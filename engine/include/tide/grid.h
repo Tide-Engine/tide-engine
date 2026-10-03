@@ -128,6 +128,14 @@ static inline const tide_grid_dir *tide_grid_dir_of(const tide_grid g)
     return b ? (const tide_grid_dir *)(const void *)(b + 1) : NULL;
 }
 
+// About how many cells a grid has: those of its chunks, since a chunk only
+// exists once a cell in it was set. For reckoning a loop's work.
+static inline uint64_t tide_grid_cells_about(const tide_grid g, const tide_grid_shape *s)
+{
+    const tide_grid_dir *d = tide_grid_dir_of(g);
+    return d ? (uint64_t)d->records << (s->shift[0] + s->shift[1] + s->shift[2]) : 0u;
+}
+
 // A chunk's cells, to read: they start where its block does.
 static inline const uint8_t *tide_grid_chunk_at(const tide_heap *heap, const uint32_t block)
 {

@@ -5830,7 +5830,22 @@ static bool reads_owner(const gen *g, const decl *sys, const int a)
 // tide_scn, and each component it takes as tide_col_<Component>, to change
 // for a mut parameter (unless `read_only`), so the chunk's page of it is the
 // world's own (see tide/page.h).
-static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *pad, const bool read_only)
+// Whether a system or handler changes component `c` of archetype `a`'s rows.
+static bool changes_component(const decl *sys, const int c, const bool read_only)
+{
+    for (int i = 0; i < sys->params.count && !read_only; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_COMPONENT && p->type.decl->index == c && p->mode == PARAM_MUT) return true;
+    }
+    return false;
+}
+
+// The lanes of the chunk's components a system reads or changes, as
+// tide_col_<Component>. The ones a loop over the chunk's rows changes
+// (`staged`) go through tide_table_lanes_begin, so a page its snapshots share
+// is only copied if a row changed (gen_chunk_lanes_end); a handler, which
+// changes one row, writes its pages as the table's own.
+static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
@@ -5839,26 +5854,54 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
     if (arch_scene_column(g, a)) {
         sb_printf(o, "%sconst tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n%s(void)tide_scn;\n", pad, columns, pad);
     }
+    if (staged) { // The most the chunk's changed lanes copy, so the copies never move under each other
+        uint32_t bytes = 0;
+        for (int c = 0; c < prog->components.count; c++) {
+            const decl *d = prog->components.items[c];
+            if (has_component(prog->archetypes.items[a], c) && changes_component(sys, c, read_only)) {
+                bytes += (uint32_t)(comp_lanes(d) * comp_width(d)) + 16u * (uint32_t)comp_lanes(d);
+            }
+        }
+        if (bytes) sb_printf(o, "%stide_table_lanes_reserve(tide_n * %uu);\n", pad, bytes);
+    }
     for (int c = 0; c < prog->components.count; c++) {
         if (!has_component(prog->archetypes.items[a], c)) continue;
         bool used = c == prog->owner->index && reads_owner(g, sys, a);
-        bool change = false;
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (p->type.kind != TY_COMPONENT || p->type.decl->index != c || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
             used = true;
-            change |= p->mode == PARAM_MUT && !read_only;
         }
         if (!used) continue;
+        const bool change = changes_component(sys, c, read_only);
         // Its lanes in this chunk
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
+        if (change && staged) {
+            sb_printf(o, "%suint8_t *tide_col_%s[%d];\n%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, comp,
+                      comp_lanes(d), pad, columns, arch_column(g, a, c), comp_lanes(d), comp);
+            continue;
+        }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, change ? "" : "const ", comp, comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
             sb_printf(o, "%s(%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d)", k ? ", " : "", change ? "" : "const ",
                       change ? "_mut" : "", columns, arch_column(g, a, c) + k);
         }
         sb_put(o, "};\n");
+    }
+}
+
+// After a loop over a chunk's rows: the lanes it changed go back, in the
+// reverse order gen_chunk_columns took them (tide_table_lanes_end).
+static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char *pad, const bool read_only)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    for (int c = prog->components.count; c-- > 0;) {
+        if (!has_component(prog->archetypes.items[a], c) || !changes_component(sys, c, read_only)) continue;
+        const decl *d = prog->components.items[c];
+        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, arch_columns(g, a),
+                  arch_column(g, a, c), comp_lanes(d), type_cname(d));
     }
 }
 
@@ -6007,7 +6050,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_printf(o, "        tide_table *tide_t = &%s->%s;\n", world, arch_name(g, a));
             sb_printf(o, "        const uint32_t tide_c = tide_loc.row >> %d;\n", shift);
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
-            gen_chunk_columns(g, h, a, "        ", false);
+            gen_chunk_columns(g, h, a, "        ", false, false);
             gen_row_copies(g, h, a, "        ");
             sb_printf(o, "        %s", call.data);
             gen_system_args(g, h, a);
@@ -6881,6 +6924,29 @@ static uint64_t expr_cost(const expr *e)
     return cost + stmt_cost(e->block);
 }
 
+// How many times a loop's body runs, as far as it can be told: a `for` from
+// one number to another by a constant step counts them, and any other loop
+// counts as 8. Capped, as a system's cost per row is.
+static uint64_t loop_trips(const stmt *s)
+{
+    if (s->kind != S_FOR || !s->init || !s->cond || !s->step) return 8u;
+    const expr *from = s->init->kind == S_VAR ? s->init->value : NULL;
+    const expr *c = s->cond;
+    if (!from || from->kind != E_INT || c->kind != E_BINARY || (c->op != T_LT && c->op != T_LE) || c->rhs->kind != E_INT) return 8u;
+    const stmt *step = s->step;
+    if (step->kind != S_ASSIGN) return 8u;
+    int64_t by;
+    if (step->op == T_PLUS_PLUS) by = 1;
+    else if (step->op == T_PLUS_ASSIGN && step->value && step->value->kind == E_INT) by = (int32_t)(uint32_t)step->value->int_value;
+    else return 8u;
+    if (by <= 0) return 8u;
+    const int64_t lo = (int32_t)(uint32_t)from->int_value;
+    const int64_t hi = (int32_t)(uint32_t)c->rhs->int_value + (c->op == T_LE ? 1 : 0);
+    if (hi <= lo) return 1u;
+    const int64_t trips = (hi - lo + by - 1) / by;
+    return trips > 1000000 ? 1000000u : (uint64_t)trips;
+}
+
 static uint64_t stmt_cost(const stmt *s)
 {
     if (!s) return 0;
@@ -6890,8 +6956,61 @@ static uint64_t stmt_cost(const stmt *s)
         for (int k = 0; k < s->cases.items[i].body.count; k++) cost += stmt_cost(s->cases.items[i].body.items[k]);
     }
     const bool loop = s->kind == S_WHILE || s->kind == S_FOR || s->kind == S_FOREACH || s->kind == S_PARALLEL;
-    cost += stmt_cost(s->init) + stmt_cost(s->else_stmt) + (loop ? 8u : 1u) * (stmt_cost(s->then_stmt) + stmt_cost(s->step));
-    return cost;
+    const uint64_t times = loop ? loop_trips(s) : 1u;
+    cost += stmt_cost(s->init) + stmt_cost(s->else_stmt) + times * (stmt_cost(s->then_stmt) + stmt_cost(s->step));
+    return cost > 1000000u ? 1000000u : cost;
+}
+
+// The parallel loops in `s`, in order.
+static void collect_parallel(const stmt *s, stmt_list *out)
+{
+    if (!s) return;
+    if (s->kind == S_PARALLEL || (s->kind == S_FOREACH && s->value->type.kind == TY_GRID && s->parallel)) {
+        vec_push(*out, s);
+        return;
+    }
+    for (int i = 0; i < s->stmts.count; i++) collect_parallel(s->stmts.items[i], out);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) collect_parallel(s->cases.items[i].body.items[k], out);
+    }
+    collect_parallel(s->init, out);
+    collect_parallel(s->step, out);
+    collect_parallel(s->then_stmt, out);
+    collect_parallel(s->else_stmt, out);
+}
+
+// A field path from a singleton parameter down to a grid or list, as the
+// world's: tide_w->Singleton.field.field, or false when it isn't one.
+static bool gen_singleton_path(sb *o, const expr *e)
+{
+    if (e->kind == E_NAME) {
+        if (e->bind != BIND_PARAM || e->param->type.kind != TY_SINGLETON || e->param->type.decl->is_local) return false;
+        sb_printf(o, "tide_w->%s", type_cname(e->param->type.decl));
+        return true;
+    }
+    if (e->kind != E_MEMBER || !e->field || !gen_singleton_path(o, e->object)) return false;
+    sb_printf(o, ".%s", field_cname(e->field));
+    return true;
+}
+
+// A parallel loop's work as the world is now, as a term added to its system's
+// (tide_system_tasks.count): its steps, which cost more than their operations
+// say, as they read and write cells, times what a step costs. Only for a
+// singleton's grid or list, which the world has: false for a component's.
+static bool gen_parallel_work(sb *o, const stmt *s)
+{
+    sb path = {0};
+    if (!gen_singleton_path(&path, s->value)) return false;
+    const uint64_t cost = 4u * stmt_cost(s->then_stmt);
+    if (s->value->type.kind == TY_LIST) {
+        sb_printf(o, " + (uint64_t)tide_list_count(%s) * %lluu", path.data, (unsigned long long)cost);
+        return true;
+    }
+    const decl *grid = s->value->type.decl;
+    const int block = s->block[0] * s->block[1] * (grid->dims == 3 ? s->block[2] : 1);
+    sb_printf(o, " + tide_grid_cells_about(%s, &%s) / %du * %lluu", path.data, grid_shape_name(grid), block > 0 ? block : 1,
+              (unsigned long long)cost);
+    return true;
 }
 
 // Whether archetype `a` has the entities a system or view runs for.
@@ -6901,23 +7020,37 @@ static bool runs_on(const gen *g, const decl *sys, const int a)
     return arch_local(g, a) == sys->entity_local && (mask & sys->need_mask) == sys->need_mask && !(mask & sys->without_mask);
 }
 
+// The rows of a chunk a task runs: all of them, or with `pieced`, the task's
+// piece of them (tide_piece of tide_pieces), as tide_from and tide_to.
+static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
+{
+    if (!pieced) {
+        sb_printf(o, "%sconst uint32_t tide_from = 0u, tide_to = tide_n;\n", pad);
+        return;
+    }
+    sb_printf(o, "%sconst uint32_t tide_from = (uint32_t)((uint64_t)tide_n * tide_piece / tide_pieces);\n", pad);
+    sb_printf(o, "%sconst uint32_t tide_to = (uint32_t)((uint64_t)tide_n * (tide_piece + 1u) / tide_pieces);\n", pad);
+}
+
 // The code for one chunk, tide_c of tide_t in archetype `a`: the body called
-// for each of its entities, with `clear` after each.
+// for each of its entities (its piece of them, `pieced`), with `clear` after each.
 static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, const char *clear, const char *pad,
-                      const bool read_only)
+                      const bool read_only, const bool pieced)
 {
     sb *o = &g->c;
     sb inner = {0};
     sb_printf(&inner, "%s    ", pad);
     sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
-    gen_chunk_columns(g, sys, a, pad, read_only);
-    sb_printf(o, "%sfor (uint32_t tide_i = 0; tide_i < tide_n; tide_i++) {\n", pad);
+    gen_piece_rows(o, pad, pieced);
+    gen_chunk_columns(g, sys, a, pad, read_only, true);
+    sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_copies(g, sys, a, inner.data);
     sb_printf(o, "%s%s", inner.data, call);
     gen_system_args(g, sys, a);
     sb_printf(o, ");%s\n", clear);
     gen_row_puts(g, sys, inner.data, read_only);
     sb_printf(o, "%s}\n", pad);
+    gen_chunk_lanes_end(g, sys, a, pad, read_only);
 }
 
 // Whether a system's spawns get temporary handles, settled once it's done
@@ -6953,14 +7086,17 @@ static void gen_system_settle(gen *g, const decl *sys)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    sb_printf(o, "static void tide_settle_%s(void *tide_world_v, uint32_t tide_task, const tide_new_entities *tide_m)\n{\n",
+    sb_printf(o, "static void tide_settle_%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces, "
+                 "const tide_new_entities *tide_m)\n{\n",
               decl_cname(sys));
     sb_put(o, "    tide_world *tide_w = tide_world_v;\n");
+    sb_put(o, "    const uint32_t tide_piece = tide_task % tide_pieces;\n    uint32_t tide_chunk = tide_task / tide_pieces;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!runs_on(g, sys, a)) continue;
         sb_printf(o, "    { // %s\n        tide_table *tide_t = &tide_w->%s;\n", arch_label(g, a), arch_name(g, a));
-        sb_put(o, "        if (tide_task < tide_t->chunks) {\n            const uint32_t tide_c = tide_task;\n");
+        sb_put(o, "        if (tide_chunk < tide_t->chunks) {\n            const uint32_t tide_c = tide_chunk;\n");
         sb_printf(o, "            const uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", arch_shift(g, a));
+        gen_piece_rows(o, "            ", true);
         for (int i = 0; i < sys->params.count; i++) {
             const path_list paths = settled_fields(sys, i);
             if (!paths.count) continue;
@@ -6971,7 +7107,7 @@ static void gen_system_settle(gen *g, const decl *sys)
                 sb_printf(o, "%s(uint8_t *)tide_table_column_mut(tide_t, %s, tide_c, %d)", k ? ", " : "", arch_columns(g, a),
                           arch_column(g, a, d->index) + k);
             }
-            sb_put(o, "};\n            for (uint32_t tide_i = 0; tide_i < tide_n; tide_i++) {\n");
+            sb_put(o, "};\n            for (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n");
             sb_printf(o, "                %s tide_v;\n                tide_gather_%s(&tide_v, (const uint8_t *const *)tide_col_%s, tide_i);\n",
                       comp, comp, comp);
             for (int k = 0; k < paths.count; k++) {
@@ -6979,9 +7115,42 @@ static void gen_system_settle(gen *g, const decl *sys)
             }
             sb_printf(o, "                tide_scatter_%s(tide_col_%s, tide_i, &tide_v);\n            }\n", comp, comp);
         }
-        sb_put(o, "            return;\n        }\n        tide_task -= tide_t->chunks;\n    }\n");
+        sb_put(o, "            return;\n        }\n        tide_chunk -= tide_t->chunks;\n    }\n");
     }
     sb_put(o, "    (void)tide_w;\n    (void)tide_task;\n    (void)tide_m;\n}\n\n");
+}
+
+// Whether a system that splits its entities changes any of their components:
+// then it has tide_own_<System> (tide_system_tasks.own).
+static bool system_owns(const gen *g, const decl *sys)
+{
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (changes_component(sys, c, false)) return true;
+    }
+    return false;
+}
+
+// tide_own_<System>: the pages of the components it changes made the world's
+// own, in every chunk it runs on, before its chunks run in pieces.
+static void gen_system_own(gen *g, const decl *sys)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    sb_printf(o, "static void tide_own_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", decl_cname(sys));
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!runs_on(g, sys, a)) continue;
+        sb_printf(o, "    { // %s\n        tide_table *tide_t = &tide_w->%s;\n", arch_label(g, a), arch_name(g, a));
+        sb_put(o, "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n");
+        for (int c = 0; c < prog->components.count; c++) {
+            if (!has_component(prog->archetypes.items[a], c) || !changes_component(sys, c, false)) continue;
+            const decl *d = prog->components.items[c];
+            for (int k = 0; k < comp_lanes(d); k++) {
+                sb_printf(o, "            tide_table_column_mut(tide_t, %s, tide_c, %d);\n", arch_columns(g, a), arch_column(g, a, c) + k);
+            }
+        }
+        sb_put(o, "        }\n    }\n");
+    }
+    sb_put(o, "    (void)tide_w;\n}\n\n");
 }
 
 // tide_settle_item: a change or event recorded by a system whose spawns got
@@ -7103,8 +7272,18 @@ static void gen_system_run(gen *g, const decl *sys)
         const uint64_t cost = stmt_cost(sys->body);
         sb_printf(o, "%s) * %lluu; // Its rows, and what one costs\n", rows ? "" : sys->per_entity ? "0u" : "1u",
                   (unsigned long long)(cost < 1000000u ? cost : 1000000u));
-        // Its parallel loops share their steps out to the tick's threads (tide_parallel_for)
-        if (parallel_loops(sys->body)) sb_put(o, "    *tide_work = UINT64_C(1) << 40;\n");
+        // Its parallel loops share their steps out to the tick's threads
+        // (tide_parallel_for): their work too, as the world is now, when it
+        // can be told; else enough that the tick runs on threads
+        stmt_list loops = {0};
+        collect_parallel(sys->body, &loops);
+        if (loops.count) {
+            sb terms = {0};
+            bool told = true;
+            for (int i = 0; i < loops.count && told; i++) told = gen_parallel_work(&terms, loops.items[i]);
+            if (told) sb_printf(o, "    *tide_work += 0u%s; // Its parallel loops' steps\n", terms.data);
+            else sb_put(o, "    *tide_work = UINT64_C(1) << 40;\n");
+        }
         if (split) {
             sb_put(o, "    const uint32_t tide_chunks = 0u");
             for (int a = 0; a < prog->archetypes.count; a++) {
@@ -7114,8 +7293,12 @@ static void gen_system_run(gen *g, const decl *sys)
         } else {
             sb_put(o, "    return 1u;\n}\n\n");
         }
-        sb_printf(o, "static void tide_task_%s(void *tide_world_v, uint32_t tide_task)\n{\n", name);
-        sb_put(o, "    tide_world *tide_w = tide_world_v;\n    (void)tide_task;\n");
+        sb_printf(o, "static void tide_task_%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)\n{\n", name);
+        sb_put(o, "    tide_world *tide_w = tide_world_v;\n    (void)tide_task;\n    (void)tide_pieces;\n");
+        if (split) { // Its task's chunk among its archetypes' chunks, and its piece of it
+            sb_put(o, "    const uint32_t tide_piece = tide_task % tide_pieces;\n    uint32_t tide_chunk = tide_task / tide_pieces;\n");
+            sb_put(o, "    (void)tide_piece;\n    (void)tide_chunk;\n");
+        }
     }
 
     // Text the code made goes once it's done: after each entity. Released heap
@@ -7143,12 +7326,12 @@ static void gen_system_run(gen *g, const decl *sys)
             sb_printf(o, "    { // %s\n", arch_label(g, a));
             sb_printf(o, "        %stide_table *tide_t = &%s->%s;\n", read_only ? "const " : "", world, arch_name(g, a));
             if (split) { // Its task's chunk, counting through its archetypes' chunks
-                sb_put(o, "        if (tide_task < tide_t->chunks) {\n            const uint32_t tide_c = tide_task;\n");
-                gen_chunk(g, sys, a, call.data, clear, "            ", read_only);
-                sb_put(o, "            return;\n        }\n        tide_task -= tide_t->chunks;\n    }\n");
+                sb_put(o, "        if (tide_chunk < tide_t->chunks) {\n            const uint32_t tide_c = tide_chunk;\n");
+                gen_chunk(g, sys, a, call.data, clear, "            ", read_only, true);
+                sb_put(o, "            return;\n        }\n        tide_chunk -= tide_t->chunks;\n    }\n");
             } else {
                 sb_put(o, "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n");
-                gen_chunk(g, sys, a, call.data, clear, "            ", read_only);
+                gen_chunk(g, sys, a, call.data, clear, "            ", read_only, false);
                 sb_put(o, "        }\n    }\n");
             }
         }
@@ -7160,6 +7343,7 @@ static void gen_system_run(gen *g, const decl *sys)
     g->blending = NULL;
     sb_put(o, "}\n\n");
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
+    if (!view && split && system_owns(g, sys)) gen_system_own(g, sys);
 }
 
 // ---------------------------------------------------------------------------
@@ -7337,7 +7521,10 @@ static void gen_api(gen *g)
             const char *name = decl_cname(sys);
             const bool settles = system_settles(sys);
             any_settles |= settles;
-            sb_printf(o, "    {tide_tasks_%s, tide_task_%s, %d, ", name, name, sys->waits.count);
+            sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
+            if (system_splits(sys) && system_owns(g, sys)) sb_printf(o, "tide_own_%s, ", name);
+            else sb_put(o, "NULL, ");
+            sb_printf(o, "%s, %d, ", system_splits(sys) ? "true" : "false", sys->waits.count);
             if (sys->waits.count) sb_printf(o, "tide_waits_%s", name);
             else sb_put(o, "NULL");
             sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", settles ? "true" : "false");

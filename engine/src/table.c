@@ -56,6 +56,65 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, const uint32_t row
     }
 }
 
+// Staging: this thread's memory for the lanes of shared pages while a loop
+// changes them (tide_table_lanes_begin), handed out and given back in order.
+static TIDE_THREAD_LOCAL uint8_t *staging;
+static TIDE_THREAD_LOCAL size_t staging_size;
+static TIDE_THREAD_LOCAL size_t staging_used;
+
+// Each lane's copy starts 16 bytes aligned, as its page's data does.
+static size_t staged_size(const uint32_t bytes)
+{
+    return ((size_t)bytes + 15u) & ~(size_t)15u;
+}
+
+void tide_table_lanes_reserve(const uint32_t bytes)
+{
+    const size_t need = staging_used + bytes;
+    if (need <= staging_size) return;
+    size_t size = staging_size ? staging_size : 1u << 16;
+    while (size < need) size *= 2u;
+    staging = tide_realloc(staging, staging_size, size);
+    staging_size = size;
+}
+
+void tide_table_lanes_begin(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first, const uint32_t lanes,
+                            uint8_t **out)
+{
+    const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+    for (uint32_t k = 0; k < lanes; k++) {
+        tide_page *p = t->pages[chunk * c->count + first + k];
+        if (p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
+            p->hashed = UINT32_MAX;
+            out[k] = tide_page_data(p);
+            continue;
+        }
+        const uint32_t bytes = rows * c->sizes[first + k];
+        tide_table_lanes_reserve(bytes + 16u); // Reserved already, unless the caller didn't say
+        uint8_t *copy = staging + staging_used;
+        memcpy(copy, tide_page_data(p), bytes);
+        staging_used += staged_size(bytes);
+        out[k] = copy;
+    }
+}
+
+void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first, const uint32_t lanes,
+                          uint8_t *const *out)
+{
+    const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+    for (uint32_t k = lanes; k-- > 0;) {
+        tide_page **p = &t->pages[chunk * c->count + first + k];
+        if (out[k] == tide_page_data(*p)) continue; // Written in place
+        const uint32_t bytes = rows * c->sizes[first + k];
+        staging_used -= staged_size(bytes);
+        if (memcmp(out[k], tide_page_data(*p), bytes) == 0) continue; // No row changed: still shared, still hashed
+        tide_page *own = tide_page_new((*p)->size);
+        memcpy(tide_page_data(own), out[k], bytes);
+        tide_page_release(*p, 1);
+        *p = own;
+    }
+}
+
 uint32_t tide_table_add(tide_table *t, const tide_columns *c)
 {
     if (t->count == UINT32_MAX) tide_out_of_memory();

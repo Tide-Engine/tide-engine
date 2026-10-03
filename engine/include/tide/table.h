@@ -78,6 +78,20 @@ void tide_table_gather(const tide_table *t, const tide_columns *c, uint32_t row,
 void tide_table_scatter(tide_table *t, const tide_columns *c, uint32_t row, uint32_t first, uint32_t lanes, uint32_t width,
                         const void *value);
 
+// A chunk's lanes of a component (columns `first` on, `lanes` of them), for a
+// loop over its rows to change: where to write each lane's rows, into `out`.
+// A page this table alone has is written in place. One its snapshots share is
+// copied into memory of this thread's first, so that a loop which changes
+// nothing leaves the page shared, with its hash good: tide_table_lanes_end
+// puts each copy whose rows changed into a page of the table's own, and lets
+// the rest go. Ends come in the reverse order of their begins, and
+// tide_table_lanes_reserve comes before a chunk's begins with the most bytes
+// they'll copy, so the memory never moves under them.
+void tide_table_lanes_reserve(uint32_t bytes);
+void tide_table_lanes_begin(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes, uint8_t **out);
+void tide_table_lanes_end(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
+                          uint8_t *const *out);
+
 // The same to change: the page is made this table's own.
 static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t column)
 {
