@@ -18,6 +18,7 @@
 #include "tide/layout.h"
 #include "tide/platform.h"
 #include "tide/session.h"
+#include "tide/time.h"
 
 typedef struct tide_run_desc {
     const char *title;      // The window's title, over the game's title setting; NULL for that
@@ -238,6 +239,7 @@ static inline tide_session *tide_run_new_session(void)
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
         .jobs = tide_platform_jobs(), // Ticks on every core
+        .now_ns = tide_time_now_ns,   // To keep running predicted ticks again within a frame's budget
     });
 }
 
@@ -374,10 +376,12 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     if (tide_run_settings.stats && match) {
         const tide_jobs *jobs = tide_platform_jobs(); // What the session ticks on
-        char stats[208];
+        char stats[240];
+        char delay[32] = "";
+        if (status.client.delay_ticks) snprintf(delay, sizeof delay, "\ndelay %u ticks", (unsigned)status.client.delay_ticks);
         snprintf(stats, sizeof stats,
-                 "%.0f fps\nping %u ms\nup %.1f KB/s\ndown %.1f KB/s\ntick %d\n%u entities\nthreads %u",
-                 tide_run_fps, (unsigned)status.client.ping_ms, tide_run_up / 1024.0, tide_run_down / 1024.0,
+                 "%.0f fps\nping %u ms%s\nup %.1f KB/s\ndown %.1f KB/s\ntick %d\n%u entities\nthreads %u",
+                 tide_run_fps, (unsigned)status.client.ping_ms, delay, tide_run_up / 1024.0, tide_run_down / 1024.0,
                  (int)game->tick(match), (unsigned)game->entity_count(match), jobs ? (unsigned)jobs->threads : 1u);
         tide_platform_draw_overlay(stats);
     }

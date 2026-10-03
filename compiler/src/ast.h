@@ -629,6 +629,8 @@ typedef struct program {
     const expr *app_id;        // appId, likewise
     const expr *version;       // version, likewise
     bool host_migration;       // hostMigration
+    bool delay_prediction;     // prediction = Prediction.Delay: clients never predict (tide_prediction)
+    decl *prediction;          // The built-in enum Prediction
 } program;
 
 // A change that fixes a diagnostic, which editors offer as a quick fix.

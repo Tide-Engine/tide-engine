@@ -46,6 +46,22 @@
 // A match whose last scene unloads, when Main is local, ends: the server stops
 // ticking and tells every player, who go offline with TIDE_DISCONNECT_ENDED.
 
+// How a game's clients keep up with the match (settings { prediction = ...; }).
+// Tide's Prediction has the same values.
+typedef enum tide_prediction {
+    // Clients predict ahead, with no input delay: their own input applies at
+    // once, and other players' are guessed. When running the predicted ticks
+    // again would cost more than a frame's budget, a client delays its input a
+    // tick at a time, predicting less, until it fits; it takes the delay back
+    // when there's room.
+    TIDE_PREDICTION_ROLLBACK,
+    // Clients never predict: their inputs are delayed so every player's reach
+    // the server before its tick, and clients run ticks as the server confirms
+    // them, as many ticks behind as that takes. Nothing is ever run again, so
+    // the simulation runs once on every machine, at the cost of input delay.
+    TIDE_PREDICTION_DELAY,
+} tide_prediction;
+
 // What a session needs from a game. tidec generates it as tide_game_api in
 // <game>.h; games without an input have no input functions.
 typedef struct tide_game {
@@ -109,6 +125,7 @@ typedef struct tide_game {
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
     const char *title;   // title: the window's, unless the host says
     bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
+    uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
 } tide_game;
 
 typedef enum tide_session_state {
@@ -200,6 +217,13 @@ typedef struct tide_client_desc {
     // changed hands (the game's tide_world, copied): the server only sends what
     // it lacks. NULL: the whole world comes.
     const void *base;
+    // The real time, in nanoseconds, to measure what the game's ticks cost:
+    // a client predicting (TIDE_PREDICTION_ROLLBACK) keeps running them again
+    // within `resim_budget` seconds a frame by delaying its input. NULL: no
+    // clock, so no delay but what the game's prediction setting asks, and a
+    // run is the same however fast the machine (benchmarks and tests).
+    uint64_t (*now_ns)(void);
+    double resim_budget; // Seconds a frame may spend running predicted ticks again; 0 for 0.004
 } tide_client_desc;
 
 typedef struct tide_client_status {
@@ -209,6 +233,7 @@ typedef struct tide_client_status {
     uint32_t ping_ms;              // Round trip to the server
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
+    uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
     uint32_t resyncs;              // Times its world diverged and the server sent it again
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection
@@ -249,7 +274,9 @@ typedef struct tide_session_desc {
     uint32_t tick_rate; // The matches it starts: 0 for the game's at the time (tide_game.tick_rate), or else 60
     tide_sample_fn sample;
     void *user;
-    const tide_jobs *jobs; // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
+    double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {
