@@ -8078,6 +8078,7 @@ static void gen_game_api(gen *g)
     // Its settings: here rather than in the header, so they don't change the game's hash
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
+    if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
         gen_c_literal(o, prog->title->text, false);

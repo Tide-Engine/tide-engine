@@ -31,7 +31,7 @@ The editors' formatter lays code out this way (see [Editors](../guide/editors.md
 | `PlayerID` | A player (see [Input](./input.md)) |
 | `T?`, like `int?` | A value or nothing (see [Errors](./errors.md)) |
 
-The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](./gui.md)), `Filter` ([Views and drawing](./views.md#textures)), `SceneVisibility` ([Scenes](./scenes.md)), `SessionState` and `DisconnectReason` ([Multiplayer](./multiplayer.md)).
+The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](./gui.md)), `Filter` ([Views and drawing](./views.md#textures)), `SceneVisibility` ([Scenes](./scenes.md)), `SessionState`, `DisconnectReason` and `Prediction` ([Multiplayer](./multiplayer.md)).
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
 
@@ -99,6 +99,7 @@ settings
 | `title` | The window's title | The game's folder's name |
 | `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate` | 60 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](./multiplayer.md#host-migration)) | `false` |
+| `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](./multiplayer.md#input-delay)) | `Prediction.Rollback` |
 | `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../guide/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
 | `version` | The version people see, like `1.2.0`: one to three numbers between dots. Each build's version code, which app stores order updates by, goes up by itself | `1.0` |
 

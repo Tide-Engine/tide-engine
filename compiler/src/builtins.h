@@ -65,7 +65,7 @@ void builtin_signatures(str owner, str name, void (*visit)(void *user, const cha
 
 typedef struct setting {
     const char *name;
-    type_kind kind;        // What it's set to: TY_INT, TY_STRING or TY_BOOL
+    type_kind kind;        // What it's set to: TY_INT, TY_STRING, TY_BOOL, or TY_ENUM for one of the engine's enums
     const char *otherwise; // What it is when the game doesn't set it, in words: "60"
     const char *doc;
 } setting;

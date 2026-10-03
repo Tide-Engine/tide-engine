@@ -3919,7 +3919,8 @@ static void complete_settings(completion *c, const int open, const int last)
         }
         if (set) continue;
         sb detail = {0};
-        sb_printf(&detail, "%s %s", type_name((type){all[i].kind, NULL}), all[i].name);
+        const type t = {all[i].kind, all[i].kind == TY_ENUM ? A.prog->prediction : NULL}; // The one enum setting's
+        sb_printf(&detail, "%s %s", type_name(t), all[i].name);
         sb snippet = {0};
         sb_printf(&snippet, "%s = $0;", all[i].name);
         item(c, all[i].name, CK_PROPERTY, detail.data, all[i].doc, snippet.data);
@@ -4898,7 +4899,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "by", "offset", "void"};
     enum { DECL_WORDS = 11 };
     static const char *const reserved[] = {"Math", "Draw", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
-                                           "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility",
+                                           "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction",
                                            "GUI", "GUILayout", "Screen", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Grid2", "Grid3",

@@ -203,6 +203,107 @@ TIDE_TEST(net_a_player_far_behind_gets_the_world_again)
     finish();
 }
 
+// A game whose clients never predict (settings { prediction = Prediction.Delay; }):
+// their inputs are delayed instead, so every tick runs once, as the server
+// confirms it. The server runs the game as it is: the setting is the client's.
+static tide_game delayed_game;
+
+static tide_client *join_delayed(const int number)
+{
+    delayed_game = tide_game_api;
+    delayed_game.prediction = TIDE_PREDICTION_DELAY;
+    const tide_client_desc desc = {
+        .game = &delayed_game,
+        .transport = tide_loopback_endpoint(net, (uint32_t)number + 2u),
+        .server = tide_loopback_address(1),
+        .sample = sample,
+        .user = &who[number],
+        .lead = 2,
+    };
+    clients[number] = tide_client_create(&desc, now);
+    return clients[number];
+}
+
+TIDE_TEST(net_a_client_that_never_predicts_runs_each_tick_once)
+{
+    start((tide_net_conditions){.latency = 0.03, .jitter = 0.01}, 23);
+    join(0);
+    join_delayed(1);
+    run(6.0);
+    const tide_client_status a = tide_client_status_of(clients[0]);
+    const tide_client_status b = tide_client_status_of(clients[1]);
+    TIDE_CHECK(a.state == TIDE_SESSION_CONNECTED && b.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(a.resyncs == 0 && b.resyncs == 0);
+    TIDE_CHECK(a.predicted_tick > a.verified_tick); // The one that predicts runs ahead
+    TIDE_CHECK(b.predicted_tick == b.verified_tick); // The other never past what the server confirmed
+    TIDE_CHECK(a.delay_ticks == 0);
+    TIDE_CHECK(b.delay_ticks > 0);
+    // Both keep up, and both players' inputs got there: each has moved
+    TIDE_CHECK(a.verified_tick + 30u > tide_server_tick(server));
+    TIDE_CHECK(b.verified_tick + 30u > tide_server_tick(server));
+    const tide_world *w = tide_server_world(server);
+    TIDE_CHECK(players_in(w)->joined == 2);
+    uint32_t moved = 0;
+    for (uint32_t row = 0; row < w->arch1_Owner_Mover.count; row++) {
+        const Mover m = TIDE_AT(w, arch1_Owner_Mover, Mover, row);
+        moved += m.position.y != 0.0f || m.jumps > 0 ? 1u : 0u;
+    }
+    TIDE_CHECK(moved == 2);
+    // Its view blends between the last two ticks it ran, as any client's does
+    const tide_view_worlds view = tide_client_view(clients[1]);
+    TIDE_CHECK(view.current && view.previous && view.alpha >= 0.0f && view.alpha <= 1.0f);
+    finish();
+}
+
+// A made-up clock, for a client's budget: each tick costs what the test says.
+static uint64_t fake_ns;
+static uint64_t fake_tick_ns;
+
+static uint64_t fake_now_ns(void)
+{
+    fake_ns += fake_tick_ns;
+    return fake_ns;
+}
+
+TIDE_TEST(net_a_client_over_its_budget_delays_its_input)
+{
+    start((tide_net_conditions){.latency = 0.05}, 29);
+    join(0);
+    // A client whose ticks cost a millisecond each, with a budget of three a
+    // frame. With 100 ms round trips it predicts about eight ticks, so running
+    // them again would cost eight: it delays its input until about three are left.
+    fake_ns = 0;
+    fake_tick_ns = 1000000;
+    const tide_client_desc desc = {
+        .game = &tide_game_api,
+        .transport = tide_loopback_endpoint(net, 3),
+        .server = tide_loopback_address(1),
+        .sample = sample,
+        .user = &who[1],
+        .lead = 2,
+        .now_ns = fake_now_ns,
+        .resim_budget = 0.003,
+    };
+    clients[1] = tide_client_create(&desc, now);
+    run(10.0);
+    tide_client_status b = tide_client_status_of(clients[1]);
+    TIDE_CHECK(b.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(b.resyncs == 0);
+    TIDE_CHECK(b.delay_ticks >= 3u);
+    TIDE_CHECK(b.predicted_tick - b.verified_tick <= 4u);
+    TIDE_CHECK(b.verified_tick + 30u > tide_server_tick(server));
+    TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0); // No clock: as it always was
+    // Its ticks get cheap: it takes the delay back, a tick every few seconds
+    fake_tick_ns = 1000;
+    run(60.0);
+    b = tide_client_status_of(clients[1]);
+    TIDE_CHECK(b.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(b.resyncs == 0);
+    TIDE_CHECK(b.delay_ticks == 0);
+    TIDE_CHECK(b.predicted_tick > b.verified_tick + 4u);
+    finish();
+}
+
 // What a match costs to keep going, through transports that count it: two
 // players, 50 ms away, for ten seconds after joining.
 static tide_transport counted_inner[3];

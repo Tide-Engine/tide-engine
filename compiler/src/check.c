@@ -5288,7 +5288,8 @@ static void check_settings(checker *c)
                           STR_ARG(f->name));
                 continue;
             }
-            f->type = (type){s->kind, NULL};
+            // An enum setting is one of the engine's enums: `prediction` a Prediction
+            f->type = (type){s->kind, s->kind == TY_ENUM ? prog->prediction : NULL};
             bool twice = false;
             for (int j = 0; j < i; j++) twice |= str_eq(block->fields.items[j].name, f->name);
             if (twice) {
@@ -5323,6 +5324,13 @@ static void check_settings(checker *c)
                 while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
                 if (known->kind != E_BOOL) diag_error(value->at, "hostMigration is true or false, or a constant that is");
                 else prog->host_migration = known->bool_value;
+            } else if (str_eq_c(f->name, "prediction")) {
+                int64_t member;
+                if (!fold_int(value, &member)) {
+                    diag_error(value->at, "prediction is 'Prediction.Rollback' or 'Prediction.Delay', or a constant that is");
+                } else {
+                    prog->delay_prediction = member == 1;
+                }
             } else if (str_eq_c(f->name, "title")) {
                 prog->title = text_literal(value);
                 if (!prog->title) {
@@ -6529,6 +6537,18 @@ static void add_builtins(program *prog)
     vec_push(visibility->members, private_member);
     prog->scene_visibility = visibility;
 
+    // enum Prediction { Rollback, Delay }: how clients keep up with the match,
+    // the `prediction` setting. tide/session.h's tide_prediction has the same values.
+    decl *prediction = NEW(decl);
+    prediction->kind = DECL_ENUM;
+    prediction->name = str_from("Prediction");
+    prediction->builtin = true;
+    const enum_member rollback_member = {str_from("Rollback"), {0, 0, 0}, NULL, 0};
+    const enum_member delay_member = {str_from("Delay"), {0, 0, 0}, NULL, 1};
+    vec_push(prediction->members, rollback_member);
+    vec_push(prediction->members, delay_member);
+    prog->prediction = prediction;
+
     // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, as
     // Unity's TextAnchor. tide/gui.h's tide_anchor has the same values.
     static const char *const anchors[] = {"UpperLeft", "UpperCenter", "UpperRight", "MiddleLeft", "MiddleCenter",
@@ -6638,6 +6658,7 @@ static void add_builtins(program *prog)
     vec_push(decls, time);
     vec_push(decls, owner);
     vec_push(decls, visibility);
+    vec_push(decls, prediction);
     vec_push(decls, anchor);
     vec_push(decls, vertex);
     vec_push(decls, vertex3);

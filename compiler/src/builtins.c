@@ -913,6 +913,12 @@ static const setting settings[] = {
      "When the machine running a room's match leaves or stops answering, another player's machine takes the match "
      "over from the last tick it verified, and the others join it again as the same players. Private scenes the new "
      "host wasn't in are lost, so a game with host migration keeps no secrets. `Session.End()` ends a match instead."},
+    {"prediction", TY_ENUM, "Prediction.Rollback",
+     "How clients keep up with the match. `Prediction.Rollback`: a client runs ahead of the server with no input "
+     "delay, guessing other players' inputs, and runs ticks again when a guess was wrong; when that costs more than a "
+     "frame's budget, it delays its input a tick at a time until it fits. `Prediction.Delay`: clients never predict: "
+     "inputs are delayed so every player's reach the server before its tick, and ticks run once, as the server "
+     "confirms them, at the cost of input delay."},
 };
 
 #define SETTING_COUNT (sizeof settings / sizeof settings[0])

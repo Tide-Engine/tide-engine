@@ -159,9 +159,22 @@ What each player controls is up to the `Owner` component (see [Input](./input.md
 
 **Coming back:** joining a server gives this machine a cookie, and joining the same server again presents it, so the player gets their `PlayerID` back, and with it whatever the game kept for them. If the server still thought they were connected, the new connection takes over with no events at all; if they'd left, `PlayerJoined` comes again with the same `PlayerID`. The cookie lasts as long as the program, for now.
 
-## No input delay
+## Input delay
 
-A player's own input applies at once: clients run ahead of the server, by about half the round trip, so their input arrives in time. Only other players' inputs are ever guessed, and when a guess is wrong, the client rolls back and runs the ticks again. See [Networking](../engine/networking.md) for how.
+By default there is none: a player's own input applies at once. Clients run ahead of the server, by about half the round trip, so their input arrives in time. Only other players' inputs are ever guessed, and when a guess is wrong, the client rolls back and runs the ticks again. See [Networking](../engine/networking.md#prediction-and-rollback) for how.
+
+Running ticks again costs time, about as many ticks as the client is ahead, every frame on a busy match. A client that can't afford it delays its input instead: a tick at a time, until what's left to run again fits in its budget, and back again once there's room to spare. `tide run --stats` shows the delay when there is one.
+
+A game can ask for delay in place of prediction altogether:
+
+```csharp
+settings
+{
+    prediction = Prediction.Delay;
+}
+```
+
+Then clients never predict. Their inputs are delayed so that every player's reach the server before its tick, and ticks run once each, as the server confirms them: nothing is ever rolled back, at the cost of input delay of about a round trip and a half. A game whose ticks are expensive, or whose views can't show a rollback well, picks it; the server runs the match the same either way.
 
 ## Limits for now
 
