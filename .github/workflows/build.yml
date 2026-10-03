@@ -138,15 +138,26 @@ jobs:
           restore-keys: lto-
 
       # Native tests that open a window (label gpu: the demo's smoke test, the
-      # renderer's) need a GPU the runners don't have; the web ones run in
-      # headless Chrome.
+      # renderer's) need OpenGL in a window, which no runner has: Windows' and
+      # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
+      # with. The web ones run in headless Chrome.
       - name: Test (native)
         run: |
           cmake --preset release
           cmake --build --preset release
           ctest --preset release -LE gpu
+      # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
+      # Linux's runners leave them out: without a GPU, Chrome there draws with
+      # WebGPU but gives nothing back when the test reads its pixels.
       - name: Test (web)
-        run: cmake --workflow --preset web-release
+        run: |
+          cmake --preset web-release
+          cmake --build --preset web-release
+          if [ "$RUNNER_OS" = Linux ]; then
+            ctest --preset web-release -LE webgpu
+          else
+            ctest --preset web-release
+          fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
         if: runner.os == 'Windows'

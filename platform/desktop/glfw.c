@@ -107,9 +107,12 @@ static uint32_t mouse_held, mouse_tapped; // Bits in tide_mouse's order
 static uint32_t typed[256];
 static unsigned typed_start, typed_count;
 
+static bool pasting; // Taking the clipboard's text, which it may hold none of
+
 static void on_error(const int code, const char *text)
 {
-    if (code == GLFW_FORMAT_UNAVAILABLE) return; // Pasting while the clipboard holds no text
+    // Only while pasting: it's also how a window with no OpenGL to be had says why
+    if (pasting && code == GLFW_FORMAT_UNAVAILABLE) return;
     fprintf(stderr, "tide: GLFW: %s (0x%X)\n", text, (unsigned)code);
 }
 
@@ -200,6 +203,11 @@ bool tide_window_open(const tide_window_desc *desc)
         glfwShowWindow(window);
     }
     return true;
+}
+
+const tide_gpu *tide_window_gpu(void)
+{
+    return &tide_gpu_gl;
 }
 
 void tide_window_close(void)
@@ -351,7 +359,10 @@ const char *tide_window_take_paste(void)
 {
     if (!paste_asked) return NULL;
     paste_asked = false;
-    return glfwGetClipboardString(window);
+    pasting = true;
+    const char *text = glfwGetClipboardString(window);
+    pasting = false;
+    return text;
 }
 
 void tide_window_copy(const char *text)
