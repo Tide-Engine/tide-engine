@@ -123,6 +123,52 @@ TIDE_TEST(table_snapshots_share_until_changed)
     tide_entities_free(&entities);
 }
 
+// A loop over a chunk's rows changes its lanes through tide_table_lanes_begin:
+// a shared page is copied only if a row changed.
+TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
+{
+    tide_table t = {0};
+    tide_table snapshot = {0};
+    tide_entities entities = {0};
+    fill(&t, &entities, 40);
+    tide_table_copy(&snapshot, &t, &columns);
+    const uint64_t before = tide_table_hash(1, &t, &columns);
+    uint8_t *lanes[1];
+
+    // Written as they were: nothing moves
+    tide_table_lanes_reserve(16 * 8 + 16);
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(lanes[0] != tide_page_data(t.pages[1 * 2 + 1])); // A copy, since the snapshot shares the page
+    for (uint32_t i = 0; i < 16; i++) {
+        float *p = (float *)(lanes[0] + i * 8);
+        p[0] = (float)(16 + i);
+        p[1] = -(float)(16 + i);
+    }
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(t.pages[1 * 2 + 1] == snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX); // Its hash still good
+    TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
+
+    // One row changed: this table's own page, the snapshot's as it was
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
+    ((float *)(lanes[0] + 4 * 8))[0] = 100.0f;
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(position(&t, 20)[0] == 100.0f && position(&t, 21)[0] == 21.0f);
+    TIDE_CHECK(position(&snapshot, 20)[0] == 20.0f);
+    TIDE_CHECK(tide_table_hash(1, &t, &columns) != before);
+    TIDE_CHECK(tide_table_hash(1, &snapshot, &columns) == before);
+
+    // A page the table alone has is written in place
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(lanes[0] == tide_page_data(t.pages[1 * 2 + 1]));
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+
+    tide_table_free(&t, &columns);
+    tide_table_free(&snapshot, &columns);
+    tide_entities_free(&entities);
+}
+
 TIDE_TEST(table_packs_and_unpacks)
 {
     tide_table t = {0};

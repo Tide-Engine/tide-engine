@@ -57,18 +57,28 @@ tide_entity tide_settled(const tide_new_entities *settled, tide_entity e);
 // A system, as the tick runs it: generated code has a table of them, in the
 // tick's order.
 typedef struct tide_system_tasks {
-    // Its tasks this tick (at least 1), and roughly how much work they are:
-    // the rows they go through, times what tidec reckons one costs. That
-    // tells whether there's enough to do for threads to be worth it.
+    // Its chunks this tick (at least 1), and roughly how much work they are:
+    // the rows they go through, times what tidec reckons one costs, and its
+    // parallel loops' steps. That tells whether there's enough to do for
+    // threads to be worth it, and in how many pieces each chunk goes.
     uint32_t (*count)(const void *world, uint64_t *work);
-    void (*run)(void *world, uint32_t task);
+    // Runs task `task` of `count * pieces`: chunk task / pieces, piece task %
+    // pieces of its rows. A system that doesn't split its entities has one
+    // task, in one piece; one with fewer chunks than there are threads gets
+    // them in pieces, so a few heavy chunks still keep every thread busy.
+    void (*run)(void *world, uint32_t task, uint32_t pieces);
+    // Before its chunks run in more than one piece: the pages of what it
+    // changes made the world's own, since the pieces of one chunk write the
+    // same pages at once (see tide_table_lanes_begin). NULL: it changes nothing.
+    void (*own)(void *world);
+    bool splits;           // Its entities go across threads, a chunk (in pieces) a task; else it's one task, whatever its work
     uint32_t wait_count;
     const uint32_t *waits; // Systems before it in the tick that it waits for
     bool spawns;           // It hands out entity IDs...
     bool settles;          // ...through temporary handles, settled once its tasks are done
     // A task's own data, with the real handles for the temporary ones it
     // stored: its mut components' entity fields. NULL when it has none.
-    void (*settle)(void *world, uint32_t task, const tide_new_entities *settled);
+    void (*settle)(void *world, uint32_t task, uint32_t pieces, const tide_new_entities *settled);
 } tide_system_tasks;
 
 // What the tick runs its systems with.

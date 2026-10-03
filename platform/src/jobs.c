@@ -8,6 +8,9 @@
 
 #include "tide/platform.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #ifndef MOST_THREADS
 #define MOST_THREADS 32u
 #endif
@@ -130,6 +133,9 @@ typedef CONDITION_VARIABLE pool_signal;
 #else
 #include <pthread.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 typedef pthread_mutex_t pool_lock;
 typedef pthread_cond_t pool_signal;
 #define LOCK(l) pthread_mutex_lock(l)
@@ -213,15 +219,46 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
     UNLOCK(&p->lock);
 }
 
+// The CPU's cores, not counting the second thread a core runs (SMT): two
+// threads of a tick on one core share its execution units and cache, and go
+// slower than one, while a spinning one holds the other back. Logical
+// processors when the system won't say.
 static uint32_t cores(void)
 {
 #ifdef _WIN32
+    DWORD size = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, NULL, &size);
+    uint8_t *buffer = size ? malloc(size) : NULL;
+    uint32_t physical = 0;
+    if (buffer && GetLogicalProcessorInformationEx(RelationProcessorCore, (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)buffer, &size)) {
+        for (DWORD at = 0; at < size;) {
+            const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info = (const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)(buffer + at);
+            physical += info->Relationship == RelationProcessorCore ? 1u : 0u;
+            at += info->Size;
+        }
+    }
+    free(buffer);
+    if (physical) return physical;
     SYSTEM_INFO info;
     GetSystemInfo(&info);
     return (uint32_t)info.dwNumberOfProcessors;
-#else
+#elif defined(__APPLE__)
+    int physical = 0;
+    size_t size = sizeof physical;
+    if (sysctlbyname("hw.physicalcpu", &physical, &size, NULL, 0) == 0 && physical > 0) return (uint32_t)physical;
     const long n = sysconf(_SC_NPROCESSORS_ONLN);
     return n > 0 ? (uint32_t)n : 1u;
+#else
+    const long n = sysconf(_SC_NPROCESSORS_ONLN);
+    uint32_t logical = n > 0 ? (uint32_t)n : 1u;
+    // Linux says whether the cores run two threads each; Android too, where it lets a program read it
+    FILE *smt = fopen("/sys/devices/system/cpu/smt/active", "r");
+    if (smt) {
+        const int active = fgetc(smt);
+        fclose(smt);
+        if (active == '1' && logical > 1u) logical /= 2u;
+    }
+    return logical;
 #endif
 }
 

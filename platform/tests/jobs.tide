@@ -41,6 +41,14 @@ component Fuse
     int left;
 }
 
+// A few bodies with a lot of work each: their one chunk runs in pieces on
+// threads, which has to come out as on one
+component Orbit
+{
+    float angle;
+    float radius;
+}
+
 // Spawned on many threads: what each knows of the others
 component Debris
 {
@@ -99,6 +107,18 @@ event(Spawned) Setup(with Main)
     {
         Spawn(Body { id = i }, Ship, Name { value = $"ship {i}" }, Trail);
     }
+    for (var i = 0; i < 300; i++)
+    {
+        Spawn(Orbit { angle = float(i), radius = 1 + float(i % 7) });
+    }
+}
+
+// Heavy, over a chunk's worth of entities: run in pieces, each thread a few rows
+system Revolve(Time time, mut Orbit orbit)
+{
+    for (var i = 0; i < 400; i++)
+        orbit.angle = Math.Sin(orbit.angle + time.dt * float(i)) * orbit.radius;
+    orbit.radius = Math.Abs(orbit.angle) + 1;
 }
 
 // Split across threads, a chunk of rocks or ships each
