@@ -1,0 +1,106 @@
+// Archetypes derive from the Adds and Removes that can reach each one. Nine
+// components toggled on and off, each by systems that run for one kind of
+// entity: a few archetypes for each kind, where every combination of the nine
+// on every kind would be thousands, more than a game can have.
+
+component Body
+{
+    int kind;
+    int toggles;
+}
+
+component Rock { }
+component Ship { }
+component Tree { }
+
+component Hot { }
+component Wet { }
+component Lit { }
+
+component Armed { }
+component Shielded { }
+component Cloaked { }
+
+component Leafy { }
+component Fruiting { }
+component Felled
+{
+    int by;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { kind = 0 }, Rock);
+    Spawn(Body { kind = 1 }, Ship);
+    // An Add on the entity a Spawn in the same code made reaches that archetype alone
+    var tree = Spawn(Body { kind = 2 }, Tree);
+    tree.Add(Leafy);
+}
+
+// Rocks: Hot, Wet and Lit come and go together
+system RockOn(mut Body body, with Rock, without Hot)
+{
+    this.Add(Hot);
+    this.Add(Wet);
+    this.Add(Lit);
+    body.toggles += 1;
+}
+
+system RockOff(mut Body body, with Rock, with Hot)
+{
+    this.Remove(Hot);
+    this.Remove(Wet);
+    this.Remove(Lit);
+    body.toggles += 1;
+}
+
+// Ships: one at a time, in turn
+system ShipArm(mut Body body, with Ship, without Armed, without Shielded, without Cloaked)
+{
+    this.Add(Armed);
+    body.toggles += 1;
+}
+
+system ShipShield(mut Body body, with Ship, with Armed)
+{
+    this.Remove(Armed);
+    this.Add(Shielded);
+    body.toggles += 1;
+}
+
+system ShipCloak(mut Body body, with Ship, with Shielded)
+{
+    this.Remove(Shielded);
+    this.Add(Cloaked);
+    body.toggles += 1;
+}
+
+system ShipDisarm(mut Body body, with Ship, with Cloaked)
+{
+    this.Remove(Cloaked);
+    body.toggles += 1;
+}
+
+// Trees: leaves come with fruit; a felled tree loses both
+system TreeFruit(mut Body body, with Tree, with Leafy, without Fruiting)
+{
+    this.Add(Fruiting);
+    body.toggles += 1;
+}
+
+system TreeFell(Time time, mut Body body, with Tree, with Fruiting)
+{
+    this.Remove(Fruiting);
+    this.Remove(Leafy);
+    this.Add(Felled { by = time.tick });
+    body.toggles += 1;
+}
+
+system TreeGrow(mut Body body, with Tree, with Felled)
+{
+    this.Remove(Felled);
+    this.Add(Leafy);
+    body.toggles += 1;
+}

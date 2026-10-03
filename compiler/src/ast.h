@@ -3,6 +3,88 @@
 #include "common.h"
 #include "lexer.h"
 
+// Components and archetypes a game can have. Components are bits of a mask,
+// which spawn sites, filters and archetypes are made of.
+#define MAX_COMPONENTS 256
+#define MAX_ARCHETYPES 1024
+#define COMP_WORDS (MAX_COMPONENTS / 64)
+
+typedef struct comp_mask {
+    uint64_t w[COMP_WORDS];
+} comp_mask;
+
+static inline comp_mask mask_none(void)
+{
+    return (comp_mask){{0}};
+}
+
+static inline comp_mask mask_bit(const int i)
+{
+    comp_mask m = {{0}};
+    m.w[i / 64] = (uint64_t)1 << (i % 64);
+    return m;
+}
+
+static inline bool mask_has(const comp_mask m, const int i)
+{
+    return (m.w[i / 64] >> (i % 64)) & 1u;
+}
+
+static inline comp_mask mask_or(const comp_mask a, const comp_mask b)
+{
+    comp_mask m;
+    for (int i = 0; i < COMP_WORDS; i++) m.w[i] = a.w[i] | b.w[i];
+    return m;
+}
+
+static inline comp_mask mask_and(const comp_mask a, const comp_mask b)
+{
+    comp_mask m;
+    for (int i = 0; i < COMP_WORDS; i++) m.w[i] = a.w[i] & b.w[i];
+    return m;
+}
+
+// a without b's bits
+static inline comp_mask mask_andnot(const comp_mask a, const comp_mask b)
+{
+    comp_mask m;
+    for (int i = 0; i < COMP_WORDS; i++) m.w[i] = a.w[i] & ~b.w[i];
+    return m;
+}
+
+static inline bool mask_eq(const comp_mask a, const comp_mask b)
+{
+    for (int i = 0; i < COMP_WORDS; i++) {
+        if (a.w[i] != b.w[i]) return false;
+    }
+    return true;
+}
+
+static inline bool mask_any(const comp_mask a)
+{
+    for (int i = 0; i < COMP_WORDS; i++) {
+        if (a.w[i]) return true;
+    }
+    return false;
+}
+
+// Whether every bit of a is in b.
+static inline bool mask_subset(const comp_mask a, const comp_mask b)
+{
+    for (int i = 0; i < COMP_WORDS; i++) {
+        if (a.w[i] & ~b.w[i]) return false;
+    }
+    return true;
+}
+
+static inline bool mask_intersects(const comp_mask a, const comp_mask b)
+{
+    for (int i = 0; i < COMP_WORDS; i++) {
+        if (a.w[i] & b.w[i]) return true;
+    }
+    return false;
+}
+
 typedef struct decl decl;
 typedef struct expr expr;
 typedef struct stmt stmt;
@@ -285,8 +367,8 @@ typedef struct decl {
     uint64_t device_uses[DEVICE_WORDS]; // Device values it reads through parameters, a bit per device leaf
     loc position_at;     // ...where it first reads a position in the window that way (the mouse's, a touch's)
     const char *position_what; // ...whose: "the mouse's position"
-    uint64_t need_mask;  // Components an entity must have (access and `with`).
-    uint64_t without_mask;
+    comp_mask need_mask; // Components an entity must have (access and `with`).
+    comp_mask without_mask;
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
 
     // Systems in the tick, from analyze_parallelism
@@ -445,7 +527,7 @@ struct expr {
     const char *c_callee;   // CALL_BUILTIN
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called
-    uint64_t spawn_mask;  // CALL_SPAWN: components the new entity has.
+    comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
@@ -574,6 +656,22 @@ struct stmt {
 // ---------------------------------------------------------------------------
 // Program
 
+typedef VEC(comp_mask) mask_list;
+
+// An Add or Remove, and whose entity it changes: the system (or handler, or
+// view) it runs for, through `this`; the entity a Spawn or Scene.Load made in
+// the same code, through a local that isn't mut; or, with neither, any
+// entity of its world (one read from a field or a parameter). The archetypes
+// derive from the ones each site can reach.
+typedef struct change_site {
+    comp_mask comps;
+    const struct decl *from;
+    const struct expr *spawn;
+    bool local;
+} change_site;
+
+typedef VEC(change_site) change_sites;
+
 typedef struct program {
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
@@ -614,12 +712,14 @@ typedef struct program {
     uint64_t device_uses[DEVICE_WORDS]; // The leaves match code reads: all the input sends of them
     VEC(decl *) structs; // In an order where each comes after the structs it contains.
 
-    VEC(uint64_t) archetypes;  // Component masks, in derivation order.
+    mask_list archetypes;      // Component masks, in derivation order.
     VEC(bool) archetype_local; // Per archetype: in the local world rather than the match
     VEC(bool) spawn_target;    // Per archetype: does some Spawn create it directly?
-    uint64_t spawned_mask;     // Union of components that appear in spawns.
-    uint64_t added_mask;       // Components that appear in Add.
-    uint64_t removed_mask;     // Components that appear in Remove.
+    comp_mask spawned_mask;    // Union of components that appear in spawns.
+    comp_mask added_mask;      // Components that appear in Add.
+    comp_mask removed_mask;    // Components that appear in Remove.
+    change_sites adds;         // Every Add, and whose entity it changes
+    change_sites removes;      // Every Remove, likewise
     bool uses_destroy;
     VEC(struct fix) fixes;     // Quick fixes for editors
 

@@ -9,16 +9,16 @@
 
 // The archetypes a system runs on, as a bitset.
 typedef struct arch_set {
-    uint64_t words[4]; // Up to 256 archetypes
+    uint64_t words[(MAX_ARCHETYPES + 63) / 64];
 } arch_set;
 
 static arch_set archetypes_of(const program *prog, const decl *sys)
 {
     arch_set set = {{0}};
-    for (int a = 0; a < prog->archetypes.count && a < 256; a++) {
-        const uint64_t mask = prog->archetypes.items[a];
+    for (int a = 0; a < prog->archetypes.count && a < MAX_ARCHETYPES; a++) {
+        const comp_mask mask = prog->archetypes.items[a];
         if (prog->archetype_local.items[a] != sys->entity_local) continue; // Another world's
-        if ((mask & sys->need_mask) == sys->need_mask && !(mask & sys->without_mask)) {
+        if (mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask)) {
             set.words[a / 64] |= (uint64_t)1 << (a % 64);
         }
     }
@@ -27,7 +27,7 @@ static arch_set archetypes_of(const program *prog, const decl *sys)
 
 static bool share_archetypes(const arch_set *a, const arch_set *b)
 {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < (MAX_ARCHETYPES + 63) / 64; i++) {
         if (a->words[i] & b->words[i]) return true;
     }
     return false;

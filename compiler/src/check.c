@@ -11,9 +11,6 @@
 // Semantic analysis: resolves names and types, enforces access and mutability
 // rules, and derives the archetype list from spawn, add and remove sites.
 
-#define MAX_COMPONENTS 64
-#define MAX_ARCHETYPES 256
-
 typedef struct checker {
     program *prog;
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
@@ -977,9 +974,9 @@ static void check_default_args(checker *c, expr *e)
 static bool check_component_side(const checker *c, const expr *arg, const decl *d);
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of);
 
-static uint64_t bit(const decl *component)
+static comp_mask bit(const decl *component)
 {
-    return (uint64_t)1 << component->index;
+    return mask_bit(component->index);
 }
 
 // Checks `Transform { position = ... }`, `Stats { armor = 2 }` and `Hit { damage = 5 }`.
@@ -1097,17 +1094,35 @@ static decl *check_component_arg(checker *c, expr *arg, const char *fn)
 }
 
 // Component list shared by Spawn and Add. Returns the mask of components.
-static uint64_t check_component_list(checker *c, const expr *call, const char *fn)
+// An Add or Remove as a change site (ast.h): whose entity it changes, as far
+// as the code says. `this` is the entity the system, handler or view runs for,
+// which its filters place; a local that isn't mut, set to a Spawn or
+// Scene.Load, is the entity that made, exactly; anything else may be any
+// entity of its world.
+static void record_change(const checker *c, const expr *e, const comp_mask comps, change_sites *sites)
 {
-    uint64_t mask = 0;
+    change_site s = {comps, NULL, NULL, e->local_world};
+    const expr *o = e->object;
+    if (o->kind == E_THIS) {
+        if (c->system && c->system->kind == DECL_SYSTEM && c->system->per_entity) s.from = c->system;
+    } else if (o->kind == E_NAME && o->bind == BIND_LOCAL && o->local && !o->local->is_mut && o->local->value) {
+        const expr *v = o->local->value;
+        if (v->kind == E_CALL && (v->call == CALL_SPAWN || v->call == CALL_LOAD)) s.spawn = v;
+    }
+    vec_push(*sites, s);
+}
+
+static comp_mask check_component_list(checker *c, const expr *call, const char *fn)
+{
+    comp_mask mask = mask_none();
     for (int i = 0; i < call->args.count; i++) {
         decl *d = check_component_arg(c, call->args.items[i], fn);
         if (!d || !check_component_side(c, call->args.items[i], d)) continue;
-        if (mask & bit(d)) {
+        if (mask_has(mask, d->index)) {
             diag_error(call->args.items[i]->at, "'" STR_FMT "' appears twice; an entity has at most one of each component",
                        STR_ARG(d->name));
         }
-        mask |= bit(d);
+        mask = mask_or(mask, bit(d));
     }
     return mask;
 }
@@ -1679,9 +1694,9 @@ static type check_call(checker *c, expr *e)
         e->spawn_mask = check_component_list(c, e, "Spawn");
         if (in_async_function(c)) e->local_world = c->method->task_side == TASK_LOCAL;
         for (int i = 0; i < c->prog->components.count; i++) {
-            if (e->spawn_mask & bit(c->prog->components.items[i])) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            if (mask_has(e->spawn_mask, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
         }
-        c->prog->spawned_mask |= e->spawn_mask;
+        c->prog->spawned_mask = mask_or(c->prog->spawned_mask, e->spawn_mask);
         vec_push(c->spawns, e);
         note_spawn(c);
         return e->local_world ? (type){TY_LOCAL_ENTITY, NULL} : T_ENTITY_;
@@ -2334,10 +2349,11 @@ static type check_method(checker *c, expr *e)
     if (str_eq_c(e->name, "Add")) {
         e->call = CALL_ADD;
         if (e->args.count == 0) diag_error(e->at, "Add needs at least one component");
-        const uint64_t added = check_component_list(c, e, "Add");
-        c->prog->added_mask |= added;
+        const comp_mask added = check_component_list(c, e, "Add");
+        c->prog->added_mask = mask_or(c->prog->added_mask, added);
+        record_change(c, e, added, &c->prog->adds);
         for (int i = 0; i < c->prog->components.count; i++) {
-            if (added & bit(c->prog->components.items[i])) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            if (mask_has(added, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
         }
         return T_VOID_;
     }
@@ -2345,7 +2361,7 @@ static type check_method(checker *c, expr *e)
     if (str_eq_c(e->name, "Remove")) {
         e->call = CALL_REMOVE;
         if (e->args.count == 0) diag_error(e->at, "Remove needs at least one component");
-        uint64_t mask = 0;
+        comp_mask mask = mask_none();
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             if (arg->kind == E_LITERAL) {
@@ -2354,10 +2370,11 @@ static type check_method(checker *c, expr *e)
             }
             decl *d = check_component_arg(c, arg, "Remove");
             if (!d || !check_component_side(c, arg, d)) continue;
-            if (mask & bit(d)) diag_error(arg->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
-            mask |= bit(d);
+            if (mask_has(mask, d->index)) diag_error(arg->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
+            mask = mask_or(mask, bit(d));
         }
-        c->prog->removed_mask |= mask;
+        c->prog->removed_mask = mask_or(c->prog->removed_mask, mask);
+        record_change(c, e, mask, &c->prog->removes);
         return T_VOID_;
     }
 
@@ -6267,7 +6284,7 @@ static void check_params(const checker *c, decl *sys)
     const param *entity = NULL; // The Entity or LocalEntity parameter
     bool has_input = false;
     bool has_devices = false;
-    uint64_t seen = 0;
+    comp_mask seen = mask_none();
     const decl *side_of = NULL; // The first component: which world the entities are in
 
     for (int i = 0; i < sys->params.count; i++) {
@@ -6416,10 +6433,10 @@ static void check_params(const checker *c, decl *sys)
         }
 
         p->type = (type){TY_COMPONENT, d};
-        if (seen & bit(d)) diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
-        seen |= bit(d);
-        if (p->mode == PARAM_WITHOUT) sys->without_mask |= bit(d);
-        else sys->need_mask |= bit(d);
+        if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
+        seen = mask_or(seen, bit(d));
+        if (p->mode == PARAM_WITHOUT) sys->without_mask = mask_or(sys->without_mask, bit(d));
+        else sys->need_mask = mask_or(sys->need_mask, bit(d));
         // An entity is in one world, so its components are all of one side.
         if (side_of && side_of->is_local != d->is_local) {
             const decl *local = d->is_local ? d : side_of;
@@ -6432,10 +6449,10 @@ static void check_params(const checker *c, decl *sys)
         }
     }
 
-    if (sys->need_mask & sys->without_mask) {
+    if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }
-    sys->per_entity = entity || seen != 0;
+    sys->per_entity = entity || mask_any(seen);
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
 
     // A handler that takes components reads the entity its event is sent to,
@@ -7033,69 +7050,112 @@ static void collect_decls(program *prog)
 // Archetypes
 
 // The match and the local world each have their own archetypes.
-static int find_archetype(const program *prog, const uint64_t mask, const bool local)
+static int find_archetype(const program *prog, const comp_mask mask, const bool local)
 {
     for (int i = 0; i < prog->archetypes.count; i++) {
-        if (prog->archetypes.items[i] == mask && prog->archetype_local.items[i] == local) return i;
+        if (mask_eq(prog->archetypes.items[i], mask) && prog->archetype_local.items[i] == local) return i;
     }
     return -1;
 }
 
-static bool add_archetype(program *prog, const uint64_t mask, const bool local)
+// What each archetype's entities could still have added or removed this tick
+// (see expand_archetypes), beside the sites that reach it.
+typedef struct pending {
+    mask_list adds;
+    mask_list removes;
+} pending;
+
+// The archetype with `mask`, made if it's new: its index, or -1 past the limit.
+static int archetype_index(program *prog, pending *p, const comp_mask mask, const bool local)
 {
-    if (find_archetype(prog, mask, local) >= 0) return true;
-    if (prog->archetypes.count == MAX_ARCHETYPES) return false;
+    const int found = find_archetype(prog, mask, local);
+    if (found >= 0) return found;
+    if (prog->archetypes.count == MAX_ARCHETYPES) return -1;
     vec_push(prog->archetypes, mask);
     vec_push(prog->archetype_local, local);
+    vec_push(p->adds, mask_none());
+    vec_push(p->removes, mask_none());
+    return prog->archetypes.count - 1;
+}
+
+// The components the sites that reach archetype `mask` add, or remove.
+static comp_mask reaching(const change_sites *sites, const comp_mask mask, const bool local)
+{
+    comp_mask all = mask_none();
+    for (int i = 0; i < sites->count; i++) {
+        const change_site *s = &sites->items[i];
+        if (s->local != local) continue;
+        if (s->spawn && !mask_eq(mask, s->spawn->spawn_mask)) continue;
+        if (s->from && !(mask_subset(s->from->need_mask, mask) && !mask_intersects(mask, s->from->without_mask))) continue;
+        all = mask_or(all, s->comps);
+    }
+    return all;
+}
+
+// What Add and Remove can turn each archetype from `from` on into. The
+// changes recorded for an entity in X apply at the end of the tick in any
+// order, so from X every combination of the components of the sites reaching
+// X is reachable, a component at a time; and since X with a component more or
+// less may be past a site's filters while the change it recorded still
+// applies, the archetypes derived from X inherit what X could still apply
+// (`pending`). Again until nothing changes. False past the limit.
+static bool expand_archetypes(program *prog, pending *p, const int from)
+{
+    bool again = true;
+    while (again) {
+        again = false;
+        for (int i = from; i < prog->archetypes.count; i++) {
+            const comp_mask current = prog->archetypes.items[i];
+            const bool local = prog->archetype_local.items[i];
+            const comp_mask adds = mask_or(reaching(&prog->adds, current, local), p->adds.items[i]);
+            const comp_mask removes = mask_or(reaching(&prog->removes, current, local), p->removes.items[i]);
+            for (int bit_index = 0; bit_index < prog->components.count; bit_index++) {
+                if (prog->components.items[bit_index]->is_local != local) continue;
+                const comp_mask b = mask_bit(bit_index);
+                for (int pass = 0; pass < 2; pass++) {
+                    if (!mask_has(pass ? removes : adds, bit_index)) continue;
+                    const int j = archetype_index(prog, p, pass ? mask_andnot(current, b) : mask_or(current, b), local);
+                    if (j < 0) return false;
+                    if (mask_subset(adds, p->adds.items[j]) && mask_subset(removes, p->removes.items[j])) continue;
+                    p->adds.items[j] = mask_or(p->adds.items[j], adds);
+                    p->removes.items[j] = mask_or(p->removes.items[j], removes);
+                    if (j < i) again = true; // Expanded already, with less
+                }
+            }
+        }
+    }
     return true;
 }
 
-static void append_component_names(const program *prog, const uint64_t mask, char *buf, const size_t size)
+static void append_component_names(const program *prog, const comp_mask mask, char *buf, const size_t size)
 {
     size_t len = strlen(buf);
     bool first = true;
     for (int i = 0; i < prog->components.count && len + 1 < size; i++) {
-        if (!(mask & ((uint64_t)1 << i))) continue;
+        if (!mask_has(mask, i)) continue;
         const int n = snprintf(buf + len, size - len, "%s" STR_FMT, first ? "" : ", ", STR_ARG(prog->components.items[i]->name));
         if (n > 0) len += (size_t)n;
         first = false;
     }
 }
 
-// Every spawn creates an archetype; every Add and Remove can move an entity from
-// any archetype to another, so keep applying them until nothing new appears.
+// Every spawn creates an archetype, and the Adds and Removes that can reach
+// each archetype's entities (change_site) make the rest, until nothing new
+// appears.
 static void derive_archetypes(const checker *c)
 {
     program *prog = c->prog;
+    pending p = {{0}, {0}};
     for (int i = 0; i < c->spawns.count; i++) {
-        if (!add_archetype(prog, c->spawns.items[i]->spawn_mask, c->spawns.items[i]->local_world)) goto too_many;
+        if (archetype_index(prog, &p, c->spawns.items[i]->spawn_mask, c->spawns.items[i]->local_world) < 0) goto too_many;
     }
-    // Add and Remove only move entities within their world.
-    for (int i = 0; i < prog->archetypes.count; i++) {
-        for (int bit_index = 0; bit_index < prog->components.count; bit_index++) {
-            const uint64_t b = (uint64_t)1 << bit_index;
-            const uint64_t current = prog->archetypes.items[i];
-            const bool local = prog->archetype_local.items[i];
-            if (prog->components.items[bit_index]->is_local != local) continue;
-            if ((prog->added_mask & b) && !add_archetype(prog, current | b, local)) goto too_many;
-            if ((prog->removed_mask & b) && !add_archetype(prog, current & ~b, local)) goto too_many;
-        }
-    }
+    if (!expand_archetypes(prog, &p, 0)) goto too_many;
     // The Main scene, which the engine loads, after every other archetype so
     // theirs keep their order. What Add and Remove derive from it comes after.
     // A package on its own, as editors analyze one, has none.
-    if (prog->main && !add_archetype(prog, bit(prog->main), prog->main->is_local)) goto too_many;
+    if (prog->main && archetype_index(prog, &p, bit(prog->main), prog->main->is_local) < 0) goto too_many;
     prog->main_archetype = prog->main ? find_archetype(prog, bit(prog->main), prog->main->is_local) : prog->archetypes.count;
-    for (int i = prog->main_archetype; i < prog->archetypes.count; i++) {
-        for (int bit_index = 0; bit_index < prog->components.count; bit_index++) {
-            const uint64_t b = (uint64_t)1 << bit_index;
-            const uint64_t current = prog->archetypes.items[i];
-            const bool local = prog->archetype_local.items[i];
-            if (prog->components.items[bit_index]->is_local != local) continue;
-            if ((prog->added_mask & b) && !add_archetype(prog, current | b, local)) goto too_many;
-            if ((prog->removed_mask & b) && !add_archetype(prog, current & ~b, local)) goto too_many;
-        }
-    }
+    if (!expand_archetypes(prog, &p, prog->main_archetype)) goto too_many;
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
     for (int i = 0; i < c->spawns.count; i++) {
@@ -7107,7 +7167,8 @@ static void derive_archetypes(const checker *c)
 
 too_many:
     diag_error((loc){1, 1, 0}, "the program can create more than %d different component combinations", MAX_ARCHETYPES);
-    diag_note("every Add and Remove can apply to any entity, so combinations multiply");
+    diag_note("an Add or Remove on an entity read from a field or a parameter can apply to any entity, so combinations "
+              "multiply; one on 'this', or on an entity a Spawn in the same code made, only reaches what it can");
 }
 
 // "system", "view" or "event handler", for messages.
@@ -7124,14 +7185,14 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
         if (!sys->per_entity || package_of(sys)) continue;
         bool matched = false;
         for (int a = 0; a < prog->archetypes.count; a++) {
-            const uint64_t mask = prog->archetypes.items[a];
+            const comp_mask mask = prog->archetypes.items[a];
             if (prog->archetype_local.items[a] != sys->entity_local) continue;
-            if ((mask & sys->need_mask) == sys->need_mask && !(mask & sys->without_mask)) matched = true;
+            if (mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask)) matched = true;
         }
         if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
                          STR_ARG(sys->name));
-            if (sys->need_mask) {
+            if (mask_any(sys->need_mask)) {
                 char names[512] = "";
                 append_component_names(prog, sys->need_mask, names, sizeof names);
                 diag_note("nothing spawns or adds an entity with %s", names);
