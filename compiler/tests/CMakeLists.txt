@@ -16,6 +16,7 @@ endfunction()
 
 tide_e2e_test(move_clamp)
 tide_e2e_test(structural)
+tide_e2e_test(reach)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")
 tide_e2e_test(defaults)

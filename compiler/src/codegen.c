@@ -454,18 +454,18 @@ static const char *enum_member_cname(const decl *d, const enum_member *m)
 
 static const char *const xyzw[] = {"x", "y", "z", "w"};
 
-static bool has_component(const uint64_t mask, const int component)
+static bool has_component(const comp_mask mask, const int component)
 {
-    return (mask >> component) & 1;
+    return mask_has(mask, component);
 }
 
 // "arch0_Transform_Player": the world member and, prefixed with tide_, the type.
 static const char *make_arch_name(const gen *g, const int index)
 {
-    const uint64_t mask = g->prog->archetypes.items[index];
+    const comp_mask mask = g->prog->archetypes.items[index];
     sb b = {0};
     sb_printf(&b, "arch%d", index);
-    if (mask == 0) sb_put(&b, "_empty");
+    if (!mask_any(mask)) sb_put(&b, "_empty");
     for (int i = 0; i < g->prog->components.count; i++) {
         if (has_component(mask, i)) sb_printf(&b, "_%s", type_cname(g->prog->components.items[i]));
     }
@@ -501,7 +501,7 @@ static void name_program(gen *g)
 // "Transform, Player" for comments and error messages.
 static const char *arch_label(const gen *g, const int index)
 {
-    const uint64_t mask = g->prog->archetypes.items[index];
+    const comp_mask mask = g->prog->archetypes.items[index];
     sb b = {0};
     sb_put(&b, "");
     bool first = true;
@@ -553,7 +553,7 @@ static const decl *arch_scene(const gen *g, const int a)
 static bool is_load_archetype(const gen *g, const int a)
 {
     const decl *scene = arch_scene(g, a);
-    return scene && g->prog->archetypes.items[a] == (uint64_t)1 << scene->index;
+    return scene && mask_eq(g->prog->archetypes.items[a], mask_bit(scene->index));
 }
 
 // A type's bytes and alignment (see Generated types, below).
@@ -672,8 +672,8 @@ static bool is_queued(const program *prog, const decl *event)
 static bool handler_runs_for(const program *prog, const decl *h, const int a)
 {
     if (h->is_local != prog->archetype_local.items[a]) return false;
-    const uint64_t mask = prog->archetypes.items[a];
-    return !h->per_entity || ((mask & h->need_mask) == h->need_mask && !(mask & h->without_mask));
+    const comp_mask mask = prog->archetypes.items[a];
+    return !h->per_entity || (mask_subset(h->need_mask, mask) && !mask_intersects(mask, h->without_mask));
 }
 
 // Whether any handler of `event` runs for an entity of archetype `a`.
@@ -4043,7 +4043,7 @@ static void gen_header(gen *g)
     sb_put(o, "// in, then each component's lanes, from the column named for it. Hosts and tests\n");
     sb_put(o, "// read a row's component with TIDE_AT(world, arch0_Transform, Transform, row).\n\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
-        const uint64_t mask = prog->archetypes.items[a];
+        const comp_mask mask = prog->archetypes.items[a];
         const char *name = arch_name(g, a);
         sb_printf(o, "// %s\n", arch_label(g, a));
         sb_printf(o, "extern const tide_columns tide_columns_%s;\n", name);
@@ -4070,9 +4070,9 @@ static void gen_header(gen *g)
     sb_put(o, "// Values for each Spawn, per archetype\n\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!g->prog->spawn_target.items[a]) continue;
-        const uint64_t mask = prog->archetypes.items[a];
+        const comp_mask mask = prog->archetypes.items[a];
         sb_printf(o, "typedef struct tide_spawn%d {\n", a);
-        if (mask == 0) sb_put(o, "    uint8_t tide_empty;\n");
+        if (!mask_any(mask)) sb_put(o, "    uint8_t tide_empty;\n");
         for (int i = 0; i < prog->components.count; i++) {
             if (!has_component(mask, i)) continue;
             const char *comp = type_cname(prog->components.items[i]);
@@ -4540,7 +4540,7 @@ static void gen_text_helpers(gen *g)
     // A spawn's values, as they go into the command queue or are dropped.
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!prog->spawn_target.items[a]) continue;
-        const uint64_t mask = prog->archetypes.items[a];
+        const comp_mask mask = prog->archetypes.items[a];
         bool any = false;
         for (int c = 0; c < prog->components.count; c++) any |= has_component(mask, c) && decl_has_text(prog->components.items[c]);
         if (!any) continue;
@@ -4887,10 +4887,10 @@ static void gen_component_access(gen *g)
     }
 }
 
-static int find_arch(const gen *g, const uint64_t mask, const bool local)
+static int find_arch(const gen *g, const comp_mask mask, const bool local)
 {
     for (int a = 0; a < g->prog->archetypes.count; a++) {
-        if (g->prog->archetypes.items[a] == mask && arch_local(g, a) == local) return a;
+        if (mask_eq(g->prog->archetypes.items[a], mask) && arch_local(g, a) == local) return a;
     }
     return -1;
 }
@@ -4918,11 +4918,14 @@ static void gen_moves(gen *g)
     for (int c = 0; c < prog->components.count; c++) {
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!same_world(g, c, a)) continue;
-            const uint64_t mask = prog->archetypes.items[a];
-            const uint64_t b = (uint64_t)1 << c;
+            const comp_mask mask = prog->archetypes.items[a];
+            const comp_mask b = mask_bit(c);
             const bool local = arch_local(g, a);
-            if (has_component(prog->added_mask, c) && !(mask & b)) need_move(g, a, find_arch(g, mask | b, local));
-            if (has_component(prog->removed_mask, c) && (mask & b)) need_move(g, a, find_arch(g, mask & ~b, local));
+            // An archetype with the component more or less that doesn't exist, no Add or Remove can reach from here
+            const int added = has_component(prog->added_mask, c) && !mask_has(mask, c) ? find_arch(g, mask_or(mask, b), local) : -1;
+            const int removed = has_component(prog->removed_mask, c) && mask_has(mask, c) ? find_arch(g, mask_andnot(mask, b), local) : -1;
+            if (added >= 0) need_move(g, a, added);
+            if (removed >= 0) need_move(g, a, removed);
         }
     }
 
@@ -4931,8 +4934,8 @@ static void gen_moves(gen *g)
     for (int i = 0; i < g->moves.count; i++) {
         const int from = g->moves.items[i].from;
         const int to = g->moves.items[i].to;
-        const uint64_t from_mask = prog->archetypes.items[from];
-        const uint64_t to_mask = prog->archetypes.items[to];
+        const comp_mask from_mask = prog->archetypes.items[from];
+        const comp_mask to_mask = prog->archetypes.items[to];
         sb_printf(o, "// %s -> %s: for each column, the one it comes from, or -1 for a new component\n", arch_label(g, from),
                   arch_label(g, to));
         sb_printf(o, "static const int32_t tide_map%d_%d[] = {0", from, to);
@@ -4964,6 +4967,12 @@ static void gen_command_recorders(gen *g)
     sb_put(o, "// How far down a chain of events can go in one tick or frame: each event sent, or\n");
     sb_put(o, "// entity spawned, by a handler of the one before.\n");
     sb_put(o, "#ifndef TIDE_MAX_CHAIN\n#define TIDE_MAX_CHAIN 100000u\n#endif\n\n");
+    // An Add or Remove reaching an archetype tidec reckoned it couldn't: a bug
+    // in the reckoning (check.c's change sites), which would otherwise leave
+    // the entity silently as it was.
+    sb_put(o, "static _Noreturn __attribute__((unused)) void tide_unreachable_change(const char *component)\n{\n");
+    sb_put(o, "    fprintf(stderr, \"tide: an entity got or lost %s where tidec reckoned none could, so there's no storage for "
+              "it: please report this\\n\", component);\n    abort();\n}\n\n");
     sb_put(o, "static _Noreturn __attribute__((unused)) void tide_endless_chain(const tide_command *c, const char *when)\n{\n");
     sb_put(o, "    const char *what = \"a structural change\";\n");
     sb_put(o, "    if (c->kind == TIDE_CMD_SPAWN) what = \"a spawn\";\n");
@@ -5128,7 +5137,7 @@ static void gen_apply(gen *g, const bool local)
     sb_printf(o, "TIDE_HELPER void %sapply_spawn(%s *w, tide_command *c)\n{\n    (void)w;\n    switch (c->id) {\n", p, world);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!g->prog->spawn_target.items[a] || arch_local(g, a) != local) continue;
-        const uint64_t mask = prog->archetypes.items[a];
+        const comp_mask mask = prog->archetypes.items[a];
         const char *name = arch_name(g, a);
         sb_printf(o, "    case %d: { // %s\n", a, arch_label(g, a));
         if (has_scenes(prog, local)) {
@@ -5170,7 +5179,7 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, "    case %d: // %s\n        switch (loc.archetype) {\n", comp_i, comp);
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) != local) continue;
-            const uint64_t mask = prog->archetypes.items[a];
+            const comp_mask mask = prog->archetypes.items[a];
             sb value = {0};
             sb_printf(&value, "c->data.%s", comp);
             if (has_component(mask, comp_i)) {
@@ -5182,7 +5191,11 @@ static void gen_apply(gen *g, const bool local)
                     sb_printf(o, "        case %d: %s; break;\n", a, comp_put(g, "w", a, comp_i, "loc.row", value.data));
                 }
             } else {
-                const int to = find_arch(g, mask | ((uint64_t)1 << comp_i), local);
+                const int to = find_arch(g, mask_or(mask, mask_bit(comp_i)), local);
+                if (to < 0) { // No Add reaches this archetype's entities, as tidec reckoned
+                    sb_printf(o, "        case %d: tide_unreachable_change(\"%s\"); break;\n", a, comp);
+                    continue;
+                }
                 sb_printf(o, "        case %d: { const uint32_t row = tide_move%d_%d(w, loc.row); %s; break; }\n", a, a, to,
                           comp_put(g, "w", to, comp_i, "row", value.data));
             }
@@ -5200,10 +5213,14 @@ static void gen_apply(gen *g, const bool local)
         if (!has_component(prog->removed_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
         sb_printf(o, "    case %d: // %s\n        switch (loc.archetype) {\n", comp_i, type_cname(prog->components.items[comp_i]));
         for (int a = 0; a < prog->archetypes.count; a++) {
-            const uint64_t mask = prog->archetypes.items[a];
+            const comp_mask mask = prog->archetypes.items[a];
             if (arch_local(g, a) != local || !has_component(mask, comp_i)) continue;
-            const int to = find_arch(g, mask & ~((uint64_t)1 << comp_i), local);
+            const int to = find_arch(g, mask_andnot(mask, mask_bit(comp_i)), local);
             const decl *comp = prog->components.items[comp_i];
+            if (to < 0) { // No Remove reaches this archetype's entities, as tidec reckoned
+                sb_printf(o, "        case %d: tide_unreachable_change(\"%s\"); break;\n", a, type_cname(comp));
+                continue;
+            }
             if (decl_has_text(comp)) {
                 sb_printf(o, "        case %d: { %s tide_old; %s; tide_release_%s(&tide_old, %s); tide_move%d_%d(w, loc.row); break; }\n",
                           a, type_cname(comp), comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), world_where(local),
@@ -7085,8 +7102,8 @@ static bool gen_parallel_work(sb *o, const stmt *s)
 // Whether archetype `a` has the entities a system or view runs for.
 static bool runs_on(const gen *g, const decl *sys, const int a)
 {
-    const uint64_t mask = g->prog->archetypes.items[a];
-    return arch_local(g, a) == sys->entity_local && (mask & sys->need_mask) == sys->need_mask && !(mask & sys->without_mask);
+    const comp_mask mask = g->prog->archetypes.items[a];
+    return arch_local(g, a) == sys->entity_local && mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask);
 }
 
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
@@ -7510,7 +7527,7 @@ static void gen_print_fields(sb *o, const decl *d, const char *base)
 static int lone_archetype(const gen *g, const decl *scene)
 {
     for (int a = 0; a < g->prog->archetypes.count; a++) {
-        if (!arch_local(g, a) && g->prog->archetypes.items[a] == (uint64_t)1 << scene->index) return a;
+        if (!arch_local(g, a) && mask_eq(g->prog->archetypes.items[a], mask_bit(scene->index))) return a;
     }
     return 0;
 }
@@ -7720,7 +7737,7 @@ static void gen_api(gen *g)
     }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
-        const uint64_t mask = prog->archetypes.items[a];
+        const comp_mask mask = prog->archetypes.items[a];
         const char *name = arch_name(g, a);
         sb_printf(o, "    for (uint32_t i = 0; i < w->%s.count; i++) {\n", name);
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
@@ -8435,7 +8452,7 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) != local) continue;
         archetypes++;
-        if (prog->archetypes.items[a] == 0) continue;
+        if (!mask_any(prog->archetypes.items[a])) continue;
         sb_printf(o, "static const tide_layout_place tide_layout_arch%d[] = {\n", a);
         for (int i = 0; i < prog->components.count; i++) {
             if (!has_component(prog->archetypes.items[a], i)) continue;

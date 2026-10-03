@@ -119,8 +119,8 @@ So a method that uses `this` can only be called on a component the code runs for
 
 ## Archetypes
 
-An archetype is a set of components that entities share, and entities with the same set are stored together. There are no archetype declarations: the compiler finds every one from the code, from what each `Spawn` makes and what `Add` and `Remove` can turn it into.
+An archetype is a set of components that entities share, and entities with the same set are stored together. There are no archetype declarations: the compiler finds every one from the code, from what each `Spawn` makes and what `Add` and `Remove` can turn it into. It follows the code as written: `this.Add(Stunned)` in a system only reaches the entities that system runs for, and `e.Add(Stunned)` on an `e` a `Spawn` in the same code made reaches that one, so toggling a component on a few kinds of entity makes a few archetypes. An `Add` on an entity read from a field or a parameter could be on any entity, so it reaches every archetype.
 
 ## Limits
 
-For now, a game has at most 64 components and 256 archetypes. Everything else grows as it needs, with no limit but memory: entities, the rows of each archetype, and the structural changes and events in a tick (see [C hosts](../engine/c-hosts.md#memory)).
+For now, a game has at most 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, the rows of each archetype, and the structural changes and events in a tick (see [C hosts](../engine/c-hosts.md#memory)).

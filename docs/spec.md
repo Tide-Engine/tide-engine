@@ -276,6 +276,7 @@ event(Spawned) Setup(with Main)
 ### Archetypes
 
 - There are no archetype declarations. The compiler derives every archetype from the code: the component set at each spawn site, plus every combination reachable through adding and removing components.
+- Reachable means by the code as written: `this.Add(X)` in a system only reaches the entities its parameters, `with` and `without` admit; `e.Add(X)` on an `e` that a `Spawn` or `Scene.Load` in the same code made (a local that isn't `mut`) reaches that one; `Add` or `Remove` on an entity read from a field or a parameter may reach any entity. The changes recorded for an entity in one tick apply in any order, so every combination of the components those sites add and remove is reachable from it.
 
 ## Provisional: implemented in v0, awaiting approval
 
@@ -310,6 +311,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - `Add`, `Remove` and `Destroy` on an entity that was already destroyed do nothing.
 - In a system that splits its entities across threads, `Spawn` returns a temporary handle: the entity gets its ID once the system is done, in the order one thread would have given them, and the handles the system kept in the components it changes, the changes it recorded and its events become the real one, before any system that waits for it starts. So such systems don't wait for each other to spawn. Until then, text shows the handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary`.
 - `Spawn` can't appear on the right side of `&&` or `||`, or in a side of `?:`. Those parts only run sometimes, while spawns run first, in order (see Evaluation order). Spawn into a local before the condition, or use `if`/`else`.
+- **Sparse components.** A component marked `[Sparse]` is kept as a presence bit and its value in every archetype it can reach, rather than making an archetype of its own with each combination: `Add` and `Remove` of it move no entity. A component with no fields (a tag) that any `Add` or `Remove` names is sparse by itself; a tag only set at `Spawn` isn't, so filtering on it costs nothing per entity. Systems, views and handlers that take or filter on a sparse component skip the entities that haven't got it, row by row. Two systems can't meet the same entity when one needs a sparse component the other excludes, as with any component. Toggled status like `Stunned`, `Burning` or `Selected` wants `[Sparse]`; a component most entities of a kind have, or that's set once, doesn't.
 
 ### Built-ins
 
@@ -331,7 +333,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Limits
 
-- 64 components and 256 archetypes. Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
+- 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
 
 ### Namespaces
 
@@ -1565,7 +1567,7 @@ Implemented, awaiting approval:
 ## Open
 
 - How entities authored as data (levels, prefabs) feed into archetype derivation.
-- Archetype growth. Every `Add` and `Remove` can apply to any entity, so the compiler assumes every combination is reachable, and a game can have at most 256 archetypes. Storage grows on demand; narrowing the combinations safely needs more analysis.
+- Archetype growth past what reachability trims: an `Add` or `Remove` on an entity read from a field or a parameter still reaches every archetype of its world, so a game that toggles many components on arbitrary entities multiplies combinations. Sparse components (a presence bit in the row instead of an archetype of their own) are the way out; see Entities.
 - How modules, such as the engine's built-in systems, initialize when there's a single `Main`.
 - Groups of systems (phases such as input, simulation, late), which Before and After could order as a whole.
 - Access control: whether a namespace can keep declarations to itself.
