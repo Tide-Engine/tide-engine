@@ -1,0 +1,40 @@
+// Locals nothing reads: tidec warns about each, and the program runs as it's
+// written. What a local's value does still happens: the spawn, and the count
+// its function bumps.
+
+component Counter
+{
+    int ticks;
+    int bumps;
+    float3 position;
+}
+
+component Spark { }
+
+int Bump(mut int count)
+{
+    count += 1;
+    return count;
+}
+
+system Step(mut Counter counter, Time time)
+{
+    var move = float3(1, 0, 0);
+    var fwd = Math.Mul(quaternion.identity, move); // Worked out, and not used
+    counter.position += move * time.dt;
+
+    var spark = Spawn(Spark);            // The spawn happens
+    var bumped = Bump(counter.bumps);    // ...and so does the bump
+
+    mut var total = 0;                   // Assigned, never read
+    total += counter.ticks;
+
+    counter.ticks += 1;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Counter);
+}

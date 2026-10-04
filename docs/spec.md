@@ -216,6 +216,10 @@ float limit = 10;                // read-only, explicit type
 mut float scale = 1;             // mutable, explicit type
 ```
 
+- A local that's declared and never read is a warning, `local 'fwd' is never used`: a value worked out and then not used is a mistake more often than not, as when code computes `fwd` and then moves by `move`. Assigned but never read counts as never read.
+- The warning's note says what to do: remove the local or use it. When its value is a call that does something (a `Spawn`, a call to C, a call that sends or changes state), the note says to keep the call, as a statement of its own.
+- Parameters are apart: systems, views and handlers warn about theirs that are never used (see System parameters), and a plain function's or a method's stay quiet.
+
 ### System parameters
 
 A system's parameter list describes its whole query. Each parameter's modifier says how the system relates to that component or singleton:
@@ -323,6 +327,14 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - Integer literals can be decimal (`255`), hex (`0xFF`) or binary (`0b1010`). Decimal goes up to 2147483647 as an `int`, and beyond that is a `long`. Hex and binary can use all 32 bits and are read as the int's bit pattern: `0xFFFFFFFF` is `-1` and `0x80000000` is the lowest int; past 32 bits they're longs the same way.
 - `_` separates digits in any number, as in C#: `1_000_000`, `0b1111_0000`, `0x_FF_FF`. It's allowed between digits and right after `0x` or `0b`, but not at the start or end or next to `.`.
 - Local variables need an initial value.
+- The warning for a local that's never read (see Mutability), in its details:
+  - It's about the locals statements declare: `var`, a type, or `mut` in front of a name, in a `for`'s first part too (`for (var i = 0; ...)`, where the for's own condition reading it counts).
+  - The names code needs whether it uses them or not are exempt, as in C#: a `foreach`'s and a `parallel` loop's variable (a loop that only counts), the name after `is`, and a `Sort`'s two elements.
+  - No name opts out, `_` included: a value that isn't needed isn't given a name, and a call that's there for what it does is a statement.
+  - A read is the local's name anywhere but where an assignment writes: `total = 5`, `total += hits`, `total++`, `stats.health = 3` and `seen[i] = 1` don't read `total`, `stats` or `seen`. A read on the right of its own assignment counts (`total = total + 1`), and so does passing it, as a `mut` argument too, and calling a method on it.
+  - A call does something when it's a `Spawn`, `Scene.Load` or the like, a widget (`GUILayout.Button`), an `await`, a `try`, a list's or a map's change (`items.Remove(x)`), or a function or method that calls C, draws, is async, takes a `mut` parameter or is a `mut` method. Any other call only gives a value, a function's too.
+  - A local that's assigned later gets a note of its own: remove it and what assigns it, or use it.
+  - Errors hide uses, so a local whose scope has an error in it waits: the warning comes once the code checks.
 - `default` of a struct or component is its fields' defaults, not all zeros as in C#, where `default` skips field initializers: a Tide value never exists without them.
 - As in C#, `default` is only compared: `default + 1` is an error. So is `var x = default;`, which says no type, and a place where nothing else does, like `if (default)`.
 - In a built-in call, the other arguments pick the version, and `default` takes its parameter's type: `Math.Max(default, 1.5)` is a float. A call whose versions take different types there is an error, like `Math.Mul(q, default)` (a quaternion or a float3), and so is a `Math` function whose arguments are all `default`. Constructors like `float3(...)` don't take it.

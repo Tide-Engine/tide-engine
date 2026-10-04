@@ -1159,13 +1159,13 @@ TIDE_TEST(lsp_gui)
     const char *in_match = complete("scene Main { }\nsystem S()\n{\n    Cursor.$\n}\n");
     TIDE_CHECK(!offers(in_match, "locked") && !offers(in_match, "Lock"));
     static const char camera[] = "input In\n{\n    float2 look;\n    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }\n}\n"
-                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    var held = Cursor.locked;\n}\n";
+                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    if (Cursor.locked) Draw.Clear(Color.black);\n}\n";
     open_document(camera);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *lock = request("textDocument/hover");
     TIDE_CHECK(has(lock, "Cursor.Lock()"));
     TIDE_CHECK(has(lock, "Call it every frame the game wants the mouse"));
-    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    var held = Cursor.loc$ked;\n}\n");
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    if (Cursor.loc$ked) Draw.Clear(Color.black);\n}\n");
     const char *locked = request("textDocument/hover");
     TIDE_CHECK(has(locked, "Cursor.locked: bool"));
     TIDE_CHECK(has(locked, "what the system says"));
@@ -2114,6 +2114,106 @@ TIDE_TEST(lsp_quick_fixes_for_errors)
     // A system has no caller to pass it to
     const char *system = actions_at(11);
     TIDE_CHECK(has(system, "add '!'") && !has(system, "add 'try'"));
+}
+
+// The document after the quick fix titled `title` among the last reply's code
+// actions, or NULL when it isn't offered.
+static const char *apply_fix(const char *original, const char *title)
+{
+    snprintf(applied, sizeof applied, "%s", original);
+    const json *reply = json_parse(last_sent(), strlen(last_sent()));
+    const json *actions = json_get(reply, "result");
+    const char *fixed = NULL;
+    for (int i = 0; actions && actions->kind == JSON_ARRAY && i < actions->count && !fixed; i++) {
+        const char *named = json_str(json_get(actions->items[i], "title"));
+        if (!named || strcmp(named, title) != 0) continue;
+        const json *edits = json_path(actions->items[i], "edit", "changes", "file:///test.tide", NULL);
+        if (!edits || edits->kind != JSON_ARRAY) continue;
+        apply_edits(applied, sizeof applied, edits);
+        fixed = applied;
+    }
+    json_release();
+    return fixed;
+}
+
+// A local nothing reads: a warning that editors fade, with a fix that removes
+// it, or keeps its call when the call does something.
+TIDE_TEST(lsp_unused_locals)
+{
+    start();
+    // Line 24 is the system's first statement
+    static const char unused[] = GAME_TYPES "system Move(mut Body body, Time time)\n{\n"
+                                            "    var move = Math.Normalize(body.position);\n"
+                                            "    var fwd = move * 2;\n"
+                                            "    body.position += move * time.dt;\n}\n";
+    open_document(unused);
+    TIDE_CHECK(has(last_sent(), "\"message\":\"local 'fwd' is never used\\nnote: nothing reads its value: remove it, or use it "
+                                "where it was meant\",\"tags\":[1]"));
+    TIDE_CHECK(has(last_sent(), "\"range\":{\"start\":{\"line\":25,\"character\":8},\"end\":{\"line\":25,\"character\":11}}"));
+    TIDE_CHECK(count(last_sent(), "\"severity\":2") == 1); // Only fwd: move is read
+    const char *remove = actions_at(25);
+    TIDE_CHECK(has(remove, "\"title\":\"Remove 'fwd'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+    const char *removed = apply_fix(unused, "Remove 'fwd'");
+    TIDE_REQUIRE(removed != NULL);
+    TIDE_CHECK(has(removed, "    var move = Math.Normalize(body.position);\n    body.position += move * time.dt;\n}\n"));
+    TIDE_CHECK(!has(actions_at(24), "Remove '")); // Only on its line
+
+    // A value that does something stays, as a statement of its own
+    static const char spawns[] = GAME_TYPES "system Split(mut Body body)\n{\n"
+                                            "    var half = Spawn(Body { radius = body.radius / 2 });\n"
+                                            "    body.radius /= 2;\n}\n";
+    open_document(spawns);
+    TIDE_CHECK(has(last_sent(), "local 'half' is never used\\nnote: nothing reads its value, but 'Spawn(...)' does "
+                                "something: keep the call as a statement of its own, without the local\",\"tags\":[1]"));
+    const char *keep = actions_at(24);
+    TIDE_CHECK(has(keep, "\"title\":\"Keep the call, without 'half'\"") && !has(keep, "Remove 'half'"));
+    const char *kept = apply_fix(spawns, "Keep the call, without 'half'");
+    TIDE_REQUIRE(kept != NULL);
+    TIDE_CHECK(has(kept, "{\n    Spawn(Body { radius = body.radius / 2 });\n    body.radius /= 2;\n}\n"));
+
+    // ...and with its type and `mut` written, they go with the name
+    static const char typed[] = GAME_TYPES "int Bump(mut float radius) { radius += 1; return 1; }\n"
+                                           "system Grow(mut Body body)\n{\n    mut int grown = Bump(body.radius);\n}\n";
+    open_document(typed);
+    actions_at(25);
+    const char *bumped = apply_fix(typed, "Keep the call, without 'grown'");
+    TIDE_REQUIRE(bumped != NULL);
+    TIDE_CHECK(has(bumped, "{\n    Bump(body.radius);\n}\n"));
+
+    // Beside other statements on its line, only it goes
+    static const char shared[] = GAME_TYPES "system Move(mut Body body)\n{\n"
+                                            "    var a = 1; var b = 2; // Two\n    body.radius = b;\n}\n";
+    open_document(shared);
+    actions_at(24);
+    const char *alone = apply_fix(shared, "Remove 'a'");
+    TIDE_REQUIRE(alone != NULL);
+    TIDE_CHECK(has(alone, "{\n    var b = 2; // Two\n    body.radius = b;\n}\n"));
+
+    // Assigned later, or declared by a for: faded, with what to do in the note and nothing to apply
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    mut var total = 0;\n    total += 1;\n"
+                             "    for (var i = 0; body.radius < 3; body.radius += 1) { }\n}\n");
+    TIDE_CHECK(has(last_sent(), "local 'total' is never used\\nnote: it's assigned, but nothing reads its value"));
+    TIDE_CHECK(has(last_sent(), "local 'i' is never used"));
+    TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
+    TIDE_CHECK(!has(actions_at(24), "Remove '") && !has(actions_at(24), "Keep the call"));
+    TIDE_CHECK(!has(actions_at(26), "Remove '"));
+
+    // The names a loop, an `is` and a Sort need aren't locals to remove
+    open_document("component Bag { List<int> items; int count; }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Bag); }\n"
+                  "int? First(int count) { if (count == 0) return null; return count; }\n"
+                  "system Count(mut Bag bag)\n{\n    foreach (var item in bag.items) bag.count += 1;\n"
+                  "    if (First(bag.count) is int first) bag.count += 1;\n"
+                  "    bag.items.Sort(a, b) { return false; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // Errors hide uses: code that didn't check says nothing of what it reads, so
+    // a local whose scope has one waits for it to be fixed
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    var speed = 2;\n    body.radus = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "Body has no field 'radus'"));
+    TIDE_CHECK(!has(last_sent(), "is never used"));
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    var speed = 2;\n    body.radius = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "local 'speed' is never used"));
 }
 
 // Notes about another place go there, and access a system doesn't use is

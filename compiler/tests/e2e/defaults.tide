@@ -56,7 +56,7 @@ scene Main { }
 event(Spawned) Setup(with Main, mut Overridden overridden)
 {
     var bare = Spawn(Health);
-    var partial = Spawn(Health { max = 200 });
+    Spawn(Health { max = 200 });
     bare.Add(Marker);
     Spawn(Bits);
     overridden.value = 6; // Main runs after defaults are applied.
