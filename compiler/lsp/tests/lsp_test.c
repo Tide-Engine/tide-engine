@@ -1802,6 +1802,10 @@ TIDE_TEST(lsp_settings)
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Settings are the engine's"));
     open_document("settings\n{\n    hostMig$ration = true;\n}\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "bool hostMigration"));
+    open_document("settings\n{\n    sta$ts = true;\n}\nscene Main { }\n");
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "bool stats"));
+    TIDE_CHECK(has(hover, "as `tide run --stats` does"));
     open_document("settings\n{\n    vers$ion = \"1.2.0\";\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "string version"));

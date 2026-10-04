@@ -1,0 +1,716 @@
+{
+  "date": "2026-10-04",
+  "kind": "non-production-diagnostic",
+  "benchmark": "versus_events",
+  "source_revision": "fce97b124d37bcb081511b89d9f0681c1a022a4a",
+  "source_state": "Event runtime and generated event behavior unchanged from this base; codegen also contains the unrelated N-body scheduling/capture fixes. Diagnostic copies only, never retained as production implementation.",
+  "os": "windows",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+  "physical_cores": 12,
+  "logical_processors": 24,
+  "compiler": "Clang 23.1.2",
+  "build_type": "RelWithDebInfo",
+  "flags": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "options": {
+    "targets": 50000,
+    "turrets": 200000,
+    "warmup": 10,
+    "ticks": 200,
+    "threads": [
+      1,
+      12
+    ],
+    "repetitions_per_variant": 3
+  },
+  "phase_instrumentation": "Three tide_time_now_ns readings bracket tide_run_systems and tide_apply_commands in tide_world_tick_on. The host collects producer and dispatch phase medians for ticks after the ten warmup ticks, independently of the normal whole-tick measurement.",
+  "baseline_generated_game_sha256": "10a9c7d5c1b67d3b9901bb266717e4e7d0d138168b7c54a80694fb7b2d4f12bd",
+  "baseline_host_sha256": "f4bbbb13557c67927170b8781d38f0e639d865e67f00613bc8b8e60bf4a79082",
+  "reproduction": [
+    "cmake --build --preset release --target versus_events",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File bench/results/iteration-events-reproduce.ps1"
+  ],
+  "reproduction_outputs": "Ignored build/events-profile contains the source variants, release objects/executables, and individual stdout/stderr logs. Normal bench/results/versus.jsonl is not modified by this script.",
+  "variants": {
+    "baseline": "Original generated event behavior with phase clock instrumentation.",
+    "event_first": "Move TIDE_CMD_EVENT to a conditional before the native apply-loop kind switch, removing its switch case. Preserves ordering and behavior, but did not show a clear improvement.",
+    "no_clear": "Diagnostic hot-path queue insertion omits memset. Queue page changes still use normal tide_queue_push_page. Unsafe for general commands/padding; not a proposal.",
+    "no_cow": "Replace mutable Health column lookup with read-only lookup. Deliberately bypasses ownership and hash invalidation, invalid for snapshots; not a proposal.",
+    "known_target": "Hardcode Health archetype 0 and row target.index-1. Valid only for the benchmark initial layout; bypasses generation, death, pending-spawn, and archetype validation. Unsafe; not a proposal.",
+    "serial_lookup": "Read the stable entity page table once without atomic acquire loads, validate generation, then return archetype/row. Applies only in this diagnostic serial dispatch context, not general threaded entity lookup.",
+    "membership": "Estimate row as target.index minus first table entity.index. Bounds-check, verify exact index+generation against the table entity column, and accept that archetype/row only on equality; otherwise call authoritative tide_entity_location. Safe for coherent worlds and preserves ordering. Restricted in production to one admitted archetype across per-entity handlers."
+  },
+  "outcome": "Initial ablations showed no safe measured event improvement: switch ordering, queue zeroing, COW checks, and serial lookup overlapped baseline. The unsafe hardcoded-row ablation identified target mapping as substantial overhead. A later bounds-checked table-membership probe with exact index+generation equality and authoritative fallback then delivered a repeatable improvement and was implemented in production; details follow.",
+  "limits": "All diagnostics agreed on the benchmark final-state digest; that does not validate snapshot or event semantics for ablations that deliberately bypass guarantees. C timings varied too (roughly 0.12-0.18 ms); phase ranges are evidence about bottlenecks, not precise cross-run percentage speedups. Programs and runs were sequential with no concurrent agent builds/tests/benchmarks.",
+  "digest": "0x83c5fb492d556932",
+  "records": [
+    {
+      "source_log": "baseline-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.7796,
+          "dispatch_median_ms": 1.6735,
+          "tick_median_ms": 2.512,
+          "c_tick_median_ms": 0.15,
+          "tide_over_c": 16.7
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.757,
+          "dispatch_median_ms": 1.6352,
+          "tick_median_ms": 2.499,
+          "c_tick_median_ms": 0.146,
+          "tide_over_c": 17.14
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 1.0134,
+          "dispatch_median_ms": 2.0325,
+          "tick_median_ms": 3.164,
+          "c_tick_median_ms": 0.155,
+          "tide_over_c": 20.37
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.0061,
+          "dispatch_median_ms": 2.0753,
+          "tick_median_ms": 3.154,
+          "c_tick_median_ms": 0.169,
+          "tide_over_c": 18.64
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.9465,
+          "dispatch_median_ms": 1.9508,
+          "tick_median_ms": 3.069,
+          "c_tick_median_ms": 0.148,
+          "tide_over_c": 20.7
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.0544,
+          "dispatch_median_ms": 2.0258,
+          "tick_median_ms": 3.115,
+          "c_tick_median_ms": 0.148,
+          "tide_over_c": 21.09
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-serial-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.5945,
+          "dispatch_median_ms": 1.4272,
+          "tick_median_ms": 2.064,
+          "c_tick_median_ms": 0.126,
+          "tide_over_c": 16.32
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.5775,
+          "dispatch_median_ms": 1.3605,
+          "tick_median_ms": 1.97,
+          "c_tick_median_ms": 0.174,
+          "tide_over_c": 11.29
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-serial-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.5707,
+          "dispatch_median_ms": 1.3747,
+          "tick_median_ms": 1.982,
+          "c_tick_median_ms": 0.126,
+          "tide_over_c": 15.72
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.568,
+          "dispatch_median_ms": 1.3266,
+          "tick_median_ms": 1.926,
+          "c_tick_median_ms": 0.124,
+          "tide_over_c": 15.56
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-serial-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.4882,
+          "dispatch_median_ms": 1.237,
+          "tick_median_ms": 1.764,
+          "c_tick_median_ms": 0.125,
+          "tide_over_c": 14.07
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4732,
+          "dispatch_median_ms": 1.2065,
+          "tick_median_ms": 1.697,
+          "c_tick_median_ms": 0.123,
+          "tide_over_c": 13.81
+        }
+      ]
+    },
+    {
+      "source_log": "event_first-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 1.0859,
+          "dispatch_median_ms": 1.9264,
+          "tick_median_ms": 3.09,
+          "c_tick_median_ms": 0.142,
+          "tide_over_c": 21.69
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.7706,
+          "dispatch_median_ms": 1.64,
+          "tick_median_ms": 2.562,
+          "c_tick_median_ms": 0.132,
+          "tide_over_c": 19.36
+        }
+      ]
+    },
+    {
+      "source_log": "event_first-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 1.1608,
+          "dispatch_median_ms": 2.2817,
+          "tick_median_ms": 3.521,
+          "c_tick_median_ms": 0.165,
+          "tide_over_c": 21.34
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.1048,
+          "dispatch_median_ms": 2.0975,
+          "tick_median_ms": 3.343,
+          "c_tick_median_ms": 0.168,
+          "tide_over_c": 19.96
+        }
+      ]
+    },
+    {
+      "source_log": "event_first-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.9622,
+          "dispatch_median_ms": 1.9451,
+          "tick_median_ms": 2.971,
+          "c_tick_median_ms": 0.169,
+          "tide_over_c": 17.62
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.9842,
+          "dispatch_median_ms": 2.1158,
+          "tick_median_ms": 3.171,
+          "c_tick_median_ms": 0.163,
+          "tide_over_c": 19.51
+        }
+      ]
+    },
+    {
+      "source_log": "known_target-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.8015,
+          "dispatch_median_ms": 0.8168,
+          "tick_median_ms": 1.728,
+          "c_tick_median_ms": 0.152,
+          "tide_over_c": 11.34
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.0614,
+          "dispatch_median_ms": 0.9048,
+          "tick_median_ms": 2.048,
+          "c_tick_median_ms": 0.164,
+          "tide_over_c": 12.47
+        }
+      ]
+    },
+    {
+      "source_log": "known_target-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.7418,
+          "dispatch_median_ms": 0.7629,
+          "tick_median_ms": 1.605,
+          "c_tick_median_ms": 0.166,
+          "tide_over_c": 9.67
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.7064,
+          "dispatch_median_ms": 0.726,
+          "tick_median_ms": 1.466,
+          "c_tick_median_ms": 0.141,
+          "tide_over_c": 10.38
+        }
+      ]
+    },
+    {
+      "source_log": "known_target-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.9731,
+          "dispatch_median_ms": 0.9127,
+          "tick_median_ms": 2.033,
+          "c_tick_median_ms": 0.178,
+          "tide_over_c": 11.44
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.4424,
+          "dispatch_median_ms": 1.1715,
+          "tick_median_ms": 2.705,
+          "c_tick_median_ms": 0.172,
+          "tide_over_c": 15.74
+        }
+      ]
+    },
+    {
+      "source_log": "no_clear-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.8576,
+          "dispatch_median_ms": 1.8411,
+          "tick_median_ms": 2.759,
+          "c_tick_median_ms": 0.161,
+          "tide_over_c": 17.17
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.8109,
+          "dispatch_median_ms": 1.8164,
+          "tick_median_ms": 2.704,
+          "c_tick_median_ms": 0.15,
+          "tide_over_c": 18.07
+        }
+      ]
+    },
+    {
+      "source_log": "no_clear-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.9968,
+          "dispatch_median_ms": 2.1258,
+          "tick_median_ms": 3.183,
+          "c_tick_median_ms": 0.158,
+          "tide_over_c": 20.14
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.9782,
+          "dispatch_median_ms": 2.1264,
+          "tick_median_ms": 3.212,
+          "c_tick_median_ms": 0.145,
+          "tide_over_c": 22.1
+        }
+      ]
+    },
+    {
+      "source_log": "no_clear-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.95,
+          "dispatch_median_ms": 1.9456,
+          "tick_median_ms": 3.055,
+          "c_tick_median_ms": 0.167,
+          "tide_over_c": 18.25
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 1.0881,
+          "dispatch_median_ms": 2.2865,
+          "tick_median_ms": 3.373,
+          "c_tick_median_ms": 0.177,
+          "tide_over_c": 19.04
+        }
+      ]
+    },
+    {
+      "source_log": "no_cow-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 1.1727,
+          "dispatch_median_ms": 1.9776,
+          "tick_median_ms": 3.31,
+          "c_tick_median_ms": 0.169,
+          "tide_over_c": 19.63
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.8882,
+          "dispatch_median_ms": 1.6324,
+          "tick_median_ms": 2.653,
+          "c_tick_median_ms": 0.142,
+          "tide_over_c": 18.69
+        }
+      ]
+    },
+    {
+      "source_log": "no_cow-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.8962,
+          "dispatch_median_ms": 1.6531,
+          "tick_median_ms": 2.63,
+          "c_tick_median_ms": 0.145,
+          "tide_over_c": 18.15
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.7792,
+          "dispatch_median_ms": 1.566,
+          "tick_median_ms": 2.414,
+          "c_tick_median_ms": 0.136,
+          "tide_over_c": 17.7
+        }
+      ]
+    },
+    {
+      "source_log": "no_cow-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 1.1066,
+          "dispatch_median_ms": 1.8529,
+          "tick_median_ms": 3.005,
+          "c_tick_median_ms": 0.146,
+          "tide_over_c": 20.57
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.9756,
+          "dispatch_median_ms": 1.7766,
+          "tick_median_ms": 2.815,
+          "c_tick_median_ms": 0.147,
+          "tide_over_c": 19.15
+        }
+      ]
+    },
+    {
+      "source_log": "serial_lookup-serial-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.5879,
+          "dispatch_median_ms": 1.3984,
+          "tick_median_ms": 2.118,
+          "c_tick_median_ms": 0.123,
+          "tide_over_c": 17.15
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.7015,
+          "dispatch_median_ms": 1.6014,
+          "tick_median_ms": 2.338,
+          "c_tick_median_ms": 0.129,
+          "tide_over_c": 18.07
+        }
+      ]
+    },
+    {
+      "source_log": "serial_lookup-serial-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.5362,
+          "dispatch_median_ms": 1.3211,
+          "tick_median_ms": 1.903,
+          "c_tick_median_ms": 0.139,
+          "tide_over_c": 13.67
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.5736,
+          "dispatch_median_ms": 1.4298,
+          "tick_median_ms": 2.058,
+          "c_tick_median_ms": 0.148,
+          "tide_over_c": 13.92
+        }
+      ]
+    },
+    {
+      "source_log": "serial_lookup-serial-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.5104,
+          "dispatch_median_ms": 1.2425,
+          "tick_median_ms": 1.774,
+          "c_tick_median_ms": 0.123,
+          "tide_over_c": 14.38
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4692,
+          "dispatch_median_ms": 1.1405,
+          "tick_median_ms": 1.64,
+          "c_tick_median_ms": 0.123,
+          "tide_over_c": 13.34
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-membership-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.4655,
+          "dispatch_median_ms": 1.1671,
+          "tick_median_ms": 1.647,
+          "c_tick_median_ms": 0.122,
+          "tide_over_c": 13.5
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4697,
+          "dispatch_median_ms": 1.1763,
+          "tick_median_ms": 1.664,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 13.78
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-membership-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.458,
+          "dispatch_median_ms": 1.1664,
+          "tick_median_ms": 1.634,
+          "c_tick_median_ms": 0.12,
+          "tide_over_c": 13.56
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.463,
+          "dispatch_median_ms": 1.1372,
+          "tick_median_ms": 1.599,
+          "c_tick_median_ms": 0.12,
+          "tide_over_c": 13.35
+        }
+      ]
+    },
+    {
+      "source_log": "baseline-membership-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.4627,
+          "dispatch_median_ms": 1.1717,
+          "tick_median_ms": 1.644,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 13.6
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4589,
+          "dispatch_median_ms": 1.1633,
+          "tick_median_ms": 1.627,
+          "c_tick_median_ms": 0.119,
+          "tide_over_c": 13.61
+        }
+      ]
+    },
+    {
+      "source_log": "membership-membership-1.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.4645,
+          "dispatch_median_ms": 0.7054,
+          "tick_median_ms": 1.176,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 9.7
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4734,
+          "dispatch_median_ms": 0.723,
+          "tick_median_ms": 1.218,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 10.07
+        }
+      ]
+    },
+    {
+      "source_log": "membership-membership-2.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.4496,
+          "dispatch_median_ms": 0.6868,
+          "tick_median_ms": 1.138,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 9.4
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4832,
+          "dispatch_median_ms": 0.7245,
+          "tick_median_ms": 1.233,
+          "c_tick_median_ms": 0.126,
+          "tide_over_c": 9.78
+        }
+      ]
+    },
+    {
+      "source_log": "membership-membership-3.txt",
+      "digest_matches": true,
+      "runs": [
+        {
+          "threads": 1,
+          "samples": 200,
+          "producer_median_ms": 0.449,
+          "dispatch_median_ms": 0.6913,
+          "tick_median_ms": 1.143,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 9.44
+        },
+        {
+          "threads": 12,
+          "samples": 200,
+          "producer_median_ms": 0.4554,
+          "dispatch_median_ms": 0.6829,
+          "tick_median_ms": 1.142,
+          "c_tick_median_ms": 0.121,
+          "tide_over_c": 9.44
+        }
+      ]
+    }
+  ],
+  "configured_threads_note": "The 12-thread column is the supplied jobs configuration. Events stays on the caller under the current 20-million-work threshold (Shoot estimate: 200000 * 38 = 7.6 million), as confirmed by the generated tasks; the handwritten C baseline also deliberately processes shared targets serially.",
+  "membership_followup": {
+    "diagnostic_sequence": "Three full alternating baseline/membership repetitions, collected after the earlier noisy ablations with no concurrent agent work.",
+    "diagnostic_outcome": "At one thread, dispatch median1.166-1.172ms baseline vs0.687-0.705ms membership, with producer unchanged0.449-0.466ms. Whole ticks1.634-1.647ms vs1.138-1.176ms. All six digests match.",
+    "production_before_label": "iteration-events-before-lookup",
+    "production_fixed_label": "iteration-events-membership-fixed",
+    "production_results": "versus.jsonl",
+    "production_sequence": "Three alternating full runs per source; copied pre-change release executable for baseline, fresh native release build for fixed. No clock hooks or unsafe ablations. Same default counts, warmup, ticks, compiler, flags, hardware.",
+    "production_outcome": "One-thread before1.595-1.676ms (13.21-13.90xC), fixed1.141-1.157ms (9.26-9.62xC). Twelve-thread configuration before1.585-1.626ms (13.28-13.44x), fixed1.126-1.148ms (9.46-9.49x). Median whole ticks about29% lower, with a remaining substantial9.5xC gap. All six digests matched.",
+    "source_change": "compiler/src/codegen.c gen_dispatcher: candidate table membership only when per-entity handlers admit one archetype; exact full handle match, bounds, empty-table guard, authoritative fallback.",
+    "semantic_evidence": "Table removal/move updates rows and entity location coherently. Spawn sets table and slot before Spawned handlers, Destroyed handlers run before removal. Snapshots copy table and slots together; unpack/delta validate placement. Bounds and exact handle equality make gaps, swaps, reused generations, pending or invalid handles safe.",
+    "tests": "New events_lookup5/5 native behavioral tests; existing events7/7 native; web CTest events and events_lookup2/2 targets pass. Covers moved row0, gaps, reused index/generation mismatch, queued spawn+Hit, Health to/from Blocked archetype, globals/null/dead/out-of-range targets, empty table, snapshot isolation, pack/unpack.",
+    "reproduction_normalization": "The script detects the production membership probe and normalizes it back to authoritative lookup before recreating original ablations. It checks that exactly one authoritative Hit lookup exists, and recreates membership as its own separate variant. Source line directives may differ after compiler rebuilds; the original baseline hashes remain historical identities.",
+    "final_full_suite_validation": "Parent task reported final full release validation passed: native774/774 CTest targets, web770/770 targets. Peer review found no correctness defects; existing local/gui/task/world tests also cover local dispatch probes."
+  }
+}

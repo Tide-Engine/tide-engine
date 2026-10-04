@@ -40,6 +40,9 @@ int sys_run(const char *const *argv, const char *cwd, bool quiet);
 // start.
 typedef struct sys_process sys_process;
 sys_process *sys_start(const char *const *argv, const char *cwd);
+// The same, with what it prints and its errors in the file `log`, made anew,
+// rather than on the terminal.
+sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log);
 // Waits up to `ms` milliseconds for it to end. True once it has, with its exit
 // code in `code`; the process is freed then.
 bool sys_wait(sys_process *p, int ms, int *code);

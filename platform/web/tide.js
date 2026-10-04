@@ -91,7 +91,13 @@
         for (const line of lines) (fd === 1 ? print : printErr)(line);
     }
 
-    const args = ['program', ...(config.arguments || [])].map(a => encoder.encode(a + '\0'));
+    // The program's arguments are the page's. `debug-views` in the page's
+    // address is --debug-views, as for a desktop game started with it
+    const words = [...(config.arguments || [])];
+    if (new URLSearchParams(location.search).has('debug-views') && !words.includes('--debug-views')) {
+        words.push('--debug-views');
+    }
+    const args = ['program', ...words].map(a => encoder.encode(a + '\0'));
 
     const wasi = {
         args_sizes_get(countPtr, sizePtr) {

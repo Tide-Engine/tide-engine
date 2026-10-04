@@ -1,0 +1,73 @@
+scene Main { }
+component Health { int value = 100; }
+component Other { }
+component Blocked { int value; } // A value component: adding it moves the entity.
+event Hit { int damage = 1; }
+
+singleton Cases
+{
+    Entity first;
+    Entity second;
+    Entity third;
+    Entity last;
+    Entity other;
+    Entity gapped;
+    Entity fresh;
+    Entity target;
+    int operation;
+    int hits;
+}
+
+event(Spawned) Setup(with Main, mut Cases cases)
+{
+    cases.first = Spawn(Health);
+    cases.second = Spawn(Health);
+    cases.third = Spawn(Health);
+    cases.last = Spawn(Health);
+    cases.other = Spawn(Other);
+    cases.gapped = Spawn(Health);
+}
+
+system Drive(mut Cases cases)
+{
+    switch (cases.operation)
+    {
+        case 1: cases.target.Send(Hit { damage = 7 }); break;
+        case 2: cases.first.Destroy(); break;
+        case 3: cases.last.Destroy(); break;
+        case 4:
+            cases.fresh = Spawn(Health);
+            cases.fresh.Send(Hit { damage = 3 });
+            break;
+        case 5:
+            cases.target.Add(Blocked);
+            cases.target.Send(Hit { damage = 9 });
+            break;
+        case 6:
+            cases.target.Remove(Blocked);
+            cases.target.Send(Hit { damage = 11 });
+            break;
+        case 7: cases.target.Send(Hit { damage = 13 }); break;
+        case 8:
+            cases.first.Destroy();
+            cases.second.Destroy();
+            cases.third.Destroy();
+            cases.last.Destroy();
+            cases.gapped.Destroy();
+            break;
+        case 9: cases.gapped.Destroy(); break;
+    }
+    cases.operation = 0;
+}
+
+// Only Health without Blocked admits this per-entity handler. A target in
+// another archetype still reaches the global handler, while dead targets do not.
+event(Hit hit) TakeHit(mut Health health, without Blocked)
+{
+    health.value -= hit.damage;
+}
+
+event(Hit) CountHit(mut Cases cases)
+{
+    cases.hits++;
+}

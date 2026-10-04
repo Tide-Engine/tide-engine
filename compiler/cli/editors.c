@@ -129,6 +129,17 @@ static bool has_extension(const editor *e)
     return found;
 }
 
+bool tide_editors_have_tide(void)
+{
+    bool have = false;
+    for (size_t i = 0; i < sizeof editors / sizeof editors[0] && !have; i++) {
+        char *command = find_editor(&editors[i]);
+        have = command && has_extension(&editors[i]);
+        free(command);
+    }
+    return have;
+}
+
 int tide_editors(const char *root, const bool only_updates)
 {
     char *vsix = path_join(root, "editors/tide.vsix");
@@ -151,16 +162,20 @@ int tide_editors(const char *root, const bool only_updates)
             continue;
         }
         const char *const argv[] = {command, "--install-extension", vsix, "--force", NULL};
+        // An update only says what went wrong: tide upgrade's own line is what there is to say.
         if (sys_run(argv, NULL, true) == 0) {
-            printf(only_updates ? "Updated Tide in %s.\n" : "Added Tide to %s.\n", e->name);
+            if (!only_updates) printf("Added Tide to %s.\n", e->name);
             added++;
         } else {
-            fprintf(stderr, "tide: couldn't add Tide to %s (%s --install-extension failed)\n", e->name, command);
+            fprintf(stderr, "tide: couldn't %s %s (%s --install-extension failed)\n",
+                    only_updates ? "update Tide in" : "add Tide to", e->name, command);
             failed++;
         }
         free(command);
     }
-    if (added > 0) printf("Windows of these editors that are open get it once reloaded: Developer: Reload Window.\n");
+    if (added > 0 && !only_updates) {
+        printf("Windows of these editors that are open get it once reloaded: Developer: Reload Window.\n");
+    }
     if (found == 0 && !only_updates) {
         printf("tide found no editor to add Tide to (VS Code, Cursor, VSCodium or Windsurf).\n"
                "For JetBrains IDEs and others, see https://github.com/BlenMiner/tide-engine#editors\n");

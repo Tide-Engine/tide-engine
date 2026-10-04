@@ -85,6 +85,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'The tide command', link: '/tools/cli' },
             { text: 'Editors', link: '/tools/editors' },
+            { text: 'Debug views', link: '/tools/debug-views' },
             { text: 'Packages', link: '/tools/packages' },
         ],
     },

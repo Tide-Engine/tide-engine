@@ -267,9 +267,9 @@ static bool write_main(const char *path, const build_options *opts, const char *
              "\n"
              "int main(int argc, char **argv)\n"
              "{\n"
-             "    tide_run(&(tide_run_desc){%s, .stats = %s, .argc = argc, .argv = argv});\n"
+             "    tide_run(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv});\n"
              "}\n",
-             title, opts->stats ? "true" : "false");
+             title, opts->stats ? "true" : "false", opts->debug_views ? "true" : "false");
     return sys_write_text(path, text);
 }
 
@@ -383,12 +383,15 @@ typedef struct build {
     char *compiler;
     char *wasm_ld; // Web builds with an installed clang
     char *cache;   // <folder>/.tide/<configuration>
+    uint64_t headers; // The installed headers, which every compiled file can include
     bool engine_built;
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
     game_packages packages; // Found again by each build of the game
 } build;
+
+static uint64_t header_stamp(const char *folder);
 
 // The flags a C file compiles with, or a C++ one (`cpp`).
 static void config_flags(args *a, const build *b, const bool cpp)
@@ -433,16 +436,29 @@ static char *stamp_of(const build *b)
     args a = {0};
     config_flags(&a, b, false);
     arg_list(&a, cpp_flags);
-    size_t n = strlen(b->compiler) + strlen(TIDE_VERSION) + 4;
+    // clang also reads header paths and the macOS SDK from its environment.
+    // Changing those must not reuse objects compiled against other headers.
+    static const char *const names[] = {"SDKROOT", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+                                      "MACOSX_DEPLOYMENT_TARGET"};
+    char *environment[sizeof names / sizeof names[0]];
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        const char *value = getenv(names[i]);
+        environment[i] = format("%s=%s", names[i], value);
+        arg(&a, environment[i]);
+        arg(&a, value ? "set" : "unset");
+    }
+    size_t n = strlen(b->compiler) + strlen(TIDE_VERSION) + 40;
     for (int i = 0; i < a.count; i++) n += strlen(a.items[i]) + 1;
     char *stamp = malloc(n);
     if (!stamp) abort();
-    snprintf(stamp, n, "%s %s", TIDE_VERSION, b->compiler);
+    snprintf(stamp, n, "%s %s %016llx %016llx", TIDE_VERSION, b->compiler,
+             (unsigned long long)sys_file_stamp(b->compiler), (unsigned long long)b->headers);
     for (int i = 0; i < a.count; i++) {
         strcat(stamp, " ");
         strcat(stamp, a.items[i]);
     }
     free(a.items);
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) free(environment[i]);
     return stamp;
 }
 
@@ -632,6 +648,7 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
     }
 #endif
     if (!find_target(root, opts)) return false;
+    b->headers = header_stamp(b->include);
 
     // Everything tide makes goes in <folder>/.tide/<configuration>, hidden
     // like .git.
@@ -690,6 +707,9 @@ static bool build_engine(build *b)
     char *stamp = stamp_of(b);
     char *old_stamp = sys_read_file(stamp_path, NULL);
     engine_build engine = {b, engine_dir, !old_stamp || strcmp(old_stamp, stamp) != 0, true, {0}};
+    // Some objects may be replaced before a later compile fails. Reverting
+    // sources, headers or flags must not make that partial rebuild look complete.
+    sys_remove(stamp_path);
     char *engine_src = path_join(b->root, "src/engine/");
     folder_find(engine_src, ".c", compile_engine_file, &engine);
     free(engine_src);
@@ -764,6 +784,54 @@ static uint64_t hash_text(uint64_t h, const char *text)
 static uint64_t hash_file(const uint64_t h, const char *path)
 {
     return (hash_text(h, path) ^ sys_file_stamp(path)) * 0x100000001B3ull;
+}
+
+static uint64_t header_stamp(const char *folder)
+{
+    file_list headers = own_files_of(folder, header_extensions);
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int i = 0; i < headers.count; i++) h = hash_file(h, headers.items[i]);
+    free_files(&headers);
+    return h;
+}
+
+// tidec still checks the whole game, but its files are written again even
+// when their contents haven't changed. Keep generated objects by contents,
+// not modification times: a C-only edit needn't compile the game or launcher.
+// The generated header is shared by both, so a layout change rebuilds both.
+static bool compile_generated(const build *b, const char *source, const char *object, const char *gen)
+{
+    char *text = sys_read_file(source, NULL);
+    char *header_path = path_join(gen, "game.h");
+    char *header = sys_read_file(header_path, NULL);
+    free(header_path);
+    if (!text || !header) {
+        free(text);
+        free(header);
+        return false;
+    }
+    char *flags = stamp_of(b);
+    uint64_t h = hash_text(0xCBF29CE484222325ull, flags);
+    h = hash_text(hash_text(h, source), text);
+    h = hash_text(h, header);
+    free(flags);
+    free(text);
+    free(header);
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
+    char *stamp_path = format("%s.stamp", object, NULL);
+    char *old = sys_read_file(stamp_path, NULL);
+    bool ok = true;
+    if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
+        // A failed compile may leave a partial object: never reuse it, even
+        // if the source is then put back exactly as it was before the failure.
+        sys_remove(stamp_path);
+        ok = compile_c(b, source, object, gen);
+        if (ok) sys_write_text(stamp_path, stamp);
+    }
+    free(old);
+    free(stamp_path);
+    return ok;
 }
 
 // Compiles the .c and .cpp files of the game, or of one of its packages
@@ -1237,8 +1305,8 @@ char *tide_build(const char *root, const build_options *opts)
     file_list objects = {0};
     add_file(&objects, path_join(b.cache, "game.o"));
     add_file(&objects, path_join(b.cache, "main.o"));
-    if (!compile_c(&b, game_c, objects.items[0], gen)) return NULL;
-    if (!compile_c(&b, main_c, objects.items[1], gen)) return NULL;
+    if (!compile_generated(&b, game_c, objects.items[0], gen)) return NULL;
+    if (!compile_generated(&b, main_c, objects.items[1], gen)) return NULL;
     c_side c = {0};
     if (!compile_game_c(&b, &c) || !find_libraries(&b, &c)) return NULL;
 
@@ -1305,8 +1373,8 @@ static bool build_library(run *r)
     add_file(&objects, path_join(r->dir, "game.o"));
     add_file(&objects, path_join(r->dir, r->web ? "main.o" : "library.o"));
     c_side c = {0};
-    bool ok = compile_c(&r->b, game_c, objects.items[0], r->gen)
-           && compile_c(&r->b, library_c, objects.items[1], r->gen) && compile_game_c(&r->b, &c)
+    bool ok = compile_generated(&r->b, game_c, objects.items[0], r->gen)
+           && compile_generated(&r->b, library_c, objects.items[1], r->gen) && compile_game_c(&r->b, &c)
            && find_libraries(&r->b, &c);
     if (ok) copy_dynamic(&c, r->dir); // Next to the host, which loads the game's library
     const uint32_t n = r->builds + 1u;
@@ -1355,10 +1423,10 @@ static bool build_host(run *r, const char *program)
              "\n"
              "int main(int argc, char **argv)\n"
              "{\n"
-             "    tide_host_run_library(&(tide_run_desc){%s, .stats = %s, .argc = argc, .argv = argv},\n"
+             "    tide_host_run_library(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv},\n"
              "                          \"%s\");\n"
              "}\n",
-             title, r->b.opts->stats ? "true" : "false", dir);
+             title, r->b.opts->stats ? "true" : "false", r->b.opts->debug_views ? "true" : "false", dir);
     char *host_c = path_join(r->gen, "host.c");
     file_list objects = {0};
     add_file(&objects, path_join(r->dir, "host.o"));
@@ -1552,9 +1620,10 @@ static bool write_web_main(const run *r)
              "    static tide_host_game game;\n"
              "    game = tide_host_game_api;\n"
              "    game.layout = &tide_game_layout;\n"
-             "    tide_host_run_web(&(tide_run_desc){%s, .stats = %s, .argc = argc, .argv = argv}, &game);\n"
+             "    tide_host_run_web(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv},\n"
+             "                      &game);\n"
              "}\n",
-             title, r->b.opts->stats ? "true" : "false");
+             title, r->b.opts->stats ? "true" : "false", r->b.opts->debug_views ? "true" : "false");
     char *path = path_join(r->gen, "main.c");
     const bool ok = sys_write_text(path, text);
     free(path);
@@ -1807,7 +1876,8 @@ static char *build_android(const char *root, const build_options *opts, char *pa
         file_list objects = {0};
         add_file(&objects, path_join(b.cache, "game.o"));
         add_file(&objects, path_join(b.cache, "main.o"));
-        if (!compile_c(&b, game_c, objects.items[0], gen) || !compile_c(&b, main_c, objects.items[1], gen)) return NULL;
+        if (!compile_generated(&b, game_c, objects.items[0], gen)
+            || !compile_generated(&b, main_c, objects.items[1], gen)) return NULL;
         if (!compile_game_c(&b, &c[abi]) || !find_libraries(&b, &c[abi])) return NULL;
         char *lib = path_join(b.cache, "libgame.so");
         if (!link_android(&b, &objects, &c[abi], lib)) return NULL;
