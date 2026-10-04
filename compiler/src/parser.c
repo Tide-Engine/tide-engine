@@ -103,18 +103,41 @@ static qname parse_qname(parser *p, const char *what)
 // ---------------------------------------------------------------------------
 // Expressions
 
-// Generic types, which take a type in <>: List<T>, Grid2<T> and Grid3<T>.
+// Generic types, which take a type in <>: List<T>, Map<K, V>, Set<K>, Grid2<T> and Grid3<T>.
 static bool generic_name(const str name)
 {
-    return str_eq_c(name, "List") || str_eq_c(name, "Grid2") || str_eq_c(name, "Grid3");
+    return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+        || str_eq_c(name, "Grid3");
 }
 
 // A type: a name, maybe qualified, or a generic one like List<T>, whose text
-// is "List<T>".
+// is "List<T>" ("Map<K, V>" for a map, with that comma and space).
 static qname parse_type(parser *p, const char *what)
 {
     qname q = parse_qname(p, what);
     if (!at(p, T_LT) || !generic_name(q.text)) return q;
+    if (str_eq_c(q.text, "Map") || str_eq_c(q.text, "Set")) {
+        const bool map = str_eq_c(q.text, "Map");
+        advance(p);
+        const qname key = parse_type(p, map ? "the map's key type, like 'Map<int, string>'" : "the set's key type, like 'Set<int>'");
+        qname value = {0};
+        if (map) {
+            expect(p, T_COMMA, "',' between the map's key and value types, like 'Map<int, string>'");
+            value = parse_type(p, "the map's value type, like 'Map<int, string>'");
+        }
+        if (at(p, T_SHR)) { // List<Map<...>>, Map<K, Set<...>>: one inside another
+            diag_error(peek(p)->at, "a list or a map can't hold lists or maps yet");
+            diag_note("hold structs that have the lists instead");
+            longjmp(p->fail, 1);
+        }
+        expect(p, T_GT, map ? "'>' after the map's value type" : "'>' after the set's key type");
+        const int len = q.text.len + key.text.len + (map ? value.text.len + 4 : 2);
+        char *text = arena_alloc((size_t)len + 1);
+        if (map) snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ", " STR_FMT ">", STR_ARG(q.text), STR_ARG(key.text), STR_ARG(value.text));
+        else snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(key.text));
+        q.text = (str){text, len};
+        return q;
+    }
     if (!str_eq_c(q.text, "List")) { // Grid2<T> and Grid3<T>
         advance(p);
         const qname cell = parse_type(p, "the grid's cell type, like 'Grid2<int>'");
@@ -578,9 +601,9 @@ static bool at_method(const parser *p)
     if (peek_at(p, i)->kind != T_IDENT || is_decl_word(peek_at(p, i)->text)) return false; // view Name(...)
     i++;
     while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
-    if (peek_at(p, i)->kind == T_LT) { // List<Item> Name(...)
+    if (peek_at(p, i)->kind == T_LT) { // List<Item> Name(...), Map<int, Item> Name(...)
         i++;
-        while (peek_at(p, i)->kind == T_IDENT || peek_at(p, i)->kind == T_DOT) i++;
+        while (peek_at(p, i)->kind == T_IDENT || peek_at(p, i)->kind == T_DOT || peek_at(p, i)->kind == T_COMMA) i++;
         if (peek_at(p, i)->kind != T_GT) return false;
         i++;
     }

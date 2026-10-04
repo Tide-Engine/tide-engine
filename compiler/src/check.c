@@ -598,6 +598,128 @@ static type list_of(program *prog, const type element)
 }
 
 // ---------------------------------------------------------------------------
+// Maps and sets
+
+// Map<K, V>'s key and value types; a Set<K>'s key.
+static type map_key(const type t)
+{
+    return t.decl->fields.items[0].type;
+}
+
+static type map_value(const type t)
+{
+    return t.decl->fields.items[1].type;
+}
+
+// What a map's or a set's key can be: a value with a hash and `==`, and a
+// fixed size in an entry.
+static bool map_key_ok(const type t, const loc at, const bool set)
+{
+    switch (t.kind) {
+    case TY_ERROR: return false;
+    case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
+        return true;
+    default:
+        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
+                   type_name(t));
+        if (t.kind == TY_FLOAT) diag_note("floats that look equal can differ in a bit; key by an int, like 'int(x * 100)'");
+        else if (t.kind == TY_STRUCT) diag_note("key by one of its fields");
+        return false;
+    }
+}
+
+static bool list_element_ok(type t, loc at);
+
+// Map<K, V> or Set<K> for those types: one declaration for each, so two maps
+// from ints to text are the same type. A map's `entry` is the struct a foreach
+// over it gives, with `key` and `value`.
+static type map_of(program *prog, const type key, const type value, const bool set)
+{
+    for (int i = 0; i < prog->maps.count; i++) {
+        const decl *m = prog->maps.items[i];
+        const type k = m->fields.items[0].type;
+        if (m->is_set != set || k.kind != key.kind || k.decl != key.decl) continue;
+        if (set) return (type){TY_SET, prog->maps.items[i]};
+        const type v = m->fields.items[1].type;
+        if (v.kind == value.kind && v.decl == value.decl) return (type){TY_MAP, prog->maps.items[i]};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_MAP;
+    d->builtin = true;
+    d->is_set = set;
+    sb name = {0};
+    if (set) sb_printf(&name, "Set<%s>", type_name(key));
+    else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
+    d->name = (str){name.data, (int)name.len};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    vec_push(d->fields, k);
+    if (!set) {
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+        vec_push(d->fields, v);
+        decl *entry = NEW(decl);
+        entry->kind = DECL_STRUCT;
+        entry->builtin = true;
+        sb entry_name = {0};
+        sb_printf(&entry_name, "Entry<%s, %s>", type_name(key), type_name(value));
+        entry->name = (str){entry_name.data, (int)entry_name.len};
+        vec_push(entry->fields, k);
+        vec_push(entry->fields, v);
+        entry->index = 2; // Checked, as a struct is once its fields are ordered
+        d->entry = entry;
+    }
+    d->index = prog->maps.count;
+    vec_push(prog->maps, d);
+    return (type){set ? TY_SET : TY_MAP, d};
+}
+
+// "Map<K, V>" or "Set<K>": the type, in `*out`; false for text that isn't one.
+static bool resolve_map_type(const checker *c, const str text, const loc at, type *out)
+{
+    const bool set = str_starts_with_c(text, "Set<");
+    if (!set && !str_starts_with_c(text, "Map<")) return false;
+    if (text.ptr[text.len - 1] != '>') return false;
+    str inner = {text.ptr + 4, text.len - 5};
+    str key_text = inner;
+    str value_text = {NULL, 0};
+    if (!set) {
+        int comma = -1;
+        for (int i = 0; i < inner.len && comma < 0; i++) {
+            if (inner.ptr[i] == ',') comma = i;
+        }
+        if (comma < 0) return false;
+        key_text = (str){inner.ptr, comma};
+        value_text = (str){inner.ptr + comma + 1, inner.len - comma - 1};
+        while (value_text.len > 0 && value_text.ptr[0] == ' ') {
+            value_text.ptr++;
+            value_text.len--;
+        }
+    }
+    type parts[2] = {T_ERR, T_ERR};
+    for (int i = 0; i < (set ? 1 : 2); i++) {
+        const str name = i ? value_text : key_text;
+        if (str_eq_c(name, "string")) {
+            parts[i] = (type){TY_STRING, NULL};
+        } else if (!builtin_type_named(name, &parts[i])) {
+            decl *d = find_type(c, name, at);
+            if (d) {
+                parts[i] = decl_type(d);
+            } else {
+                diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(name));
+                suggestion sg = suggest_start(name);
+                suggest_builtin_types(&sg);
+                suggest_structs(&sg, c->prog);
+                suggest_note(&sg);
+                parts[i] = T_ERR;
+            }
+        }
+    }
+    bool ok = map_key_ok(parts[0], at, set);
+    if (!set && !list_element_ok(parts[1], at)) ok = false;
+    *out = ok ? map_of(c->prog, parts[0], parts[1], set) : T_ERR;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Results: T? and `T fails E`
 
 // One declaration for each combination, so two calls of functions that return
@@ -758,14 +880,16 @@ static bool list_element_ok(const type t, const loc at)
         return true;
     case TY_STRUCT:
         if (!holds_list(t)) return true;
-        diag_error(at, "a list can't hold '" STR_FMT "': it has a list in it", STR_ARG(t.decl->name));
-        diag_note("lists can't hold lists yet");
+        diag_error(at, "a list or a map can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(t.decl->name));
+        diag_note("lists and maps can't hold lists or maps yet");
         return false;
     case TY_LIST:
-        diag_error(at, "a list can't hold lists yet");
+    case TY_MAP:
+    case TY_SET:
+        diag_error(at, "a list or a map can't hold lists or maps yet");
         return false;
     default:
-        diag_error(at, "a list holds values, like numbers, text, enums and structs, not %s", type_name(t));
+        diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a list, keep their Entity");
         return false;
     }
@@ -848,8 +972,10 @@ static bool grid_cell_ok(const type t, const loc at)
         diag_note("cells are plain values, side by side in their chunk: keep the text elsewhere, and a number for it in the cell");
         return false;
     case TY_LIST:
+    case TY_MAP:
+    case TY_SET:
     case TY_GRID:
-        diag_error(at, "a grid's cells can't be %s", t.kind == TY_LIST ? "lists" : "grids");
+        diag_error(at, "a grid's cells can't be %s", t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps");
         return false;
     default:
         diag_error(at, "a grid's cells are values, like numbers, enums and structs, not %s", type_name(t));
@@ -891,7 +1017,8 @@ static bool through_element(const expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_INDEX
-            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_GRID || e->object->type.kind == TY_LOOKUP)) {
+            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_GRID
+                || e->object->type.kind == TY_LOOKUP)) {
             return true;
         }
     }
@@ -912,6 +1039,7 @@ static bool equatable(const type t)
 
 static type check_list_literal(checker *c, expr *e, type want);
 static type check_list_method(checker *c, expr *e, type list);
+static type check_map_method(checker *c, expr *e, type map);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
@@ -929,7 +1057,7 @@ static type check_default_value(checker *c, expr *e, const type want)
         return T_ERR;
     }
     e->type = want;
-    if (want.kind == TY_STRING || want.kind == TY_LIST) c->prog->uses_text = true;
+    if (want.kind == TY_STRING || want.kind == TY_LIST || want.kind == TY_MAP || want.kind == TY_SET) c->prog->uses_text = true;
     return want;
 }
 
@@ -955,7 +1083,9 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
-    if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_ERROR)) return check_list_literal(c, e, inner);
+    if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ERROR)) {
+        return check_list_literal(c, e, inner);
+    }
     if (is_new_grid(e)) return check_new_grid(c, e, inner);
     if (e->kind == E_DEFAULT) return check_default_value(c, e, inner);
     if (e->kind == E_NULL) {
@@ -2301,6 +2431,7 @@ static type check_method(checker *c, expr *e)
         return T_ERR;
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
+    if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_LOOKUP) { // health.Has(e): whether that entity has one
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -2558,7 +2689,7 @@ static bool text_shows_value(const type t)
 static bool text_shows_inside(const type t)
 {
     return t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_STRUCT
-        || t.kind == TY_EVENT || t.kind == TY_LIST;
+        || t.kind == TY_EVENT || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET;
 }
 
 #define TEXT_DEPTH 32
@@ -2913,6 +3044,15 @@ static type check_member(checker *c, expr *e)
         diag_error(e->at, "Color has r, g, b and a, not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
+    if (obj.kind == TY_MAP || obj.kind == TY_SET) {
+        if (str_eq_c(e->member, "count")) return T_INT_;
+        diag_error(e->at, "a %s has 'count' and methods like %s, not '" STR_FMT "'", obj.kind == TY_SET ? "set" : "map",
+                   obj.kind == TY_SET ? "Add(...)" : "Has(...)", STR_ARG(e->member));
+        suggestion sg = suggest_start(e->member);
+        suggest_consider_c(&sg, "count");
+        suggest_note(&sg);
+        return T_ERR;
+    }
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) return T_INT_;
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
@@ -3246,35 +3386,125 @@ static type check_index(checker *c, expr *e)
         }
         return decl_type(obj.decl);
     }
+    if (obj.kind == TY_MAP) { // scores[key]: its value, or the value type's zero when the key isn't there
+        const type key = check_expr_want(c, e->lhs, map_key(obj));
+        if (key.kind != TY_ERROR && !type_assignable(map_key(obj), key)) {
+            diag_error(e->lhs->at, "%s is keyed by %s, not %s", type_name(obj), type_name(map_key(obj)), type_name(key));
+        }
+        return map_value(obj);
+    }
+    if (obj.kind == TY_SET) {
+        check_expr(c, e->lhs);
+        diag_error(e->at, "a set has no values to index: it holds keys");
+        diag_note("ask whether a key is in it with 'Has(key)', or go through its keys with foreach");
+        return T_ERR;
+    }
     const type index = check_expr(c, e->lhs);
     if (index.kind != TY_ERROR && index.kind != TY_INT) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
     if (obj.kind == TY_ERROR) return T_ERR;
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
     if (obj.kind != TY_LIST) {
-        diag_error(e->at, "only lists have elements to index, and this is %s", type_name(obj));
+        diag_error(e->at, "only lists and maps have elements to index, and this is %s", type_name(obj));
         if (obj.kind == TY_STRING) diag_note("a piece of text is 'text.Substring(start, length)'");
         return T_ERR;
     }
     return list_element(obj);
 }
 
-// [a, b, c] where a List<T> goes.
+// [a, b, c] where a List<T> or a Set<T> goes.
 static type check_list_literal(checker *c, expr *e, const type want)
 {
-    if (want.kind != TY_LIST) {
+    if (want.kind == TY_MAP) {
+        diag_error(e->at, "a map starts empty; there's no map literal yet");
+        diag_note("add entries one by one: 'scores[key] = value;'");
         for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
         return T_ERR;
     }
-    const type element = list_element(want);
+    if (want.kind != TY_LIST && want.kind != TY_SET) {
+        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
+        return T_ERR;
+    }
+    const bool set = want.kind == TY_SET;
+    const type element = set ? map_key(want) : list_element(want);
     for (int i = 0; i < e->args.count; i++) {
         expr *item = e->args.items[i];
         const type t = item->kind == E_DEFAULT ? check_default_value(c, item, element) : check_expr(c, item);
-        if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the list");
-        else if (!type_assignable(element, t)) diag_error(item->at, "this list holds %s, not %s", type_name(element), type_name(t));
+        if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the %s", set ? "set" : "list");
+        else if (!type_assignable(element, t)) diag_error(item->at, "this %s holds %s, not %s", set ? "set" : "list", type_name(element), type_name(t));
     }
     c->prog->uses_text = true; // Made in the scratch area
     e->type = want;
     return want;
+}
+
+// scores.Has(k), scores.Get(k), scores.Remove(k), scores.Clear(), and a
+// set's Add(k): a map's or a set's methods. Those that change it need it to
+// be a variable or field that can be changed. Reading and writing values is
+// indexing: scores[k], scores[k] = v.
+static type check_map_method(checker *c, expr *e, const type map)
+{
+    static const struct {
+        const char *name;
+        const char *form;
+        bool set_only;
+        bool map_only;
+        bool key; // Takes a key
+        bool changes;
+        type_kind result;
+    } methods[] = {
+        {"Has", "Has(key)", false, false, true, false, TY_BOOL},
+        {"Get", "Get(key)", false, true, true, false, TY_OPTIONAL},
+        {"Add", "Add(key)", true, false, true, true, TY_BOOL},
+        {"Remove", "Remove(key)", false, false, true, true, TY_BOOL},
+        {"Clear", "Clear()", false, false, false, true, TY_VOID},
+    };
+    const bool set = map.kind == TY_SET;
+    const char *what = set ? "set" : "map";
+    int m = -1;
+    for (int i = 0; i < (int)(sizeof methods / sizeof methods[0]); i++) {
+        if (str_eq_c(e->name, methods[i].name) && !(set && methods[i].map_only) && !(!set && methods[i].set_only)) m = i;
+    }
+    if (m < 0) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!set && str_eq_c(e->name, "Add")) {
+            diag_error(e->at, "a map takes values by key: '" STR_FMT "[key] = value;'", STR_ARG(e->object->kind == E_NAME ? e->object->name : str_from("scores")));
+        } else if (set && str_eq_c(e->name, "Get")) {
+            diag_error(e->at, "a set has no values to get: it holds keys, which Has(key) looks for");
+        } else {
+            diag_error(e->at, "a %s has no method '" STR_FMT "'", what, STR_ARG(e->name));
+            suggestion sg = suggest_start(e->name);
+            for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {
+                if (!(set && methods[i].map_only) && !(!set && methods[i].set_only)) suggest_consider_c(&sg, methods[i].name);
+            }
+            suggest_note(&sg);
+        }
+        return T_ERR;
+    }
+    e->call = CALL_MAP;
+    e->type_decl = map.decl;
+    const type key = map_key(map);
+    const int argc = methods[m].key ? 1 : 0;
+    for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], key);
+    if (e->args.count != argc) {
+        diag_error(e->at, "%s takes %d argument%s: '%s'", methods[m].name, argc, argc == 1 ? "" : "s", methods[m].form);
+        return T_ERR;
+    }
+    if (argc == 1 && !type_assignable(key, e->args.items[0]->type)) {
+        diag_error(e->args.items[0]->at, "%s is keyed by %s, not %s", type_name(map), type_name(key), type_name(e->args.items[0]->type));
+    }
+    if (methods[m].changes) {
+        decl *changer = NEW(decl);
+        sb name = {0};
+        sb_printf(&name, "%s.%s", set ? "Set" : "Map", methods[m].name);
+        changer->name = (str){name.data, (int)name.len};
+        check_writable(c, e->object, changer, NULL);
+    }
+    if (methods[m].result == TY_OPTIONAL) { // Get: the value, or nothing
+        const type optional = optional_type(c, map_value(map), e->at);
+        if (optional.kind != TY_ERROR) map.decl->optional = optional.decl;
+        return optional;
+    }
+    return (type){methods[m].result, NULL};
 }
 
 // items.Add(x), items.Contains(x), ...: a list's methods. Those that change it
@@ -3472,7 +3702,7 @@ static type check_defaulted(checker *c, expr *e)
         return T_ERR;
     }
     const type value = wrapped_value(t);
-    if (value.kind == TY_STRING || value.kind == TY_LIST) c->prog->uses_text = true;
+    if (value.kind == TY_STRING || value.kind == TY_LIST || value.kind == TY_MAP || value.kind == TY_SET) c->prog->uses_text = true;
     return value;
 }
 
@@ -3524,6 +3754,7 @@ static type is_pattern_type(checker *c, const expr *e, const enum_member **membe
     if (builtin_type_named(e->pattern, &t)) return t;
     if (str_eq_c(e->pattern, "string")) return (type){TY_STRING, NULL};
     if (resolve_list_type(c, e->pattern, at, &t)) return t;
+    if (resolve_map_type(c, e->pattern, at, &t)) return t;
     if (resolve_grid_type(c, e->pattern, at, &t)) {
         if (t.kind != TY_ERROR) diag_error(at, "'is' can't look for a grid");
         return T_ERR;
@@ -3617,7 +3848,7 @@ static type check_is(checker *c, expr *e)
                    type_name(value), type_name(error), type_name(pattern));
         return T_ERR;
     }
-    if (pattern.kind == TY_STRING || pattern.kind == TY_LIST) c->prog->uses_text = true;
+    if (pattern.kind == TY_STRING || pattern.kind == TY_LIST || pattern.kind == TY_MAP || pattern.kind == TY_SET) c->prog->uses_text = true;
     return T_BOOL_;
 }
 
@@ -3792,7 +4023,7 @@ static type check_expr_any(checker *c, expr *e)
     }
     e->type = t;
     // Text and lists that code makes go in the scratch area.
-    if ((t.kind == TY_STRING && e->kind != E_STRING) || t.kind == TY_LIST) c->prog->uses_text = true;
+    if ((t.kind == TY_STRING && e->kind != E_STRING) || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
     return t;
 }
@@ -4869,6 +5100,7 @@ static void check_var(checker *c, stmt *s)
                     : find_type(c, type_name_, s->type_at);
         if (builtin_type_named(type_name_, &s->type)) {
         } else if (resolve_list_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
+        } else if (resolve_map_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
         } else if (resolve_grid_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
         } else if (str_eq_c(type_name_, "string")) {
             s->type = (type){TY_STRING, NULL};
@@ -4896,7 +5128,7 @@ static void check_var(checker *c, stmt *s)
         if (s->value->kind == E_DEFAULT || s->value->kind == E_NULL || (optional && s->value->kind == E_LIST)) {
             value = check_expr_want(c, s->value, s->type);
         } else if (s->value->kind == E_LIST) {
-            if (s->type.kind != TY_LIST && s->type.kind != TY_ERROR) {
+            if (s->type.kind != TY_LIST && s->type.kind != TY_SET && s->type.kind != TY_MAP && s->type.kind != TY_ERROR) {
                 diag_error(s->value->at, "can't initialize %s with a list", type_name(s->type));
                 const type_kind k = s->type.kind;
                 const bool holdable = k != TY_COMPONENT && k != TY_SINGLETON && k != TY_INPUT && k != TY_RECORD
@@ -4949,7 +5181,7 @@ static type local_type(checker *c, stmt *s)
     if (builtin_type_named(s->type_name, &t)) return t;
     const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
     const int errors = diag_error_count();
-    if (resolve_list_type(c, s->type_name, at, &t)) {
+    if (resolve_list_type(c, s->type_name, at, &t) || resolve_map_type(c, s->type_name, at, &t)) {
         if (diag_error_count() > errors) s->type_name = str_from(""); // Reported: it takes the element's type, like var
         return t;
     }
@@ -5025,12 +5257,16 @@ static void check_stmt(checker *c, stmt *s)
         type element = T_ERR;
         if (list.kind == TY_LIST) {
             element = list_element(list);
+        } else if (list.kind == TY_MAP) { // Its entries, in the order their keys were added: each a key and a value
+            element = (type){TY_STRUCT, list.decl->entry};
+        } else if (list.kind == TY_SET) { // Its keys, in the order they were added
+            element = map_key(list);
         } else if (list.kind == TY_GRID) { // Its cells' positions, in order
             element = list.decl->dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
         } else if (list.kind == TY_RECORD && list.decl->array_of) { // touches: every one, in use or not
             element = (type){TY_RECORD, list.decl->array_of};
         } else if (list.kind != TY_ERROR) {
-            diag_error(s->value->at, "foreach goes through a list or a grid, and this is %s", type_name(list));
+            diag_error(s->value->at, "foreach goes through a list, a map, a set or a grid, and this is %s", type_name(list));
         }
         if (s->type_name.len > 0) {
             const type declared = local_type(c, s);
@@ -5121,6 +5357,7 @@ static void check_stmt(checker *c, stmt *s)
                          || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
                          || call == CALL_SNAP
                          || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
+                         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
                          || call == CALL_GRID
                          || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
                          || e->kind == E_TRY // Passes an error on, even from a variable
@@ -5639,6 +5876,7 @@ static void resolve_field_types(const checker *c, const decl *d)
             continue;
         }
         if (resolve_list_type(c, f->type_name, at, &f->type)) continue;
+        if (resolve_map_type(c, f->type_name, at, &f->type)) continue;
         if (resolve_grid_type(c, f->type_name, at, &f->type)) continue;
         if (str_eq_c(f->type_name, "string")) {
             f->type = (type){TY_STRING, NULL};
@@ -5771,7 +6009,7 @@ static void order_struct(program *prog, decl *d)
 // Whether a value of type `t` has a list in it, or is one.
 static bool holds_list(const type t)
 {
-    if (t.kind == TY_LIST) return true;
+    if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) return true;
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_list(t.decl->fields.items[i].type)) return true;
@@ -5829,8 +6067,8 @@ static void check_fields(checker *c, const decl *d)
         }
         if (f->type.kind == TY_LIST && holds_list(list_element(f->type))) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-            diag_error(at, "a list can't hold '" STR_FMT "': it has a list in it", STR_ARG(list_element(f->type).decl->name));
-            diag_note("lists can't hold lists yet");
+            diag_error(at, "a list can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(list_element(f->type).decl->name));
+            diag_note("lists and maps can't hold lists or maps yet");
         }
         check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
@@ -5863,6 +6101,7 @@ static type method_type(const checker *c, const str name, const loc at, const bo
     if (is_return && str_eq_c(name, "void")) return T_VOID_;
     if (builtin_type_named(name, &t)) return t;
     if (resolve_list_type(c, name, at, &t)) return t;
+    if (resolve_map_type(c, name, at, &t)) return t;
     if (resolve_grid_type(c, name, at, &t)) {
         if (t.kind == TY_ERROR) return t;
         diag_error(at, "functions can't %s grids yet", is_return ? "return" : "take");
@@ -6144,6 +6383,8 @@ static const char *c_refuses(const type t)
     switch (t.kind) {
     case TY_STRING: return "text";
     case TY_LIST: return "lists";
+    case TY_MAP: return "maps";
+    case TY_SET: return "sets";
     case TY_ACTION: return "an Action";
     case TY_RECORD: return "the devices";
     case TY_OPTIONAL: return "T? values";
@@ -7168,6 +7409,7 @@ static void collect_decls(program *prog)
         case DECL_STRUCT: // Ordered once their fields are known; see order_struct
         case DECL_METHOD: // Not in prog->decls
         case DECL_LIST:
+        case DECL_MAP:
         case DECL_GRID:
         case DECL_RESULT:
         case DECL_FUNCTION:

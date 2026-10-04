@@ -167,6 +167,8 @@ const char *type_name(const type t)
     case TY_EVENT:
     case TY_ENUM:
     case TY_LIST:
+    case TY_MAP:
+    case TY_SET:
     case TY_GRID:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
@@ -187,6 +189,7 @@ const char *type_c_name(const type t)
 {
     if (t.kind == TY_STRING) return "tide_str";
     if (t.kind == TY_LIST) return "tide_list";
+    if (t.kind == TY_MAP || t.kind == TY_SET) return "tide_map";
     if (t.kind == TY_GRID) return "tide_grid";
     if (t.kind == TY_DRAW_LIST) return "tide_draw_list *";
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {

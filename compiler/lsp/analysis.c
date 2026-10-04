@@ -303,8 +303,31 @@ static void type_ref(const loc qual_at, const loc at, const str text, const type
         type_ref(qual_at, at, (str){text.ptr, text.len - 1}, inner);
         return;
     }
-    // List<T>, Grid2<T> and Grid3<T>: the generic type, then the one it holds
+    // Map<K, V>: the generic type, then its key and its value
+    if (str_starts_with_c(text, "Map<") && text.ptr[text.len - 1] == '>' && t.kind == TY_MAP && t.decl) {
+        add_occ((occurrence){.at = qual_at, .len = 3, .kind = OCC_TYPE, .name = (str){text.ptr, 3}, .type = t});
+        const str inner = {text.ptr + 4, text.len - 5};
+        int comma = 0;
+        while (comma < inner.len && inner.ptr[comma] != ',') comma++;
+        const str key = {inner.ptr, comma};
+        str value = {inner.ptr + comma + 1, inner.len - comma - 1};
+        while (value.len > 0 && value.ptr[0] == ' ') {
+            value.ptr++;
+            value.len--;
+        }
+        for (int part = 0; part < 2; part++) {
+            const str name = part ? value : key;
+            if (name.len == 0) continue;
+            const loc name_at = {qual_at.line, qual_at.col + (int)(name.ptr - text.ptr), qual_at.file};
+            const str last = last_part(name);
+            const loc last_at = {qual_at.line, name_at.col + (int)(last.ptr - name.ptr), qual_at.file};
+            type_ref(name_at, last_at, name, t.decl->fields.items[part].type);
+        }
+        return;
+    }
+    // List<T>, Set<K>, Grid2<T> and Grid3<T>: the generic type, then the one it holds
     const int generic = str_starts_with_c(text, "List<") ? 4
+                      : str_starts_with_c(text, "Set<") ? 3
                       : str_starts_with_c(text, "Grid2<") || str_starts_with_c(text, "Grid3<") ? 5
                                                                                                : 0;
     if (generic && text.ptr[text.len - 1] == '>') {
@@ -312,7 +335,8 @@ static void type_ref(const loc qual_at, const loc at, const str text, const type
         // The held type, as the formatter writes it: right after the '<'
         const str inner = {text.ptr + generic + 1, text.len - generic - 2};
         const loc inner_at = {qual_at.line, qual_at.col + generic + 1, qual_at.file};
-        const type element = t.kind == TY_LIST || t.kind == TY_GRID ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL};
+        const type element = (t.kind == TY_LIST || t.kind == TY_SET || t.kind == TY_GRID) && t.decl ? t.decl->fields.items[0].type
+                                                                                             : (type){TY_ERROR, NULL};
         const str last = last_part(inner);
         const loc last_at = {qual_at.line, inner_at.col + (int)(last.ptr - inner.ptr), qual_at.file};
         type_ref(inner_at, last_at, inner, element);
@@ -1009,6 +1033,12 @@ static const char *builtin_type_doc(const type_kind kind)
                               "function takes one, and a view passes it `Draw.list`.";
     case TY_LIST: return "A list of values, which grows and shrinks: `Count`, `items[i]`, `Add`, `RemoveAt`, `foreach`, "
                          "and `parallel` through its elements by index.";
+    case TY_MAP: return "Values by key, in the order the keys were added: `scores[key]` reads (the value type's zero when "
+                        "the key isn't there) and `scores[key] = value` writes, `Has`, `Get` (a `V?`), `Remove`, `Clear`, "
+                        "`count`, and `foreach` through its entries, each with `key` and `value`. Keys are ints, longs, "
+                        "enums, entities, players or text.";
+    case TY_SET: return "Keys, each once, in the order they were added: `Add` (whether it was new), `Has`, `Remove`, "
+                        "`Clear`, `count`, and `foreach` through them. `[a, b]` makes one where a set goes.";
     case TY_GRID: return "Cells at positions, kept in chunks only where something's set: `cells[x, y]`, `size`, `Clear()`, "
                          "and `foreach` or `parallel` through its cells. "
                          "Its size is given when it's made, `Grid2(1024, 1024)`; 0 or nothing is open.";
@@ -1029,6 +1059,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_EVENT: return "event";
     case DECL_ENUM: return "enum";
     case DECL_LIST: return "list";
+    case DECL_MAP: return "map";
     case DECL_GRID: return "grid";
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
@@ -1248,6 +1279,7 @@ static const method_form session_calls[] = {
     "A grid of that size, in cells, whose cell type comes from where it goes: 0 or nothing leaves an axis open."
 #define GRID_SIZE_FIELD_DOC "The grid's size, 0 on the axes where it's open."
 #define LIST_COUNT_DOC "How many elements the list has."
+#define MAP_COUNT_DOC "How many keys it has."
 #define DEVICE_ARRAY_COUNT_DOC "How many fingers the touchscreen follows at once: every slot, touching or not."
 #define TEXT_LENGTH_DOC "How many characters the text has."
 
@@ -1280,6 +1312,21 @@ static const method_form list_calls[] = {
     {"IndexOf", "IndexOf(T item) -> int", "Where the first element equal to `item` is, or -1."},
 };
 
+// A map's and a set's methods, as the checker takes them: reading and writing values is indexing.
+static const method_form map_calls[] = {
+    {"Has", "Has(K key) -> bool", "Whether the key is in the map."},
+    {"Get", "Get(K key) -> V?", "The key's value, or nothing when it isn't there."},
+    {"Remove", "Remove(K key) -> bool", "Removes the key and its value, if it's there, and says whether it was."},
+    {"Clear", "Clear()", "Removes every key."},
+};
+
+static const method_form set_calls[] = {
+    {"Add", "Add(K key) -> bool", "Adds the key, and says whether it was new."},
+    {"Has", "Has(K key) -> bool", "Whether the key is in the set."},
+    {"Remove", "Remove(K key) -> bool", "Removes the key, if it's there, and says whether it was."},
+    {"Clear", "Clear()", "Removes every key."},
+};
+
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
 };
@@ -1307,6 +1354,8 @@ static const method_form *methods_of(const type t, size_t *count)
     *count = 0;
     switch (t.kind) {
     case TY_LIST: forms = list_calls; *count = sizeof list_calls / sizeof list_calls[0]; break;
+    case TY_MAP: forms = map_calls; *count = sizeof map_calls / sizeof map_calls[0]; break;
+    case TY_SET: forms = set_calls; *count = sizeof set_calls / sizeof set_calls[0]; break;
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -1319,17 +1368,20 @@ static const method_form *methods_of(const type t, size_t *count)
 // `t`; "items.Add(T item)" where its type isn't known.
 static void format_method(const method_form *form, const type t, sb *out)
 {
-    const bool generic = (t.kind == TY_LIST || t.kind == TY_GRID) && t.decl;
+    const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
+    const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, generic ? type_name(t)
                 : t.kind == TY_LIST ? "items"
+                : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
                 : t.kind == TY_SINGLETON ? "singleton"
                 : "entity");
     sb_put(out, ".");
     for (const char *p = form->form; *p; p++) {
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
-        if (*p == 'T' && alone) sb_put(out, element);
+        if ((*p == 'T' || *p == 'K') && alone) sb_put(out, element);
+        else if (*p == 'V' && alone) sb_put(out, value);
         else sb_putn(out, p, 1);
     }
 }
@@ -1353,6 +1405,8 @@ static void describe_default(const type t, sb *out)
     case TY_PLAYER: sb_put(out, "No player"); break;
     case TY_STRING: sb_put(out, "Empty text"); break;
     case TY_LIST: sb_put(out, "An empty list"); break;
+    case TY_MAP: sb_put(out, "An empty map"); break;
+    case TY_SET: sb_put(out, "An empty set"); break;
     case TY_GRID: sb_put(out, "An empty grid, open every way"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
@@ -1615,6 +1669,7 @@ static void describe(const occurrence *o, sb *out)
         if (o->object_type.kind == TY_STRING && str_eq_c(o->name, "length")) sb_put(out, "\n\n" TEXT_LENGTH_DOC);
         if (keyboard_text(o->object_type, o->name)) sb_put(out, "\n\n" KEYBOARD_TEXT_DOC);
         if (o->object_type.kind == TY_LIST && str_eq_c(o->name, "count")) sb_put(out, "\n\n" LIST_COUNT_DOC);
+        if ((o->object_type.kind == TY_MAP || o->object_type.kind == TY_SET) && str_eq_c(o->name, "count")) sb_put(out, "\n\n" MAP_COUNT_DOC);
         if (o->object_type.kind == TY_RECORD && o->object_type.decl && o->object_type.decl->array_of
             && str_eq_c(o->name, "count")) {
             sb_put(out, "\n\n" DEVICE_ARRAY_COUNT_DOC);
@@ -2446,8 +2501,9 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
         }
     }
     // What a list, grid or T? holds, and a failable call's value
-    while ((t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) && t.decl) {
-        t = t.decl->fields.items[0].type;
+    while ((t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE || t.kind == TY_MAP
+            || t.kind == TY_SET) && t.decl) {
+        t = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type; // A map's value
     }
     const decl *d = t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_STRUCT
                          || t.kind == TY_EVENT || t.kind == TY_ENUM || t.kind == TY_RECORD
@@ -3539,7 +3595,7 @@ static type member_type(const type t, const str member)
         return (type){TY_FLOAT, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
-    if (t.kind == TY_LIST && str_eq_c(member, "count")) return (type){TY_INT, NULL};
+    if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_GRID && (str_eq_c(member, "size") || str_eq_c(member, "min") || str_eq_c(member, "max"))) {
         return (type){t.decl->dims == 3 ? TY_INT3 : TY_INT2, NULL};
@@ -3587,7 +3643,8 @@ static type loop_variable_type(const scope *sc, const int use)
                 of = member_type(of, DOC->toks[i + 1].text);
             }
         }
-        if (of.kind == TY_LIST) return of.decl->fields.items[0].type;
+        if (of.kind == TY_LIST || of.kind == TY_SET) return of.decl->fields.items[0].type;
+        if (of.kind == TY_MAP && of.decl->entry) return (type){TY_STRUCT, of.decl->entry}; // An entry: key and value
         if (of.kind == TY_GRID) return (type){of.decl->dims == 3 ? TY_INT3 : TY_INT2, NULL}; // A cell's position
         if (of.kind == TY_RECORD && of.decl->array_of) return (type){TY_RECORD, of.decl->array_of}; // touches
         return (type){TY_ERROR, NULL};
@@ -3664,6 +3721,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "a", CK_PROPERTY, "float", "Alpha, 0 to 1.", NULL);
     }
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
+    if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
     if (t.kind == TY_RECORD && t.decl->array_of) item(c, "count", CK_PROPERTY, "int", DEVICE_ARRAY_COUNT_DOC, NULL);
     if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
     if (t.kind == TY_STRING) {
@@ -3689,7 +3747,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const bool match = sc->decl && sc->decl->kind == DECL_SYSTEM && !local;
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
                       || (t.kind == TY_SINGLETON && match && !t.decl->is_local);
-    if (t.kind == TY_LIST || t.kind == TY_GRID || changes) {
+    if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes) {
         size_t count;
         const method_form *forms = methods_of(t, &count);
         for (size_t i = 0; i < count; i++) {
@@ -4015,7 +4073,11 @@ static void complete_value_types(completion *c, const unsigned which)
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
-    if (which & VT_LIST) item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
+    if (which & VT_LIST) {
+        item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
+        item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
+        item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
+    }
     if (which & VT_GRID) {
         item(c, "Grid2", CK_STRUCT, "Grid2<T>", builtin_type_doc(TY_GRID), "Grid2<$1>");
         item(c, "Grid3", CK_STRUCT, "Grid3<T>", builtin_type_doc(TY_GRID), "Grid3<$1>");
@@ -4909,7 +4971,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
-                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Grid2", "Grid3",
+                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
 

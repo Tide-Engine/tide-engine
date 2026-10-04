@@ -1,0 +1,12 @@
+// expect: a set has no values to index: it holds keys
+component Seen
+{
+    Set<int> ids;
+}
+
+scene Main { }
+
+system Look(Seen seen, mut Owner owner)
+{
+    if (seen.ids[3] == 3) owner.player = PlayerID(0);
+}
