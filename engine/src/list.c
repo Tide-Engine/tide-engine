@@ -326,6 +326,39 @@ void tide_list_release(tide_list *l, const uint32_t where)
     l->at = 0;
 }
 
+void tide_list_sort(tide_list *l, const uint32_t size, bool (*before)(const void *ctx, const void *a, const void *b),
+                    const void *ctx)
+{
+    const uint32_t n = (uint32_t)tide_list_count(*l);
+    if (n < 2) return;
+    bool copied;
+    char *flat = tide_list_flatten(*l, size, true, &copied);
+    char *temp = tide_alloc((size_t)n * size);
+    // Bottom-up merges of runs twice as long each pass, between the two
+    // buffers; a tie takes the left run's element, so equal ones keep their order
+    char *src = flat;
+    char *dst = temp;
+    for (uint32_t width = 1; width < n; width *= 2) {
+        for (uint32_t lo = 0; lo < n; lo += 2 * width) {
+            const uint32_t mid = lo + width < n ? lo + width : n;
+            const uint32_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+            uint32_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) {
+                const bool right_first = before(ctx, src + (size_t)j * size, src + (size_t)i * size);
+                memcpy(dst + (size_t)k++ * size, src + (size_t)(right_first ? j++ : i++) * size, size);
+            }
+            if (i < mid) memcpy(dst + (size_t)k * size, src + (size_t)i * size, (size_t)(mid - i) * size);
+            if (j < hi) memcpy(dst + (size_t)(k + (mid - i)) * size, src + (size_t)j * size, (size_t)(hi - j) * size);
+        }
+        char *swap = src;
+        src = dst;
+        dst = swap;
+    }
+    if (src != flat) memcpy(flat, src, (size_t)n * size);
+    free(temp);
+    tide_list_unflatten(*l, flat, size, true, copied);
+}
+
 void *tide_list_flatten(const tide_list l, const uint32_t size, const bool changes, bool *copied)
 {
     *copied = false;

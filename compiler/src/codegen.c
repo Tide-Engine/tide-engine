@@ -110,6 +110,11 @@ typedef struct gen {
     VEC(const struct stmt *) pars;
     VEC(const char *) par_names;
     const struct stmt *par_loop;
+    // Its Sort calls with a comparison block, each one's name for its
+    // comparison function and what it captures; the one being generated, or NULL.
+    VEC(const struct expr *) sorts;
+    VEC(const char *) sort_names;
+    const struct expr *comparing;
     // Names made once, before anything is written (name_program): the C names
     // of the program's types, functions and constants, which a local can't
     // take, and each archetype's name.
@@ -3214,6 +3219,7 @@ static void gen_body_stmt(gen *g, const stmt *s);
 static void gen_parallel_call(gen *g, const stmt *s);
 static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
+static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t stmt_cost(const stmt *s);
 
 // Session.Start(Arena { ... }), Join, Connect, Leave and End, Session.Open and
@@ -3730,6 +3736,13 @@ static void gen_stmt(gen *g, const stmt *s)
     }
 
     case S_RETURN: {
+        if (g->comparing) { // A comparison's answer: whether its first element goes before the second
+            indent(g, o);
+            sb_put(o, "return ");
+            gen_as(g, o, s->value, (type){TY_BOOL, NULL});
+            sb_put(o, ";\n");
+            break;
+        }
         if (g->task && !g->frame) { // A task ends, with its value in its frame
             const decl *fn = g->task->info->fn;
             const bool failable = fn->kind == DECL_FUNCTION && fn->result.kind == TY_FAILABLE;
@@ -3964,6 +3977,8 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_inline(g, s->value);
         } else if (s->value->call == CALL_ACTION) {
             gen_block_run(g);
+        } else if (s->value->call == CALL_LIST && s->value->block && str_eq_c(s->value->name, "Sort")) {
+            gen_sort_call(g, s->value);
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
                    || s->value->call == CALL_GRID || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
@@ -5961,41 +5976,42 @@ static bool declared_in(const stmt *s, const stmt *local)
 
 typedef VEC(const stmt *) stmt_list;
 
-static void outer_locals_stmt(const stmt *s, const stmt *loop, stmt_list *out);
+static void outer_locals_stmt(const stmt *s, const stmt *body, const stmt *skip, stmt_list *out);
 
-// The locals of the code around a loop that its step reads.
-static void outer_locals_expr(const expr *e, const stmt *loop, stmt_list *out)
+// The locals of the code around `body` that it reads: declared outside it, and
+// not `skip` (a loop's own variable). For a loop's step, and a Sort's comparison.
+static void outer_locals_expr(const expr *e, const stmt *body, const stmt *skip, stmt_list *out)
 {
     if (!e) return;
-    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local != loop && !declared_in(loop->then_stmt, e->local)) {
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local != skip && !declared_in(body, e->local)) {
         bool known = false;
         for (int i = 0; i < out->count && !known; i++) known = out->items[i] == e->local;
         if (!known) vec_push(*out, e->local);
     }
-    outer_locals_expr(e->object, loop, out);
-    outer_locals_expr(e->lhs, loop, out);
-    outer_locals_expr(e->rhs, loop, out);
-    outer_locals_expr(e->cond, loop, out);
-    for (int i = 0; i < e->args.count; i++) outer_locals_expr(e->args.items[i], loop, out);
-    for (int i = 0; i < e->inits.count; i++) outer_locals_expr(e->inits.items[i].value, loop, out);
-    if (e->block) outer_locals_stmt(e->block, loop, out);
+    outer_locals_expr(e->object, body, skip, out);
+    outer_locals_expr(e->lhs, body, skip, out);
+    outer_locals_expr(e->rhs, body, skip, out);
+    outer_locals_expr(e->cond, body, skip, out);
+    for (int i = 0; i < e->args.count; i++) outer_locals_expr(e->args.items[i], body, skip, out);
+    for (int i = 0; i < e->inits.count; i++) outer_locals_expr(e->inits.items[i].value, body, skip, out);
+    if (e->block) outer_locals_stmt(e->block, body, skip, out);
 }
 
-static void outer_locals_stmt(const stmt *s, const stmt *loop, stmt_list *out)
+static void outer_locals_stmt(const stmt *s, const stmt *body, const stmt *skip, stmt_list *out)
 {
     if (!s) return;
-    for (int i = 0; i < s->stmts.count; i++) outer_locals_stmt(s->stmts.items[i], loop, out);
+    for (int i = 0; i < s->stmts.count; i++) outer_locals_stmt(s->stmts.items[i], body, skip, out);
     for (int i = 0; i < s->cases.count; i++) {
-        for (int k = 0; k < s->cases.items[i].labels.count; k++) outer_locals_expr(s->cases.items[i].labels.items[k], loop, out);
-        for (int k = 0; k < s->cases.items[i].body.count; k++) outer_locals_stmt(s->cases.items[i].body.items[k], loop, out);
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) outer_locals_expr(s->cases.items[i].labels.items[k], body, skip, out);
+        for (int k = 0; k < s->cases.items[i].body.count; k++) outer_locals_stmt(s->cases.items[i].body.items[k], body, skip, out);
     }
-    outer_locals_expr(s->cond, loop, out);
-    outer_locals_expr(s->value, loop, out);
-    outer_locals_expr(s->target, loop, out);
-    outer_locals_stmt(s->init, loop, out);
-    outer_locals_stmt(s->step, loop, out);
-    outer_locals_stmt(s->then_stmt, loop, out);
-    outer_locals_stmt(s->else_stmt, loop, out);
+    outer_locals_expr(s->cond, body, skip, out);
+    outer_locals_expr(s->value, body, skip, out);
+    outer_locals_expr(s->target, body, skip, out);
+    outer_locals_stmt(s->init, body, skip, out);
+    outer_locals_stmt(s->step, body, skip, out);
+    outer_locals_stmt(s->then_stmt, body, skip, out);
+    outer_locals_stmt(s->else_stmt, body, skip, out);
 }
 
 typedef struct par_capture {
@@ -6044,7 +6060,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
         if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
     }
     stmt_list locals = {0};
-    outer_locals_stmt(loop->then_stmt, loop, &locals);
+    outer_locals_stmt(loop->then_stmt, loop->then_stmt, loop, &locals);
     for (int i = 0; i < locals.count; i++) {
         const stmt *l = locals.items[i];
         const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
@@ -6070,6 +6086,203 @@ static void gen_par_heads(gen *g, const decl *sys)
                                                        caps.items[k].name);
         sb_printf(o, "} %s_ctx;\n\nstatic void %s(void *tide_ctx, uint32_t tide_task);\n\n", name, name);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sorting with a comparison block: items.Sort(a, b) { return a.x < b.x; }.
+// The block becomes a function of its own (tide_list_sort calls it for each
+// pair it compares), with what it reads of the code around it copied into a
+// struct, as a parallel loop's step is: the system's world and parameters, or
+// the function's parameters, and the locals it reads.
+
+static void find_sorts_stmt(const stmt *s, gen *g);
+
+static void find_sorts_expr(const expr *e, gen *g)
+{
+    if (!e) return;
+    if (e->kind == E_METHOD && e->call == CALL_LIST && e->block && str_eq_c(e->name, "Sort")) {
+        vec_push(g->sorts, e);
+        vec_push(g->sort_names, made_up(g, "cmp"));
+    }
+    find_sorts_expr(e->object, g);
+    find_sorts_expr(e->lhs, g);
+    find_sorts_expr(e->rhs, g);
+    find_sorts_expr(e->cond, g);
+    for (int i = 0; i < e->args.count; i++) find_sorts_expr(e->args.items[i], g);
+    for (int i = 0; i < e->inits.count; i++) find_sorts_expr(e->inits.items[i].value, g);
+    if (e->block) find_sorts_stmt(e->block, g);
+}
+
+static void find_sorts_stmt(const stmt *s, gen *g)
+{
+    if (!s) return;
+    for (int i = 0; i < s->stmts.count; i++) find_sorts_stmt(s->stmts.items[i], g);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) find_sorts_stmt(s->cases.items[i].body.items[k], g);
+    }
+    find_sorts_expr(s->cond, g);
+    find_sorts_expr(s->value, g);
+    find_sorts_expr(s->target, g);
+    find_sorts_stmt(s->init, g);
+    find_sorts_stmt(s->step, g);
+    find_sorts_stmt(s->then_stmt, g);
+    find_sorts_stmt(s->else_stmt, g);
+}
+
+// What a comparison gets from the code around it: the system's (g->code) or
+// the function's (g->routine) parameters as the body has them, and the locals
+// it reads, by the C names the body uses, so its code generates the same way.
+static capture_list sort_captures(gen *g, const expr *sort)
+{
+    capture_list out = {0};
+    const decl *sys = g->code;
+    const decl *fn = g->routine;
+    if (sys) {
+        if (sys->is_view) {
+            capture(&out, "const tide_world *", "tide_w");
+            capture(&out, "tide_local *", "tide_l");
+            capture(&out, "tide_draw_list *", "tide_draw");
+            capture(&out, "tide_gui *", "tide_ui");
+            capture(&out, "uint32_t", "tide_seed");
+        } else if (sys->is_handler) {
+            capture(&out, ptr_type("", world_type(sys->is_local)), sys->is_local ? "tide_l" : "tide_w");
+            capture(&out, ptr_type("const ", type_cname(sys->event)), trigger_cname(g, sys));
+        } else {
+            capture(&out, "tide_world *", "tide_w");
+        }
+        if (sys->per_entity) capture(&out, "tide_entity", "tide_this");
+        if (sys->per_entity && has_scenes(g->prog, sys->entity_local)) capture(&out, "tide_entity", "tide_scene");
+        for (int i = 0; i < sys->params.count; i++) {
+            const param *p = &sys->params.items[i];
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_LOOKUP) continue;
+            capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
+            if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
+        }
+    } else if (fn) {
+        if (fn->draws) {
+            capture(&out, "tide_draw_list *", "tide_draw");
+            capture(&out, "tide_gui *", "tide_ui");
+            capture(&out, "uint32_t", "tide_seed");
+        }
+        if (fn->uses_this) capture(&out, "tide_entity", "tide_this");
+        for (int i = 0; i < fn->params.count; i++) {
+            const param *p = &fn->params.items[i];
+            if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
+            else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
+            else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
+            else capture(&out, c_type(p->type), local_cname(g, p->name));
+            if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
+        }
+    }
+    stmt_list locals = {0};
+    outer_locals_stmt(sort->block, sort->block, NULL, &locals);
+    for (int i = 0; i < locals.count; i++) {
+        const stmt *l = locals.items[i];
+        if (l == sort->compare[0] || l == sort->compare[1]) continue;
+        const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
+        capture(&out, element ? elem_vtype(l->type) : c_type(l->type), local_cname(g, l->name));
+    }
+    return out;
+}
+
+// Before a system's or function's code: each comparison's captures as a
+// struct, and its prototype. `code` is the system, view or handler, or NULL
+// for a function `routine`.
+static void gen_sort_heads(gen *g, const decl *code, const decl *routine, const stmt *body)
+{
+    sb *o = &g->c;
+    g->sorts.count = 0;
+    g->sort_names.count = 0;
+    find_sorts_stmt(body, g);
+    if (g->sorts.count == 0) return;
+    const decl *outer_code = g->code;
+    const decl *outer_routine = g->routine;
+    g->code = code;
+    g->routine = routine;
+    for (int i = 0; i < g->sorts.count; i++) {
+        const char *name = g->sort_names.items[i];
+        const capture_list caps = sort_captures(g, g->sorts.items[i]);
+        sb_printf(o, "typedef struct %s_ctx {\n    uint8_t tide_none;\n", name); // So the struct is never empty
+        for (int k = 0; k < caps.count; k++) sb_printf(o, "    %s%s%s;\n", caps.items[k].ctype,
+                                                       caps.items[k].ctype[strlen(caps.items[k].ctype) - 1] == '*' ? "" : " ",
+                                                       caps.items[k].name);
+        sb_printf(o, "} %s_ctx;\n\nstatic bool %s(const void *tide_ctx, const void *tide_pa, const void *tide_pb);\n\n", name, name);
+    }
+    g->code = outer_code;
+    g->routine = outer_routine;
+}
+
+static int sort_index(const gen *g, const expr *sort)
+{
+    for (int i = 0; i < g->sorts.count; i++) {
+        if (g->sorts.items[i] == sort) return i;
+    }
+    return -1;
+}
+
+// After the code: each comparison as a function, its captures as locals of
+// the names the code uses, its two elements copies of what it's given.
+static void gen_sort_functions(gen *g, const decl *code, const decl *routine)
+{
+    sb *o = &g->c;
+    const decl *outer_code = g->code;
+    const decl *outer_routine = g->routine;
+    g->code = code;
+    g->routine = routine;
+    for (int i = 0; i < g->sorts.count; i++) {
+        const expr *sort = g->sorts.items[i];
+        const char *name = g->sort_names.items[i];
+        const type element = list_elem(sort->type_decl);
+        const capture_list caps = sort_captures(g, sort);
+        sb_printf(o, "static bool %s(const void *tide_ctx, const void *tide_pa, const void *tide_pb)\n{\n", name);
+        sb_printf(o, "    const %s_ctx *tide_cx = tide_ctx;\n    (void)tide_cx;\n", name);
+        for (int k = 0; k < caps.count; k++) {
+            const par_capture *c = &caps.items[k];
+            sb_printf(o, "    %s%s%s = tide_cx->%s;\n    (void)%s;\n", c->ctype, c->ctype[strlen(c->ctype) - 1] == '*' ? "" : " ",
+                      c->name, c->name, c->name);
+        }
+        g->indent = 1;
+        gen_grid_caches(g);
+        for (int k = 0; k < 2; k++) {
+            const char *var = local_cname(g, sort->compare[k]->name);
+            if (element.kind == TY_STRING) {
+                line(g, o, "const tide_str %s = tide_text_view(*(const tide_text *)%s);", var, k ? "tide_pb" : "tide_pa");
+            } else {
+                line(g, o, "const %s %s = *(const %s *)%s;", c_type(element), var, c_type(element), k ? "tide_pb" : "tide_pa");
+            }
+            line(g, o, "(void)%s;", var);
+        }
+        g->comparing = sort;
+        gen_body_stmt(g, sort->block);
+        g->comparing = NULL;
+        g->list_caches = false;
+        g->indent = 0;
+        sb_put(o, "}\n\n");
+        line_reset(g);
+    }
+    g->code = outer_code;
+    g->routine = outer_routine;
+}
+
+// items.Sort(a, b) { ... } where it is: its captures, then the sort.
+static void gen_sort_call(gen *g, const expr *sort)
+{
+    sb *o = &g->c;
+    const int index = sort_index(g, sort);
+    const char *name = g->sort_names.items[index];
+    const capture_list caps = sort_captures(g, sort);
+    line(g, o, "{");
+    g->indent++;
+    indent(g, o);
+    sb_printf(o, "const %s_ctx tide_cx = {0", name);
+    for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
+    sb_put(o, "};\n");
+    indent(g, o);
+    sb_put(o, "tide_list_sort(&(");
+    gen_expr(g, o, sort->object);
+    sb_printf(o, "), sizeof(%s), %s, &tide_cx);\n", elem_ctype(list_elem(sort->type_decl)), name);
+    g->indent--;
+    line(g, o, "}");
 }
 
 static int par_index(const gen *g, const stmt *loop)
@@ -6402,6 +6615,7 @@ static void gen_system_body(gen *g, const decl *sys)
     sb *o = &g->c;
     const char *name = decl_cname(sys);
     gen_par_heads(g, sys);
+    gen_sort_heads(g, sys, NULL, sys->body);
     sb_printf(o, "// %s " STR_FMT "\n", sys->is_view ? "view" : sys->is_handler ? "event handler" : "system",
               STR_ARG(sys->qualified));
     // TIDE_HELPER: a system that no entity matches is never called.
@@ -6452,6 +6666,7 @@ static void gen_system_body(gen *g, const decl *sys)
     sb_put(o, "}\n");
     line_reset(g);
     gen_par_steps(g, sys);
+    gen_sort_functions(g, sys, NULL);
     g->has_scene = false;
     g->code = NULL;
     sb_put(o, "\n");
@@ -6882,6 +7097,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
 static void gen_routine(gen *g, const decl *m)
 {
     sb *o = &g->c;
+    gen_sort_heads(g, NULL, m, m->body);
     if (m->owner) sb_printf(o, "// " STR_FMT "." STR_FMT "\n", STR_ARG(m->owner->qualified), STR_ARG(m->name));
     else sb_printf(o, "// " STR_FMT "\n", STR_ARG(m->qualified));
     gen_routine_signature(g, o, m);
@@ -6908,6 +7124,7 @@ static void gen_routine(gen *g, const decl *m)
     sb_put(o, "}\n");
     line_reset(g);
     sb_put(o, "\n");
+    gen_sort_functions(g, NULL, m);
 }
 
 // A task's code for one world (gen_task_resume) as a function: from where it

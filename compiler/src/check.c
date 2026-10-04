@@ -38,6 +38,8 @@ typedef struct checker {
     const stmt *parallel;     // Checking a parallel loop's step: the loop
     int grid_loops;           // Foreach loops over grids being checked, which go through cells without waiting
     int parallel_locals;      // ...and how many locals were in scope before it: the rest are the step's own
+    const expr *compare;      // Checking a Sort's comparison block: the call
+    int compare_locals;       // ...and how many locals were in scope before its own
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -1040,6 +1042,8 @@ static bool equatable(const type t)
 static type check_list_literal(checker *c, expr *e, type want);
 static type check_list_method(checker *c, expr *e, type list);
 static type check_map_method(checker *c, expr *e, type map);
+static bool always_returns(const stmt *s);
+static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
@@ -3507,10 +3511,156 @@ static type check_map_method(checker *c, expr *e, const type map)
     return (type){methods[m].result, NULL};
 }
 
+// "a.x < b.x" for the notes about a Sort's comparison, with its elements' names.
+static const char *compare_example(const expr *sort)
+{
+    static char buf[2][160];
+    static int next;
+    char *b = buf[next++ % 2];
+    const str a = sort->compare[0] ? sort->compare[0]->name : str_from("a");
+    const str z = sort->compare[1] ? sort->compare[1]->name : str_from("b");
+    snprintf(b, sizeof buf[0], STR_FMT " < " STR_FMT, STR_ARG(a), STR_ARG(z));
+    return b;
+}
+
+static void check_compare_stmt(checker *c, const stmt *s);
+
+// What a comparison can't do: anything with an effect, since it runs again
+// and again as the list sorts, in an order nothing promises.
+static void check_compare_expr(checker *c, const expr *e)
+{
+    if (!e) return;
+    const char *what = NULL;
+    switch (e->call) {
+    case CALL_SPAWN: what = "spawn"; break;
+    case CALL_SEND: what = "send events"; break;
+    case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "change entities"; break;
+    case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load or unload scenes"; break;
+    case CALL_SESSION: what = "change the session"; break;
+    case CALL_CLIPBOARD: what = "use the clipboard"; break;
+    case CALL_DRAW: what = "draw"; break;
+    case CALL_GUI: what = "use the GUI"; break;
+    case CALL_SNAP: what = "snap"; break;
+    case CALL_WAIT: what = "wait"; break;
+    case CALL_ACTION: what = "run a block"; break;
+    case CALL_NEW_GRID: what = "make grids"; break;
+    default: break;
+    }
+    if (!what && e->kind == E_AWAIT) what = "wait";
+    if (!what && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method && e->method->is_extern) what = "call C";
+    if (!what && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method && e->method->is_async) what = "start tasks";
+    if (what) {
+        diag_error(e->at, "a comparison can't %s: it runs again and again as the list sorts, in an order nothing promises", what);
+        diag_note("it only compares its two elements, and returns whether the first goes before the second");
+    }
+    check_compare_expr(c, e->object);
+    check_compare_expr(c, e->lhs);
+    check_compare_expr(c, e->rhs);
+    check_compare_expr(c, e->cond);
+    for (int i = 0; i < e->args.count; i++) check_compare_expr(c, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) check_compare_expr(c, e->inits.items[i].value);
+    if (e->block) check_compare_stmt(c, e->block);
+}
+
+static void check_compare_stmt(checker *c, const stmt *s)
+{
+    if (!s) return;
+    for (int i = 0; i < s->stmts.count; i++) check_compare_stmt(c, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) check_compare_expr(c, s->cases.items[i].labels.items[k]);
+        for (int k = 0; k < s->cases.items[i].body.count; k++) check_compare_stmt(c, s->cases.items[i].body.items[k]);
+    }
+    check_compare_expr(c, s->cond);
+    check_compare_expr(c, s->value);
+    check_compare_expr(c, s->target);
+    check_compare_stmt(c, s->init);
+    check_compare_stmt(c, s->step);
+    check_compare_stmt(c, s->then_stmt);
+    check_compare_stmt(c, s->else_stmt);
+}
+
+// items.Sort(a, b) { return a.x < b.x; }: sorts the list, stable, by a
+// comparison written after the call, whose two names are the elements it
+// compares, read-only copies. It's checked as a function of its own: it
+// returns a bool on every path, and changes nothing but what it declares.
+static type check_sort(checker *c, expr *e, const type list)
+{
+    const type element = list_element(list);
+    e->call = CALL_LIST;
+    e->type_decl = list.decl;
+    if (!e->block || e->args.count != 2 || e->args.items[0]->kind != E_NAME || e->args.items[1]->kind != E_NAME) {
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->kind != E_NAME) check_expr(c, e->args.items[i]);
+        }
+        diag_error(e->at, "Sort names the two elements it compares, then says in a block whether the first goes before the second");
+        diag_note("like 'items.Sort(a, b) { return a.x < b.x; }'");
+        if (e->block) check_stmt(c, e->block);
+        return T_ERR;
+    }
+    const char *refused = c->method && c->method->owner        ? "a struct's or component's method"
+                        : c->method && c->method->takes_action ? "a function that takes an Action"
+                        : async_code(c)                        ? "async code"
+                        : c->block_depth > 0                   ? "a block written after a call"
+                        : c->in_input                          ? input_code(c)
+                                                               : NULL;
+    if (refused) {
+        diag_error(e->at, "%s can't sort with a comparison yet", refused);
+        diag_note("sort in a system, a view, a handler or a plain function");
+    }
+    decl *changer = NEW(decl);
+    changer->name = str_from("List.Sort");
+    check_writable(c, e->object, changer, NULL);
+    push_scope(c);
+    for (int i = 0; i < 2; i++) {
+        expr *arg = e->args.items[i];
+        stmt *local = NEW(stmt);
+        local->kind = S_VAR;
+        local->at = arg->at;
+        local->name = arg->name;
+        local->name_at = arg->at;
+        local->type = element;
+        check_reserved(arg->name, arg->at);
+        if (find_local(c, arg->name) || find_param(c, arg->name)) {
+            diag_error(arg->at, "'" STR_FMT "' is already declared", STR_ARG(arg->name));
+        } else if (i == 1 && str_eq(arg->name, e->args.items[0]->name)) {
+            diag_error(arg->at, "the two elements need two names");
+        }
+        vec_push(c->locals, local);
+        arg->bind = BIND_LOCAL;
+        arg->local = local;
+        arg->type = element;
+        e->compare[i] = local;
+    }
+    const expr *outer = c->compare;
+    const int outer_locals = c->compare_locals;
+    const int loops = c->loop_depth;
+    const int switches = c->switch_depth;
+    c->compare = e;
+    c->compare_locals = c->locals.count;
+    c->loop_depth = 0;
+    c->switch_depth = 0;
+    c->block_depth++;
+    check_stmt(c, e->block);
+    c->block_depth--;
+    check_compare_stmt(c, e->block);
+    c->compare = outer;
+    c->compare_locals = outer_locals;
+    c->loop_depth = loops;
+    c->switch_depth = switches;
+    pop_scope(c);
+    if (!always_returns(e->block)) {
+        diag_error(e->block->at, "the comparison doesn't return on every path");
+        diag_note("end every path with 'return %s;' or the like: whether the first element goes before the second",
+                  compare_example(e));
+    }
+    return T_VOID_;
+}
+
 // items.Add(x), items.Contains(x), ...: a list's methods. Those that change it
 // need it to be a variable or field that can be changed.
 static type check_list_method(checker *c, expr *e, const type list)
 {
+    if (str_eq_c(e->name, "Sort")) return check_sort(c, e, list);
     static const struct {
         const char *name;
         const char *form;
@@ -4095,9 +4245,26 @@ static bool check_step_write(checker *c, const expr *target)
     return false;
 }
 
+// In a Sort's comparison block: whether it may write `target`, a variable it
+// declares itself. It runs again and again as the list sorts, so it changes
+// nothing outside it.
+static bool check_compare_write(checker *c, const expr *target)
+{
+    const expr *root = assign_root((expr *)target);
+    if (root && root->bind == BIND_LOCAL) {
+        for (int i = c->compare_locals; i < c->locals.count; i++) {
+            if (c->locals.items[i] == root->local) return true;
+        }
+    }
+    diag_error(target->at, "a comparison runs again and again as the list sorts, so it changes nothing outside it");
+    diag_note("work it out before the sort, or in the variables the comparison declares");
+    return false;
+}
+
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of)
 {
     if (c->parallel && !check_step_write(c, target)) return false;
+    if (c->compare && !check_compare_write(c, target)) return false;
     if (target->kind == E_THIS) {
         diag_error(target->at, "'this' is the entity the code runs for, so it can't change");
         if (called) diag_note("store it in a 'mut var' first");
@@ -4976,6 +5143,18 @@ static void check_switch(checker *c, stmt *s)
 // `return;` everywhere, and `return value;` in a method that returns one.
 static void check_return(checker *c, const stmt *s)
 {
+    if (c->compare) { // A comparison's answer: whether the first element goes before the second
+        const type value = s->value ? check_expr_want(c, s->value, T_BOOL_) : T_VOID_;
+        if (!s->value) {
+            diag_error(s->at, "a comparison returns whether its first element goes before the second: 'return %s;'",
+                       compare_example(c->compare));
+        } else if (value.kind != TY_ERROR && value.kind != TY_BOOL) {
+            diag_error(s->value->at, "a comparison returns a bool, whether its first element goes before the second, not %s",
+                       type_name(value));
+            diag_note("compare the two, like 'return %s;'", compare_example(c->compare));
+        }
+        return;
+    }
     const decl *m = c->method;
     const type value = s->value ? check_expr_want(c, s->value, m ? m->return_type : T_ERR) : T_VOID_;
     if (!m) {
@@ -5372,7 +5551,9 @@ static void check_stmt(checker *c, stmt *s)
                       STR_ARG(named->method ? named->method->name : named->name));
             unwrap_fix(c, e, e->type);
         }
-        if (e->block) {
+        if (e->block && call == CALL_LIST && str_eq_c(called->name, "Sort")) {
+            // A Sort's comparison: checked with the call, as code of its own (check_sort)
+        } else if (e->block) {
             // The block after a call: the caller's own code, run where the function runs it.
             const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action);
             if (!takes && e->type.kind != TY_ERROR) {

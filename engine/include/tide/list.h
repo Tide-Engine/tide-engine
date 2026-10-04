@@ -180,6 +180,14 @@ void tide_list_own(tide_list *l, uint32_t size, uint32_t where);
 // A world's list leaving it. Release its elements' text first.
 void tide_list_release(tide_list *l, uint32_t where);
 
+// Sorts the elements, stable: `before(ctx, a, b)` says whether `a` goes before
+// `b` (a strict order), and elements it doesn't order keep their order. The
+// elements are compared where they are, or in a copy when they're in chunks,
+// which goes back once sorted. Merge sort, so the same calls in the same order
+// on every machine.
+void tide_list_sort(tide_list *l, uint32_t size, bool (*before)(const void *ctx, const void *a, const void *b),
+                    const void *ctx);
+
 // For C, which takes a list as a pointer to its elements side by side (NULL
 // for none): the list's own elements when they are, made its world's own when
 // C `changes` them, or else a copy, which tide_list_unflatten lets go of,

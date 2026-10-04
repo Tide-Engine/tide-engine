@@ -1,0 +1,15 @@
+// expect: the comparison doesn't return on every path
+component Board
+{
+    List<int> numbers;
+}
+
+scene Main { }
+
+system Order(mut Board board)
+{
+    board.numbers.Sort(a, b)
+    {
+        if (a < b) return true;
+    }
+}

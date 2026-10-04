@@ -543,6 +543,7 @@ struct expr {
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
+    struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
