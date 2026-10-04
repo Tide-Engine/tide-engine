@@ -11,7 +11,13 @@
 #include "json.h"
 #include "packages.h"
 
-enum { METHOD_NOT_FOUND = -32601, PARSE_ERROR = -32700, INVALID_PARAMS = -32602, REQUEST_FAILED = -32803 };
+enum {
+    METHOD_NOT_FOUND = -32601,
+    PARSE_ERROR = -32700,
+    INVALID_PARAMS = -32602,
+    REQUEST_FAILED = -32803,
+    REQUEST_CANCELLED = -32800,
+};
 
 // The id of our one request of the editor: to watch files for us.
 #define WATCH_REQUEST "tidels-watch"
@@ -25,8 +31,17 @@ void lsp_init(lsp_server *s, const lsp_send_fn send, void *user)
 
 static void free_kept(lsp_server *s);
 
+static void forget_unsettled(lsp_server *s)
+{
+    for (int i = 0; i < s->unsettled_count; i++) free(s->unsettled[i]);
+    free(s->unsettled);
+    s->unsettled = NULL;
+    s->unsettled_count = 0;
+}
+
 void lsp_free(lsp_server *s)
 {
+    forget_unsettled(s);
     for (int i = 0; i < s->doc_count; i++) {
         free(s->docs[i].uri);
         free(s->docs[i].text);
@@ -566,6 +581,19 @@ static void reply_error(lsp_server *s, const json *id, const int code, const cha
     jb_free(&b);
 }
 
+// A document changed, and its game's analysis waits (lsp_server.defer).
+static void unsettle(lsp_server *s, const char *uri)
+{
+    for (int i = 0; i < s->unsettled_count; i++) {
+        if (strcmp(s->unsettled[i], uri) == 0) return;
+    }
+    s->unsettled = realloc(s->unsettled, sizeof(char *) * (size_t)(s->unsettled_count + 1));
+    char *copy = malloc(strlen(uri) + 1);
+    if (!s->unsettled || !copy) abort();
+    strcpy(copy, uri);
+    s->unsettled[s->unsettled_count++] = copy;
+}
+
 // Diagnostics for one file: of the analysed game, or none (`file` < 0).
 static void publish_diagnostics(lsp_server *s, const char *uri, const int file)
 {
@@ -951,6 +979,13 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     const json *id = json_get(msg, "id");
     const json *params = json_get(msg, "params");
 
+    // Changes that waited are analysed before anything but another change:
+    // what's sent comes in the order it would have without waiting
+    if (s->unsettled_count > 0 && method && strcmp(method, "textDocument/didOpen") != 0
+        && strcmp(method, "textDocument/didChange") != 0 && strcmp(method, "$/cancelRequest") != 0) {
+        lsp_settle(s);
+    }
+
     if (!method) {
         // A response to our request: the editor watches the files, or it
         // can't and says so. Nothing waits for it either way.
@@ -978,8 +1013,12 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         if (uri && text && text->kind == JSON_STRING) {
             const lsp_document *d = set_doc(s, uri, text);
             s->changes++;
-            analyze(s, d->uri);
-            publish_game_diagnostics(s);
+            if (s->defer) {
+                unsettle(s, d->uri); // Analysed once the changes after it are in
+            } else {
+                analyze(s, d->uri);
+                publish_game_diagnostics(s);
+            }
         }
     } else if (strcmp(method, "textDocument/didClose") == 0) {
         const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
@@ -1047,4 +1086,74 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     // Other notifications ($/cancelRequest, $/setTrace...) need nothing.
 
     json_release();
+}
+
+void lsp_settle(lsp_server *s)
+{
+    bool analyzed = false;
+    for (int i = 0; i < s->unsettled_count; i++) {
+        const lsp_document *d = find_doc(s, s->unsettled[i]);
+        if (!d) continue;                                    // Closed since
+        if (analyzed && select_uri(d->uri)) continue;        // Its game is the one just analysed
+        analyze(s, d->uri);
+        publish_game_diagnostics(s);
+        analyzed = true;
+    }
+    forget_unsettled(s);
+}
+
+// Whether `text` has `word` in it: a look before parsing.
+static bool mentions(const char *text, const size_t len, const char *word)
+{
+    const size_t n = strlen(word);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (text[i] == word[0] && memcmp(text + i, word, n) == 0) return true;
+    }
+    return false;
+}
+
+void lsp_handle_ahead(lsp_server *s, const char *message, const size_t len, const lsp_message *later, const int later_count)
+{
+    // Few messages cancel anything, so most are handled without a second parse
+    bool cancels = false;
+    for (int i = 0; i < later_count && !cancels; i++) cancels = mentions(later[i].text, later[i].len, "$/cancelRequest");
+    if (!cancels) {
+        lsp_handle(s, message, len);
+        return;
+    }
+    // A request's id, kept past its tree
+    const json *msg = json_parse(message, len);
+    const json *id = msg ? json_get(msg, "id") : NULL;
+    const bool request = id && json_str(json_get(msg, "method")) && (id->kind == JSON_NUMBER || id->kind == JSON_STRING);
+    json mine = {0};
+    char *name = NULL;
+    if (request) {
+        mine.kind = id->kind;
+        mine.number = id->number;
+        if (id->kind == JSON_STRING) {
+            name = malloc(id->string_len + 1);
+            if (!name) abort();
+            memcpy(name, id->string, id->string_len);
+            name[id->string_len] = '\0';
+            mine.string = name;
+            mine.string_len = id->string_len;
+        }
+    }
+    json_release();
+    bool cancelled = false;
+    for (int i = 0; request && i < later_count && !cancelled; i++) {
+        if (!mentions(later[i].text, later[i].len, "$/cancelRequest")) continue;
+        const json *other = json_parse(later[i].text, later[i].len);
+        const char *method = other ? json_str(json_get(other, "method")) : NULL;
+        const json *theirs = method && strcmp(method, "$/cancelRequest") == 0 ? json_path(other, "params", "id", NULL) : NULL;
+        if (theirs && theirs->kind == mine.kind) {
+            cancelled = mine.kind == JSON_NUMBER ? theirs->number == mine.number
+                                                 : theirs->string_len == mine.string_len
+                                                       && memcmp(theirs->string, mine.string, mine.string_len) == 0;
+        }
+        json_release();
+    }
+    if (cancelled) reply_error(s, &mine, REQUEST_CANCELLED, "cancelled");
+    else lsp_handle(s, message, len);
+    free(name);
 }

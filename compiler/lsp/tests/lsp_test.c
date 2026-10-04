@@ -3243,3 +3243,106 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     TIDE_CHECK(has(add_mut, "Declare 'body' as mut") && has(add_mut, "\"newText\":\"mut \""));
     TIDE_CHECK(has(add_mut, "\"start\":{\"line\":2,\"character\":12}"));
 }
+
+// ---------------------------------------------------------------------------
+// Reading ahead: changes wait to be analysed together, and cancelled requests
+// aren't worked out (as main.c runs the server)
+
+static void change_document(const char *text)
+{
+    jbuf b = {0};
+    jb_put(&b, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":"
+               "{\"uri\":\"file:///test.tide\",\"version\":2},\"contentChanges\":[{\"text\":");
+    jb_string(&b, text);
+    jb_put(&b, "}]}}");
+    handle(b.data);
+    jb_free(&b);
+}
+
+TIDE_TEST(lsp_changes_wait_to_be_analysed_together)
+{
+    start();
+    server.defer = true;
+    // Nothing goes out for a change, or for the ones after it
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.pos = 1;\n}\n");
+    TIDE_CHECK(sent_count == 0);
+    change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.spin = 1;\n}\n");
+    TIDE_CHECK(sent_count == 0);
+    // Once input goes quiet, the text as the last change left it is analysed, once
+    lsp_settle(&server);
+    TIDE_CHECK(sent_count == 1);
+    TIDE_CHECK(has(last_sent(), "\"method\":\"textDocument/publishDiagnostics\""));
+    TIDE_CHECK(has(last_sent(), "Body has no field 'spin'"));
+    TIDE_CHECK(!has(last_sent(), "Body has no field 'pos'"));
+    clear_sent();
+    lsp_settle(&server); // Nothing waits any more
+    TIDE_CHECK(sent_count == 0);
+
+    // A request doesn't wait for quiet: the change is analysed for it, and
+    // its diagnostics go out before the reply, as they would without waiting
+    change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position.x = 1;\n}\n");
+    TIDE_CHECK(sent_count == 0);
+    cursor_line = 24;
+    cursor_character = 6;
+    const char *reply = request("textDocument/hover");
+    TIDE_CHECK(sent_count == 2);
+    TIDE_CHECK(has(sent[0], "\"method\":\"textDocument/publishDiagnostics\"") && has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(reply, "\"id\":7") && has(reply, "\"result\""));
+    clear_sent();
+    lsp_settle(&server);
+    TIDE_CHECK(sent_count == 0);
+
+    // Closing isn't a change: what waited is analysed first, then the
+    // document's diagnostics go with it
+    change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.pos = 1;\n}\n");
+    TIDE_CHECK(sent_count == 0 && server.unsettled_count == 1);
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":"
+           "{\"uri\":\"file:///test.tide\"}}}");
+    TIDE_CHECK(server.unsettled_count == 0);
+    TIDE_CHECK(sent_count == 2 && has(sent[0], "Body has no field 'pos'") && has(sent[1], "\"diagnostics\":[]"));
+}
+
+TIDE_TEST(lsp_cancelled_requests_are_skipped)
+{
+    start();
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position.x = 1;\n}\n");
+    static const char hover[] =
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":"
+        "{\"uri\":\"file:///test.tide\"},\"position\":{\"line\":24,\"character\":6}}}";
+    static const char named[] =
+        "{\"jsonrpc\":\"2.0\",\"id\":\"h-7\",\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":"
+        "{\"uri\":\"file:///test.tide\"},\"position\":{\"line\":24,\"character\":6}}}";
+    static const char cancel_7[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":7}}";
+    static const char cancel_8[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":8}}";
+    static const char cancel_named[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":\"h-7\"}}";
+    static const char unrelated[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/setTrace\",\"params\":{\"value\":\"off\"}}";
+
+    // With nothing after it, or nothing that cancels it, a request is answered
+    clear_sent();
+    lsp_handle_ahead(&server, hover, strlen(hover), NULL, 0);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"result\""));
+    const lsp_message others[] = {{unrelated, strlen(unrelated)}, {cancel_8, strlen(cancel_8)}, {cancel_named, strlen(cancel_named)}};
+    clear_sent();
+    lsp_handle_ahead(&server, hover, strlen(hover), others, 3);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"result\""));
+
+    // One that a later message cancels is answered as cancelled
+    const lsp_message later[] = {{unrelated, strlen(unrelated)}, {cancel_7, strlen(cancel_7)}};
+    clear_sent();
+    lsp_handle_ahead(&server, hover, strlen(hover), later, 2);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"code\":-32800"));
+    TIDE_CHECK(!has(last_sent(), "\"result\""));
+
+    // Ids can be text
+    clear_sent();
+    lsp_handle_ahead(&server, named, strlen(named), others, 3);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":\"h-7\"") && has(last_sent(), "\"code\":-32800"));
+    clear_sent();
+    lsp_handle_ahead(&server, named, strlen(named), later, 2);
+    TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":\"h-7\"") && has(last_sent(), "\"result\""));
+
+    // A notification has no id to cancel: a change is taken in all the same
+    clear_sent();
+    lsp_handle_ahead(&server, cancel_7, strlen(cancel_7), later, 2);
+    TIDE_CHECK(sent_count == 0);
+}

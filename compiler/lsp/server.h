@@ -14,6 +14,13 @@ typedef struct lsp_document {
 
 typedef void (*lsp_send_fn)(void *user, const char *message, size_t len);
 
+// A message that has arrived, for a host that reads ahead of the one it
+// handles (lsp_handle_ahead).
+typedef struct lsp_message {
+    const char *text;
+    size_t len;
+} lsp_message;
+
 typedef struct lsp_server {
     lsp_send_fn send;
     void *user;
@@ -35,8 +42,23 @@ typedef struct lsp_server {
     bool shutdown;
     bool exited;
     int exit_code;
+    // A big game takes a while to analyse, and an editor sends a change at
+    // every key. A host that reads ahead sets `defer`: a document's change
+    // then waits to be analysed, until a message that isn't a change is
+    // handled or the host calls lsp_settle, so the changes that arrived
+    // meanwhile are analysed once, as the last of them left the text.
+    bool defer;
+    char **unsettled;           // The documents changed since their diagnostics last went out
+    int unsettled_count;
 } lsp_server;
 
 void lsp_init(lsp_server *s, lsp_send_fn send, void *user);
 void lsp_handle(lsp_server *s, const char *message, size_t len);
+// lsp_handle, for a host that reads ahead: `later` is what has arrived after
+// this message, in order. A request that one of them cancels
+// ($/cancelRequest) is answered as cancelled, without its work.
+void lsp_handle_ahead(lsp_server *s, const char *message, size_t len, const lsp_message *later, int later_count);
+// Analyses the documents whose changes waited (`defer`), and sends their
+// games' diagnostics. The host calls it once nothing more has arrived.
+void lsp_settle(lsp_server *s);
 void lsp_free(lsp_server *s);
