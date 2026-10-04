@@ -72,7 +72,7 @@ system Fold(mut Field field, Time time)
             var d = other.position - item.position;
             var r2 = Math.Dot(d, d) + 0.01;
             pull += d * (other.mass / (r2 * Math.Sqrt(r2)));
-            ordered += other.seed;
+            ordered += other.mass;
         }
         item.velocity += pull * time.dt;
         item.root = Math.Sqrt(item.seed);
