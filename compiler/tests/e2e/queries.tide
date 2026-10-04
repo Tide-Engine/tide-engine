@@ -1,0 +1,249 @@
+// Read-only queries select a second candidate set, with current-world reads.
+
+component Body
+{
+    float2 position;
+    float radius = 0.5;
+}
+
+[Sparse]
+component Fighter
+{
+    int number;
+}
+
+[Sparse]
+component Target { }
+
+[Sparse]
+component Shield { }
+
+component Ghost { }
+
+component Seen { }
+
+component Health
+{
+    int value;
+}
+
+component Bullet
+{
+    float endX = 10;
+    int damage = 7;
+    Entity hit;
+    float fraction = 1;
+    int candidates;
+    int emptyVisits;
+    int pairs;
+    int continued;
+    int stopped;
+    int markedVisits;
+}
+
+component Counter
+{
+    int value;
+    int seen;
+}
+
+component Sample
+{
+    int number;
+    int value;
+}
+
+component Probe
+{
+    Entity next;
+    int before;
+    int after;
+}
+
+component Work
+{
+    int value;
+    int total;
+    int visits;
+}
+
+singleton Stats
+{
+    int healthBeforeEvents;
+    int handles;
+    int workVisits;
+    int workPrefix;
+    int impossibleVisits;
+}
+
+event Hit
+{
+    int damage;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    // Farther fighter first: collision selection must inspect every candidate.
+    Spawn(Body { position = float2(8, 0) }, Fighter { number = 1 }, Target, Health { value = 50 });
+    Spawn(Body { position = float2(4, 0) }, Fighter { number = 2 }, Target, Health { value = 40 });
+    Spawn(Body { position = float2(2, 0) }, Fighter { number = 3 }, Target, Shield, Health { value = 30 });
+    Spawn(Body { position = float2(1, 0) }, Fighter { number = 4 }, Health { value = 20 });
+    Spawn(Body { position = float2(0.5, 0) }, Target); // Sparse Fighter absent.
+    Spawn(Fighter { number = 5 }, Target, Health { value = 10 }); // Body absent.
+    var empty = Spawn(Body { position = float2(100, 0) }, Ghost);
+    empty.Remove(Ghost); // The tag is possible, but absent when ticks run.
+    Spawn(Body { position = float2(0, 0) }, Bullet);
+    Spawn(Body { position = float2(0, 2) }, Bullet);
+    Spawn(Counter { value = 10 });
+    Spawn(Counter { value = 20 });
+    Spawn(Counter { value = 30 });
+    Spawn(Sample { number = 1, value = 1 });
+    var second = Spawn(Sample { number = 2, value = 2 });
+    Spawn(Sample { number = 3, value = 3 });
+    Spawn(Probe { next = second });
+    for (var i = 0; i < 4096; i++) Spawn(Work { value = i });
+}
+
+// An earlier outer set writes the component later queried by bullets.
+system MoveFighters(mut Body body, with Fighter)
+{
+    body.position.x += 0.25;
+}
+
+// Component values from rows can be passed to normal functions.
+float Entry(float from, float to, Body body)
+{
+    return (body.position.x - body.radius - from) / (to - from);
+}
+
+system BulletHits(Body shot, mut Bullet bullet,
+                  query (Body body, Fighter fighter, with Target, without Shield) fighters,
+                  query (Body body, with Ghost) empty,
+                  query (with Target, without Shield) targets,
+                  query (with Seen) marked)
+{
+    bullet.hit = default;
+    bullet.fraction = 1;
+    bullet.candidates = 0;
+    bullet.emptyVisits = 0;
+    bullet.pairs = 0;
+    bullet.continued = 0;
+    bullet.stopped = 0;
+    bullet.markedVisits = 0;
+    foreach (var fighter in fighters)
+    {
+        bullet.candidates += 1;
+        var fraction = Entry(shot.position.x, bullet.endX, fighter.body);
+        if (Math.Abs(shot.position.y - fighter.body.position.y) <= fighter.body.radius &&
+            fraction >= 0 && fraction < bullet.fraction)
+        {
+            bullet.hit = fighter.entity;
+            bullet.fraction = fraction;
+        }
+        foreach (var target in targets)
+        {
+            if (target.entity == fighter.entity) bullet.pairs += 1;
+        }
+    }
+    foreach (var missing in empty) bullet.emptyVisits += int(missing.body.position.x) + 1;
+    foreach (var fighter in fighters)
+    {
+        if (fighter.fighter.number == 1) continue;
+        bullet.continued += 1;
+    }
+    foreach (var target in targets)
+    {
+        if (target.entity != this) bullet.stopped += 1;
+        break;
+    }
+    // These Adds cannot affect membership until the end of the tick.
+    foreach (var target in targets) target.entity.Add(Seen);
+    foreach (var row in marked)
+    {
+        if (row.entity != this) bullet.markedVisits += 1;
+    }
+    if (bullet.hit != default) bullet.hit.Send(Hit { damage = bullet.damage });
+}
+
+// Queries alone run once. Events above have not changed Health yet.
+system Audit(mut Stats stats, query (Health health, with Fighter) fighters)
+{
+    stats.healthBeforeEvents = 0;
+    stats.handles = 0;
+    foreach (var fighter in fighters)
+    {
+        stats.healthBeforeEvents += fighter.health.value;
+        if (fighter.entity != default) stats.handles += 1;
+    }
+}
+
+event(Hit hit) TakeHit(mut Health health)
+{
+    health.value -= hit.damage;
+}
+
+// Reads include earlier rows' writes, as with World reads-own-writes.
+system Count(mut Counter counter, query (Counter candidate) counters)
+{
+    counter.value += 1;
+    counter.seen = 0;
+    foreach (var row in counters) counter.seen += row.candidate.value;
+}
+
+// Setting a component may replace its pages when a snapshot shares them.
+// The next iteration and a nested query must read the replacements.
+system ProbeWorld(mut Probe probe, mut World world, query (Sample sample) values)
+{
+    probe.before = 0;
+    probe.after = 0;
+    foreach (var row in values)
+    {
+        probe.before += row.sample.value;
+        if (row.sample.number == 1) world.Set<Sample>(probe.next, Sample { number = 2, value = 20 });
+        mut var changed = row.sample;
+        changed.value += 1;
+        world.Set<Sample>(row.entity, changed);
+        foreach (var current in values)
+        {
+            if (current.entity == row.entity) probe.after += current.sample.value;
+        }
+    }
+}
+
+// Enough per-entity work for native and web ticks to use multiple threads.
+// This system reads a query, changes only its own row and can split.
+system QueryWork(mut Work work, query (Body body, Fighter fighter, with Target, without Shield) fighters)
+{
+    work.total = 0;
+    work.visits = 0;
+    foreach (var fighter in fighters)
+    {
+        work.total += int(fighter.body.position.x * 4) * fighter.fighter.number;
+        work.visits += 1;
+    }
+    for (var i = 0; i < 1024; i++) work.value = (work.value * 17 + i + work.total) % 65521;
+}
+
+// The query candidates themselves span two chunks. Continue skips the first
+// row of the second chunk; break stops at the next, after 2048 rows counted.
+system AuditChunks(mut Stats stats, query (Work work) works,
+                   query (Health health, with Ghost) impossible)
+{
+    stats.workVisits = 0;
+    stats.workPrefix = 0;
+    stats.impossibleVisits = 0;
+    foreach (var row in works) stats.workVisits += row.work.visits;
+    mut var at = 0;
+    foreach (var row in works)
+    {
+        var index = at;
+        at += 1;
+        if (index == 2048) continue;
+        if (index == 2049) break;
+        stats.workPrefix += row.work.visits;
+    }
+    // No archetype can have both: codegen emits an empty query directly.
+    foreach (var row in impossible) stats.impossibleVisits += row.health.value + 1;
+}

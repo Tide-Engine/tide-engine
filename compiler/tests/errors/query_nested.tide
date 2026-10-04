@@ -1,0 +1,4 @@
+// expect: a query can't contain another query
+component Body { float x; }
+scene Main { }
+system Hits(query (query (Body body) bodies) groups) { }

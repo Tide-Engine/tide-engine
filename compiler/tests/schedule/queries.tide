@@ -1,0 +1,56 @@
+// Query candidates are independent of the outer Shot/Fighter filters. Reads
+// are global even when those outer filters can't meet the writers' entities.
+component Body { float x; }
+component Shot { }
+component Fighter { }
+[Sparse] component Ghost { }
+component Energy { int value; }
+component Cargo { int value; }
+singleton Score { int value; }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body, Fighter);
+    Spawn(Body, Fighter, Ghost);
+    Spawn(Body, Shot, Energy);
+    Spawn(Cargo);
+}
+
+system MoveFighters(mut Body body, with Fighter)
+{
+    body.x += 1;
+}
+
+system BulletHits(mut Energy energy, with Shot, query (Body body, with Fighter, without Ghost) fighters)
+{
+    foreach (var fighter in fighters) energy.value += int(fighter.body.x);
+}
+
+system Alias(mut Body body, with Shot, query (Body other, with Fighter) fighters)
+{
+    foreach (var fighter in fighters) body.x += fighter.other.x;
+}
+
+system WorldAlias(with Shot, query (Body body, with Fighter) fighters, mut World world)
+{
+    foreach (var fighter in fighters)
+    {
+        mut var body = fighter.body;
+        body.x += 1;
+        world.Set<Body>(fighter.entity, body);
+    }
+}
+
+system Count(mut Score score, query (with Fighter, without Ghost) fighters)
+{
+    foreach (var fighter in fighters)
+    {
+        if (fighter.entity != default) score.value += 1;
+    }
+}
+
+system Carry(mut Cargo cargo)
+{
+    cargo.value += 1;
+}

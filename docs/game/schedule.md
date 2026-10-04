@@ -67,6 +67,8 @@ stage 2  Drain  (per entity)
 
 The editors show it above the system too, `stage 1 · World: reads Armor; writes Health`, and when you hover the system or its `World` parameter.
 
+[Read-only query parameters](./systems.md#another-set-of-entities) also read components of a separate entity set. Those bindings count as reads of any entity's component and appear in the schedule and editor hints, so `query (Body body, with Fighter) fighters` waits for earlier systems that write `Body`, even when their outer entity filters differ. The query's `with` and `without` filters access no component data.
+
 In a big game, the long lists are cut short. Every wait that's a system's own is there, but the ones that go through another system (`and through Fire`) and the systems it runs alongside are named up to 32 each and counted past that: `after 412 more, through those`, `alongside Expire, Fade and 168 more`.
 
 ## When systems wait
@@ -78,7 +80,7 @@ Two systems **conflict** when one writes a component or singleton the other read
 Some things never make systems wait:
 
 - **Filters.** `with` and `without` read nothing.
-- **Entities that can't overlap.** Two systems that write the same component don't conflict if they can never touch the same entity, which the compiler proves from the archetypes: `with Player` against `with Enemy`, when nothing is both. A component a system reaches through its `World` is any entity's, so this doesn't hold for it: `world.Get<Health>(e)` waits for every earlier system that writes `Health`.
+- **Entities that can't overlap.** Two systems that write the same component don't conflict if they can never touch the same entity, which the compiler proves from the archetypes: `with Player` against `with Enemy`, when nothing is both. A component a system reaches through its `World` or a read-only query is any entity's, so this doesn't hold for it: `world.Get<Health>(e)` and `query (Health health) targets` wait for every earlier system that writes `Health`.
 - **Structural changes and events.** `Add`, `Remove`, `Destroy` and `Send` are recorded and applied at the end of the tick, in order. Event handlers run then too, so they aren't part of the tick's schedule.
 - **Input and `Time`**, which systems only read.
 - **C.** Calls to C are trusted: they make no system wait, and a system that calls C splits across threads like any other. What C does when it's called from several threads at once is the game's to get right.
@@ -98,7 +100,7 @@ Some things are the whole match's, so systems wait for each other over them what
 
 ## Splitting across threads
 
-The other kind of parallelism is a system splitting its entities across threads: each thread takes a chunk of them, up to 1,024. It doesn't change results either, and needs nothing from you, but a system only splits when nothing it does has to happen in order across its entities. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it.
+The other kind of parallelism is a system splitting its entities across threads: each thread takes a chunk of them, up to 1,024. It doesn't change results either, and needs nothing from you, but a system only splits when nothing it does has to happen in order across its entities. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. So does one that calls its `World`'s `Set`, which may change any entity, or that reads through its `World` or a query a component it also changes: it then sees the entities it already ran for as it left them, the same on every machine. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it.
 
 A system that splits can spawn. Its `Spawn` gives a temporary handle, which works like any other: store it in the entity's components, `Add` to it, `Send` to it or put it in an event. Once the system is done, its new entities get their IDs, in the order one thread would have given them, and every handle it kept (in the components it changes, the changes it recorded and its events) becomes the real one, before any system that waits for it starts. Only while the system runs does the difference show: text shows a temporary handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary` (see [Calling C](../c/functions.md)).
 

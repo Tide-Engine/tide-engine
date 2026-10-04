@@ -1,0 +1,6 @@
+// warnings: 1
+// expect: 'bodies' is never used
+// expect: remove the query parameter
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body) bodies) { }

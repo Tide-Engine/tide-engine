@@ -1,0 +1,11 @@
+// expect: query row 'row' is read-only
+component Body
+{
+    float x;
+    mut void Move() { x += 1; }
+}
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies) row.body.Move();
+}

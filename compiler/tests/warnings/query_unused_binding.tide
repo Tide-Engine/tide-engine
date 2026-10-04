@@ -1,0 +1,10 @@
+// warnings: 1
+// expect: 'body' is never used
+// expect: to only require the component, write 'with Body'
+component Body { float x; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.entity}");
+}

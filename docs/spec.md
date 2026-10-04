@@ -222,7 +222,7 @@ mut float scale = 1;             // mutable, explicit type
 
 ### System parameters
 
-A system's parameter list describes its whole query. Each parameter's modifier says how the system relates to that component or singleton:
+A system's component parameters describe the entities it runs for. Each parameter's modifier says how the system relates to that component or singleton:
 
 | Modifier  | Meaning                                                                 |
 |-----------|-------------------------------------------------------------------------|
@@ -243,6 +243,27 @@ system ClampPlayer(mut Transform trs, with Player)
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.
+
+### Read-only entity queries
+
+A system can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
+
+```csharp
+system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
+{
+    foreach (var fighter in fighters)
+    {
+        // fighter.body is read-only Body data; fighter.entity is its Entity.
+    }
+}
+```
+
+- The outer parameters still select the entities the system runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick.
+- The nested list accepts named read-only match component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World`, local component or nested query.
+- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are system parameters only in this version, iterated in the system's ordinary control flow, outside parallel loops and callback blocks.
+- Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
+- Component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
+- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the system's run.
 
 ### The World
 
@@ -555,7 +576,7 @@ Implemented, awaiting approval:
 ### Decided
 
 - An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. `event Hit { ... }` declares one, with fields like a struct's, which carry its context.
-- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system.
+- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters.
 - An event with no fields needs no name in the trigger: `event(Spawned) Arm(...)`.
 - `entity.Send(Hit { ... })` sends an event to an entity. `Send(RoundOver { ... })` sends it to the whole world.
 - A handler's components and `this` come from the entity the event was sent to, as a system's come from the entity it runs for. If that entity doesn't match the handler's parameters, the handler doesn't run for it.
