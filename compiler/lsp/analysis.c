@@ -49,6 +49,7 @@ typedef enum occ_kind {
     OCC_DEFAULT,  // `default`, with the type it takes
     OCC_CONST,    // A constant the game declares, MAX_HEALTH, with `decl`
     OCC_SETTING,  // One of the engine's settings, tickRate in settings { ... }
+    OCC_OWNERSHIP, // `ownership` after `with` or `without`, with `param` the filter
 } occ_kind;
 
 typedef struct occurrence {
@@ -736,6 +737,11 @@ static void walk_params(const decl *d)
 {
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
+        if (p->ownership) { // A word of its own there, not a type's name
+            add_occ((occurrence){.at = p->type_at, .len = p->type_name.len, .kind = OCC_OWNERSHIP, .param = p,
+                                 .param_of = d, .name = p->type_name});
+            continue;
+        }
         type_ref(p->type_qual_at, p->type_at, p->type_name, p->type);
         if (p->name.len > 0) {
             add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
@@ -1492,6 +1498,15 @@ static void describe(const occurrence *o, sb *out)
         }
         describe_order(o->decl, out);
         break;
+    case OCC_OWNERSHIP: {
+        const bool with = o->param->mode == PARAM_WITH;
+        code_block(out, with ? "with ownership" : "without ownership");
+        sb_put(out, with ? "\n\nFilter: the view runs for the entities this machine's player owns: those with an `Owner` "
+                           "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
+                         : "\n\nFilter: the view runs for the entities this machine's player doesn't own: another "
+                           "player's, and those with no `Owner`. With `with Owner` too, only another player's.");
+        break;
+    }
     case OCC_SETTING: {
         const setting *st = setting_named(o->name);
         sb_printf(&code, "%s %s", type_name((type){st->kind, NULL}), st->name);
@@ -3300,6 +3315,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_ENUM_MEMBER: *type = ST_ENUM_MEMBER; *mods |= SM_READONLY; break;
     case OCC_THIS: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_DEFAULT: *type = ST_KEYWORD; *mods = 0; break;
+    case OCC_OWNERSHIP: *type = ST_KEYWORD; *mods = 0; break;
     }
 }
 
@@ -4635,6 +4651,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
+            // view Camera(Player player, with ownership): by this machine's player, which only views ask
+            if (f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT && str_eq_c(DOC->toks[f.open - 2].text, "view")) {
+                item(&c, "ownership", CK_KEYWORD,
+                     pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            }
             complete_types(&c, true, false, false);
         } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT) {
             if (pk != T_MUT) {
@@ -4834,7 +4855,8 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_ENUM_MEMBER: return a->decl == b->decl && str_eq(a->name, b->name);
     case OCC_THIS:
     case OCC_CONST: return a->decl == b->decl;
-    case OCC_DEFAULT: return false; // A keyword, not a symbol
+    case OCC_DEFAULT:
+    case OCC_OWNERSHIP: return false; // A keyword, not a symbol
     }
     return false;
 }
@@ -4907,6 +4929,8 @@ static const char *rename_target(const int line, const int character, const occu
         return "Built-in names can't be renamed.";
     case OCC_THIS:
         return "'this' is a keyword, so it can't be renamed.";
+    case OCC_OWNERSHIP:
+        return "'ownership' is a keyword after 'with' and 'without', so it can't be renamed.";
     case OCC_SETTING:
         return "Settings are the engine's, so they can't be renamed.";
     default:

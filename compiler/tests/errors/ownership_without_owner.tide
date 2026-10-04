@@ -1,0 +1,6 @@
+// expect: view 'Show' takes entities 'with ownership' and 'without Owner', and an entity without an Owner is nobody's
+component Body { float2 position; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body, Owner { player = PlayerID(0) }); }
+view Show(Body body, without Owner, with ownership) { Draw.Circle(body.position, 1, Color.white); }

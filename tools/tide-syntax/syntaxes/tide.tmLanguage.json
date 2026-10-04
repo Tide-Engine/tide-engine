@@ -354,6 +354,14 @@
           }
         },
         {
+          "comment": "view Camera(Player player, with ownership), without ownership: a view's filter by this machine's player. A name anywhere else, and in with ownership.Flag",
+          "match": "\\b(with|without)\\s+(ownership)\\b(?!\\s*\\.)",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "keyword.other.ownership.tide" }
+          }
+        },
+        {
           "comment": "Parameter and local modifiers",
           "name": "storage.modifier.tide",
           "match": "\\b(mut|with|without|lookup)\\b"
