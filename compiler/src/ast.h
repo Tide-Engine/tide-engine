@@ -121,7 +121,7 @@ typedef enum type_kind {
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
-    TY_LOOKUP,     // lookup Health: a system parameter that reads (or with mut, changes) any entity's Health by handle; decl is the component
+    TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
     TY_COMPONENT,
     TY_SINGLETON,
     TY_INPUT,      // The game's input declaration
@@ -212,7 +212,6 @@ typedef struct param {
     loc name_at;
     bool read;    // The body names it
     bool written; // The body assigns through it
-    bool lookup;  // `lookup Health health`: any entity's Health by its handle, health[e], read or (mut) changed; no filter
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
 } param;
@@ -238,6 +237,16 @@ enum {
     TASK_MATCH,
     TASK_LOCAL,
 };
+
+// A component code reaches through its World parameter, any entity's by its
+// handle: world.Get<Health>(e), Has and Set. It's access to every entity's,
+// which the schedule counts as the system's own.
+typedef struct world_use {
+    struct decl *component;
+    bool writes;  // Some call is a Set
+    loc at;       // The first call that names it
+    loc write_at; // ...and the first Set
+} world_use;
 
 typedef struct system_wait {
     struct decl *on;         // A system earlier in the tick
@@ -377,6 +386,7 @@ typedef struct decl {
     uint64_t device_uses[DEVICE_WORDS]; // Device values it reads through parameters, a bit per device leaf
     loc position_at;     // ...where it first reads a position in the window that way (the mouse's, a touch's)
     const char *position_what; // ...whose: "the mouse's position"
+    VEC(world_use) world_uses; // What it reads and changes through its World parameter, by component, in the order its body first names each
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
@@ -446,7 +456,7 @@ typedef enum builtin_call {
     CALL_GUI,       // GUI.Button(...), GUILayout.Horizontal() { ... }: calls c_callee with the GUI first
     CALL_ACTION,    // content(): runs the Action its function was given
     CALL_TEXT,      // name.Contains(...), text's methods: calls c_callee with the text first
-    CALL_HAS,       // health.Has(e): whether an entity has the component a lookup parameter is of
+    CALL_WORLD,     // world.Get<Health>(e), Has and Set, the World's methods: `name` says which; type_decl is the component
     CALL_LIST,      // items.Add(...), a list's methods: `name` says which
     CALL_MAP,       // scores.Has(k), a map's or a set's methods: `name` says which; type_decl is the map
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
@@ -550,6 +560,9 @@ struct expr {
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
+    str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
+    loc type_arg_at;      // ...its last part, if it's qualified
+    loc type_arg_qual_at; // ...and where it starts
 
     // E_BINARY, E_UNARY; E_CONDITIONAL's two sides. `method` is the struct's
     // operator, if one is used.
@@ -805,6 +818,16 @@ void analyze_parallelism(program *prog);
 // C is trusted: what it does on several threads at once is the game's to get
 // right.
 bool system_splits(const decl *sys);
+
+// Whether a system reads through its World a component it also changes
+// through a parameter: it runs on one thread, and writes its rows in place, so
+// what it reads of the rows it changed is the same on every machine.
+bool world_reads_own_writes(const decl *sys);
+
+// The components code reads (writes = false) or writes through its World:
+// "Transform and Health". `quote` wraps names, written as code in `from`'s
+// namespace writes them (qualified without one). Returns how many there are.
+int world_use_names(const decl *sys, bool writes, const char *quote, const decl *from, sb *out);
 
 // The loops a statement holds whose steps run at once, on threads: parallel
 // loops, and foreach loops over grids that run as one.

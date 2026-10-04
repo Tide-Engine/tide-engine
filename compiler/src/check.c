@@ -348,6 +348,16 @@ static bool check_reserved(const str name, const loc at)
     return true;
 }
 
+// `World` written where another type goes, when no type of the game's has the
+// name: says where it belongs. Returns whether it did.
+static bool world_misplaced(const str name, const loc at)
+{
+    if (!str_eq_c(name, "World")) return false;
+    diag_error(at, "the World is a parameter of systems, views and event handlers: 'system Name(World world)'");
+    diag_note("read what's needed there, like 'world.Get<Health>(entity)', and pass the value on");
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Scopes
 
@@ -1070,8 +1080,7 @@ static bool through_element(const expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_INDEX
-            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_GRID
-                || e->object->type.kind == TY_LOOKUP)) {
+            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_GRID)) {
             return true;
         }
     }
@@ -2420,8 +2429,172 @@ static void use_mesh_types(checker *c)
                       pixels, c->prog->filter);
 }
 
+static const char *system_what(const decl *sys);
+
+// A component code reaches through its World: a use the schedule counts as
+// access to every entity's (parallel.c).
+static void note_world_use(const checker *c, decl *component, const bool writes, const loc at)
+{
+    decl *code = c->system;
+    for (int i = 0; i < code->world_uses.count; i++) {
+        world_use *u = &code->world_uses.items[i];
+        if (u->component != component) continue;
+        if (writes && !u->writes) {
+            u->writes = true;
+            u->write_at = at;
+        }
+        return;
+    }
+    const world_use u = {component, writes, at, writes ? at : (loc){0, 0, 0}};
+    vec_push(code->world_uses, u);
+}
+
+// world.Get<Health>(e), world.Has<Health>(e) and world.Set<Health>(e, value):
+// any entity's component by its handle, through the World parameter `world`.
+// Get gives a copy, or the component's zero value where the entity has none,
+// which Has tells; Set, which `mut World` allows, puts one back and changes
+// nothing there.
+static type check_world_call(checker *c, expr *e, param *world)
+{
+    e->object->bind = BIND_PARAM;
+    e->object->param = world;
+    e->object->type = world->type;
+    world->read = true;
+    const decl *code = c->system;
+    const bool set = str_eq_c(e->name, "Set");
+    if (set) world->written = true;
+    if (!set && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has and Set", STR_ARG(e->name));
+        suggestion s = suggest_start(e->name);
+        suggest_consider_c(&s, "Get");
+        suggest_consider_c(&s, "Has");
+        suggest_consider_c(&s, "Set");
+        suggest_note(&s);
+        return T_ERR;
+    }
+    const char *usage = set ? "(entity, value)" : "(entity)";
+    if (e->type_arg.len == 0) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, STR_FMT " takes the component in '<>': '" STR_FMT "." STR_FMT "<Health>%s'", STR_ARG(e->name),
+                   STR_ARG(world->name), STR_ARG(e->name), usage);
+        return T_ERR;
+    }
+    decl *d = find_type(c, e->type_arg, e->type_arg_at);
+    e->type_decl = d;
+    if (!d || d->kind != DECL_COMPONENT) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!d) {
+            diag_error(e->type_arg_at, "unknown component '" STR_FMT "'", STR_ARG(e->type_arg));
+            suggestion s = suggest_start(e->type_arg);
+            suggest_decls(&s, c->prog, true, false, false);
+            suggest_note(&s);
+            const fix create = {.kind = FIX_CREATE_COMPONENT, .at = e->type_arg_at, .name = e->type_arg};
+            vec_push(c->prog->fixes, create);
+        } else {
+            diag_error(e->type_arg_at, STR_FMT " is of a component, any entity's by its handle, and '" STR_FMT "' is %s",
+                       STR_ARG(e->name), STR_ARG(d->name), decl_what(d));
+            if (d->kind == DECL_SINGLETON) {
+                diag_note("a %s takes a singleton as a parameter, like '" STR_FMT " name'", system_what(code), STR_ARG(d->name));
+            }
+        }
+        return T_ERR;
+    }
+    // Which world it's in: the match can't use local state, and a local
+    // handler only takes local state.
+    const bool local_in_match = d->is_local && !is_local_code(code);
+    if (local_in_match || (!d->is_local && code->is_handler && code->is_local)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (local_in_match) {
+            diag_error(e->type_arg_at, "'" STR_FMT "' is local, and the match can't use local state", STR_ARG(d->name));
+            diag_note("local state belongs to one machine, and the match runs the same on every one");
+        } else {
+            diag_error(e->type_arg_at, "'" STR_FMT "' belongs to the match, and local handlers only take local state for now",
+                       STR_ARG(d->name));
+        }
+        return T_ERR;
+    }
+    // The entity, then Set's value
+    const type_kind want = d->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
+    bool ok = true;
+    if (e->args.count > 0) {
+        const type handle = check_expr(c, e->args.items[0]);
+        if (handle.kind != TY_ERROR && handle.kind != want) {
+            diag_error(e->args.items[0]->at, STR_FMT "<" STR_FMT "> takes an entity's handle, %s, not %s", STR_ARG(e->name),
+                       STR_ARG(d->name), want == TY_ENTITY ? "an Entity" : "a LocalEntity", type_name(handle));
+        }
+        ok = handle.kind == want;
+    }
+    if (set && e->args.count > 1) {
+        const type value = check_expr_want(c, e->args.items[1], decl_type(d));
+        const bool fits = value.kind != TY_ERROR && type_assignable(decl_type(d), value);
+        if (value.kind != TY_ERROR && !fits) {
+            diag_error(e->args.items[1]->at, "Set<" STR_FMT "> takes the entity's new " STR_FMT ", not %s", STR_ARG(d->name),
+                       STR_ARG(d->name), type_name(value));
+        }
+        ok = ok && fits;
+    }
+    for (int i = set ? 2 : 1; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (e->args.count != (set ? 2 : 1)) {
+        diag_error(e->at, set ? STR_FMT " takes an entity's handle and its new component: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
+                              : STR_FMT " takes one entity's handle: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'",
+                   STR_ARG(e->name), STR_ARG(world->name), STR_ARG(e->name), STR_ARG(d->name), usage);
+        return T_ERR;
+    }
+    // A view only reads the match
+    if (set && !d->is_local && code->is_view) {
+        diag_error(e->at, "a view reads the match, and 'Set<" STR_FMT ">' would change it", STR_ARG(d->name));
+        diag_note("views draw: a system changes the match");
+        return T_ERR;
+    }
+    if (set && world->mode != PARAM_MUT) {
+        diag_error(e->object->at, "'" STR_FMT "' is read-only", STR_ARG(world->name));
+        diag_note("Set changes an entity's component: declare the parameter as 'mut World " STR_FMT "' to call it",
+                  STR_ARG(world->name));
+        const fix f = {.kind = FIX_ADD_MUT, .at = e->object->at, .param = world};
+        vec_push(c->prog->fixes, f);
+        return T_ERR;
+    }
+    if (set && c->parallel) {
+        diag_error(e->at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
+                          "or block, a list's element or block), and the variables it declares");
+        diag_note("work it out in the step, or in a 'for' loop, which goes in order");
+        return T_ERR;
+    }
+    if (set && c->compare) {
+        diag_error(e->at, "a comparison runs again and again as the list sorts, so it changes nothing outside it");
+        diag_note("work it out before the sort, or in the variables the comparison declares");
+        return T_ERR;
+    }
+    // Set changes any entity's component, this one's included, which its
+    // parameter would then put back as it was: one way or the other.
+    for (int i = 0; set && i < code->params.count; i++) {
+        const param *q = &code->params.items[i];
+        if (q->type.kind != TY_COMPONENT || q->type.decl != d || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
+        diag_error(e->at, "Set<" STR_FMT "> changes any entity's " STR_FMT ", and the %s takes this entity's too",
+                   STR_ARG(d->name), STR_ARG(d->name), system_what(code));
+        diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
+                  ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
+        return T_ERR;
+    }
+    e->call = CALL_WORLD;
+    if (ok) note_world_use(c, d, set, e->at);
+    if (set) note_text_write(c, decl_holds_text(d)); // Its text and lists go into the world's heap
+    if (set) return T_VOID_;
+    return str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
+}
+
 static type check_method(checker *c, expr *e)
 {
+    // world.Get<Health>(e): the World parameter's methods
+    if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
+        param *world = find_param(c, e->object->name);
+        if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
+    }
+    if (e->type_arg.len > 0) {
+        diag_error(e->type_arg_at, "'" STR_FMT "' takes no type in '<>'", STR_ARG(e->name));
+        diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
+    }
     if (names_wait(c, e->object)) {
         if (c->awaiting == e) return check_wait(c, e);
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -2488,21 +2661,6 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
-    if (obj.kind == TY_LOOKUP) { // health.Has(e): whether that entity has one
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        if (!str_eq_c(e->name, "Has")) {
-            diag_error(e->at, "a lookup has one method, 'Has(entity)'; its values are indexed: '" STR_FMT "[entity]'",
-                       STR_ARG(e->object->name));
-            return T_ERR;
-        }
-        const type_kind want = obj.decl->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
-        if (e->args.count != 1 || (e->args.items[0]->type.kind != TY_ERROR && e->args.items[0]->type.kind != want)) {
-            diag_error(e->at, "Has takes one entity's handle, %s", want == TY_ENTITY ? "an Entity" : "a LocalEntity");
-            return T_ERR;
-        }
-        e->call = CALL_HAS;
-        return T_BOOL_;
-    }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
         for (int i = 0; i < e->args.count; i++) {
@@ -3273,6 +3431,12 @@ static type check_name(checker *c, expr *e)
             diag_note("it's the code the caller wrote after the call, and it runs where it's run");
             return T_ERR;
         }
+        if (p->type.kind == TY_WORLD) {
+            diag_error(e->at, "the World is no value: code calls it, like '" STR_FMT ".Get<Health>(entity)'", STR_ARG(e->name));
+            diag_note("Get gives a copy of an entity's component, Has tells whether it has one, and Set, with 'mut World', "
+                      "puts one back");
+            return T_ERR;
+        }
         return p->type;
     }
     if (str_eq_c(e->name, "Devices")) {
@@ -3432,15 +3596,6 @@ static type check_index(checker *c, expr *e)
         }
         return grid_cell(obj);
     }
-    if (obj.kind == TY_LOOKUP) { // health[e]: that entity's, or its zero when it has none
-        const type handle = check_expr(c, e->lhs);
-        const type_kind want = obj.decl->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
-        if (handle.kind != TY_ERROR && handle.kind != want) {
-            diag_error(e->lhs->at, "a lookup takes an entity's handle, %s, not %s", want == TY_ENTITY ? "an Entity" : "a LocalEntity",
-                       type_name(handle));
-        }
-        return decl_type(obj.decl);
-    }
     if (obj.kind == TY_MAP) { // scores[key]: its value, or the value type's zero when the key isn't there
         const type key = check_expr_want(c, e->lhs, map_key(obj));
         if (key.kind != TY_ERROR && !type_assignable(map_key(obj), key)) {
@@ -3455,8 +3610,8 @@ static type check_index(checker *c, expr *e)
         return T_ERR;
     }
     const type index = check_expr(c, e->lhs);
-    if (index.kind != TY_ERROR && index.kind != TY_INT) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
     if (obj.kind == TY_ERROR) return T_ERR;
+    if (index.kind != TY_ERROR && index.kind != TY_INT) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
     if (obj.kind != TY_LIST) {
         diag_error(e->at, "only lists and maps have elements to index, and this is %s", type_name(obj));
@@ -4935,15 +5090,23 @@ static void check_assign(checker *c, const stmt *s)
     const type target = check_expr_any(c, s->target); // A T? local, or one that holds a failable call's result
     const type value = check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
+    // world.Get<Health>(e).value = 5: a copy of the entity's component
+    const expr *got = s->target;
+    while (got->kind == E_MEMBER || got->kind == E_INDEX) got = got->object;
+    if (got != s->target && got->kind == E_METHOD && got->call == CALL_WORLD) {
+        const str world = got->object->name;
+        const str component = got->type_decl->name;
+        diag_error(s->target->at, "Get gives a copy of the entity's component, so it can't be changed where it is");
+        diag_note("take it out, change it, and put it back: 'mut var c = " STR_FMT ".Get<" STR_FMT ">(e); c.value = 5; "
+                  STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
+        return;
+    }
     if (s->target->kind != E_INDEX && through_element(s->target)) {
         const expr *at = s->target;
         while (at->kind != E_INDEX) at = at->object;
         if (at->object->type.kind == TY_GRID) {
             diag_error(s->target->at, "a grid's cell is a copy, so it can't be changed where it is");
             diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
-        } else if (at->object->type.kind == TY_LOOKUP) {
-            diag_error(s->target->at, "a lookup gives a copy of the entity's component, so it can't be changed where it is");
-            diag_note("take it out, change it, and put it back: 'mut var h = health[e]; h.value -= 5; health[e] = h;'");
         } else {
             diag_error(s->target->at, "a list's element is a copy, so it can't be changed where it is");
             diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
@@ -5314,11 +5477,6 @@ static void check_var(checker *c, stmt *s)
             diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
             value = T_ERR;
         }
-        if (value.kind == TY_LOOKUP) {
-            diag_error(s->value->at, "a lookup stays a parameter; its values are indexed by an entity's handle");
-            diag_note("like 'var h = " STR_FMT "[e];'", STR_ARG(s->value->name));
-            value = T_ERR;
-        }
         s->type = value;
     } else {
         str inner_name;
@@ -5343,6 +5501,8 @@ static void check_var(checker *c, stmt *s)
             s->type = T_ERR;
         } else if (d) {
             s->type = decl_type(d);
+        } else if (world_misplaced(type_name_, s->type_at.line ? s->type_at : s->at)) {
+            s->type = T_ERR;
         } else {
             diag_error(s->type_at.line ? s->type_at : s->at, "unknown type '" STR_FMT "'", STR_ARG(type_name_));
             suggestion sg = suggest_start(type_name_);
@@ -5589,6 +5749,7 @@ static void check_stmt(checker *c, stmt *s)
                          || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
                          || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
                          || call == CALL_GRID
+                         || (call == CALL_WORLD && str_eq_c(called->name, "Set"))
                          || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
                          || e->kind == E_TRY // Passes an error on, even from a variable
                          || called->kind == E_AWAIT;
@@ -6145,7 +6306,7 @@ static void resolve_field_types(const checker *c, const decl *d)
                                                            : "inputs";
             diag_error(at, "fields can't hold %s", what);
             diag_note("to share fields between types, declare a struct, like 'struct Name { ... }', and use it in both");
-        } else {
+        } else if (!world_misplaced(f->type_name, at)) {
             diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(f->type_name));
             suggestion s = suggest_start(f->type_name);
             suggest_builtin_types(&s);
@@ -6375,7 +6536,7 @@ static type method_type(const checker *c, const str name, const loc at, const bo
                    d->kind == DECL_SINGLETON ? "singletons" : d->kind == DECL_EVENT ? "events" : "inputs");
     } else if (str_eq_c(name, "void")) {
         diag_error(at, "'void' only goes before a method that returns nothing");
-    } else {
+    } else if (!world_misplaced(name, at)) {
         diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(name));
         suggestion s = suggest_start(name);
         suggest_builtin_types(&s);
@@ -6883,6 +7044,7 @@ static void check_params(const checker *c, decl *sys)
     const param *entity = NULL; // The Entity or LocalEntity parameter
     bool has_input = false;
     bool has_devices = false;
+    bool has_world = false;
     comp_mask seen = mask_none();
     const decl *side_of = NULL; // The first component: which world the entities are in
 
@@ -6939,6 +7101,23 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
 
+        // `World world`: any entity's components by its handle, through
+        // world.Get<Health>(e), Has and, with mut, Set. What the body reaches
+        // that way is access to every entity's, and it filters nothing. A
+        // game's own World, in its namespace, comes first.
+        if (!d && str_eq_c(p->type_name, "World")) {
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT) {
+                diag_error(p->at, "'with' and 'without' filter entities by component, and the World is every entity's");
+                diag_note("take it as a parameter, 'World world', and ask it: 'world.Has<Health>(entity)'");
+                p->type = T_ERR;
+                continue;
+            }
+            if (has_world) diag_error(p->at, "a %s can only have one World parameter", system_what(sys));
+            has_world = true;
+            p->type = (type){TY_WORLD, NULL};
+            continue;
+        }
+
         str inner;
         if (!d && optional_name(p->type_name, &inner)) {
             diag_error(p->type_at.line ? p->type_at : p->at, "a %s's parameters are there or it doesn't run, so they can't be T?",
@@ -6988,25 +7167,6 @@ static void check_params(const checker *c, decl *sys)
             diag_note("keep it in a component or singleton, like 'component Name { " STR_FMT " value; }'",
                       STR_ARG(d->name));
             p->type = T_ERR;
-            continue;
-        }
-
-        // `lookup Health health`: any entity's Health by its handle, health[e],
-        // read, or changed with mut. Access to every entity's, and no filter.
-        if (p->lookup) {
-            if (d->kind != DECL_COMPONENT) {
-                diag_error(p->at, "'lookup' is of a component, any entity's by its handle, and '" STR_FMT "' is %s",
-                           STR_ARG(d->name), d->kind == DECL_SINGLETON ? "a singleton, which the system takes as it is" : "not one");
-                p->type = T_ERR;
-                continue;
-            }
-            if (p->mode == PARAM_MUT && sys->is_view && !d->is_local) {
-                diag_error(p->at, "a view reads the match, and 'mut lookup' would change it");
-                diag_note("views draw: a system changes the match");
-                p->type = T_ERR;
-                continue;
-            }
-            p->type = (type){TY_LOOKUP, d};
             continue;
         }
 
@@ -7070,20 +7230,6 @@ static void check_params(const checker *c, decl *sys)
     if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }
-    // A mut lookup changes any entity's component, this one's included, which
-    // its parameter would then put back as it was: one way or the other.
-    for (int i = 0; i < sys->params.count; i++) {
-        const param *p = &sys->params.items[i];
-        if (!p->lookup || p->mode != PARAM_MUT || p->type.kind != TY_LOOKUP) continue;
-        for (int j = 0; j < sys->params.count; j++) {
-            const param *q = &sys->params.items[j];
-            if (q->type.kind != TY_COMPONENT || q->type.decl != p->type.decl || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
-            diag_error(p->at, "'" STR_FMT "' changes any entity's " STR_FMT ", and the system takes this entity's too",
-                       STR_ARG(p->name), STR_ARG(p->type.decl->name));
-            diag_note("change this entity's through '" STR_FMT "', and look the others up with a 'lookup' that isn't mut, "
-                      "or send them an event", STR_ARG(q->name));
-        }
-    }
     sys->per_entity = entity || mask_any(seen);
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
 
@@ -7108,6 +7254,15 @@ static void warn_unused_params(checker *c, const decl *sys)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         const type_kind kind = p->type.kind;
+        if (kind == TY_WORLD && !p->read) {
+            diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
+            diag_note("remove it");
+        } else if (kind == TY_WORLD && p->mode == PARAM_MUT && !p->written) {
+            diag_warning(p->at, "'" STR_FMT "' is declared mut but never calls Set", STR_ARG(p->name));
+            diag_note("remove 'mut': the %s only reads through it", system_what(sys));
+            const fix f = {.kind = FIX_REMOVE_MUT, .at = p->at, .param = p};
+            vec_push(c->prog->fixes, f);
+        }
         if (p->name.len == 0 || (kind != TY_COMPONENT && kind != TY_SINGLETON)) continue;
         const str type = p->type_name;
         if (!p->read && kind == TY_COMPONENT) {
@@ -7554,6 +7709,10 @@ static void collect_decls(program *prog)
             check_reserved(d->name, d->at);
             if (is_builtin_name(d->name)) {
                 diag_error(d->at, "'" STR_FMT "' is built into the language", STR_ARG(d->name));
+            }
+            // The World a system takes, 'World world': a game's own goes in a namespace
+            if (ns.len == 0 && str_eq_c(d->name, "World") && is_kind(d, NAME_TYPE)) {
+                diag_error(d->at, "'" STR_FMT "' is built into the engine", STR_ARG(d->name));
             }
             // Against those before it that it could clash with: the ones with
             // its name in generated C (which the same name in the same

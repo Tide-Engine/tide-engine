@@ -19,6 +19,8 @@ Drawing is immediate mode: views call `Draw` functions every frame, and nothing 
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
+A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
+
 ## Draw functions
 
 Positions and sizes are in world units, with `y` up. The camera maps them to the screen.

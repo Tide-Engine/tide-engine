@@ -1,0 +1,8 @@
+// expect: Get gives a copy of the entity's component, so it can't be changed where it is
+component Health { int value; }
+component Attacker { Entity target; }
+scene Main { }
+system Attack(Attacker attacker, mut World world)
+{
+    world.Get<Health>(attacker.target).value -= 1;
+}

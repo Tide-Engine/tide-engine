@@ -1,0 +1,3 @@
+// expect: 'World' is built into the engine
+singleton World { int seed; }
+scene Main { }

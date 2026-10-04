@@ -145,3 +145,12 @@ system Loops(Field field)
     parallel (var at in field.cells by 2 offset o) { }
     foreach (var tick in Both(Ticks(), Ticks())) { int in = 1; }
 }
+
+// The World, and a type in <> after a method's name.
+system Track(Seeker seeker, mut World world)
+{
+    var target = world.Get<Health>(seeker.target);
+    if (world.Has<Combat.Stats>(seeker.target) && target.value < 3 && seeker.range > (2)) return;
+    world.Set<Health>(seeker.target, target);
+    var lookup = seeker.range < target.value;
+}

@@ -18,7 +18,8 @@ tide_e2e_test(move_clamp)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
-tide_e2e_test(lookup)
+tide_e2e_test(world) # Other entities' components through the World
+tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
 tide_e2e_test(maps)

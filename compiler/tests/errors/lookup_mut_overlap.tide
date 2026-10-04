@@ -1,7 +1,0 @@
-// expect: 'health' changes any entity's Health, and the system takes this entity's too
-component Health { int value; }
-scene Main { }
-system Drain(mut Health own, mut lookup Health health)
-{
-    own.value -= 1;
-}

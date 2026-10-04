@@ -20,22 +20,8 @@ A system's parameter list is its whole query. Each parameter's modifier says how
 | `mut` | Writes it |
 | `with` | The entity must have it. No data, so no data dependency. |
 | `without` | The entity must not have it. |
-| `lookup` | Any entity's, by its handle (below). |
 
 So `ClampPlayer` runs for every entity that has a `Transform` and a `Player`, and changes its `Transform`.
-
-A system often needs another entity's component in the same tick: the target it attacks, the leader it follows. `lookup` gives it, by the entity's handle:
-
-```csharp
-system Attack(Attacker attacker, lookup Health health, mut Stats stats)
-{
-    if (!health.Has(attacker.target)) return;
-    var target = health[attacker.target];
-    if (target.value <= attacker.damage) stats.kills += 1;
-}
-```
-
-`health[e]` is a copy of that entity's `Health`, or its zero value when it has none. `mut lookup` lets a system change it too, `health[e] = target;`, which does nothing for an entity without one. A lookup is access to every entity's component, so the engine schedules it like a system that touches them all, and one with a `mut lookup` runs on one thread. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 
 Keeping what a system touches (its access) apart from which entities it picks (its filters) is what lets the engine run systems side by side safely: two systems that only filter on the same component never wait for each other.
 
@@ -44,7 +30,41 @@ Other parameters:
 - **Singletons**, read or `mut`, like components: `system Score(mut Stats stats, Rules rules)`.
 - **The input**, or **`Devices`**: what the player who owns the entity does (see [Input](./input.md)).
 
+- **The `World`**: any other entity's components (below).
+
 The entity itself isn't a parameter: it's `this` (see [Entity handles](./entities.md#entity-handles)).
+
+## Other entities: the World
+
+A system often needs another entity's component in the same tick: the target it attacks, the leader it follows. A `World` parameter gives it, by the entity's handle:
+
+```csharp
+system Attack(Attacker attacker, World world, mut Stats stats)
+{
+    if (!world.Has<Health>(attacker.target)) return;
+    var target = world.Get<Health>(attacker.target);
+    if (target.value <= attacker.damage) stats.kills += 1;
+}
+```
+
+- `world.Get<Health>(e)` is a copy of that entity's `Health`, or its zero value when it has none.
+- `world.Has<Health>(e)` tells whether it has one.
+- `world.Set<Health>(e, value)` puts one back, and needs `mut World`. It does nothing for an entity without one.
+
+What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
+
+```csharp
+system Heal(Healer healer, mut World world)
+{
+    mut var health = world.Get<Health>(healer.patient);
+    health.value += 1;
+    world.Set<Health>(healer.patient, health);
+}
+```
+
+The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
+
+A system changes its own entity's component through the parameter, not through `Set`: `Set<Health>` in a system that also takes `Health` is an error. Views and event handlers take a `World` too; a view only reads the match through it.
 
 ## Once per entity, or once per tick
 
@@ -84,7 +104,7 @@ stage 2  Move  (per entity)
          after Steer: both write Body
 ```
 
-Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written. A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for both.
+Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
 
 ## What systems can't do
 

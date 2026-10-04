@@ -1,0 +1,7 @@
+// expect: Set takes an entity's handle and its new component: 'world.Set<Health>(entity, value)'
+component Health { int value; }
+scene Main { }
+system Write(mut World world, with Health)
+{
+    world.Set<Health>(this);
+}

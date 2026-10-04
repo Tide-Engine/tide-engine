@@ -1373,7 +1373,7 @@ TIDE_TEST(lsp_grids)
     TIDE_CHECK(has(request("textDocument/hover"), "Grid2<int> cells"));
 
     // Byte-sized cells: the enum keeps its backing as written, and hovers show it
-    static const char voxels[] = "enum Voxel : byte\n{\n    Air,\n    Stone,\n}\n\nsingleton World { Grid3<Voxel> cells; }\nscene Main { }\n";
+    static const char voxels[] = "enum Voxel : byte\n{\n    Air,\n    Stone,\n}\n\nsingleton Terrain { Grid3<Voxel> cells; }\nscene Main { }\n";
     open_document(voxels);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(format_reply(voxels), "\"result\":[]"));
@@ -2547,7 +2547,11 @@ TIDE_TEST(lsp_every_prefix_is_safe)
         "singleton Field { Grid2<int> cells = Grid2(8, 8); List<int> items; }\n"
         "system Fill(mut Field field)\n{\n    foreach (var i in field.items) field.items.Add(i);\n"
         "    parallel (var at in field.cells) field.cells[at] = 1;\n"
-        "    field.cells[1, 2] = field.items.IndexOf($$\"{3}\".length);\n    field.cells.Clear();\n}\n";
+        "    field.cells[1, 2] = field.items.IndexOf($$\"{3}\".length);\n    field.cells.Clear();\n}\n"
+        "component Aim { Entity target; }\n"
+        "system Track(Aim aim, mut World world)\n{\n    if (!world.Has<Body>(aim.target)) return;\n"
+        "    mut var b = world.Get<Body>(aim.target);\n    b.radius = b.radius < 2 ? 2 : 1;\n"
+        "    world.Set<Body>(aim.target, b);\n}\n";
     start();
     char text[sizeof program];
     for (size_t n = 0; n < sizeof program; n++) {
@@ -3242,6 +3246,146 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
                                      "\"range\":{\"start\":{\"line\":2,\"character\":25},\"end\":{\"line\":2,\"character\":29}}");
     TIDE_CHECK(has(add_mut, "Declare 'body' as mut") && has(add_mut, "\"newText\":\"mut \""));
     TIDE_CHECK(has(add_mut, "\"start\":{\"line\":2,\"character\":12}"));
+}
+
+#define WORLD_GAME                                                                                      \
+    "component Health { int value; }\n"                                                                 \
+    "component Healer { Entity patient; }\n"                                                            \
+    "singleton Score { int total; }\n"                                                                  \
+    "scene Main { }\n"                                                                                  \
+    "event(Spawned) Setup(with Main) { var a = Spawn(Health); Spawn(Healer { patient = a }); }\n"
+
+// The World: any entity's component through world.Get<Health>(e), Has and
+// Set. Its signature doesn't name the components, so hovers and lenses do.
+TIDE_TEST(lsp_world)
+{
+    start();
+    static const char game[] = WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
+                                          "    if (!world.Has<Health>(healer.patient)) return;\n"
+                                          "    mut var h = world.Get<Health>(healer.patient);\n"
+                                          "    h.value += 1;\n"
+                                          "    world.Set<Health>(healer.patient, h);\n}\n"
+                                          "system Watch(Healer healer, World world)\n{\n"
+                                          "    if (world.Has<Health>(healer.patient)) return;\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // The lens and the hovers say what goes through the World
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(has(lenses, "stage 1") && has(lenses, "World: writes Health"));
+    TIDE_CHECK(has(lenses, "World: reads Health") && has(lenses, "after Heal: it writes Health, which this reads"));
+    const char *system = request_at("file:///test.tide", "textDocument/hover", 5, 8, "");
+    TIDE_CHECK(has(system, "Through its `World`, it writes any entity's `Health`."));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 8, ""),
+                   "Through its `World`, it reads any entity's `Health`."));
+    const char *parameter = request_at("file:///test.tide", "textDocument/hover", 8, 18, "");
+    TIDE_CHECK(has(parameter, "mut World world") && has(parameter, "The World: any entity's components by its handle"));
+    TIDE_CHECK(has(parameter, "it writes any entity's `Health`"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 5, 32, ""), "`world.Get<Health>(entity)` is a copy"));
+    const char *get = request_at("file:///test.tide", "textDocument/hover", 8, 23, "");
+    TIDE_CHECK(has(get, "World.Get<Health>(Entity entity) -> Health") && has(get, "zero value when the entity has none"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 11, ""), "World.Set<Health>(Entity entity, Health value)"));
+    // The component in <> is the component: its hover, its declaration, and a type for `var`
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 8, 28, ""), "component Health"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 8, 28, ""), "\"start\":{\"line\":0,\"character\":10}"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":8,\"character\":13},\"label\":\": Health\""));
+
+    // Formatting keeps a method's type tight, and comparisons apart
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
+    static const char messy[] = WORLD_GAME "system Heal(Healer healer,mut World world)\n{\n"
+                                           "var h=world.Get <Health> (healer.patient);\n"
+                                           "if(h.value<3&&world.Get<Health>(healer.patient).value>(2))return;\n"
+                                           "world.Set< Health >(healer.patient,h);\n}\n";
+    format_reply(messy);
+    const char *tidy = apply_reply(messy, NULL);
+    TIDE_CHECK(has(tidy, "    var h = world.Get<Health>(healer.patient);\n"));
+    TIDE_CHECK(has(tidy, "    if (h.value < 3 && world.Get<Health>(healer.patient).value > (2)) return;\n"));
+    TIDE_CHECK(has(tidy, "    world.Set<Health>(healer.patient, h);\n"));
+
+    // Semantic tokens: World a built-in type (1, defaultLibrary 8), Get a built-in method (10), Health a struct (2)
+    open_document("component Health { int value; }\nscene Main { }\nsystem S(World world, with Health)\n{\n"
+                  "    var h = world.Get<Health>(this);\n}\n");
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, "0,2,5,1,8,0,6,5,5,3,0,12,6,2,0,"));
+    TIDE_CHECK(has(tokens, "0,4,5,5,2,0,6,3,10,8,0,4,6,2,0,0,8,4,11,0"));
+
+    // Completion: the World's methods, the components in <>, and World where a parameter's type goes
+    const char *methods = complete(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    world.$\n}\n");
+    TIDE_CHECK(offers(methods, "Get") && offers(methods, "Has") && offers(methods, "Set"));
+    TIDE_CHECK(has(methods, "World.Get<T>(Entity entity) -> T") && has(methods, "Get<$1>($2)"));
+    const char *components = complete(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    var h = world.Get<$\n}\n");
+    TIDE_CHECK(offers(components, "Health") && offers(components, "Healer") && !offers(components, "Score"));
+    TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    var h = world.Get<He$\n}\n"),
+                      "Health"));
+    const char *types = complete(WORLD_GAME "system Heal(Healer healer, $)\n{\n}\n");
+    TIDE_CHECK(offers(types, "World") && !offers(types, "lookup"));
+    TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, mut $)\n{\n}\n"), "World"));
+    TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, World $)\n{\n}\n"), "world"));
+    // A local handler's World reads the local world's, a view's both
+    static const char local[] = "component Health { int value; }\nlocal component Spark { int life; }\nlocal event Tap { }\n"
+                                "scene Main { }\n";
+    char text[1024];
+    snprintf(text, sizeof text, "%slocal event(Tap) OnTap(World world, with Spark)\n{\n    var s = world.Get<$\n}\n", local);
+    const char *locals = complete(text);
+    TIDE_CHECK(offers(locals, "Spark") && !offers(locals, "Health"));
+    snprintf(text, sizeof text, "%sview Show(World world, with Spark)\n{\n    var s = world.Get<$\n}\n", local);
+    const char *both = complete(text);
+    TIDE_CHECK(offers(both, "Spark") && offers(both, "Health"));
+
+    // Signature help, with the component it's of
+    open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    world.Set<Health>(healer.patient, $\n}\n");
+    const char *set = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(set, "World.Set<Health>(Entity entity, Health value)") && has(set, "\"activeParameter\":1"));
+    open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n    var h = world.Get<Health>($);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "World.Get<Health>(Entity entity) -> Health"));
+
+    // Renaming the component renames it in <> too, and the uses there are found
+    open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
+                             "    if (!world.Has<Health>(healer.patient)) return;\n"
+                             "    mut var h = world.Get<Hea$lth>(healer.patient);\n"
+                             "    h.value += 1;\n"
+                             "    world.Set<Health>(healer.patient, h);\n}\n"
+                             "system Watch(Healer healer, World world)\n{\n"
+                             "    if (world.Has<Health>(healer.patient)) return;\n}\n");
+    // Its declaration, Setup's Spawn, and the four calls
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 6);
+    request_with("textDocument/rename", "\"newName\":\"Hp\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "world.Has<Hp>(healer.patient)") && has(renamed, "world.Get<Hp>(healer.patient)"));
+    TIDE_CHECK(has(renamed, "world.Set<Hp>(healer.patient, h)") && !has(renamed, "Health"));
+    char copy[8192];
+    snprintf(copy, sizeof copy, "%s", renamed);
+    open_document(copy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // A type outside a namespace can't take the World's name
+    open_document(WORLD_GAME "system Count(mut Sco$re score) { score.total = 1; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"World\""), "'World' is built into the engine"));
+
+    // Set through a World that isn't mut: the fix declares it mut
+    open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n"
+                             "    world.Set<Health>(healer.patient, Health { value = 1 });\n}\n");
+    TIDE_CHECK(has(last_sent(), "'world' is read-only") && has(last_sent(), "declare the parameter as 'mut World world'"));
+    const char *add_mut = actions_at(7);
+    TIDE_CHECK(has(add_mut, "Declare 'world' as mut") && has(add_mut, "\"newText\":\"mut \""));
+    TIDE_CHECK(has(add_mut, "\"start\":{\"line\":5,\"character\":27}"));
+    // A mut World that never calls Set, and one that's never used: warnings, faded, and the first has a fix
+    open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
+                             "    if (world.Has<Health>(healer.patient)) return;\n}\n"
+                             "system Idle(Healer healer, World world)\n{\n    if (healer.patient == this) return;\n}\n");
+    TIDE_CHECK(has(last_sent(), "'world' is declared mut but never calls Set") && has(last_sent(), "'world' is never used"));
+    TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
+    const char *remove_mut = actions_at(5);
+    TIDE_CHECK(has(remove_mut, "Remove 'mut' from 'world'") && has(remove_mut, "\"newText\":\"\""));
+    TIDE_CHECK(has(remove_mut, "\"start\":{\"line\":5,\"character\":27}"));
+
+    // `lookup` is gone: the error says what to write
+    open_document(WORLD_GAME "system Heal(Healer healer, lookup Health health)\n{\n}\n");
+    TIDE_CHECK(has(last_sent(), "'lookup' parameters are gone") && has(last_sent(), "world.Get<Health>(entity)"));
+    // An unknown component in <>: a suggestion, as a fix
+    open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n    var h = world.Get<Helth>(healer.patient);\n}\n");
+    TIDE_CHECK(has(last_sent(), "unknown component 'Helth'") && has(actions_at(7), "Change to 'Health'"));
 }
 
 // ---------------------------------------------------------------------------

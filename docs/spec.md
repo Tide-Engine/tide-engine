@@ -226,7 +226,6 @@ A system's parameter list describes its whole query. Each parameter's modifier s
 | `mut`     | Write access                                                            |
 | `with`    | Entity must have this component. No data access, so no data dependency. |
 | `without` | Entity must not have this component.                                    |
-| `lookup`  | Any entity's component, by its handle: `lookup Health health`, read as `health[e]`, or with `mut lookup`, changed as `health[e] = h`. Access to every entity's, and no filter. |
 
 ```csharp
 system ClampPlayer(mut Transform trs, with Player)
@@ -236,10 +235,38 @@ system ClampPlayer(mut Transform trs, with Player)
 }
 ```
 
-- A lookup reads another entity's component in the same tick, where `Send` would wait for the tick's end: `health[target]` is that entity's `Health` as it is, or its zero value when it has none (`health.Has(target)` tells), and `mut lookup` lets `health[target] = h` put one back (nothing happens when it has none). The component is a copy, as a list's element is: change it and put it back. A lookup is read or write access to every entity's component, so the schedule treats it as touching them all; a system with a `mut lookup`, or one that looks up a component it also changes through a parameter, runs on one thread, and the latter reads the rows it changed earlier in the same run. A `mut lookup` of a component the system also takes as a parameter is an error: this entity's goes through the parameter. A view can't `mut lookup` the match.
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.
+
+### The World
+
+- `World world` is a built-in parameter, like `Devices`: any entity's components, by its handle. It reads another entity's component in the same tick, where `Send` would wait for the tick's end. A signature has one at most, and it filters nothing.
+- `world.Get<Health>(target)` is a copy of that entity's `Health` as it is, or its zero value when it has none. `world.Has<Health>(target)` tells whether it has one.
+- `world.Set<Health>(target, h)` puts one back, and needs `mut World`. Nothing happens when the entity has none. The component `Get` gives is a copy, as a list's element is: change it and put it back.
+
+```csharp
+system Attack(Attacker a, World world)
+{
+    var h = world.Get<Health>(a.target);
+    if (world.Has<Health>(a.target)) { ... }
+}
+
+system Heal(Healer healer, mut World world)
+{
+    mut var h = world.Get<Health>(healer.target);
+    h.value += 1;
+    world.Set<Health>(healer.target, h);
+}
+```
+
+- What a system reaches through its `World` is access to every entity's component, which the schedule takes from the calls in its body: `Get<T>` and `Has<T>` read every entity's `T`, and `Set<T>` writes every entity's `T` and keeps the system on one thread. A system that reads through its `World` a component it also changes through a parameter runs on one thread too, and reads the rows it changed earlier in the same run.
+- `Set<T>` of a component the system also takes as a parameter is an error: this entity's goes through the parameter.
+- The signature doesn't list those components, so tooling does: `tidec --schedule` says what each system reads and writes through its `World`, and so do the language server's hover and the line above each system.
+- A `World` parameter that's never used is a warning, and so is a `mut World` that never calls `Set`.
+- Views take `World` to read the match, never to change it: `Set` of the match's component in a view is an error.
+- `World` is built in: a game can't declare a type of that name outside a namespace.
+- `lookup` parameters (`lookup Health health`, read as `health[e]`) are gone. Writing one is an error that says what to write with `World` instead.
 
 ### Entities
 
@@ -303,6 +330,12 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 - A system with no component parameters runs once per tick. Otherwise it runs once per matching entity.
 - A parameter that's never used, or declared `mut` and never written, is a warning: it makes other systems wait for nothing. A component that's only there to filter entities belongs in `with`.
+- **Where the World goes.** Systems, views and event handlers take `World`, async handlers too: their tasks keep it across their waits. Functions and methods can't take it yet: the code that has it reads what they need and passes the values on. It's only ever called: it can't be stored, passed on or compared, and `world.Get<Health>(e).value = 5` is an error, since `Get` gives a copy.
+- **The World in local code.** A local component is reached the same way, with a `LocalEntity`: `world.Get<Spark>(e)`. A view or a local handler with `mut World` can `Set` one, as it can change local state. Match code's `World` only reaches the match's components, and a local handler's only local ones for now. A view that reads the match through its `World` only runs in a match, as one that takes a match component does, and what `Get` gives it is the component as of the latest tick, not blended between ticks.
+- **A type in `<>`.** Only the `World`'s methods take one. A `<` after a method's name starts a type when a name, `>` and the call's `(` follow, as in C#: `a.b < c.d > (e)` would compare a `bool`, so no comparison reads that way.
+- **`Set` and text.** `Set` of a component that holds text, lists or maps copies them into the world as the entity's own, as assigning the component does. A system that does it changes the match's heap, like any that writes text.
+- **`Set` where code runs at once.** In a parallel loop's step and in a `Sort`'s block, `Get` and `Has` work and `Set` is an error, as writing anything outside the step is.
+- **A game's own `World`.** A type named `World` in a namespace hides the built-in one in that namespace's code.
 - `return;` ends the system for the current entity.
 - Locals can't reuse the name of another local or parameter in scope.
 - Names starting with `tide_` are reserved for generated code.
@@ -323,7 +356,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Syntax
 
-- Statements: blocks, `if`/`else`, `switch`, loops (see Loops), `break;`, `continue;`, `return;`, `fail error;` (see Errors), local declarations, assignments (`= += -= *= /= %= <<= >>= &= |= ^=`), `i++` and `i--`, and calls: of `Spawn`, `Add`, `Remove`, `Destroy`, `Send`, the `Draw` and GUI functions, lists' methods, and methods and functions, with a block after the ones that take one, and with `!` after or `try` before the ones that can fail.
+- Statements: blocks, `if`/`else`, `switch`, loops (see Loops), `break;`, `continue;`, `return;`, `fail error;` (see Errors), local declarations, assignments (`= += -= *= /= %= <<= >>= &= |= ^=`), `i++` and `i--`, and calls: of `Spawn`, `Add`, `Remove`, `Destroy`, `Send`, the `World`'s `Set`, the `Draw` and GUI functions, lists' methods, and methods and functions, with a block after the ones that take one, and with `!` after or `try` before the ones that can fail.
 
 ### Functions and blocks
 
@@ -373,7 +406,7 @@ event(Spawned) Setup(with Main)
 - Otherwise the default order holds: of the systems whose constraints are met, the earliest in the default order runs next.
 - Constraints that form a loop are an error naming the loop. Systems and views are ordered separately, and `Main` isn't ordered: it runs once, before everything.
 - The language server shows a system's place in the order when hovering it.
-- Systems that share no data they write can run at the same time; the others wait, in this order. Above each system, the language server shows its stage and why it waits ("stage 2 · after Move: both write Body"), and `tidec --schedule` prints the whole plan.
+- Systems that share no data they write can run at the same time; the others wait, in this order. Above each system, the language server shows its stage, what it reaches through its `World` and why it waits ("stage 2 · World: reads Health · after Move: both write Body"), and `tidec --schedule` prints the whole plan.
 
 ```csharp
 [After(Physics.Gravity)]

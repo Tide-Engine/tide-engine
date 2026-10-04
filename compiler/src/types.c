@@ -153,12 +153,7 @@ const char *type_name(const type t)
     case TY_STRING: return "string";
     case TY_ACTION: return "Action";
     case TY_DRAW_LIST: return "DrawList";
-    case TY_LOOKUP: {
-        char *b = buf[next++ % 4];
-        const str name = t.decl->qualified.len > 0 ? t.decl->qualified : t.decl->name;
-        snprintf(b, sizeof buf[0], "lookup " STR_FMT, STR_ARG(name));
-        return b;
-    }
+    case TY_WORLD: return "World";
     case TY_COMPONENT:
     case TY_SINGLETON:
     case TY_INPUT:

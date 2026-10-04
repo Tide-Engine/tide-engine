@@ -1,0 +1,8 @@
+// expect: Set<Health> takes the entity's new Health, not int
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+system Heal(Healer healer, mut World world)
+{
+    world.Set<Health>(healer.patient, 5);
+}

@@ -204,6 +204,20 @@ const cases = {
         ['parallel (var at in field.cells by 2 offset o)', [['parallel', 'keyword.control'], ['in', 'keyword.control'], ['by', 'keyword.control'], ['offset', 'keyword.control']]],
         ['foreach (var tick in Both(Ticks(), Ticks()))', [['in', 'keyword.control'], ['Both', 'entity.name.function.call'], ['in', '!keyword', 2]]],
     ],
+    "the World, and a method's type in <>": [
+        ['system Track(', [['mut', 'storage.modifier'], ['World', 'support.class'], ['world', '!support']]],
+        ['var target = world.Get<Health>(', [
+            ['Get', 'support.function'], ['<', 'punctuation.definition.typeparameters.begin'], ['<', '!keyword.operator'],
+            ['Health', 'entity.name.type'], ['>', 'punctuation.definition.typeparameters.end'], ['>', '!keyword.operator'],
+        ]],
+        ['if (world.Has<Combat.Stats>(', [
+            ['Has', 'support.function'], ['Combat', 'entity.name.type'], ['Stats', 'entity.name.type'],
+            ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end'],
+            ['<', 'keyword.operator.comparison', 2], ['>', 'keyword.operator.comparison', 2],
+        ]],
+        ['world.Set<Health>(', [['Set', 'support.function'], ['Health', 'entity.name.type']]],
+        ['var lookup =', [['lookup', '!storage'], ['<', 'keyword.operator.comparison']]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {

@@ -342,6 +342,19 @@ static expr *parse_primary(parser *p)
     }
 }
 
+// Whether the '<' the parser is at starts a method's type, as in
+// world.Get<Health>(e), rather than a comparison: a name, maybe qualified,
+// then '>' and the call's '('. As in C#, what follows the '>' decides, and
+// no comparison reads that way (it would compare a bool).
+static bool at_type_argument(const parser *p)
+{
+    int i = 1;
+    if (peek_at(p, i)->kind != T_IDENT) return false;
+    i++;
+    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    return peek_at(p, i)->kind == T_GT && peek_at(p, i + 1)->kind == T_LPAREN;
+}
+
 static expr *parse_postfix(parser *p)
 {
     expr *e = parse_primary(p);
@@ -371,10 +384,17 @@ static expr *parse_postfix(parser *p)
         }
         advance(p);
         const token *name = expect_ident(p, "member name after '.'");
-        if (at(p, T_LPAREN)) {
+        if (at(p, T_LPAREN) || (at(p, T_LT) && at_type_argument(p))) {
             expr *m = new_expr(E_METHOD, name->at);
             m->object = e;
             m->name = name->text;
+            if (accept(p, T_LT)) { // world.Get<Health>(e)
+                const qname arg = parse_qname(p, "a type in '<>'");
+                m->type_arg = arg.text;
+                m->type_arg_at = arg.name_at;
+                m->type_arg_qual_at = arg.at;
+                expect(p, T_GT, "'>' after the type");
+            }
             parse_args(p, m);
             e = m;
         } else {
@@ -1385,11 +1405,26 @@ static void parse_query_rest(parser *p, decl *d)
                 what = "component name after 'without'";
             } else {
                 prm.mode = accept(p, T_MUT) ? PARAM_MUT : PARAM_READ;
-                // `lookup Health health`, or `mut lookup`: any entity's, by its handle
-                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT) {
-                    advance(p);
-                    prm.lookup = true;
-                    what = "component name after 'lookup'";
+                // `lookup Health health` and `mut lookup` were any entity's component, by its handle
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT
+                    && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT)) {
+                    const token *keyword = advance(p);
+                    const qname component = parse_qname(p, "component name");
+                    const str name = at(p, T_IDENT) ? peek(p)->text : str_from("health");
+                    diag_error(keyword->at, "'lookup' parameters are gone: code takes the World, and reads any entity's "
+                                            "components through it");
+                    if (prm.mode == PARAM_MUT) {
+                        diag_note("write 'mut World world' instead, 'world.Get<" STR_FMT ">(entity)' where the code has '"
+                                  STR_FMT "[entity]', and 'world.Set<" STR_FMT ">(entity, value)' where it has '" STR_FMT
+                                  "[entity] = value'", STR_ARG(component.text), STR_ARG(name), STR_ARG(component.text),
+                                  STR_ARG(name));
+                    } else {
+                        diag_note("write 'World world' instead, 'world.Get<" STR_FMT ">(entity)' where the code has '"
+                                  STR_FMT "[entity]', and 'world.Has<" STR_FMT ">(entity)' where it has '" STR_FMT
+                                  ".Has(entity)'", STR_ARG(component.text), STR_ARG(name), STR_ARG(component.text),
+                                  STR_ARG(name));
+                    }
+                    longjmp(p->fail, 1);
                 }
             }
             const qname type = parse_decl_type(p, what);

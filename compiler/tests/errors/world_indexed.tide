@@ -1,0 +1,8 @@
+// expect: the World is no value: code calls it, like 'health.Get<Health>(entity)'
+component Health { int value; }
+component Attacker { Entity target; }
+scene Main { }
+system Attack(Attacker attacker, World health)
+{
+    var h = health[attacker.target];
+}
