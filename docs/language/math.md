@@ -1,6 +1,6 @@
 # Math
 
-Tide's math follows Unity.Mathematics, with Tide's naming: functions live on `Math`, in PascalCase. It's all deterministic: the same inputs give the same bits on every platform (see [Determinism](../engine/determinism.md)).
+Tide's math follows Unity.Mathematics, with Tide's naming: functions live on `Math`, in PascalCase. It's all deterministic: the same inputs give the same bits on every platform (see [Determinism](../multiplayer/determinism.md)).
 
 ```csharp
 quaternion spin = quaternion.AxisAngle(float3(0, 1, 0), input.turn * time.dt);
@@ -47,7 +47,7 @@ And these build values:
 - `quaternion.LookRotation(forward, up)`
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`
-- `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` and `float4x4.Ortho(width, height, near, far)`: projections for a 3D camera, as Unity.Mathematics' (see [Any projection](./views.md#any-projection))
+- `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` and `float4x4.Ortho(width, height, near, far)`: projections for a 3D camera, as Unity.Mathematics' (see [Any projection](../game/views.md#any-projection))
 
 ## Operators
 

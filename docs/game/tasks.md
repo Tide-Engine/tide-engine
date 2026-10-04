@@ -41,7 +41,7 @@ A call of an async function is used in one of two ways:
 
 Using an async call's value without `await` is an error that says which of the two to write.
 
-An async function that can fail works as any function that fails (see [Errors](./errors)): `await Fetch(name) ?? "nobody"`, `if (await Fetch(name) is string token) { ... }`, `try await Fetch(name)`, and `await Fetch(name)!`.
+An async function that can fail works as any function that fails (see [Errors](../language/errors.md)): `await Fetch(name) ?? "nobody"`, `if (await Fetch(name) is string token) { ... }`, `try await Fetch(name)`, and `await Fetch(name)!`.
 
 ## Async handlers
 

@@ -61,7 +61,7 @@ system CountDown(mut Round round, Time time)
 
 ## Order
 
-Systems run in one order, the same on every machine. By default, it follows the files, sorted by path, then the order of the systems in each file. A game's [packages](../guide/packages.md) come first, each after the packages it needs.
+Systems run in one order, the same on every machine. By default, it follows the files, sorted by path, then the order of the systems in each file. A game's [packages](../tools/packages.md) come first, each after the packages it needs.
 
 `[Before]` and `[After]` change that. They take any number of systems:
 
@@ -77,7 +77,7 @@ Of the systems whose constraints are met, the earliest in the default order runs
 
 ## Running side by side
 
-Two systems that write the same component isn't a mistake: it's normal. Such systems run one after the other, in the order above. Systems that share nothing they write can run at the same time. The compiler works this out from the parameters, and can tell you why each system waits (see [The schedule](../engine/schedule.md)):
+Two systems that write the same component isn't a mistake: it's normal. Such systems run one after the other, in the order above. Systems that share nothing they write can run at the same time. The compiler works this out from the parameters, and can tell you why each system waits (see [The schedule](./schedule.md)):
 
 ```
 stage 2  Move  (per entity)

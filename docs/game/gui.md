@@ -51,7 +51,7 @@ Widgets have no IDs to write. They're told apart by where they're called from an
 | `ColorField(label, mut Color value)` | A swatch, and fields for r, g, b and a |
 | `GUILayout.Space(size)` | Empty space |
 
-**Containers** take a block (see [Actions](./functions.md#actions)):
+**Containers** take a block (see [Actions](../language/functions.md#actions)):
 
 | Container | What it does |
 |---|---|
@@ -149,7 +149,7 @@ The pointer is the GUI's wherever it's on a widget or an area, from the moment i
 
 ## Widgets of your own
 
-A view can draw widgets itself with `Draw`, or hand the devices to a UI library through [C functions](./c-functions.md). The engine doesn't know those widgets are there, so the view says what they're using:
+A view can draw widgets itself with `Draw`, or hand the devices to a UI library through [Calling C](../c/functions.md). The engine doesn't know those widgets are there, so the view says what they're using:
 
 | Call | What it does |
 |---|---|

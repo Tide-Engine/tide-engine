@@ -62,7 +62,7 @@ final class TideGames {
         return new Game(root, null);
     }
 
-    // A folder's tide.packages (see docs/guide/packages.md), as lines without
+    // A folder's tide.packages (see docs/tools/packages.md), as lines without
     // their comments, or null when it has none.
     private static @Nullable List<String> packagesLines(@NotNull Path folder) {
         final Path file = folder.resolve("tide.packages");

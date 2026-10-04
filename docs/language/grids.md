@@ -47,11 +47,11 @@ Nothing about a grid fails: past its size, reads give zero and writes do nothing
 
 A grid keeps its cells in chunks of 64 by 64 cells, or 16 by 16 by 16 in 3D: 16 KB for four-byte cells, 4 KB for a byte enum (`enum Material : byte`), which makes a big grid a quarter of the memory to keep, hash and send. Cells bigger than four bytes make chunks of fewer cells, 16 KB at most. A chunk only exists once a cell in it is set to something other than zero, so a blank canvas costs nothing, and an open grid costs what's in it rather than the space it spans.
 
-A match is snapshotted every tick and rolled back when a guess about another player went wrong (see [Multiplayer](./multiplayer.md)). Snapshots share the chunks nothing changed, and hashes cover each chunk on its own, so changing a few cells copies and hashes a few chunks, never the whole grid. A player joining gets only the chunks that exist.
+A match is snapshotted every tick and rolled back when a guess about another player went wrong (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). Snapshots share the chunks nothing changed, and hashes cover each chunk on its own, so changing a few cells copies and hashes a few chunks, never the whole grid. A player joining gets only the chunks that exist.
 
 A grid is never copied, since every chunk would be: a local can't hold one, nor a component that has one, and functions can't take grids yet. Read and change cells through the component or singleton.
 
-A `Grid2<Color>` with a size draws as a texture: `Draw.Mesh` takes one (see [Textures](./views.md#textures)).
+A `Grid2<Color>` with a size draws as a texture: `Draw.Mesh` takes one (see [Textures](../game/views.md#textures)).
 
 ## Going through every cell
 

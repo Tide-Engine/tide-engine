@@ -2,7 +2,7 @@
 
 Every system declares what it reads and writes, so the compiler knows, before the game runs, which systems can run at the same time and which have to wait. That plan is the **schedule**.
 
-The tick follows it on every core: a system starts as soon as what it waits for is done, and big systems split their entities across threads too. Running in parallel never changes results, so every machine still gets the same match. A small tick, where waking the other threads would cost more than they'd save, runs on one thread. On the web, ticks run on threads when the page is cross-origin isolated (see [Command line](../guide/cli.md#threads-on-the-web)), and on one thread elsewhere.
+The tick follows it on every core: a system starts as soon as what it waits for is done, and big systems split their entities across threads too. Running in parallel never changes results, so every machine still gets the same match. A small tick, where waking the other threads would cost more than they'd save, runs on one thread. On the web, ticks run on threads when the page is cross-origin isolated (see [The tide command](../tools/cli.md#threads-on-the-web)), and on one thread elsewhere.
 
 ## Reading it
 
@@ -68,7 +68,7 @@ Some things are the whole match's, so systems wait for each other over them what
 
 - **Text, lists and grids.** Two systems that change the match's text, lists or grids conflict, since they share its heap. Reading them alongside is fine.
 - **Spawns.** Entities get their IDs in order. A system that runs on one thread gives a new entity its ID as it spawns, so it waits for the systems before it that spawn. A system that splits its entities across threads doesn't wait: see below.
-- **Tasks.** A system that starts [tasks](../language/tasks.md) runs their code until they first wait, which can spawn and change text, and the match keeps its tasks in the order they start. So it runs on one thread, and waits for the systems before it that start tasks, spawn or change text. Tasks that go on later do so after the tick's changes, one at a time, in the order they started: `tide schedule` says so at its end.
+- **Tasks.** A system that starts [tasks](./tasks.md) runs their code until they first wait, which can spawn and change text, and the match keeps its tasks in the order they start. So it runs on one thread, and waits for the systems before it that start tasks, spawn or change text. Tasks that go on later do so after the tick's changes, one at a time, in the order they started: `tide schedule` says so at its end.
 
 ## Keeping it wide
 
@@ -80,7 +80,7 @@ Some things are the whole match's, so systems wait for each other over them what
 
 The other kind of parallelism is a system splitting its entities across threads: each thread takes a chunk of them, up to 1,024. It doesn't change results either, and needs nothing from you, but a system only splits when nothing it does has to happen in order across its entities. One that changes text, lists or grids, or changes a singleton, runs on one thread, alongside the others. Everything a system records (spawns, adds, removes, destroys, events) is applied in the order one thread would have recorded it.
 
-A system that splits can spawn. Its `Spawn` gives a temporary handle, which works like any other: store it in the entity's components, `Add` to it, `Send` to it or put it in an event. Once the system is done, its new entities get their IDs, in the order one thread would have given them, and every handle it kept (in the components it changes, the changes it recorded and its events) becomes the real one, before any system that waits for it starts. Only while the system runs does the difference show: text shows a temporary handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary` (see [C functions](../language/c-functions.md)).
+A system that splits can spawn. Its `Spawn` gives a temporary handle, which works like any other: store it in the entity's components, `Add` to it, `Send` to it or put it in an event. Once the system is done, its new entities get their IDs, in the order one thread would have given them, and every handle it kept (in the components it changes, the changes it recorded and its events) becomes the real one, before any system that waits for it starts. Only while the system runs does the difference show: text shows a temporary handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary` (see [Calling C](../c/functions.md)).
 
 ## Parallel loops
 

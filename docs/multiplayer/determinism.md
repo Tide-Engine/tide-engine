@@ -21,7 +21,7 @@ The engine compiles everything, your game included, with the flags that guarante
 
 NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. The engine keeps it out where it can:
 
-- Inputs come from other machines, so NaN and infinite floats in them become the field's default before the game sees them (see [Input](../language/input.md)).
+- Inputs come from other machines, so NaN and infinite floats in them become the field's default before the game sees them (see [Input](../game/input.md)).
 - `Math.Clamp` always returns a value in range, `Math.Min` and `Math.Max` with one NaN return the other argument, and `Math.NormalizeSafe` gives zero instead of NaN.
 
 ## Order
@@ -29,7 +29,7 @@ NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. T
 Everything that could run in a different order does so in a fixed one:
 
 - Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere.
-- Systems run in one order (see [Systems](../language/systems.md#order)), and structural changes and events apply in the order they were made.
+- Systems run in one order (see [Systems](../game/systems.md#order)), and structural changes and events apply in the order they were made.
 - Running systems in parallel will never change results: thread timing never decides the order of anything that can be seen.
 
 ## Integers

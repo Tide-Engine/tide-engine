@@ -249,7 +249,7 @@ function manifestGames() {
     return games;
 }
 
-// A folder's tide.packages (see docs/guide/packages.md), as lines without
+// A folder's tide.packages (see docs/tools/packages.md), as lines without
 // their comments, or null when it has none.
 function packagesLines(folder) {
     try {

@@ -83,7 +83,7 @@ system Regenerate(mut Unit unit)
 
 Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
 
-A function can also be written in C, declared with `extern` and no body: see [Calling C](c-functions.md).
+A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 
 ## Actions
 

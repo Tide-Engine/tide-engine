@@ -1,4 +1,4 @@
-# Multiplayer
+# Matches
 
 Every match runs on a server, and this machine's player connects to it. When the server is on this machine, that's over a loopback transport, so single-player and multiplayer are the same game with the same code. The engine assumes nothing about what a game does with a match, like pausing: games build that from inputs and state.
 
@@ -111,7 +111,7 @@ The built-in local events `Connected` and `Disconnected` say when that changes. 
 | `Refused` | The server runs another build of the game, has no room left, or its match is closed |
 | `ServerLeft` | The server's machine left, which ended the match |
 | `Failed` | It couldn't start: no network, a port in use, an address that isn't one, or a room nobody has |
-| `Ended` | The match's last scene unloaded (see [Scenes](./scenes.md#loading-and-unloading)), or the machine running it called `Session.End()` |
+| `Ended` | The match's last scene unloaded (see [Scenes](../game/scenes.md#loading-and-unloading)), or the machine running it called `Session.End()` |
 | `Kicked` | The server's machine sent it away, saying why in `message` |
 
 ```csharp
@@ -123,7 +123,7 @@ local event(Disconnected gone) BackToMenu(mut Menu menu)
 
 ## Host migration
 
-When the machine running a match leaves, the match ends for everyone, unless the game turns on host migration in its [settings](./basics.md#settings):
+When the machine running a match leaves, the match ends for everyone, unless the game turns on host migration in its [settings](../language/basics.md#settings):
 
 ```csharp
 settings
@@ -142,7 +142,7 @@ Then, when the machine running a room's match leaves or stops answering, another
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
 - Only matches in a room change hands, as the room is where the players meet again. A closed match stays closed: its players come back, but no one new joins.
 
-The new host only has what its machine could see: [private scenes](./scenes.md#private-scenes) it wasn't in are lost. A game that uses host migration shouldn't keep secrets. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
+The new host only has what its machine could see: [private scenes](../game/scenes.md#private-scenes) it wasn't in are lost. A game that uses host migration shouldn't keep secrets. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
 ## Players in the match
 
@@ -155,13 +155,13 @@ event(PlayerJoined joined) GiveBody()
 }
 ```
 
-What each player controls is up to the `Owner` component (see [Input](./input.md)).
+What each player controls is up to the `Owner` component (see [Input](../game/input.md)).
 
 **Coming back:** joining a server gives this machine a cookie, and joining the same server again presents it, so the player gets their `PlayerID` back, and with it whatever the game kept for them. If the server still thought they were connected, the new connection takes over with no events at all; if they'd left, `PlayerJoined` comes again with the same `PlayerID`. The cookie lasts as long as the program, for now.
 
 ## Input delay
 
-By default there is none: a player's own input applies at once. Clients run ahead of the server, by about half the round trip, so their input arrives in time. Only other players' inputs are ever guessed, and when a guess is wrong, the client rolls back and runs the ticks again. See [Networking](../engine/networking.md#prediction-and-rollback) for how.
+By default there is none: a player's own input applies at once. Clients run ahead of the server, by about half the round trip, so their input arrives in time. Only other players' inputs are ever guessed, and when a guess is wrong, the client rolls back and runs the ticks again. See [Networking](./networking.md#prediction-and-rollback) for how.
 
 Running ticks again costs time, about as many ticks as the client is ahead, every frame on a busy match. A client that can't afford it delays its input instead: a tick at a time, until what's left to run again fits in its budget, and back again once there's room to spare. `tide run --stats` shows the delay when there is one.
 

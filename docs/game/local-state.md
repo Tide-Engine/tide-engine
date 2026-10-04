@@ -55,7 +55,7 @@ No mistake here can reach a running game, because the compiler enforces the boun
 - **Local code** (views, local event handlers, local scenes) can read the match, but never change it: no `mut` on the match's components or singletons, and no spawning, changing or sending match things.
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
-The only way from local code into the match is input. Starting, joining and leaving a match are session calls, which never touch a running match (see [Multiplayer](./multiplayer.md)). The errors say where to go instead:
+The only way from local code into the match is input. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
 
 ```csharp
 // Error: match code can't read local state.

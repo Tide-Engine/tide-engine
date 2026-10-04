@@ -2,7 +2,7 @@
 
 #include <stdbool.h>
 
-// A game's packages (see docs/guide/packages.md): what its tide.packages file
+// A game's packages (see docs/tools/packages.md): what its tide.packages file
 // lists, and where each package's files are on this machine. tide and tidels
 // share this; downloading is tide's (compiler/cli/fetch.c).
 //

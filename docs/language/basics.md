@@ -1,6 +1,6 @@
 # Basics
 
-Tide's syntax is C#-like. If you know C#, C or Java, most of it will read as you expect. This page covers what's the same everywhere in the language: values, variables and control flow. The pages after it cover what's special to Tide.
+Tide's syntax is C#-like. If you know C#, C or Java, most of it will read as you expect. This page covers what's the same everywhere in the language: values, variables and control flow. What's special to Tide starts with [components and entities](../game/entities.md).
 
 ## Style
 
@@ -10,7 +10,7 @@ Tide's syntax is C#-like. If you know C#, C or Java, most of it will read as you
 - Names are ASCII. Other characters go in comments and text. Names starting with `tide_` are the engine's, for the C it generates.
 - Braces go on lines of their own, and so does an `else` after a block. A block that fits on one line can stay there: `scene Main { }`, `if (dead) { return; }`.
 
-The editors' formatter lays code out this way (see [Editors](../guide/editors.md)).
+The editors' formatter lays code out this way (see [Editors](../tools/editors.md)).
 
 ## Types
 
@@ -22,18 +22,18 @@ The editors' formatter lays code out this way (see [Editors](../guide/editors.md
 | `float` | A 32-bit float. There's no `double`. |
 | `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
 | `quaternion`, `float2x2`, `float3x3`, `float4x4` | Rotations and matrices (see [Math](./math.md)) |
-| `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](./views.md)) |
-| `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](./gui.md)) |
+| `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](../game/views.md)) |
+| `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
 | `List<T>` | A list of values (see [Text and lists](./text-and-lists.md)) |
 | `Map<K, V>`, `Set<K>` | Values by key, and keys each once, in the order they were added (see [Text and lists](./text-and-lists.md#maps-and-sets)) |
 | `Grid2<T>`, `Grid3<T>` | Cells at `int2` or `int3` positions, in fields (see [Grids](./grids.md)) |
-| `Entity` | A handle to an entity (see [Components and entities](./entities.md)) |
-| `LocalEntity` | A handle to one of this machine's own entities (see [Local state](./local-state.md)) |
-| `PlayerID` | A player (see [Input](./input.md)) |
+| `Entity` | A handle to an entity (see [Components and entities](../game/entities.md)) |
+| `LocalEntity` | A handle to one of this machine's own entities (see [Local state](../game/local-state.md)) |
+| `PlayerID` | A player (see [Input](../game/input.md)) |
 | `T?`, like `int?` | A value or nothing (see [Errors](./errors.md)) |
 
-The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](./gui.md)), `Filter` ([Views and drawing](./views.md#textures)), `SceneVisibility` ([Scenes](./scenes.md)), `SessionState`, `DisconnectReason` and `Prediction` ([Multiplayer](./multiplayer.md)).
+The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](../game/gui.md)), `Filter` ([Views and drawing](../game/views.md#textures)), `SceneVisibility` ([Scenes](../game/scenes.md)), `SessionState`, `DisconnectReason` and `Prediction` ([Matches](../multiplayer/matches.md)).
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
 
@@ -101,16 +101,16 @@ settings
 |---|---|---|
 | `title` | The window's title | The game's folder's name |
 | `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate` | 60 |
-| `maxPlayers` | How many players a match takes, from 1 to 256. Builds with different values can't play together (see [Multiplayer](./multiplayer.md#how-many-players)) | 16 |
-| `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](./multiplayer.md#host-migration)) | `false` |
-| `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](./multiplayer.md#input-delay)) | `Prediction.Rollback` |
-| `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../guide/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
+| `maxPlayers` | How many players a match takes, from 1 to 256. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
+| `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
+| `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |
+| `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../tools/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
 | `version` | The version people see, like `1.2.0`: one to three numbers between dots. Each build's version code, which app stores order updates by, goes up by itself | `1.0` |
 
 - Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.
 - A game has one `settings` block. The editors complete the settings' names and show what each one does.
 - Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
-- `--title` goes over the `title` setting (see [The tide command](../guide/cli.md)).
+- `--title` goes over the `title` setting (see [The tide command](../tools/cli.md)).
 
 ## Logging and asserting
 
@@ -125,7 +125,7 @@ system Fall(Time time, mut Body body)
 }
 ```
 
-Neither changes the match, so the simulation stays the same on every machine with or without them. A client runs a tick again when a guess about another player's input was wrong (see [Networking](../engine/networking.md#prediction-and-rollback)), and a log in it prints again: prefix what you log of the match with `Time.tick` to tell the runs apart. `tide run --stats` shows the three systems that took longest in the last tick, beside the frame rate.
+Neither changes the match, so the simulation stays the same on every machine with or without them. A client runs a tick again when a guess about another player's input was wrong (see [Networking](../multiplayer/networking.md#prediction-and-rollback)), and a log in it prints again: prefix what you log of the match with `Time.tick` to tell the runs apart. `tide run --stats` shows the three systems that took longest in the last tick, beside the frame rate.
 
 ## Default values
 

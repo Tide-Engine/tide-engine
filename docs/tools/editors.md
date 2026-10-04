@@ -8,7 +8,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Formatting, of a file or a selection, parameter hints and inlay hints.
 - The outline, symbols across the game, folding, growing a selection, and semantic highlighting.
 - Moving a declaration to a file of its own.
-- Each system's place in [the schedule](../engine/schedule.md) above it: its stage, and why it waits.
+- Each system's place in [the schedule](../game/schedule.md) above it: its stage, and why it waits.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
