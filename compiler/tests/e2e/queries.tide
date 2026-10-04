@@ -71,6 +71,9 @@ singleton Stats
 {
     int healthBeforeEvents;
     int handles;
+    int workVisits;
+    int workPrefix;
+    int impossibleVisits;
 }
 
 event Hit
@@ -221,4 +224,26 @@ system QueryWork(mut Work work, query (Body body, Fighter fighter, with Target, 
         work.visits += 1;
     }
     for (var i = 0; i < 1024; i++) work.value = (work.value * 17 + i + work.total) % 65521;
+}
+
+// The query candidates themselves span two chunks. Continue skips the first
+// row of the second chunk; break stops at the next, after 2048 rows counted.
+system AuditChunks(mut Stats stats, query (Work work) works,
+                   query (Health health, with Ghost) impossible)
+{
+    stats.workVisits = 0;
+    stats.workPrefix = 0;
+    stats.impossibleVisits = 0;
+    foreach (var row in works) stats.workVisits += row.work.visits;
+    mut var at = 0;
+    foreach (var row in works)
+    {
+        var index = at;
+        at += 1;
+        if (index == 2048) continue;
+        if (index == 2049) break;
+        stats.workPrefix += row.work.visits;
+    }
+    // No archetype can have both: codegen emits an empty query directly.
+    foreach (var row in impossible) stats.impossibleVisits += row.health.value + 1;
 }

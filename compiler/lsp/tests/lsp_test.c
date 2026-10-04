@@ -4636,6 +4636,18 @@ TIDE_TEST(lsp_entity_query_format_tokens_and_schedule)
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 8, 8, "");
     TIDE_CHECK(has(hover, "Through its queries, it reads any entity's `Body`"));
     TIDE_CHECK(has(hover, "`Move`: it writes `Body`, which this reads"));
+
+    // A World write to the same component retains the query's read in metadata.
+    open_document(QUERY_TYPES "system Rewrite(query (Body body, with Fighter) fighters, mut World world)\n{\n"
+                  "    foreach (var fighter in fighters)\n    {\n"
+                  "        mut var next = fighter.body;\n"
+                  "        next.position.x += 1;\n"
+                  "        world.Set<Body>(fighter.entity, next);\n"
+                  "    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/codeLens"), "World/query: reads Body; writes Body"));
+    const char *alias = request_at("file:///test.tide", "textDocument/hover", 7, 8, "");
+    TIDE_CHECK(has(alias, "Through its `World` and queries, it reads any entity's `Body` and writes any entity's `Body`"));
 }
 
 TIDE_TEST(lsp_entity_query_every_prefix_is_safe)
