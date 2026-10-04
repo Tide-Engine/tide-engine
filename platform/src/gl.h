@@ -116,6 +116,8 @@ enum {
     V(EnableVertexAttribArray, (GLuint index), (index))                                                                \
     V(FramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffer_target, GLuint renderbuffer),    \
       (target, attachment, renderbuffer_target, renderbuffer))                                                         \
+    V(FramebufferTexture2D, (GLenum target, GLenum attachment, GLenum texture_target, GLuint texture, GLint level),    \
+      (target, attachment, texture_target, texture, level))                                                            \
     V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                  \
     V(GenFramebuffers, (GLsizei count, GLuint *framebuffers), (count, framebuffers))                                   \
     V(GenRenderbuffers, (GLsizei count, GLuint *renderbuffers), (count, renderbuffers))                                \

@@ -1,0 +1,6 @@
+// expect: a Stage offset must be a constant int
+enum Phases { First }
+int Next() { return 1; }
+scene Main { }
+[Stage(Phases.First, Next())]
+system Work() { }

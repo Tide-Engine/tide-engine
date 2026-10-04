@@ -1,0 +1,3 @@
+// expect: a frag reads its Texture source: drop 'mut'
+scene Main { }
+frag Copy(Vertex vertex, mut Color color, mut Texture source) { color = source.Sample(vertex.uv); }

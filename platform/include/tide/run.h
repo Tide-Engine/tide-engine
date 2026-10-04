@@ -88,6 +88,7 @@ static inline uint32_t tide_run_entity_count(const void *world)
 
 static inline void tide_run_unload(void)
 {
+    tide_render_targets_free();
     tide_scratch_free();
 }
 
@@ -104,6 +105,11 @@ static inline uint32_t tide_run_local_pack(const void *local, uint8_t *out, cons
 static inline bool tide_run_local_unpack(void *local, const uint8_t *data, const uint32_t size)
 {
     return tide_local_unpack(local, data, size);
+}
+
+static inline void tide_run_rebind_resources(void *local, const bool same_memory)
+{
+    tide_local_rebind_resources(local, same_memory);
 }
 
 // The game as hosts run it.
@@ -129,6 +135,7 @@ static const tide_host_game tide_host_game_api = {
     .tick = tide_run_tick,
     .entity_count = tide_run_entity_count,
     .unload = tide_run_unload,
+    .rebind_resources = tide_run_rebind_resources,
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)

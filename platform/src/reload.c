@@ -89,6 +89,7 @@ __attribute__((export_name("tide_reload_save"))) uint32_t tide_reload_save(void)
 {
     const tide_host_game *game = tide_run_game;
     if (!game || !game->layout || !tide_run_local) return 0;
+    if (game->rebind_resources) game->rebind_resources(tide_run_local, true);
     uint32_t layout_size = 0;
     void *layout = tide_layout_pack(game->layout, &layout_size);
     if (!layout) return 0;
@@ -169,6 +170,7 @@ static bool resume(void)
         return false;
     }
 
+    if (game->rebind_resources) game->rebind_resources(local, false);
     tide_run_local = local;
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_start) abort();
@@ -407,6 +409,7 @@ static bool carry_over(const tide_host_game *next)
 static void swap(const tide_host_game *next, void *library)
 {
     const tide_host_game *old = tide_run_game;
+    bool retained = true;
     if (next->game->hash == old->game->hash && next->local_size == old->local_size) {
         tide_session_set_game(tide_run_session, next->game);
         tide_run_game = next;
@@ -414,10 +417,12 @@ static void swap(const tide_host_game *next, void *library)
     } else if (carry_over(next)) {
         tide_run_game = next;
     } else {
+        retained = false;
         tide_run_end();
         tide_run_game = next;
         tide_run_begin();
     }
+    if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
     fflush(stdout);
     old->unload();
     library_close(reload.library);

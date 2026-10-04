@@ -1,0 +1,5 @@
+// expect: 'Work' already has a Stage
+enum Phases { First, Last }
+scene Main { }
+[Stage(Phases.First), Stage(Phases.Last)]
+system Work() { }

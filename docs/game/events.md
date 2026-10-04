@@ -64,6 +64,8 @@ Handlers can send events and change entities in turn. Those are handled next, un
 
 The handlers of one event run in the order they're declared, and `[Before]` and `[After]` order them as they do systems, among the handlers of the same event.
 
+Handlers can also use [named phases](./systems.md#named-phases): `[Stage(MyStages.Apply)]`, optionally with an offset such as `[Stage(MyStages.Apply, 10)]`. `Before` and `After` can name a whole phase. Each event has its own order, even when different events use the same phase enum.
+
 A handler of an event nothing sends is a warning: it would never run. So is declared access a handler doesn't use, as for systems (see [Systems](./systems.md)).
 
 Events waiting to be handled are part of the world: a snapshot holds them, and running a tick again sends and handles them again the same way.
