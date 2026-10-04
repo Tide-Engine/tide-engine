@@ -1,0 +1,7 @@
+// expect: query row 'row' is read-only
+component Body { Grid2<int> cells; }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies) row.body.cells[int2(0, 0)] = 1;
+}

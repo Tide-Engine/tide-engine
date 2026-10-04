@@ -93,8 +93,8 @@ bool system_splits(const decl *sys)
         const param *p = &sys->params.items[i];
         if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
     }
-    // World.Set writes any entity's component; reading through the World a
-    // component the system changes would read rows other threads are changing
+    // World.Set writes any entity's component; reading through World or a
+    // query a component the system changes would read rows other threads change
     for (int i = 0; i < sys->world_uses.count; i++) {
         if (sys->world_uses.items[i].writes) return false;
     }
@@ -129,16 +129,18 @@ typedef struct access_list {
     int count;
 } access_list;
 
-// In the order of its parameters, the World's uses where the World is.
+// In parameter order, global accesses at the first World or query parameter.
 static access_list accesses_of(const decl *sys)
 {
     access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 1)), 0};
+    bool any_entity = false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        for (int k = 0; p->type.kind == TY_WORLD && k < sys->world_uses.count; k++) {
+        for (int k = 0; !any_entity && (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) && k < sys->world_uses.count; k++) {
             const world_use *u = &sys->world_uses.items[k];
             list.items[list.count++] = (access){u->component, u->writes, true};
         }
+        any_entity |= p->type.kind == TY_WORLD || p->type.kind == TY_QUERY;
         const decl *data = accessed(p);
         if (data) list.items[list.count++] = (access){data, p->mode == PARAM_MUT, false};
     }
@@ -399,12 +401,27 @@ int world_use_names(const decl *sys, const bool writes, const char *quote, const
     return count;
 }
 
-// What a system reads (writes = false) or writes of every entity's, through its World.
+// What a system reads or writes beyond its outer entity, through World or queries.
 static void put_world_access(sb *out, const decl *sys, const bool writes)
 {
-    sb names = {0};
-    if (!world_use_names(sys, writes, "", NULL, &names)) return;
-    sb_printf(out, "         %s any entity's %s, through World\n", writes ? "writes" : "reads", names.data);
+    for (int pass = 0; pass < (writes ? 1 : 2); pass++) {
+        sb names = {0};
+        int count = 0;
+        for (int i = 0; i < sys->world_uses.count; i++) {
+            const world_use *u = &sys->world_uses.items[i];
+            count += pass ? u->query_read : u->through_world && u->writes == writes;
+        }
+        int written = 0;
+        for (int i = 0; i < sys->world_uses.count; i++) {
+            const world_use *u = &sys->world_uses.items[i];
+            if (pass ? !u->query_read : !u->through_world || u->writes != writes) continue;
+            sb_put(&names, written == 0 ? "" : written == count - 1 ? " and " : ", ");
+            put_decl_name(&names, u->component, "", NULL);
+            written++;
+        }
+        if (count) sb_printf(out, "         %s any entity's %s, through %s\n", writes ? "writes" : "reads", names.data,
+                             pass ? "queries" : "World");
+    }
 }
 
 void print_schedule(const program *prog, const char *game, sb *out)

@@ -1405,7 +1405,7 @@ static decl *parse_data_decl(parser *p, const decl_kind kind)
 
 // (Time time, mut Transform trs, with Player, without Dead) { ... }: the rest
 // of a system, view or event handler.
-static void parse_query_rest(parser *p, decl *d)
+static void parse_query_params(parser *p, decl *d)
 {
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
@@ -1413,6 +1413,19 @@ static void parse_query_rest(parser *p, decl *d)
             param prm = {0};
             prm.at = peek(p)->at;
             const char *what = "parameter type";
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "query") && peek_at(p, 1)->kind == T_LPAREN) {
+                advance(p);
+                prm.mode = PARAM_QUERY;
+                decl nested = {0};
+                parse_query_params(p, &nested);
+                prm.query.items = nested.params.items;
+                prm.query.count = nested.params.count;
+                prm.query.cap = nested.params.cap;
+                prm.name_at = peek(p)->at;
+                prm.name = expect_ident(p, "query parameter name")->text;
+                vec_push(d->params, prm);
+                continue;
+            }
             // `chunk mut Field.cells cells` was a chunk system's grid
             const token *first = peek(p);
             if (first->kind == T_IDENT && str_eq_c(first->text, "chunk")
@@ -1478,6 +1491,11 @@ static void parse_query_rest(parser *p, decl *d)
         } while (accept(p, T_COMMA));
     }
     expect(p, T_RPAREN, "')' after parameters");
+}
+
+static void parse_query_rest(parser *p, decl *d)
+{
+    parse_query_params(p, d);
     d->body = parse_block(p);
     d->end = d->body->end;
 }

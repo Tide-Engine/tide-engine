@@ -12,7 +12,7 @@ system ClampPlayer(mut Transform trs, with Player)
 
 ## Parameters are the query
 
-A system's parameter list is its whole query. Each parameter's modifier says how the system relates to that component or singleton:
+A system's component parameters describe the entities it runs for. Each parameter's modifier says how the system relates to that component or singleton:
 
 | Modifier | Meaning |
 |---|---|
@@ -31,10 +31,42 @@ Other parameters:
 - **The input**, or **`Devices`**: what the player who owns the entity does (see [Input](./input.md)).
 
 - **The `World`**: any other entity's components (below).
+- **A read-only `query`**: another set of entities to inspect (below).
 
 Views take the same parameters, and one filter more: `with ownership` and `without ownership`, the entities this machine's player owns, or doesn't (see [Your own entities](./views.md#your-own-entities)). It's for views only: a system runs the same on every machine, so there it's an error, which points to `with Owner`, the entities any player owns.
 
 The entity itself isn't a parameter: it's `this` (see [Entity handles](./entities.md#entity-handles)).
+
+## Another set of entities
+
+A bullet system runs for bullets, but needs to inspect fighters too. A `query` parameter selects that second set:
+
+```csharp
+system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
+{
+    foreach (var fighter in fighters)
+    {
+        if (Intersects(shot, fighter.body))
+            fighter.entity.Send(Hit { damage = bullet.damage });
+    }
+}
+```
+
+`Intersects` is a function the game defines. The outer `Body` and `Bullet` parameters select each bullet; `Body` and `with Fighter` inside the query select the candidates it inspects. The query never requires a bullet to be a fighter.
+
+Inside `foreach`, `fighter.body` is read-only component data and `fighter.entity` is that fighter's entity handle. Add more component bindings when their values are needed, and `with` or `without` filters when only presence matters:
+
+```csharp
+query (Body body, Health health, with Fighter, without Invulnerable) fighters
+```
+
+Sparse components and tags are checked for each candidate, and an empty query runs no iterations. A system with only query parameters runs once per tick.
+
+Queries use normal deterministic ECS traversal. They do not sort by entity ID, distance or hit time. For a swept projectile, calculate each candidate's intersection and keep the earliest one before sending a hit.
+
+Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
+
+This version supports queries in match systems, with read-only component bindings and component filters. Queries and their whole rows are used directly in `foreach` in the system's ordinary control flow, outside parallel loops and callback blocks; they cannot be stored or passed to functions. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
 ## Other entities: the World
 

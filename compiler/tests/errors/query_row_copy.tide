@@ -1,0 +1,11 @@
+// expect: query rows can't be stored or passed on
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies)
+    {
+        var copy = row;
+        Debug.Log($"{copy}");
+    }
+}

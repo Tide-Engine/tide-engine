@@ -122,6 +122,7 @@ typedef enum type_kind {
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
+    TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
     TY_COMPONENT,
     TY_SINGLETON,
     TY_INPUT,      // The game's input declaration
@@ -193,6 +194,7 @@ typedef enum param_mode {
     PARAM_WITHOUT,
     PARAM_EVENT, // An event handler's trigger: `event(Hit hit)`, always its first parameter
     PARAM_IN,    // `in Stats stats`, an extern function's: C gets a read-only pointer to the value
+    PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a second candidate set
 } param_mode;
 
 // One value the devices send, like keyboard.space or gamepad.leftStick.
@@ -226,6 +228,11 @@ typedef struct param {
     bool local_written;  // ...and writes one
     bool match_write;    // A function's: it changes the match's fields of it, itself or through a function it passes it to
     loc match_write_at;  // ...where it first does
+    VEC(struct param) query; // PARAM_QUERY's read-only bindings and component filters
+    comp_mask query_need_mask;
+    comp_mask query_without_mask;
+    bool query_local; // The candidates belong to the local world rather than the match
+    struct param *query_source; // A nested binding or filter's containing query parameter
 } param;
 
 // Why a system waits for one that runs before it in the tick (see parallel.c).
@@ -259,14 +266,16 @@ enum {
     TASK_LOCAL,
 };
 
-// A component code reaches through its World parameter, any entity's by its
-// handle: world.Get<Health>(e), Has and Set. It's access to every entity's,
-// which the schedule counts as the system's own.
+// A component code reaches through its World parameter or a query, beyond
+// the entity the system runs for. It's access to every entity's, which the
+// schedule counts as the system's own.
 typedef struct world_use {
     struct decl *component;
     bool writes;  // Some call is a Set
     loc at;       // The first call that names it
     loc write_at; // ...and the first Set
+    bool query_read; // A query parameter also reads this component's candidate rows
+    bool through_world; // Some World call names it
 } world_use;
 
 typedef struct system_wait {
@@ -321,6 +330,8 @@ typedef struct decl {
     const unit *unit; // The file it's in; NULL for built-ins
     VEC(attribute) attributes;
     bool builtin;
+    bool query_row;   // Compiler-only foreach row: entity and named read-only component values
+    struct param *query_source; // Its query parameter, for editor binding lookup
     bool is_local;    // `local`: belongs to this machine, not the match. Views are always local code.
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
@@ -425,7 +436,7 @@ typedef struct decl {
     uint64_t device_uses[DEVICE_WORDS]; // Device values it reads through parameters, a bit per device leaf
     loc position_at;     // ...where it first reads a position in the window that way (the mouse's, a touch's)
     const char *position_what; // ...whose: "the mouse's position"
-    VEC(world_use) world_uses; // What it reads and changes through its World parameter, by component, in the order its body first names each
+    VEC(world_use) world_uses; // Query reads and World access, by component: query declaration order, then first body use
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
     int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's `with ownership` or `without ownership`, which its rows are checked for
@@ -714,6 +725,8 @@ struct stmt {
     loc name_at;
     loc type_qual_at; // Where the type starts: its namespace if it's qualified
 
+    param *query; // S_FOREACH over a query parameter; its compiler-only row is `type`
+
     // S_VAR initializer (NULL for the name after `is`), S_ASSIGN value, S_EXPR
     // expression, S_RETURN value (or NULL), S_FAIL error
     expr *value;
@@ -942,12 +955,12 @@ void analyze_parallelism(program *prog);
 // right.
 bool system_splits(const decl *sys);
 
-// Whether a system reads through its World a component it also changes
+// Whether a system reads through its World or a query a component it also changes
 // through a parameter: it runs on one thread, and writes its rows in place, so
 // what it reads of the rows it changed is the same on every machine.
 bool world_reads_own_writes(const decl *sys);
 
-// The components code reads (writes = false) or writes through its World:
+// The components code reads (writes = false) or writes through World or queries:
 // "Transform and Health". `quote` wraps names, written as code in `from`'s
 // namespace writes them (qualified without one). Returns how many there are.
 int world_use_names(const decl *sys, bool writes, const char *quote, const decl *from, sb *out);

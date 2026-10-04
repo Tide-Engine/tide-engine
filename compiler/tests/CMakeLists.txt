@@ -19,6 +19,12 @@ tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(world) # Other entities' components through the World
+tide_e2e_test(queries) # Read-only iteration over a separate entity set
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)
+endif()
+set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)

@@ -4407,3 +4407,156 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     lsp_handle_ahead(&server, cancel_7, strlen(cancel_7), later, 2);
     TIDE_CHECK(sent_count == 0);
 }
+
+#define QUERY_TYPES \
+    "component Body { float2 position; }\n" \
+    "component Fighter { int health; }\n" \
+    "component Ghost { }\n" \
+    "component Bullet { }\n" \
+    "singleton Score { int value; }\n" \
+    "scene Main { }\n" \
+    "event(Spawned) Setup(with Main) { Spawn(Body, Fighter); Spawn(Body, Bullet); }\n"
+
+TIDE_TEST(lsp_entity_query_members_and_headers)
+{
+    start();
+    const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
+    TIDE_CHECK(offers(header, "query"));
+    TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+
+    const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "Fighter"));
+    TIDE_CHECK(offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "system Hits(query (Body $) fighters) { }\n"), "body"));
+    const char *filters = complete(QUERY_TYPES "system Hits(query (Body body, without $) fighters) { }\n");
+    TIDE_CHECK(offers(filters, "Ghost") && !offers(filters, "ownership") && !offers(filters, "Score"));
+
+    const char *rows = complete(QUERY_TYPES "system Hits(query (Body body, Fighter stats, without Ghost) fighters)\n{\n"
+                                          "    foreach (var fighter in fighters) { var value = fighter.$; }\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body") && offers(rows, "stats"));
+    TIDE_CHECK(!offers(rows, "position") && !offers(rows, "health"));
+    TIDE_CHECK(has(rows, "Read-only component data from this query row"));
+    const char *fields = complete(QUERY_TYPES "system Hits(query (Body body, with Fighter) fighters)\n{\n"
+                                            "    foreach (var fighter in fighters) { var value = fighter.body.$; }\n}\n");
+    TIDE_CHECK(offers(fields, "position"));
+    const char *braceless = complete(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
+                                               "    foreach (var fighter in fighters) Debug.Log(fighter.$\n}\n");
+    TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
+}
+
+TIDE_TEST(lsp_entity_query_symbols)
+{
+    start();
+    static const char game[] = QUERY_TYPES
+        "system Hits(Body shot, with Bullet, query (Body body, Fighter stats, without Ghost) fighters)\n{\n"
+        "    foreach (var fighter in fighters)\n    {\n"
+        "        var value = fighter.body.position + shot.position;\n"
+        "        var target = fighter.entity;\n"
+        "        if (fighter.stats.health == 0 && target != this && value.x > 1) return;\n"
+        "    }\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 8, ""),
+                   "query (Body body, Fighter stats, without Ghost) fighters"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 32, ""), "read-only second entity set"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 29, ""), "Read-only component data from this query row"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 30, ""), "entity matched by this query row, read-only"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 11, 29, ""),
+                   "\"start\":{\"line\":7,\"character\":48}"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/typeDefinition", 11, 29, ""),
+                   "\"start\":{\"line\":0,\"character\":10}"));
+    const char *refs = request_at("file:///test.tide", "textDocument/references", 7, 48,
+                                  "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(refs, "\"uri\":\"file:///test.tide\"") == 2);
+    request_at("file:///test.tide", "textDocument/rename", 11, 29, "\"newName\":\"shape\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "query (Body shape, Fighter stats, without Ghost) fighters"));
+    TIDE_CHECK(has(renamed, "fighter.shape.position") && has(renamed, "Body shot"));
+    TIDE_CHECK(!has(renamed, "fighter.body"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/rename", 11, 29, "\"newName\":\"entity\""),
+                   "already declared there"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 12, 30, ""),
+                   "Built-in names can't be renamed"));
+
+    // Query types and filters resolve to ordinary components for navigation and rename.
+    request_at("file:///test.tide", "textDocument/rename", 7, 43, "\"newName\":\"Shape\"");
+    renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "component Shape") && has(renamed, "query (Shape body"));
+    TIDE_CHECK(has(renamed, "Shape shot") && !has(renamed, "Body"));
+
+    open_document(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
+                  "    foreach (var fighter in fighters) fighter.body.position.x = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "query row 'fighter' is read-only"));
+}
+
+TIDE_TEST(lsp_entity_query_format_tokens_and_schedule)
+{
+    start();
+    static const char messy[] = QUERY_TYPES "system Hits(Body shot,query(Body body,with Fighter,without Ghost) fighters)\n{\n"
+        "foreach(var fighter in fighters)\n{\nvar value=fighter.body.position+shot.position;\n"
+        "if(value.x>1&&fighter.entity!=this)return;\n}\n}\n";
+    format_reply(messy);
+    const char *tidy = apply_reply(messy, NULL);
+    TIDE_CHECK(has(tidy, "system Hits(Body shot, query (Body body, with Fighter, without Ghost) fighters)"));
+    TIDE_CHECK(has(tidy, "    foreach (var fighter in fighters)\n    {\n"));
+    char again[8192];
+    snprintf(again, sizeof again, "%s", tidy);
+    TIDE_CHECK(has(format_reply(again), "\"result\":[]"));
+
+    open_document("component Body { int value; }\nscene Main { }\n"
+                  "system S(query (Body body) candidates) { foreach (var row in candidates) { var x = row.body.value; } }\n");
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, "0,2,5,11,0,0,7,4,2,0,0,5,4,5,3,0,6,10,5,3")); // query, Body, body, candidates
+    TIDE_CHECK(has(tokens, "0,4,4,7,2")); // row.body: a readonly property
+
+    open_document(QUERY_TYPES "system Move(mut Body body, with Fighter) { body.position.x += 1; }\n"
+                  "system Hits(Body shot, with Bullet, query (Body body, with Fighter) fighters)\n{\n"
+                  "    foreach (var fighter in fighters) { var value = fighter.body.position + shot.position; if (value.x > 1) return; }\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/codeLens"), "Query: reads Body"));
+    const char *hover = request_at("file:///test.tide", "textDocument/hover", 8, 8, "");
+    TIDE_CHECK(has(hover, "Through its queries, it reads any entity's `Body`"));
+    TIDE_CHECK(has(hover, "`Move`: it writes `Body`, which this reads"));
+}
+
+TIDE_TEST(lsp_entity_query_every_prefix_is_safe)
+{
+    start();
+    static const char program[] = QUERY_TYPES
+        "system Hits(Body shot, query (Body body, Fighter stats, without Ghost) fighters)\n{\n"
+        "    foreach (var fighter in fighters)\n    {\n"
+        "        var value = fighter.body.position + shot.position;\n"
+        "        if (fighter.stats.health == 0 && fighter.entity != this && value.x > 1) return;\n"
+        "    }\n}\n"
+        "system Filter(query (with Fighter, without Ghost) fighters)\n{\n"
+        "    foreach (var fighter in fighters) fighter.entity.Destroy();\n}\n";
+    type_out(program, strlen(QUERY_TYPES));
+}
+
+TIDE_TEST(lsp_entity_query_unused_bindings)
+{
+    start();
+    static const char game[] = QUERY_TYPES "system Filter(query (Body body, with Fighter) fighters)\n{\n"
+        "    foreach (var fighter in fighters) fighter.entity.Destroy();\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "'body' is never used") && has(last_sent(), "\"tags\":[1]"));
+    request_at("file:///test.tide", "textDocument/codeAction", 7, 26,
+               "\"range\":{\"start\":{\"line\":7,\"character\":0},\"end\":{\"line\":7,\"character\":72}},"
+               "\"context\":{\"diagnostics\":[]}");
+    TIDE_CHECK(has(last_sent(), "Only require it: 'with Body'"));
+    const json *reply = json_parse(last_sent(), strlen(last_sent()));
+    const json *actions = json_get(reply, "result");
+    bool found = false;
+    for (int i = 0; actions && i < actions->count; i++) {
+        const json *edits = json_path(actions->items[i], "edit", "changes", "file:///test.tide", NULL);
+        char text[8192];
+        snprintf(text, sizeof text, "%s", game);
+        if (edits && edits->kind == JSON_ARRAY) apply_edits(text, sizeof text, edits);
+        found |= has(text, "query (with Body, with Fighter) fighters");
+    }
+    json_release();
+    TIDE_CHECK(found);
+}

@@ -1,0 +1,11 @@
+// expect: a query row can't be captured by parallel loops or callback blocks
+component Body { float x; }
+scene Main { }
+void Twice(Action content) { content(); content(); }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies)
+    {
+        Twice() { Debug.Log($"{row.body.x}"); }
+    }
+}
