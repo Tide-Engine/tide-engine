@@ -397,7 +397,10 @@ static bool ends_with(const char *s, const char *suffix)
     return n >= k && _stricmp(s + n - k, suffix) == 0;
 }
 
-static bool start_process(const char *const *argv, const char *cwd, const bool quiet, PROCESS_INFORMATION *process)
+// What the program prints and its errors go to the file `log`, nowhere with
+// `quiet`, and otherwise where tide's own do.
+static bool start_process(const char *const *argv, const char *cwd, const bool quiet, const char *log,
+                          PROCESS_INFORMATION *process)
 {
     char *line = NULL;
     size_t len = 0;
@@ -415,26 +418,28 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
     STARTUPINFOA startup;
     memset(&startup, 0, sizeof startup);
     startup.cb = sizeof startup;
-    HANDLE null_file = INVALID_HANDLE_VALUE;
-    if (quiet) {
+    HANDLE output = INVALID_HANDLE_VALUE;
+    const bool redirected = quiet || log;
+    if (redirected) {
         SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
-        null_file = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, NULL);
+        output = log ? CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+                     : CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, NULL);
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-        startup.hStdOutput = null_file;
-        startup.hStdError = null_file;
+        startup.hStdOutput = output;
+        startup.hStdError = output;
     }
-    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, quiet, 0, NULL, cwd, &startup, process);
+    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, redirected, 0, NULL, cwd, &startup, process);
     if (command != line) free(command);
     free(line);
-    if (null_file != INVALID_HANDLE_VALUE) CloseHandle(null_file);
+    if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
     return started != 0;
 }
 
 int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 {
     PROCESS_INFORMATION process;
-    if (!start_process(argv, cwd, quiet, &process)) return -1;
+    if (!start_process(argv, cwd, quiet, NULL, &process)) return -1;
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(process.hProcess, &code);
@@ -447,15 +452,20 @@ struct sys_process {
     PROCESS_INFORMATION info;
 };
 
-sys_process *sys_start(const char *const *argv, const char *cwd)
+sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
 {
     sys_process *p = malloc(sizeof *p);
     if (!p) abort();
-    if (!start_process(argv, cwd, false, &p->info)) {
+    if (!start_process(argv, cwd, false, log, &p->info)) {
         free(p);
         return NULL;
     }
     return p;
+}
+
+sys_process *sys_start(const char *const *argv, const char *cwd)
+{
+    return sys_start_logged(argv, cwd, NULL);
 }
 
 bool sys_wait(sys_process *p, const int ms, int *code)
@@ -582,12 +592,19 @@ struct sys_process {
     pid_t pid;
 };
 
-sys_process *sys_start(const char *const *argv, const char *cwd)
+sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
 {
     const pid_t pid = fork();
     if (pid < 0) return NULL;
     if (pid == 0) {
         if (cwd && chdir(cwd) != 0) _exit(127);
+        if (log) {
+            const int file = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (file >= 0) {
+                dup2(file, 1);
+                dup2(file, 2);
+            }
+        }
         execvp(argv[0], (char *const *)argv);
         _exit(127);
     }
@@ -595,6 +612,11 @@ sys_process *sys_start(const char *const *argv, const char *cwd)
     if (!p) abort();
     p->pid = pid;
     return p;
+}
+
+sys_process *sys_start(const char *const *argv, const char *cwd)
+{
+    return sys_start_logged(argv, cwd, NULL);
 }
 
 bool sys_wait(sys_process *p, const int ms, int *code)

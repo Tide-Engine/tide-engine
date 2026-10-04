@@ -53,6 +53,7 @@ TIDE_TEST(unzip_extracts_the_entries_asked_for)
     TIDE_REQUIRE(f && fwrite(zip_archive, 1, sizeof zip_archive, f) == sizeof zip_archive);
     fclose(f);
     sys_remove_tree("unzip_test_out");
+    TIDE_CHECK(unzip_size(archive) == 600 + 6 + 10); // Every entry's, those not asked for too
     TIDE_REQUIRE(unzip(archive, "unzip_test_out", in_pkg, NULL));
 
     size_t size = 0;
@@ -73,5 +74,13 @@ TIDE_TEST(unzip_extracts_the_entries_asked_for)
     fclose(f);
     TIDE_CHECK(!unzip(archive, "unzip_test_out", in_pkg, NULL));
     sys_remove_tree("unzip_test_out");
+
+    // What isn't a zip has no size to say
+    const char other[] = "not a zip, though it's long enough to hold the end of one";
+    f = fopen(archive, "wb");
+    TIDE_REQUIRE(f && fwrite(other, 1, sizeof other - 1, f) == sizeof other - 1);
+    fclose(f);
+    TIDE_CHECK(unzip_size(archive) == -1);
     sys_remove(archive);
+    TIDE_CHECK(unzip_size(archive) == -1);
 }
