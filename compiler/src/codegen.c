@@ -9248,18 +9248,24 @@ static void gen_api(gen *g)
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
     sb_printf(o, "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n%s", use_match);
+    // A host that shows where ticks' time goes gave its jobs a profile
+    // (tide/profile.h): the systems' part of the tick, and what follows them
+    sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
+              "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (prog->systems.count) {
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
-        sb_put(o, "    (void)jobs;\n    (void)tide_prepare;\n");
+        sb_put(o, "    (void)tide_prepare;\n");
     }
+    sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
-    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n}\n\n");
+    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
+    sb_put(o, "    if (tide_p) tide_profile_tick(tide_p, tide_began, tide_ran);\n}\n\n");
 
     // A match that's out of scenes ends when Main is local. A match Main comes
     // back instead (see tide_apply_commands), and a match that can't hold a
@@ -9307,8 +9313,17 @@ static void gen_api(gen *g)
     // The local fields of entities that are gone go first: with no verified
     // world given, the one views draw is all there is
     if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
+    // A host that shows where frames' time goes gave the GUI a profile
+    // (tide/profile.h): each view says how long it took
+    if (prog->views.count) {
+        sb_put(o, "    tide_profile *tide_p = gui->profile;\n    uint64_t tide_at = tide_profile_now(tide_p);\n");
+    }
     for (int i = 0; i < prog->views.count; i++) {
-        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(prog->views.items[i]));
+        const decl *view = prog->views.items[i];
+        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(view));
+        sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
+        gen_c_literal(o, view->qualified, false);
+        sb_put(o, ", tide_at);\n");
     }
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");
@@ -10160,6 +10175,8 @@ static void gen_game_api(gen *g)
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
+    if (prog->stats) sb_put(o, "    .stats = true,\n");
+    if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
         gen_c_literal(o, prog->title->text, false);

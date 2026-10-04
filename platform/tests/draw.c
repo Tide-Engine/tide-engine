@@ -176,6 +176,12 @@ static int run_checks(void)
     }
     expect(covered == TEXT_W * TEXT_H, "a rect drawn after text covers it");
     expect(text > 20, "text drawn after a rect shows over it");
+    // What a stats overlay reads: the clears, the text and each run of shapes between them, a draw call each
+    const uint32_t calls = tide_platform_draw_calls();
+    const uint64_t memory = tide_platform_memory();
+    printf("%u draw calls, %.0f MB\n", (unsigned)calls, (double)memory / (1024.0 * 1024.0));
+    expect(calls == 6, "a run of shapes is one draw call, however many they are");
+    expect(memory > 0, "the system says how much memory the program has");
     return failures == 0 ? 0 : 1;
 }
 

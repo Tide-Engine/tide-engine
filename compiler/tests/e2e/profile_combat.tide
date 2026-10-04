@@ -1,0 +1,12 @@
+// A system in a namespace: a profile names it with it, Combat.Hit.
+namespace Combat;
+
+singleton Tally
+{
+    int hits;
+}
+
+system Hit(mut Tally tally)
+{
+    tally.hits += 1;
+}
