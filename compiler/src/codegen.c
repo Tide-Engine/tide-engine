@@ -45,6 +45,7 @@ typedef struct gen_target {
     bool end_used;
     const char *next;       // A loop: the end of its body
     bool next_used;
+    bool multi_loop;        // One Tide loop spans several generated C loops: break jumps past all of them
 } gen_target;
 
 // A slot of a task's frame: where a C local of its code stays while it waits.
@@ -3393,6 +3394,7 @@ static void gen_body_stmt(gen *g, const stmt *s);
 static void gen_parallel_call(gen *g, const stmt *s);
 static void gen_grid_foreach(gen *g, const stmt *s);
 static void gen_map_foreach(gen *g, const stmt *s);
+static void gen_query_foreach(gen *g, const stmt *s);
 static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t stmt_cost(const stmt *s);
 
@@ -3684,7 +3686,7 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_SWITCH: {
         // Each section in braces, for its locals. The checker makes sure every
         // one ends in break or return, so none falls through.
-        const gen_target sw = {g->frame, g->containers.count, false, false, made_up(g, "switch_end"), false, NULL, false};
+        const gen_target sw = {g->frame, g->containers.count, false, false, made_up(g, "switch_end"), false, NULL, false, false};
         vec_push(g->targets, sw);
         indent(g, o);
         sb_put(o, "switch (");
@@ -3752,7 +3754,7 @@ static void gen_stmt(gen *g, const stmt *s)
             g->indent++;
         }
         const gen_target loop = {g->frame, g->containers.count, true, s->kind == S_WHILE, made_up(g, "loop_end"), false,
-                                 made_up(g, "next"), false};
+                                 made_up(g, "next"), false, false};
         vec_push(g->targets, loop);
         gen_body_stmt(g, s->then_stmt);
         const gen_target done = g->targets.items[--g->targets.count];
@@ -3775,6 +3777,10 @@ static void gen_stmt(gen *g, const stmt *s)
         break;
 
     case S_FOREACH: {
+        if (s->query) {
+            gen_query_foreach(g, s);
+            break;
+        }
         if (s->value->type.kind == TY_GRID && s->parallel) { // Its steps only touch their own cells: at once
             gen_parallel_call(g, s);
             break;
@@ -3800,7 +3806,7 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "%s %s = %s.at[%s];", elem_vtype(s->type), local_cname(g, s->name), all, index);
             line(g, o, "(void)%s;", local_cname(g, s->name));
             task_declare(g, local_cname(g, s->name), s->type);
-            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
             vec_push(g->targets, loop);
             gen_body_stmt(g, s->then_stmt);
             const gen_target done = g->targets.items[--g->targets.count];
@@ -3843,7 +3849,7 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "%s %s = tide_list%d_get(%s, %s);", elem_vtype(s->type), local_cname(g, s->name), k, list, index);
             line(g, o, "(void)%s;", local_cname(g, s->name));
             task_declare(g, local_cname(g, s->name), s->type);
-            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
             vec_push(g->targets, loop);
             gen_body_stmt(g, s->then_stmt);
             const gen_target done = g->targets.items[--g->targets.count];
@@ -3876,7 +3882,7 @@ static void gen_stmt(gen *g, const stmt *s)
         g->indent++;
         line(g, o, "const %s %s = tide_list%d_get(*%s, %s);", elem_vtype(s->type), local_cname(g, s->name), k, list, index);
         line(g, o, "(void)%s;", local_cname(g, s->name));
-        const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+        const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
         vec_push(g->targets, loop);
         gen_body_stmt(g, s->then_stmt);
         const gen_target done = g->targets.items[--g->targets.count];
@@ -3904,7 +3910,7 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         bool innermost = true; // Nothing C's break or continue would go to first
         for (int i = target + 1; i < g->targets.count; i++) innermost &= !is_break && !g->targets.items[i].loop;
-        if (is_break && innermost) {
+        if (is_break && innermost && !t->multi_loop) {
             line(g, o, "break;");
         } else if (is_break) {
             line(g, o, "goto %s;", t->end);
@@ -6847,7 +6853,7 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     g->par_loop = s;
     g->list_caches = g->prog->lists.count > 0;
     g->targets.count = 0;
-    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);
     gen_body_stmt(g, s->then_stmt);
     const gen_target done = g->targets.items[--g->targets.count];
@@ -7003,7 +7009,7 @@ static void gen_map_foreach(gen *g, const stmt *s)
     }
     line(g, o, "(void)%s;", var);
     if (g->task) task_declare(g, var, s->type);
-    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);
     gen_body_stmt(g, s->then_stmt);
     const gen_target done = g->targets.items[--g->targets.count];
@@ -7040,7 +7046,7 @@ static void gen_grid_foreach(gen *g, const stmt *s)
     if (three) line(g, o, "const tide_int3 %s = {%s_x, %s_y, %s_z};", local_cname(g, s->name), rows, rows, rows);
     else line(g, o, "const tide_int2 %s = {%s_x, %s_y};", local_cname(g, s->name), rows, rows);
     line(g, o, "(void)%s;", local_cname(g, s->name));
-    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false};
+    const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);
     gen_body_stmt(g, s->then_stmt);
     const gen_target done = g->targets.items[--g->targets.count];
@@ -7061,6 +7067,106 @@ static void gen_grid_foreach(gen *g, const stmt *s)
 // runs for (`this`), then its other parameters.
 static void gen_par_steps(gen *g, const decl *sys);
 static void gen_par_heads(gen *g, const decl *sys);
+
+// A query is code over a second set of archetypes, never a stored collection.
+// Its rows are copies from the current world's lanes, in normal ECS order.
+static bool query_changes_binding(const gen *g, const param *p)
+{
+    for (int i = 0; g->code && i < g->code->world_uses.count; i++) {
+        const world_use *u = &g->code->world_uses.items[i];
+        if (u->writes && u->component == p->type.decl) return true;
+    }
+    return false;
+}
+
+static void gen_query_foreach(gen *g, const stmt *s)
+{
+    sb *o = &g->c;
+    const param *q = s->query;
+    const decl *row = q->type.decl;
+    const char *world = q->query_local ? "tide_l" : "tide_w";
+    const char *name = local_cname(g, s->name);
+    const char *end = made_up(g, "query_end");
+    bool end_used = false;
+    decl filter = {0};
+    filter.need_mask = q->query_need_mask;
+    filter.without_mask = q->query_without_mask;
+    line(g, o, "{");
+    g->indent++;
+    for (int a = 0; a < g->prog->archetypes.count; a++) {
+        if (arch_local(g, a) != q->query_local || !filters_admit(g->prog, &filter, a)) continue;
+        line(g, o, "{ // query: %s", arch_label(g, a));
+        g->indent++;
+        line(g, o, "const tide_table *tide_qt = &%s->%s;", world, arch_name(g, a));
+        line(g, o, "for (uint32_t tide_qc = 0; tide_qc < tide_qt->chunks; tide_qc++) {");
+        g->indent++;
+        line(g, o, "const uint32_t tide_qn = tide_table_rows(tide_qt, %d, tide_qc);", arch_shift(g, a));
+        line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
+        for (int i = 0; i < q->query.count; i++) {
+            const param *p = &q->query.items[i];
+            if (p->mode != PARAM_READ || query_changes_binding(g, p)) continue;
+            const decl *comp = p->type.decl;
+            indent(g, o);
+            sb_printf(o, "const uint8_t *const tide_qcol%d[%d] = {", i, comp_lanes(comp));
+            for (int k = 0; k < comp_lanes(comp); k++) {
+                sb_printf(o, "%s(const uint8_t *)tide_table_column(tide_qt, %s, tide_qc, %d)", k ? ", " : "",
+                          arch_columns(g, a), arch_column(g, a, comp->index) + k);
+            }
+            sb_put(o, "};\n");
+        }
+        for (int c = 0; c < g->prog->components.count; c++) {
+            if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+            if (!mask_has(q->query_need_mask, c) && !mask_has(q->query_without_mask, c)) continue;
+            line(g, o, "const uint8_t *tide_qpres%d = tide_table_column(tide_qt, %s, tide_qc, %d);", c,
+                 arch_columns(g, a), arch_presence(g, a, c));
+        }
+        line(g, o, "for (uint32_t tide_qi = 0; tide_qi < tide_qn; tide_qi++) {");
+        g->indent++;
+        for (int c = 0; c < g->prog->components.count; c++) {
+            if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+            if (mask_has(q->query_need_mask, c)) line(g, o, "if (!tide_qpres%d[tide_qi]) continue;", c);
+            else if (mask_has(q->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
+        }
+        line(g, o, "struct {");
+        g->indent++;
+        for (int i = 0; i < row->fields.count; i++) {
+            const field *f = &row->fields.items[i];
+            line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+        }
+        g->indent--;
+        line(g, o, "} %s;", name);
+        line(g, o, "%s.%s = tide_qe[tide_qi];", name, field_cname(&row->fields.items[0]));
+        for (int i = 0, f = 1; i < q->query.count; i++) {
+            const param *p = &q->query.items[i];
+            if (p->mode != PARAM_READ) continue;
+            const field *value = &row->fields.items[f++];
+            if (query_changes_binding(g, p)) {
+                line(g, o, "tide_table_gather(tide_qt, %s, (tide_qc << %d) + tide_qi, %d, %du, %du, &%s.%s);",
+                     arch_columns(g, a), arch_shift(g, a), arch_column(g, a, p->type.decl->index),
+                     comp_lanes(p->type.decl), comp_width(p->type.decl), name, field_cname(value));
+            } else {
+                line(g, o, "tide_gather_%s(&%s.%s, tide_qcol%d, tide_qi);", type_cname(p->type.decl), name,
+                     field_cname(value), i);
+            }
+        }
+        line(g, o, "(void)%s;", name);
+        const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
+        vec_push(g->targets, loop);
+        gen_body_stmt(g, s->then_stmt);
+        const gen_target done = g->targets.items[--g->targets.count];
+        end_used |= done.end_used;
+        if (done.next_used) line(g, o, "%s:;", done.next);
+        g->indent--;
+        line(g, o, "}");
+        g->indent--;
+        line(g, o, "}");
+        g->indent--;
+        line(g, o, "}");
+    }
+    if (end_used) line(g, o, "%s:;", end);
+    g->indent--;
+    line(g, o, "}");
+}
 
 static void gen_system_body(gen *g, const decl *sys)
 {
@@ -7084,7 +7190,7 @@ static void gen_system_body(gen *g, const decl *sys)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT) continue;
-        if (p->type.kind == TY_WORLD) continue; // The world the code runs in, which it has already
+        if (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) continue; // Uses the world already passed to the system
         sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", c_type(p->type), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
@@ -7113,7 +7219,7 @@ static void gen_system_body(gen *g, const decl *sys)
     if (sys->is_handler) line(g, o, "(void)%s;", trigger_cname(g, sys));
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_WORLD) line(g, o, "(void)%s;", local_cname(g, p->name));
+        if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_WORLD && p->type.kind != TY_QUERY) line(g, o, "(void)%s;", local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
         if (has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
     }

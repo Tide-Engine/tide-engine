@@ -1,0 +1,4 @@
+// expect: 'entity' is the query row's entity handle
+component Body { float x; }
+scene Main { }
+system Hits(query (Body entity) bodies) { }
