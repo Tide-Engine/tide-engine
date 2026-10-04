@@ -201,6 +201,16 @@ static void players_play_together(const bool delayed)
             tide_client_update(clients[i], now);
         }
         tide_server_update(server, now);
+        // Don't let simulated seconds outrun delivery by the real sockets:
+        // finish this tick before advancing the clock, except while testing
+        // the deliberately withheld final receives.
+        if (!receivers[0].paused) {
+            const uint32_t through = tide_server_tick(server);
+            const bool ready = drain(server, clients, now, through);
+            TIDE_CHECK(ready);
+            TIDE_CHECK(tide_server_tick(server) == through);
+            if (!ready) break;
+        }
     }
     const uint32_t through = tide_server_tick(server);
     for (int i = 0; i < 2; i++) {
