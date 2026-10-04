@@ -52,6 +52,7 @@ static void usage(void)
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
            "  --title <title>    the window's title (default: the game's title setting, or the folder's name)\n"
            "  --stats            show the frame rate, ping, bandwidth, tick, entity count, threads and what draws\n"
+           "  --debug-views      F7 shows the profiler: where a frame's time and a tick's go (as the debugViews setting)\n"
            "  -o <path>          build: where the program goes\n"
            "  --no-open          run --web: serve the page without opening a browser\n"
            "\n"
@@ -192,6 +193,7 @@ int main(const int argc, char **argv)
         else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;
+        else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
         else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
         else if (a[0] != '-') opts.folder = a;
