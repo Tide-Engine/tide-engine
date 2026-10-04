@@ -2,10 +2,10 @@
 input PlayerInput
 {
     float2 look;
-    Sample()
+    Sample(Devices devices)
     {
         Cursor.Lock();
-        look = Devices.mouse.delta;
+        look = devices.mouse.delta;
     }
 }
 scene Main { }

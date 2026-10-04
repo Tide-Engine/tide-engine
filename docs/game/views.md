@@ -1,6 +1,6 @@
 # Views and drawing
 
-A **view** draws the game. It looks like a system and takes the same parameters, components and singletons, but it runs once per rendered frame instead of once per tick, and it never changes the match. It reads this machine's devices as `Devices`, not as a parameter, and can't read the input (see [Input](./input.md#devices-in-the-match)).
+A **view** draws the game. It looks like a system and takes the same parameters, components and singletons, but it runs once per rendered frame instead of once per tick, and it never changes the match. It reads this machine's devices through a `Devices devices` parameter, and can't read the input (see [Input](./input.md#devices-in-the-match)).
 
 ```csharp
 view DrawBalls(Body body, Ball ball)
@@ -303,9 +303,9 @@ In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far l
 Device positions use a bottom-left origin with `y` up. Flip their `y` before passing them to these helpers:
 
 ```csharp
-view Pointer()
+view Pointer(Devices devices)
 {
-    var screen = float2(Devices.mouse.position.x, Screen.height - Devices.mouse.position.y);
+    var screen = float2(devices.mouse.position.x, Screen.height - devices.mouse.position.y);
     var world = Draw2D.ScreenToWorld(screen);
     Draw2D.WireCircle(world, 0.2, Color.yellow);
 
@@ -331,9 +331,9 @@ input PlayerInput
 {
     float2 look;
 
-    Sample()
+    Sample(Devices devices)
     {
-        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+        if (Cursor.locked) look = devices.mouse.delta * 0.003;
     }
 }
 
@@ -350,10 +350,10 @@ local singleton Menu
     bool looking; // The window held the cursor last frame
 }
 
-view Look(Viewer viewer, mut Menu menu)
+view Look(Devices devices, Viewer viewer, mut Menu menu)
 {
     Draw3D.Camera(viewer.position, viewer.rotation, 75);
-    if (Devices.keyboard.escape.down) menu.paused = true;
+    if (devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
     // The lock went away on its own: show the pause menu
     if (menu.looking && !Cursor.locked) menu.paused = true;
@@ -371,8 +371,8 @@ view PauseMenu(mut Menu menu)
 
 While the cursor is locked:
 
-- It's hidden, and `Devices.mouse.position` stays where it was, as does the pointer's.
-- `Devices.mouse.delta` keeps coming, however far the mouse goes. Where the system gives it, it's the mouse's own movement, without the acceleration a cursor has, so the camera turns evenly.
+- It's hidden, and `devices.mouse.position` stays where it was, as does the pointer's.
+- `devices.mouse.delta` keeps coming, however far the mouse goes. Where the system gives it, it's the mouse's own movement, without the acceleration a cursor has, so the camera turns evenly.
 - The GUI sees no pointer: nothing hovers, and a click presses no widget, so it's all the game's. A finger on a touchscreen still presses what it touches.
 
 ::: warning Read `Cursor.locked`, don't assume
@@ -447,4 +447,4 @@ component Body
 
 ## Reading this machine's devices
 
-Views can read `Devices`, this machine's input devices, for the frame: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. A view that wants the mouse for itself [locks the cursor](#looking-around). What the GUI is using is hidden from them, and so is what another view [claimed](./gui.md#widgets-of-your-own) for widgets of its own. They read [what's typed](./input.md#typed-text) too, as `Devices.keyboard.text`. A function that reads `Devices` needs the frame, like one that draws, so only views and the functions they call can call it.
+Views take `Devices devices` to read this machine's input devices for the frame: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. A view that wants the mouse for itself [locks the cursor](#looking-around). What the GUI is using is hidden from them, and so is what another view [claimed](./gui.md#widgets-of-your-own) for widgets of its own. They read [what's typed](./input.md#typed-text) too, as `devices.keyboard.text`. Helpers take the devices or a part of them as an explicit parameter. A helper that reads `keyboard.text` needs the frame, so only views and the functions they call can call it.

@@ -7,11 +7,11 @@ input PlayerInput
     bool forward;
     float2 aim;
 
-    Sample()
+    Sample(Devices devices)
     {
-        fire = Devices.mouse.left.pressed || Devices.pointer.press.pressed;
-        forward = Devices.keyboard.w.pressed;
-        aim = Devices.pointer.position;
+        fire = devices.mouse.left.pressed || devices.pointer.press.pressed;
+        forward = devices.keyboard.w.pressed;
+        aim = devices.pointer.position;
     }
 }
 
@@ -51,21 +51,21 @@ bool Over(Pointer pointer)
 }
 
 // A function claims for the view that calls it, and reads what it claimed.
-void Rename(mut string name, mut bool renaming, mut int keys)
+void Rename(Devices devices, mut string name, mut bool renaming, mut int keys)
 {
     GUI.ClaimKeyboard();
     GUI.ShowKeyboard();
-    name += Devices.keyboard.text;
-    if (Devices.keyboard.w.down) keys += 1;
-    if (Devices.keyboard.enter.down) renaming = false;
+    name += devices.keyboard.text;
+    if (devices.keyboard.w.down) keys += 1;
+    if (devices.keyboard.enter.down) renaming = false;
 }
 
-view Toolbox(mut Tools tools)
+view Toolbox(Devices devices, mut Tools tools)
 {
     // Where it is, in the GUI's pixels: a press on it is this view's from the
     // frame it lands in.
     GUI.ClaimPointer(Rect(0, Screen.height - 200, 200, 200));
-    var pointer = Devices.pointer;
+    var pointer = devices.pointer;
     var over = Over(pointer);
     if (over && pointer.press.down)
     {
@@ -75,7 +75,7 @@ view Toolbox(mut Tools tools)
     }
     if (!pointer.press.pressed) tools.dragging = false;
     if (tools.dragging) GUI.ClaimPointer(); // ...and wherever it goes, while it's dragged
-    if (tools.renaming) Rename(tools.name, tools.renaming, tools.keys);
+    if (tools.renaming) Rename(devices, tools.name, tools.renaming, tools.keys);
 }
 
 // What's typed, through a part of the devices passed on.
@@ -84,11 +84,11 @@ int Typed(Keyboard keys)
     return keys.text.length;
 }
 
-view Look(mut Camera camera)
+view Look(Devices devices, mut Camera camera)
 {
-    var keys = Devices.keyboard;
-    if (Devices.mouse.left.pressed) camera.drags += 1;
+    var keys = devices.keyboard;
+    if (devices.mouse.left.pressed) camera.drags += 1;
     if (keys.w.pressed) camera.keys += 1;
     camera.typed += keys.text;
-    camera.count += Typed(Devices.keyboard);
+    camera.count += Typed(devices.keyboard);
 }

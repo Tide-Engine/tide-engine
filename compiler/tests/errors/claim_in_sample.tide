@@ -2,10 +2,10 @@
 input PlayerInput
 {
     bool jump;
-    Sample()
+    Sample(Devices devices)
     {
         GUI.ClaimKeyboard();
-        jump = Devices.keyboard.space.pressed;
+        jump = devices.keyboard.space.pressed;
     }
 }
 scene Main { }

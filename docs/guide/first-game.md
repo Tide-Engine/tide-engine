@@ -91,9 +91,9 @@ input Controls
 {
     float2 move;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed) move.x += 1;
         if (keys.a.pressed) move.x -= 1;
         if (keys.w.pressed) move.y += 1;
@@ -183,9 +183,9 @@ input Controls
 {
     float2 move;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed) move.x += 1;
         if (keys.a.pressed) move.x -= 1;
         if (keys.w.pressed) move.y += 1;

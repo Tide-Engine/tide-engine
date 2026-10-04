@@ -1,0 +1,4 @@
+// expect: a command sender is PlayerID, supplied by the connection
+command Rename { string name; }
+command(Rename rename, int sender) Handle() { }
+scene Main { }
