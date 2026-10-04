@@ -1,11 +1,16 @@
 // Ticks on every core (tide_platform_jobs) give the same worlds as ticks on
 // one thread, tick after tick (platform/tests/jobs.tide).
 
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "game.h"
+#include "tide/jobs.h"
 #include "tide/platform.h"
+#include "tide/time.h"
 #include "tide_test.h"
 
 static tide_world one;      // Ticked on this thread
@@ -84,4 +89,101 @@ TIDE_TEST(jobs_threads_change_nothing)
     tide_world_free(&one);
     tide_world_free(&many);
     tide_world_free(&snapshot);
+}
+
+// ---------------------------------------------------------------------------
+// A tick of thousands of systems, made up here rather than generated: each
+// starts only once the systems it waits for are done, and runs once, however
+// the tick spreads them over the threads.
+
+#define MANY 3000
+static atomic_uint many_ran[MANY];
+static atomic_uint many_early; // Systems that started before one they wait for was done
+static uint32_t many_waits[MANY][4];
+static tide_system_tasks many_systems[MANY];
+static uint32_t many_spin; // How long each system works
+
+static void many_step(const uint32_t s)
+{
+    const tide_system_tasks *system = &many_systems[s];
+    for (uint32_t i = 0; i < system->wait_count; i++) {
+        if (!atomic_load(&many_ran[system->waits[i]])) atomic_fetch_add(&many_early, 1u);
+    }
+    for (volatile uint32_t i = 0; i < many_spin; i++) {
+    }
+    atomic_fetch_add(&many_ran[s], 1u);
+}
+
+static uint32_t many_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 1u << 20; // Enough, together, for the tick to go on threads
+    return 1;
+}
+
+// A system's function says which system it is, so each has one of its own:
+// many_run_1000 to many_run_3999.
+#define MANY_RUN(n)                                                                    \
+    static void many_run_##n(void *world, const uint32_t task, const uint32_t pieces) \
+    {                                                                                  \
+        (void)world;                                                                   \
+        (void)task;                                                                    \
+        (void)pieces;                                                                  \
+        many_step(n - 1000);                                                           \
+    }
+#define MANY_NAME(n) many_run_##n,
+#define TEN(F, p) F(p##0) F(p##1) F(p##2) F(p##3) F(p##4) F(p##5) F(p##6) F(p##7) F(p##8) F(p##9)
+#define HUNDRED(F, p)                                                                                            \
+    TEN(F, p##0) TEN(F, p##1) TEN(F, p##2) TEN(F, p##3) TEN(F, p##4) TEN(F, p##5) TEN(F, p##6) TEN(F, p##7) \
+    TEN(F, p##8) TEN(F, p##9)
+#define THOUSAND(F, p)                                                                                    \
+    HUNDRED(F, p##0) HUNDRED(F, p##1) HUNDRED(F, p##2) HUNDRED(F, p##3) HUNDRED(F, p##4) HUNDRED(F, p##5) \
+    HUNDRED(F, p##6) HUNDRED(F, p##7) HUNDRED(F, p##8) HUNDRED(F, p##9)
+THOUSAND(MANY_RUN, 1)
+THOUSAND(MANY_RUN, 2)
+THOUSAND(MANY_RUN, 3)
+static void (*const many_runs[MANY])(void *, uint32_t, uint32_t) = {THOUSAND(MANY_NAME, 1) THOUSAND(MANY_NAME, 2)
+                                                                    THOUSAND(MANY_NAME, 3)};
+
+TIDE_TEST(jobs_thousands_of_systems)
+{
+    // Each waits for up to four of the systems before it, most of them near
+    // it: a schedule made up here, the same every run
+    uint32_t random = 12345u;
+    for (uint32_t s = 0; s < MANY; s++) {
+        uint32_t count = 0;
+        for (uint32_t i = 0; s > 0 && i < 4u; i++) {
+            random = random * 1664525u + 1013904223u;
+            if ((random >> 24 & 3u) == 0) continue;
+            const uint32_t reach = (random >> 28) < 12u && s > 16u ? 16u : s;
+            const uint32_t on = s - 1u - (random >> 8) % reach;
+            bool have = false;
+            for (uint32_t k = 0; k < count; k++) have |= many_waits[s][k] == on;
+            if (!have) many_waits[s][count++] = on;
+        }
+        many_systems[s] = (tide_system_tasks){.count = many_count, .run = many_runs[s], .wait_count = count,
+                                              .waits = many_waits[s], .name = "many"};
+    }
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, 16u, &entities, NULL};
+    const tide_jobs *jobs = tide_platform_jobs();
+    for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
+        const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core
+        many_spin = pass % 2 ? 2000u : 0u;               // Systems with nothing to do, then with a little
+        uint64_t best = UINT64_MAX;
+        for (int t = 0; t < 20; t++) {
+            for (uint32_t s = 0; s < MANY; s++) atomic_store(&many_ran[s], 0u);
+            const uint64_t began = tide_time_now_ns();
+            tide_run_systems(&queue, &tick, with);
+            const uint64_t took = tide_time_now_ns() - began;
+            if (took < best) best = took;
+            bool once = true;
+            for (uint32_t s = 0; s < MANY; s++) once &= atomic_load(&many_ran[s]) == 1u;
+            TIDE_REQUIRE(once);
+        }
+        TIDE_CHECK(atomic_load(&many_early) == 0u);
+        printf("    %d systems with %s to do: a tick takes %.2f ms on %s\n", MANY, many_spin ? "a little" : "nothing",
+               (double)best * 1e-6, with ? "every core" : "one thread");
+    }
 }
