@@ -469,6 +469,76 @@ static void meshes_3d(void)
     }
 }
 
+// Primitives use the same cached meshes and depth path. An orthographic
+// camera makes one world unit ten pixels, so their sizes and silhouettes
+// can be checked independently of the window's shape.
+static tide_float3 primitive_at(const float x, const float y, const float z)
+{
+    const tide_float2 p = at(x, y);
+    return tide_f3(p.x / 10.0f, p.y / 10.0f, z);
+}
+
+static void primitive_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_camera_matrices(&list, tide_identity_f4x4(),
+                              tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.3f, 100.0f));
+    tide_draw_cube(&list, primitive_at(40, 40, 10), tide_f3(4, 4, 4), red);
+    tide_draw_sphere(&list, primitive_at(110, 40, 10), 2, blue);
+    tide_draw_cylinder(&list, primitive_at(180, 40, 10), 2, 4, green);
+
+    const tide_quaternion turn_x = tide_axisangle_q(tide_f3(1, 0, 0), TIDE_PI_F * 0.5f);
+    const tide_quaternion turn_z = tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F * 0.5f);
+    tide_draw_plane_rotated(&list, primitive_at(40, 110, 10), tide_f2(4, 6), turn_x, yellow);
+    tide_draw_cube_rotated(&list, primitive_at(110, 110, 10), tide_f3(2, 4, 2), turn_z, cyan);
+    tide_draw_cylinder_rotated(&list, primitive_at(180, 110, 10), 2, 4, turn_x, magenta);
+
+    // Near first, then near last: primitive order never decides depth.
+    tide_draw_sphere(&list, primitive_at(40, 190, 8), 2, red);
+    tide_draw_cube(&list, primitive_at(40, 190, 12), tide_f3(6, 6, 2), blue);
+    tide_draw_sphere(&list, primitive_at(110, 190, 12), 3, orange);
+    tide_draw_cube(&list, primitive_at(110, 190, 8), tide_f3(2, 2, 2), green);
+
+    tide_draw_sphere(&list, primitive_at(180, 180, 10), 1, orange);
+    tide_draw_sphere(&list, primitive_at(180, 230, 10), 1, orange);
+}
+
+static void primitives(void)
+{
+    const check checks[] = {
+        {40, 40, red, "a cube's center"},
+        {58, 58, red, "a cube's full width and height"},
+        {62, 40, background, "outside a cube"},
+        {110, 40, blue, "a sphere's center"},
+        {128, 40, blue, "a sphere's radius"},
+        {132, 40, background, "outside a sphere"},
+        {126, 56, background, "a sphere's round silhouette"},
+        {180, 40, green, "an upright cylinder"},
+        {198, 58, green, "a cylinder's radius and full height"},
+        {202, 40, background, "outside a cylinder"},
+        {40, 110, yellow, "a rotated plane"},
+        {58, 138, yellow, "a plane's width and depth rotated onto the screen"},
+        {62, 110, background, "outside a plane"},
+        {128, 110, cyan, "a rotated cube's long side"},
+        {110, 118, cyan, "a rotated cube's short side"},
+        {110, 122, background, "outside a rotated cube's short side"},
+        {180, 110, magenta, "a rotated cylinder's cap"},
+        {198, 110, magenta, "a cylinder's cap radius"},
+        {196, 126, background, "a cylinder's round cap"},
+        {40, 190, red, "a near sphere in front of a cube drawn after it"},
+        {66, 190, blue, "the far cube around a sphere"},
+        {110, 190, green, "a near cube in front of a sphere drawn before it"},
+        {132, 190, orange, "the far sphere around a cube"},
+        {180, 180, orange, "the first sphere instance"},
+        {180, 230, orange, "the next sphere instance"},
+    };
+    for (int frame = 0; frame < 2; frame++) {
+        primitive_scene();
+        check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shaders of the game's: meshes of any vertices, drawn through GLSL and WGSL
 // as tidec writes them from Tide's (see tide_shader), here written by hand
@@ -1234,6 +1304,7 @@ static int frame(void *user, const float seconds)
     }
     if (lost == 2) {
         meshes_3d();
+        primitives();
         shaded();
         tiles_leave_no_gaps();
         return run_checks();
@@ -1241,6 +1312,7 @@ static int frame(void *user, const float seconds)
 #endif
     meshes();
     meshes_3d();
+    primitives();
     shaded();
     tiles_leave_no_gaps();
     const int code = run_checks();

@@ -1,6 +1,6 @@
 # Frags and verts
 
-A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` names them:
+A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw2D.Mesh` or `Draw3D.Mesh` names them:
 
 ```csharp
 struct BoxVertex
@@ -26,7 +26,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models)
 
 view DrawBox(Box box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Wave, Shade);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Wave, Shade);
 }
 ```
 
@@ -36,17 +36,17 @@ Their parameters say what they read, and the engine supplies it. There's nothing
 
 A mesh's vertices are a list of a struct, and the struct can be yours:
 
-- It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw.Mesh` places with a transform.
+- It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw3D.Mesh` places with a transform.
 - Its other fields are whatever the mesh needs: floats, ints, their vectors and colors, 12 fields at most. The GPU reads them from the list as they are, so a vertex costs what its struct does: a struct with only a `position` is 12 bytes a vertex.
 
-`Draw.Mesh` takes a list of it, with or without a vert and a frag:
+`Draw2D.Mesh` and `Draw3D.Mesh` take a list of it, with or without a vert and a frag:
 
 ```csharp
-Draw.Mesh(vertices, indices);                           // 2D
-Draw.Mesh(vertices, indices, transform);                // 3D
-Draw.Mesh(vertices, indices, transform, Shade);         // A frag
-Draw.Mesh(vertices, indices, transform, Wave);          // A vert
-Draw.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
+Draw2D.Mesh(vertices, indices);                           // 2D
+Draw3D.Mesh(vertices, indices, transform);                // 3D
+Draw3D.Mesh(vertices, indices, transform, Shade);         // A frag
+Draw3D.Mesh(vertices, indices, transform, Wave);          // A vert
+Draw3D.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
 ```
 
 With no frag, a pixel is its vertex's `color` times the draw's texture at its `uv`, as the built-in `Vertex` and `Vertex3` draw: a struct with no `Color color` draws white, and a texture needs a `float2 uv` to be read at. With no vert, the vertices are used as they are.
@@ -85,12 +85,12 @@ After the vertex (and a frag's color), a frag or vert takes the game's state, as
 - None is `mut`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 
-The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the `Draw.Mesh` when it doesn't:
+The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
 ```csharp
 view DrawBoxes(with Box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade); // Shade reads Box and Sun
+    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade); // Shade reads Box and Sun
 }
 ```
 
@@ -141,7 +141,7 @@ frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun 
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Screen()`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen()`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture.
 
@@ -153,14 +153,14 @@ frag Leaves(BoxVertex vertex, mut Color color, Models models, Pixel pixel)
 }
 ```
 
-The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw.Camera` reads it too, and take that.
+The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.Camera` reads it too, and take that.
 
 ## What the GPU runs
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
 - **It has** bools, ints, floats, vectors, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; `Math`; and sampling a grid.
-- **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
+- **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw2D` and `Draw3D`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
 
@@ -181,11 +181,11 @@ Instances of one mesh drawn in a row through the same vert and frag are one draw
 ```csharp
 view DrawBoxes(Box box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Shade);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Shade);
 }
 ```
 
-What's the same for every entity belongs in a singleton, which is sent once. A GPU has room for so much with each vertex: its struct's fields, the transform, and the components' fields the code reads, 4 floats or 4 ints to a slot, 16 slots in all. A draw that reads more is an error at the `Draw.Mesh`, which counts what it reads.
+What's the same for every entity belongs in a singleton, which is sent once. A GPU has room for so much with each vertex: its struct's fields, the transform, and the components' fields the code reads, 4 floats or 4 ints to a slot, 16 slots in all. A draw that reads more is an error at the mesh draw, which counts what it reads.
 
 2D meshes have no transform, so their instances would land on each other: a vert puts each where its component says.
 
@@ -198,4 +198,4 @@ vert Place(mut Sprite vertex, Body body)
 
 ## Looking at what's generated
 
-`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, vert and frag a `Draw.Mesh` uses.
+`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, vert and frag a mesh draw uses.

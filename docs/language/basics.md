@@ -144,7 +144,7 @@ Neither changes the match, so the simulation stays the same on every machine wit
 `default` is the default value of the type where it goes, so the type doesn't have to be spelled out:
 
 ```csharp
-Draw.Circle(default, 5, Color.yellow);  // At float2(0, 0)
+Draw2D.Circle(default, 5, Color.yellow);  // At float2(0, 0)
 float2 center = default;
 if (target == default) { return; }      // The null entity
 ```

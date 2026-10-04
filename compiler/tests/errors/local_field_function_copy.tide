@@ -15,5 +15,5 @@ int Corners(Box box)
 view Count(Box box)
 {
     var copy = box;
-    if (Corners(copy) > 0) Draw.Clear(Color.black);
+    if (Corners(copy) > 0) Draw2D.Clear(Color.black);
 }

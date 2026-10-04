@@ -1720,7 +1720,7 @@ static void gen_text_literal(sb *o, const str text, const bool values)
     sb_printf(o, ", %d, %d})", bytes, chars);
 }
 
-// Text for a C function that takes a `const char *`, like Draw.Text's.
+// Text for a C function that takes a `const char *`, like Draw2D.Text's.
 // The source line `at` is on, without the space around it: what an assertion
 // that fails shows.
 static str source_line(const loc at)
@@ -2394,7 +2394,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW && e->shader) {
-            // Draw.Mesh through a shader: its values, then what the frag and the vert read of the view's
+            // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
             bool filter = false;
             sb_printf(o, "tide_shade_%d(tide_draw", sh->index);
@@ -2420,7 +2420,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW
                    && (strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0)) {
-            // Draw.Mesh(vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
+            // Draw2D.Mesh(vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
             // it has when left out
             const int texture = strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0 ? 3 : 2;
             sb_printf(o, "%s(tide_draw", e->c_callee);
@@ -2449,6 +2449,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 if (i || e->call == CALL_DRAW) sb_put(o, ", ");
                 if (e->arg_want.items[i].kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
                 else gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            }
+            if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
+                                        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
+                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
             }
             sb_put(o, ")");
         }
@@ -10136,7 +10140,7 @@ static void setting_text(char *out, const size_t size, const expr *setting)
 
 // ---------------------------------------------------------------------------
 // Shaders (see shader.c): each as a tide_shader, and a function that draws a
-// mesh through it, which a Draw.Mesh calls with what the view has.
+// mesh through it, which a Draw2D.Mesh calls with what the view has.
 
 // A shader's source as an array of chars: C only promises string literals of
 // 4095.
@@ -10205,7 +10209,7 @@ static void gen_shaders(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
-    sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    sb_put(o, "// Shaders: what Draw2D.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
     for (int s = 0; s < prog->shaders.count; s++) {
         const shader *sh = prog->shaders.items[s];
         const char *vertex = type_cname(sh->vertex);

@@ -3,6 +3,6 @@
 scene Main { }
 view Label()
 {
-    Draw.Text("oops\
+    Draw2D.Text("oops\
     , float2(0, 0), 1, Color.white);
 }

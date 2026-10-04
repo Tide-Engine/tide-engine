@@ -4,5 +4,5 @@ scene Main { }
 async void Flash()
 {
     await Wait.Frames(1);
-    Draw.Circle(float2(0, 0), 1, Color.white);
+    Draw2D.Circle(float2(0, 0), 1, Color.white);
 }

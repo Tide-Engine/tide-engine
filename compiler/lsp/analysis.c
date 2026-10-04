@@ -38,7 +38,7 @@ typedef enum occ_kind {
     OCC_PARAM,
     OCC_LOCAL,
     OCC_OWNER,    // Math, Draw
-    OCC_FUNCTION, // Math.Dot, Draw.Circle, Spawn, Send, and the game's functions (with `decl`)
+    OCC_FUNCTION, // Math.Dot, Draw2D.Circle, Spawn, Send, and the game's functions (with `decl`)
     OCC_CONSTANT, // Math.PI, Color.red
     OCC_METHOD,   // e.Add, e.Remove, e.Destroy, e.Send, and methods of structs and components (with `decl`)
     OCC_MEMBER,   // Swizzles, color channels, quaternion.value, matrix columns, input .down/.up
@@ -62,7 +62,7 @@ typedef struct occurrence {
     const param *param;
     const decl *param_of;
     const stmt *local;
-    str owner;          // Functions and constants: "Math", "Draw", "Color"...
+    str owner;          // Functions and constants: "Math", "Draw2D", "Draw3D", "Color"...
     str name;
     type type;
     type object_type;   // Members, and built-in methods: the type they're read from or called on
@@ -419,7 +419,7 @@ static bool is_operator_decl(const decl *d)
     return is_routine(d) && d->is_operator;
 }
 
-// A frag or vert: code the GPU runs, which a Draw.Mesh names.
+// A frag or vert: code the GPU runs, which a Draw2D.Mesh names.
 static bool is_shader(const decl *d)
 {
     return d && d->kind == DECL_SHADER;
@@ -529,7 +529,7 @@ static void walk_expr(const expr *e)
             o.kind = OCC_CONST;
             o.decl = e->constant;
             break;
-        case BIND_SHADER: // The vert or frag a Draw.Mesh names
+        case BIND_SHADER: // The vert or frag a Draw2D.Mesh names
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
             break;
@@ -555,7 +555,7 @@ static void walk_expr(const expr *e)
         if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
-        } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw.Mesh(..., Effects.Shade)
+        } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw2D.Mesh(..., Effects.Shade)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
         } else if (e->enum_member) { // Title in Page.Title
@@ -1109,7 +1109,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
     case TY_DRAW_LIST: return "The frame's draw list, for a game's C to draw into with tide/draw.h: an extern "
-                              "function takes one, and a view passes it `Draw.list`.";
+                              "function takes one, and a view passes it `Draw2D.list` or `Draw3D.list`.";
     case TY_LIST: return "A list of values, which grows and shrinks: `Count`, `items[i]`, `Add`, `RemoveAt`, `foreach`, "
                          "and `parallel` through its elements by index.";
     case TY_MAP: return "Values by key, in the order the keys were added: `scores[key]` reads (the value type's zero when "
@@ -1428,16 +1428,16 @@ static const method_form grid_calls[] = {
      "there: the GPU is told both before any pixel runs."},
 };
 
-// What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
+// What Draw2D.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
 #define MESH_SHADER_DOC                                                                                                \
     "`vertices` can be a list of a struct of the game's too, one with a `position`: a float2 for a 2D mesh, a float3 " \
     "for a 3D one. A vert and a frag, named last, run on the GPU for each of the mesh's vertices and pixels: "         \
-    "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`."
+    "`Draw3D.Mesh(vertices, indices, transform, Wave, Shade)`."
 
 static bool is_mesh_draw(const str owner, const str name)
 {
-    return str_eq_c(owner, "Draw") && str_eq_c(name, "Mesh");
+    return builtin_draw_owner(owner) && str_eq_c(name, "Mesh");
 }
 
 // A Pixel's one method, in a frag.
@@ -1472,7 +1472,7 @@ static const char *shader_field_doc(const decl *d, const str name)
         if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
     }
     if (d && d == A.prog->instance && str_eq_c(name, "transform")) {
-        return "The transform `Draw.Mesh` was given, which places the mesh in the world.";
+        return "The transform `Draw3D.Mesh` was given, which places the mesh in the world.";
     }
     return NULL;
 }
@@ -1667,17 +1667,28 @@ static const char *type_prefix(const param *p)
     return prefix.data;
 }
 
+// Whether a vertex struct is a 3D mesh's: its position is a float3.
+static bool vertex_is_3d(const decl *vertex)
+{
+    for (int i = 0; vertex && i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        if (str_eq_c(f->name, "position")) return f->type.kind == TY_FLOAT3;
+    }
+    return false;
+}
+
 // A frag or vert: when it runs, and what it reads, grouped as the engine
 // sends it to the GPU: components' fields for each instance drawn,
 // singletons' for each draw, grids as textures, and of a frag's vertex, the
 // fields the mesh's corners pass on to its pixels.
 static void describe_shader(const decl *d, sb *out)
 {
-    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw.Mesh(..., "
+    const bool three_d = d->params.count && vertex_is_3d(d->params.items[0].type.decl);
+    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.Mesh(..., "
                                 STR_FMT ")`. What its `mut Color` holds when it ends is the pixel."
-                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.Mesh(..., "
+                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.Mesh(..., "
                                 STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
-              STR_ARG(d->name));
+              three_d ? 3 : 2, STR_ARG(d->name));
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
         return;
@@ -1817,7 +1828,7 @@ static void describe(const occurrence *o, sb *out)
     case OCC_SYSTEM:
         format_header(o->decl, &code);
         code_block(out, code.data);
-        if (is_shader(o->decl)) { // Where it's declared, and where a Draw.Mesh names it
+        if (is_shader(o->decl)) { // Where it's declared, and where a Draw2D.Mesh names it
             describe_shader(o->decl, out);
             break;
         }
@@ -1937,7 +1948,7 @@ static void describe(const occurrence *o, sb *out)
             put_names(out, wait_calls, sizeof wait_calls / sizeof wait_calls[0]);
             sb_put(out, ", the match's ticks, this machine's frames, or seconds.");
         } else {
-            sb_put(out, str_eq_c(o->name, "Draw")        ? "\n\nImmediate-mode drawing, in views and the functions they call."
+            sb_put(out, builtin_draw_owner(o->name)        ? "\n\nImmediate-mode drawing, in views and the functions they call."
                       : str_eq_c(o->name, "GUI")       ? "\n\nThe GUI's widgets, each at a Rect, and claims of the pointer and "
                                                          "the keyboard for widgets a view draws itself. In views and the "
                                                          "functions they call."
@@ -2729,7 +2740,7 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
     }
     case OCC_OWNER:
         if (str_eq_c(o->owner, "Devices")) return cdefs_find("tide_devices", out);
-        return cdefs_find_header(str_eq_c(o->owner, "Draw")                                         ? "draw.h"
+        return cdefs_find_header(builtin_draw_owner(o->owner)                                         ? "draw.h"
                                  : str_eq_c(o->owner, "GUI") || str_eq_c(o->owner, "GUILayout")
                                        || str_eq_c(o->owner, "Screen") || str_eq_c(o->owner, "Cursor") ? "gui.h"
                                                                                                     : "math.h",
@@ -3016,7 +3027,7 @@ void analysis_implementation(const int line, const int character, jbuf *out)
 
 // ---------------------------------------------------------------------------
 // Call hierarchy: who calls the game's functions and methods, and what they
-// call. A view that names a frag or vert at Draw.Mesh calls it, as far as the
+// call. A view that names a frag or vert at Draw2D.Mesh calls it, as far as the
 // hierarchy goes: the GPU runs it for what the view draws.
 
 static bool block_contains(const stmt *block, loc at);
@@ -3076,7 +3087,7 @@ static void write_call_item(jbuf *out, const caller *c)
 
 // The code named at the cursor, which the call hierarchy is about: a function
 // or method where it's declared or called, a system where it's declared, or a
-// frag or vert where it's declared or a Draw.Mesh names it.
+// frag or vert where it's declared or a Draw2D.Mesh names it.
 static caller hierarchy_target(const int line, const int character)
 {
     const occurrence *o = occurrence_at(from_lsp(line, character));
@@ -3106,7 +3117,7 @@ void analysis_prepare_call_hierarchy(const int line, const int character, jbuf *
 }
 
 // A call of a game's function or method, by name or by operator, or a frag's
-// or vert's name at a Draw.Mesh.
+// or vert's name at a Draw2D.Mesh.
 static bool is_call(const occurrence *o)
 {
     if (o->kind == OCC_SYSTEM) return !o->declaration && is_shader(o->decl);
@@ -3593,7 +3604,7 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
         sb_printf(&label, ": %s", type_name(o->type));
         inlay_hint(out, &written, (loc){o->at.line, o->at.col + o->len, o->at.file}, label.data, HINT_TYPE, false);
     }
-    for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw.Circle(p, radius: 3, color)
+    for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw2D.Circle(p, radius: 3, color)
         const expr *call = A.calls.items[i];
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
         str names[16];
@@ -4393,7 +4404,7 @@ static void complete_members(completion *c, const int dot, const loc at, const b
             return;
         }
         if (n == 1 && builtin_owner(base)) {
-            const bool frame_owner = str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
+            const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
             if (frame_owner && !frame) return;
@@ -4794,7 +4805,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     complete_namespaces(c, false);
     // What views draw with, which the functions they call can use too.
     if (view || (routine && sc.decl->kind == DECL_FUNCTION)) {
-        item(c, "Draw", CK_MODULE, "Immediate-mode drawing", NULL, NULL);
+        item(c, "Draw2D", CK_MODULE, "2D drawing and its camera", NULL, NULL);
+        item(c, "Draw3D", CK_MODULE, "3D drawing and its camera", NULL, NULL);
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
         item(c, "Screen", CK_MODULE, "The window's size, in GUI units", NULL, NULL);
@@ -4928,7 +4940,7 @@ static void complete_shader_header(completion *c, const int open, const int last
     complete_namespaces(c, false);
 }
 
-// The frags and verts a Draw.Mesh can name after its other arguments: those
+// The frags and verts a Draw2D.Mesh can name after its other arguments: those
 // that run on its mesh's vertex, `vertex`, or all of them where it isn't known.
 static void complete_shaders(completion *c, const decl *vertex)
 {
@@ -5122,7 +5134,7 @@ static int open_call(const int last, int *commas)
     return -1;
 }
 
-// Whether the '(' at token `open` is Draw.Mesh's.
+// Whether the '(' at token `open` is Draw2D.Mesh's.
 static bool opens_mesh_draw(const int open)
 {
     const token *toks = DOC->toks;
@@ -5182,12 +5194,12 @@ static type names_type(const scope *sc, const int first, const int last)
     return t;
 }
 
-// Draw.Mesh's parameters, in the order they're written:
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// Draw2D.Mesh's parameters, in the order they're written:
+// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_PARAMS };
 
-// What an argument of Draw.Mesh after its indices is, from what's written at
+// What an argument of Draw2D.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
 // that doesn't say.
 static int mesh_argument(const scope *sc, const int first, const int last)
@@ -5211,7 +5223,7 @@ static int mesh_argument(const scope *sc, const int first, const int last)
     return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID ? MESH_TEXTURE : MESH_PARAMS;
 }
 
-// The vertex struct of the mesh a Draw.Mesh draws, from its first argument,
+// The vertex struct of the mesh a Draw2D.Mesh draws, from its first argument,
 // at tokens `first` to `last`: the element of the list that names say, like
 // models.crate, or the struct a list written there starts with, like
 // [Vertex3 { ... }]. NULL where that doesn't say.
@@ -5234,15 +5246,6 @@ static const decl *mesh_vertex(const scope *sc, const int first, const int last)
     return t.decl->fields.items[0].type.decl;
 }
 
-// Whether a vertex struct is a 3D mesh's: its position is a float3.
-static bool vertex_is_3d(const decl *vertex)
-{
-    for (int i = 0; vertex && i < vertex->fields.count; i++) {
-        const field *f = &vertex->fields.items[i];
-        if (str_eq_c(f->name, "position")) return f->type.kind == TY_FLOAT3;
-    }
-    return false;
-}
 
 void analysis_completion(const int line, const int character, jbuf *out)
 {
@@ -5624,14 +5627,16 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool statement_start = before == T_LBRACE || before == T_RBRACE || before == T_SEMI || before == T_MUT;
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
-        // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
+        // Draw2D.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
         int commas;
         const int call = open_call(last, &commas);
         if (call >= 0 && opens_mesh_draw(call) && commas >= 2) {
             const scope sc = scope_at(at);
             call_args args;
             call_arguments(call, &args);
-            if (sc.decl && sc.decl->is_view) complete_shaders(&c, mesh_vertex(&sc, args.first[0], args.last[0]));
+            const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
+            const bool three_d = str_eq_c(DOC->toks[call - 3].text, "Draw3D");
+            if (sc.decl && sc.decl->is_view && (!vertex || vertex_is_3d(vertex) == three_d)) complete_shaders(&c, vertex);
         }
         const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE;
         complete_expression(&c, at, at_statement);
@@ -5845,7 +5850,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "using", "extern", "const", "frag", "vert", "async", "settings", "operator",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 13 };
-    static const char *const reserved[] = {"Math", "Draw", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
+    static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
@@ -6192,13 +6197,13 @@ static void collect_label(void *user, const char *label, const char *doc)
     vec_push(((label_list *)user)->labels, label);
 }
 
-// Draw.Mesh's two forms, a 2D mesh's and a 3D one's, with what may follow
+// Draw2D.Mesh's two forms, a 2D mesh's and a 3D one's, with what may follow
 // their lists in brackets. The built-in signatures (builtins.c) are those of
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])",
-    "Draw.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
+    "Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])",
+    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
 };
 
 // Each of its parameters: what it's called in those, and what it takes, in a
@@ -6320,7 +6325,7 @@ static int label_word(const char *label, const char *name)
     return 0;
 }
 
-// The built-in signatures' docs for Draw.Mesh: a 2D mesh's, and a 3D one's.
+// The built-in signatures' docs for Draw2D.Mesh: a 2D mesh's, and a 3D one's.
 typedef struct mesh_docs {
     const char *doc[2];
 } mesh_docs;
@@ -6332,7 +6337,7 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
     if (!docs->doc[form]) docs->doc[form] = doc;
 }
 
-// Signature help in Draw.Mesh's parentheses, opened at token `open`, with
+// Signature help in Draw2D.Mesh's parentheses, opened at token `open`, with
 // `commas` before the cursor: its two forms, the one the mesh's vertices or a
 // transform say first, and the parameter the argument at the cursor is. What
 // follows the lists can be left out, so that goes by what each argument is.
@@ -6345,9 +6350,8 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const scope sc = scope_at(at);
     call_args args;
     call_arguments(open, &args);
-    const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
-    bool three_d = vertex_is_3d(vertex);
-    if (!vertex && args.count > 2) three_d = mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM;
+    const str owner = DOC->toks[open - 3].text;
+    const bool three_d = str_eq_c(owner, "Draw3D");
     const int *order = forms[three_d];
     const int count = three_d ? MESH_PARAMS : MESH_PARAMS - 1;
     const int fixed = three_d ? 3 : 2; // Its lists, and a 3D mesh's transform: always there, in this order
@@ -6366,13 +6370,14 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     }
 
     mesh_docs docs = {{NULL, NULL}};
-    builtin_signatures(str_from("Draw"), str_from("Mesh"), collect_mesh_doc, &docs);
+    builtin_signatures(owner, str_from("Mesh"), collect_mesh_doc, &docs);
     jb_put(out, "{\"signatures\":[");
-    for (int form = 0; form < 2; form++) {
+    const int form = three_d ? 1 : 0;
+    {
         const char *label = mesh_labels[form];
         sb doc = {0};
         sb_printf(&doc, "%s%s%s", docs.doc[form] ? docs.doc[form] : "", docs.doc[form] ? "\n\n" : "", MESH_SHADER_DOC);
-        jb_put(out, form ? ",{\"label\":" : "{\"label\":");
+        jb_put(out, "{\"label\":");
         jb_string(out, label);
         jb_put(out, ",\"documentation\":{\"kind\":\"markdown\",\"value\":");
         jb_string(out, doc.data);
@@ -6388,7 +6393,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
         }
         jb_put(out, "]}");
     }
-    jb_printf(out, "],\"activeSignature\":%d,\"activeParameter\":%d}", three_d ? 1 : 0, active);
+    jb_printf(out, "],\"activeSignature\":0,\"activeParameter\":%d}", active);
 }
 
 void analysis_signature_help(const int line, const int character, jbuf *out)
@@ -6417,7 +6422,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
 
     jbuf list = {0};
     signature_list s = {&list, commas, -1, commas, 0};
-    if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw.Circle(, quaternion.Euler(
+    if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw2D.Circle(, quaternion.Euler(
         builtin_signatures(owner, name, visit_signature, &s);
     } else if (str_eq_c(owner, "Scene")) {
         for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {

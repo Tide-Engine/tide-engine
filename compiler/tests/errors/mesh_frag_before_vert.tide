@@ -1,4 +1,4 @@
-// expect: the vert comes before the frag, as the GPU runs them: 'Draw.Mesh(..., Wave, Shade)'
+// expect: the vert comes before the frag, as the GPU runs them: 'Draw3D.Mesh(..., Wave, Shade)'
 scene Main { }
 
 struct V
@@ -41,5 +41,5 @@ vert Wave(mut V vertex)
 
 view Show(Box box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade, Wave);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade, Wave);
 }

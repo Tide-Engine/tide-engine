@@ -1,4 +1,4 @@
-// expect: Draw.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture)
+// expect: Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture)
 scene Main { }
 
 local singleton Art
@@ -9,5 +9,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw.Mesh(art.corners, [0, 1, 2], art.cells);
+    Draw2D.Mesh(art.corners, [0, 1, 2], art.cells);
 }
