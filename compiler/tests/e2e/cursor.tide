@@ -8,11 +8,11 @@ input PlayerInput
     bool fire;
     bool locked; // The window held the cursor when this was sampled
 
-    Sample()
+    Sample(Devices devices)
     {
         locked = Cursor.locked;
-        if (Cursor.locked) look = Devices.mouse.delta;
-        fire = Devices.mouse.left.pressed;
+        if (Cursor.locked) look = devices.mouse.delta;
+        fire = devices.mouse.left.pressed;
     }
 }
 
@@ -48,7 +48,7 @@ bool Hold()
     return Cursor.locked;
 }
 
-view Look(mut Menu menu)
+view Look(Devices devices, mut Menu menu)
 {
     if (!menu.paused)
     {
@@ -56,7 +56,7 @@ view Look(mut Menu menu)
         if (held)
         {
             menu.looked += 1;
-            menu.turned += Devices.mouse.delta;
+            menu.turned += devices.mouse.delta;
         }
         // The lock went away on its own, as a browser's does at Escape: the pause menu
         if (menu.held && !held)

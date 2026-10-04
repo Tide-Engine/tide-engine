@@ -112,6 +112,13 @@ typedef struct tide_game {
     // server's (the slot after the last player's: tide_game_players). What
     // ticks' inputs go as deltas from.
     void (*world_input)(const void *world, uint32_t slot, void *input);
+    // Commands are bounded, copied wire values. Checking only decodes them;
+    // dispatch records them for this tick, with the connection's sender, and
+    // advances its sequence. Sequences are world state: snapshots, hashes and
+    // migration keep them, even when the game's handler chooses to do nothing.
+    bool (*check_command)(const uint8_t *data, uint32_t size);
+    uint32_t (*command_sequence)(const void *world, tide_player_id player);
+    bool (*command)(void *world, tide_player_id sender, uint32_t sequence, const uint8_t *data, uint32_t size);
     // Whether the match is over: its last scene unloaded, and Main is local,
     // so it can't come back. The server ends it then. NULL: it never is.
     bool (*ended)(const void *world);
@@ -131,6 +138,10 @@ typedef struct tide_game {
     // server's after them, so it's part of the game's layout: its hash differs.
     uint32_t max_players;
 } tide_game;
+
+#define TIDE_COMMAND_BYTES 1024u
+#define TIDE_COMMAND_PENDING 32u
+#define TIDE_COMMANDS_PER_TICK 16u
 
 // How many players a game's matches take. The server's input is the slot after
 // the last player's.
@@ -270,6 +281,11 @@ tide_client *tide_client_create(const tide_client_desc *desc, double now);
 // Tells the server it's leaving, and closes the transport.
 void tide_client_destroy(tide_client *c);
 void tide_client_update(tide_client *c, double now);
+// Copies a command to resend until its sequence is in a verified world.
+// False outside a connected match, for invalid bytes, a full queue, or when
+// its 32-bit sequence is exhausted. After a layout change a remote client
+// waits for a fresh authoritative world. Commands never predict by repeating.
+bool tide_client_send_command(tide_client *c, const uint8_t *data, uint32_t size);
 tide_client_status tide_client_status_of(const tide_client *c);
 // What views read: the world as predicted, up to predicted_tick. NULL until connected.
 const void *tide_client_world(const tide_client *c);
@@ -376,6 +392,7 @@ void tide_session_fail(tide_session *s, tide_disconnect_reason reason);
 // server, a long gap since the last update is a pause (a breakpoint, a
 // browser that froze the page): the match goes on from where it stopped.
 void tide_session_update(tide_session *s, double now);
+bool tide_session_send_command(tide_session *s, const uint8_t *data, uint32_t size);
 // Seconds from the last update until the match is due its next tick: when it
 // next needs an update, for a host with nothing else to do meanwhile, like one
 // whose window nobody sees (tide_platform_next_frame). Outside a match, or

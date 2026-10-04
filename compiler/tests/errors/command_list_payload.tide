@@ -1,0 +1,4 @@
+// expect: a command can't hold a list, map, set or grid
+struct Detail { List<int> values; }
+command Submit { Detail detail; }
+scene Main { }

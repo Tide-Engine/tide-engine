@@ -16,6 +16,7 @@ The server ticks the one true world. Every tick, it sends each player:
 
 - who joined or left,
 - the inputs that changed,
+- the commands scheduled for that tick, with their sender and sequence,
 - and a hash of the world after the tick.
 
 An input that didn't change, or didn't arrive, keeps its last value, on every machine. One that changed goes as what changed: a bit for each value that didn't. Players send theirs the same way, each tick's from the tick before. Its ints and enums take as little as they need: a number from -64 to 63 takes a byte, one up to about 8,000 either way two, and so on, and one that changed goes as by how much, so a big number that moves a little takes a byte too. A float that changed goes as the bits that changed, which for a value that moved a little, or a round one, is far fewer than its 32. Nothing is rounded: every value arrives exactly as it was sent, bit for bit.
@@ -55,6 +56,8 @@ With the game's `hostMigration` setting, the server tells every player what they
 ## Reliability
 
 Everything is sent again until it's acknowledged. Nothing waits on a reliable stream, so one lost packet never holds up the ones after it.
+
+[Commands](../game/commands.md) have a pending queue separate from tick inputs. The server schedules each received command into its next ticks and records its order. A command stays pending until a verified world confirms its sequence; duplicates are ignored. Per-player sequence state is part of the world and follows snapshots and host migration. Command handlers use ordinary guard clauses to check the sender's permissions and the payload against match state.
 
 ## Transports
 

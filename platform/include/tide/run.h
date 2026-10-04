@@ -60,6 +60,18 @@ static inline bool tide_run_take_request(void *local, tide_session_request *requ
     return tide_local_take_request(local, request, start);
 }
 
+#ifdef TIDE_HAS_COMMANDS
+static inline uint32_t tide_run_command(const void *local, uint8_t *out, const uint32_t capacity)
+{
+    return tide_local_command(local, out, capacity);
+}
+
+static inline void tide_run_command_sent(void *local)
+{
+    tide_local_command_sent(local);
+}
+#endif
+
 static inline void tide_run_set_session(void *local, const uint32_t state, const tide_player_id player,
                                         const uint32_t ping, const bool server, const bool open, const char *room)
 {
@@ -129,6 +141,10 @@ static const tide_host_game tide_host_game_api = {
     .frame = tide_run_views,
     .frame_time = tide_run_frame_time,
     .take_request = tide_run_take_request,
+#ifdef TIDE_HAS_COMMANDS
+    .command = tide_run_command,
+    .command_sent = tide_run_command_sent,
+#endif
     .set_session = tide_run_set_session,
     .connected = tide_run_connected,
     .disconnected = tide_run_disconnected,

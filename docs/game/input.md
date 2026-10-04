@@ -8,13 +8,13 @@ input PlayerInput
     float2 move;
     bool jump;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed) move.x += 1;
         if (keys.a.pressed) move.x -= 1;
-        move += Devices.gamepad.leftStick;
-        jump = keys.space.pressed || Devices.gamepad.buttonSouth.pressed;
+        move += devices.gamepad.leftStick;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
     }
 }
 
@@ -29,7 +29,7 @@ system Jump(PlayerInput input, mut Velocity velocity)
 
 The engine calls the input's `Sample` method on the player's own machine, once per tick. Its fields start at their defaults, and `Sample` assigns them by name, without `mut`.
 
-`Sample` runs outside the match. It reads this machine's `Devices`, and the local singletons it takes as parameters, like `Sample(Settings settings)`, but never the match. It's the place to work out what the match needs from things only this machine knows: an aim direction from the mouse, which is in this machine's window, or anything that depends on its settings.
+`Sample` runs outside the match. It reads this machine's `Devices`, and the local singletons it takes as parameters, like `Sample(Devices devices, Settings settings)`, but never the match. It's the place to work out what the match needs from things only this machine knows: an aim direction from the mouse, which is in this machine's window, or anything that depends on its settings.
 
 ## Who gets which input
 
@@ -92,7 +92,7 @@ A finger keeps its slot in `touches` while it touches, and lifts out of it. `pri
 
 ```csharp
 mut var fingers = 0;
-foreach (var touch in Devices.touchscreen.touches)
+foreach (var touch in devices.touchscreen.touches)
 {
     if (touch.press.pressed) fingers += 1;
 }
@@ -108,9 +108,9 @@ input Brush
     bool paint;
 
     // Cells of 16 pixels, under the mouse or a finger
-    Sample()
+    Sample(Devices devices)
     {
-        var pointer = Devices.pointer;
+        var pointer = devices.pointer;
         x = int(Math.Floor(pointer.position.x / 16));
         y = int(Math.Floor(pointer.position.y / 16));
         paint = pointer.press.pressed;
@@ -131,9 +131,9 @@ input PlayerInput
 {
     float2 look;
 
-    Sample()
+    Sample(Devices devices)
     {
-        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+        if (Cursor.locked) look = devices.mouse.delta * 0.003;
     }
 }
 ```
@@ -142,7 +142,7 @@ input PlayerInput
 
 ### Typed text
 
-`Devices.keyboard.text` is what the player typed since the last frame, as a `string`. Unlike keys, it follows the keyboard's layout: on AZERTY, the key in the `q` position types `a`, and `text` says `a`. Shift, accents and a phone's keyboard are applied, and what's pasted with Ctrl+V comes through it too. Backspace, Enter and the arrows are keys, not characters.
+`devices.keyboard.text` is what the player typed since the last frame, as a `string`. Unlike keys, it follows the keyboard's layout: on AZERTY, the key in the `q` position types `a`, and `text` says `a`. Shift, accents and a phone's keyboard are applied, and what's pasted with Ctrl+V comes through it too. Backspace, Enter and the arrows are keys, not characters.
 
 A text field of the GUI's reads it for you. Views read it themselves, and so do the functions they call, for a text box of their own, or to pass on to a library:
 
@@ -152,10 +152,10 @@ local singleton Chat
     string line;
 }
 
-view Typing(mut Chat chat)
+view Typing(Devices devices, mut Chat chat)
 {
-    chat.line += Devices.keyboard.text;
-    if (Devices.keyboard.backspace.down) chat.line = chat.line.Substring(0, chat.line.length - 1);
+    chat.line += devices.keyboard.text;
+    if (devices.keyboard.backspace.down) chat.line = chat.line.Substring(0, chat.line.length - 1);
 }
 ```
 
@@ -173,7 +173,7 @@ system Hop(Devices devices, mut Velocity velocity)
 }
 ```
 
-Match code can't read this machine's `Devices` directly; the error says to take the parameter. A system takes one `Devices` parameter, and one input parameter. Views read `Devices`, never a parameter, and can't read the input.
+Device access always takes a `Devices` parameter. `Sample` and views receive this machine's devices; match code receives the entity owner's, or the server's. A system takes at most one `Devices` parameter and one input parameter. Views can't read the input. Local event handlers and tasks can't take devices.
 
 The match can't read positions on the screen either, the mouse's, a touch's or the pointer's: they're in this machine's window, which the other machines don't have. Work out what the match needs from them in `Sample`, like an aim direction, and read that from the input.
 
@@ -192,7 +192,7 @@ input PlayerInput
     [Min(0), Max(3)] int gear = 1;
     bool boost;
 
-    Sample() { move = Devices.gamepad.leftStick; }
+    Sample(Devices devices) { move = devices.gamepad.leftStick; }
 
     // After the bounds: what attributes can't say.
     Sanitize()
