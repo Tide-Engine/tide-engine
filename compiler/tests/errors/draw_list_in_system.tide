@@ -1,4 +1,4 @@
-// expect: Draw can only be used in views, and in functions they call
+// expect: Draw2D can only be used in views, and in functions they call
 scene Main { }
 
 extern void Paint(DrawList list);
@@ -11,5 +11,5 @@ singleton Count
 system Run(mut Count count)
 {
     count.frames += 1;
-    Paint(Draw.list);
+    Paint(Draw2D.list);
 }

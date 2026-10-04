@@ -19,6 +19,8 @@ void tide_draw_reset(tide_draw_list *d)
     d->instance_used = 0;
     d->uniform_used = 0;
     d->clipped = 0;
+    d->camera_2d = 0;
+    d->camera_3d = 0;
     // The textures the frame drew with stay, for the next to find its pixels
     // here already
     uint32_t kept = 0;
@@ -117,6 +119,8 @@ static tide_draw_command *push(tide_draw_list *d, const tide_draw_kind kind, con
     reserve(d, 1);
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint32_t)kind, .a = a, .b = b, .color = color};
+    if (kind == TIDE_DRAW_CAMERA || kind == TIDE_DRAW_SCREEN) d->camera_2d = d->count;
+    if (kind == TIDE_DRAW_CAMERA_3D) d->camera_3d = d->count;
     return c;
 }
 

@@ -8,5 +8,5 @@ component Body
 
 view Nudge(mut Body body)
 {
-    Draw.Circle(body.pos.xy, 1, Color.red);
+    Draw2D.Circle(body.pos.xy, 1, Color.red);
 }

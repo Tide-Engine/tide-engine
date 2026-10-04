@@ -127,7 +127,7 @@ view DrawBox(mut Box box, mut Stats stats)
     if (box.verts.count == 0) Bake(box);
     box.age += 1;
     stats.corners += CornersOf(box);
-    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+    Draw3D.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
 }
 
 // Reads local fields nothing wrote: the defaults, for every entity
@@ -188,7 +188,7 @@ view Survey(mut Arena arena)
 // `mut` that writes no local field: the usual warning, which the build expects
 view Watch(mut Box box)
 {
-    if (box.bakes > 99) Draw.Clear(Color.black);
+    if (box.bakes > 99) Draw2D.Clear(Color.black);
 }
 
 // As an entity's local fields go, its entity gone from the match

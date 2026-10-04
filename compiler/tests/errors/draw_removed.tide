@@ -1,0 +1,3 @@
+// expect: unknown name 'Draw'
+scene Main { }
+view Show() { Draw.Clear(Color.black); }

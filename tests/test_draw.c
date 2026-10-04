@@ -209,7 +209,7 @@ TIDE_TEST(draw_meshes_append)
     tide_draw_free(&over);
 }
 
-// Tide's Draw.Mesh: lists, and a grid of colors as the texture, which is only
+// Tide's Draw2D.Mesh: lists, and a grid of colors as the texture, which is only
 // copied when its cells changed.
 TIDE_TEST(draw_grids_are_textures)
 {
