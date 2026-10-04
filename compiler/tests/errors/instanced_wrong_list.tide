@@ -1,4 +1,4 @@
-// expect: Draw.Instanced takes a List<float4x4> of transforms or a List<T> of instance structs
+// expect: Draw3D.Instanced takes a List<float4x4> of transforms or a List<T> of instance structs
 scene Main { }
 local singleton Mesh
 {
@@ -8,5 +8,5 @@ local singleton Mesh
 }
 view DrawBatch(Mesh mesh)
 {
-    Draw.Instanced(mesh.vertices, mesh.indices, mesh.instances);
+    Draw3D.Instanced(mesh.vertices, mesh.indices, mesh.instances);
 }

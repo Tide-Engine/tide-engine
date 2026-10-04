@@ -1,4 +1,4 @@
-// expect: a Draw.Mesh that names a vert or a frag goes in a view
+// expect: a Draw3D.Mesh that names a vert or a frag goes in a view
 scene Main { }
 
 struct V
@@ -36,7 +36,7 @@ frag Shade(V vertex, mut Color color, Box box)
 
 void Show(List<V> crate, List<int> faces)
 {
-    Draw.Mesh(crate, faces, float4x4.identity, Shade);
+    Draw3D.Mesh(crate, faces, float4x4.identity, Shade);
 }
 
 view Each(with Box, Models models)

@@ -606,79 +606,79 @@ view Start(mut Art art)
         art.four[0, 1] = Color.blue;
         art.four[1, 1] = Color.white;
     }
-    Draw.Clear(Color(0.1, 0.1, 0.1));
+    Draw2D.Clear(Color(0.1, 0.1, 0.1));
     // A unit a pixel, the origin at the screen's middle, looking along +z
-    Draw.Camera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
+    Draw3D.Camera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
 }
 
 // Three entities, three tints, one draw
 view Boxes(Box box, Art art)
 {
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(box.pos), Tinted);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(box.pos), Tinted);
 }
 
 view Singles(Art art)
 {
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 0)), Blank);
-    Draw.Mesh(art.dots, art.faces, float4x4.Translate(Cell(5, 0)));
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 0)));
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 0)), Blank);
+    Draw3D.Mesh(art.dots, art.faces, float4x4.Translate(Cell(5, 0)));
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 0)));
 
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 1)), Shift);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 1)), Wood);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 1)), Smooth);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 1)), art.four, Filter.Point);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 1)), Shift);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 1)), Wood);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 1)), Smooth);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 1)), art.four, Filter.Point);
 
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 2)), Split);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 2)), Hole);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 2)), World);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 2)), Depth);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 2)), Split);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 2)), Hole);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 2)), World);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 2)), Depth);
     var turned = float4x4.TRS(Cell(4, 2), quaternion.AxisAngle(float3(0, 0, 1), Math.Radians(90)), float3(1));
-    Draw.Mesh(art.quad, art.faces, turned, Turn, Normal);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 2)), Placed);
+    Draw3D.Mesh(art.quad, art.faces, turned, Turn, Normal);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 2)), Placed);
 
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 5)), Sink);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 5)), Checks);
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 5)), More);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 5)), Sink);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 5)), Checks);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 5)), More);
 }
 
 view Lamps(Lamp lamp, Art art)
 {
-    Draw.Mesh(art.quad, art.faces, float4x4.Translate(lamp.pos), Lit);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(lamp.pos), Lit);
 }
 
 // 2D meshes go through the 2D camera, in order with the other 2D calls
 view Flat(Art art)
 {
-    Draw.Camera(-Spot(0, 4), Screen.height / 2);
-    Draw.Rect(float2(0, 0), float2(32, 32), Color.blue);
-    Draw.Mesh(art.flat, art.faces, Paint);
-    Draw.Rect(float2(0, 0), float2(8, 8), Color.green);
+    Draw2D.Camera(-Spot(0, 4), Screen.height / 2);
+    Draw2D.Rect(float2(0, 0), float2(32, 32), Color.blue);
+    Draw2D.Mesh(art.flat, art.faces, Paint);
+    Draw2D.Rect(float2(0, 0), float2(8, 8), Color.green);
 
-    Draw.Camera(-Spot(2, 4), Screen.height / 2);
-    Draw.Mesh(art.dots2, art.faces);
-    Draw.Camera(-Spot(3, 4), Screen.height / 2);
-    Draw.Mesh(art.flat, art.faces, art.four, Filter.Point);
-    Draw.Camera(-Spot(5, 4), Screen.height / 2);
-    Draw.Mesh(art.flat, art.faces, Slide);
+    Draw2D.Camera(-Spot(2, 4), Screen.height / 2);
+    Draw2D.Mesh(art.dots2, art.faces);
+    Draw2D.Camera(-Spot(3, 4), Screen.height / 2);
+    Draw2D.Mesh(art.flat, art.faces, art.four, Filter.Point);
+    Draw2D.Camera(-Spot(5, 4), Screen.height / 2);
+    Draw2D.Mesh(art.flat, art.faces, Slide);
 
-    Draw.Screen();
-    Draw.Mesh(art.onScreen, art.faces, Stripe);
-    Draw.Camera(float2(0, 0), Screen.height / 2);
+    Draw2D.Screen();
+    Draw2D.Mesh(art.onScreen, art.faces, Stripe);
+    Draw2D.Camera(float2(0, 0), Screen.height / 2);
 }
 
 // Three entities in one 2D draw: the vert puts each where its component says
 view FlatLamps(with Lamp, Art art)
 {
-    Draw.Mesh(art.flat, art.faces, Place, Glow);
+    Draw2D.Mesh(art.flat, art.faces, Place, Glow);
 }
 
 view Manual(Art art)
 {
-    Draw.Instanced(art.quad, art.faces, art.empty, BatchPlace3, BatchPaint3);
-    Draw.Instanced(art.quad, art.faces, art.manual3, BatchPlace3, BatchPaint3);
-    Draw.Instanced(art.manualMesh, art.faces, art.manualTransforms, art.four, Filter.Point);
-    Draw.Instanced(art.flat, art.faces, art.manual2, BatchPlace2, BatchPaint2);
-    Draw.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
+    Draw3D.Instanced(art.quad, art.faces, art.empty, BatchPlace3, BatchPaint3);
+    Draw3D.Instanced(art.quad, art.faces, art.manual3, BatchPlace3, BatchPaint3);
+    Draw3D.Instanced(art.manualMesh, art.faces, art.manualTransforms, art.four, Filter.Point);
+    Draw2D.Instanced(art.flat, art.faces, art.manual2, BatchPlace2, BatchPaint2);
+    Draw2D.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
 }
 
 // shaders.c requests independent full-window checks after the existing grid.
@@ -689,11 +689,11 @@ view Targets(mut Art art)
     if (art.targetPass == 0) return;
     if (art.targetPass >= 4)
     {
-        Draw.Screen();
+        Draw2D.Screen();
         if (art.targetPass == 4)
-            Draw.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point, TextureChecks);
+            Draw2D.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point, TextureChecks);
         else
-            Draw.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point);
+            Draw2D.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point);
         return;
     }
 
@@ -707,8 +707,8 @@ view Targets(mut Art art)
     art.outputTarget.Clear(Color.magenta);
     art.outputTarget.Camera(float2(10000), 0.01);
     art.outputTarget.Clip(Rect(0, 0, 0, 0));
-    Draw.Camera(float2(10000), 0.01);
-    Draw.Clip(Rect(0, 0, 0, 0));
+    Draw2D.Camera(float2(10000), 0.01);
+    Draw2D.Clip(Rect(0, 0, 0, 0));
 
     if (art.targetPass == 1)
     {

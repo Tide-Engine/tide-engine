@@ -1,4 +1,4 @@
-// frag and vert: Draw.Mesh through code the GPU runs, and what it records for
+// frag and vert: Draw2D.Mesh through code the GPU runs, and what it records for
 // them. A vertex struct of the game's, the fields a frag and a vert read of
 // the view's entity (for each instance) and of singletons (for each draw),
 // grids as textures, and a mesh with neither, drawn as its vertices are.
@@ -158,23 +158,23 @@ view Sparkle(mut Box box)
 // The view only requires the component: the frag reads it, and the engine hands it over
 view Boxes(with Box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);
 }
 
 // A frag alone, a vert alone, and what the view takes itself
 view Others(Box box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Blank);
-    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), models.wood, Filter.Point, Wave);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Blank);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), models.wood, Filter.Point, Wave);
 }
 
 // With neither: the vertices as they are, their color times the texture
 view Plain(Models models)
 {
-    Draw.Mesh(models.dots, [0, 1, 2], float4x4.identity);
-    Draw.Mesh(models.flat, [0, 1, 2]);
-    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw.Mesh(models.flat, [0, 1, 2], models.wood);
-    Draw.Mesh(models.flat, [0, 1, 2], Tint);
-    Draw.Mesh([Corner { }, Corner { position = float2(2, 0) }, Corner { position = float2(0, 2) }], [0, 1, 2]);
+    Draw3D.Mesh(models.dots, [0, 1, 2], float4x4.identity);
+    Draw2D.Mesh(models.flat, [0, 1, 2]);
+    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw2D.Mesh(models.flat, [0, 1, 2], models.wood);
+    Draw2D.Mesh(models.flat, [0, 1, 2], Tint);
+    Draw2D.Mesh([Corner { }, Corner { position = float2(2, 0) }, Corner { position = float2(0, 2) }], [0, 1, 2]);
 }

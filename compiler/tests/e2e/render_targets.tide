@@ -14,7 +14,12 @@ local singleton Buffers
     int beginTask;
     RenderTarget windowAlias;
     RenderTarget borrowed;
+    float2 targetThenWindow;
+    float2 windowThenTarget;
+    float3 projected3;
 }
+
+extern void WindowMark(DrawList draw);
 
 async void Keep(Resources resources, mut Buffers buffers)
 {
@@ -48,7 +53,7 @@ view Present(Buffers buffers)
 {
     Draw.Blit(buffers.scratch.color, Draw.window, Copy);
     Draw.window.Rect(float2(0), float2(1), Color.white);
-    Draw.Clear(Color.black);
+    Draw2D.Clear(Color.black);
 }
 
 [Stage(RenderPhases.Objects)]
@@ -66,10 +71,17 @@ view Effects(Buffers buffers)
 }
 
 [Stage(RenderPhases.Prepare)]
-view Prepare(Buffers buffers)
+view Prepare(mut Buffers buffers)
 {
+    Draw2D.Camera(float2(0), 4);
     buffers.scene.Clear(Color.black);
     buffers.scene.Camera(float2(0), 4);
+    buffers.targetThenWindow = Draw2D.WorldToScreen(buffers.scene.WorldToScreen(float2(0)));
+    buffers.windowThenTarget = buffers.scene.WorldToScreen(Draw2D.WorldToScreen(float2(0)));
+    buffers.scene.Camera(float3(0, 0, -5), quaternion.identity, 60);
+    buffers.projected3 = buffers.scene.WorldToScreen(float3(0, 0, 5));
+    buffers.scene.Cube(float3(0, 0, 5), float3(2), Color.green);
     buffers.scene.Clip(Rect(-2, -2, 4, 4));
     buffers.scratch.Clear(Color.blue);
+    WindowMark(Draw2D.list);
 }

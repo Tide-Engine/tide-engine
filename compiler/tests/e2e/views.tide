@@ -33,24 +33,24 @@ event(Spawned) Setup(with Main)
 // Once per frame: no entity parameters.
 view Background(Palette palette, Time time)
 {
-    Draw.Clear(palette.background);
-    Draw.Camera(float2(time.tick, 0), 10);
-    Draw.Text("tick", float2(0, 0), 2, Color.white);
+    Draw2D.Clear(palette.background);
+    Draw2D.Camera(float2(time.tick, 0), 10);
+    Draw2D.Text("tick", float2(0, 0), 2, Color.white);
 }
 
 // Once per matching entity, skipping hidden ones.
 view Bodies(Body body, Tint tint, without Hidden)
 {
-    Draw.Circle(body.position, body.radius, tint.color);
+    Draw2D.Circle(body.position, body.radius, tint.color);
     mut var solid = tint.color;
     solid.a = 1;
-    Draw.WireRect(body.position, float2(body.radius * 2), solid);
+    Draw2D.WireRect(body.position, float2(body.radius * 2), solid);
 }
 
 view Hints(Body body, with Hidden)
 {
-    Draw.Line(body.position, body.position + float2(1, 0), Color.yellow);
-    Draw.WireCircle(body.position, body.radius, Color(1, 1, 1));
-    Draw.Rect(body.position, float2(2, 1), Color.gray);
-    Draw.Text("say \"hi\"?", body.position, 1, Color.black);
+    Draw2D.Line(body.position, body.position + float2(1, 0), Color.yellow);
+    Draw2D.WireCircle(body.position, body.radius, Color(1, 1, 1));
+    Draw2D.Rect(body.position, float2(2, 1), Color.gray);
+    Draw2D.Text("say \"hi\"?", body.position, 1, Color.black);
 }

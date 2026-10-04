@@ -1,4 +1,4 @@
 // expect: Sample reads a Texture on the GPU: in a frag or a vert
 scene Main { }
 local singleton Image { Texture source; }
-view Show(Image image) { Draw.Clear(image.source.Sample(float2(0))); }
+view Show(Image image) { Draw2D.Clear(image.source.Sample(float2(0))); }

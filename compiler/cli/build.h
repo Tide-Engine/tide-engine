@@ -36,5 +36,5 @@ int tide_run_web(const char *root, const build_options *opts, bool open_page, co
 int tide_run_android(const char *root, const build_options *opts, const char *const *args);
 
 // Prints the schedule of the game in `folder` (see tidec --schedule), or with
-// `shaders`, the shaders its Draw.Mesh calls draw through (tidec --shaders).
+// `shaders`, the shaders its mesh draw calls draw through (tidec --shaders).
 bool tide_schedule(const char *folder, bool shaders);

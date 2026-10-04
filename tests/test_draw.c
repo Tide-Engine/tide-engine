@@ -122,8 +122,11 @@ TIDE_TEST(draw_owned_target_aliases_capture_resize_and_disposal)
     TIDE_CHECK(d.target == 0);
     tide_draw_to(&d, 33, 0, 4);
     TIDE_CHECK(d.target && d.targets[d.target - 1u].id == 33);
+    const uint32_t prior_count = d.count;
     tide_draw_forget(&d);
-    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_TARGET && d.commands[d.count - 1u].target == UINT32_MAX);
+    TIDE_CHECK(d.commands[prior_count - 1u].kind == TIDE_DRAW_TARGET
+               && d.commands[prior_count - 1u].target == UINT32_MAX);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_TARGET && d.commands[d.count - 1u].target == 0);
     tide_draw_free(&appended);
     tide_draw_free(&d);
     tide_render_targets_free();
@@ -313,7 +316,7 @@ TIDE_TEST(draw_meshes_append)
     tide_draw_free(&over);
 }
 
-// Tide's Draw.Mesh: lists, and a grid of colors as the texture, which is only
+// Tide's Draw2D.Mesh: lists, and a grid of colors as the texture, which is only
 // copied when its cells changed.
 TIDE_TEST(draw_grids_are_textures)
 {

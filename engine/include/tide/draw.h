@@ -6,7 +6,7 @@
 #include "tide/color.h"
 #include "tide/math.h"
 
-// Immediate-mode drawing: Tide's Draw API records commands into a draw
+// Immediate-mode drawing: Tide's Draw2D and Draw3D APIs record commands into a draw
 // list, and a renderer plays them back (tide_platform_draw, on OpenGL). The list
 // knows nothing about any renderer, so replacing one doesn't touch game code.
 //
@@ -208,6 +208,7 @@ typedef struct tide_draw_target_data {
     uint64_t version; // Resize revision, captured with its dimensions.
     int32_t width, height;
     uint32_t clipped;
+    uint32_t camera_2d, camera_3d; // Command indexes, 1 + their places; 0 for the defaults.
 } tide_draw_target_data;
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -261,7 +262,7 @@ enum { TIDE_MESH_NONE, TIDE_MESH_MEMORY, TIDE_MESH_LISTS, TIDE_MESH_BYTES };
 // ---------------------------------------------------------------------------
 // Shaders: code of the game's that runs on the GPU, for each vertex of a mesh
 // and each pixel it covers. tidec writes them from Tide's `vert` and `frag`
-// declarations, one for each combination a Draw.Mesh uses, in the generated
+// declarations, one for each combination a mesh draw uses, in the generated
 // C: nothing else makes one.
 
 // What a vertex's field is in its list: 1 to 4 floats, or 1 to 4 ints.
@@ -367,6 +368,7 @@ typedef struct tide_draw_list {
     uint32_t target_count, target_capacity;
     uint32_t target; // Current destination, 1 + its place above; 0 is the window
     uint32_t window_clipped;
+    uint32_t window_camera_2d, window_camera_3d;
     tide_float4x4 *matrices; // The 3D cameras' and the instances' of 3D meshes
     uint32_t matrix_count;
     uint32_t matrix_capacity;
@@ -387,6 +389,8 @@ typedef struct tide_draw_list {
     uint32_t uniform_capacity;
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t clipped; // Whether a clip is on for the commands to come
+    uint32_t camera_2d; // 1 + the current 2D camera or screen command, or 0 for the default
+    uint32_t camera_3d; // 1 + the current 3D camera command, or 0 for the default
     uint32_t epoch;   // Counts tide_draw_forget
 } tide_draw_list;
 
@@ -569,3 +573,62 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, ui
 // are the same as tide_draw_shaded's. Sampling the destination is refused.
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const void *instance,
                    const void *uniforms, const uint32_t *textures, uint32_t blended);
+// ---------------------------------------------------------------------------
+// 3D primitives: solid meshes, through the 3D camera and with depth, as
+// tide_draw_mesh_3d. Every shape is centered on `center`; its geometry is
+// kept by shape and color, and repeated instances draw at once. A size,
+// radius or height that is not positive draws nothing.
+
+// A cube's `size` is its full width, height and depth. The rotated form
+// turns its local axes by `rotation` before placing it in the world.
+void tide_draw_cube(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_color color);
+void tide_draw_cube_rotated(tide_draw_list *d, tide_float3 center, tide_float3 size, tide_quaternion rotation,
+                             tide_color color);
+
+void tide_draw_sphere(tide_draw_list *d, tide_float3 center, float radius, tide_color color);
+
+// A cylinder's axis is local +y, with the full `height` around its center
+// and a circular cap at each end.
+void tide_draw_cylinder(tide_draw_list *d, tide_float3 center, float radius, float height, tide_color color);
+void tide_draw_cylinder_rotated(tide_draw_list *d, tide_float3 center, float radius, float height,
+                                 tide_quaternion rotation, tide_color color);
+
+// A plane is in local XZ: `size.x` along x, `size.y` along z. Both sides
+// draw, as for other meshes.
+void tide_draw_plane(tide_draw_list *d, tide_float3 center, tide_float2 size, tide_color color);
+void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 size, tide_quaternion rotation,
+                              tide_color color);
+
+// ---------------------------------------------------------------------------
+// Coordinates through the current camera, for the commands recorded next.
+// `screen_size` is the window's width and height in logical pixels. When a
+// target is selected, its dimensions are used instead. Screen
+// positions are from the top left, with y down, as tide_draw_screen and the
+// GUI's are. Device positions are from the bottom left: change their y to
+// screen_size.y - y before passing them here.
+//
+// Each target keeps its own cameras. The 2D helpers use its most recent
+// 2D camera or screen command, or the
+// default centered camera at one world unit per pixel. In screen mode both
+// are the identity. A 3D camera leaves them as they were, and 2D commands
+// leave the 3D camera as it was. Neither needs a frame to have been rendered.
+tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+
+// The 3D helpers use the most recent 3D camera, or the default perspective
+// camera. A screen position's z is depth: 0 at the near plane, 1 at the far
+// plane, as the GPU's depth buffer, rather than distance from the camera.
+// Coordinates and depth are not clamped to the viewport. With the standard
+// infinite perspective camera, depth 1 has no finite world position.
+tide_float3 tide_draw_world_to_screen_3d(const tide_draw_list *d, tide_float3 point, tide_float2 screen_size);
+tide_float3 tide_draw_screen_to_world_3d(const tide_draw_list *d, tide_float3 point, tide_float2 screen_size);
+
+// A ray through the screen point, starting at the camera's near plane and
+// pointing into the scene. The direction is normalized; this works with
+// perspective cameras and orthographic or other matrix projections.
+tide_float3 tide_draw_screen_ray_origin(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+
+// All coordinate helpers return a zero vector when an input is non-finite,
+// screen size is non-positive, the camera is singular, or a homogeneous
+// projection has no finite point. A point outside the view is still mapped.

@@ -1720,7 +1720,7 @@ static void gen_text_literal(sb *o, const str text, const bool values)
     sb_printf(o, ", %d, %d})", bytes, chars);
 }
 
-// Text for a C function that takes a `const char *`, like Draw.Text's.
+// Text for a C function that takes a `const char *`, like Draw2D.Text's.
 // The source line `at` is on, without the space around it: what an assertion
 // that fails shows.
 static str source_line(const loc at)
@@ -2058,7 +2058,8 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
-    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL)) {
+    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL
+                       || (e->call == CALL_DRAW && e->type.kind != TY_VOID))) {
         sb_put(o, e->hoisted); // Already ran, before the statement: a unit, or an operator that calls C
         return;
     }
@@ -2420,7 +2421,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW && e->shader) {
-            // Draw.Mesh through a shader: its values, then what the frag and the vert read of the view's
+            // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
             bool filter = false;
             sb_printf(o, "tide_shade_%d(", sh->index);
@@ -2451,7 +2452,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                        || strcmp(e->c_callee, "tide_draw_mesh3_instances_grid") == 0
                        || strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_texture") == 0
                        || strcmp(e->c_callee, "tide_draw_mesh3_instances_texture") == 0)) {
-            // Draw.Mesh(vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
+            // mesh drawing (vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
             // it has when left out
             const int texture = strcmp(e->c_callee, "tide_draw_mesh_grid") == 0
                              || strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 ? 2 : 3;
@@ -2485,6 +2486,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 if (i || e->call == CALL_DRAW || e->resource_operation) sb_put(o, ", ");
                 if (e->arg_want.items[i].kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
                 else gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            }
+            if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
+                                        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
+                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
             }
             sb_put(o, ")");
         }
@@ -3034,7 +3039,7 @@ static void collect_ordered(expr *e, expr_list *out)
         for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
         if (is_spawn(e)
             || (e->type.kind != TY_VOID
-                && (e->call == CALL_GUI || e->resource_operation
+                && (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation
                     || ((e->call == CALL_FUNCTION || e->call == CALL_METHOD)
                         && (e->method->draws || e->method->is_extern || e->method->calls_c))))) {
             vec_push(*out, e);
@@ -10325,7 +10330,7 @@ static void setting_text(char *out, const size_t size, const expr *setting)
 
 // ---------------------------------------------------------------------------
 // Shaders (see shader.c): each as a tide_shader, and a function that draws a
-// mesh through it, which a Draw.Mesh calls with what the view has.
+// mesh through it, which a Draw2D.Mesh calls with what the view has.
 
 // A shader's source as an array of chars: C only promises string literals of
 // 4095.
@@ -10394,7 +10399,7 @@ static void gen_shaders(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
-    sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    sb_put(o, "// Shaders: what Draw2D.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
     for (int s = 0; s < prog->shaders.count; s++) {
         const shader *sh = prog->shaders.items[s];
         const char *vertex = type_cname(sh->vertex);

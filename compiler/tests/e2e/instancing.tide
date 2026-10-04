@@ -137,26 +137,26 @@ view Fill(mut Art art)
 
 view Plain(Art art)
 {
-    Draw.Instanced(art.builtIn, art.faces, art.emptyTransforms);
-    Draw.Instanced(art.builtIn, art.faces, art.transforms, art.texture, Filter.Point);
-    Draw.Instanced(art.builtIn, art.faces, [float4x4.Translate(float3(500, 0, 5))], art.texture, Filter.Point);
-    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw.Instanced(art.corners, art.faces, art.transforms);
-    Draw.Instanced(art.corners, art.faces, art.transforms, art.texture);
-    Draw.Instanced(art.corners, art.faces, art.flatItems, Identity);
+    Draw3D.Instanced(art.builtIn, art.faces, art.emptyTransforms);
+    Draw3D.Instanced(art.builtIn, art.faces, art.transforms, art.texture, Filter.Point);
+    Draw3D.Instanced(art.builtIn, art.faces, [float4x4.Translate(float3(500, 0, 5))], art.texture, Filter.Point);
+    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw3D.Instanced(art.corners, art.faces, art.transforms);
+    Draw3D.Instanced(art.corners, art.faces, art.transforms, art.texture);
+    Draw3D.Instanced(art.corners, art.faces, art.flatItems, Identity);
     // Different generated helpers, one compatible shader and one run
-    Draw.Mesh(art.corners, art.faces, float4x4.Translate(float3(1000, 0, 5)), SharedPaint);
-    Draw.Instanced(art.corners, art.faces, art.transforms, SharedPaint);
+    Draw3D.Mesh(art.corners, art.faces, float4x4.Translate(float3(1000, 0, 5)), SharedPaint);
+    Draw3D.Instanced(art.corners, art.faces, art.transforms, SharedPaint);
 }
 
 view Batch(with Banner, Art art)
 {
-    Draw.Instanced(art.corners, art.faces, art.emptyItems, Place, Paint);
-    Draw.Instanced(art.corners, art.faces, art.items, Place, Paint);
+    Draw3D.Instanced(art.corners, art.faces, art.emptyItems, Place, Paint);
+    Draw3D.Instanced(art.corners, art.faces, art.items, Place, Paint);
 }
 
 view Flat(Art art)
 {
-    Draw.Instanced(art.flat, art.faces, art.flatItems, FlatPlace, FlatPaint);
-    Draw.Instanced(art.flat, art.faces, art.flatItems, art.texture, Filter.Point, FlatPlace);
+    Draw2D.Instanced(art.flat, art.faces, art.flatItems, FlatPlace, FlatPaint);
+    Draw2D.Instanced(art.flat, art.faces, art.flatItems, art.texture, Filter.Point, FlatPlace);
 }

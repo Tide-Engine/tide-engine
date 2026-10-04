@@ -8,6 +8,7 @@
 #include "tide/page.h"
 
 static void reindex_meshes(tide_draw_list *d);
+static tide_draw_command *push(tide_draw_list *d, tide_draw_kind kind, tide_float2 a, tide_float2 b, tide_color color);
 
 static tide_render_target_state *render_targets;
 
@@ -92,6 +93,9 @@ void tide_draw_reset(tide_draw_list *d)
     d->uniform_used = 0;
     d->clipped = 0;
     d->target_count = d->target = d->window_clipped = 0;
+    d->camera_2d = 0;
+    d->camera_3d = 0;
+    d->window_camera_2d = d->window_camera_3d = 0;
     // The textures the frame drew with stay, for the next to find its pixels
     // here already
     uint32_t kept = 0;
@@ -152,8 +156,16 @@ void tide_draw_free(tide_draw_list *d)
 
 void tide_draw_forget(tide_draw_list *d)
 {
+    const bool had_targets = d->target_count != 0;
+    const bool window_clipped = d->target ? d->window_clipped != 0 : d->clipped != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free(d->textures[i].pixels);
     d->texture_count = 0;
+    if (!d->target) {
+        d->window_camera_2d = d->camera_2d;
+        d->window_camera_3d = d->camera_3d;
+    }
+    d->camera_2d = d->window_camera_2d;
+    d->camera_3d = d->window_camera_3d;
     d->target_count = d->target = d->window_clipped = d->clipped = 0;
     free_meshes(d);
     d->epoch++;
@@ -166,6 +178,12 @@ void tide_draw_forget(tide_draw_list *d)
         if (c->kind == TIDE_DRAW_TARGET) c->target = UINT32_MAX;
     }
     for (uint32_t i = 0; i < d->run_count; i++) d->runs[i] = (tide_draw_run){0};
+    // The forgotten selectors now sink their old commands. End on a valid
+    // window selector so direct C draws recorded afterward have a destination.
+    if (had_targets) {
+        push(d, TIDE_DRAW_TARGET, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR)->target = 0;
+        if (window_clipped) push(d, TIDE_DRAW_NO_CLIP, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+    }
 }
 
 // Room for `more` items of `size` bytes after the `count` there are, the
@@ -193,6 +211,8 @@ static tide_draw_command *push(tide_draw_list *d, const tide_draw_kind kind, con
     reserve(d, 1);
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint32_t)kind, .a = a, .b = b, .color = color};
+    if (kind == TIDE_DRAW_CAMERA || kind == TIDE_DRAW_SCREEN) d->camera_2d = d->count;
+    if (kind == TIDE_DRAW_CAMERA_3D) d->camera_3d = d->count;
     return c;
 }
 
@@ -214,10 +234,20 @@ static tide_draw_list *draw_to_version(tide_draw_list *d, const uint64_t id, con
 {
     const uint32_t slot = target_slot(d, id, width, height, version);
     if (slot == d->target) return d;
-    if (d->target) d->targets[d->target - 1u].clipped = d->clipped;
-    else d->window_clipped = d->clipped;
+    if (d->target) {
+        tide_draw_target_data *previous = &d->targets[d->target - 1u];
+        previous->clipped = d->clipped;
+        previous->camera_2d = d->camera_2d;
+        previous->camera_3d = d->camera_3d;
+    } else {
+        d->window_clipped = d->clipped;
+        d->window_camera_2d = d->camera_2d;
+        d->window_camera_3d = d->camera_3d;
+    }
     d->target = slot;
     d->clipped = slot ? d->targets[slot - 1u].clipped : d->window_clipped;
+    d->camera_2d = slot ? d->targets[slot - 1u].camera_2d : d->window_camera_2d;
+    d->camera_3d = slot ? d->targets[slot - 1u].camera_3d : d->window_camera_3d;
     push(d, TIDE_DRAW_TARGET, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR)->target = slot;
     return d;
 }

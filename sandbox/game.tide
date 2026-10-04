@@ -36,12 +36,12 @@ input PlayerInput
 view Map()
 {
     float WIDTH = 200;
-    Draw.Line(float2(-WIDTH, 0), float2(WIDTH, 0), Color.green);
+    Draw2D.Line(float2(-WIDTH, 0), float2(WIDTH, 0), Color.green);
 }
 
 view Test(Transform trs, Player player)
 {
-    Draw.Circle(trs.position.xy, player.radius, Color.red);
+    Draw2D.Circle(trs.position.xy, player.radius, Color.red);
 }
 
 system PlayerMovement(mut Transform trs, Player player, Time time)

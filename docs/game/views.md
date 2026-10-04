@@ -5,13 +5,13 @@ A **view** draws the game. It looks like a system and takes the same parameters,
 ```csharp
 view DrawBalls(Body body, Ball ball)
 {
-    Draw.Circle(body.position, body.radius, ball.color);
+    Draw2D.Circle(body.position, body.radius, ball.color);
 }
 
 view DrawHud(Arena arena)
 {
-    Draw.Camera(float2(0, 0), arena.halfSize.y);
-    Draw.Text("fire: space", float2(-arena.halfSize.x, arena.halfSize.y), 18, Color.gray);
+    Draw2D.Camera(float2(0, 0), arena.halfSize.y);
+    Draw2D.Text("fire: space", float2(-arena.halfSize.x, arena.halfSize.y), 18, Color.gray);
 }
 ```
 
@@ -23,12 +23,12 @@ Views can share [named phases](./systems.md#named-phases) instead of depending o
 enum RenderStages { Prepare, Objects, Effects, UI }
 
 [Stage(RenderStages.Prepare)]
-view ClearScene() { Draw.Clear(Color.black); }
+view ClearScene() { Draw2D.Clear(Color.black); }
 
 [Stage(RenderStages.Objects)]
 view DrawBalls(Body body, Ball ball)
 {
-    Draw.Circle(body.position, body.radius, ball.color);
+    Draw2D.Circle(body.position, body.radius, ball.color);
 }
 
 [After(RenderStages.Objects), Before(RenderStages.UI)]
@@ -39,7 +39,7 @@ An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects
 
 ## Targets and post-processing
 
-`RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
+`RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
 
 Create a target with `RenderTarget(width, height)`, using positive pixel dimensions. Its color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
 
@@ -92,13 +92,13 @@ A view takes a `World` as a system does, to read another entity's component by i
 ```csharp
 view RenderGame(Player player, with ownership)
 {
-    Draw.Camera(player.pos, player.rot, 75);
+    Draw3D.Camera(player.pos, player.rot, 75);
 }
 
 // Everyone else's body: a first-person camera doesn't draw its own
 view Bodies(Player player, Scenery scenery, without ownership)
 {
-    Draw.Mesh(scenery.crate, scenery.faces, float4x4.TRS(player.pos, player.rot, float3(1)), scenery.wood);
+    Draw3D.Mesh(scenery.crate, scenery.faces, float4x4.TRS(player.pos, player.rot, float3(1)), scenery.wood);
 }
 ```
 
@@ -111,25 +111,31 @@ Only views have them. The match runs the same on every machine, so a system can'
 
 ## Draw functions
 
+`Draw2D` draws shapes, text and 2D meshes. `Draw3D` draws 3D meshes and primitives. Each has its own camera; changing one leaves the other as it is. These replace the former `Draw` API: use the namespace matching the draw's dimension. Both `Clear` methods clear the same target and its depth, and both namespaces' `list` members hand the same draw list to C.
+
 Positions and sizes are in world units, with `y` up. The camera maps them to the screen.
 
 | Function | What it draws |
 |---|---|
-| `Draw.Clear(color)` | Fills the screen |
-| `Draw.Camera(center, size)` | Sets the camera for the calls after it: `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size |
-| `Draw.Circle(center, radius, color)` | A filled circle |
-| `Draw.WireCircle(center, radius, color)` | A circle's outline |
-| `Draw.Rect(center, size, color)` | A filled rectangle |
-| `Draw.WireRect(center, size, color)` | A rectangle's outline |
-| `Draw.Line(from, to, color)` | A line |
-| `Draw.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
-| `Draw.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
-| `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
-| `Draw.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw.Clip()` draws everywhere again (see [Clipping](#clipping)) |
-| `Draw.Screen()` | The calls after it are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
-| `Draw.Camera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
-| `Draw.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
-| `Draw.Instanced(vertices, indices, instances)` | One mesh for each transform or ordinary struct in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
+| `Draw2D.Clear(color)` | Fills the screen |
+| `Draw2D.Camera(center, size)` | Sets the camera for the calls after it: `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size |
+| `Draw2D.Circle(center, radius, color)` | A filled circle |
+| `Draw2D.WireCircle(center, radius, color)` | A circle's outline |
+| `Draw2D.Rect(center, size, color)` | A filled rectangle |
+| `Draw2D.WireRect(center, size, color)` | A rectangle's outline |
+| `Draw2D.Line(from, to, color)` | A line |
+| `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
+| `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
+| `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
+| `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
+| `Draw2D.Screen()` | The calls after it are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
+| `Draw3D.Camera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
+| `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
+| `Draw3D.Cube(center, size, color)` | A box with full widths `size.x`, `size.y` and `size.z` |
+| `Draw3D.Sphere(center, radius, color)` | A sphere |
+| `Draw3D.Cylinder(center, radius, height, color)` | A capped cylinder along its local `y` axis, with full `height` |
+| `Draw3D.Plane(center, size, color)` | A rectangle in the local `xz` plane, with full widths `size.x` and `size.y` |
+| `Draw3D.Instanced(vertices, indices, instances)` / `Draw3D.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
 
 Each frame starts black, with the camera at the origin and one world unit per pixel.
 
@@ -141,7 +147,7 @@ Colors add, subtract and multiply channel by channel, alpha too, and scale by a 
 
 ## Meshes
 
-`Draw.Mesh(vertices, indices)` draws triangles, the shape every other one can be made of. `vertices` is a `List<Vertex>`, the corners, and `indices` a `List<int>`: every three are a triangle, each a corner's place in `vertices`, so triangles share corners.
+`Draw2D.Mesh(vertices, indices)` draws triangles, the shape every other one can be made of. `vertices` is a `List<Vertex>`, the corners, and `indices` a `List<int>`: every three are a triangle, each a corner's place in `vertices`, so triangles share corners.
 
 ```csharp
 struct Vertex // Built in
@@ -160,7 +166,7 @@ view Arrows(Body body)
         Vertex { position = body.position + float2(-1, -1), color = Color.blue },
         Vertex { position = body.position + float2(1, -1), color = Color.blue },
     ];
-    Draw.Mesh(corners, [0, 1, 2]);
+    Draw2D.Mesh(corners, [0, 1, 2]);
 }
 ```
 
@@ -172,7 +178,7 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw.Mesh` also accepts a `Texture` reference, including a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
+An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw2D.Mesh` also accepts a `Texture` reference, including a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
 ```csharp
 local singleton Art
@@ -197,7 +203,7 @@ view Board(mut Art art)
         Vertex { position = float2(4, 4), uv = float2(1, 1) },
         Vertex { position = float2(-4, 4), uv = float2(0, 1) },
     ];
-    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], art.checker, Filter.Point);
+    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], art.checker, Filter.Point);
 }
 ```
 
@@ -215,31 +221,31 @@ A game's C can draw meshes too, with pixels of its own, like a font atlas a libr
 
 ## Clipping
 
-`Draw.Clip(rect)` keeps what's drawn after it inside a rectangle: meshes, shapes, text, and `Draw.Clear`, which then fills the rectangle. `Draw.Clip()` draws everywhere again.
+`Draw2D.Clip(rect)` keeps what's drawn after it inside a rectangle: meshes, shapes, text, and `Draw2D.Clear`, which then fills the rectangle. `Draw2D.Clip()` draws everywhere again.
 
 ```csharp
 view Panel()
 {
-    Draw.Screen();
-    Draw.Clip(Rect(20, 20, 200, 100));
-    Draw.Clear(Color.black); // The panel only
-    Draw.Text("A line too long for the panel is cut off at its edge", float2(28, 28), 18, Color.white);
-    Draw.Clip();
+    Draw2D.Screen();
+    Draw2D.Clip(Rect(20, 20, 200, 100));
+    Draw2D.Clear(Color.black); // The panel only
+    Draw2D.Text("A line too long for the panel is cut off at its edge", float2(28, 28), 18, Color.white);
+    Draw2D.Clip();
 }
 ```
 
-The `Rect` goes from (x, y) to (x + width, y + height), in the units the calls are in: the world's under a camera, where `y` is up, and pixels after `Draw.Screen()`. It stays where it is on the screen when the camera changes afterwards. Each frame starts with none, and a view's clip never clips the GUI.
+The `Rect` goes from (x, y) to (x + width, y + height), in the units the calls are in: the world's under a camera, where `y` is up, and pixels after `Draw2D.Screen()`. It stays where it is on the screen when the camera changes afterwards. Each frame starts with none, and a view's clip never clips the GUI.
 
 ## On the screen
 
-After `Draw.Screen()`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. `Draw.Camera` goes back to the world.
+After `Draw2D.Screen()`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. `Draw2D.Camera` goes back to the world.
 
 ```csharp
 view Health(Stats stats)
 {
-    Draw.Screen();
-    Draw.Rect(float2(110, 30), float2(200, 20), Color.gray);
-    Draw.Rect(float2(10 + stats.health, 30), float2(stats.health * 2, 20), Color.red);
+    Draw2D.Screen();
+    Draw2D.Rect(float2(110, 30), float2(200, 20), Color.gray);
+    Draw2D.Rect(float2(10 + stats.health, 30), float2(stats.health * 2, 20), Color.red);
 }
 ```
 
@@ -258,7 +264,7 @@ struct Vertex3 // Built in
 }
 ```
 
-`Draw.Camera(position, rotation, fieldOfView)` sets the 3D camera: where it is, which way it looks, along its rotation's `+z` with `+x` to the right and `+y` up as Unity's cameras do, and how much it sees up and down, in degrees, like Unity's `Camera.fieldOfView`. It sees from 0.3 units in front of it on, however far, and as much across as the screen's shape gives. `Draw.Mesh(vertices, indices, transform)` draws a 3D mesh through it, placed in the world by `transform`, which `float4x4.TRS(position, rotation, scale)` makes:
+`Draw3D.Camera(position, rotation, fieldOfView)` sets the 3D camera: where it is, which way it looks, along its rotation's `+z` with `+x` to the right and `+y` up as Unity's cameras do, and how much it sees up and down, in degrees, like Unity's `Camera.fieldOfView`. It sees from 0.3 units in front of it on, however far, and as much across as the screen's shape gives. `Draw3D.Mesh(vertices, indices, transform)` draws a 3D mesh through it, placed in the world by `transform`, which `float4x4.TRS(position, rotation, scale)` makes:
 
 ```csharp
 local singleton Scenery
@@ -270,26 +276,39 @@ local singleton Scenery
 
 view Look(Viewer viewer)
 {
-    Draw.Clear(Color(0.5, 0.7, 1));
-    Draw.Camera(viewer.position, viewer.rotation, 60);
+    Draw2D.Clear(Color(0.5, 0.7, 1));
+    Draw3D.Camera(viewer.position, viewer.rotation, 60);
 }
 
 // Once for each crate, and drawn for them all at once
 view Crates(Crate crate, Scenery scenery)
 {
-    Draw.Mesh(scenery.crate, scenery.faces, float4x4.TRS(crate.position, crate.rotation, float3(1)), scenery.wood);
+    Draw3D.Mesh(scenery.crate, scenery.faces, float4x4.TRS(crate.position, crate.rotation, float3(1)), scenery.wood);
 }
 ```
 
-- 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw.Clear` clears what's in front too.
+- 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw2D.Clear` clears what's in front too.
 - A see-through mesh blends with what's behind it, and still hides what's drawn behind it later: draw see-through meshes last, the farthest first.
-- Triangles draw whichever way round their corners go. Textures and filters work as a mesh's do: `Draw.Mesh(vertices, indices, transform, texture, filter)`.
+- Triangles draw whichever way round their corners go. Textures and filters work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.
 
+### Primitives
+
+The primitives draw solid colors through the current 3D camera, with depth and no lighting, as meshes do. Cube, cylinder and plane also take a rotation before the color:
+
+```csharp
+Draw3D.Cube(float3(0, 0, 5), float3(2, 1, 1), Color.red);
+Draw3D.Sphere(float3(3, 0, 5), 1, Color.green);
+Draw3D.Cylinder(float3(-3, 0, 5), 0.5, 2, Color.blue);
+Draw3D.Plane(float3(0, -1, 5), float2(10, 10), quaternion.identity, Color.gray);
+```
+
+Nonpositive dimensions draw nothing. Geometry is cached by shape and color; consecutive instances of the same shape and color are drawn together. Use a mesh with a frag for textures or lighting.
+
 ### Big scenes
 
-`Draw.Instanced(vertices, indices, transforms)` draws the mesh at every `float4x4` in a list, without an entity for each placement. It can also take a list of your own instance struct, with per-item fields read by a vert or frag: see [Instances from a list](./shaders.md#instances-from-a-list).
+`Draw3D.Instanced(vertices, indices, transforms)` draws the mesh at every `float4x4` in a list, without an entity for each placement. It can also take a list of your own instance struct, with per-item fields read by a vert or frag: see [Instances from a list](./shaders.md#instances-from-a-list).
 
 The lists a 3D mesh is drawn from are kept on the GPU while frames draw them. A list that didn't change costs next to nothing to draw again, however big it is, so keep meshes in fields rather than making them each frame. A list that changed is sent again the next frame.
 
@@ -307,7 +326,7 @@ component Rock
 view Rocks(mut Rock rock)
 {
     if (rock.corners.count == 0) Carve(rock); // Fills corners and faces from the seed, once
-    Draw.Mesh(rock.corners, rock.faces, float4x4.Translate(rock.position));
+    Draw3D.Mesh(rock.corners, rock.faces, float4x4.Translate(rock.position));
 }
 ```
 
@@ -317,20 +336,57 @@ A mesh drawn again and again in a row, from the same lists, with the same textur
 
 ### Any projection
 
-`Draw.Camera(transform, projection)` sets the 3D camera from matrices: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees to the screen, the screen's shape included. `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` makes a perspective one, with the field of view in radians, and `float4x4.Ortho(width, height, near, far)` one without perspective, as isometric games have, as Unity.Mathematics' do. `Screen.width / Screen.height` is the screen's shape.
+`Draw3D.Camera(transform, projection)` sets the 3D camera from matrices: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees to the screen, the screen's shape included. `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` makes a perspective one, with the field of view in radians, and `float4x4.Ortho(width, height, near, far)` one without perspective, as isometric games have, as Unity.Mathematics' do. `Screen.width / Screen.height` is the screen's shape.
 
 ```csharp
 view Isometric(Viewer viewer)
 {
     var place = float4x4.TRS(viewer.position, quaternion.Euler(float3(Math.Radians(30), Math.Radians(45), 0)), float3(1));
     float height = 20;
-    Draw.Camera(place, float4x4.Ortho(height * Screen.width / Screen.height, height, 0.1, 1000));
+    Draw3D.Camera(place, float4x4.Ortho(height * Screen.width / Screen.height, height, 0.1, 1000));
 }
 ```
 
 A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](../c/functions.md#drawing-from-c).
 
-### Looking around
+## Screen and world coordinates
+
+The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw2D.Screen()` and the GUI's are.
+
+| Function | Result |
+|---|---|
+| `Draw2D.WorldToScreen(float2 point)` | The point's screen position |
+| `Draw2D.ScreenToWorld(float2 point)` | Its position under the current 2D camera |
+| `Draw3D.WorldToScreen(float3 point)` | Screen `x` and `y`, and normalized depth in `z` |
+| `Draw3D.ScreenToWorld(float3 point)` | The world position at screen `x`, `y` and normalized depth `z` |
+| `Draw3D.ScreenRayOrigin(float2 point)` | The world position on the camera's near plane |
+| `Draw3D.ScreenRayDirection(float2 point)` | A normalized world direction through that pixel |
+
+In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far limit, rather than a distance in world units. The standard perspective camera has an infinite far limit, so depth 1 has no finite world position. The ray helpers work with perspective and orthographic cameras, including custom projection matrices. Intersect the ray with your game's objects or a plane to pick a world position; a pixel alone has no unique 3D position.
+
+Device positions use a bottom-left origin with `y` up. Flip their `y` before passing them to these helpers:
+
+```csharp
+view Pointer()
+{
+    var screen = float2(Devices.mouse.position.x, Screen.height - Devices.mouse.position.y);
+    var world = Draw2D.ScreenToWorld(screen);
+    Draw2D.WireCircle(world, 0.2, Color.yellow);
+
+    var origin = Draw3D.ScreenRayOrigin(screen);
+    var direction = Draw3D.ScreenRayDirection(screen);
+    // Hit the world plane y = 0, when the ray points towards it.
+    if (Math.Abs(direction.y) > 0.00001)
+    {
+        float distance = -origin.y / direction.y;
+        if (distance >= 0) Draw3D.Sphere(origin + direction * distance, 0.1, Color.yellow);
+    }
+}
+```
+
+After `Draw2D.Screen()`, its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
+
+## Looking around
 
 A camera that turns with the mouse wants the mouse for itself: the cursor out of sight, and no screen's edge for it to stop at. `Cursor.Lock()` asks for that. Call it every frame the game wants the mouse, as with `GUI.ShowKeyboard()`: the cursor comes back by itself once a frame goes by without it, so there's nothing to unlock. `Cursor.locked` says whether the lock holds.
 
@@ -360,7 +416,7 @@ local singleton Menu
 
 view Look(Viewer viewer, mut Menu menu)
 {
-    Draw.Camera(viewer.position, viewer.rotation, 75);
+    Draw3D.Camera(viewer.position, viewer.rotation, 75);
     if (Devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
     // The lock went away on its own: show the pause menu

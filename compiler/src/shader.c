@@ -8,7 +8,7 @@
 
 // Tide code the GPU runs: a `frag` for each pixel of a mesh, a `vert` for
 // each of its vertices, and the functions they call. For every combination a
-// Draw.Mesh uses (a vertex struct, with a vert, a frag, both or neither) this
+// mesh draw uses (a vertex struct, with a vert, a frag, both or neither) this
 // writes a shader in each language a renderer takes: GLSL, for OpenGL 3.3,
 // OpenGL ES 3 and WebGL 2, and WGSL, for WebGPU. Codegen puts them in the
 // generated C as tide_shaders (tide/draw.h).
@@ -1114,7 +1114,7 @@ static void ex_call(emit *em, const expr *e)
     case CALL_SNAP: what = "change the world: systems do, on the CPU"; break;
     case CALL_SEND: what = "send events: systems and views do, on the CPU"; break;
     case CALL_DRAW:
-    case CALL_GUI: what = "draw: a view does, and names the frag at Draw.Mesh"; break;
+    case CALL_GUI: what = "draw: a view does, and names the frag at mesh draw"; break;
     case CALL_LIST:
     case CALL_MAP:
     case CALL_WORLD: what = "use lists, maps or the World: it reads fields of numbers, and samples grids of colors"; break;
@@ -1958,7 +1958,7 @@ static void write_wgsl(program *prog, shader *sh)
 }
 
 // ---------------------------------------------------------------------------
-// Planning: what each Draw.Mesh draws through
+// Planning: what each mesh draw draws through
 
 // Checks a frag's or vert's code for the GPU, and notes what it reads.
 static bool check_shader(program *prog, decl *d)
@@ -2074,7 +2074,7 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
     }
 }
 
-// The shader a Draw.Mesh draws through: the one planned already for the same
+// The shader a mesh draw draws through: the one planned already for the same
 // vertex, vert and frag, or a new one, laid out and written. NULL after an
 // error, reported at the call.
 static shader *plan(program *prog, const expr *call, const decl *vertex, const bool textured, const bool direct_texture)
@@ -2231,5 +2231,5 @@ void print_shaders(const program *prog, sb *out)
         sb_printf(out, "// %s: GLSL, vertex\n%s\n// %s: GLSL, fragment\n%s\n// %s: WGSL\n%s\n", sh->name, sh->glsl_vertex,
                   sh->name, sh->glsl_fragment, sh->name, sh->wgsl);
     }
-    if (prog->shaders.count == 0) sb_put(out, "// No Draw.Mesh draws through a shader of the game's.\n");
+    if (prog->shaders.count == 0) sb_put(out, "// No mesh draw draws through a shader of the game's.\n");
 }

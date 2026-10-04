@@ -1492,7 +1492,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     upload_atlas();
     select_target(0, target);
     screen_uniforms uniforms = target_uniforms();
-    gpu->begin(target, !over); // Every frame starts black; Draw.Clear picks another color
+    gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     bool pass_active = true;
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];

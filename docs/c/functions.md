@@ -206,8 +206,8 @@ extern void DrawUI(DrawList list);
 
 view UI()
 {
-    Draw.Screen();
-    DrawUI(Draw.list);
+    Draw2D.Screen();
+    DrawUI(Draw2D.list);
 }
 ```
 
@@ -227,15 +227,15 @@ void DrawUI(tide_draw_list *list)
 }
 ```
 
-A `DrawList` parameter is for extern functions only, and takes `Draw.list`, which is only ever passed on. Like `Draw`, it needs the frame, so views and the functions they call can use it. What C draws lands in order with what the view draws before and after the call.
+A `DrawList` parameter is for extern functions only, and takes `Draw2D.list` or `Draw3D.list`, which is only ever passed on. Like `Draw2D` and `Draw3D`, it needs the frame, so views and the functions they call can use it. What C draws lands in order with what the view draws before and after the call.
 
-C has everything Tide's `Draw` has, as `tide_draw_circle`, `tide_draw_text`, `tide_draw_camera`, `tide_draw_screen` and the rest, and meshes:
+C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_text`, `tide_draw_camera`, `tide_draw_screen` and the rest, and meshes:
 
 - `tide_vertex` is Tide's `Vertex`: a position, a uv and a color of four floats. Indices are `uint32_t`.
-- `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw.Mesh`. `texture` is NULL for none.
+- `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw2D.Mesh`. `texture` is NULL for none.
 - `tide_draw_vertices` and `tide_draw_triangles` are the same in two steps, for vertices several batches share: the first copies them into the list and returns where they start, and the second draws triangles of them.
-- `tide_draw_clip(list, rect)` and `tide_draw_no_clip(list)` are `Draw.Clip`.
-- `tide_vertex3` is Tide's `Vertex3`. `tide_draw_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_camera_matrices(list, transform, projection)` are the 3D `Draw.Camera`.
+- `tide_draw_clip(list, rect)` and `tide_draw_no_clip(list)` are `Draw2D.Clip`.
+- `tide_vertex3` is Tide's `Vertex3`. `tide_draw_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_camera_matrices(list, transform, projection)` are `Draw3D.Camera`.
 - `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture and filter, are drawn at once.
 
 ### C's own pixels

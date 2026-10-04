@@ -32,19 +32,21 @@ static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, 
 void builtins_use(const decl *anchor)
 {
     anchor_decl = anchor;
-    // Another program's: this one's come with its first Draw.Mesh
+    // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
 }
 
-// What Draw.Mesh takes, the same way: these stand for the program's own
+// What Draw2D.Mesh and Draw3D.Mesh take, the same way: these stand for the program's own
 // List<Vertex>, List<Vertex3>, List<int>, Grid2<Color> and Filter.
-static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter, mesh_transforms;
+static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter, mesh_transforms, mesh_instances;
 static const type T_VERTICES = {TY_LIST, &mesh_vertices};
 static const type T_VERTICES3 = {TY_LIST, &mesh_vertices3};
 static const type T_INDICES = {TY_LIST, &mesh_indices};
 static const type T_PIXELS = {TY_GRID, &mesh_pixels};
 static const type T_FILTER = {TY_ENUM, &mesh_filter};
 static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
+// Editor signatures for ordinary instance structs: the checker resolves these itself.
+static const type T_INSTANCES = {TY_LIST, &mesh_instances};
 static const type T_RECT = {TY_RECT, NULL};
 static const type T_TEXTURE = {TY_TEXTURE, NULL};
 
@@ -59,11 +61,11 @@ void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *
     transforms_decl = transforms;
 }
 
-// Whether `t` stands for one of the program's types Draw.Mesh takes.
+// Whether `t` stands for one of the program's types Draw2D.Mesh and Draw3D.Mesh take.
 static bool mesh_type(const type t)
 {
     return t.decl == &mesh_vertices || t.decl == &mesh_vertices3 || t.decl == &mesh_indices || t.decl == &mesh_pixels
-        || t.decl == &mesh_filter || t.decl == &mesh_transforms;
+        || t.decl == &mesh_filter || t.decl == &mesh_transforms || t.decl == &mesh_instances;
 }
 
 // A signature's type as a program sees it.
@@ -87,6 +89,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_pixels) return "Grid2<Color>";
     if (t.decl == &mesh_filter) return "Filter";
     if (t.decl == &mesh_transforms) return "List<float4x4>";
+    if (t.decl == &mesh_instances) return "List<T>";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
 }
 
@@ -132,7 +135,7 @@ typedef struct signature {
     int gui;                 // GUI_ID and GUI_CONTAINER
 } signature;
 
-#define MAX_SIGNATURES 192
+#define MAX_SIGNATURES 224
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -301,44 +304,46 @@ static void build_signatures(void)
     perspective->argc = 4;
     perspective->params[3] = T_F;
     describe(perspective, "verticalFov, aspect, near, far",
-             "A perspective projection, for `Draw.Camera(transform, projection)`: `verticalFov` in radians, and "
+             "A perspective projection, for `Draw3D.Camera(transform, projection)`: `verticalFov` in radians, and "
              "`aspect` the screen's width over its height. It takes what a camera sees, looking down -z as "
              "OpenGL's and Unity's views do, to the screen, from `near` to `far`.");
     signature *ortho = add("float4x4", "Ortho", T_F4X4, "tide_ortho_f4x4", 3, T_F, T_F, T_F);
     ortho->argc = 4;
     ortho->params[3] = T_F;
     describe(ortho, "width, height, near, far",
-             "An orthographic projection, for `Draw.Camera(transform, projection)`: a box `width` by `height` "
+             "An orthographic projection, for `Draw3D.Camera(transform, projection)`: a box `width` by `height` "
              "around the camera's axis, from `near` to `far`, with no perspective.");
 
     // Drawing, in views: tide/draw.h. Codegen passes the view's draw list first.
-    describe(add("Draw", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
+    describe(add("Draw2D", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
              "color", "Fills the whole screen.");
-    describe(add("Draw", "Camera", T_NONE, "tide_draw_camera", 2, T_F2, T_F, T_NONE),
+    describe(add("Draw3D", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
+             "color", "Fills the whole screen and clears depth.");
+    describe(add("Draw2D", "Camera", T_NONE, "tide_draw_camera", 2, T_F2, T_F, T_NONE),
              "center, size",
-             "Sets the camera for the Draw calls after it. `center` is the world position at the middle of the "
+             "Sets the camera for the Draw2D calls after it. `center` is the world position at the middle of the "
              "screen and `size` is half the visible height, like Unity's orthographic size.");
-    describe(add("Draw", "Camera", T_NONE, "tide_draw_camera_3d", 3, T_F3, T_Q, T_F),
+    describe(add("Draw3D", "Camera", T_NONE, "tide_draw_camera_3d", 3, T_F3, T_Q, T_F),
              "position, rotation, fieldOfView",
              "Sets the 3D camera for the 3D meshes after it: where it is, which way it looks (along its rotation's "
              "+z), and how much it sees up and down, in degrees, like Unity's Camera.fieldOfView. It sees from 0.3 "
              "units in front of it on, however far.");
-    describe(add("Draw", "Camera", T_NONE, "tide_draw_camera_matrices", 2, T_F4X4, T_F4X4, T_NONE),
+    describe(add("Draw3D", "Camera", T_NONE, "tide_draw_camera_matrices", 2, T_F4X4, T_F4X4, T_NONE),
              "transform, projection",
              "Sets the 3D camera with any projection: `transform` places the camera in the world, looking along "
              "its +z, and `projection` (`float4x4.PerspectiveFov`, `float4x4.Ortho`) takes what it sees to the "
              "screen, the screen's shape included.");
-    describe(add("Draw", "Circle", T_NONE, "tide_draw_circle", 3, T_F2, T_F, T_COLOR),
+    describe(add("Draw2D", "Circle", T_NONE, "tide_draw_circle", 3, T_F2, T_F, T_COLOR),
              "center, radius, color", "A filled circle.");
-    describe(add("Draw", "WireCircle", T_NONE, "tide_draw_wire_circle", 3, T_F2, T_F, T_COLOR),
+    describe(add("Draw2D", "WireCircle", T_NONE, "tide_draw_wire_circle", 3, T_F2, T_F, T_COLOR),
              "center, radius, color", "A circle outline.");
-    describe(add("Draw", "Rect", T_NONE, "tide_draw_rect", 3, T_F2, T_F2, T_COLOR),
+    describe(add("Draw2D", "Rect", T_NONE, "tide_draw_rect", 3, T_F2, T_F2, T_COLOR),
              "center, size, color", "A filled rectangle.");
-    describe(add("Draw", "WireRect", T_NONE, "tide_draw_wire_rect", 3, T_F2, T_F2, T_COLOR),
+    describe(add("Draw2D", "WireRect", T_NONE, "tide_draw_wire_rect", 3, T_F2, T_F2, T_COLOR),
              "center, size, color", "A rectangle outline.");
-    describe(add("Draw", "Line", T_NONE, "tide_draw_line", 3, T_F2, T_F2, T_COLOR),
+    describe(add("Draw2D", "Line", T_NONE, "tide_draw_line", 3, T_F2, T_F2, T_COLOR),
              "from, to, color", "A line.");
-    signature *text = add("Draw", "Text", T_NONE, "tide_draw_text", 3, T_STR, T_F2, T_F);
+    signature *text = add("Draw2D", "Text", T_NONE, "tide_draw_text", 3, T_STR, T_F2, T_F);
     text->argc = 4;
     text->params[3] = T_COLOR;
     describe(text, "text, position, size, color", "Text: `position` is its top left corner and `size` its height.");
@@ -346,17 +351,17 @@ static void build_signatures(void)
         "Triangles: three of `indices` each, places in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
         "uv (0, 0). `filter` is how it's read between cells: `Filter.Bilinear` (the default) or `Filter.Point`.";
-    describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_lists", 2, T_VERTICES, T_INDICES, T_NONE),
+    describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_lists", 2, T_VERTICES, T_INDICES, T_NONE),
              "vertices, indices", mesh_doc);
-    describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS),
+    describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS),
              "vertices, indices, texture", mesh_doc);
-    signature *sampled = add("Draw", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS);
+    signature *sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS);
     sampled->argc = 4;
     sampled->params[3] = T_FILTER;
     describe(sampled, "vertices, indices, texture, filter", mesh_doc);
-    describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE),
+    describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE),
              "vertices, indices, texture", mesh_doc);
-    signature *texture_sampled = add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE);
+    signature *texture_sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE);
     texture_sampled->argc = 4;
     texture_sampled->params[3] = T_FILTER;
     describe(texture_sampled, "vertices, indices, texture, filter", mesh_doc);
@@ -365,22 +370,22 @@ static void build_signatures(void)
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
         "triangle, times `texture`'s at their uvs. Lists that don't change aren't copied again, and a mesh drawn "
         "again and again in a row is drawn at once.";
-    describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_lists", 3, T_VERTICES3, T_INDICES, T_F4X4),
+    describe(add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_lists", 3, T_VERTICES3, T_INDICES, T_F4X4),
              "vertices, indices, transform", mesh3_doc);
-    signature *textured3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    signature *textured3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
     textured3->argc = 4;
     textured3->params[3] = T_PIXELS;
     describe(textured3, "vertices, indices, transform, texture", mesh3_doc);
-    signature *sampled3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    signature *sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
     sampled3->argc = 5;
     sampled3->params[3] = T_PIXELS;
     sampled3->params[4] = T_FILTER;
     describe(sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
-    signature *texture3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    signature *texture3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
     texture3->argc = 4;
     texture3->params[3] = T_TEXTURE;
     describe(texture3, "vertices, indices, transform, texture", mesh3_doc);
-    signature *texture_sampled3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    signature *texture_sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
     texture_sampled3->argc = 5;
     texture_sampled3->params[3] = T_TEXTURE;
     texture_sampled3->params[4] = T_FILTER;
@@ -389,39 +394,82 @@ static void build_signatures(void)
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
         "transform places it; without one it uses the identity. A vert places 2D instances.";
-    describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
+    describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
              "vertices, indices, instances", instanced_doc);
-    signature *instances_textured = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
+    signature *instances_textured = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
                                         T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_textured->argc = 4;
     instances_textured->params[3] = T_PIXELS;
     describe(instances_textured, "vertices, indices, instances, texture", instanced_doc);
-    signature *instances_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
+    signature *instances_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
                                        T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_sampled->argc = 5;
     instances_sampled->params[3] = T_PIXELS;
     instances_sampled->params[4] = T_FILTER;
     describe(instances_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
-    signature *instances_texture = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
+    signature *instances_texture = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
                                       T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_texture->argc = 4;
     instances_texture->params[3] = T_TEXTURE;
     describe(instances_texture, "vertices, indices, instances, texture", instanced_doc);
-    signature *instances_texture_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
+    signature *instances_texture_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
                                               T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_texture_sampled->argc = 5;
     instances_texture_sampled->params[3] = T_TEXTURE;
     instances_texture_sampled->params[4] = T_FILTER;
     describe(instances_texture_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
+    describe(add("Draw2D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES, T_INDICES, T_INSTANCES),
+             "vertices, indices, instances", instanced_doc);
+    describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
+             "vertices, indices, instances", instanced_doc);
     static const char clip_doc[] =
-        "Only what's inside `rect` draws, for the Draw calls after it: from (x, y) to (x + width, y + height), in "
-        "the units they're in. `Draw.Clip()` with no rect draws everywhere again. Each frame starts with none.";
-    describe(add("Draw", "Clip", T_NONE, "tide_draw_clip", 1, T_RECT, T_NONE, T_NONE), "rect", clip_doc);
-    describe(add("Draw", "Clip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
-    describe(add("Draw", "NoClip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
-    describe(add("Draw", "Screen", T_NONE, "tide_draw_screen", 0, T_NONE, T_NONE, T_NONE), NULL,
-             "The Draw calls after it are in the screen's pixels: from the top left, with y down, as the GUI's are. "
-             "`Draw.Camera` goes back to the world.");
+        "Only what's inside `rect` draws, for the Draw2D calls after it: from (x, y) to (x + width, y + height), in "
+        "the units they're in. `Draw2D.Clip()` with no rect draws everywhere again. Each frame starts with none.";
+    describe(add("Draw2D", "Clip", T_NONE, "tide_draw_clip", 1, T_RECT, T_NONE, T_NONE), "rect", clip_doc);
+    describe(add("Draw2D", "Clip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
+    describe(add("Draw2D", "NoClip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
+    describe(add("Draw2D", "Screen", T_NONE, "tide_draw_screen", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "The Draw2D calls after it are in the screen's pixels: from the top left, with y down, as the GUI's are. "
+             "`Draw2D.Camera` goes back to the world.");
+
+    describe(add("Draw3D", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
+             "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
+    signature *cube = add("Draw3D", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);
+    cube->argc = 4;
+    cube->params[3] = T_COLOR;
+    describe(cube, "center, size, rotation, color", "A filled cube, rotated around its center, with the full size along each axis.");
+    describe(add("Draw3D", "Sphere", T_NONE, "tide_draw_sphere", 3, T_F3, T_F, T_COLOR),
+             "center, radius, color", "A filled sphere, centered in the world.");
+    signature *cylinder = add("Draw3D", "Cylinder", T_NONE, "tide_draw_cylinder", 3, T_F3, T_F, T_F);
+    cylinder->argc = 4;
+    cylinder->params[3] = T_COLOR;
+    describe(cylinder, "center, radius, height, color", "A filled cylinder, centered in the world, along the y axis.");
+    signature *rotated_cylinder = add("Draw3D", "Cylinder", T_NONE, "tide_draw_cylinder_rotated", 3, T_F3, T_F, T_F);
+    rotated_cylinder->argc = 5;
+    rotated_cylinder->params[3] = T_Q;
+    rotated_cylinder->params[4] = T_COLOR;
+    describe(rotated_cylinder, "center, radius, height, rotation, color", "A filled cylinder, rotated around its center from the y axis.");
+    describe(add("Draw3D", "Plane", T_NONE, "tide_draw_plane", 3, T_F3, T_F2, T_COLOR),
+             "center, size, color", "A filled plane, centered in the world, with its size along x and z.");
+    signature *plane = add("Draw3D", "Plane", T_NONE, "tide_draw_plane_rotated", 3, T_F3, T_F2, T_Q);
+    plane->argc = 4;
+    plane->params[3] = T_COLOR;
+    describe(plane, "center, size, rotation, color", "A filled plane, rotated around its center from the xz plane.");
+
+    describe(add("Draw2D", "WorldToScreen", T_F2, "tide_draw_world_to_screen", 1, T_F2, T_NONE, T_NONE),
+             "position", "A world point through the current 2D camera, in screen pixels from the top left, with y down.");
+    describe(add("Draw2D", "ScreenToWorld", T_F2, "tide_draw_screen_to_world", 1, T_F2, T_NONE, T_NONE),
+             "position", "A screen point in pixels from the top left, with y down, through the current 2D camera to the world.");
+    describe(add("Draw3D", "WorldToScreen", T_F3, "tide_draw_world_to_screen_3d", 1, T_F3, T_NONE, T_NONE),
+             "position", "A world point through the current 3D camera: screen pixels from the top left, with y down, "
+             "and normalized depth in z (0 at the near plane, 1 at the far plane).");
+    describe(add("Draw3D", "ScreenToWorld", T_F3, "tide_draw_screen_to_world_3d", 1, T_F3, T_NONE, T_NONE),
+             "position", "A screen point through the current 3D camera to the world: x and y in pixels from the top left, "
+             "with y down, and normalized depth in z (0 at the near plane, 1 at the far plane).");
+    describe(add("Draw3D", "ScreenRayOrigin", T_F3, "tide_draw_screen_ray_origin", 1, T_F2, T_NONE, T_NONE),
+             "position", "The world origin on the near plane of a ray through this screen point in pixels from the top left.");
+    describe(add("Draw3D", "ScreenRayDirection", T_F3, "tide_draw_screen_ray_direction", 1, T_F2, T_NONE, T_NONE),
+             "position", "The normalized world direction of a ray through this screen point in pixels from the top left.");
 
     // Text's methods: tide/text.h, with the text first. Positions and lengths
     // count characters, and are clamped to the text, never out of range.
@@ -553,8 +601,9 @@ static const struct {
     {"Color", "magenta", TY_COLOR, "TIDE_COLOR_MAGENTA"},
     {"Color", "gray", TY_COLOR, "TIDE_COLOR_GRAY"},
     {"Color", "clear", TY_COLOR, "TIDE_COLOR_CLEAR"},
-    {"Draw", "list", TY_DRAW_LIST, "tide_draw"},
     {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
+    {"Draw2D", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
+    {"Draw3D", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).
@@ -577,10 +626,15 @@ static const char *member_doc(const size_t i)
 
 // ---------------------------------------------------------------------------
 
+bool builtin_draw_owner(const str name)
+{
+    return str_eq_c(name, "Draw2D") || str_eq_c(name, "Draw3D");
+}
+
 bool builtin_owner(const str name)
 {
     type ignored;
-    return str_eq_c(name, "Math") || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
+    return str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Debug")
         || builtin_type_named(name, &ignored);
 }
@@ -632,7 +686,7 @@ static void arg_list(const expr *e, char *buf, const size_t size)
     }
 }
 
-// "Draw.Circle(float2 center, float radius, Color color)", plus " -> float" for results.
+// "Draw2D.Circle(float2 center, float radius, Color color)", plus " -> float" for results.
 static void format_signature(const signature *s, sb *out)
 {
     sb_printf(out, "%s.%s(", s->owner, s->name);
@@ -981,7 +1035,7 @@ bool builtin_describe(const str owner, const str name, sb *out)
         return true;
     }
 
-    // Each version's doc once, as versions share them (Draw.Mesh's in 2D and in 3D)
+    // Each version's doc once, as versions share them (Draw2D.Mesh's in 2D and in 3D)
     const char *docs[MAX_SIGNATURES];
     int doc_count = 0;
     for (int i = 0; i < signature_count; i++) {

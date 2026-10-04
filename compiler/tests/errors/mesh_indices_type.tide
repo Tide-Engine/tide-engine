@@ -36,5 +36,5 @@ local singleton Shapes
 
 view Show(Shapes shapes, Models models)
 {
-    Draw.Mesh(models.crate, shapes.faces, float4x4.identity);
+    Draw3D.Mesh(models.crate, shapes.faces, float4x4.identity);
 }
