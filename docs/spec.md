@@ -386,7 +386,9 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Limits
 
-- 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
+- 256 components and 1024 archetypes.
+- A world's heap, which keeps its text, lists, maps, sets and grids, holds 1 GiB, in blocks of 128 MiB at most: a text it keeps is one block. The scratch area, where code makes text and lists along the way, holds 1 GiB on each thread. Past any of these the program ends, as it does when it runs out of memory. A list stops growing at 1 GiB of elements.
+- Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
 
 ### Namespaces
 
@@ -715,8 +717,8 @@ system Advance(mut Match match)
 
 - `string` is text, as a value: assigning copies it, and nothing is ever shared.
 - A string's `length` counts characters (Unicode code points), not bytes.
-- Components, singletons, structs and events can hold text. A world keeps it in its heap, part of the world, so snapshots have it too. The heap grows as it needs, with no limit but memory.
-- Nothing about text fails: past the end of a string, positions are clamped. Text that code makes can be of any size: the scratch area it lives in grows as it needs, with no limit but memory.
+- Components, singletons, structs and events can hold text. A world keeps it in its heap, part of the world, so snapshots have it too. The heap grows as it needs, up to 1 GiB (see Limits).
+- Nothing about text fails: past the end of a string, positions are clamped. Text that code makes can be as long as the scratch area it lives in has room for: the area grows as it needs, up to 1 GiB a thread (see Limits).
 
 ### Provisional
 
@@ -744,7 +746,7 @@ system Advance(mut Match match)
 
 - `List<T>` is a list of values, as a value: assigning or passing one copies it, and changing a copy never changes the original.
 - A world keeps its lists in its heap, like text.
-- Nothing about lists fails: past the end, a read gives the element type's zero and a write does nothing. A world's lists grow with its heap, and a list that code makes grows with the scratch area, which grows as it needs, with no limit but memory.
+- Nothing about lists fails: past the end, a read gives the element type's zero and a write does nothing. A world's lists grow with its heap, and a list that code makes grows with the scratch area, each as far as it goes; a list stops growing at 1 GiB of elements (see Limits).
 
 ### Provisional
 
@@ -772,7 +774,7 @@ system Advance(mut Match match)
 
 - `Map<K, V>` holds values by key, and `Set<K>` keys each once, as values: assigning or passing one copies it, and changing a copy never changes the original.
 - A world keeps its maps and sets in its heap, like lists and text (see Lists).
-- Nothing about them fails: a key that isn't there reads as the value type's zero, and removing it does nothing. They grow with the heap, with no limit but memory.
+- Nothing about them fails: a key that isn't there reads as the value type's zero, and removing it does nothing. They grow with the heap, as far as it goes (see Limits).
 - Going through a map or a set gives its keys in the order they were added, the same on every machine.
 
 ### Provisional
@@ -1165,7 +1167,7 @@ view DrawBox(Box box, Models models)
 ```
 
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
-  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, comes with drawing into a texture. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
+  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, isn't there yet. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
   - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw2D.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`. One read-only `Texture` parameter per stage may receive an explicit draw source; both stages receive the same source when both take it.
   - There are no individual plain value arguments to bind: what a frag or vert reads lives in a component, a singleton (local ones included), or the ordinary instance struct supplied by `Draw2D.Instanced`/`Draw3D.Instanced`.
   - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
@@ -1346,7 +1348,7 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); drawing into a texture that later meshes sample, for shadows, reflections and effects, and with it outputs other than one `Color`; code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
+- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).

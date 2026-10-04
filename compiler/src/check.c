@@ -8326,7 +8326,8 @@ static void check_shader_decl(const checker *c, decl *d)
             } else if (d->is_frag && p->mode == PARAM_MUT) {
                 diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
                                                          : "a frag writes its pixel's color, a 'mut Color', for now");
-                diag_note("%s comes with drawing into a texture", value.kind == TY_COLOR ? "a second output" : "another type");
+                diag_note("%s isn't there yet",
+                          value.kind == TY_COLOR ? "a second output" : "an output of another type than Color");
             } else if (p->mode == PARAM_MUT) {
                 diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
                 diag_note("put what it works out in a field of the vertex, which the frag reads blended");
