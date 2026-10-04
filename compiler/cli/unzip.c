@@ -243,9 +243,10 @@ static bool read_at(FILE *f, const uint64_t at, void *out, const size_t size)
     return seek64(f, (int64_t)at, SEEK_SET) == 0 && fread(out, 1, size, f) == size;
 }
 
+// Says why `archive` can't be unpacked; nothing for NULL, when it's only asked about.
 static bool fail(const char *archive, const char *why)
 {
-    fprintf(stderr, "tide: can't unpack %s: %s\n", archive, why);
+    if (archive) fprintf(stderr, "tide: can't unpack %s: %s\n", archive, why);
     return false;
 }
 
@@ -347,39 +348,62 @@ static bool extract(FILE *f, const char *archive, const char *dir, const char *t
     return ok;
 }
 
+// The archive's directory, read whole; NULL after saying what's wrong.
+static uint8_t *read_directory(FILE *f, const char *archive, uint64_t *size, uint64_t *count)
+{
+    uint64_t start;
+    if (!find_directory(f, archive, &start, size, count)) return NULL;
+    uint8_t *directory = *size < ((uint64_t)1 << 31) ? malloc((size_t)*size ? (size_t)*size : 1) : NULL;
+    if (!directory || !read_at(f, start, directory, (size_t)*size)) {
+        free(directory);
+        fail(archive, "can't read its directory");
+        return NULL;
+    }
+    return directory;
+}
+
+// One of the directory's entries.
+typedef struct entry {
+    const uint8_t *record;
+    size_t name_size;
+    uint64_t compressed, uncompressed, local;
+} entry;
+
+// The entry at `at` in the directory, which moves to the next; false if it's broken.
+static bool next_entry(const uint8_t *directory, const uint64_t size, size_t *at, entry *out)
+{
+    if (*at + 46 > size || get32(directory + *at) != 0x02014b50) return false;
+    const uint8_t *e = directory + *at;
+    const size_t name_size = get16(e + 28), extra_size = get16(e + 30), comment_size = get16(e + 32);
+    if (*at + 46 + name_size + extra_size + comment_size > size) return false;
+    *out = (entry){e, name_size, get32(e + 20), get32(e + 24), get32(e + 42)};
+    zip64_sizes(e + 46 + name_size, extra_size, &out->uncompressed, &out->compressed, &out->local);
+    *at += 46 + name_size + extra_size + comment_size;
+    return true;
+}
+
 bool unzip(const char *archive, const char *dir, const unzip_filter wanted, void *user)
 {
     FILE *f = fopen(archive, "rb");
     if (!f) return fail(archive, "can't open it");
-    uint64_t start, size, count;
-    if (!find_directory(f, archive, &start, &size, &count)) {
+    uint64_t size, count;
+    uint8_t *directory = read_directory(f, archive, &size, &count);
+    if (!directory) {
         fclose(f);
         return false;
-    }
-    uint8_t *directory = size < ((uint64_t)1 << 31) ? malloc((size_t)size ? (size_t)size : 1) : NULL;
-    if (!directory || !read_at(f, start, directory, (size_t)size)) {
-        free(directory);
-        fclose(f);
-        return fail(archive, "can't read its directory");
     }
     bool ok = true;
     size_t at = 0;
     for (uint64_t i = 0; ok && i < count; i++) {
-        if (at + 46 > size || get32(directory + at) != 0x02014b50) {
+        entry item;
+        if (!next_entry(directory, size, &at, &item)) {
             ok = fail(archive, "its directory is broken");
             break;
         }
-        const uint8_t *e = directory + at;
+        const uint8_t *e = item.record;
         const uint32_t method = get16(e + 10), crc = get32(e + 16);
-        uint64_t compressed = get32(e + 20), uncompressed = get32(e + 24), local = get32(e + 42);
-        const size_t name_size = get16(e + 28), extra_size = get16(e + 30), comment_size = get16(e + 32);
-        if (at + 46 + name_size + extra_size + comment_size > size) {
-            ok = fail(archive, "its directory is broken");
-            break;
-        }
-        zip64_sizes(e + 46 + name_size, extra_size, &uncompressed, &compressed, &local);
         char name[1024];
-        const size_t n = name_size < sizeof name - 1 ? name_size : sizeof name - 1;
+        const size_t n = item.name_size < sizeof name - 1 ? item.name_size : sizeof name - 1;
         memcpy(name, e + 46, n);
         name[n] = '\0';
         for (char *c = name; *c; c++) {
@@ -390,11 +414,28 @@ bool unzip(const char *archive, const char *dir, const unzip_filter wanted, void
         const bool folder = n > 0 && name[n - 1] == '/';
         if (!folder && !strstr(name, "..") && wanted(user, name, to, sizeof to)) {
             const uint32_t mode = get16(e + 4) >> 8 == 3 ? get32(e + 38) >> 16 : 0; // Unix attributes, from Unix zips
-            ok = extract(f, archive, dir, to, local, compressed, uncompressed, method, crc, mode);
+            ok = extract(f, archive, dir, to, item.local, item.compressed, item.uncompressed, method, crc, mode);
         }
-        at += 46 + name_size + extra_size + comment_size;
     }
     free(directory);
     fclose(f);
     return ok;
+}
+
+int64_t unzip_size(const char *archive)
+{
+    FILE *f = fopen(archive, "rb");
+    if (!f) return -1;
+    uint64_t size, count;
+    uint8_t *directory = read_directory(f, NULL, &size, &count);
+    fclose(f);
+    if (!directory) return -1;
+    int64_t total = 0;
+    size_t at = 0;
+    for (uint64_t i = 0; total >= 0 && i < count; i++) {
+        entry item;
+        total = next_entry(directory, size, &at, &item) ? total + (int64_t)item.uncompressed : -1;
+    }
+    free(directory);
+    return total;
 }
