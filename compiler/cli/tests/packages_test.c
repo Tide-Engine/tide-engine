@@ -1,6 +1,7 @@
 // Packages without the network: what tide.packages says, sources as people
-// write them, git's lists of branches and tags, and which commit a line
-// follows. compiler/cli/tests/packages_test.cmake runs tide on games.
+// write them, git's lists of branches and tags, which commit a line follows,
+// and a downloaded commit's files put where packages are kept.
+// compiler/cli/tests/packages_test.cmake runs tide on games.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,11 @@
 #include "sys.h"
 #include "tide_test.h"
 #include "version.h"
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 static bool parses(const char *text, const char *source, const char *ref)
 {
@@ -213,6 +219,144 @@ TIDE_TEST(cli_packages_read_gits_list_of_branches_and_tags)
     TIDE_CHECK(!git_refs_parse("<html>not found</html>", 22, &refs));
     TIDE_CHECK(!git_refs_parse("00ffshort", 9, &refs));
 }
+
+// ---------------------------------------------------------------------------
+// A commit's files, unpacked, put where packages are kept
+
+static void put(const char *root, const char *file, const char *text)
+{
+    char *path = path_join(root, file);
+    char *dir = path_dir(path);
+    TIDE_CHECK(sys_mkdirs(dir));
+    TIDE_CHECK(sys_write_text(path, text));
+    free(dir);
+    free(path);
+}
+
+static bool says(const char *root, const char *file, const char *text)
+{
+    char *path = path_join(root, file);
+    char *got = sys_read_file(path, NULL);
+    const bool same = got && strcmp(got, text) == 0;
+    free(got);
+    free(path);
+    return same;
+}
+
+// A folder of its own for a test of placing, made anew, which the test
+// removes once it's done: `files` gets where a commit is unpacked, and `dir`
+// where it goes, ending in '/' as packages_repo_dir's does.
+static const char *place_folders(const char *name, char files[1200], char dir[1200])
+{
+    static char work[1100];
+    snprintf(work, sizeof work, "%s%s", scratch(), name);
+    sys_remove_tree(work);
+    snprintf(files, 1200, "%s/.downloads/1/files", work);
+    snprintf(dir, 1200, "%s/github.com/test/physics/0123456789abcdef0123456789abcdef01234567/", work);
+    return work;
+}
+
+// A repository with a package in a folder of it, as tar unpacks its archive.
+static void unpack(const char *files)
+{
+    put(files, "README.md", "Physics\n");
+    put(files, "packages/physics/tide.packages", "package Physics\n");
+    put(files, "packages/physics/body.tide", "namespace Physics;\n");
+    put(files, "packages/physics/joints/hinge.tide", "namespace Physics.Joints;\n");
+}
+
+static void check_placed(const char *dir)
+{
+    TIDE_CHECK(packages_fetched(dir));
+    TIDE_CHECK(says(dir, "README.md", "Physics\n"));
+    TIDE_CHECK(says(dir, "packages/physics/tide.packages", "package Physics\n"));
+    TIDE_CHECK(says(dir, "packages/physics/body.tide", "namespace Physics;\n"));
+    TIDE_CHECK(says(dir, "packages/physics/joints/hinge.tide", "namespace Physics.Joints;\n"));
+}
+
+TIDE_TEST(cli_a_package_is_fetched_once_its_last_file_is_in)
+{
+    char files[1200], dir[1200], failed[1024];
+    const char *work = place_folders("place", files, dir);
+    unpack(files);
+    // The repository's own file of the marker's name isn't what says so.
+    put(files, PACKAGES_FETCHED, "the repository's");
+    TIDE_CHECK(!packages_fetched(dir));
+    TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
+    TIDE_CHECK(failed[0] == '\0');
+    check_placed(dir);
+    TIDE_CHECK(says(dir, PACKAGES_FETCHED, ""));
+    sys_remove_tree(work);
+}
+
+// What a download that stopped partway leaves: some of the files, and nothing
+// that says they're all there.
+TIDE_TEST(cli_a_fetch_goes_on_from_one_that_stopped)
+{
+    char files[1200], dir[1200], failed[1024];
+    const char *work = place_folders("stopped", files, dir);
+    put(dir, "README.md", "Physics\n");
+    put(dir, "packages/physics/body.tide", "namespace Physics;\n");
+    TIDE_CHECK(!packages_fetched(dir));
+    unpack(files);
+    TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
+    check_placed(dir);
+    // Again, over a commit that's all there, as a second tide's would be.
+    unpack(files);
+    TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
+    check_placed(dir);
+    sys_remove_tree(work);
+}
+
+#ifdef _WIN32
+
+// Only Windows keeps a folder from moving while a program has a file in it
+// open, however the program shares the file.
+
+TIDE_TEST(cli_a_fetch_gets_past_a_file_antivirus_has_open)
+{
+    char files[1200], dir[1200], failed[1024];
+    const char *work = place_folders("scanned", files, dir);
+    unpack(files);
+    // A file as antivirus reads one that was just written: sharing everything.
+    char *scanned = path_join(files, "packages/physics/body.tide");
+    const DWORD everything = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const HANDLE antivirus = CreateFileA(scanned, GENERIC_READ, everything, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    TIDE_REQUIRE(antivirus != INVALID_HANDLE_VALUE);
+    // What fetching tripped on: the folder it's in, at any depth, doesn't move.
+    char *moved = path_join(work, "moved");
+    TIDE_CHECK(!sys_rename(files, moved));
+    TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
+    check_placed(dir);
+    CloseHandle(antivirus);
+    free(moved);
+    free(scanned);
+    sys_remove_tree(work);
+}
+
+TIDE_TEST(cli_a_fetch_that_cant_move_a_file_says_which_and_isnt_fetched)
+{
+    char files[1200], dir[1200], failed[1024];
+    const char *work = place_folders("held", files, dir);
+    unpack(files);
+    // A file as a program that doesn't share it has it, which nothing moves.
+    char *held = path_join(files, "packages/physics/body.tide");
+    const HANDLE program = CreateFileA(held, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    TIDE_REQUIRE(program != INVALID_HANDLE_VALUE);
+    TIDE_CHECK(!fetch_place(files, dir, failed, sizeof failed));
+    TIDE_CHECK(strstr(failed, "packages/physics/body.tide") != NULL);
+    TIDE_CHECK(!packages_fetched(dir));
+    CloseHandle(program);
+
+    // The next download finishes it.
+    unpack(files);
+    TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
+    check_placed(dir);
+    free(held);
+    sys_remove_tree(work);
+}
+
+#endif
 
 TIDE_TEST(cli_packages_compare_tide_versions_by_their_numbers)
 {

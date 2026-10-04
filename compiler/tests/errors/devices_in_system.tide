@@ -1,4 +1,4 @@
-// expect: 'Devices' is this machine's devices, and the match runs the same on every machine
+// expect: 'Devices' is a type, not a value: take a 'Devices devices' parameter
 component Walker { float x; }
 scene Main { }
 system Walk(mut Walker w)

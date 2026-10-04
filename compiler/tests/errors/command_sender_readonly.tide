@@ -1,0 +1,4 @@
+// expect: 'sender' is read-only
+command Rename { string name; }
+command(Rename rename, PlayerID sender) Handle() { sender = PlayerID(2); }
+scene Main { }

@@ -55,8 +55,8 @@ static char *archive_url(const char *repo, const char *commit)
     return dup_n(url, strlen(url));
 }
 
-// A folder of its own for this tide's downloads, next to the packages, so a
-// finished one moves into place with a rename. Made anew.
+// A folder of its own for this tide's downloads, next to the packages, so
+// what's unpacked there moves into place with renames. Made anew.
 static char *download_dir(void)
 {
     char *cache = packages_cache();
@@ -73,6 +73,80 @@ static bool curl(const char *url, const char *path, const char *timeout)
 {
     const char *const argv[] = {sys_tool("curl"), "-fsSL", "--retry", "2", "-m", timeout, "-o", path, url, NULL};
     return sys_run(argv, NULL, false) == 0;
+}
+
+typedef struct entry {
+    char *name;
+    bool is_dir;
+} entry;
+
+typedef struct entries {
+    entry *items;
+    int count;
+} entries;
+
+static void add_entry(void *user, const char *name, const bool is_dir)
+{
+    entries *found = user;
+    found->items = realloc(found->items, sizeof(entry) * (size_t)(found->count + 1));
+    if (!found->items) abort();
+    found->items[found->count++] = (entry){dup_n(name, strlen(name)), is_dir};
+}
+
+static bool cant_place(const char *path, char *failed, const size_t failed_size)
+{
+    if (failed && failed_size > 0) snprintf(failed, failed_size, "%s", path);
+    return false;
+}
+
+// Whether a name is the marker's, as a file system that ignores case sees it.
+static bool is_marker(const char *name)
+{
+    const char *marker = PACKAGES_FETCHED;
+    for (; *name && *marker; name++, marker++) {
+        if (tolower((unsigned char)*name) != tolower((unsigned char)*marker)) return false;
+    }
+    return *name == *marker;
+}
+
+// Moves what's in the folder `from` into the folder `to`, file by file. A
+// file that's there already is the same commit's, from another tide or from
+// a download that stopped. `top` is the repository's own folder, where a file
+// of the marker's name stays out: only the marker says the commit is whole.
+static bool place_inside(const char *from, const char *to, const bool top, char *failed, const size_t failed_size)
+{
+    if (!sys_mkdirs(to)) return cant_place(to, failed, failed_size);
+    entries found = {0};
+    sys_list(from, add_entry, &found); // Every name, before any of them moves
+    bool ok = true;
+    for (int i = 0; i < found.count; i++) {
+        const entry *e = &found.items[i];
+        if (ok && !(top && is_marker(e->name))) {
+            char *child_from = path_join(from, e->name);
+            char *child_to = path_join(to, e->name);
+            if (e->is_dir) ok = place_inside(child_from, child_to, false, failed, failed_size);
+            else ok = sys_rename(child_from, child_to) || sys_exists(child_to) || cant_place(child_to, failed, failed_size);
+            free(child_from);
+            free(child_to);
+        }
+        free(e->name);
+    }
+    free(found.items);
+    return ok;
+}
+
+bool fetch_place(const char *files, const char *dir, char *failed, const size_t failed_size)
+{
+    if (failed && failed_size > 0) failed[0] = '\0';
+    char *target = dup_n(dir, strlen(dir));
+    const size_t n = strlen(target);
+    if (n > 1 && target[n - 1] == '/') target[n - 1] = '\0';
+    char *marker = path_join(target, PACKAGES_FETCHED);
+    const bool ok = place_inside(files, target, true, failed, failed_size)
+                 && (sys_write_text(marker, "") || cant_place(marker, failed, failed_size));
+    free(marker);
+    free(target);
+    return ok;
 }
 
 bool fetch_package(void *user, const package_line *line, const char *dir)
@@ -102,19 +176,11 @@ bool fetch_package(void *user, const package_line *line, const char *dir)
         fprintf(stderr, "tide: couldn't unpack %s at %s\n", repo, line->commit);
         ok = false;
     }
-    if (ok) {
-        char *target = dup_n(dir, strlen(dir));
-        const size_t n = strlen(target);
-        if (n > 1 && target[n - 1] == '/') target[n - 1] = '\0';
-        char *parent = path_dir(target);
-        sys_mkdirs(parent);
-        // Another tide may have got it meanwhile.
-        if (!sys_rename(files, target) && !sys_is_dir(target)) {
-            fprintf(stderr, "tide: can't write %s\n", target);
-            ok = false;
-        }
-        free(parent);
-        free(target);
+    char failed[1024];
+    if (ok && !fetch_place(files, dir, failed, sizeof failed)) {
+        fprintf(stderr, "tide: can't write %s\n", failed);
+        fprintf(stderr, "  = note: another program may have it open: close it, then run tide again\n");
+        ok = false;
     }
     sys_remove_tree(work);
     free(work);

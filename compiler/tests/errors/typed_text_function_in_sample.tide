@@ -6,6 +6,6 @@ int Typed(Keyboard keys)
 input PlayerInput
 {
     int typed;
-    Sample() { typed = Typed(Devices.keyboard); }
+    Sample(Devices devices) { typed = Typed(devices.keyboard); }
 }
 scene Main { }

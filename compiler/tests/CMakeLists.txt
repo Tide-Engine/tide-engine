@@ -45,6 +45,11 @@ tide_e2e_test(structs)
 tide_e2e_test(methods)
 tide_e2e_test(operators)
 tide_e2e_test(events)
+tide_e2e_test(commands)
+add_test(NAME tidec_command_schema
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/command_schema.cmake")
 tide_e2e_test(local)
 # `local` fields of the match's components and singletons: this machine's, outside the match
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
