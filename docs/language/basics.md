@@ -112,7 +112,7 @@ settings
 | Setting | What it is | Without it |
 |---|---|---|
 | `title` | The window's title | The game's folder's name |
-| `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate` | 60 |
+| `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate`, and code reads the rate as `Time.tickRate` | 60 |
 | `maxPlayers` | How many players a match takes, from 1 to 256. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
 | `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |
@@ -144,7 +144,7 @@ Neither changes the match, so the simulation stays the same on every machine wit
 `default` is the default value of the type where it goes, so the type doesn't have to be spelled out:
 
 ```csharp
-Draw.Circle(default, 5, Color.yellow);  // At float2(0, 0)
+Draw2D.Circle(default, 5, Color.yellow);  // At float2(0, 0)
 float2 center = default;
 if (target == default) { return; }      // The null entity
 ```

@@ -1,0 +1,8 @@
+// expect: a frag takes one instance struct, supplied by Draw3D.Instanced, and this names two
+scene Main { }
+struct BatchItem { Color tint; }
+struct OtherItem { Color tint; }
+frag Tint(Vertex3 vertex, mut Color color, BatchItem item, OtherItem other)
+{
+    color = item.tint * other.tint;
+}

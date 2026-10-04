@@ -35,7 +35,7 @@ view Trail(Body body, with Ball)
 
 view DrawSparks(mut Spark spark)
 {
-    Draw.Circle(spark.position, 0.1, Color.yellow);
+    Draw2D.Circle(spark.position, 0.1, Color.yellow);
     spark.framesLeft -= 1;
     if (spark.framesLeft <= 0) this.Destroy();
 }
@@ -62,7 +62,7 @@ component Box
 view DrawBox(mut Box box)
 {
     if (box.verts.count == 0) Bake(box);
-    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+    Draw3D.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
 }
 
 void Bake(mut Box box)

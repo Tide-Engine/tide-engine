@@ -22,7 +22,8 @@ TIDE_TEST(settings_tick_rate_runs_the_match)
     }
     const tide_world *w = tide_session_server_world(s);
     TIDE_REQUIRE(w);
-    TIDE_CHECK(w->Time.dt == 1.0f / 30.0f);
+    TIDE_CHECK(w->Time.dt == 1.0f / 30.0f && w->Time.tickRate == 30);
+    TIDE_CHECK(w->Time.t == (float)w->Time.tick * w->Time.dt);
     TIDE_CHECK(w->Time.tick >= 28 && w->Time.tick <= 31); // A second at 30 ticks a second
     tide_session_destroy(s);
 
@@ -32,5 +33,6 @@ TIDE_TEST(settings_tick_rate_runs_the_match)
     tide_session_start(s, NULL, t);
     tide_session_update(s, t + 0.1);
     TIDE_CHECK(((const tide_world *)tide_session_server_world(s))->Time.dt == 1.0f / 60.0f);
+    TIDE_CHECK(((const tide_world *)tide_session_server_world(s))->Time.tickRate == 60);
     tide_session_destroy(s);
 }

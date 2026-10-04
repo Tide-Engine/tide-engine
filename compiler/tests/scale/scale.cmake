@@ -239,13 +239,13 @@ local singleton Look
 
 view DrawBalls(Body body, Ball ball, Look look)
 {
-    Draw.Circle(body.position, body.radius * look.zoom, ball.color);
+    Draw2D.Circle(body.position, body.radius * look.zoom, ball.color);
 }
 
 view DrawPlayers(Body body, Aim aim, with Owner, Look look)
 {
-    Draw.Circle(body.position, body.radius, look.player);
-    if (look.aim) Draw.Line(body.position, body.position + aim.direction * (body.radius + 12), look.player);
+    Draw2D.Circle(body.position, body.radius, look.player);
+    if (look.aim) Draw2D.Line(body.position, body.position + aim.direction * (body.radius + 12), look.player);
 }
 
 view Options(mut Look look, Arena arena)

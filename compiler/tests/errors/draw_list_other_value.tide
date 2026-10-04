@@ -1,4 +1,4 @@
-// expect: pass the frame's draw list: 'Draw.list'
+// expect: pass the frame's draw list: 'Draw2D.list'
 scene Main { }
 
 extern void Paint(DrawList list);

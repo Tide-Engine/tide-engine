@@ -76,6 +76,7 @@ system Jump(Time time, mut Body body, with Jumper)
 
 system Cut(Time time, mut Shot shot)
 {
+    Debug.Assert(time.t == time.tick * time.dt && time.tickRate == 20);
     shot.center += float2(0, 8);
     if (time.tick != 1) return;
     shot.center = float2(0, 500);
@@ -84,18 +85,19 @@ system Cut(Time time, mut Shot shot)
 
 view DrawBody(Body body, without Jumper)
 {
-    Draw.Circle(body.position, body.radius, body.look.tint);
-    Draw.Line(body.position, body.position + float2(body.heading.degrees, 0), Color.white);
-    Draw.Text($"{body.lives} {body.look.layer}", body.position, 10, Color.white);
+    Draw2D.Circle(body.position, body.radius, body.look.tint);
+    Draw2D.Line(body.position, body.position + float2(body.heading.degrees, 0), Color.white);
+    Draw2D.Text($"{body.lives} {body.look.layer}", body.position, 10, Color.white);
 }
 
 view DrawJumper(Body body, with Jumper)
 {
-    Draw.WireRect(body.position, float2(1, 1), Color.red);
+    Draw2D.WireRect(body.position, float2(1, 1), Color.red);
 }
 
-view Frame(Camera camera, Shot shot)
+view Frame(Camera camera, Shot shot, Time time)
 {
-    Draw.Camera(camera.center, 10);
-    Draw.Rect(shot.center, float2(1, 1), Color.blue);
+    Draw2D.Camera(camera.center, 10);
+    Draw2D.Rect(shot.center, float2(1, 1), Color.blue);
+    Draw2D.Rect(float2(time.t, time.tickRate), float2(1, 1), Color.blue); // The match's seconds, between ticks too
 }

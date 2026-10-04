@@ -1275,7 +1275,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         uniforms.texel[1] = 1.0f / (float)gpu_state.atlas_height;
     }
 
-    gpu->begin(target, !over); // Every frame starts black; Draw.Clear picks another color
+    gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
         switch (s->kind) {

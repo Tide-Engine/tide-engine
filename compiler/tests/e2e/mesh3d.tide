@@ -1,4 +1,4 @@
-// 3D: the built-in Vertex3, the 3D camera in both its forms, and Draw.Mesh in
+// 3D: the built-in Vertex3, the 3D camera in both its forms, and Draw2D.Mesh in
 // 3D: lists the draw list keeps, a grid as the texture, and a mesh drawn for
 // every entity, which is one command.
 
@@ -37,16 +37,16 @@ view Sky(mut Scenery scenery)
     }
     if (scenery.frames == 3) scenery.square.Add(Vertex3 { position = float3(0, 2, 0) });
 
-    Draw.Clear(Color.black);
-    Draw.Camera(float3(0, 1, -5), quaternion.Euler(float3(0.1, 0, 0)), 60);
-    Draw.Mesh([Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }], [0, 1, 2],
+    Draw2D.Clear(Color.black);
+    Draw3D.Camera(float3(0, 1, -5), quaternion.Euler(float3(0.1, 0, 0)), 60);
+    Draw3D.Mesh([Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }], [0, 1, 2],
               float4x4.Translate(float3(0, 0, 10)));
 }
 
 // Once for each tree, and one command for them all
 view Trees(Tree tree, Scenery scenery)
 {
-    Draw.Mesh(scenery.square, [0, 1, 2, 0, 2, 3], float4x4.TRS(tree.position, quaternion.identity, float3(1, tree.height, 1)),
+    Draw3D.Mesh(scenery.square, [0, 1, 2, 0, 2, 3], float4x4.TRS(tree.position, quaternion.identity, float3(1, tree.height, 1)),
               scenery.bark, Filter.Point);
 }
 
@@ -54,8 +54,8 @@ view Trees(Tree tree, Scenery scenery)
 view Ground(Scenery scenery)
 {
     var above = float4x4.TRS(float3(0, 10, 0), quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1)), float3(1));
-    Draw.Camera(above, float4x4.PerspectiveFov(Math.Radians(60), 1.5, 0.1, 100));
-    Draw.Mesh(scenery.square, [0, 1, 2, 0, 2, 3], float4x4.identity, scenery.bark);
-    Draw.Camera(float2(0, 0), 5);
-    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw3D.Camera(above, float4x4.PerspectiveFov(Math.Radians(60), 1.5, 0.1, 100));
+    Draw3D.Mesh(scenery.square, [0, 1, 2, 0, 2, 3], float4x4.identity, scenery.bark);
+    Draw2D.Camera(float2(0, 0), 5);
+    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
 }

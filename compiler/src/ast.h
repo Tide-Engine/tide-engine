@@ -116,7 +116,7 @@ typedef enum type_kind {
     TY_STRING,     // Text: literals, and function parameters and locals that hold them
     TY_RECT,       // Rect: a GUI rectangle, x and y from the top left, width and height
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
-    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
+    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
@@ -442,7 +442,7 @@ typedef struct decl {
     bool is_frag;                 // A frag; else a vert
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
-    VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its Draw.Mesh calls read, which it doesn't take itself
+    VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 
 // ---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ typedef enum builtin_call {
     CALL_NONE,
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
-    CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
+    CALL_DRAW,      // Draw2D.Circle(...): calls c_callee with the view's draw list first
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -544,7 +544,7 @@ typedef enum binding_kind {
     BIND_NAMESPACE, // `Combat` in Combat.Health
     BIND_DEVICES,   // `Devices`: this machine's devices, in views and the input's Sample
     BIND_CONST,     // A constant, MAX_HEALTH or Combat.MAX_HEALTH: `constant` is it
-    BIND_SHADER,    // A frag or vert named at Draw.Mesh: `type_decl` is it
+    BIND_SHADER,    // A frag or vert named at mesh draw: `type_decl` is it
 } binding_kind;
 
 typedef enum input_edge {
@@ -609,7 +609,9 @@ struct expr {
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
-    struct decl *vert;    // Draw.Mesh: the vert and the frag it names, or NULL
+    struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
+    bool instanced;      // Instanced: its third argument supplies the instances
+    struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
@@ -745,7 +747,7 @@ struct stmt {
 // for each instance, or of a singleton, one for each draw. Its floats and ints
 // are words of the instance's or the uniforms' float4s and int4s.
 typedef struct shader_value {
-    const struct decl *source; // The component or singleton; NULL for the transform Draw.Mesh was given
+    const struct decl *source; // The component or singleton; NULL for the transform mesh draw was given
     const field *field;
     bool per_instance;
     int floats, ints;       // Words it takes of each
@@ -761,7 +763,7 @@ typedef struct shader_texture {
 } shader_texture;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
-// for each combination a Draw.Mesh uses (see shader.c). Codegen writes each
+// for each combination a mesh draw uses (see shader.c). Codegen writes each
 // as a tide_shader (tide/draw.h).
 typedef struct shader {
     int index;
@@ -770,6 +772,9 @@ typedef struct shader {
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
+    bool instanced;      // Its draw supplies a list of instances
+    struct decl *instance_type; // Explicit instance data, or NULL for transforms only
+    const field *instance_transform; // The instance struct's optional float4x4 transform
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
@@ -782,7 +787,7 @@ typedef struct shader {
     const char *glsl_vertex, *glsl_fragment, *wgsl;
 } shader;
 
-// A Draw.Mesh with a vertex struct of the game's, a vert or a frag, and the
+// A mesh draw with a vertex struct of the game's, a vert or a frag, and the
 // view (or function) it's in.
 typedef struct mesh_draw {
     struct expr *call;
@@ -835,13 +840,13 @@ typedef struct program {
     decl *input;         // The input declaration, if any.
     decl *scene_visibility; // The built-in enum SceneVisibility
     decl *anchor;        // The built-in enum Anchor, where GUILayout.Area goes
-    decl *vertex;        // The built-in struct Vertex, a corner of what Draw.Mesh draws
+    decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
-    decl *filter;        // The built-in enum Filter, how Draw.Mesh samples its texture
+    decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time
-    VEC(mesh_draw) mesh_draws; // Every Draw.Mesh that draws through a shader
+    VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match
     decl *connected;     // Built-in local events: this machine joined a match, and left it
@@ -977,7 +982,7 @@ bool attributes_before_field(const token *toks, int i);
 bool check(program *prog);
 
 // Checks every frag and vert, and the functions they call, for what the GPU
-// runs, and plans the shader each Draw.Mesh draws through (program.shaders):
+// runs, and plans the shader each mesh draw draws through (program.shaders):
 // what it reads, how that's laid out, and its GLSL and WGSL (shader.c).
 void plan_shaders(program *prog);
 

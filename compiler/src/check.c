@@ -169,7 +169,7 @@ typedef enum name_kind {
     NAME_SYSTEM,   // Systems and views, in [Before] and [After]
     NAME_FUNCTION,
     NAME_CONST,
-    NAME_SHADER,   // Frags and verts, where Draw.Mesh names them
+    NAME_SHADER,   // Frags and verts, where Draw2D.Mesh names them
 } name_kind;
 
 static bool is_kind(const decl *d, const name_kind kind)
@@ -1621,9 +1621,9 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
     if (gpu_code(c)) {
         const bool devices = strcmp(what, "Devices") == 0;
         const bool screen = strcmp(what, "Screen") == 0;
-        gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen" : strcmp(what, "Draw") == 0 ? "draw" : "use the GUI",
+        gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen" : builtin_draw_owner(str_from(what)) ? "draw" : "use the GUI",
                     devices || screen ? "the view puts what it needs in a component or a singleton, which it takes"
-                                      : "it writes its pixel or changes its vertex: a view draws, and names it at Draw.Mesh");
+                                      : "it writes its pixel or changes its vertex: a view draws, and names it at Draw2D.Mesh or Draw3D.Mesh");
         return false;
     }
     if (in_async_function(c)) {
@@ -1877,7 +1877,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
         } else if (!type_assignable(p->type, arg->type)) {
             diag_error(arg->at, "'" STR_FMT "' takes %s for '" STR_FMT "', not %s", STR_ARG(m->name), type_name(p->type),
                        STR_ARG(p->name), type_name(arg->type));
-            if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw.list'");
+            if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw2D.list'");
             note_long_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
@@ -2058,7 +2058,7 @@ static type check_call(checker *c, expr *e)
     const decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {
         diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, and nothing calls it", STR_ARG(e->name), shader_word(shader));
-        diag_note("a view's Draw.Mesh names it, last: the engine gives it what its parameters say");
+        diag_note("a view's Draw2D.Mesh or Draw3D.Mesh names it, last: the engine gives it what its parameters say");
         return T_ERR;
     }
     diag_error(e->at, "unknown function '" STR_FMT "'", STR_ARG(e->name));
@@ -2550,7 +2550,7 @@ static type check_clipboard_call(checker *c, expr *e)
     return T_VOID_;
 }
 
-// Draw.Mesh takes the program's own List<Vertex>, List<Vertex3> and
+// Draw2D.Mesh and Draw3D.Mesh take the program's own vertex lists and
 // List<int>, its Grid2<Color> if it has one, and its Filter.
 static void use_mesh_types(checker *c)
 {
@@ -2561,10 +2561,10 @@ static void use_mesh_types(checker *c)
     }
     builtins_use_mesh(list_of(c->prog, decl_type(c->prog->vertex)).decl,
                       list_of(c->prog, decl_type(c->prog->vertex3)).decl, list_of(c->prog, (type){TY_INT, NULL}).decl,
-                      pixels, c->prog->filter);
+                      pixels, c->prog->filter, list_of(c->prog, (type){TY_FLOAT4X4, NULL}).decl);
 }
 
-// The frag or vert an argument of Draw.Mesh names, or NULL: `Shade`, or
+// The frag or vert an argument of Draw2D.Mesh names, or NULL: `Shade`, or
 // `Effects.Shade`.
 static decl *named_shader(const checker *c, expr *arg)
 {
@@ -2639,19 +2639,36 @@ static const field *field_called(const decl *d, const char *name)
     return NULL;
 }
 
-static void note_mesh_forms(void)
+static void note_mesh_forms(const expr *e)
 {
-    diag_note("Draw.Mesh(vertices, indices) draws a 2D mesh, and Draw.Mesh(vertices, indices, transform) a 3D one; then come a "
-              "texture and its filter, or a vert and a frag by name");
+    const str owner = e->object->name;
+    if (e->instanced) {
+        diag_note(STR_FMT ".Instanced(vertices, indices, instances) draws a %dD mesh; then come a texture and its filter, "
+                  "or a vert and a frag by name", STR_ARG(owner), str_eq_c(owner, "Draw3D") ? 3 : 2);
+        return;
+    }
+    diag_note(STR_FMT ".Mesh(vertices, indices%s) draws a %dD mesh; then come a texture and its filter, or a vert and a frag by name",
+              STR_ARG(owner), str_eq_c(owner, "Draw3D") ? ", transform" : "", str_eq_c(owner, "Draw3D") ? 3 : 2);
 }
 
-// A view's Draw.Mesh through a frag or a vert: the components they read are
+// A view's Draw2D.Mesh or Draw3D.Mesh through a frag or a vert: the components they read are
 // those of the entity the view runs for, so it has to have them.
 static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
 {
     decl *view = c->system;
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) {
+            if (!e->instanced) {
+                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "': draw it with " STR_FMT ".Instanced and a List<" STR_FMT ">",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->object->name), STR_ARG(p->type.decl->name));
+            } else if (p->type.decl != e->instance_type) {
+                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "', which this draw's instances don't supply",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name));
+                diag_note("its read-only struct parameter has to be the element type of the draw's instance list");
+            }
+            continue;
+        }
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         const decl *d = p->type.decl;
         for (int k = 0; k < view->params.count; k++) { // What a frag reads of it is a use of it
@@ -2675,13 +2692,18 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
     (void)e;
 }
 
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
 // A List<Vertex> or a List<Vertex3> with no vert and no frag is the built-in
 // call it always was. Anything else draws through a shader tidec writes (see
 // shader.c): a vertex struct of the game's, a vert, a frag.
 static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
+    const str owner = e->object->name;
+    const int wanted_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+    const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
+    const char *draw_name = wanted_dims == 3 ? (instanced ? "Draw3D.Instanced" : "Draw3D.Mesh")
+                                          : (instanced ? "Draw2D.Instanced" : "Draw2D.Mesh");
     // The vert and the frag it names come last, the vert first
     int count = e->args.count;
     bool order_said = false;
@@ -2691,28 +2713,29 @@ static type check_mesh_draw(checker *c, expr *e)
         if (!shader) break;
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
-            diag_error(name->at, "Draw.Mesh takes one %s, and this names two", shader_word(shader));
+            diag_error(name->at, "%s takes one %s, and this names two", draw_name, shader_word(shader));
         } else if (!shader->is_frag && e->frag && !order_said) {
             // Peeled from the end: a vert found after a frag was written before it, as it should be
         } else if (shader->is_frag && e->vert && !order_said) {
-            diag_error(name->at, "the vert comes before the frag, as the GPU runs them: 'Draw.Mesh(..., " STR_FMT ", " STR_FMT ")'",
-                       STR_ARG(e->vert->name), STR_ARG(shader->name));
+            diag_error(name->at, "the vert comes before the frag, as the GPU runs them: '%s(..., " STR_FMT ", " STR_FMT ")'",
+                       draw_name, STR_ARG(e->vert->name), STR_ARG(shader->name));
             order_said = true;
         }
         *slot = shader;
         count--;
     }
     const bool shaded = e->vert || e->frag;
-    if (!check_frame_use(c, e->at, "Draw")) {
+    if (!check_frame_use(c, e->at, str_to_cstr(e->object->name))) {
         for (int i = 0; i < count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
         return T_ERR;
     }
-    if (count < 2) {
+    if (count < (instanced ? 3 : 2)) {
         for (int i = 0; i < count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Draw.Mesh takes a mesh's vertices and its indices first");
-        note_mesh_forms();
+        diag_error(e->at, instanced ? "%s takes a mesh's vertices, its indices, and a list of instances first"
+                                  : "%s takes a mesh's vertices and its indices first", draw_name);
+        note_mesh_forms(e);
         return T_ERR;
     }
 
@@ -2729,14 +2752,14 @@ static type check_mesh_draw(checker *c, expr *e)
             decl *named = find_type(c, first->name, first->at);
             if (named && named->kind == DECL_STRUCT) vertex = named;
         }
-        if (!vertex) vertex = prog->vertex;
+        if (!vertex) vertex = str_eq_c(e->object->name, "Draw3D") ? prog->vertex3 : prog->vertex;
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
         const type t = check_expr(c, vertices);
         if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_STRUCT) {
             vertex = t.decl->fields.items[0].type.decl;
         } else if (t.kind != TY_ERROR) {
-            diag_error(vertices->at, "Draw.Mesh draws a list of vertices, and this is %s", type_name(t));
+            diag_error(vertices->at, "%s draws a list of vertices, and this is %s", draw_name, type_name(t));
             diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position'");
         }
     }
@@ -2745,11 +2768,43 @@ static type check_mesh_draw(checker *c, expr *e)
     const type index_type = indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
     for (int i = 2; i < count; i++) {
         expr *arg = e->args.items[i];
-        if (arg->kind != E_DEFAULT) check_expr(c, arg);
+        if (instanced && i == 2 && arg->kind == E_LIST) {
+            type element = {TY_FLOAT4X4, NULL};
+            const decl *stages[] = {e->vert, e->frag};
+            bool supplied = false;
+            for (int stage = 0; stage < 2 && !supplied; stage++) {
+                const decl *code = stages[stage];
+                for (int p = 1; code && p < code->params.count; p++) {
+                    const param *data = &code->params.items[p];
+                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT) {
+                        element = data->type;
+                        supplied = true;
+                        break;
+                    }
+                }
+            }
+            if (!supplied && arg->args.count && arg->args.items[0]->kind == E_LITERAL) {
+                const expr *first = arg->args.items[0];
+                decl *named = find_type(c, first->name, first->at);
+                if (named && named->kind == DECL_STRUCT) element = decl_type(named);
+            }
+            check_expr_want(c, arg, list_of(prog, element));
+        } else if (arg->kind != E_DEFAULT) {
+            check_expr(c, arg);
+        }
     }
     if (!vertex) return T_ERR;
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded) {
+    const int dims = vertex_dims(vertex, vertices->at, true);
+    if (dims == 0) return T_ERR;
+    if (dims != wanted_dims) {
+        diag_error(vertices->at, "%s draws %dD vertices, and '" STR_FMT "' has a float%d position",
+                   draw_name, wanted_dims, STR_ARG(vertex->name), dims);
+        diag_note("use Draw%dD." STR_FMT " for this vertex type", dims, STR_ARG(e->name));
+        return T_ERR;
+    }
+
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(e->object->name, e);
         if (result.kind == TY_ERROR) return result;
@@ -2763,8 +2818,6 @@ static type check_mesh_draw(checker *c, expr *e)
         diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, and this is %s", type_name(index_type));
         ok = false;
     }
-    const int dims = vertex_dims(vertex, vertices->at, true);
-    if (dims == 0) return T_ERR;
     for (int i = 2; i < count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) {
             diag_error(e->args.items[i]->at, "'default' doesn't say what it stands for here: write the value itself");
@@ -2772,14 +2825,38 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
     }
-    // A 3D mesh's transform
+    // A 3D mesh's transform, or an explicit draw's list of instances
     int at = 2;
     const type f4x4 = {TY_FLOAT4X4, NULL};
-    if (dims == 3) {
+    bool transforms = false;
+    if (instanced) {
+        const expr *instances = e->args.items[at++];
+        const type list = instances->type;
+        const type element = list.kind == TY_LIST ? list.decl->fields.items[0].type : T_ERR;
+        if (list.kind != TY_LIST || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
+            diag_error(instances->at, "%s takes a List<float4x4> of transforms or a List<T> of instance structs, and this is %s",
+                       draw_name, type_name(list));
+            return T_ERR;
+        }
+        transforms = element.kind == TY_FLOAT4X4;
+        if (transforms && dims != 3) {
+            diag_error(instances->at, "a List<float4x4> places 3D instances: a 2D draw takes instance structs and a vert that places them");
+            return T_ERR;
+        }
+        e->instance_type = transforms ? NULL : element.decl;
+        if (e->instance_type && dims == 3) {
+            const field *transform = field_called(e->instance_type, "transform");
+            if (transform && transform->type.kind != TY_FLOAT4X4) {
+                diag_error(instances->at, "a 3D instance struct's 'transform' is a float4x4, and '" STR_FMT "'s is %s",
+                           STR_ARG(e->instance_type->name), type_name(transform->type));
+                return T_ERR;
+            }
+        }
+    } else if (dims == 3) {
         if (at >= count || e->args.items[at]->type.kind != TY_FLOAT4X4) {
             diag_error(at < count ? e->args.items[at]->at : e->at, "a 3D mesh takes the transform that places it in the world, "
                        "a float4x4, after its indices");
-            diag_note("like 'Draw.Mesh(vertices, indices, float4x4.Translate(position));': '" STR_FMT "' is a 3D mesh's vertex, "
+            diag_note("like 'Draw3D.Mesh(vertices, indices, float4x4.Translate(position));': '" STR_FMT "' is a 3D mesh's vertex, "
                       "as its 'position' is a float3", STR_ARG(vertex->name));
             return T_ERR;
         }
@@ -2801,8 +2878,8 @@ static type check_mesh_draw(checker *c, expr *e)
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) at++;
     }
     if (at < count) {
-        diag_error(e->args.items[at]->at, "Draw.Mesh doesn't take %s here", type_name(e->args.items[at]->type));
-        note_mesh_forms();
+        diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(e->args.items[at]->type));
+        note_mesh_forms(e);
         return T_ERR;
     }
     if (texture && e->frag) {
@@ -2842,7 +2919,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     if (shaded && (c->method || c->in_input || !in_view(c))) {
-        diag_error(e->at, "a Draw.Mesh that names a vert or a frag goes in a view");
+        diag_error(e->at, "a %s that names a vert or a frag goes in a view", draw_name);
         diag_note("the components they read are those of the entity the view runs for; a function can draw the mesh "
                   "without them");
         ok = false;
@@ -2853,12 +2930,21 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     if (!ok) return T_ERR;
 
+    if (instanced && transforms && vertex == prog->vertex3 && !shaded) {
+        use_mesh_types(c);
+        const type result = resolve_builtin_call(e->object->name, e);
+        if (result.kind == TY_ERROR) return result;
+        check_default_args(c, e);
+        e->call = CALL_DRAW;
+        return result;
+    }
+
     e->call = CALL_DRAW;
     e->c_callee = NULL;
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
     vec_push(e->arg_want, index_list);
-    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 ? f4x4 : e->args.items[i]->type);
+    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : e->args.items[i]->type);
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
     return T_VOID_;
@@ -3049,11 +3135,11 @@ static type check_method(checker *c, expr *e)
         return check_clipboard_call(c, e);
     }
 
-    // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw.Circle(center,
+    // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw2D.Circle(center,
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
-        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Mesh")) return check_mesh_draw(c, e);
+        if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
         for (int i = 0; i < e->args.count; i++) {
@@ -3071,12 +3157,12 @@ static type check_method(checker *c, expr *e)
                       "the mouse, like 'if (!menu.paused) Cursor.Lock();'");
             return T_ERR;
         }
-        if ((gui || str_eq_c(owner, "Draw")) && !check_frame_use(c, e->at, gui ? "The GUI" : "Draw")) return T_ERR;
+        if ((gui || builtin_draw_owner(owner)) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
-        if (str_eq_c(owner, "Draw")) e->call = CALL_DRAW;
+        if (builtin_draw_owner(owner)) e->call = CALL_DRAW;
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -3752,7 +3838,7 @@ static type check_member(checker *c, expr *e)
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
-        if (str_eq_c(e->object->name, "Draw") && !check_frame_use(c, e->at, "Draw")) return T_ERR;
+        if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
         if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
             diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
@@ -4034,11 +4120,12 @@ static type check_name(checker *c, expr *e)
     if (shader) {
         e->bind = BIND_SHADER;
         e->type_decl = shader;
-        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, for the meshes a Draw.Mesh names it for", STR_ARG(e->name),
+        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, for the meshes a Draw2D.Mesh or Draw3D.Mesh names it for", STR_ARG(e->name),
                    shader_word(shader));
-        diag_note("name it last in a view's Draw.Mesh, like 'Draw.Mesh(vertices, indices, %s" STR_FMT ");'",
-                  shader->params.count && shader->params.items[0].type.kind == TY_STRUCT
-                          && shader_dims(shader->params.items[0].type.decl) == 3 ? "transform, " : "",
+        const bool three_d = shader->params.count && shader->params.items[0].type.kind == TY_STRUCT
+                         && shader_dims(shader->params.items[0].type.decl) == 3;
+        diag_note("name it last in a view's Draw2D.Mesh or Draw3D.Mesh, like 'Draw%dD.Mesh(vertices, indices, %s" STR_FMT ");'",
+                  three_d ? 3 : 2, three_d ? "transform, " : "",
                   STR_ARG(e->name));
         return T_ERR;
     }
@@ -4069,7 +4156,8 @@ static type check_name(checker *c, expr *e)
         if (c->prog->decls.items[i]->kind == DECL_CONST) suggest_consider(&s, c->prog->decls.items[i]->name);
     }
     suggest_consider_c(&s, "Math");
-    suggest_consider_c(&s, "Draw");
+    suggest_consider_c(&s, "Draw2D");
+    suggest_consider_c(&s, "Draw3D");
     suggest_builtin_types(&s);
     suggest_note(&s);
     return T_ERR;
@@ -4592,6 +4680,10 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         || of->object->param->function_param) {
         diag_error(of->at, "a %s samples a grid that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'",
                    shader_word(shader));
+        return T_ERR;
+    }
+    if (of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled grid in a component or singleton");
         return T_ERR;
     }
     const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
@@ -6179,7 +6271,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (value.kind == TY_DRAW_LIST) {
             diag_error(s->value->at, "the draw list is only passed on, to an extern function that takes a DrawList");
-            diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
+            diag_note("write 'Draw2D.list' where it goes, like 'DrawUI(Draw2D.list);'");
             value = T_ERR;
         }
         s->type = value;
@@ -6202,7 +6294,7 @@ static void check_var(checker *c, stmt *s)
             s->type = T_ERR;
         } else if (str_eq_c(type_name_, "DrawList")) {
             diag_error(s->type_at, "the draw list is only passed on, to an extern function that takes a DrawList");
-            diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
+            diag_note("write 'Draw2D.list' where it goes, like 'DrawUI(Draw2D.list);'");
             s->type = T_ERR;
         } else if (d) {
             s->type = decl_type(d);
@@ -7006,7 +7098,7 @@ static void resolve_field_types(const checker *c, const decl *d)
             continue;
         }
         if (str_eq_c(f->type_name, "DrawList")) {
-            diag_error(at, "fields can't hold a DrawList; it's the frame's, which a view passes to C as 'Draw.list'");
+            diag_error(at, "fields can't hold a DrawList; it's the frame's, which a view passes to C as 'Draw2D.list'");
             continue;
         }
         decl *const t = find_type(c, f->type_name, at);
@@ -7271,7 +7363,7 @@ static type method_type(const checker *c, const str name, const loc at, const bo
     }
     if (str_eq_c(name, "DrawList")) {
         if (!is_return) return (type){TY_DRAW_LIST, NULL};
-        diag_error(at, "a function can't return a DrawList; an extern function takes one, passed 'Draw.list'");
+        diag_error(at, "a function can't return a DrawList; an extern function takes one, passed 'Draw2D.list'");
         return T_ERR;
     }
     for (int i = 0; i < c->prog->records.count; i++) { // Devices, Keyboard, ..., Button
@@ -7356,7 +7448,7 @@ static void check_signature(const checker *c, decl *m)
         }
         if (p->type.kind == TY_DRAW_LIST && !m->is_extern) {
             diag_error(p->type_at, "only extern functions take a DrawList: C draws into it with tide/draw.h");
-            diag_note("a Tide function draws with Draw itself, like 'Draw.Mesh(vertices, indices);'");
+            diag_note("a Tide function draws with Draw2D or Draw3D themselves, like 'Draw2D.Mesh(vertices, indices);'");
             p->type = T_ERR;
         } else if (p->type.kind == TY_DRAW_LIST && p->mode != PARAM_READ) {
             diag_error(p->at, "a DrawList goes to C as it is, a 'tide_draw_list *'; drop '%s'",
@@ -7735,6 +7827,7 @@ static void check_shader_decl(const checker *c, decl *d)
     d->result = T_VOID_;
     d->fails = T_VOID_;
     const param *color = NULL;
+    const param *instance_data = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
@@ -7788,6 +7881,16 @@ static void check_shader_decl(const checker *c, decl *d)
             p->function_param = true;
             if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
                 color = p; // The pixel it writes
+            } else if (t && t->kind == DECL_STRUCT && p->mode != PARAM_MUT) {
+                if (instance_data) {
+                    const type vertex = d->params.items[0].type;
+                    const bool three_d = vertex.kind == TY_STRUCT && shader_dims(vertex.decl) == 3;
+                    diag_error(p->at, "a %s takes one instance struct, supplied by Draw%dD.Instanced, and this names two",
+                               word, three_d ? 3 : 2);
+                } else {
+                    instance_data = p;
+                }
+                p->function_param = false; // Supplied by each element of the explicit instance list
             } else if (d->is_frag && p->mode == PARAM_MUT) {
                 diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
                                                          : "a frag writes its pixel's color, a 'mut Color', for now");
@@ -8393,15 +8496,23 @@ static decl *builtin_event(const char *name, const bool world)
 
 static void add_builtins(program *prog)
 {
-    // singleton Time { float dt; int tick; }
+    // singleton Time { float dt; int tick; float t; int tickRate; }: t is
+    // tick * dt, the seconds since the match started, which the tick sets, and
+    // tickRate the ticks a second, 1 / dt to the nearest, set as the match
+    // starts (gen_api). t is a float of the match's, so views and what they
+    // draw through see it blended.
     decl *time = NEW(decl);
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
     const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    vec_push(time->fields, t);
+    vec_push(time->fields, rate);
     prog->time = time;
 
     // What a frag and a vert take beside the game's state, as parameters:
@@ -8488,7 +8599,7 @@ static void add_builtins(program *prog)
     prog->anchor = anchor;
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
-    // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
+    // a corner of what Draw2D.Mesh draws, as tide/draw.h's tide_vertex. And
     // enum Filter { Point, Bilinear }: how it reads its texture between cells,
     // with tide_filter's values, which are Unity's FilterMode's.
     decl *vertex = NEW(decl);
@@ -8794,7 +8905,7 @@ static void add_device_records(program *prog)
 static bool is_builtin_name(const str name)
 {
     type dummy;
-    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || str_eq_c(name, "Draw")
+    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");

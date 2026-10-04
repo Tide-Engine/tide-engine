@@ -1,0 +1,12 @@
+// expect: a List<float4x4> places 3D instances: a 2D draw takes instance structs and a vert that places them
+scene Main { }
+local singleton Mesh
+{
+    List<Vertex> vertices;
+    List<int> indices;
+    List<float4x4> transforms;
+}
+view DrawBatch(Mesh mesh)
+{
+    Draw2D.Instanced(mesh.vertices, mesh.indices, mesh.transforms);
+}

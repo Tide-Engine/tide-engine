@@ -26,13 +26,14 @@ struct tt_BoxVertex {
     vec2 m_uv;
 };
 float tide_f(float x) { return x; }
+int tide_i(int x) { return x; }
 void tf_Brighten(inout vec3 t_rgb, float t_by) {
     t_rgb = (t_rgb * t_by);
 }
 
 void ts_Wave(inout tt_BoxVertex t_vertex) {
-    float t_seconds = (float(tide_v0.x) * tide_u0.x);
-    t_vertex.m_position.y = (t_vertex.m_position.y + (sin(((t_seconds * tide_f(2.0)) + t_vertex.m_position.x)) * 0.1));
+    float t_height = ((((tide_v0.x / tide_v0.y) % tide_i(2)) == 0) ? 0.1 : 0.2);
+    t_vertex.m_position.y = (t_vertex.m_position.y + (sin(((tide_u0.x * tide_f(2.0)) + t_vertex.m_position.x)) * t_height));
     t_vertex.m_position.xz = (t_vertex.m_position.xz * (tide_f(1.0) + (tide_f(1.0) / tide_f(2.0))));
     t_vertex.m_normal = (mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(t_vertex.m_normal, 0.0)).xyz;
     tf_Brighten(t_vertex.m_normal, 1.0);
@@ -133,6 +134,7 @@ struct tt_BoxVertex {
     m_uv: vec2f,
 }
 fn tide_f(x: f32) -> f32 { return x; }
+fn tide_i(x: i32) -> i32 { return x; }
 fn tide_normalize3(v: vec3f) -> vec3f {
     let l = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
@@ -143,8 +145,8 @@ fn tf_Brighten(t_rgb: ptr<function, vec3f>, t_by: f32) {
 }
 
 fn ts_Wave(t_vertex: ptr<function, tt_BoxVertex>) {
-    var t_seconds: f32 = (f32(tide_block.tide_v0.x) * tide_block.tide_u0.x);
-    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (sin(((t_seconds * tide_f(2.0)) + (*t_vertex).m_position.x)) * 0.1));
+    var t_height: f32 = select(0.2, 0.1, (((tide_block.tide_v0.x / tide_block.tide_v0.y) % tide_i(2)) == 0));
+    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (sin(((tide_block.tide_u0.x * tide_f(2.0)) + (*t_vertex).m_position.x)) * t_height));
     { var tide_set0: vec2f = ((*t_vertex).m_position.xz * (tide_f(1.0) + (tide_f(1.0) / tide_f(2.0)))); (*t_vertex).m_position.x = tide_set0.x; (*t_vertex).m_position.z = tide_set0.y; }
     (*t_vertex).m_normal = (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_vertex).m_normal, 0.0)).xyz;
     {
