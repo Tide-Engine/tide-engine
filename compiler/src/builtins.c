@@ -229,8 +229,9 @@ static void build_signatures(void)
         add("Math", "LengthSq", T_F, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
         add("Math", "Distance", T_F, c_function("distance", v), 2, v, v, T_NONE);
         add("Math", "DistanceSq", T_F, c_function("distancesq", v), 2, v, v, T_NONE);
-        add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE);
-        add("Math", "NormalizeSafe", v, c_function("normalizesafe", v), 1, v, T_NONE, T_NONE);
+        describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
+                 "The vector at length 1. One too short to have a direction, like a move with no key held, gives "
+                 "zero, never NaN.");
         add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
         add("Math", "Csum", T_F, c_function("csum", v), 1, v, T_NONE, T_NONE);
         add("Math", "Cmin", T_F, c_function("cmin", v), 1, v, T_NONE, T_NONE);
@@ -250,8 +251,9 @@ static void build_signatures(void)
 
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
-    add("Math", "Normalize", T_Q, "tide_normalize_q", 1, T_Q, T_NONE, T_NONE);
-    add("Math", "NormalizeSafe", T_Q, "tide_normalizesafe_q", 1, T_Q, T_NONE, T_NONE);
+    describe(add("Math", "Normalize", T_Q, "tide_normalize_q", 1, T_Q, T_NONE, T_NONE), "rotation",
+             "The quaternion at length 1, which a rotation has to be. One too short, like a field nothing set, "
+             "gives the identity, never NaN.");
     add("Math", "Mul", T_Q, "tide_mul_q", 2, T_Q, T_Q, T_NONE);
     add("Math", "Mul", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE);
     add("Math", "Rotate", T_F3, "tide_rotate_q", 2, T_Q, T_F3, T_NONE);
@@ -727,6 +729,14 @@ type resolve_builtin_call(const str owner, expr *e)
     }
 
     if (!known) {
+        // There was a NormalizeSafe while Normalize gave NaN for a zero vector
+        if (str_eq_c(owner, "Math") && str_eq_c(e->name, "NormalizeSafe")) {
+            diag_error(e->at, "Math.NormalizeSafe is gone: write Math.Normalize");
+            diag_note("Math.Normalize no longer gives NaN for a vector too short to normalize: it gives zero, and "
+                      "the identity for a quaternion");
+            suggest_replacement(e->name, "Normalize");
+            return (type){TY_ERROR, NULL};
+        }
         diag_error(e->at, STR_FMT " has no function '" STR_FMT "'", STR_ARG(owner), STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         for (size_t i = 0; i < COMPONENTWISE_COUNT && str_eq_c(owner, "Math"); i++) {

@@ -64,11 +64,11 @@ And these build values:
 
 **Vectors:**
 
-`Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize`, `NormalizeSafe` (zero instead of NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.
+`Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize` (zero for a zero vector, never NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.
 
 **Quaternions:**
 
-`Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize`, `NormalizeSafe`, `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
+`Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize` (the identity for a zero quaternion), `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
 
 **Matrices:**
 
@@ -91,6 +91,20 @@ Values can come from other players' input, so math avoids spreading NaN where it
 
 - `Math.Clamp` always returns a value in range: NaN gives the lower bound.
 - `Math.Min` and `Math.Max` with one NaN argument return the other.
-- `Math.NormalizeSafe` gives zero for a zero vector, where `Math.Normalize` would give NaN.
+- `Math.Normalize` gives zero for a vector too short to have a direction, and the identity for a quaternion that short. Dividing a zero vector by its length would give NaN.
+
+That last one is the first thing most games run into: a move is zero while no key is held.
+
+```csharp
+// No key held: move is zero, and the body stays where it is.
+float3 move = Math.Normalize(float3(input.horizontal, 0, input.vertical));
+body.position += move * 5 * time.dt;
+```
+
+Too short means a length under about 1e-19. Anything longer comes out at length 1.
+
+::: info
+Unity.Mathematics has two, `normalize` and `normalizesafe`. Tide has one, and it's the safe one: there's no `Math.NormalizeSafe`.
+:::
 
 Everywhere else, results match Unity.Mathematics. The transcendental functions (`Sin`, `Exp`, `Pow` and the others) are Tide's own, accurate to about 1 ulp, and give the same bits everywhere.

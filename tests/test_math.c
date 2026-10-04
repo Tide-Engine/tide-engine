@@ -221,12 +221,78 @@ TIDE_TEST(math_vectors)
     const tide_float3 v = tide_f3(3.0f, 4.0f, 12.0f);
     TIDE_CHECK(tide_length_f3(v) == 13.0f);
     TIDE_CHECK(near(tide_length_f3(tide_normalize_f3(v)), 1.0f));
-    const tide_float3 zero = tide_normalizesafe_f3(tide_f3(0.0f, 0.0f, 0.0f));
-    TIDE_CHECK(zero.x == 0.0f && zero.y == 0.0f && zero.z == 0.0f);
     const tide_float3 c = tide_cross_f3(tide_f3(1, 0, 0), tide_f3(0, 1, 0));
     TIDE_CHECK(c.x == 0.0f && c.y == 0.0f && c.z == 1.0f);
     const tide_float3 r = tide_reflect_f3(tide_f3(1, -1, 0), tide_f3(0, 1, 0));
     TIDE_CHECK(r.x == 1.0f && r.y == 1.0f && r.z == 0.0f);
+}
+
+static bool same_bits(const void *a, const void *b, const size_t size)
+{
+    return memcmp(a, b, size) == 0;
+}
+
+TIDE_TEST(math_normalize_gives_zero_for_what_has_no_direction)
+{
+    // No key held: the move that every game normalizes
+    const tide_float2 none2 = tide_normalize_f2(tide_f2(0.0f, 0.0f));
+    const tide_float3 none3 = tide_normalize_f3(tide_f3(0.0f, 0.0f, 0.0f));
+    const tide_float4 none4 = tide_normalize_f4(tide_f4(0.0f, 0.0f, 0.0f, 0.0f));
+    TIDE_CHECK(same_bits(&none2, &(tide_float2){0.0f, 0.0f}, sizeof none2));
+    TIDE_CHECK(same_bits(&none3, &(tide_float3){0.0f, 0.0f, 0.0f}, sizeof none3));
+    TIDE_CHECK(same_bits(&none4, &(tide_float4){0.0f, 0.0f, 0.0f, 0.0f}, sizeof none4));
+
+    // Too short: a length squared that's no normal float. The shortest that
+    // still has one comes out at length 1.
+    const tide_float3 tiny = tide_normalize_f3(tide_f3(1e-20f, 0.0f, 0.0f));
+    TIDE_CHECK(tiny.x == 0.0f && tiny.y == 0.0f && tiny.z == 0.0f);
+    const tide_float3 denormal = tide_normalize_f3(tide_f3(0.0f, 0x1p-149f, 0.0f));
+    TIDE_CHECK(denormal.x == 0.0f && denormal.y == 0.0f && denormal.z == 0.0f);
+    const tide_float3 small = tide_normalize_f3(tide_f3(0.0f, 0.0f, -2e-19f));
+    TIDE_CHECK(small.x == 0.0f && small.y == 0.0f && near(small.z, -1.0f));
+
+    // NaN doesn't spread through it
+    const tide_float3 nan = tide_normalize_f3(tide_f3(NAN, 1.0f, 0.0f));
+    TIDE_CHECK(nan.x == 0.0f && nan.y == 0.0f && nan.z == 0.0f);
+
+    // A zeroed quaternion (a field nothing set) is the identity
+    const tide_quaternion none = tide_normalize_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f));
+    const tide_quaternion identity = tide_identity_q();
+    TIDE_CHECK(same_bits(&none, &identity, sizeof none));
+    const tide_quaternion blend = tide_nlerp_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f), tide_q(0.0f, 0.0f, 0.0f, 0.0f), 0.5f);
+    TIDE_CHECK(same_bits(&blend, &identity, sizeof blend));
+    TIDE_CHECK(tide_angle_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f), tide_axisangle_q(tide_f3(0, 1, 0), 1.0f)) == 0.0f);
+
+    // Looking straight along up: no rotation to give, but no NaN either
+    const tide_quaternion along = tide_lookrotation_q(tide_f3(0, 1, 0), tide_f3(0, 1, 0));
+    TIDE_CHECK(!isnan(along.value.x) && !isnan(along.value.y) && !isnan(along.value.z) && !isnan(along.value.w));
+}
+
+TIDE_TEST(math_normalize_is_the_reciprocal_square_root_times_the_vector)
+{
+    // What it gave before it was safe, bit for bit, for every vector with a length
+    rng_state = 777;
+    for (int i = 0; i < 100000; i++) {
+        const float scale = i % 3 == 0 ? 1e-15f : i % 3 == 1 ? 1.0f : 1e15f;
+        const float x = rnd(-1.0f, 1.0f) * scale;
+        const float y = rnd(-1.0f, 1.0f) * scale;
+        const float z = rnd(-1.0f, 1.0f) * scale;
+        const float w = rnd(-1.0f, 1.0f) * scale;
+        const tide_float2 v2 = tide_f2(x, y);
+        const tide_float3 v3 = tide_f3(x, y, z);
+        const tide_float4 v4 = tide_f4(x, y, z, w);
+        const tide_float2 got2 = tide_normalize_f2(v2);
+        const tide_float3 got3 = tide_normalize_f3(v3);
+        const tide_float4 got4 = tide_normalize_f4(v4);
+        const tide_quaternion got_q = tide_normalize_q((tide_quaternion){v4});
+        const tide_float2 want2 = tide_mul_f2(tide_f2_splat(tide_rsqrt_f(tide_dot_f2(v2, v2))), v2);
+        const tide_float3 want3 = tide_mul_f3(tide_f3_splat(tide_rsqrt_f(tide_dot_f3(v3, v3))), v3);
+        const tide_float4 want4 = tide_mul_f4(tide_f4_splat(tide_rsqrt_f(tide_dot_f4(v4, v4))), v4);
+        TIDE_REQUIRE(same_bits(&got2, &want2, sizeof got2));
+        TIDE_REQUIRE(same_bits(&got3, &want3, sizeof got3));
+        TIDE_REQUIRE(same_bits(&got4, &want4, sizeof got4));
+        TIDE_REQUIRE(same_bits(&got_q.value, &want4, sizeof want4));
+    }
 }
 
 TIDE_TEST(math_quaternions)

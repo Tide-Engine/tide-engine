@@ -118,7 +118,7 @@ A system that takes the input gets the input of the player who owns the entity i
 ```csharp
 system Steer(Controls input, mut Body body, with Owner)
 {
-    body.velocity = Math.NormalizeSafe(input.move) * 250;
+    body.velocity = Math.Normalize(input.move) * 250;
 }
 ```
 
@@ -207,7 +207,7 @@ event(PlayerJoined joined) AddPlayer()
 
 system Steer(Controls input, mut Body body, with Owner)
 {
-    body.velocity = Math.NormalizeSafe(input.move) * 250;
+    body.velocity = Math.Normalize(input.move) * 250;
 }
 
 system Move(mut Body body, Time time)

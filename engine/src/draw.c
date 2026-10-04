@@ -312,7 +312,7 @@ tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_
                                          const float field_of_view)
 {
     // The world as the camera sees it: moved and turned the other way
-    const tide_quaternion back = tide_conjugate_q(tide_normalizesafe_q(rotation));
+    const tide_quaternion back = tide_conjugate_q(tide_normalize_q(rotation));
     const tide_float4x4 view = tide_f4x4_from_f3x3_f3(tide_f3x3_from_q(back), tide_neg_f3(tide_rotate_q(back, position)));
     // A perspective for a square screen, from 0.3 units on, as Unity's
     // cameras, with no far side: precision hardly depends on it

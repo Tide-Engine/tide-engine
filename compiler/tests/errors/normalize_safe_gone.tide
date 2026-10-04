@@ -1,0 +1,4 @@
+// expect: Math.NormalizeSafe is gone: write Math.Normalize
+component Body { float3 velocity; }
+system Steer(mut Body body) { body.velocity = Math.NormalizeSafe(body.velocity) * 5; }
+scene Main { }

@@ -12,6 +12,8 @@ component Body
     float4x4 world;
     float angle = Math.Radians(90);
     float pi = Math.PI;
+    float2 move; // No key held
+    quaternion unset = quaternion(0, 0, 0, 0);
 }
 
 component Results
@@ -27,6 +29,10 @@ component Results
     float dotted;
     float length;
     float3 normalized;
+    float3 stayed;
+    float2 noDirection;
+    float4 tooShort;
+    quaternion noRotation;
     float3 crossed;
     float3 rotated;
     float3 transformed;
@@ -68,6 +74,11 @@ system Compute(mut Body body, mut Results r)
     r.dotted = Math.Dot(body.position, float3(1, 1, 1));
     r.length = Math.Length(float3(3, 4, 12));
     r.normalized = Math.Normalize(float3(0, 5, 0));
+    // Nothing to normalize gives zero, never NaN: a move with no key held moves nothing
+    r.stayed = body.position + Math.Normalize(float3(body.move.x, 0, body.move.y)) * 5;
+    r.noDirection = Math.Normalize(body.move);
+    r.tooShort = Math.Normalize(float4(body.move, 1e-20, 0));
+    r.noRotation = Math.Normalize(body.unset);
     r.crossed = Math.Cross(float3(1, 0, 0), float3(0, 1, 0));
 
     quaternion yaw = quaternion.AxisAngle(float3(0, 1, 0), body.angle);
