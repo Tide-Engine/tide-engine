@@ -39,6 +39,8 @@ extern List<int> Primes(int count);
 extern float Noise(float x, float y);
 extern void Fill(in Stats stats, mut List<float> values);
 extern void DrawUI(DrawList list);
+RenderTarget scene; Texture image;
+Draw.Blit(scene.color, Draw.window, Blur);
 const List<int> NONE = [];
 const int MAX_HEALTH = 100;
 
@@ -87,6 +89,7 @@ int ParseLong(string text)
 [After(Steer)] [Before(Fade)]
 system Both() { }
 [After(Steer), Before(Fade)] system SameLine() { }
+[Stage(RenderStages.Objects, -10), Before(RenderStages.UI)] view DrawObjects() { }
 
 input Aim
 {

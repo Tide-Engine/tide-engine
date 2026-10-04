@@ -1,0 +1,4 @@
+// expect: 'Controls' can't hold rendering resources in match state
+scene Main { }
+struct Surface { Texture image; }
+input Controls { Surface surface; }

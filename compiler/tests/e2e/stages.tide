@@ -1,0 +1,77 @@
+namespace Scheduling;
+
+// Phase order follows declarations, including aliases and descending enum values.
+enum Phases { Prepare = 40, Objects = 3, Empty = 3, Effects = 1, UI = 0 }
+const int LATE = true ? int(50L) : 0;
+const int EARLY = 1 < 2 && !false ? -100 : 10;
+singleton Trace { int systems; int handlers; int otherHandlers; }
+local singleton FrameTrace { int order; }
+component Body { int digit = 2; }
+scene Main { }
+event Round { }
+event Other { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body);
+    Spawn(Body);
+    Send(Round { });
+    Send(Other { });
+}
+
+[Stage(Phases.UI)]
+system Last(mut Trace trace) { trace.systems = trace.systems * 10 + 9; }
+
+[After(Phases.Empty), Before(Phases.Effects)]
+system Gap(mut Trace trace) { trace.systems = trace.systems * 10 + 6; }
+
+[Stage(Phases.Objects, LATE + 1)]
+system Later(mut Trace trace) { trace.systems = trace.systems * 10 + 5; }
+
+[Stage(Phases.Objects)]
+system TieSecond(mut Trace trace) { trace.systems = trace.systems * 10 + 4; }
+
+[Stage(Phases.Objects, default), Before(TieSecond)]
+system TieFirst(mut Trace trace) { trace.systems = trace.systems * 10 + 3; }
+
+[Stage(Phases.Prepare)]
+system First(mut Trace trace) { trace.systems = trace.systems * 10 + 1; }
+
+[Stage(Scheduling.Phases.Objects, EARLY)]
+system Early(mut Trace trace) { trace.systems = trace.systems * 10 + 2; }
+
+[Stage(Phases.Effects)]
+system Effect(mut Trace trace) { trace.systems = trace.systems * 10 + 7; }
+
+[After(Effect), Before(Last)]
+system FineOrder(mut Trace trace) { trace.systems = trace.systems * 10 + 8; }
+
+[Stage(Phases.UI)]
+event(Round) HandlerLast(mut Trace trace) { trace.handlers = trace.handlers * 10 + 5; }
+
+[After(Phases.Objects), Before(Phases.Effects)]
+event(Round) HandlerGap(mut Trace trace) { trace.handlers = trace.handlers * 10 + 3; }
+
+[Stage(Phases.Objects)]
+event(Round) HandlerObjects(mut Trace trace) { trace.handlers = trace.handlers * 10 + 2; }
+
+[Stage(Phases.Prepare)]
+event(Round) HandlerFirst(mut Trace trace) { trace.handlers = trace.handlers * 10 + 1; }
+
+[Stage(Phases.Effects)]
+event(Round) HandlerEffect(mut Trace trace) { trace.handlers = trace.handlers * 10 + 4; }
+
+[Stage(Phases.Effects)]
+event(Other) OtherHandler(mut Trace trace) { trace.otherHandlers += 1; }
+
+[After(Phases.Objects), Before(Phases.UI)]
+view FinishFrame(mut FrameTrace trace) { trace.order = trace.order * 10 + 4; }
+
+[Stage(Phases.Objects, 10)]
+view LateFrame(mut FrameTrace trace) { trace.order = trace.order * 10 + 3; }
+
+[Stage(Phases.Objects)]
+view Bodies(Body body, mut FrameTrace trace) { trace.order = trace.order * 10 + body.digit; }
+
+[Stage(Phases.Prepare)]
+view BeginFrame(mut FrameTrace trace) { trace.order = 1; }

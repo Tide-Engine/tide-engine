@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdlib.h>
 
 #include "tide/draw.h"
 #include "tide/mesh.h"
@@ -54,6 +55,112 @@ TIDE_TEST(draw_list_grows)
 
 // ---------------------------------------------------------------------------
 // Meshes
+
+TIDE_TEST(draw_targets_preserve_recording_state_and_append_sources)
+{
+    tide_draw_list d = {0}, appended = {0};
+    tide_draw_to(&d, 17, 8, 6);
+    tide_draw_clip(&d, (tide_rect){0, 0, 4, 3});
+    const uint32_t first_count = d.count;
+    tide_draw_to(&d, 17, 8, 6);
+    TIDE_CHECK(d.count == first_count);
+    tide_draw_to(&d, 18, 4, 3);
+    TIDE_CHECK(!d.clipped);
+    tide_draw_to(&d, 17, 8, 6);
+    TIDE_CHECK(d.clipped);
+    const uint32_t color = tide_draw_target_texture(&d, 17, 8, 6);
+    TIDE_REQUIRE(color && d.textures[color - 1u].space == TIDE_PIXELS_TARGET);
+    TIDE_CHECK(d.textures[color - 1u].pixels == NULL && d.textures[color - 1u].capacity == 0);
+    static const tide_shader shader = {.dims = 2, .vertex_size = sizeof(tide_vertex), .texture_count = 1};
+    tide_draw_to(&d, 18, 4, 3);
+    tide_draw_blit(&d, &shader, NULL, NULL, &color, 0);
+    tide_draw_blit(&d, &shader, NULL, NULL, &color, 0);
+    TIDE_REQUIRE(d.run_count == 2 && d.runs[0].count == 1 && d.runs[1].count == 1);
+    tide_draw_to(&appended, 19, 2, 2);
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.run_count == 2 && appended.target_count == 3);
+    const tide_draw_run *run = &appended.runs[0];
+    TIDE_REQUIRE(run->textures[0]);
+    const tide_draw_texture *copied = &appended.textures[run->textures[0] - 1u];
+    TIDE_CHECK(copied->space == TIDE_PIXELS_TARGET && copied->id == 17 && copied->pixels == NULL);
+    TIDE_CHECK(appended.commands[1].kind == TIDE_DRAW_TARGET && appended.commands[1].target == 0);
+    tide_draw_reset(&d);
+    TIDE_CHECK(d.target_count == 0 && d.target == 0 && !d.clipped);
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_owned_target_aliases_capture_resize_and_disposal)
+{
+    tide_draw_list d = {0}, appended = {0};
+    const tide_render_target target = tide_render_target_make(8, 6), alias = target;
+    const tide_texture_ref color = tide_render_target_color(target);
+    tide_draw_render_target(&d, target);
+    tide_draw_clear(&d, TIDE_COLOR_RED);
+    const uint32_t before = tide_draw_texture_source(&d, color);
+    tide_render_target_resize(alias, 8, 6);
+    tide_draw_render_target(&d, target);
+    const uint32_t resized = tide_draw_texture_source(&d, color);
+    TIDE_REQUIRE(d.target_count == 2 && before && resized && before != resized);
+    TIDE_CHECK(d.targets[0].version == 1 && d.targets[1].version == 2);
+    TIDE_CHECK(d.textures[before - 1u].version == 1 && d.textures[resized - 1u].version == 2);
+    tide_render_target_resize(target, 16, 12);
+    const uint32_t larger = tide_draw_texture_source(&d, color);
+    TIDE_CHECK(d.textures[larger - 1u].width == 16 && d.textures[larger - 1u].height == 12);
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.target_count == 2);
+    TIDE_CHECK(appended.targets[0].version == 1 && appended.targets[1].version == 2);
+    tide_render_target_dispose(alias);
+    tide_render_target_dispose(target);
+    TIDE_CHECK(!tide_render_target_live(target.id));
+    tide_draw_render_target(&d, target);
+    TIDE_REQUIRE(d.target && d.target <= d.target_count);
+    TIDE_CHECK(d.targets[d.target - 1u].id == target.id && d.targets[d.target - 1u].width == 0);
+    tide_draw_render_target(&d, (tide_render_target){0});
+    TIDE_CHECK(d.target && d.targets[d.target - 1u].id == TIDE_RENDER_INVALID);
+    tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    TIDE_CHECK(d.target == 0);
+    tide_draw_to(&d, 33, 0, 4);
+    TIDE_CHECK(d.target && d.targets[d.target - 1u].id == 33);
+    const uint32_t prior_count = d.count;
+    tide_draw_forget(&d);
+    TIDE_CHECK(d.commands[prior_count - 1u].kind == TIDE_DRAW_TARGET
+               && d.commands[prior_count - 1u].target == UINT32_MAX);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_TARGET && d.commands[d.count - 1u].target == 0);
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
+{
+    // Another library's registry is a different variable pointing to shared
+    // heap state. Retained disposed aliases must move before its owner unloads.
+    tide_render_target_state *foreign = calloc(1, sizeof *foreign);
+    tide_render_target_state *disposed = calloc(1, sizeof *disposed);
+    TIDE_REQUIRE(foreign && disposed);
+    *foreign = (tide_render_target_state){.next = disposed, .owner = &foreign,
+                                         .width = 12, .height = 9, .version = 2, .alive = true};
+    *disposed = (tide_render_target_state){.owner = &foreign, .version = 1};
+    const tide_render_target live_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)foreign};
+    const tide_render_target dead_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)disposed};
+    tide_render_target_adopt(dead_ref);
+    tide_render_target_adopt(live_ref);
+    tide_render_target_adopt(live_ref);
+    TIDE_CHECK(foreign == NULL && tide_render_target_live(live_ref.id) && !tide_render_target_live(dead_ref.id));
+
+    // Tokens here are deliberately not pointers; recreation cannot dereference
+    // the previous program's address space and must retain shared identity.
+    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 123u, .width = 24, .height = 18};
+    const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
+    TIDE_CHECK(first.id == second.id && first.width == 24 && first.height == 18);
+    TIDE_CHECK(tide_render_target_recreate((tide_render_target){.id = packed.id}).id == 0);
+    tide_render_targets_recreated();
+    const tide_render_target another_restore = tide_render_target_recreate(packed);
+    TIDE_CHECK(another_restore.id != first.id);
+    tide_render_targets_recreated();
+    tide_render_targets_free();
+}
 
 static const tide_vertex quad[4] = {
     {{0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},

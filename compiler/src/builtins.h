@@ -2,12 +2,12 @@
 
 #include "ast.h"
 
-// Built-in functions and constants reached through a type, `Math`, `Draw2D`, `Draw3D`,
+// Built-in functions and constants reached through a type, `Math`, `Draw2D`, `Draw3D`, `Draw`,
 // `GUI`, `GUILayout`, `Screen` or `Cursor`: Math.Dot(a, b),
 // quaternion.AxisAngle(axis, angle), Draw2D.Circle(...), GUILayout.Button(text),
 // Color.red, Screen.width, Cursor.Lock().
 
-// Is `name` something that can own static members: Math, Draw2D, Draw3D, GUI, GUILayout,
+// Is `name` something that can own static members: Math, Draw2D, Draw3D, Draw (resource operations), GUI, GUILayout,
 // Screen, Cursor or a built-in type?
 bool builtin_owner(str name);
 

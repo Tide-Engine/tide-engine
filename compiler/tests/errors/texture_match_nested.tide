@@ -1,0 +1,5 @@
+// expect: 'State' can't hold rendering resources in match state
+scene Main { }
+struct Surface { Texture image; }
+struct Nested { Surface surface; }
+component State { Nested data; }

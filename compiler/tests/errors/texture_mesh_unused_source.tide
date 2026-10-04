@@ -1,0 +1,5 @@
+// expect: this mesh's frag has no Texture parameter for the explicit source
+scene Main { }
+local singleton Image { Texture source; }
+frag White(Vertex vertex, mut Color color) { color = Color.white; }
+view Show(Image image) { Draw2D.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], image.source, White); }

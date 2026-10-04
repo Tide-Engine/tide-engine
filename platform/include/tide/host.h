@@ -61,12 +61,15 @@ typedef struct tide_host_game {
     void (*disconnected)(void *local, uint32_t reason, const char *message); // `message`: a kick's, or ""
     int32_t (*tick)(const void *world); // Time.tick
     uint32_t (*entity_count)(const void *world);
-    // Frees what the game's code keeps for itself (the scratch area), before
+    // Frees what the game's code keeps for itself (scratch and target bookkeeping), before
     // its library is unloaded.
     void (*unload)(void);
     // Its data layout, when tidec described it (tide run's builds), to carry
     // the game over to a build whose layout changed; NULL otherwise.
     const tide_layout *layout;
+    // Graphics references in retained local state: native targets transfer to
+    // the new build; a new address space recreates them. Optional for C hosts.
+    void (*rebind_resources)(void *local, bool same_memory);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
