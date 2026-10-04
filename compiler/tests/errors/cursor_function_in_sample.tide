@@ -6,6 +6,6 @@ bool Looking()
 input PlayerInput
 {
     float2 look;
-    Sample() { if (Looking()) look = Devices.mouse.delta; }
+    Sample(Devices devices) { if (Looking()) look = devices.mouse.delta; }
 }
 scene Main { }

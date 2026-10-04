@@ -563,6 +563,21 @@ char *packages_repo_dir(const package_line *line)
     return dir;
 }
 
+bool packages_fetched(const char *dir)
+{
+    const size_t n = strlen(dir);
+    char *marker = format("%s%s" PACKAGES_FETCHED, dir, n > 0 && is_separator(dir[n - 1]) ? "" : "/");
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesA(marker);
+    const bool there = attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat info;
+    const bool there = stat(marker, &info) == 0 && S_ISREG(info.st_mode);
+#endif
+    free(marker);
+    return there;
+}
+
 char *packages_folder(const package_line *line, const char *base)
 {
     if (line->local) {
@@ -687,9 +702,9 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
             continue;
         }
         char *dir = packages_folder(line, game->folder);
-        if (!line->local && !folder_exists(dir)) {
+        if (!line->local) {
             char *repo = packages_repo_dir(line);
-            bool here = folder_exists(repo);
+            bool here = packages_fetched(repo);
             if (!here && fetch) here = fetch(user, line, repo);
             free(repo);
             if (!here) { // fetch said why; tidels, with nothing to get it with, leaves it out

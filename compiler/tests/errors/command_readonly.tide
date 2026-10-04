@@ -1,0 +1,4 @@
+// expect: 'rename' is read-only
+command Rename { string name; }
+command(Rename rename, PlayerID sender) Handle() { rename.name = "changed"; }
+scene Main { }

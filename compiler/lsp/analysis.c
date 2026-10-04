@@ -1158,7 +1158,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_STRUCT: return "struct";
     case DECL_METHOD: return "method";
     case DECL_FUNCTION: return "function";
-    case DECL_EVENT: return "event";
+    case DECL_EVENT: return d->is_command ? "command" : "event";
     case DECL_ENUM: return "enum";
     case DECL_LIST: return "list";
     case DECL_MAP: return "map";
@@ -1167,7 +1167,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_CONST: return "const";
     case DECL_SETTINGS: return "settings";
     case DECL_SHADER: return d->is_frag ? "frag" : "vert";
-    case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? "event" : "system";
+    case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? d->is_command ? "command" : "event" : "system";
     }
     return "";
 }
@@ -1176,7 +1176,7 @@ static const char *decl_keyword(const decl *d)
 // and "local component" for what's local.
 static const char *decl_what(const decl *d)
 {
-    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? "event handler" : decl_keyword(d);
+    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler" : decl_keyword(d);
     if (!d->is_local) return what;
     sb b = {0};
     sb_printf(&b, "local %s", what);
@@ -1190,7 +1190,7 @@ static void format_param(const param *p, sb *out)
     case PARAM_IN: sb_put(out, "in "); break;
     case PARAM_WITH: sb_put(out, "with "); break;
     case PARAM_WITHOUT: sb_put(out, "without "); break;
-    case PARAM_READ: case PARAM_EVENT: break;
+    case PARAM_READ: case PARAM_EVENT: case PARAM_SENDER: break;
     }
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
@@ -1203,10 +1203,14 @@ static void format_header(const decl *d, sb *out)
     if (d->is_local) sb_put(out, "local ");
     if (d->is_async) sb_put(out, "async ");
     if (d->is_handler && d->params.count > 0) {
-        sb_put(out, "event(");
+        sb_put(out, d->is_command ? "command(" : "event(");
         format_param(&d->params.items[0], out);
+        if (d->is_command && d->params.count > 1) {
+            sb_put(out, ", ");
+            format_param(&d->params.items[1], out);
+        }
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
-        first = 1;
+        first = d->is_command ? 2 : 1;
     } else {
         sb_printf(out, "%s " STR_FMT "(", decl_keyword(d), STR_ARG(d->name));
     }
@@ -1859,6 +1863,8 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
                                               : "\n\nA scene: its entities load and unload together. Load it with `Scene.Load`; "
                                                 "systems that take it run once per loaded one.");
+            } else if (o->decl->kind == DECL_EVENT && o->decl->is_command) {
+                sb_put(out, "\n\nSent with `Send` from views or local handlers to one match handler. Its payload is untrusted; the connection supplies the sender's PlayerID.");
             } else if (o->decl->kind == DECL_EVENT && o->decl->is_local) {
                 sb_put(out, "\n\nLocal: sent with `Send` from views, and handled by `local event(...)` handlers at the end of the frame.");
             } else if (o->decl->kind == DECL_EVENT) {
@@ -1880,6 +1886,7 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->decl->is_handler && o->decl->event) {
+            if (o->decl->is_command) sb_put(out, "\n\nHandles an untrusted player submission. The connection supplies its sender; check permissions and game rules before changing match state.");
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
             if (o->decl->per_entity) {
@@ -1949,7 +1956,8 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
-        else if (o->param->mode == PARAM_EVENT) sb_put(out, "\n\nThe event being handled, read-only.");
+        else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
+        else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
         else sb_put(out, "\n\nParameter, read-only.");
@@ -2010,8 +2018,8 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "Devices")   ? "\n\nThis machine's keyboard, mouse, gamepad, touchscreen and "
                                                          "pointer. Views read them once per frame, less what the GUI is "
                                                          "using and what other views claimed, and the input's Sample once "
-                                                         "per tick. Systems take a `Devices` parameter instead: the devices "
-                                                         "of the entity's owner."
+                                                         "per tick. Both take a `Devices` parameter. In match code the "
+                                                         "parameter receives the entity owner's devices, or the server's."
                       : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views and local handlers. "
                                                          "Ctrl+V pastes into text fields by itself."
                       : str_eq_c(o->name, "Debug")     ? "\n\nOutput for whoever runs the game: Log prints a line, Assert stops "
@@ -2092,7 +2100,13 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->call == CALL_NONE && str_eq_c(o->name, "Sample")) {
-            code_block(out, "Sample()");
+            sb_put(&code, "Sample(");
+            for (int i = 0; o->decl && i < o->decl->params.count; i++) {
+                if (i) sb_put(&code, ", ");
+                format_param(&o->decl->params.items[i], &code);
+            }
+            sb_put(&code, ")");
+            code_block(out, code.data);
             sb_put(out, "\n\nBuilds the player's input from this machine's `Devices`, once per tick on their machine. "
                         "Fields start at their defaults. It runs outside the simulation, so it only sees the devices and "
                         "the local singletons it takes.");
@@ -4375,6 +4389,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const bool match = sc->decl && sc->decl->kind == DECL_SYSTEM && !local;
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
                       || (t.kind == TY_SINGLETON && match && !t.decl->is_local);
+    if (t.kind == TY_ENTITY && local) {
+        item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
+    }
     const bool pixel = t.kind == TY_RECORD && t.decl == A.prog->pixel;
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
@@ -4456,7 +4473,6 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     const param *p;
     type t = name_type(&sc, base, &p);
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, ids[n - 1]);
-    if (t.kind == TY_ERROR && str_eq_c(base, "Devices") && !gpu) t = (type){TY_RECORD, A.prog->devices}; // This machine's
     if (t.kind == TY_ERROR && n == 2 && str_eq_c(base, "Draw") && str_eq_c(DOC->toks[ids[0]].text, "window") && !gpu) {
         list_members(c, (type){TY_RENDER_TARGET, NULL}, false, &sc);
         return;
@@ -4602,11 +4618,11 @@ static void complete_components_of(completion *c, const bool local)
 }
 
 // Events: what handlers handle and Send sends. `builtin` includes the engine's own.
-static void complete_events(completion *c, const bool builtin)
+static void complete_events(completion *c, const bool builtin, const bool command)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind != DECL_EVENT || (d->builtin && !builtin)) continue;
+        if (d->kind != DECL_EVENT || d->is_command != command || (d->builtin && !builtin)) continue;
         item(c, name_for(d), CK_EVENT, decl_what(d), d->builtin ? builtin_event_doc(A.prog, d) : NULL, NULL);
     }
 }
@@ -4616,7 +4632,7 @@ static void complete_events_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_EVENT && !d->builtin && d->is_local == local) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
+        if (d->kind == DECL_EVENT && !d->builtin && (d->is_command ? local : d->is_local == local)) item(c, name_for(d), CK_EVENT, decl_what(d), NULL, NULL);
     }
 }
 
@@ -4915,7 +4931,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
                    : "Creates an entity with these components.",
              "Spawn($1)");
         item(c, "Send", CK_FUNCTION, "Send(event)",
-             local ? "Sends a local event, handled at the end of the frame." : "Sends an event to the whole world, handled at the end of the tick.",
+             local ? "Sends a local event, or submits a command to the match." : "Sends an event to the whole world, handled at the end of the tick.",
              "Send($1)");
         complete_components_of(c, local);
         complete_events_of(c, local);
@@ -4945,10 +4961,6 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
         item(c, "Cursor", CK_MODULE, "The mouse's cursor: its lock, for a camera that looks around", NULL, NULL);
     }
-    // This machine's devices
-    if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
-        item(c, "Devices", CK_MODULE, "This machine's keyboard, mouse and gamepad", NULL, NULL);
-    }
     // content(): a function's Action
     for (int i = 0; sc.decl && i < sc.decl->params.count; i++) {
         const param *p = &sc.decl->params.items[i];
@@ -4974,9 +4986,14 @@ static void complete_declarations(completion *c)
          "Runs on the GPU for each vertex of a mesh a view draws through it, and changes it in place.",
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
     item(c, "input", CK_SNIPPET, "input Name { fields; Sample }", "What a player sends each tick.",
-         "input ${1:Name}\n{\n    $0\n\n    Sample()\n    {\n    }\n}");
+         "input ${1:Name}\n{\n    $0\n\n    Sample(Devices devices)\n    {\n    }\n}");
     item(c, "event", CK_SNIPPET, "event Name { fields }", "Something that happened, sent with Send.",
          "event ${1:Name}\n{\n    $0\n}");
+    item(c, "command", CK_SNIPPET, "command Name { fields }", "A player's untrusted submission, sent from local code to the match.",
+         "command ${1:Name}\n{\n    $0\n}");
+    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }",
+         "Checks the authenticated sender and untrusted payload before changing match state.",
+         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "scene", CK_SNIPPET, "scene Name { fields }", "Entities that load and unload together, like a level.",
          "scene ${1:Name}\n{\n    $0\n}");
     item(c, "local scene", CK_SNIPPET, "local scene Name { fields }", "A scene on this machine only, like a menu.",
@@ -5101,7 +5118,7 @@ typedef enum header_kind {
     HEADER_SYSTEM,  // A system's or view's, or a handler's after its trigger: system Move(mut Body body)
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
-    HEADER_SAMPLE,  // The input's Sample and Sanitize: local singletons
+    HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
     HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, mut Color color, Sun sun)
 } header_kind;
 
@@ -5118,7 +5135,7 @@ static header_kind top_header(const int i)
 {
     if (i < 1) return HEADER_NONE;
     const token *name = &DOC->toks[i - 1];
-    if (name->kind == T_IDENT && str_eq_c(name->text, "event")) return HEADER_TRIGGER;
+    if (name->kind == T_IDENT && (str_eq_c(name->text, "event") || str_eq_c(name->text, "command"))) return HEADER_TRIGGER;
     if (i < 2) return HEADER_ROUTINE;
     const token *keyword = &DOC->toks[i - 2];
     if (keyword->kind == T_RPAREN || keyword->kind == T_SYSTEM) return HEADER_SYSTEM; // event(Hit hit) TakeHit(
@@ -5171,7 +5188,7 @@ static bool starts_declaration(const int i)
     if (t->kind == T_LBRACKET && t->at.col == 1) return !attributes_before_field(DOC->toks, i); // Attributes
     if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_IDENT
         && (str_eq_c(t->text, "input") || str_eq_c(t->text, "view") || str_eq_c(t->text, "struct")
-            || str_eq_c(t->text, "event") || str_eq_c(t->text, "enum") || str_eq_c(t->text, "scene")
+            || str_eq_c(t->text, "event") || str_eq_c(t->text, "command") || str_eq_c(t->text, "enum") || str_eq_c(t->text, "scene")
             || str_eq_c(t->text, "local") || str_eq_c(t->text, "namespace")
             || str_eq_c(t->text, "using") || str_eq_c(t->text, "extern") || str_eq_c(t->text, "frag")
             || str_eq_c(t->text, "vert"))) {
@@ -5181,7 +5198,8 @@ static bool starts_declaration(const int i)
         && (DOC->toks[i + 1].kind == T_COMPONENT || DOC->toks[i + 1].kind == T_SINGLETON)) {
         return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_LPAREN && str_eq_c(t->text, "event")) {
+    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_LPAREN
+        && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) {
         return true; // event(Hit hit) TakeHit(...)
     }
     if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_IDENT && str_eq_c(t->text, "async")) {
@@ -5602,14 +5620,18 @@ void analysis_completion(const int line, const int character, jbuf *out)
         }
         if (sample && str_eq_c(DOC->toks[f.open - 1].text, "Sanitize")) break; // It takes nothing
         if (trigger) {
+            const bool command = str_eq_c(DOC->toks[f.open - 1].text, "command");
             if (pk == T_LPAREN) {
-                complete_events(&c, true);
+                complete_events(&c, true, command);
                 complete_namespaces(&c, false);
+            } else if (command && pk == T_COMMA) {
+                item(&c, "PlayerID", CK_STRUCT, "Authenticated command sender", builtin_type_doc(TY_PLAYER), NULL);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
-        } else if (sample) { // Sample(Settings settings): local singletons
+        } else if (sample) { // Sample(Devices devices, Settings settings)
             if (pk == T_LPAREN || pk == T_COMMA) {
+                item(&c, "Devices", CK_CLASS, "This machine's sampled devices", NULL, NULL);
                 for (int i = 0; i < A.prog->decls.count; i++) {
                     const decl *d = A.prog->decls.items[i];
                     if (d->kind == DECL_SINGLETON && d->is_local) item(&c, name_for(d), CK_CLASS, decl_what(d), NULL, NULL);
@@ -5629,7 +5651,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
-                item(&c, "Devices", CK_CLASS, "The devices of the entity's owner, or the server's", NULL, NULL);
+                item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
             }
             item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
             complete_types(&c, true, true, pk != T_MUT);
@@ -6003,10 +6025,10 @@ static const char *check_new_name(const occurrence *target, const str name)
     // Words the parser reads as keywords where a declaration or a part of one
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
-    static const char *const contextual[] = {"input", "view", "struct", "event", "enum", "scene", "local", "namespace",
+    static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
                                              "using", "extern", "const", "frag", "vert", "async", "settings", "operator",
                                              "fails", "in", "by", "offset", "void"};
-    enum { DECL_WORDS = 13 };
+    enum { DECL_WORDS = 14 };
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",

@@ -35,16 +35,16 @@ input PlayerInput
     float2 move;
     bool fire;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
         if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
         if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
         if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
-        var stick = Devices.gamepad.leftStick;
+        var stick = devices.gamepad.leftStick;
         if (Math.Length(stick) > 0.2) move += stick;
-        fire = keys.space.pressed || Devices.gamepad.buttonSouth.pressed;
+        fire = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
     }
 }
 
@@ -131,9 +131,9 @@ view DrawPlayers(Body body, Aim aim, with Owner, Look look)
 
 // The GUI, over the world. The button, Escape or Start bring up the options,
 // and back (Escape or B) puts them away.
-view Options(mut Look look)
+view Options(Devices devices, mut Look look)
 {
-    if (Devices.keyboard.escape.down || Devices.gamepad.start.down) look.open = true;
+    if (devices.keyboard.escape.down || devices.gamepad.start.down) look.open = true;
     GUILayout.Area(Anchor.UpperLeft)
     {
         if (GUILayout.Button("Options")) look.open = true;

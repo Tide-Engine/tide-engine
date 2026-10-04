@@ -10,10 +10,10 @@ local singleton Settings
     float volume = 1;
 }
 
-view Options(mut Settings settings)
+view Options(Devices devices, mut Settings settings)
 {
     if (GUI.Button(Rect(Screen.width - 210, 10, 200, 40), "Options")) settings.open = true;
-    if (Devices.keyboard.escape.down || Devices.gamepad.start.down) settings.open = true;
+    if (devices.keyboard.escape.down || devices.gamepad.start.down) settings.open = true;
 
     GUILayout.Modal(Anchor.MiddleCenter, settings.open)
     {
@@ -169,12 +169,12 @@ local singleton Toolbox
 }
 
 // A toolbox in the window's lower left corner
-view Tools(mut Toolbox box)
+view Tools(Devices devices, mut Toolbox box)
 {
     GUI.ClaimPointer(Rect(0, Screen.height - 200, 200, 200));
     if (box.dragging) GUI.ClaimPointer();
 
-    var pointer = Devices.pointer;
+    var pointer = devices.pointer;
     var over = pointer.position.x < 200 && pointer.position.y < 200;
     if (over && pointer.press.down) box.dragging = true;
     if (!pointer.press.pressed) box.dragging = false;
@@ -183,8 +183,8 @@ view Tools(mut Toolbox box)
     {
         GUI.ClaimKeyboard();
         GUI.ShowKeyboard();
-        box.name += Devices.keyboard.text;
-        if (Devices.keyboard.enter.down) box.renaming = false;
+        box.name += devices.keyboard.text;
+        if (devices.keyboard.enter.down) box.renaming = false;
     }
 }
 ```
