@@ -1,0 +1,178 @@
+scene Main { }
+
+struct Item
+{
+    float3 position;
+    float3 velocity;
+    float mass;
+    float seed;
+    float root;
+    float ordered;
+    int divergent;
+    int bounded;
+    int calls;
+    int defaults;
+    int aggregateDefaults;
+}
+
+singleton Field
+{
+    List<Item> items;
+    int count;
+    bool ready;
+    bool run;
+}
+
+extern int batch_begin(int i);
+extern int batch_call(int i, int j);
+extern int batch_mark(int value);
+
+struct Mark
+{
+    int key;
+    Mark operator +(Mark a, Mark b) { return Mark { key = batch_mark(a.key + b.key) }; }
+}
+
+struct Stamp
+{
+    // The constant syntax can hide a call through a user-defined operator.
+    Mark mark = Mark { key = 1 } + Mark { key = 2 };
+}
+
+component ComponentStamp { Mark mark = Mark { key = 1 } + Mark { key = 2 }; }
+event EventStamp { Mark mark = Mark { key = 1 } + Mark { key = 2 }; }
+
+system Setup(mut Field field)
+{
+    if (field.ready) return;
+    field.ready = true;
+    for (var i = 0; i < field.count; i++)
+    {
+        field.items.Add(Item {
+            position = float3(float(i % 11), float(i % 7), float(i % 3)) * 0.25,
+            mass = 1 + float(i % 5) * 0.1,
+            seed = float(i)
+        });
+    }
+}
+
+// The same inner loop for independent outputs; each sum must stay in order.
+system Fold(mut Field field, Time time)
+{
+    if (!field.run) return;
+    var n = field.items.count;
+    parallel (var i in field.items)
+    {
+        mut var item = field.items[i];
+        mut var pull = float3(0);
+        mut var ordered = 0.0;
+        for (var j = 0; j < n; j++)
+        {
+            var other = field.items[j];
+            var d = other.position - item.position;
+            var r2 = Math.Dot(d, d) + 0.01;
+            pull += d * (other.mass / (r2 * Math.Sqrt(r2)));
+            ordered += other.mass;
+        }
+        item.velocity += pull * time.dt;
+        item.root = Math.Sqrt(item.seed);
+        item.ordered = ordered;
+        // Forgiving reads are still zero, including either end of a flat input.
+        item.position += (field.items[-1].position + field.items[n].position) * time.dt;
+        field.items[i] = item;
+    }
+}
+
+// Each output has its own bound and changes its induction variable: this
+// must retain the ordinary per-output loop even alongside the batched one.
+system DifferentLoops(mut Field field)
+{
+    if (!field.run) return;
+    var n = field.items.count;
+    parallel (var i in field.items)
+    {
+        mut var divergent = 0;
+        for (mut var j = 0; j < n; j++)
+        {
+            j += i % 2;
+            divergent += j;
+        }
+        mut var item = field.items[i];
+        item.divergent = divergent;
+        field.items[i] = item;
+    }
+    parallel (var i in field.items)
+    {
+        mut var bounded = 0;
+        for (var j = 0; j < (Mark { key = i % 5 }).key; j++)
+        {
+            bounded += j;
+        }
+        mut var item = field.items[i];
+        item.bounded = bounded;
+        field.items[i] = item;
+    }
+}
+
+// C may observe calls within one step: don't interleave its prefix with
+// another output's prefix, or move a call across its inner loop.
+system Calls(mut Field field)
+{
+    if (!field.run) return;
+    var n = field.items.count;
+    parallel (var i in field.items)
+    {
+        mut var calls = batch_begin(i);
+        for (var j = 0; j < n; j++)
+        {
+            calls += batch_call(i, j);
+        }
+        mut var item = field.items[i];
+        item.calls = calls;
+        field.items[i] = item;
+    }
+}
+
+// Implicit field defaults take part in the purity proof too. Each step sees
+// its own sequence of calls, even though the literal has no explicit fields.
+system Defaults(mut Field field)
+{
+    if (!field.run) return;
+    var n = field.items.count;
+    parallel (var i in field.items)
+    {
+        var first = Stamp { };
+        mut var total = 0;
+        for (var j = 0; j < n; j++)
+        {
+            var next = Stamp { };
+            total += next.mark.key - first.mark.key;
+        }
+        mut var item = field.items[i];
+        item.defaults = total;
+        field.items[i] = item;
+    }
+}
+
+// Projecting an aggregate literal to a plain value still evaluates every
+// implicit default of the aggregate, regardless of its declaration kind.
+system AggregateDefaults(mut Field field)
+{
+    if (!field.run) return;
+    var n = field.items.count;
+    parallel (var i in field.items)
+    {
+        var first = (ComponentStamp { }).mark;
+        var second = (EventStamp { }).mark;
+        mut var total = 0;
+        for (var j = 0; j < n; j++)
+        {
+            var a = (ComponentStamp { }).mark;
+            var b = (EventStamp { }).mark;
+            total += a.key - first.key + b.key - second.key;
+        }
+        mut var item = field.items[i];
+        item.aggregateDefaults = total;
+        field.items[i] = item;
+    }
+}

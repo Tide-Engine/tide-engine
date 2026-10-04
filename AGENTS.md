@@ -376,6 +376,7 @@ The language shares the engine's name, Tide. Its syntax and semantics are specif
 
 - Performance is a top priority. Weigh design choices by their runtime cost.
 - Runtime, compilation and rendering speed are requirements. Compare equivalent work with the best practical handwritten implementation; an unexplained order-of-magnitude gap is a performance bug to investigate and fix. Runtime comparisons keep the same determinism guarantees. Fast iteration matters alongside the speed of the shipped game.
+- Internal performance changes are authorized when they preserve observable language behavior, including deterministic results, ordering, snapshots and hot reload. Storage, generated code, scheduling, batching and caching are implementation choices; changes to the language's expectations remain the owner's decision.
 - Flexible features are fine even if they cost more, as long as the common, fixed path stays fast.
 - Friction between engine code and user code should be minimal or non-existent.
 - Snapshotting and restoring the full simulation state must be cheap. Rollback depends on it.

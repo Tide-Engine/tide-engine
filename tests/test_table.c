@@ -222,6 +222,140 @@ static bool notes_from(const tide_queue *q, tide_queue_place at, const int32_t f
     return tide_queue_next(q, &at) == NULL;
 }
 
+// Reserve runs, and record the same notes one at a time for comparison. Only
+// the requested payload is written, so alignment padding must stay zero too.
+static void push_note_runs(tide_queue *runs, tide_queue *ordinary, const int32_t first,
+                           const uint32_t count, const uint32_t extra)
+{
+    for (uint32_t done = 0; done < count;) {
+        uint32_t n = count - done;
+        uint8_t *items = tide_queue_push_run(runs, (uint32_t)sizeof(note) + extra, &n);
+        TIDE_REQUIRE(items && n > 0 && n <= count - done);
+        uint32_t stride;
+        memcpy(&stride, items, sizeof stride);
+        for (uint32_t i = 0; i < n; i++) {
+            note *a = (note *)(items + i * stride);
+            note *b = tide_queue_push(ordinary, (uint32_t)sizeof(note) + extra);
+            TIDE_REQUIRE(a->size == b->size);
+            for (uint32_t byte = (uint32_t)sizeof(a->size); byte < a->size; byte++)
+                TIDE_CHECK(((const uint8_t *)a)[byte] == 0);
+            a->value = b->value = first + (int32_t)(done + i);
+            const int pattern = 1 + a->value % 251;
+            memset(a + 1, pattern, extra);
+            memset(b + 1, pattern, extra);
+        }
+        done += n;
+    }
+}
+
+static bool queues_equal(const tide_queue *a, const tide_queue *b)
+{
+    if (a->count != b->count || tide_queue_hash(7, a) != tide_queue_hash(7, b)) return false;
+    tide_queue_place left = {0}, right = {0};
+    for (uint32_t i = 0; i < a->count; i++) {
+        const note *x = tide_queue_next(a, &left), *y = tide_queue_next(b, &right);
+        if (!x || !y || x->size != y->size || memcmp(x, y, x->size)) return false;
+    }
+    if (tide_queue_next(a, &left) || tide_queue_next(b, &right)) return false;
+    const uint32_t size = tide_queue_packed_size(a);
+    if (size != tide_queue_packed_size(b)) return false;
+    uint8_t *one = malloc(size), *two = malloc(size);
+    if (!one || !two) { free(one); free(two); return false; }
+    tide_writer w1 = {one, size, 0, false, false}, w2 = {two, size, 0, false, false};
+    tide_queue_pack(a, &w1);
+    tide_queue_pack(b, &w2);
+    const bool equal = !w1.overflow && !w2.overflow && w1.size == size && w2.size == size &&
+                       memcmp(one, two, size) == 0;
+    free(one);
+    free(two);
+    return equal;
+}
+
+TIDE_TEST(table_queue_runs_keep_the_ordinary_format)
+{
+    tide_queue runs = {0}, ordinary = {0}, snapshot = {0};
+    uint32_t zero = 0;
+    TIDE_CHECK(tide_queue_push_run(&runs, 1, &zero) == NULL && zero == 0);
+    TIDE_CHECK(runs.count == 0 && runs.pages == 0 && runs.kept == 0 && runs.page == NULL);
+    const struct { uint32_t count, extra; } groups[] = {
+        {1021, 0}, {17, 1}, {613, 25}, {1, TIDE_QUEUE_PAGE - (uint32_t)sizeof(note)},
+        {2, 3u * TIDE_QUEUE_PAGE + 1u}, {1023, 7}
+    };
+    int32_t first = 0;
+    for (uint32_t i = 0; i < sizeof groups / sizeof groups[0]; i++) {
+        push_note_runs(&runs, &ordinary, first, groups[i].count, groups[i].extra);
+        first += (int32_t)groups[i].count;
+        // Runs and ordinary pushes may be interleaved without changing order.
+        push_note(&runs, first, 9);
+        push_note(&ordinary, first++, 9);
+    }
+    TIDE_CHECK(runs.pages > 5 && notes_from(&runs, (tide_queue_place){0}, 0, first));
+    TIDE_CHECK(queues_equal(&runs, &ordinary));
+    const tide_queue_place end = tide_queue_end(&runs);
+    const uint32_t count = runs.count, pages = runs.pages, kept = runs.kept;
+    tide_queue_page **const storage = runs.page;
+    TIDE_CHECK(tide_queue_push_run(&runs, 3u * TIDE_QUEUE_PAGE, &zero) == NULL && zero == 0);
+    const tide_queue_place after = tide_queue_end(&runs);
+    TIDE_CHECK(runs.count == count && runs.pages == pages && runs.kept == kept && runs.page == storage);
+    TIDE_CHECK(end.page == after.page && end.offset == after.offset);
+
+    tide_queue_copy(&snapshot, &runs);
+    TIDE_CHECK(queues_equal(&snapshot, &ordinary));
+    // Dirty payload and padding before reuse: every run item must be zeroed,
+    // even where a different size lands over a previous item's size header.
+    tide_queue_place at = {0};
+    note *item;
+    while ((item = tide_queue_next(&runs, &at)) != NULL)
+        memset((uint8_t *)item + sizeof item->size, 0xa5, item->size - (uint32_t)sizeof item->size);
+    tide_queue_clear(&runs);
+    TIDE_CHECK(queues_equal(&snapshot, &ordinary));
+    tide_queue_clear(&ordinary);
+    push_note_runs(&runs, &ordinary, 0, 1500, 13);
+    push_note_runs(&runs, &ordinary, 1500, 1, 3u * TIDE_QUEUE_PAGE + 1u);
+    TIDE_CHECK(queues_equal(&runs, &ordinary));
+    TIDE_CHECK(snapshot.count == count && notes_from(&snapshot, (tide_queue_place){0}, 0, first));
+    tide_queue_free(&runs);
+    tide_queue_free(&ordinary);
+    tide_queue_free(&snapshot);
+}
+
+TIDE_TEST(table_queue_runs_append_and_resume_reading)
+{
+    // The short append copies into a partial page, and the long one hands
+    // pages over. A reader waiting at the end must see both kinds of append.
+    const uint32_t counts[] = {1, 1300};
+    for (uint32_t i = 0; i < sizeof counts / sizeof counts[0]; i++) {
+        tide_queue to = {0}, from = {0}, ordinary = {0}, part = {0}, snapshot = {0};
+        push_note_runs(&to, &ordinary, 0, 11, 9);
+        note *const first = to.page[0] ? (note *)(to.page[0] + 1) : NULL;
+        tide_queue_place at = tide_queue_end(&to);
+        TIDE_CHECK(tide_queue_next(&to, &at) == NULL);
+        const tide_queue_place end = at;
+        push_note_runs(&from, &part, 11, counts[i], 17);
+        tide_queue_copy(&snapshot, &from);
+        tide_queue_append(&to, &from);
+        tide_queue_append(&ordinary, &part);
+        TIDE_CHECK(from.count == 0 && from.pages == 0 && queues_equal(&to, &ordinary));
+        TIDE_CHECK(first && first->value == 0);
+        TIDE_CHECK(notes_from(&to, end, 11, (int32_t)counts[i]));
+        const note *next = tide_queue_next(&to, &at);
+        TIDE_CHECK(next && next->value == 11);
+        // A copied queue keeps its records while the source's empty pages
+        // are reused, and appending never prevents a later run reservation.
+        push_note_runs(&from, &part, 0, 700, 5);
+        TIDE_CHECK(notes_from(&snapshot, (tide_queue_place){0}, 11, (int32_t)counts[i]));
+        TIDE_CHECK(queues_equal(&from, &part));
+        push_note_runs(&to, &ordinary, 11 + (int32_t)counts[i], 600, 0);
+        TIDE_CHECK(queues_equal(&to, &ordinary));
+        TIDE_CHECK(notes_from(&to, (tide_queue_place){0}, 0, 611 + (int32_t)counts[i]));
+        tide_queue_free(&to);
+        tide_queue_free(&from);
+        tide_queue_free(&ordinary);
+        tide_queue_free(&part);
+        tide_queue_free(&snapshot);
+    }
+}
+
 TIDE_TEST(table_queue_keeps_items_in_place)
 {
     tide_queue q = {0};
