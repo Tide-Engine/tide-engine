@@ -332,7 +332,7 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-Every float, vector, quaternion and color a view reads of the match is blended. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

@@ -47,7 +47,16 @@ singleton Physics
 
 Singletons start with their defaults when the world is created. Systems take them as parameters, like components (see [Systems](./systems.md)).
 
-`Time` is a built-in singleton, with `dt`, the length of a tick in seconds, and `tick`, which counts from 0. Systems can read it, but not write it.
+`Time` is a built-in singleton. Systems can read it, but not write it:
+
+| Field | What it is |
+|---|---|
+| `float dt` | The length of a tick in seconds |
+| `int tick` | The tick, which counts from 0 |
+| `float t` | The seconds since the match started: `tick * dt` |
+| `int tickRate` | The ticks in a second: 1 / `dt` to the nearest whole number |
+
+`t` is worked out from the tick each time, so it never drifts, and [views](./views.md#smooth-at-any-tick-rate) see it move every frame. A float holds about 7 digits, so it gets coarser as the match goes on (after a day, its steps are about 8 milliseconds): a timer that has to be exact counts in `tick`.
 
 ## Spawning entities
 

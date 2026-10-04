@@ -965,7 +965,8 @@ static const setting settings[] = {
      "The window's title. Without it, it's the game's name: its folder's under tide, its target's under CMake. "
      "`--title` and CMake's `TITLE` take precedence."},
     {"tickRate", TY_INT, "60",
-     "How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / tickRate. The machine that runs "
+     "How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / tickRate, and code reads the rate "
+     "as `Time.tickRate`. The machine that runs "
      "the match decides, and every player ticks at its rate. A new rate takes effect when a match starts."},
     {"maxPlayers", TY_INT, "16",
      "How many players a match takes, from 1 to 256. The world keeps an input for each, and every player's "

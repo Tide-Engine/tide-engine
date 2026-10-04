@@ -364,7 +364,10 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Built-ins
 
-- `Time` is a built-in singleton with `float dt` (the fixed tick length) and `int tick` (starts at 0). Systems can read it but not write it.
+- `Time` is a built-in singleton with `float dt` (the fixed tick length), `int tick` (starts at 0), `float t` (the seconds since the match started) and `int tickRate` (the ticks in a second). Systems can read it but not write it.
+  - `t` is `tick * dt`, worked out from the tick each time and never added to, so it doesn't drift. Views see it blended between ticks like any float of the match, so it moves every frame, in the frags and verts they draw through too.
+  - A float holds about 7 digits, so `t` gets coarser as the match goes on: after a day its steps are about 8 milliseconds. What has to be exact counts in `tick`.
+  - `tickRate` is 1 / `dt` to the nearest whole number: the `tickRate` setting, or the rate the machine that runs the match gave it.
 - `Debug.Log(text)` prints a line for whoever runs the game: the terminal under `tide run`, the browser's console on the web, the system's log on Android. `Debug.Assert(condition)` and `Debug.Assert(condition, text)` stop the program when the condition is false, naming the file, the line and the source line, and the text. Both go anywhere, and neither changes the match, so it stays the same on every machine with or without them. A tick a client runs again after a rollback logs again: a log of match state is best prefixed with `Time.tick`.
 
 ### Syntax
@@ -1053,7 +1056,7 @@ input PlayerInput
 - Drawing is immediate mode: code calls `Draw` functions every frame, and nothing is kept between frames.
 - Views never change the match. They can change local state (see Local state).
 - Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
@@ -1099,8 +1102,7 @@ struct BoxVertex
 // Once per vertex: changes it in place, as a system changes a component
 vert Wave(mut BoxVertex vertex, Time time)
 {
-    float seconds = time.tick * time.dt;
-    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+    vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 
 // Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write

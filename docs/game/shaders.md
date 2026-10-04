@@ -13,8 +13,7 @@ struct BoxVertex
 // Once per vertex: changes it in place
 vert Wave(mut BoxVertex vertex, Time time)
 {
-    float seconds = time.tick * time.dt;
-    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+    vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 
 // Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write
@@ -70,7 +69,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 ```csharp
 vert Wave(mut BoxVertex vertex, Time time)
 {
-    vertex.position.y += Math.Sin(time.tick * time.dt * 2 + vertex.position.x) * 0.1;
+    vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 ```
 
@@ -81,7 +80,7 @@ A vert takes its vertex `mut` and changes it in place: where it is, and anything
 After the vertex (and a frag's color), a frag or vert takes the game's state, as a view does:
 
 - **Components** are those of the entity the view that draws runs for. `box.tint` in the frag above is the tint of the box being drawn: a view that runs for a thousand boxes draws them all at once, each with its own.
-- **Singletons**, the match's or [local](./local-state.md) ones, and `Time`.
+- **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 

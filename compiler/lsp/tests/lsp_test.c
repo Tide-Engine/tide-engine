@@ -588,6 +588,14 @@ TIDE_TEST(lsp_hover)
     TIDE_CHECK(has(normalize, "Math.Normalize(float2 vector)"));
     TIDE_CHECK(has(normalize, "gives zero, never NaN"));
     TIDE_CHECK(has(normalize, "gives the identity, never NaN")); // A quaternion's
+
+    // Time's fields say what they are, where they're read and where they're offered
+    open_document(GAME_TYPES "system Move(mut Body body, Time time)\n{\n    body.radius = time.t$ * time.tickRate;\n}\n");
+    const char *seconds = request("textDocument/hover");
+    TIDE_CHECK(has(seconds, "float t") && has(seconds, "The seconds since the match started: `tick * dt`"));
+    const char *time = complete(GAME_TYPES "system Move(mut Body body, Time time)\n{\n    body.radius = time.$\n}\n");
+    TIDE_CHECK(offers(time, "dt") && offers(time, "tick") && offers(time, "t") && offers(time, "tickRate"));
+    TIDE_CHECK(has(time, "The ticks in a second") && has(time, "The length of a tick in seconds"));
 }
 
 TIDE_TEST(lsp_definition)

@@ -8393,15 +8393,23 @@ static decl *builtin_event(const char *name, const bool world)
 
 static void add_builtins(program *prog)
 {
-    // singleton Time { float dt; int tick; }
+    // singleton Time { float dt; int tick; float t; int tickRate; }: t is
+    // tick * dt, the seconds since the match started, which the tick sets, and
+    // tickRate the ticks a second, 1 / dt to the nearest, set as the match
+    // starts (gen_api). t is a float of the match's, so views and what they
+    // draw through see it blended.
     decl *time = NEW(decl);
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
     const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    vec_push(time->fields, t);
+    vec_push(time->fields, rate);
     prog->time = time;
 
     // What a frag and a vert take beside the game's state, as parameters:
