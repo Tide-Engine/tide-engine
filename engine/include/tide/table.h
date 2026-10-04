@@ -186,6 +186,30 @@ static inline void *tide_queue_push(tide_queue *q, uint32_t size)
     return item;
 }
 
+// Up to *count consecutive zeroed items of one size, on the last page.
+// Returns their first item and the number it pushed. The caller fills them
+// before pushing anything else; their ordinary size headers are already set.
+static inline void *tide_queue_push_run(tide_queue *q, uint32_t size, uint32_t *count)
+{
+    if (!*count) return NULL;
+    size = size < 8u ? 8u : (size + 7u) & ~7u;
+    tide_queue_page *last = q->pages ? q->page[q->pages - 1u] : NULL;
+    uint32_t n = last ? (last->room - last->used) / size : 0u;
+    if (!n) {
+        *count = 1u;
+        return tide_queue_push_page(q, size);
+    }
+    if (n > *count) n = *count;
+    if (n > UINT32_MAX - q->count) tide_out_of_memory();
+    uint8_t *items = (uint8_t *)(last + 1) + last->used;
+    last->used += n * size;
+    q->count += n;
+    memset(items, 0, n * size);
+    for (uint32_t i = 0; i < n; i++) memcpy(items + i * size, &size, sizeof size);
+    *count = n;
+    return items;
+}
+
 // A place in a queue: an item's, or the end's.
 typedef struct tide_queue_place {
     uint32_t page;

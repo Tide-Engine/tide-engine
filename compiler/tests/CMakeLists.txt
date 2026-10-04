@@ -46,6 +46,7 @@ tide_e2e_test(methods)
 tide_e2e_test(operators)
 tide_e2e_test(events)
 tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
+tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(commands)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
@@ -73,6 +74,8 @@ tide_e2e_test(lists)
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
+tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
+tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes
 tide_e2e_test(parallel_work) # Unknown nested loop work must still select the worker pool
 # These share the same behavioral check, with a different nested-loop form.
 foreach(variant IN ITEMS condition step block constant)
