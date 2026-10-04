@@ -1,0 +1,82 @@
+settings { appId = "tests.tide.io"; }
+
+local scene Main { }
+
+local singleton Results
+{
+    string text;
+    List<byte> bytes;
+    List<string> paths;
+    string fileName;
+    string parent;
+    string extension;
+    bool missing;
+    bool wrote;
+    int saved;
+    int after;
+    bool scanned;
+    Grid2<int> scan = Grid2(2, 1);
+}
+
+void Write(string path) fails IOError
+{
+    try File.WriteAllText(path, "héllo");
+    try File.AppendAllText(path, "!");
+}
+
+// The local provider follows transitive helper calls.
+void Save(string path) fails IOError
+{
+    try Write(path);
+}
+
+bool Leaf() { return File.Exists("save"); }
+bool WrappedRead() { return Leaf(); }
+
+view ReadInOrder(mut Results results)
+{
+    if (results.scanned) return;
+    foreach (var at in results.scan) results.scan[at] = WrappedRead() ? 1 : 0;
+    results.scanned = true;
+}
+
+async void Barrier() fails IOError
+{
+    try await Storage.Flush();
+}
+
+async void Commit(mut Results results)
+{
+    var before = 17;
+    if (await Barrier() is IOError error)
+    {
+        results.saved = -int(error);
+    }
+    else results.saved = 1;
+    results.after = before;
+}
+
+local event(Spawned) Setup(with Main, mut Results results)
+{
+    var root = Application.persistentDataPath;
+    var path = Path.Combine(root, "save.txt");
+    Directory.CreateDirectory(root)!;
+    File.Create(path)!;
+    results.wrote = !(Save(path) is IOError);
+    results.text = File.ReadAllText(path) ?? "failed";
+    File.WriteAllBytes(Path.Combine(root, "save.bin"), [0, 128, 255])!;
+    results.bytes = File.ReadAllBytes(Path.Combine(root, "save.bin")) ?? [];
+    results.paths = Directory.GetFiles(root) ?? [];
+    results.fileName = Path.GetFileName(path);
+    results.parent = Path.GetDirectoryName(path);
+    results.extension = Path.GetExtension(path);
+    results.missing = File.ReadAllText("missing") is IOError.NotFound;
+    File.Copy(path, "copy.txt")!;
+    File.Move("copy.txt", "moved.txt", true)!;
+    File.Delete("moved.txt")!;
+    Directory.CreateDirectory(Application.temporaryCachePath)!;
+    Directory.Move("cache", "moved-cache")!;
+    Directory.GetDirectories(root, true)!;
+    Directory.Delete("moved-cache", true)!;
+    Commit(results);
+}

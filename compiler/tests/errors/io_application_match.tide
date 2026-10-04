@@ -1,0 +1,3 @@
+// expect: Application paths can only be used in local code
+scene Main { }
+event(Spawned) Setup(with Main) { var path = Application.persistentDataPath; }

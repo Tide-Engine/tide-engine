@@ -96,6 +96,7 @@ typedef enum type_kind {
     TY_ERROR, // Already reported; suppresses follow-up errors.
     TY_VOID,
     TY_BOOL,
+    TY_BYTE,      // byte: an unsigned 8-bit integer; arithmetic promotes to int
     TY_INT,
     TY_LONG,       // long: a 64-bit int. An int converts to it implicitly; floats convert both ways only explicitly
     TY_INT2,
@@ -407,6 +408,8 @@ typedef struct decl {
     loc draws_at;        // ...where it first does
     bool render_resources; // Uses local rendering handles, directly or through its calls
     loc render_resources_at;
+    bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
+    loc io_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -623,6 +626,9 @@ struct expr {
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
+    bool io_operation;       // File/Directory operation: gets this machine's provider
+    bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
+    bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
@@ -860,6 +866,8 @@ typedef struct program {
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
+    decl *io_error;      // The built-in IOError enum, shared with tide/io.h
+    VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time

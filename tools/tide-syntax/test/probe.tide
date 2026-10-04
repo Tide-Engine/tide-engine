@@ -194,3 +194,13 @@ view Boxes(with Box, Models models)
     Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
     Draw3D.Cube(float3(0, 0, 5), float3(1), Color.red);
 }
+
+// Local filesystem APIs and binary values.
+async void SaveBytes(List<byte> bytes) fails IOError
+{
+    var root = Application.persistentDataPath;
+    Directory.CreateDirectory(root)!;
+    try File.WriteAllBytes(Path.Combine(root, "save.bin"), bytes);
+    try await Storage.Flush();
+    fail IOError.OutOfSpace;
+}

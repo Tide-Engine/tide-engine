@@ -81,6 +81,8 @@ A networking-first game engine:
 
 ## Tech stack
 
+- Local files are `File`, `Directory`, `Path`, and the read-only runtime properties `Application.persistentDataPath` and `Application.temporaryCachePath` (`docs/game/files.md`). File contents are UTF-8 text or `List<byte>`; `byte` is an unsigned 8-bit scalar. File/directory operations, application paths and `await Storage.Flush()` are local only, including functions that reach them; their results reach the match through input. `Path` is pure. Whole-file operations fail with `IOError`, except `Exists`, which is a bool. Directory results are sorted full paths, with recursion off by default; directory creation creates parents, writes do not, and recursive deletion is explicit. Relative paths use the persistent root. Save identity is the stable `appId`, never the window title. Native files use the OS; browser files are an in-memory filesystem loaded from IndexedDB before startup, with automatic background commits and an awaitable flush that confirms preceding changes committed. The page keeps its files and commits across hot reload. Storage failures are reported, and failed commits retain dirty data for retry; temporary storage stays usable when persistence is unavailable. Open file handles and streams are outside this first API.
+
 - The engine is written in C and compiled with clang on every platform.
 - The custom language transpiles to C.
 - User code and engine code are compiled and optimized together, so calls between them cost nothing.

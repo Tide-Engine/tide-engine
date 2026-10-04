@@ -37,6 +37,11 @@ static inline void tide_run_local_init(void *local)
     tide_local_init(local);
 }
 
+static inline void tide_run_set_io(void *local, const tide_io *io)
+{
+    tide_local_set_io(local, io);
+}
+
 #ifdef TIDE_HAS_INPUT
 static inline void tide_run_sample_input(const tide_devices *devices, const void *local, void *input)
 {
@@ -120,6 +125,9 @@ static const tide_host_game tide_host_game_api = {
     .main_is_local = true,
 #endif
     .local_init = tide_run_local_init,
+#ifdef TIDE_HAS_IO
+    .set_io = tide_run_set_io,
+#endif
     .local_free = tide_run_local_free,
     .local_pack = tide_run_local_pack,
     .local_unpack = tide_run_local_unpack,

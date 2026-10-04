@@ -141,6 +141,7 @@ static bool is_struct_like(const type t)
 // False for a type it can't have.
 static bool type_words(const type t, int *floats, int *ints)
 {
+    if (t.kind == TY_BYTE) return false;
     const int dim = type_dim(t);
     if (dim > 0) {
         *(type_is_float_based(t) ? floats : ints) += dim;
@@ -186,6 +187,7 @@ static bool type_fits(emit *em, const type t, const loc at)
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
     switch (t.kind) {
+    case TY_BYTE: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_LIST:
@@ -1148,6 +1150,10 @@ static void ex(emit *em, const expr *e)
         return;
     case E_CALL:
     case E_METHOD:
+        if (e->io_operation || e->path_operation || e->storage_flush) {
+            refuse(em, e->at, "file and directory access belongs to local CPU code: read it before drawing");
+            return;
+        }
         if (e->type.kind != TY_VOID && !type_fits(em, e->type, e->at)) return;
         ex_call(em, e);
         return;
