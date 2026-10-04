@@ -122,12 +122,24 @@ function(tide_add_game target)
     if(NOT written STREQUAL warnings)
         file(WRITE "${expected}" "${warnings}")
     endif()
+    # The game's files go to tidec as a list in a file (@list), written only
+    # when it changes: a big game's are more than a command line holds
+    # (32,767 characters on Windows).
+    set(listed "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.sources")
+    list(JOIN sources "\n" source_lines)
+    set(written "-")
+    if(EXISTS "${listed}")
+        file(READ "${listed}" written)
+    endif()
+    if(NOT written STREQUAL source_lines)
+        file(WRITE "${listed}" "${source_lines}")
+    endif()
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
-            -- ${sources} -o "${out_dir}" --name "${name}" ${layout}
-        DEPENDS ${TIDEC_DEPENDS} ${sources} "${expected}" "${TIDE_RUN_TIDEC}"
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout}
+        DEPENDS ${TIDEC_DEPENDS} ${sources} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
@@ -173,7 +185,7 @@ int main(int argc, char **argv)
     # `cmake --build --preset <preset> --target <target>_schedule` prints which
     # systems can run at the same time, and why the others wait.
     add_custom_target(${target}_schedule
-        COMMAND ${TIDEC_COMMAND} ${sources} --schedule --name "${name}"
+        COMMAND ${TIDEC_COMMAND} "@${listed}" --schedule --name "${name}"
         DEPENDS ${TIDEC_DEPENDS}
         VERBATIM
         USES_TERMINAL)

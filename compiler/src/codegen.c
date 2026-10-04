@@ -8454,15 +8454,17 @@ static void gen_api(gen *g)
     sb_put(o, "    tide_apply_commands(w);\n}\n\n");
 
     // The systems, as tide_run_systems takes them (tide/jobs.h): in the tick's
-    // order, each with the systems it waits for (the schedule).
+    // order, each with the systems it waits for (the schedule). Only the
+    // waits that are its own: one that goes through another system is done
+    // by the time that system is.
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         if (sys->waits.count == 0) continue;
         sb_printf(o, "static const uint32_t tide_waits_%s[] = {", decl_cname(sys));
+        int written = 0;
         for (int k = 0; k < sys->waits.count; k++) {
-            int on = 0;
-            while (prog->systems.items[on] != sys->waits.items[k].on) on++;
-            sb_printf(o, "%s%du", k ? ", " : "", on);
+            const system_wait *wait = &sys->waits.items[k];
+            if (!wait->through) sb_printf(o, "%s%du", written++ ? ", " : "", wait->on->index);
         }
         sb_put(o, "};\n");
     }
@@ -8479,7 +8481,9 @@ static void gen_api(gen *g)
             sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
             if (system_splits(sys) && system_owns(g, sys)) sb_printf(o, "tide_own_%s, ", name);
             else sb_put(o, "NULL, ");
-            sb_printf(o, "%s, %d, ", system_splits(sys) ? "true" : "false", sys->waits.count);
+            int own_waits = 0;
+            for (int k = 0; k < sys->waits.count; k++) own_waits += !sys->waits.items[k].through;
+            sb_printf(o, "%s, %d, ", system_splits(sys) ? "true" : "false", own_waits);
             if (sys->waits.count) sb_printf(o, "tide_waits_%s", name);
             else sb_put(o, "NULL");
             sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", settles ? "true" : "false");

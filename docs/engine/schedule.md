@@ -50,6 +50,8 @@ Event handlers, at the end of the tick, as their events are sent:
 
 In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover.
 
+In a big game, the long lists are cut short. Every wait that's a system's own is there, but the ones that go through another system (`and through Fire`) and the systems it runs alongside are named up to 32 each and counted past that: `after 412 more, through those`, `alongside Expire, Fade and 168 more`.
+
 ## When systems wait
 
 Two systems **conflict** when one writes a component or singleton the other reads or writes. Conflicting systems keep their order in the tick; `[Before]` and `[After]` order systems too. A system starts as soon as everything it waits for is done, with no barriers between stages: a system's stage is only how deep it is in that chain.

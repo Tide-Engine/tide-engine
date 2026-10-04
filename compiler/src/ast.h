@@ -382,8 +382,10 @@ typedef struct decl {
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
 
     // Systems in the tick, from analyze_parallelism
-    VEC(system_wait) waits;       // Earlier systems it must wait for
-    VEC(struct decl *) alongside; // Systems it can run at the same time as
+    VEC(system_wait) waits;       // Earlier systems it must wait for: every one that's its own, and the first few through others
+    int waits_unlisted;           // ...and how many more it waits for through others
+    VEC(struct decl *) alongside; // Systems it can run at the same time as: the first few
+    int alongside_count;          // ...and how many there are
     int stage;                    // 1 + the deepest stage it waits for; 0 before the analysis
 } decl;
 
@@ -686,9 +688,19 @@ typedef struct change_site {
 
 typedef VEC(change_site) change_sites;
 
+// Declarations by a hash of a name of theirs, for the checker (check.c).
+typedef struct decl_index {
+    int *first;  // By bucket: the first declaration there, or -1
+    int *next;   // By declaration: the next one in its bucket, in decls' order, or -1
+    int buckets; // A power of two
+    int count;   // The declarations it covers
+} decl_index;
+
 typedef struct program {
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
+    decl_index by_name;   // ...by namespace and name, once the checker asks
+    decl_index by_c_name; // ...and by name in generated C
 
     // Filled by the checker
     VEC(decl *) components;
@@ -779,7 +791,7 @@ typedef struct fix {
 program *program_new(void);
 
 // Works out which systems in the tick can run at the same time, and why the
-// others wait (fills decl.waits, alongside and stage). Two systems conflict
+// others wait (fills decl.waits, alongside, their counts and stage). Two systems conflict
 // when one writes a component or singleton the other reads or writes, unless
 // their entities can never be the same (disjoint archetypes). Conflicting
 // systems keep their order in the tick, and [Before]/[After] order them too.

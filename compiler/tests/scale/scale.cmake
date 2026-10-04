@@ -6,15 +6,21 @@
 # namespaces. With 150 parts (26,000 lines), compiling it ran out of memory
 # after minutes, at 49 GB, while codegen built every declaration's C name
 # again at each use and checked each local's name against every declaration
-# (name_program in compiler/src/codegen.c); it takes seconds now, most of
-# them the schedule's, as every part's systems write the same components. The
+# (name_program in compiler/src/codegen.c). With 200, the schedule alone took
+# most of a minute, as every part's systems write the same components and
+# its analysis went through every pair of a system's waits, and with 800 the
+# checker took ten seconds to look names up among every declaration. With 600
+# parts (104,000 lines, 2,402 systems) it takes a few seconds now. The
 # ceiling is far above that, so machines of any speed pass, and a compiler
 # that goes quadratic again fails.
+#
+# The files go to tidec as a list in a file (@list), as tide_add_game passes
+# them: 600 paths are more than a command line holds on Windows.
 #
 # cmake -DTIDEC=<tidec> -DOUT=<folder> [-DPARTS=<n>] [-DSECONDS=<n>] -P scale.cmake
 
 if(NOT PARTS)
-    set(PARTS 150)
+    set(PARTS 600)
 endif()
 if(NOT SECONDS)
     set(SECONDS 300)
@@ -267,10 +273,12 @@ endforeach()
 
 file(GLOB files "${game}/*.tide")
 list(SORT files)
+list(JOIN files "\n" listed)
+file(WRITE "${OUT}/sources.txt" "${listed}\n")
 file(MAKE_DIRECTORY "${OUT}/out")
 string(TIMESTAMP started "%s")
 execute_process(
-    COMMAND "${TIDEC}" ${files} -o "${OUT}/out" --name game
+    COMMAND "${TIDEC}" "@${OUT}/sources.txt" -o "${OUT}/out" --name game
     RESULT_VARIABLE result
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr
@@ -287,3 +295,24 @@ if(NOT stderr STREQUAL "")
     message(FATAL_ERROR "tidec warned about the game of ${PARTS} parts:\n${stderr}")
 endif()
 message(STATUS "tidec compiled ${PARTS} parts (${lines} lines) in ${took} seconds")
+
+# Its schedule: every system is there, and a system's long lists are cut
+# short, the waits through other systems and those it runs alongside (see
+# compiler/src/parallel.c).
+execute_process(
+    COMMAND "${TIDEC}" "@${OUT}/sources.txt" --schedule --name game
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr
+    TIMEOUT ${SECONDS})
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "tidec --schedule failed on the game of ${PARTS} parts: ${result}\n${stderr}")
+endif()
+math(EXPR systems "${PARTS} * 4 + 2")
+foreach(expected "game: ${systems} systems each tick" "more, through those\n" " more\n")
+    string(FIND "${stdout}" "${expected}" found)
+    if(found EQUAL -1)
+        string(SUBSTRING "${stdout}" 0 4000 start)
+        message(FATAL_ERROR "the schedule of ${PARTS} parts doesn't say '${expected}'. It starts:\n${start}")
+    endif()
+endforeach()

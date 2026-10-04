@@ -93,6 +93,11 @@ typedef void (*diag_sink)(void *user, diag_severity severity, loc at, const char
 
 // Forgets every source file and error, before compiling a program.
 void diag_reset(void);
+
+// With TIDEC_TIMES set in the environment, says on stderr how long the phase
+// that just ended took (the time since the last call), under `what`; NULL
+// starts the clock.
+void diag_phase(const char *what);
 // Registers a source file and sets src->file: locations in it carry that index.
 void diag_add_source(source *src);
 const source *diag_source(int file);
