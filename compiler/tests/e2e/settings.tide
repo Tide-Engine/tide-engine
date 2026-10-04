@@ -2,11 +2,13 @@
 
 const int RATE = 20;
 const string NAME = "Tide \"settings\"";
+const bool SHOW_STATS = true;
 
 settings
 {
     title = NAME;
     tickRate = RATE + 10;
+    stats = SHOW_STATS;
 }
 
 scene Main { }

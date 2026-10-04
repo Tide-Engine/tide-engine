@@ -891,6 +891,7 @@ typedef struct program {
     const expr *version;       // version, likewise
     bool host_migration;       // hostMigration
     bool delay_prediction;     // prediction = Prediction.Delay: clients never predict (tide_prediction)
+    bool stats;                // stats: the host shows its stats overlay
     decl *prediction;          // The built-in enum Prediction
 } program;
 

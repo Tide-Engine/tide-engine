@@ -9,7 +9,7 @@ typedef struct build_options {
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
     const char *output; // Where the program goes; NULL for <folder>/build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
-    bool stats;         // Show the frame rate, ping, bandwidth, tick, entity count and threads
+    bool stats;         // Show the stats overlay, whether or not the game's stats setting does
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,

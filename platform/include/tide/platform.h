@@ -120,6 +120,15 @@ int tide_platform_fps(void);
 // and with WebGL 2 where it doesn't.
 const char *tide_platform_renderer(void);
 
+// How many draw calls the last list drawn took (tide_platform_draw), the
+// overlay's aside: a run of shapes, of text, or of one mesh's instances is one.
+uint32_t tide_platform_draw_calls(void);
+
+// How much memory the program has, in bytes, as the system counts it: what it
+// keeps in RAM or, on the web, its WebAssembly memory, which only grows. 0
+// where the system doesn't say.
+uint64_t tide_platform_memory(void);
+
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
 
