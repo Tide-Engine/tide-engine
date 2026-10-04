@@ -27,6 +27,8 @@ static const struct {
     {"PlayerID", TY_PLAYER, "p", "tide_player_id"},
     {"Color", TY_COLOR, "c", "tide_color"},
     {"Rect", TY_RECT, "r", "tide_rect"},
+    {"Texture", TY_TEXTURE, "texture", "tide_texture_ref"},
+    {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])

@@ -1,0 +1,4 @@
+// expect: 'Capture' can't hold rendering resources in match state
+scene Main { }
+struct Surface { RenderTarget destination; }
+event Capture { Surface surface; }

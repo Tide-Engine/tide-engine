@@ -83,7 +83,8 @@ After the vertex (and a frag's color), a frag or vert takes the game's state, as
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
-- With [`Draw2D.Instanced` or `Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too.
+- With [`Draw2D.Instanced`/`Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too.
+- A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
@@ -96,7 +97,7 @@ view DrawBoxes(with Box, Models models)
 
 What a frag sees of the match is what a view sees: [blended between ticks](./views.md#smooth-at-any-tick-rate), so it's smooth at any tick rate.
 
-There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw2D.Instanced` or `Draw3D.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
+There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
 
 ```csharp
 local singleton Look
@@ -198,7 +199,7 @@ vert Place(mut Sprite vertex, Body body)
 
 ### Instances from a list
 
-`Draw2D.Instanced(vertices, indices, instances)` and `Draw3D.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
+`Draw3D.Instanced(vertices, indices, instances)` and `Draw3D.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
 
 For a 3D mesh, a `List<float4x4>` supplies its transforms:
 
@@ -243,10 +244,10 @@ view GrassField(Foliage foliage, Models models)
 - For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
 - Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
-- Textures, filters, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A draw with a frag samples its own grids and takes no texture argument.
+- Textures, filters, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
 
-An ordinary instance parameter is supplied only by `Draw2D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
+An ordinary instance parameter is supplied only by `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
 
 ## Looking at what's generated
 

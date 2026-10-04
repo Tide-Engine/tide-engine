@@ -1,0 +1,33 @@
+scene Main { }
+
+struct Surface { RenderTarget target; Texture image; }
+local singleton Buffers { Surface surface; RenderTarget alias; int frames; }
+local event Release { Surface surface; }
+
+void Grow(RenderTarget target) { target.Resize(32, 24); }
+void Finish(RenderTarget target) { target.Dispose(); }
+
+local event(Release release) Cleanup()
+{
+    var scratch = RenderTarget(3, 5);
+    scratch.Resize(4, 6);
+    scratch.Dispose();
+    Finish(release.surface.target);
+}
+
+view Lifecycle(mut Buffers buffers)
+{
+    if (buffers.frames == 0)
+    {
+        var made = RenderTarget(16, 12);
+        buffers.surface.target = made;
+        buffers.surface.image = made.color;
+        buffers.alias = made;
+        Grow(buffers.alias);
+    }
+    else if (buffers.frames == 1)
+    {
+        Send(Release { surface = buffers.surface });
+    }
+    buffers.frames += 1;
+}

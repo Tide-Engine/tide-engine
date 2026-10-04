@@ -1,0 +1,5 @@
+// expect: Stage takes an enum member and an optional int offset
+enum Phases { First }
+scene Main { }
+[Stage(Phases.First, 1, 2)]
+system Work() { }
