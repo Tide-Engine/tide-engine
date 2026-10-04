@@ -8,6 +8,8 @@ TIDE_TEST(settings_are_in_the_game)
     TIDE_CHECK(tide_game_api.tick_rate == 30);
     TIDE_REQUIRE(tide_game_api.title);
     TIDE_CHECK(strcmp(tide_game_api.title, "Tide \"settings\"") == 0);
+    TIDE_CHECK(tide_game_api.stats); // Set through a constant
+    TIDE_CHECK(tide_game_api.debug_views && !tide_game_api.host_migration); // Set, and left at its default
 }
 
 // A session whose desc leaves the tick rate out runs its matches at the game's.

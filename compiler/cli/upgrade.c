@@ -1,14 +1,17 @@
 #include "upgrade.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "editors.h"
 #include "install.h"
 #include "json.h"
 #include "release.h"
 #include "sha256.h"
 #include "sys.h"
+#include "unzip.h"
 
 #ifndef TIDE_VERSION
 #define TIDE_VERSION "0.0.0-dev"
@@ -128,64 +131,128 @@ static int64_t asset_size(const json *release, const char *name)
     return size && size->kind == JSON_NUMBER && size->number > 0 ? (int64_t)size->number : 0;
 }
 
-// Draws the download's progress over the last one drawn: a bar when the
-// package's size is known, a spinner when it isn't.
-static void draw_progress(int64_t got, const int64_t size, const int64_t ms, const int frame, const bool done)
+// ---------------------------------------------------------------------------
+// What an upgrade shows: a bar for each step that takes a while, drawn over
+// itself on its line of the terminal, and a line once it's done.
+
+static int drawn; // How long the line the terminal's cursor is still on is
+
+// Writes `line` over what's on the cursor's line.
+static void draw(const char *line)
+{
+    const int n = (int)strlen(line);
+    printf("%s%s%*s", drawn ? "\r" : "", line, drawn > n ? drawn - n : 0, "");
+    fflush(stdout);
+    drawn = n;
+}
+
+// Leaves the line as it is, for the next one.
+static void end_line(void)
+{
+    if (drawn) printf("\n");
+    fflush(stdout);
+    drawn = 0;
+}
+
+// Draws how far a step is: a bar when its size is known, a spinner when it
+// isn't.
+static void draw_progress(const char *step, int64_t got, const int64_t size, const int64_t ms, const int frame,
+                          const bool done)
 {
     const double mb = 1024.0 * 1024.0;
     const double seconds = (double)ms / 1000.0;
     if (got < 0) got = 0;
-    if (size > 0 && got > size) got = size;
-    char line[128];
+    if (size > 0 && (done || got > size)) got = size;
+    char line[160];
     int n;
     if (size > 0) {
-        enum { WIDTH = 30 };
+        enum { WIDTH = 24 };
         const int filled = (int)(got * WIDTH / size);
         char bar[WIDTH + 1];
         for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
         bar[WIDTH] = '\0';
-        n = snprintf(line, sizeof line, "  [%s] %3d%%  %.1f / %.1f MB", bar, (int)(got * 100 / size), got / mb, size / mb);
+        n = snprintf(line, sizeof line, "%-11s [%s] %3d%%  %.1f / %.1f MB", step, bar, (int)(got * 100 / size), got / mb,
+                     size / mb);
     } else if (done) {
-        n = snprintf(line, sizeof line, "  %.1f MB", got / mb);
+        n = snprintf(line, sizeof line, "%-11s %.1f MB", step, got / mb);
     } else {
-        n = snprintf(line, sizeof line, "  %c %.1f MB", "|/-\\"[frame % 4], got / mb);
+        n = snprintf(line, sizeof line, "%-11s %c %.1f MB", step, "|/-\\"[frame % 4], got / mb);
     }
     if (done) snprintf(line + n, sizeof line - (size_t)n, "  in %.1fs", seconds);
     else if (seconds >= 1) snprintf(line + n, sizeof line - (size_t)n, "  %.1f MB/s", got / mb / seconds);
-    printf("\r%-72s", line);
-    fflush(stdout);
+    draw(line);
 }
 
-// Downloads the package to `path`, with a progress bar in a terminal. curl
-// runs in the background, and the bar follows the file as it grows; curl's
-// errors wait in a log, to be shown once the bar is done with the line.
-static bool download_package(const char *url, const char *path, const char *work, const int64_t size)
+// How many bytes the files in `dir` and its folders hold so far.
+static int64_t tree_size(const char *dir);
+
+typedef struct tree {
+    const char *dir;
+    int64_t bytes;
+} tree;
+
+static void add_size(void *user, const char *name, const bool is_dir)
 {
-    if (!sys_is_terminal()) return download(url, path, false);
-    char *log = path_join(work, "curl.log");
-    const char *const argv[] = {sys_tool("curl"), "-fsSL", "--retry", "2", "-m", "600",
-                                "--stderr", log, "-o", path, url, NULL};
-    sys_process *curl = sys_start(argv, NULL);
-    if (!curl) {
-        free(log);
-        return false;
-    }
-    const int64_t start = sys_now_ms();
-    int code = 0;
-    for (int frame = 0;; frame++) {
-        const bool ended = sys_wait(curl, 100, &code);
-        if (!ended || code == 0) draw_progress(sys_file_size(path), size, sys_now_ms() - start, frame, ended);
-        if (ended) break;
-    }
-    printf("\n");
-    fflush(stdout);
-    if (code != 0) {
-        char *errors = sys_read_file(log, NULL);
-        if (errors) fputs(errors, stderr);
-        free(errors);
+    tree *t = user;
+    char *path = path_join(t->dir, name);
+    const int64_t size = is_dir ? tree_size(path) : sys_file_size(path);
+    if (size > 0) t->bytes += size;
+    free(path);
+}
+
+static int64_t tree_size(const char *dir)
+{
+    tree t = {dir, 0};
+    sys_list(dir, add_size, &t);
+    return t.bytes;
+}
+
+// How far a step is, in bytes, from the file or folder it fills.
+typedef int64_t (*progress_fn)(const char *path);
+
+// Runs a step of the upgrade, a program. In a terminal it has a bar: the
+// program runs in the background, `progress` says how much of `size` bytes is
+// in `path`, and what the program says waits in a log until the bar is done
+// with the line.
+static bool run_step(const char *step, const char *const *argv, const char *work, const progress_fn progress,
+                     const char *path, const int64_t size)
+{
+    if (!sys_is_terminal()) return sys_run(argv, NULL, false) == 0;
+    char *log = path_join(work, "step.log");
+    sys_process *program = sys_start_logged(argv, NULL, log);
+    int code = -1;
+    if (program) {
+        const int64_t start = sys_now_ms();
+        for (int frame = 0;; frame++) {
+            const bool ended = sys_wait(program, frame ? 100 : 0, &code);
+            if (!ended || code == 0) draw_progress(step, progress(path), size, sys_now_ms() - start, frame, ended);
+            if (ended) break;
+        }
+        end_line();
+        char *said = sys_read_file(log, NULL);
+        if (said) fputs(said, stderr);
+        free(said);
     }
     free(log);
     return code == 0;
+}
+
+// About how many bytes the package unpacks to: a zip's directory says each
+// entry's size, and a gzip ends with the size of what's in it, the tar, which
+// is its files and a little more. 0 if it doesn't say.
+static int64_t unpacked_size(const char *package)
+{
+    const size_t n = strlen(package);
+    if (n > 4 && strcmp(package + n - 4, ".zip") == 0) {
+        const int64_t size = unzip_size(package);
+        return size > 0 ? size : 0;
+    }
+    uint8_t tail[4] = {0};
+    FILE *f = fopen(package, "rb");
+    const bool ok = f && fseek(f, -4, SEEK_END) == 0 && fread(tail, 1, 4, f) == 4;
+    if (f) fclose(f);
+    const uint32_t size = (uint32_t)tail[0] | (uint32_t)tail[1] << 8 | (uint32_t)tail[2] << 16 | (uint32_t)tail[3] << 24;
+    return ok ? (int64_t)size : 0;
 }
 
 // The hash SHA256SUMS lists for `file` ("<hash>  <file>" lines).
@@ -280,12 +347,13 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         return 1;
     }
     if (!whole) printf("This installation isn't whole (an upgrade stopped partway): installing tide %s over it.\n", next);
-    printf("Downloading tide %s...\n", next);
     fflush(stdout);
     char *package = path_join(work, PACKAGE);
     char *sums_path = path_join(work, "SHA256SUMS");
-    if (!download_package(package_url, package, work, asset_size(release, PACKAGE)) ||
-        !download(sums_url, sums_path, false)) {
+    // The checksums come first, so the bar ends when the package is all there.
+    const char *const curl[] = {sys_tool("curl"), "-fsSL", "--fail-early", "--retry", "2", "-m", "600", "-o", sums_path,
+                                sums_url, "-o", package, package_url, NULL};
+    if (!run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE))) {
         fprintf(stderr, "tide: the download failed\n");
         return 1;
     }
@@ -310,7 +378,7 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     char *fresh = path_join(work, "new");
     sys_mkdirs(fresh);
     const char *const tar[] = {sys_tool("tar"), "-xf", package, "-C", fresh, NULL};
-    if (sys_run(tar, NULL, false) != 0) {
+    if (!run_step("Unpacking", tar, work, tree_size, fresh, unpacked_size(package))) {
         fprintf(stderr, "tide: couldn't unpack the download\n");
         return 1;
     }
@@ -326,21 +394,35 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     }
     char *channel_file = path_join(root, "channel");
     sys_write_text(channel_file, channel);
-    sys_remove_tree(work); // What stays, a program still running has open: the next upgrade deletes it
-    if (order == 0) printf("Installed tide %s again (%s).\n", next, channel);
-    else printf("Upgraded tide %s -> %s (%s).\n", TIDE_VERSION, next, channel);
-    fflush(stdout);
-    // The new tide updates the editor extension, in the editors that have it.
+
+    // The new tide updates the editor extension, in the editors that have it,
+    // which takes them a while. It only says what went wrong, which waits in a
+    // log for the upgrade's own line.
 #ifdef _WIN32
     char *tide = path_join(root, "bin/tide.exe");
 #else
     char *tide = path_join(root, "bin/tide");
 #endif
     const char *const editors[] = {tide, "editors", "--update", NULL};
-    sys_run(editors, NULL, false);
+    char *log = path_join(work, "editors.log");
+    if (sys_is_terminal() && tide_editors_have_tide()) draw("Updating Tide in your editors...");
+    sys_process *update = sys_start_logged(editors, NULL, log);
+    int code = 0;
+    while (update && !sys_wait(update, 1000, &code)) {
+        // Still at it
+    }
+    char *said = sys_read_file(log, NULL);
+    free(log);
     free(tide);
-    const char *notes = json_str(json_get(release, "html_url"));
-    if (notes) printf("What's new: %s\n", notes);
+    sys_remove_tree(work); // What stays, a program still running has open: the next upgrade deletes it
+
+    char line[256];
+    if (order == 0) snprintf(line, sizeof line, "Installed tide %s again (%s).", next, channel);
+    else snprintf(line, sizeof line, "Upgraded tide %s -> %s (%s).", TIDE_VERSION, next, channel);
+    draw(line);
+    end_line();
+    if (said) fputs(said, stderr);
+    free(said);
     return 0;
 }
 

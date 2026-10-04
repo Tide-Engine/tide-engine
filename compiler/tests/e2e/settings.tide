@@ -2,11 +2,15 @@
 
 const int RATE = 20;
 const string NAME = "Tide \"settings\"";
+const bool SHOW_STATS = true;
+const bool PROFILED = true;
 
 settings
 {
     title = NAME;
     tickRate = RATE + 10;
+    stats = SHOW_STATS;
+    debugViews = PROFILED;
 }
 
 scene Main { }

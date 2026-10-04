@@ -6399,6 +6399,22 @@ static void find_parallels(const stmt *s, gen *g)
     find_parallels(s->else_stmt, g);
 }
 
+static bool declared_in(const stmt *s, const stmt *local);
+
+static bool declared_in_expr(const expr *e, const stmt *local)
+{
+    if (!e) return false;
+    if (declared_in(e->block, local) || declared_in_expr(e->object, local) || declared_in_expr(e->lhs, local)
+        || declared_in_expr(e->rhs, local) || declared_in_expr(e->cond, local)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (declared_in_expr(e->args.items[i], local)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (declared_in_expr(e->inits.items[i].value, local)) return true;
+    }
+    return false;
+}
+
 static bool declared_in(const stmt *s, const stmt *local)
 {
     if (!s) return false;
@@ -6407,11 +6423,15 @@ static bool declared_in(const stmt *s, const stmt *local)
         if (declared_in(s->stmts.items[i], local)) return true;
     }
     for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (declared_in_expr(s->cases.items[i].labels.items[k], local)) return true;
+        }
         for (int k = 0; k < s->cases.items[i].body.count; k++) {
             if (declared_in(s->cases.items[i].body.items[k], local)) return true;
         }
     }
-    return declared_in(s->init, local) || declared_in(s->step, local) || declared_in(s->then_stmt, local)
+    return declared_in_expr(s->value, local) || declared_in_expr(s->target, local) || declared_in_expr(s->cond, local)
+        || declared_in(s->init, local) || declared_in(s->step, local) || declared_in(s->then_stmt, local)
         || declared_in(s->else_stmt, local);
 }
 
@@ -7475,7 +7495,36 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         if (event->handlers.items[i]->is_local == local) text |= touches_text(event->handlers.items[i]);
     }
     if (prog->uses_text && text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
-    sb_printf(o, "    const tide_location tide_loc = tide_entity_location(&%s->entities, tide_target);\n", world);
+    int candidate = -1;
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        bool admitted = false;
+        for (int i = 0; i < event->handlers.count; i++) {
+            const decl *h = event->handlers.items[i];
+            if (h->is_local == local && h->per_entity && handler_runs_for(prog, h, a)) admitted = true;
+        }
+        if (!admitted) continue;
+        if (candidate >= 0) { candidate = -1; break; }
+        candidate = a;
+    }
+    if (candidate < 0) {
+        sb_printf(o, "    const tide_location tide_loc = tide_entity_location(&%s->entities, tide_target);\n", world);
+    } else {
+        // A table's handles prove membership without reading the entity slots.
+        // Contiguous indices often predict the row; gaps, swaps and reused
+        // generations fall back to the authoritative lookup on any mismatch.
+        sb_put(o, "    tide_location tide_loc = {TIDE_ARCHETYPE_NONE, 0};\n");
+        sb_printf(o, "    const tide_table *const tide_guess = &%s->%s;\n", world, arch_name(g, candidate));
+        sb_put(o, "    if (tide_guess->count) {\n");
+        sb_printf(o, "        const tide_entity tide_first = *(const tide_entity *)tide_table_get(tide_guess, %s, 0, 0);\n",
+                  arch_columns(g, candidate));
+        sb_put(o, "        const uint32_t tide_row = tide_target.index - tide_first.index;\n");
+        sb_put(o, "        if (tide_row < tide_guess->count && tide_entity_equal(\n");
+        sb_printf(o, "                *(const tide_entity *)tide_table_get(tide_guess, %s, tide_row, 0), tide_target)) {\n",
+                  arch_columns(g, candidate));
+        sb_printf(o, "            tide_loc = (tide_location){%du, tide_row};\n        }\n    }\n", candidate);
+        sb_printf(o, "    if (tide_loc.archetype == TIDE_ARCHETYPE_NONE) tide_loc = tide_entity_location(&%s->entities, tide_target);\n",
+                  world);
+    }
     sb_put(o, "    if (!tide_entity_is_null(tide_target) && tide_loc.archetype == TIDE_ARCHETYPE_NONE) return; // Gone by its turn\n");
     for (int i = 0; i < event->handlers.count; i++) {
         const decl *h = event->handlers.items[i];
@@ -8543,8 +8592,9 @@ static uint64_t expr_cost(const expr *e)
 // How many times a loop's body runs, as far as it can be told: a `for` from
 // one number to another by a constant step counts them, and any other loop
 // counts as 8. Capped, as a system's cost per row is.
-static uint64_t loop_trips(const stmt *s)
+static uint64_t loop_trips(const stmt *s, bool *known)
 {
+    if (known) *known = false;
     if (s->kind != S_FOR || !s->init || !s->cond || !s->step) return 8u;
     const expr *from = s->init->kind == S_VAR ? s->init->value : NULL;
     const expr *c = s->cond;
@@ -8558,8 +8608,14 @@ static uint64_t loop_trips(const stmt *s)
     if (by <= 0) return 8u;
     const int64_t lo = (int32_t)(uint32_t)from->int_value;
     const int64_t hi = (int32_t)(uint32_t)c->rhs->int_value + (c->op == T_LE ? 1 : 0);
-    if (hi <= lo) return 1u;
-    const int64_t trips = (hi - lo + by - 1) / by;
+    const int64_t trips = hi > lo ? (hi - lo + by - 1) / by : 0;
+    // The old heuristic can guess for other forms; only this induction
+    // variable and a step that cannot wrap make its trip count known.
+    if (known && s->init->type.kind == TY_INT && !s->init->is_mut
+        && c->lhs->kind == E_NAME && c->lhs->bind == BIND_LOCAL && c->lhs->local == s->init
+        && step->target->kind == E_NAME && step->target->bind == BIND_LOCAL && step->target->local == s->init
+        && (!trips || lo + trips * by <= INT32_MAX)) *known = true;
+    if (!trips) return 1u;
     return trips > 1000000 ? 1000000u : (uint64_t)trips;
 }
 
@@ -8572,9 +8628,54 @@ static uint64_t stmt_cost(const stmt *s)
         for (int k = 0; k < s->cases.items[i].body.count; k++) cost += stmt_cost(s->cases.items[i].body.items[k]);
     }
     const bool loop = s->kind == S_WHILE || s->kind == S_FOR || s->kind == S_FOREACH || s->kind == S_PARALLEL;
-    const uint64_t times = loop ? loop_trips(s) : 1u;
+    const uint64_t times = loop ? loop_trips(s, NULL) : 1u;
     cost += stmt_cost(s->init) + stmt_cost(s->else_stmt) + times * (stmt_cost(s->then_stmt) + stmt_cost(s->step));
     return cost > 1000000u ? 1000000u : cost;
+}
+
+// Eight iterations is a guess for an unknown loop, not an upper bound. A
+// parallel step with one can cost much more (all pairs, for example), so its
+// system must use the unknown-work fallback rather than stay on one thread.
+static bool loop_work_known(const stmt *s);
+
+static bool expr_loop_work_known(const expr *e)
+{
+    if (!e) return true;
+    if (!loop_work_known(e->block) || !expr_loop_work_known(e->object) || !expr_loop_work_known(e->lhs)
+        || !expr_loop_work_known(e->rhs) || !expr_loop_work_known(e->cond)) return false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (!expr_loop_work_known(e->args.items[i])) return false;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (!expr_loop_work_known(e->inits.items[i].value)) return false;
+    }
+    return true;
+}
+
+static bool loop_work_known(const stmt *s)
+{
+    if (!s) return true;
+    if (s->kind == S_FOR) {
+        bool known;
+        loop_trips(s, &known);
+        if (!known) return false;
+    } else if (s->kind == S_WHILE || s->kind == S_FOREACH || s->kind == S_PARALLEL) {
+        return false;
+    }
+    for (int i = 0; i < s->stmts.count; i++) {
+        if (!loop_work_known(s->stmts.items[i])) return false;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (!expr_loop_work_known(s->cases.items[i].labels.items[k])) return false;
+        }
+        for (int k = 0; k < s->cases.items[i].body.count; k++) {
+            if (!loop_work_known(s->cases.items[i].body.items[k])) return false;
+        }
+    }
+    return expr_loop_work_known(s->value) && expr_loop_work_known(s->target) && expr_loop_work_known(s->cond)
+        && loop_work_known(s->init) && loop_work_known(s->step) && loop_work_known(s->then_stmt)
+        && loop_work_known(s->else_stmt);
 }
 
 // The parallel loops in `s`, in order.
@@ -8615,6 +8716,7 @@ static bool gen_singleton_path(sb *o, const expr *e)
 // singleton's grid or list, which the world has: false for a component's.
 static bool gen_parallel_work(sb *o, const stmt *s)
 {
+    if (!loop_work_known(s->then_stmt)) return false;
     sb path = {0};
     if (!gen_singleton_path(&path, s->value)) return false;
     const uint64_t cost = 4u * stmt_cost(s->then_stmt);
@@ -9187,18 +9289,24 @@ static void gen_api(gen *g)
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
     sb_printf(o, "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n%s", use_match);
+    // A host that shows where ticks' time goes gave its jobs a profile
+    // (tide/profile.h): the systems' part of the tick, and what follows them
+    sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
+              "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (prog->systems.count) {
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
-        sb_put(o, "    (void)jobs;\n    (void)tide_prepare;\n");
+        sb_put(o, "    (void)tide_prepare;\n");
     }
+    sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
-    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n}\n\n");
+    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
+    sb_put(o, "    if (tide_p) tide_profile_tick(tide_p, tide_began, tide_ran);\n}\n\n");
 
     // A match that's out of scenes ends when Main is local. A match Main comes
     // back instead (see tide_apply_commands), and a match that can't hold a
@@ -9246,8 +9354,17 @@ static void gen_api(gen *g)
     // The local fields of entities that are gone go first: with no verified
     // world given, the one views draw is all there is
     if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
+    // A host that shows where frames' time goes gave the GUI a profile
+    // (tide/profile.h): each view says how long it took
+    if (prog->views.count) {
+        sb_put(o, "    tide_profile *tide_p = gui->profile;\n    uint64_t tide_at = tide_profile_now(tide_p);\n");
+    }
     for (int i = 0; i < prog->views.count; i++) {
-        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(prog->views.items[i]));
+        const decl *view = prog->views.items[i];
+        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(view));
+        sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
+        gen_c_literal(o, view->qualified, false);
+        sb_put(o, ", tide_at);\n");
     }
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");
@@ -10250,6 +10367,8 @@ static void gen_game_api(gen *g)
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
+    if (prog->stats) sb_put(o, "    .stats = true,\n");
+    if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
         gen_c_literal(o, prog->title->text, false);

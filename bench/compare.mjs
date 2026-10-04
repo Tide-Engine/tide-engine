@@ -1,6 +1,7 @@
-// Compares saved benchmark runs (bench_<name> --save <label>, which adds to
-// bench/results/<name>.jsonl): runs with the same options, on the same kind
-// of machine, side by side, each against the first one that passed.
+// Compares saved benchmark runs (bench_<name> or versus_<concept> --save
+// <label>): runs with the same options and thread counts, on the same kind
+// of machine, side by side. Session metrics compare with the first passing
+// run; versus shows each implementation's time and Tide's ratio to C.
 //
 //   node bench/compare.mjs [benchmark...] [--last <n>]
 
@@ -42,19 +43,46 @@ const metrics = [
 const at = (record, path) => path.split(".").reduce((v, key) => (v == null ? undefined : v[key]), record);
 const pad = (text, width) => String(text).padStart(width);
 
+function printVersus(shown, width) {
+    const counts = shown[0].runs.map((run) => run.threads);
+    for (const threads of counts) {
+        const ways = new Set(shown.flatMap((r) => Object.keys(r.runs.find((run) => run.threads === threads).ways)));
+        for (const way of ways) {
+            const name = `${way}, ${threads} thread${threads === 1 ? "" : "s"} (ms)`;
+            const cells = shown.map((r) => {
+                const run = r.runs.find((run) => run.threads === threads);
+                const time = run.ways[way]?.median_ms;
+                if (time == null) return pad("-", width);
+                const ratio = way === "Tide" || !r.ok || !(time > 0) ? "" : ` (${(run.ways.Tide.median_ms / time).toFixed(2)}x)`;
+                return pad(`${time.toFixed(4)}${ratio}`, width);
+            });
+            console.log(name.padEnd(32) + cells.join(""));
+        }
+    }
+    console.log("digest".padEnd(32) + shown.map((r) => pad(r.digest, width)).join(""));
+    console.log("  medians; ratios show how many times as long Tide takes as that C implementation");
+}
+
 const files = readdirSync(results).filter((f) => f.endsWith(".jsonl"));
 for (const file of files) {
     const benchmark = file.slice(0, -".jsonl".length);
-    if (names.length && !names.includes(benchmark)) continue;
-    const records = readFileSync(join(results, file), "utf8")
+    const selected = readFileSync(join(results, file), "utf8")
         .split("\n")
         .filter((line) => line.trim())
-        .map((line) => JSON.parse(line));
+        .map((line) => JSON.parse(line))
+        .filter((r) => !names.length || names.includes(benchmark) || names.includes(r.benchmark));
+    // Compile and draw reports have their own metrics and reporting commands.
+    // Only the session and versus record formats belong in this comparison.
+    const records = selected.filter((r) => r.options && ((r.server && r.client)
+        || (Array.isArray(r.runs) && r.runs.length && r.runs.every((run) => run.ways && Number.isFinite(run.threads)))));
+    if (names.length && records.length < selected.length) {
+        console.error(`${benchmark}: skipped unsupported records; this command compares session and versus benchmarks`);
+    }
 
     // Runs compare when they ran the same thing on the same kind of machine
     const groups = new Map();
     for (const r of records) {
-        const key = JSON.stringify([r.options, r.os, r.optimized, r.threads]);
+        const key = JSON.stringify([r.benchmark, r.options, r.os, r.optimized, r.runs?.map((run) => run.threads) ?? r.threads]);
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(r);
     }
@@ -63,11 +91,13 @@ for (const file of files) {
         const first = shown[0];
         const base = shown.find((r) => r.ok); // What changes are against: a run that failed measured something else
         const options = Object.entries(first.options).map(([k, v]) => `${k} ${v}`).join(", ");
-        console.log(`\n${benchmark}: ${options}; ${first.os}, ${first.threads} threads${first.optimized ? "" : ", unoptimized"}`);
-        const width = 22;
+        const threads = first.runs ? first.runs.map((run) => run.threads).join("/") : first.threads;
+        console.log(`\n${first.benchmark ?? benchmark}: ${options}; ${first.os}, ${threads} threads${first.optimized ? "" : ", unoptimized"}`);
+        const width = Math.max(22, ...shown.map((r) => r.label.length + 2));
         console.log(pad("", 32) + shown.map((r) => pad(r.label, width)).join(""));
         console.log(pad("", 32) + shown.map((r) => pad(r.date.slice(0, 10), width)).join(""));
-        for (const [path, name, show] of metrics) {
+        if (first.runs) printVersus(shown, width);
+        for (const [path, name, show] of first.runs ? [] : metrics) {
             const from = base ? at(base, path) : undefined;
             const cells = shown.map((r) => {
                 const v = at(r, path);

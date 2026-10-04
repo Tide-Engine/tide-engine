@@ -19,6 +19,10 @@ typedef bool (*unzip_filter)(void *user, const char *name, char *to, size_t size
 // wrong.
 bool unzip(const char *archive, const char *dir, unzip_filter wanted, void *user);
 
+// How many bytes the archive's entries are once unpacked, all together; -1 if
+// it's not a zip that can be read. Says nothing.
+int64_t unzip_size(const char *archive);
+
 // RFC 1951's DEFLATE, decompressed: `in` into `out`, which holds exactly
 // `out_size` bytes. False if it's not that much, or not DEFLATE.
 bool unzip_inflate(const uint8_t *in, size_t in_size, uint8_t *out, size_t out_size);

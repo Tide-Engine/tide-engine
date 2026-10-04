@@ -251,6 +251,7 @@ endif()
 # `tide_platform_draw --bench` (`?bench` on the web) times frames of many shapes.
 add_executable(tide_platform_draw tests/draw.c)
 target_link_libraries(tide_platform_draw PRIVATE tide_platform)
+target_compile_definitions(tide_platform_draw PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
 if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_draw TARGET tide_platform_draw WEBGPU EXPECT "renderer: WebGPU")
@@ -264,6 +265,7 @@ else()
     # (`adb logcat -s tide`).
     add_library(tide_platform_draw_app SHARED tests/draw.c)
     target_link_libraries(tide_platform_draw_app PRIVATE tide_platform)
+    target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
 
@@ -335,6 +337,13 @@ if(TIDE_WEB)
     target_link_libraries(tide_platform_web_cursor PRIVATE tide_platform)
     tide_web_page(tide_platform_web_cursor SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_cursor TARGET tide_platform_web_cursor)
+
+    # The standard host's debug views (tide/host.h): F7 shows the profiler where
+    # they're on, by the command line or the game's setting, and nowhere else.
+    tide_add_game(tide_platform_web_debug_views SOURCES tests/debug_views.tide NAME game HOST tests/web_debug_views.c)
+    target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
 
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "tide/entity.h"
+#include "tide/profile.h"
 #include "tide/table.h"
 
 // Running a tick's systems on several threads, with the same results as on
@@ -29,32 +30,19 @@
 // systems that spawn, and systems waiting for it start after it, so they
 // never see a temporary handle.
 
-// Profiling: how long each system took in the last tick that ran, from its
-// first task's start to its last task's end. The host that wants it gives the
-// pool one (tide_jobs.profile, tide_platform_jobs_profile), and ticks fill it;
-// without one, nothing is measured. Names are copied, as a game's code may be
-// swapped out under `tide run` between a tick and a frame that shows them.
-#define TIDE_PROFILE_NAME 48
-typedef struct tide_system_time {
-    char name[TIDE_PROFILE_NAME];
-    double ms;
-} tide_system_time;
-
-typedef struct tide_profile {
-    tide_system_time *times; // The last tick's systems, in the tick's order
-    uint32_t count;
-    uint32_t room;
-} tide_profile;
-
 typedef struct tide_jobs {
     void *self;
     uint32_t threads; // That can run work: the pool's, and the caller's
     // Runs work(context, thread) on the caller's thread, as thread 0, and on
     // each other thread (1 and up) that's free to join while it runs, and
     // returns once it has returned on every one. The work has to get done on
-    // the caller's thread alone if no other joins.
+    // the caller's thread alone if no other joins. Never called with one
+    // thread, which needs none.
     void (*run)(void *self, void (*work)(void *context, uint32_t thread), void *context);
-    tide_profile *profile; // Where ticks say how long each system took, or NULL
+    // Where ticks say how long each system took (tide/profile.h), from its
+    // first task's start to its last task's end, or NULL: nothing is measured.
+    // The host that wants it gives one (tide_platform_jobs_profile).
+    tide_profile *profile;
 } tide_jobs;
 
 // The entities a system's spawns got as it settled them: what a temporary
