@@ -1,0 +1,7 @@
+// expect: these views must each run after the next
+enum Phases { Objects }
+scene Main { }
+[Stage(Phases.Objects, 1), Before(Early)]
+view Late() { }
+[Stage(Phases.Objects, -1)]
+view Early() { }

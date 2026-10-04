@@ -19,6 +19,8 @@
 void tide_draw_mesh_lists(tide_draw_list *d, tide_list vertices, tide_list indices);
 void tide_draw_mesh_grid(tide_draw_list *d, tide_list vertices, tide_list indices, tide_grid texture,
                          const tide_grid_shape *shape, int32_t filter);
+void tide_draw_mesh_texture(tide_draw_list *d, tide_list vertices, tide_list indices,
+                            tide_texture_ref texture, int32_t filter);
 
 // The same in 3D, with lists of `Vertex3` and a transform: Tide's
 // Draw3D.Mesh(vertices, indices, transform[, texture[, filter]]). The lists are
@@ -27,6 +29,8 @@ void tide_draw_mesh_grid(tide_draw_list *d, tide_list vertices, tide_list indice
 void tide_draw_mesh3_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform);
 void tide_draw_mesh3_grid(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
                           tide_grid texture, const tide_grid_shape *shape, int32_t filter);
+void tide_draw_mesh3_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
+                             tide_texture_ref texture, int32_t filter);
 
 // Draw3D.Instanced with a list of float4x4 transforms. The mesh and texture
 // are found once, and all transforms copied into one run, in list order.
@@ -34,6 +38,8 @@ void tide_draw_mesh3_grid(tide_draw_list *d, tide_list vertices, tide_list indic
 void tide_draw_mesh3_instances_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms);
 void tide_draw_mesh3_instances_grid(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms,
                                     tide_grid texture, const tide_grid_shape *shape, int32_t filter);
+void tide_draw_mesh3_instances_texture(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms,
+                                       tide_texture_ref texture, int32_t filter);
 
 // The texture a grid of colors is, for a draw: what tide_draw_texture_slot
 // gives, the grid's cells copied into the list if it hasn't got them as they

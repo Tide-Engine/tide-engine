@@ -1,0 +1,4 @@
+// expect: Blit takes an explicit source texture, destination target and frag
+scene Main { }
+local singleton Image { Texture source; }
+view Show(Image image) { Draw.Blit(image.source, Draw.window); }

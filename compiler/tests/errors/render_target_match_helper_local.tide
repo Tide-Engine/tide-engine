@@ -1,0 +1,4 @@
+// expect: 'Prepare' uses rendering resources, which belong to this machine: the match can't call it
+scene Main { }
+void Prepare() { RenderTarget target = default; }
+system Work() { Prepare(); }
