@@ -359,19 +359,24 @@ typedef struct mesh_vertex {
 } mesh_vertex;
 
 // What a list comes to, in order: runs of shapes, clears, runs of text, runs
-// of triangles, clips and runs of instances of 3D meshes.
-enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, STEP_MESH_3D };
+// of triangles, clips, runs of instances of 3D meshes, and runs of instances
+// of meshes through shaders of the game's.
+enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, STEP_MESH_3D, STEP_SHADED };
 
 typedef struct draw_step {
     uint32_t kind;    // STEP_*
     uint32_t first;   // STEP_SHAPES: its shapes; STEP_TEXT and STEP_MESH: its vertices;
-                      // STEP_MESH_3D: its instances' transforms in the list's matrices
+                      // STEP_MESH_3D: its instances' transforms in the list's matrices;
+                      // STEP_SHADED: its run's place in the list's
     uint32_t count;
     uint32_t texture; // STEP_MESH and STEP_MESH_3D: 1 + its texture's place in the list's, or 0 for none
     uint32_t filter;  // ...and how it's sampled: tide_filter
     uint32_t mesh;    // STEP_MESH_3D: 1 + its mesh's place in the list's
-    uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera
+    uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
+                      // a STEP_SHADED's too, for a 3D shader
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
+    camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
+    tide_gpu_id pipeline; // ...and its shader's pipeline, once it's found
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
     tide_float2 to;   // ...and its bottom right one
     rgba color;       // STEP_CLEAR
@@ -516,6 +521,8 @@ static struct {
     uint32_t mesh_capacity; // Vertices the buffer holds
     tide_gpu_id matrices;
     uint32_t matrix_capacity; // Transforms the 3D meshes' instance buffer holds
+    tide_gpu_id instances;
+    uint32_t instance_capacity; // Bytes the shaded runs' instance buffer holds
     tide_gpu_id white;        // A white pixel, which a mesh with no texture samples
     tide_gpu_id atlas;        // The font atlas, as of `atlas_version`
     int atlas_width, atlas_height;
@@ -534,9 +541,24 @@ typedef struct screen_uniforms {
     float unused[2];
 } screen_uniforms;
 
+// What the uniforms of a shader of the game's start with (see tide_shader),
+// before a run's own: `tide_camera`, from the units its mesh is in to clip
+// space, and `tide_screen`, the target's pixels in a logical one, across and
+// down, then its height in its own pixels.
+typedef struct shaded_uniforms {
+    tide_float4x4 camera;
+    float screen[4];
+} shaded_uniforms;
+
+_Static_assert(sizeof(shaded_uniforms) + TIDE_SHADER_UNIFORM_BYTES <= TIDE_GPU_MAX_UNIFORMS,
+               "a shader's uniforms fit a pipeline's block");
+_Static_assert(TIDE_SHADER_ATTRIBUTES <= TIDE_GPU_MAX_ATTRIBUTES && TIDE_SHADER_TEXTURES <= TIDE_GPU_MAX_TEXTURES,
+               "a shader's attributes and textures fit a pipeline's");
+
 // A 3D mesh's corner on the GPU. A mesh goes there as its corners, each
 // once, and its triangles as indices into them, uploaded when a list first
-// draws it, and let go once a frame draws without it.
+// draws it, and let go once a frame draws without it. A mesh for a shader of
+// the game's (TIDE_MESH_BYTES) goes as the list has it: the shader reads it.
 typedef struct mesh_3d_vertex {
     float position[3];
     float uv[2];
@@ -549,7 +571,7 @@ typedef struct gpu_mesh {
     uint32_t space;
     uint32_t epoch;
     tide_gpu_id vertices, indices; // Its buffers
-    uint32_t vertex_capacity;      // Corners `vertices` has room for
+    uint32_t vertex_capacity;      // Bytes `vertices` has room for
     uint32_t index_capacity;       // Bytes `indices` has room for
     uint32_t index_count;          // Three a triangle...
     bool wide;                     // ...of 16 bits where they fit, or 32
@@ -587,12 +609,29 @@ typedef struct gpu_texture {
 static gpu_texture *gpu_textures;
 static uint32_t gpu_texture_count, gpu_texture_capacity;
 static uint32_t gpu_frame;
+
+// The pipeline of a shader of the game's (tide_shader), made the first time a
+// list draws through it and found again by the shader's id. That's a hash of
+// all the shader is, so the same shader in another build of the game (hot
+// reloading) is the same pipeline, and nothing here keeps the shader itself.
+typedef struct shader_pipeline {
+    uint64_t id;
+    tide_gpu_id pipeline;
+    uint32_t frame; // The frame that last drew through it
+} shader_pipeline;
+
+static shader_pipeline *shader_pipelines;
+static uint32_t shader_pipeline_count, shader_pipeline_capacity;
+static uint32_t *shader_index;         // The pipelines by id: 1 + a place, or 0 for none
+static uint32_t shader_index_capacity; // A power of two, or 0: at most half of it is taken
+static uint32_t shader_epoch;          // The epoch of the last list that drew through them (see tide_draw_forget)
+
 static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.epoch)
 
 // Whether there's a device to draw with. When it's another than last time,
 // what the renderer had on the last one went with it: it forgets it, and
 // makes it again as lists draw. It can: the lists keep their textures' and
-// meshes' copies, and the font its atlas.
+// meshes' copies and their runs' shaders, and the font its atlas.
 static bool gpu_ready(void)
 {
     const uint32_t epoch = gpu->epoch();
@@ -601,6 +640,8 @@ static bool gpu_ready(void)
     memset(&gpu_state, 0, sizeof gpu_state);
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
+    shader_pipeline_count = 0;
+    if (shader_index) memset(shader_index, 0, shader_index_capacity * sizeof(uint32_t));
     gpu_epoch = epoch;
     return true;
 }
@@ -637,7 +678,7 @@ static void renderer_start(void)
                        {0, TIDE_GPU_BYTES4, offsetof(mesh_vertex, color)}},
         .attribute_count = 3,
         .uniform_size = sizeof(screen_uniforms),
-        .texture = true,
+        .texture_count = 1,
         .blend = TIDE_GPU_BLEND_ALPHA,
         .depth = TIDE_GPU_DEPTH_NONE,
     };
@@ -662,7 +703,7 @@ static void renderer_start(void)
                        {1, TIDE_GPU_FLOAT4, 3 * sizeof(tide_float4)}},
         .attribute_count = 7,
         .uniform_size = sizeof(tide_float4x4),
-        .texture = true,
+        .texture_count = 1,
         .blend = TIDE_GPU_BLEND_ALPHA,
         .depth = TIDE_GPU_DEPTH_TEST,
     });
@@ -695,21 +736,26 @@ static gpu_mesh *mesh_for(const tide_draw_list *list, const uint32_t mesh)
         && g->epoch == m->epoch) {
         return g;
     }
-    // Its corners, each once
-    const size_t vertex_bytes = (size_t)m->vertex_count * sizeof(mesh_3d_vertex);
-    mesh_3d_vertex *corners = upload_room(vertex_bytes);
-    for (uint32_t i = 0; i < m->vertex_count; i++) {
-        const tide_vertex3 *v = &m->vertices[i];
-        const rgba color = to_rgba(v->color);
-        corners[i] = (mesh_3d_vertex){{v->position.x, v->position.y, v->position.z}, {v->uv.x, v->uv.y},
-                                      {color.r, color.g, color.b, color.a}};
+    // Its corners, each once: as they are for a shader of the game's, which reads their bytes
+    const void *corners = m->bytes;
+    size_t vertex_bytes = (size_t)m->vertex_count * m->vertex_size;
+    if (m->space != TIDE_MESH_BYTES) {
+        vertex_bytes = (size_t)m->vertex_count * sizeof(mesh_3d_vertex);
+        mesh_3d_vertex *packed = upload_room(vertex_bytes);
+        for (uint32_t i = 0; i < m->vertex_count; i++) {
+            const tide_vertex3 *v = &m->vertices[i];
+            const rgba color = to_rgba(v->color);
+            packed[i] = (mesh_3d_vertex){{v->position.x, v->position.y, v->position.z}, {v->uv.x, v->uv.y},
+                                         {color.r, color.g, color.b, color.a}};
+        }
+        corners = packed;
     }
-    if (g->vertices && m->vertex_count <= g->vertex_capacity) {
+    if (g->vertices && vertex_bytes <= g->vertex_capacity) {
         gpu->buffer_write(g->vertices, 0, corners, vertex_bytes);
     } else {
         if (g->vertices) gpu->buffer_free(g->vertices);
         g->vertices = gpu->buffer(TIDE_GPU_VERTICES, vertex_bytes, corners);
-        g->vertex_capacity = m->vertex_count;
+        g->vertex_capacity = (uint32_t)vertex_bytes;
     }
     // ...and its triangles, in 16 bits where they fit, to a multiple of 4 bytes, as buffers take them
     const bool wide = m->vertex_count > 65536u;
@@ -776,6 +822,147 @@ static void forget_meshes_3d(void)
             gpu_meshes[i] = (gpu_mesh){0};
         }
     }
+}
+
+// Where the pipeline of the shader `id` is in the index, or would go.
+static uint32_t shader_slot(const uint64_t id)
+{
+    const uint32_t mask = shader_index_capacity - 1u;
+    uint32_t i = (uint32_t)(id ^ id >> 32) & mask;
+    while (shader_index[i] && shader_pipelines[shader_index[i] - 1u].id != id) i = (i + 1u) & mask;
+    return i;
+}
+
+// The index again, from the pipelines there are, with room for another.
+static void index_shaders(void)
+{
+    uint32_t capacity = shader_index_capacity ? shader_index_capacity : 64u;
+    while (capacity / 2u <= shader_pipeline_count) capacity *= 2u;
+    if (capacity != shader_index_capacity) {
+        free(shader_index);
+        shader_index = tide_alloc_zeroed(capacity, sizeof(uint32_t));
+        shader_index_capacity = capacity;
+    } else {
+        memset(shader_index, 0, capacity * sizeof(uint32_t));
+    }
+    for (uint32_t i = 0; i < shader_pipeline_count; i++) shader_index[shader_slot(shader_pipelines[i].id)] = i + 1u;
+}
+
+// The pipeline of a shader of the game's, made if there's none: it reads a
+// mesh's vertices as they are from the first slot, and from the second an
+// instance's bytes, a float4 or an int4 an attribute.
+static tide_gpu_id pipeline_for(const tide_shader *shader)
+{
+    if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
+    const uint32_t slot = shader_slot(shader->id);
+    if (shader_index[slot]) {
+        shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
+        p->frame = gpu_frame;
+        return p->pipeline;
+    }
+    static const tide_gpu_attribute_format formats[] = {
+        [TIDE_SHADER_FLOAT] = TIDE_GPU_FLOAT,   [TIDE_SHADER_FLOAT2] = TIDE_GPU_FLOAT2,
+        [TIDE_SHADER_FLOAT3] = TIDE_GPU_FLOAT3, [TIDE_SHADER_FLOAT4] = TIDE_GPU_FLOAT4,
+        [TIDE_SHADER_INT] = TIDE_GPU_INT,       [TIDE_SHADER_INT2] = TIDE_GPU_INT2,
+        [TIDE_SHADER_INT3] = TIDE_GPU_INT3,     [TIDE_SHADER_INT4] = TIDE_GPU_INT4,
+    };
+    const uint32_t instance_size = tide_shader_instance_size(shader);
+    tide_gpu_pipeline_desc desc = {
+        .name = shader->name ? shader->name : "a shader",
+        .glsl_vertex = shader->glsl_vertex,
+        .glsl_fragment = shader->glsl_fragment,
+        .wgsl = shader->wgsl,
+        .slots = {{shader->vertex_size, false}, {instance_size, true}},
+        .slot_count = instance_size ? 2u : 1u,
+        .uniform_size = (uint32_t)sizeof(shaded_uniforms) + tide_shader_uniform_size(shader),
+        .texture_count = shader->texture_count,
+        .blend = TIDE_GPU_BLEND_ALPHA,
+        .depth = shader->dims == 3 ? TIDE_GPU_DEPTH_TEST : TIDE_GPU_DEPTH_NONE, // 2D draws in order, as shapes do
+    };
+    for (uint32_t i = 0; i < shader->attribute_count; i++) {
+        desc.attributes[i].slot = 0;
+        desc.attributes[i].format = formats[shader->attributes[i].format];
+        desc.attributes[i].offset = shader->attributes[i].offset;
+    }
+    desc.attribute_count = shader->attribute_count;
+    for (uint32_t i = 0; i < shader->instance_floats + shader->instance_ints; i++) {
+        const uint32_t at = desc.attribute_count++;
+        desc.attributes[at].slot = 1;
+        desc.attributes[at].format = i < shader->instance_floats ? TIDE_GPU_FLOAT4 : TIDE_GPU_INT4;
+        desc.attributes[at].offset = i * 16u;
+    }
+    if (shader_pipeline_count == shader_pipeline_capacity) {
+        const uint32_t capacity = shader_pipeline_capacity ? shader_pipeline_capacity * 2u : 16u;
+        shader_pipelines = tide_realloc(shader_pipelines, shader_pipeline_capacity * sizeof(shader_pipeline),
+                                        capacity * sizeof(shader_pipeline));
+        shader_pipeline_capacity = capacity;
+    }
+    const tide_gpu_id pipeline = gpu->pipeline(&desc);
+    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame};
+    shader_index[slot] = ++shader_pipeline_count;
+    return pipeline;
+}
+
+// Lets go of the pipelines the frame didn't draw through: for the first frame
+// of another build of the game (see tide_draw_forget), whose shaders that
+// didn't change keep theirs.
+static void forget_pipelines(void)
+{
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < shader_pipeline_count; i++) {
+        if (shader_pipelines[i].frame != gpu_frame) {
+            gpu->pipeline_free(shader_pipelines[i].pipeline);
+            continue;
+        }
+        shader_pipelines[kept++] = shader_pipelines[i];
+    }
+    if (kept == shader_pipeline_count) return;
+    shader_pipeline_count = kept;
+    index_shaders();
+}
+
+// Whether the list's run `place` can draw: it wasn't forgotten (see
+// tide_draw_forget), its shader takes no more than a pipeline does, its mesh
+// is of the shader's vertices, and its instances and uniforms are all there.
+static bool run_draws(const tide_draw_list *list, const uint32_t place)
+{
+    if (place >= list->run_count) return false;
+    const tide_draw_run *run = &list->runs[place];
+    const tide_shader *shader = run->shader;
+    if (!shader || run->mesh == 0 || run->mesh > list->mesh_count || run->count == 0) return false;
+    const tide_draw_mesh_data *m = &list->meshes[run->mesh - 1u];
+    if (m->space != TIDE_MESH_BYTES || m->index_count == 0 || m->vertex_size != shader->vertex_size) return false;
+    const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
+    const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
+    if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
+        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
+        return false;
+    }
+    for (uint32_t i = 0; i < shader->attribute_count; i++) {
+        if (shader->attributes[i].format > TIDE_SHADER_INT4) return false;
+    }
+    return run->first + instance_fields * 16u * run->count <= list->instance_used
+           && run->uniforms + uniform_fields * 16u <= list->uniform_used;
+}
+
+// What the list's shaded runs draw from goes to the GPU, before anything
+// draws: their meshes, their instances into the instance buffer, which grows
+// as they need, and a pipeline for each shader that has none.
+static bool upload_shaded(const tide_draw_list *list)
+{
+    bool any = false;
+    for (uint32_t i = 0; i < step_count; i++) {
+        if (steps[i].kind != STEP_SHADED) continue;
+        const tide_draw_run *run = &list->runs[steps[i].first];
+        any = true;
+        mesh_for(list, run->mesh);
+        steps[i].pipeline = pipeline_for(run->shader);
+    }
+    if (any && list->instance_used) {
+        buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used, 1, 4096u);
+        gpu->buffer_write(gpu_state.instances, 0, list->instances, list->instance_used);
+    }
+    return any;
 }
 
 // This list's shapes into the instance buffer, and its triangles, text's too,
@@ -860,21 +1047,25 @@ static void forget_textures(void)
     gpu_frame++;
 }
 
+// The GPU's copy of the list's texture `texture` (1 + its place), or the
+// white pixel for none.
+static tide_gpu_id texture_or_white(const tide_draw_list *list, const uint32_t texture)
+{
+    if (texture == 0 || texture > list->texture_count) return gpu_state.white;
+    const gpu_texture *g = texture_for(&list->textures[texture - 1u]);
+    return g->texture ? g->texture : gpu_state.white;
+}
+
 // The texture a mesh step samples, sampled as the step says.
 static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 {
-    tide_gpu_id texture = gpu_state.white;
-    if (s->texture) {
-        const gpu_texture *g = texture_for(&list->textures[s->texture - 1u]);
-        if (g->texture) texture = g->texture;
-    }
-    gpu->sample(texture, s->filter != TIDE_FILTER_POINT);
+    gpu->sample(0, texture_or_white(list, s->texture), s->filter != TIDE_FILTER_POINT);
 }
 
-static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
+// A step's 3D camera, from the world to clip space, fitted to the screen's
+// shape: x divided by its width over its height.
+static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
 {
-    const gpu_mesh *g = &gpu_meshes[s->mesh - 1u];
-    // The camera, fitted to the screen's shape: x divided by its width over its height
     tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     if (!s->camera || s->fit) {
@@ -882,6 +1073,58 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
         world_to_clip.c0.x *= across, world_to_clip.c1.x *= across;
         world_to_clip.c2.x *= across, world_to_clip.c3.x *= across;
     }
+    return world_to_clip;
+}
+
+// A camera as a matrix, from the units its commands are in to clip space:
+// where to_screen puts a point, on the target.
+static tide_float4x4 camera_to_clip(const camera *cam)
+{
+    const float x = 2.0f * cam->scale / (float)screen_width, y = 2.0f * cam->scale / (float)screen_height;
+    tide_float4x4 m = tide_identity_f4x4();
+    m.c0.x = x;
+    if (cam->gui) { // From the top left, y down
+        m.c1.y = -y;
+        m.c3.x = -1.0f, m.c3.y = 1.0f;
+    } else {
+        m.c1.y = y;
+        m.c3.x = -cam->center.x * x, m.c3.y = -cam->center.y * y;
+    }
+    return m;
+}
+
+// A run of instances of a mesh through a shader of the game's, at once.
+static void draw_shaded(const tide_draw_list *list, const draw_step *s)
+{
+    static union {
+        shaded_uniforms engine; // Then the run's own
+        uint8_t bytes[TIDE_GPU_MAX_UNIFORMS];
+    } block;
+    const tide_draw_run *run = &list->runs[s->first];
+    const tide_shader *shader = run->shader;
+    const gpu_mesh *g = &gpu_meshes[run->mesh - 1u];
+    const tide_float2 scale = pixel_scale();
+    const uint32_t own = tide_shader_uniform_size(shader);
+    block.engine.camera = shader->dims == 3 ? camera_3d_to_clip(list, s) : camera_to_clip(&s->through);
+    block.engine.screen[0] = scale.x, block.engine.screen[1] = scale.y;
+    block.engine.screen[2] = (float)(offscreen ? screen_height : pixel_height);
+    block.engine.screen[3] = 0.0f;
+    if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);
+    gpu->use(s->pipeline);
+    gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
+    for (uint32_t i = 0; i < shader->texture_count; i++) {
+        gpu->sample(i, texture_or_white(list, run->textures[i]), (run->blended >> i & 1u) != 0);
+    }
+    gpu->vertices(0, g->vertices, 0);
+    if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
+    gpu->indices(g->indices, g->wide);
+    gpu->draw_indexed(g->index_count, run->count);
+}
+
+static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
+{
+    const gpu_mesh *g = &gpu_meshes[s->mesh - 1u];
+    const tide_float4x4 world_to_clip = camera_3d_to_clip(list, s);
     gpu->use(gpu_state.meshes_3d);
     gpu->uniforms(&world_to_clip, sizeof world_to_clip);
     sample_step_texture(list, s);
@@ -958,6 +1201,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         case TIDE_DRAW_MESH_3D: {
             if (!c->mesh3.mesh || c->mesh3.mesh > list->mesh_count) break; // Forgotten (see tide_draw_forget)
+            if (list->meshes[c->mesh3.mesh - 1u].space == TIDE_MESH_BYTES) break; // A shader's: not these vertices
             draw_step *s = add_step(STEP_MESH_3D);
             s->first = c->mesh3.first;
             s->count = c->mesh3.count;
@@ -966,6 +1210,15 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             s->mesh = c->mesh3.mesh;
             s->camera = camera_3d;
             s->fit = fit;
+            break;
+        }
+        case TIDE_DRAW_SHADED: {
+            if (!run_draws(list, c->shaded.run)) break;
+            draw_step *s = add_step(STEP_SHADED);
+            s->first = c->shaded.run;
+            s->camera = camera_3d;
+            s->fit = fit;
+            s->through = cam;
             break;
         }
         case TIDE_DRAW_CLIP: {
@@ -1013,6 +1266,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     renderer_start();
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
+    const bool shaded = upload_shaded(list);
     upload_atlas();
     screen_uniforms uniforms = {.screen = {[0] = 2.0f / (float)screen_width, [5] = -2.0f / (float)screen_height,
                                            [10] = 1.0f, [12] = -1.0f, [13] = 1.0f, [15] = 1.0f}};
@@ -1052,6 +1306,9 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         case STEP_MESH_3D:
             draw_mesh_3d(list, s);
             break;
+        case STEP_SHADED:
+            draw_shaded(list, s);
+            break;
         case STEP_CLIP:
         case STEP_NO_CLIP:
             clip(s);
@@ -1060,7 +1317,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             if (s->count == 0 || !gpu_state.atlas) break;
             gpu->use(gpu_state.text);
             gpu->uniforms(&uniforms, sizeof uniforms);
-            gpu->sample(gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
+            gpu->sample(0, gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
             break;
@@ -1069,6 +1326,11 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     gpu->end();
     offscreen = false;
     if (!over) {
+        // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
+        if (shaded && list->epoch != shader_epoch) {
+            forget_pipelines();
+            shader_epoch = list->epoch;
+        }
         forget_meshes_3d();
         forget_textures();
     }

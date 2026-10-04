@@ -12,20 +12,21 @@
 #include "gl.h"
 #include "window.h"
 
-// One GLSL for all three, but for its first lines.
+// One GLSL for all three, but for its first lines. OpenGL ES asks for floats
+// and ints of 32 bits, which its fragment shaders don't have otherwise.
 #if defined(__wasm__)
 #define GL_NAME "WebGL 2"
-#define GLSL_VERSION "#version 300 es\nprecision highp float;\n"
+#define GLSL_VERSION "#version 300 es\nprecision highp float;\nprecision highp int;\n"
 #elif defined(__ANDROID__)
 #define GL_NAME "OpenGL ES 3"
-#define GLSL_VERSION "#version 300 es\nprecision highp float;\n"
+#define GLSL_VERSION "#version 300 es\nprecision highp float;\nprecision highp int;\n"
 #else
 #define GL_NAME "OpenGL 3.3"
 #define GLSL_VERSION "#version 330\n"
 #endif
 
 typedef struct gl_pipeline {
-    GLuint program, vao;
+    GLuint program, vao;         // No program: a place that's free
     tide_gpu_pipeline_desc desc; // Its slots and attributes, and how it blends and tests depth
 } gl_pipeline;
 
@@ -40,8 +41,7 @@ typedef struct gl_buffer {
 } gl_buffer;
 
 typedef struct gl_texture {
-    uint8_t format;  // tide_gpu_format
-    int8_t blended;  // How it's sampled now
+    uint8_t format; // tide_gpu_format
     int32_t width, height;
 } gl_texture;
 
@@ -56,6 +56,9 @@ static uint32_t texture_names;
 
 static GLuint upload_vao;     // What index buffers are bound in while they're written, in no pipeline's place
 static GLuint uniform_buffer; // Every pipeline's uniform block, as the last draw's was set
+// How a unit samples the texture it has: the nearest pixel, or blended. A
+// texture's own way would be the same in every unit that has it.
+static GLuint samplers[2];
 static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
@@ -118,14 +121,23 @@ static void texture_pixels(const gl_texture *t, const void *pixels, const bool a
     }
 }
 
+// Binds a texture to write it, in a unit past the ones pipelines sample, so
+// the textures a draw was given stay in theirs.
+static void bind_texture(const GLuint texture)
+{
+    glActiveTexture(GL_TEXTURE0 + TIDE_GPU_MAX_TEXTURES);
+    glBindTexture(GL_TEXTURE_2D, texture);
+}
+
 static tide_gpu_id gl_texture_make(const tide_gpu_format format, const int width, const int height, const void *pixels)
 {
     GLuint texture = 0;
     glGenTextures(1, &texture);
     textures = room(textures, &texture_names, texture, sizeof(gl_texture));
     textures[texture] = (gl_texture){.format = (uint8_t)format, .width = width, .height = height};
-    glBindTexture(GL_TEXTURE_2D, texture);
+    bind_texture(texture);
     texture_pixels(&textures[texture], pixels, false);
+    // Its own way of being sampled, which a unit's sampler stands in for (gl_sample)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -135,7 +147,7 @@ static tide_gpu_id gl_texture_make(const tide_gpu_format format, const int width
 
 static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
 {
-    glBindTexture(GL_TEXTURE_2D, texture);
+    bind_texture(texture);
     texture_pixels(&textures[texture], pixels, true);
 }
 
@@ -155,8 +167,8 @@ static GLuint compile(const char *name, const GLenum kind, const char *source)
     if (!ok) {
         char log[1024] = "";
         glGetShaderInfoLog(shader, sizeof log, NULL, log);
-        fprintf(stderr, "tide: the %s' %s shader didn't compile:\n%s\n", name,
-                kind == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+        fprintf(stderr, "tide: the %s shader of %s didn't compile:\n%s\n",
+                kind == GL_VERTEX_SHADER ? "vertex" : "fragment", name, log);
         abort();
     }
     return shader;
@@ -175,21 +187,29 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
     if (!ok) {
         char log[1024] = "";
         glGetProgramInfoLog(program, sizeof log, NULL, log);
-        fprintf(stderr, "tide: the %s' shaders didn't link:\n%s\n", desc->name, log);
+        fprintf(stderr, "tide: the shaders of %s didn't link:\n%s\n", desc->name, log);
         abort();
     }
     glDeleteShader(vertex); // The program keeps them
     glDeleteShader(fragment);
-    // Its uniforms are in the uniform buffer, and its texture the first
+    // Its uniforms are in the uniform buffer, and each of its textures in the unit that's its place
     const GLuint block = glGetUniformBlockIndex(program, "uniforms");
     if (block != GL_INVALID_INDEX) glUniformBlockBinding(program, block, 0);
-    if (desc->texture) {
-        glUseProgram(program);
-        glUniform1i(glGetUniformLocation(program, "pixels"), 0);
+    if (desc->texture_count) glUseProgram(program);
+    for (uint32_t i = 0; i < desc->texture_count; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "pixels%u", (unsigned)i);
+        glUniform1i(glGetUniformLocation(program, name), (GLint)i); // Nowhere, for one its shaders don't sample
     }
 
-    pipelines = tide_realloc(pipelines, pipeline_count * sizeof(gl_pipeline), (pipeline_count + 1u) * sizeof(gl_pipeline));
-    gl_pipeline *p = &pipelines[pipeline_count++];
+    uint32_t place = 0;
+    while (place < pipeline_count && pipelines[place].program) place++;
+    if (place == pipeline_count) {
+        pipelines = tide_realloc(pipelines, pipeline_count * sizeof(gl_pipeline),
+                                 (pipeline_count + 1u) * sizeof(gl_pipeline));
+        pipeline_count++;
+    }
+    gl_pipeline *p = &pipelines[place];
     *p = (gl_pipeline){.program = program, .desc = *desc};
     glGenVertexArrays(1, &p->vao);
     glBindVertexArray(p->vao);
@@ -198,7 +218,16 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
         if (desc->slots[desc->attributes[i].slot].per_instance) glVertexAttribDivisor(i, 1);
     }
     current = NULL; // The pipelines may have moved
-    return pipeline_count;
+    return place + 1u;
+}
+
+static void gl_pipeline_free(const tide_gpu_id pipeline)
+{
+    gl_pipeline *p = &pipelines[pipeline - 1u];
+    glDeleteProgram(p->program);
+    glDeleteVertexArrays(1, &p->vao);
+    *p = (gl_pipeline){0};
+    current = NULL;
 }
 
 static tide_gpu_id gl_target_make(const int width, const int height)
@@ -277,11 +306,18 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     glDisable(GL_CULL_FACE); // Either side of a triangle draws
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
-    glActiveTexture(GL_TEXTURE0);
-    if (!uniform_buffer) {
+    if (!uniform_buffer) { // The first pass: what every pipeline draws with
         glGenBuffers(1, &uniform_buffer);
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer);
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
+        glGenSamplers(2, samplers);
+        for (int blended = 0; blended < 2; blended++) {
+            const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
+            glSamplerParameteri(samplers[blended], GL_TEXTURE_MIN_FILTER, filter);
+            glSamplerParameteri(samplers[blended], GL_TEXTURE_MAG_FILTER, filter);
+            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer);
     current = NULL;
@@ -327,29 +363,30 @@ static void gl_uniforms(const void *data, const size_t size)
     glBufferSubData(GL_UNIFORM_BUFFER, 0, (GLsizeiptr)size, data);
 }
 
-static void gl_sample(const tide_gpu_id texture, const bool blended)
+static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended)
 {
+    glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
-    gl_texture *t = &textures[texture];
-    if (t->blended != (int8_t)blended) {
-        const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-        t->blended = (int8_t)blended;
-    }
+    glBindSampler(slot, samplers[blended]);
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
 {
-    static const GLint counts[] = {1, 2, 3, 4, 4};
+    static const GLint counts[] = {1, 2, 3, 4, 4, 1, 2, 3, 4};
     const tide_gpu_pipeline_desc *d = &current->desc;
     glBindVertexArray(current->vao); // Writing an index buffer binds another
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     for (uint32_t i = 0; i < d->attribute_count; i++) {
         if (d->attributes[i].slot != slot) continue;
-        const bool bytes = d->attributes[i].format == TIDE_GPU_BYTES4;
-        glVertexAttribPointer(i, counts[d->attributes[i].format], bytes ? GL_UNSIGNED_BYTE : GL_FLOAT, bytes,
-                              (GLsizei)d->slots[slot].stride, (const void *)(offset + d->attributes[i].offset));
+        const tide_gpu_attribute_format format = d->attributes[i].format;
+        const GLsizei stride = (GLsizei)d->slots[slot].stride;
+        const void *at = (const void *)(offset + d->attributes[i].offset);
+        if (format >= TIDE_GPU_INT) { // Ints stay ints: the other call would hand the shader floats
+            glVertexAttribIPointer(i, counts[format], GL_INT, stride, at);
+        } else {
+            const bool bytes = format == TIDE_GPU_BYTES4;
+            glVertexAttribPointer(i, counts[format], bytes ? GL_UNSIGNED_BYTE : GL_FLOAT, bytes, stride, at);
+        }
     }
 }
 
@@ -388,6 +425,7 @@ const tide_gpu tide_gpu_gl = {
     .texture_write = gl_texture_write,
     .texture_free = gl_texture_free,
     .pipeline = gl_pipeline_make,
+    .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
     .target_free = gl_target_free,
     .target_read = gl_target_read,

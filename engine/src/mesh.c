@@ -35,9 +35,7 @@ static void grid_pixels(const tide_grid_dir *dir, const tide_heap *heap, const t
     }
 }
 
-// The texture a grid of colors is, for a mesh command, or 0 for none: a grid
-// with no size on an axis.
-static uint32_t grid_slot(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
     const tide_grid_dir *dir = tide_grid_dir_of(g);
     tide_heap *heap = tide_heap_of(g.at >> 30);
@@ -85,7 +83,7 @@ void tide_draw_mesh_lists(tide_draw_list *d, const tide_list vertices, const tid
 void tide_draw_mesh_grid(tide_draw_list *d, const tide_list vertices, const tide_list indices, const tide_grid texture,
                          const tide_grid_shape *shape, const int32_t filter)
 {
-    mesh_lists(d, vertices, indices, grid_slot(d, texture, shape),
+    mesh_lists(d, vertices, indices, tide_draw_grid_texture(d, texture, shape),
                filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
 }
 
@@ -154,6 +152,35 @@ static void mesh3_lists(tide_draw_list *d, const tide_list vertices, const tide_
     tide_draw_instance(d, mesh, transform, texture, filter);
 }
 
+void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, const tide_list vertices, const tide_list indices,
+                           const void *instance, const void *uniforms, const uint32_t *textures, const uint32_t blended)
+{
+    const int32_t vertex_count = tide_list_count(vertices);
+    const int32_t index_count = tide_list_count(indices);
+    if (vertex_count <= 0 || index_count < 3) return;
+    // As a 3D mesh: its two lists at their versions, and how big a vertex is,
+    // so no other kind of list with the same bytes is taken for it
+    const uint32_t size = shader->vertex_size;
+    uint64_t version = list_version(vertices, size);
+    const uint64_t index_version = list_version(indices, sizeof(uint32_t));
+    version = tide_hash_more(version, &index_version, sizeof index_version);
+    version = tide_hash_end(tide_hash_more(version, &size, sizeof size));
+    const uint64_t scratch = (uint64_t)TIDE_IN_SCRATCH << 32;
+    const uint64_t id = vertices.at >> 30 == TIDE_IN_SCRATCH ? scratch : vertices.at;
+    const uint64_t other = indices.at >> 30 == TIDE_IN_SCRATCH ? scratch : indices.at;
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, id, other, version, &fill);
+    if (fill) {
+        bool vertices_copied, indices_copied;
+        void *v = tide_list_flatten(vertices, size, false, &vertices_copied);
+        uint32_t *i = tide_list_flatten(indices, sizeof(uint32_t), false, &indices_copied);
+        tide_draw_mesh_fill_bytes(d, mesh, v, size, (uint32_t)vertex_count, i, (uint32_t)index_count);
+        tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
+        tide_list_unflatten(vertices, v, size, false, vertices_copied);
+    }
+    tide_draw_shaded(d, shader, mesh, instance, uniforms, textures, blended);
+}
+
 void tide_draw_mesh3_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices,
                            const tide_float4x4 transform)
 {
@@ -164,6 +191,6 @@ void tide_draw_mesh3_grid(tide_draw_list *d, const tide_list vertices, const tid
                           const tide_float4x4 transform, const tide_grid texture, const tide_grid_shape *shape,
                           const int32_t filter)
 {
-    mesh3_lists(d, vertices, indices, transform, grid_slot(d, texture, shape),
+    mesh3_lists(d, vertices, indices, transform, tide_draw_grid_texture(d, texture, shape),
                 filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
 }
