@@ -131,6 +131,7 @@ static uint32_t runs_through(const char *name, uint32_t *instances)
 // A frame of the game, and its pixels against what they should be.
 static void run_checks(const char *when)
 {
+    local.Art.targetPass = 0;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
@@ -163,6 +164,44 @@ static void run_checks(const char *when)
     }
 }
 
+// The generated shaders also run independently over entire destinations,
+// including their corners where a stale camera or clip would leave pixels.
+static void run_target_checks(const char *when)
+{
+    static const tide_float2 points[] = {{4, 4}, {SIZE - 5, 4}, {4, SIZE - 5}, {SIZE - 5, SIZE - 5},
+                                         {64, 64}, {192, 64}, {64, 192}, {192, 192}};
+    static const uint32_t pattern[] = {0xff0000ffu, 0x00ff00ffu, 0x0000ffffu, 0xffffffffu};
+    static const uint32_t alpha[] = {0x40ff00ffu, 0x4000ffffu, 0x400000ffu, 0x40ffffffu};
+    static const char *what[] = {"rendered Texture source, field filters and full alpha replacement",
+                                "grid Blit source keeps top-left UVs across targets",
+                                "CPU Texture source, field filters and full alpha replacement",
+                                "a vert samples an explicit Texture with both filters",
+                                "an ordinary mesh samples an explicit Texture"};
+    for (int pass = 1; pass <= 5; pass++) {
+        local.Art.targetPass = pass;
+        tide_draw_reset(&list);
+        tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
+        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_gui_end(&gui, &list);
+        uint32_t got[8];
+        tide_platform_read_pixels(&list, points, 8, got);
+        bool ok = true;
+        const uint32_t *wanted = pass == 1 || pass == 3 ? alpha : pattern;
+        for (int p = 0; p < 8; p++) {
+            for (int channel = 0; channel < 4; channel++) {
+                const int shift = 24 - 8 * channel;
+                const int difference = (int)(got[p] >> shift & 0xffu) - (int)(wanted[p % 4] >> shift & 0xffu);
+                ok &= difference >= -2 && difference <= 2;
+            }
+            if (!ok) printf("target pass %d point %d%s: 0x%08X, expected 0x%08X\n", pass, p, when,
+                            (unsigned)got[p], (unsigned)wanted[p % 4]);
+        }
+        printf("%s: %s%s\n", ok ? "ok" : "FAIL", what[pass - 1], when);
+        if (!ok) failures++;
+    }
+    local.Art.targetPass = 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -181,12 +220,15 @@ static int frame(void *user, const float seconds)
     }
     if (lost == 2) {
         run_checks(", on another device");
+        run_target_checks(", on another device");
         return failures;
     }
 #endif
     run_checks("");
+    run_target_checks("");
     // A second frame draws the same from what the list and the renderer kept
     run_checks(", again");
+    run_target_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
@@ -202,6 +244,11 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world); // The entities are there
     tide_local_init(&local);
+    local.Art.sourceTarget = (tide_render_target){.id = 1001, .width = 32, .height = 32};
+    local.Art.outputTarget = (tide_render_target){.id = 1002, .width = 48, .height = 24};
+    static const uint8_t pixels[] = {255, 0, 0, 255, 0, 255, 0, 255,
+                                     0, 0, 255, 255, 255, 255, 255, 255};
+    local.Art.uploaded = (tide_texture_ref){.image = {.pixels = pixels, .width = 2, .height = 2, .version = 1}};
     tide_platform_open(&(tide_window_desc){.title = "shaders", .width = SIZE, .height = SIZE, .hidden = true});
     tide_platform_run(frame, NULL);
 }

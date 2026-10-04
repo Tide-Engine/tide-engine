@@ -267,6 +267,21 @@ else()
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
 
+# Targets are sampleable images: multiple passes preserve their color/depth,
+# and sampling keeps the same top-left UVs as uploaded images on every GPU.
+if(NOT TIDE_ANDROID)
+    add_executable(tide_platform_targets tests/targets.c)
+    target_include_directories(tide_platform_targets PRIVATE src)
+    target_link_libraries(tide_platform_targets PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_targets SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_targets TARGET tide_platform_targets WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_targets COMMAND tide_platform_targets)
+        set_tests_properties(tide_platform_targets PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 # frag and vert, written in Tide: every shader tidec writes for
 # tests/shaders.tide has to compile on the backend that draws, without a
 # warning, and give the pixels tests/shaders.c expects.

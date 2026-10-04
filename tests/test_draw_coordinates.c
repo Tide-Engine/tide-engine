@@ -208,3 +208,155 @@ TIDE_TEST(draw_coordinates_invalid)
     TIDE_CHECK(close3(tide_draw_screen_ray_direction(&d, zero2, screen), zero3));
     tide_draw_free(&d);
 }
+
+TIDE_TEST(draw_coordinates_targets_2d)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f);
+    const tide_float2 point = tide_f2(40.0f, 0.0f);
+    tide_draw_camera(&d, tide_f2(10.0f, -5.0f), 20.0f);
+    tide_draw_to(&d, 101, 200, 100);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, point, window), tide_f2(140.0f, 50.0f)));
+    tide_draw_camera(&d, tide_f2(1.0f, 2.0f), 5.0f);
+    const tide_float2 target_point = tide_f2(4.0f, 3.0f), pixel = tide_f2(130.0f, 40.0f);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, target_point, window), pixel));
+    TIDE_CHECK(close2(tide_draw_screen_to_world(&d, pixel, window), target_point));
+    // A target's size is independent of the caller's window-size fallback.
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, target_point, tide_f2(0.0f, 0.0f)), pixel));
+
+    tide_draw_to(&d, 102, 64, 128);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, point, window), tide_f2(72.0f, 64.0f)));
+    tide_draw_screen(&d);
+    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -10.0f), tide_identity_q(), 90.0f);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, target_point, window), target_point));
+    TIDE_CHECK(close2(tide_draw_screen_to_world(&d, target_point, window), target_point));
+    tide_draw_to(&d, 101, 200, 100);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, target_point, window), pixel));
+    tide_draw_to(&d, 0, 0, 0);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, point, window), tide_f2(700.0f, 150.0f)));
+    tide_draw_to(&d, 102, 64, 128);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, target_point, window), target_point));
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_coordinates_targets_3d)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f);
+    const tide_float3 point = tide_f3(2.0f, 1.0f, 2.0f);
+    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
+    const tide_float3 window_pixel = tide_draw_world_to_screen_3d(&d, point, window);
+    tide_draw_to(&d, 201, 200, 100);
+    // A new target starts with the default camera, independent of the window.
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(100.0f, 50.0f), window), tide_f3(0.0f, 0.0f, 0.3f)));
+    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 90.0f);
+    const tide_float3 pixel = tide_f3(150.0f, 25.0f, 0.85f);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, point, window), pixel));
+    TIDE_CHECK(close3(tide_draw_screen_to_world_3d(&d, pixel, window), point));
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(200.0f, 0.0f), window), tide_f3(0.6f, 0.3f, 0.3f)));
+    TIDE_CHECK(close3(tide_draw_screen_ray_direction(&d, tide_f2(200.0f, 0.0f), window),
+                     tide_normalize_f3(tide_f3(2.0f, 1.0f, 1.0f))));
+    tide_draw_camera(&d, tide_f2(30.0f, 40.0f), 2.0f);
+    tide_draw_screen(&d);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, point, window), pixel));
+
+    tide_draw_to(&d, 202, 300, 150);
+    tide_draw_camera_matrices(&d, tide_translate_f4x4(tide_f3(3.0f, 4.0f, -5.0f)),
+                              tide_ortho_f4x4(8.0f, 4.0f, 1.0f, 11.0f));
+    const tide_float3 matrix_point = tide_f3(5.0f, 5.0f, 1.0f), matrix_pixel = tide_f3(225.0f, 37.5f, 0.5f);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, matrix_point, window), matrix_pixel));
+    TIDE_CHECK(close3(tide_draw_screen_to_world_3d(&d, matrix_pixel, window), matrix_point));
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(150.0f, 75.0f), window), tide_f3(3.0f, 4.0f, -4.0f)));
+    TIDE_CHECK(close3(tide_draw_screen_ray_direction(&d, tide_f2(300.0f, 0.0f), window), tide_f3(0.0f, 0.0f, 1.0f)));
+    tide_draw_to(&d, 0, 0, 0);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, point, window), window_pixel));
+    tide_draw_to(&d, 201, 200, 100);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, point, window), pixel));
+    tide_draw_to(&d, 202, 300, 150);
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, matrix_point, window), matrix_pixel));
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_coordinates_targets_append_reset)
+{
+    tide_draw_list d = {0}, from = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f);
+    tide_draw_camera(&d, tide_f2(100.0f, 100.0f), 1.0f);
+    tide_draw_to(&d, 301, 200, 100);
+    tide_draw_camera(&d, tide_f2(-20.0f, -30.0f), 2.0f);
+    tide_draw_camera(&from, tide_f2(10.0f, -5.0f), 20.0f);
+    tide_draw_to(&from, 301, 200, 100);
+    tide_draw_camera(&from, tide_f2(3.0f, -2.0f), 10.0f);
+    tide_draw_camera_matrices(&from, tide_translate_f4x4(tide_f3(0.0f, 0.0f, -2.0f)),
+                              tide_ortho_f4x4(8.0f, 4.0f, 1.0f, 11.0f));
+    tide_draw_to(&from, 302, 80, 60);
+    tide_draw_screen(&from);
+    tide_draw_to(&from, 301, 200, 100);
+    tide_draw_append(&d, &from);
+    tide_draw_free(&from);
+    for (uint32_t i = 0; i < 8192; i++) tide_draw_circle(&d, tide_f2(0.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(5.0f, 0.0f), window), tide_f2(110.0f, 40.0f)));
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, tide_f3(2.0f, 1.0f, 3.0f), window), tide_f3(150.0f, 25.0f, 0.4f)));
+    tide_draw_to(&d, 0, 0, 0);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(40.0f, 0.0f), window), tide_f2(700.0f, 150.0f)));
+    tide_draw_to(&d, 302, 80, 60);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(5.0f, 0.0f), window), tide_f2(5.0f, 0.0f)));
+    tide_draw_reset(&d);
+    tide_draw_to(&d, 301, 200, 100);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(5.0f, 0.0f), window), tide_f2(105.0f, 50.0f)));
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(100.0f, 50.0f), window), tide_f3(0.0f, 0.0f, 0.3f)));
+    tide_draw_free(&d);
+}
+
+TIDE_TEST(draw_coordinates_targets_lifecycle)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f), zero2 = tide_f2(0.0f, 0.0f);
+    const tide_float3 zero3 = tide_f3(0.0f, 0.0f, 0.0f);
+    const tide_render_target target = tide_render_target_make(200, 100), alias = target;
+    tide_draw_render_target(&d, alias);
+    tide_draw_camera(&d, tide_f2(10.0f, 20.0f), 5.0f);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(10.0f, 20.0f), window), tide_f2(100.0f, 50.0f)));
+    tide_render_target_resize(target, 120, 240);
+    tide_draw_render_target(&d, alias);
+    // Resize selects a fresh attachment and the same defaults as playback.
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, zero2, window), tide_f2(60.0f, 120.0f)));
+    tide_draw_cube(&d, tide_f3(0.0f, 0.0f, 2.0f), tide_f3_splat(1.0f), TIDE_COLOR_WHITE);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_MESH_3D && d.target != 0);
+    tide_render_target_dispose(target);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, zero2, window), zero2));
+    TIDE_CHECK(close2(tide_draw_screen_to_world(&d, zero2, window), zero2));
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, tide_f3(0.0f, 0.0f, 2.0f), window), zero3));
+    TIDE_CHECK(close3(tide_draw_screen_to_world_3d(&d, tide_f3(60.0f, 120.0f, 0.5f), window), zero3));
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, zero2, window), zero3));
+    TIDE_CHECK(close3(tide_draw_screen_ray_direction(&d, zero2, window), zero3));
+    tide_draw_render_target(&d, (tide_render_target){0});
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, zero2, window), zero2));
+    tide_draw_to(&d, 401, 0, 100);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, zero2, window), zero2));
+    tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, zero2, window), tide_f2(400.0f, 200.0f)));
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
+TIDE_TEST(draw_coordinates_targets_forget)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f);
+    tide_draw_camera(&d, tide_f2(10.0f, -5.0f), 20.0f);
+    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
+    tide_draw_clip(&d, (tide_rect){0.0f, 0.0f, 10.0f, 10.0f});
+    tide_draw_to(&d, 501, 200, 100);
+    tide_draw_screen(&d);
+    tide_draw_camera_3d(&d, tide_f3(100.0f, 200.0f, 300.0f), tide_identity_q(), 45.0f);
+    tide_draw_forget(&d);
+    TIDE_REQUIRE(d.count >= 2);
+    TIDE_CHECK(d.commands[d.count - 2u].kind == TIDE_DRAW_TARGET && d.commands[d.count - 2u].target == 0);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_NO_CLIP && d.clipped == 0);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(40.0f, 0.0f), window), tide_f2(700.0f, 150.0f)));
+    TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(400.0f, 200.0f), window), tide_f3(0.0f, 0.0f, -4.7f)));
+    tide_draw_circle(&d, tide_f2(40.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_CIRCLE && d.target == 0);
+    tide_draw_free(&d);
+}

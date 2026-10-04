@@ -90,7 +90,7 @@ static str join_names(const str a, const str b)
 static qname parse_qname(parser *p, const char *what)
 {
     const token *first = expect_ident(p, what);
-    qname q = {first->text, first->at, first->at, NULL};
+    qname q = {.text = first->text, .at = first->at, .name_at = first->at};
     while (at(p, T_DOT) && peek_at(p, 1)->kind == T_IDENT) {
         advance(p);
         const token *part = advance(p);
@@ -1587,12 +1587,17 @@ static void parse_attributes(parser *p)
         a.at = name->at;
         if (accept(p, T_LPAREN)) {
             if (!at(p, T_RPAREN)) {
-                do {
-                    // [NativeName("stb_perlin_noise3")] takes text
-                    const bool call = at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN;
-                    if (at(p, T_STRING) || at(p, T_INT) || at(p, T_MINUS) || call) vec_push(a.values, parse_expr(p));
-                    else vec_push(a.args, parse_qname(p, "a name"));
-                } while (accept(p, T_COMMA));
+                if (str_eq_c(a.name, "Stage")) {
+                    vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));
+                    while (accept(p, T_COMMA)) vec_push(a.values, parse_expr(p));
+                } else {
+                    do {
+                        // [NativeName("stb_perlin_noise3")] takes text
+                        const bool call = at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN;
+                        if (at(p, T_STRING) || at(p, T_INT) || at(p, T_MINUS) || call) vec_push(a.values, parse_expr(p));
+                        else vec_push(a.args, parse_qname(p, "a name"));
+                    } while (accept(p, T_COMMA));
+                }
             }
             expect(p, T_RPAREN, "')' after the attribute's arguments");
         }

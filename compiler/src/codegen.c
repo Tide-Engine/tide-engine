@@ -2047,9 +2047,20 @@ static void gen_window_index(gen *g, sb *o, const expr *index)
     }
 }
 
+// Every ordinary Draw call names the window; a receiver names its target.
+// The receiver is evaluated once, while the runtime keeps its camera and clip.
+static void gen_draw_list(gen *g, sb *o, const expr *e)
+{
+    sb_put(o, "tide_draw_render_target(tide_draw, ");
+    if (e->targeted) gen_expr(g, o, e->object);
+    else sb_put(o, "(tide_render_target){.id = TIDE_RENDER_WINDOW}");
+    sb_put(o, ")");
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
-    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL)) {
+    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL
+                       || (e->call == CALL_DRAW && e->type.kind != TY_VOID))) {
         sb_put(o, e->hoisted); // Already ran, before the statement: a unit, or an operator that calls C
         return;
     }
@@ -2199,6 +2210,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         break;
     case E_MEMBER: {
+        if (e->object->type.kind == TY_RENDER_TARGET) {
+            sb_put(o, "tide_render_target_color(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            break;
+        }
         if (is_text_field(e) && e != g->raw_place) {
             sb_put(o, "tide_text_view(");
             gen_raw_place(g, o, e);
@@ -2270,6 +2287,16 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     case E_CALL:
         if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);
+        } else if (e->call == CALL_BUILTIN) {
+            if (e->hoisted) sb_put(o, e->hoisted);
+            else {
+                sb_printf(o, "%s(", e->c_callee);
+                for (int i = 0; i < e->args.count; i++) {
+                    if (i) sb_put(o, ", ");
+                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                }
+                sb_put(o, ")");
+            }
         } else if (e->call == CALL_CONSTRUCT) {
             gen_construct(g, o, e);
         } else if (e->call == CALL_SPAWN) {
@@ -2398,7 +2425,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
             bool filter = false;
-            sb_printf(o, "tide_shade_%d(tide_draw", sh->index);
+            sb_printf(o, "tide_shade_%d(", sh->index);
+            if (sh->blit) sb_put(o, "tide_draw");
+            else gen_draw_list(g, o, e);
             for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
                 expr *arg = e->args.items[i];
                 sb_put(o, ", ");
@@ -2421,16 +2450,20 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW
                    && (strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0
-                       || strcmp(e->c_callee, "tide_draw_mesh3_instances_grid") == 0)) {
+                       || strcmp(e->c_callee, "tide_draw_mesh3_instances_grid") == 0
+                       || strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_texture") == 0
+                       || strcmp(e->c_callee, "tide_draw_mesh3_instances_texture") == 0)) {
             // mesh drawing (vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
-
             // it has when left out
-            const int texture = strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 ? 2 : 3;
-            sb_printf(o, "%s(tide_draw", e->c_callee);
+            const int texture = strcmp(e->c_callee, "tide_draw_mesh_grid") == 0
+                             || strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 ? 2 : 3;
+            sb_printf(o, "%s(", e->c_callee);
+            gen_draw_list(g, o, e);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
                 gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
-                if (i == texture) sb_printf(o, ", &%s", grid_shape_name(e->args.items[texture]->type.decl));
+                if (i == texture && e->args.items[i]->type.kind == TY_GRID)
+                    sb_printf(o, ", &%s", grid_shape_name(e->args.items[texture]->type.decl));
             }
             sb_put(o, e->args.count == texture + 1 ? ", TIDE_FILTER_BILINEAR)" : ")");
         } else if (e->call == CALL_BUILTIN && e->c_callee && strcmp(e->c_callee, "tide_debug_assert") == 0) {
@@ -2447,9 +2480,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             else sb_put(o, "\"\"");
             sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW) {
-            sb_printf(o, "%s(%s", e->c_callee, e->call == CALL_DRAW ? "tide_draw" : "");
+            sb_printf(o, "%s(", e->c_callee);
+            if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
+            else if (e->resource_operation) gen_expr(g, o, e->object);
             for (int i = 0; i < e->args.count; i++) {
-                if (i || e->call == CALL_DRAW) sb_put(o, ", ");
+                if (i || e->call == CALL_DRAW || e->resource_operation) sb_put(o, ", ");
                 if (e->arg_want.items[i].kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
                 else gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
             }
@@ -3006,7 +3041,7 @@ static void collect_ordered(expr *e, expr_list *out)
         for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
         if (is_spawn(e)
             || (e->type.kind != TY_VOID
-                && (e->call == CALL_GUI
+                && (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation
                     || ((e->call == CALL_FUNCTION || e->call == CALL_METHOD)
                         && (e->method->draws || e->method->is_extern || e->method->calls_c))))) {
             vec_push(*out, e);
@@ -4283,6 +4318,8 @@ static layout type_layout(const type t)
     if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) return decl_layout(t.decl);
     if (t.kind == TY_RECORD) return (layout){(int)sizeof(tide_devices), 4}; // The input's devices
     if (t.kind == TY_LONG) return (layout){8, 8};
+    if (t.kind == TY_RENDER_TARGET) return (layout){16, 8};
+    if (t.kind == TY_TEXTURE) return (layout){32, 8};
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (type_dim(t) > 0) return (layout){4 * type_dim(t), 4};
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
@@ -4739,6 +4776,9 @@ static void gen_header(gen *g)
     sb_put(o, "// Clears the local state (zeroed, or local state: what it had goes) and sets its\n");
     sb_put(o, "// singletons' defaults. If Main is a local scene, loads it.\n");
     sb_put(o, "void tide_local_init(tide_local *local);\n\n");
+    sb_put(o, "// Rebinds graphics references after a reload: native references keep their shared\n"
+              "// targets; a new address space recreates them. CPU pixel references always clear.\n");
+    sb_put(o, "void tide_local_rebind_resources(tide_local *local, bool same_memory);\n\n");
     sb_put(o, "// The local state's tide_world_free, tide_world_pack and tide_world_unpack.\n");
     sb_put(o, "void tide_local_free(tide_local *local);\n");
     sb_put(o, "uint32_t tide_local_pack(const tide_local *local, uint8_t *out, uint32_t capacity);\n");
@@ -7931,7 +7971,8 @@ static void gen_frame_release(gen *g, const decl *frame)
 // Rows in each chunk of a table of tasks: 1 << this, as for archetypes.
 static int task_shift(const task_info *ti)
 {
-    const int widest = 28 + decl_layout(ti->frame).size;
+    const layout frame = decl_layout(ti->frame);
+    const int widest = round_up(28, frame.align) + frame.size;
     int shift = 4;
     while (shift < 10 && (16384 >> (shift + 1)) >= widest) shift++;
     return shift;
@@ -8067,8 +8108,12 @@ static void gen_tasks(gen *g)
         const char *id = task_id(ti->fn);
         const char *frame = type_cname(ti->frame);
         sb_printf(o, "// " STR_FMT "'s tasks, as they wait\n", STR_ARG(ti->fn->qualified));
-        sb_printf(o, "typedef struct tide_task_%s {\n    tide_task task;\n    %s frame;\n} tide_task_%s;\n", id, frame, id);
-        sb_printf(o, "_Static_assert(sizeof(tide_task_%s) == sizeof(tide_task) + sizeof(%s), \"tide_task_%s has padding\");\n", id, frame, id);
+        const layout frame_layout = decl_layout(ti->frame);
+        const int pad = round_up(28, frame_layout.align) - 28;
+        sb_printf(o, "typedef struct tide_task_%s {\n    tide_task task;\n", id);
+        if (pad) sb_printf(o, "    uint8_t tide_pad[%d];\n", pad);
+        sb_printf(o, "    %s frame;\n} tide_task_%s;\n", frame, id);
+        sb_printf(o, "_Static_assert(sizeof(tide_task_%s) == sizeof(tide_task) + %d + sizeof(%s), \"tide_task_%s has padding\");\n", id, pad, frame, id);
         sb_printf(o, "static const uint32_t tide_sizes_tasks_%s[] = {sizeof(tide_task_%s)};\n", id, id);
         sb_printf(o, "static const tide_columns tide_columns_tasks_%s = {1, %d, tide_sizes_tasks_%s};\n\n", id, task_shift(ti), id);
     }
@@ -9912,6 +9957,146 @@ static bool start_is_pure(const program *prog)
     return true;
 }
 
+// Rendering references never cross a library's lifetime as raw CPU pointers.
+// Managed targets can transfer their bookkeeping to a native replacement;
+// a replacement address space recreates their dimensions with empty contents.
+static bool resource_type(const type t);
+
+static bool resource_fields(const decl *d)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        if (resource_type(d->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool resource_type(const type t)
+{
+    if (t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return resource_fields(t.decl);
+    return false; // Containers cannot keep rendering references.
+}
+
+static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad)
+{
+    sb *o = &g->c;
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (!resource_type(f->type)) continue;
+        sb at = {0};
+        sb_printf(&at, "%s.%s", path, field_cname(f));
+        if (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
+            const bool texture = f->type.kind == TY_TEXTURE;
+            sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target" : "id");
+            if (texture) {
+                sb_printf(o, "%s    tide_render_target target = {.id = %s.target, .width = %s.image.width, .height = %s.image.height};\n",
+                          pad, at.data, at.data, at.data);
+                sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
+                sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
+                sb_printf(o, "%s    %s = tide_render_target_color(target);\n", pad, at.data);
+            } else {
+                sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at.data);
+                sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
+                          pad, at.data, at.data, pad, at.data, at.data);
+            }
+            sb_printf(o, "%s} ", pad);
+            if (texture) sb_printf(o, "else memset(&%s, 0, sizeof %s);\n", at.data, at.data);
+            else sb_printf(o, "else if (%s.id != TIDE_RENDER_WINDOW) memset(&%s, 0, sizeof %s);\n", at.data, at.data, at.data);
+        } else {
+            gen_resource_fields(g, f->type.decl, at.data, pad);
+        }
+    }
+}
+
+static void gen_rebind_resources(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    sb_put(o, "void tide_local_rebind_resources(tide_local *l, const bool same_memory)\n{\n    (void)l;\n    (void)same_memory;\n");
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!d->is_local || !resource_fields(d)) continue;
+        sb path = {0};
+        sb_printf(&path, "l->%s", type_cname(d));
+        gen_resource_fields(g, d, path.data, "    ");
+    }
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!arch_local(g, a)) continue;
+        for (int c = 0; c < prog->components.count; c++) {
+            const decl *d = prog->components.items[c];
+            if (!arch_stores(g, a, c) || !resource_fields(d)) continue;
+            sb_printf(o, "    for (uint32_t row = 0; row < l->%s.count; row++) {\n", arch_name(g, a));
+            if (comp_sparse(g, c)) sb_printf(o, "        if (!%s) continue;\n", presence_cell(g, "l", a, c, "row", false));
+            sb_printf(o, "        %s v;\n        %s;\n", type_cname(d), comp_take(g, "l", a, c, "row", "v"));
+            gen_resource_fields(g, d, "v", "        ");
+            sb_printf(o, "        %s;\n    }\n", comp_put(g, "l", a, c, "row", "v"));
+        }
+    }
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *d = prog->local_parts.items[i];
+        if (d->kind != DECL_COMPONENT || !resource_fields(d)) continue;
+        sb_printf(o, "    for (uint32_t row = 0; row < l->%s.rows.count; row++) {\n", fields_table(d));
+        sb_printf(o, "        %s *v = tide_attached_cell(&l->%s, %s, row);\n", type_cname(d), fields_table(d), fields_columns(d));
+        gen_resource_fields(g, d, "(*v)", "        ");
+        sb_put(o, "    }\n");
+    }
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, true) || !resource_fields(ti->frame)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "    for (uint32_t row = 0; row < l->tide_tasks_%s.count; row++) {\n", id);
+        sb_printf(o, "        tide_task_%s *v = tide_table_cell(&l->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n", id, id, id);
+        gen_resource_fields(g, ti->frame, "v->frame", "        ");
+        sb_put(o, "    }\n");
+    }
+    // A frame normally applies its queue, but host requests can leave local
+    // payloads waiting. Preserve the commands while rebinding their references.
+    bool queued = false;
+    for (int i = 0; i < prog->events.count; i++) queued |= is_queued(prog, prog->events.items[i]) && resource_fields(prog->events.items[i]);
+    for (int i = 0; i < prog->components.count; i++) queued |= prog->components.items[i]->is_local && resource_fields(prog->components.items[i]);
+    if (queued) {
+        sb_put(o, "    tide_queue_place at = {0};\n    for (tide_command *c; (c = tide_queue_next(&l->commands, &at));) {\n"
+                  "        switch (c->kind) {\n        case TIDE_CMD_SPAWN:\n            switch (c->id) {\n");
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (!arch_local(g, a) || !prog->spawn_target.items[a]) continue;
+            bool any = false;
+            for (int i = 0; i < prog->components.count; i++) any |= arch_stores(g, a, i) && resource_fields(prog->components.items[i]);
+            if (!any) continue;
+            sb_printf(o, "            case %d:\n", a);
+            for (int i = 0; i < prog->components.count; i++) {
+                const decl *d = prog->components.items[i];
+                if (!arch_stores(g, a, i) || !resource_fields(d)) continue;
+                sb path = {0};
+                sb_printf(&path, "c->data.spawn%d.values.%s", a, type_cname(d));
+                gen_resource_fields(g, d, path.data, "                ");
+            }
+            sb_put(o, "                break;\n");
+        }
+        sb_put(o, "            default: break;\n            }\n            break;\n        case TIDE_CMD_ADD:\n            switch (c->id) {\n");
+        for (int i = 0; i < prog->components.count; i++) {
+            const decl *d = prog->components.items[i];
+            if (!d->is_local || !has_component(prog->added_mask, i) || !resource_fields(d)) continue;
+            sb_printf(o, "            case %d:\n", i);
+            sb path = {0};
+            sb_printf(&path, "c->data.%s", type_cname(d));
+            gen_resource_fields(g, d, path.data, "                ");
+            sb_put(o, "                break;\n");
+        }
+        sb_put(o, "            default: break;\n            }\n            break;\n        case TIDE_CMD_EVENT:\n            switch (c->id) {\n");
+        for (int i = 0; i < prog->events.count; i++) {
+            const decl *d = prog->events.items[i];
+            if (!is_queued(prog, d) || !resource_fields(d)) continue;
+            sb_printf(o, "            case %d:\n", d->index);
+            sb path = {0};
+            sb_printf(&path, "c->data.event_%s", type_cname(d));
+            gen_resource_fields(g, d, path.data, "                ");
+            sb_put(o, "                break;\n");
+        }
+        sb_put(o, "            default: break;\n            }\n            break;\n        default: break;\n        }\n    }\n");
+    }
+    sb_put(o, "    if (!same_memory) tide_render_targets_recreated();\n}\n\n");
+}
+
 // What sessions (tide/session.h) need: the local state's side, the input
 // packed for the network, and tide_game_api.
 static void gen_game_api(gen *g)
@@ -10446,10 +10631,14 @@ static void gen_shaders(gen *g)
                   word_packs(sh->uniform_ints), sh->textures.count);
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
-        sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw, tide_list tide_vertices, tide_list tide_indices", s);
+        sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
+        if (!sh->blit) sb_put(o, ", tide_list tide_vertices, tide_list tide_indices");
         if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
-        if (sh->textured) sb_put(o, ", tide_grid tide_texture, const tide_grid_shape *tide_shape, int32_t tide_filter");
+        if (sh->direct_texture && !sh->source_grid) sb_put(o, ", tide_texture_ref tide_texture");
+        else if (sh->textured || sh->source_grid) sb_put(o, ", tide_grid tide_texture, const tide_grid_shape *tide_shape");
+        if (sh->textured) sb_put(o, ", int32_t tide_filter");
+        if (sh->blit) sb_put(o, ", tide_render_target tide_destination");
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *d = sh->bound.items[b];
             sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
@@ -10457,6 +10646,9 @@ static void gen_shaders(gen *g)
             if (shader_reads_local(sh, d)) sb_printf(o, ", const %s *tide_lb%d", type_cname(d->local_part), b);
         }
         sb_put(o, ")\n{\n");
+        if (sh->blit) sb_put(o, "    tide_draw = tide_draw_render_target(tide_draw, tide_destination);\n");
+        if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
+        if (sh->source_grid) sb_put(o, "    (void)tide_shape;\n");
         if (sh->instanced) {
             sb_put(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
                       "    if (tide_count <= 0 || tide_list_count(tide_vertices) <= 0 || tide_list_count(tide_indices) < 3) return;\n");
@@ -10512,22 +10704,36 @@ static void gen_shaders(gen *g)
                       "               &tide_instance, sizeof tide_instance);\n    }\n");
         }
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
+        int draw_texture = -1;
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
             if (!texture->source) { // The one the draw was given, read as it said
-                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_texture, tide_shape);\n", t);
+                sb_printf(o, sh->direct_texture && !sh->source_grid
+                             ? "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n"
+                             : "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_texture, tide_shape);\n", t);
+                if (sh->textured && !texture->direct) draw_texture = t;
+                else if (texture->blended) blended |= 1u << t;
                 continue;
             }
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
-            sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_%sb%d->%s, &%s);\n", t,
-                      texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
+            if (texture->field->type.kind == TY_TEXTURE)
+                sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            else
+                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_%sb%d->%s, &%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
             if (texture->blended) blended |= 1u << t;
         }
-        char mask[64];
-        if (sh->textured) snprintf(mask, sizeof mask, "tide_filter != TIDE_FILTER_POINT ? 1u : 0u"); // As the draw said
+        char mask[128];
+        if (draw_texture == 0 && blended == 0) snprintf(mask, sizeof mask, "tide_filter != TIDE_FILTER_POINT ? 1u : 0u");
+        else if (draw_texture >= 0)
+            snprintf(mask, sizeof mask, "0x%xu | (tide_filter != TIDE_FILTER_POINT ? 0x%xu : 0u)", blended, 1u << draw_texture);
         else snprintf(mask, sizeof mask, "0x%xu", blended);
-        if (sh->instanced)
+        if (sh->blit)
+            sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, %s, %s, tide_textures, %s);\n}\n\n",
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
+        else if (sh->instanced)
             sb_printf(o, "    tide_draw_mesh_shaded_instances(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, "
                          "(uint32_t)tide_count, %s, tide_textures, %s);\n%s}\n\n",
                       s, instance ? "tide_instances" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask,
@@ -10656,6 +10862,7 @@ bool codegen(program *prog, const codegen_options *opts)
     for (int i = 0; i < prog->views.count; i++) gen_system_run(&g, prog->views.items[i]);
     gen_api(&g);
     gen_game_api(&g);
+    gen_rebind_resources(&g);
     if (opts->layout) gen_layout(&g);
 
     sb h_path = {0};
