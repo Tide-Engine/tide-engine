@@ -236,6 +236,7 @@ system ClampPlayer(mut Transform trs, with Player)
 }
 ```
 
+- A view has one filter more, by who owns the entity: `with ownership` and `without ownership` (see Views and drawing). In match code they're errors.
 - A lookup reads another entity's component in the same tick, where `Send` would wait for the tick's end: `health[target]` is that entity's `Health` as it is, or its zero value when it has none (`health.Has(target)` tells), and `mut lookup` lets `health[target] = h` put one back (nothing happens when it has none). The component is a copy, as a list's element is: change it and put it back. A lookup is read or write access to every entity's component, so the schedule treats it as touching them all; a system with a `mut lookup`, or one that looks up a component it also changes through a parameter, runs on one thread, and the latter reads the rows it changed earlier in the same run. A `mut lookup` of a component the system also takes as a parameter is an error: this entity's goes through the parameter. A view can't `mut lookup` the match.
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
@@ -904,7 +905,7 @@ Implemented, awaiting approval:
 
 - One `input` declaration per game describes one player's input for one tick. It's what the network sends.
 - Input is one value per player per tick. The engine writes it, and the simulation can only read it.
-- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over.
+- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over. A view runs for the entities this machine's player owns with `with ownership` (see Views and drawing).
 - Players are identified by a built-in `PlayerID` type, not an `int`. Like `Entity`, it's opaque, comparable with `==`, and has a null value. The simulation only sees `PlayerID`s and never connections, so a player who reconnects and gets their `PlayerID` back keeps everything they owned. `PlayerID(0)` names a player by index, for local play and tests.
 - **Sampling is Tide code:** the input's `Sample()` method. The engine calls it on the client once per tick. Fields start at their defaults, and `Sample` assigns them by name, without `mut`. It runs outside the simulation: it reads this machine's `Devices`, and the local singletons it takes, but not the match.
 - **Devices are read both ways.** Local code (views, and the input's `Sample`) reads this machine's as `Devices`: `Devices.keyboard.escape.down`. Match code takes a parameter, `Devices devices`: the devices of the player who owns the entity, or the server's, as with an input parameter. The input sends what match code reads of them, and nothing else, and the engine repairs them, since it knows their ranges.
@@ -1013,6 +1014,24 @@ component Body
 ```
 
 - Something that jumps, like a respawn, a portal or a camera cut, says so from match code: `entity.Snap()` or `singleton.Snap()`. For the tick it happens in, views draw it as it is instead of sliding from where it was.
+- A view filters its entities by whether this machine's player owns them, with `with ownership` and `without ownership`, beside `with` and `without`:
+
+```csharp
+view RenderGame(Player player, with ownership)
+{
+    Draw.Camera(player.pos, player.rot, 75);
+}
+
+view Nameplates(Player player, without ownership) { ... }
+```
+
+  - `with ownership`: the view runs only for entities that have the built-in `Owner` component and whose `Owner.player` equals `Session.player`, this machine's player.
+  - `without ownership`: every other entity the view's other parameters and filters admit: entities with no `Owner`, and entities another player owns.
+  - They're filters: they create no data dependency, and the view needs no `Owner` or `Session` parameter for them. It can still take either, and `with Owner` still means "has any owner": `with Owner, without ownership` is the entities whose `Owner` isn't this machine's player: another player's, or no player's. A view that takes both `with ownership` and `without ownership`, or `with ownership` and `without Owner`, is an error, as no entity is both.
+  - A view with no component parameter runs once per entity through them, as through `with Player`: `view Hud(with ownership)`.
+  - Only local code that runs for the match's entities has them, which is views. In match code (systems, the match's event handlers, tasks) they're errors, since the match has no "this machine": the message points to `with Owner`, the entities that have any owner, or `without Owner`. Local handlers only take local state, and local entities have no owner, so there they're errors too.
+  - Outside a match, a view with either doesn't run, like any view that reads the match.
+  - `ownership` is a keyword only right after `with` or `without`, where it's never a component's name. Anywhere else it's a name like any other: a field, a local, a parameter or a declaration can be called `ownership`, and a qualified name starts with it as with any namespace (`with ownership.Flag`).
 - Meshes are the general shape: `Draw.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with the other Draw calls. The engine gives general primitives rather than a helper for each case.
 - A texture is a grid of colors: `Draw.Mesh(vertices, indices, texture)` takes a `Grid2<Color>` with a size. There's no texture type and no handle. The pixels are the game's state, local or the match's, and the engine keeps a copy on the GPU, which it uploads again when the cells change. So hot reloading carries textures as it carries any state, on every platform.
 - Filtering is how a draw reads the pixels, not part of them: `Draw.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.

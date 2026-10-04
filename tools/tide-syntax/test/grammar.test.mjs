@@ -205,6 +205,18 @@ const cases = {
         ['parallel (var at in field.cells by 2 offset o)', [['parallel', 'keyword.control'], ['in', 'keyword.control'], ['by', 'keyword.control'], ['offset', 'keyword.control']]],
         ['foreach (var tick in Both(Ticks(), Ticks()))', [['in', 'keyword.control'], ['Both', 'entity.name.function.call'], ['in', '!keyword', 2]]],
     ],
+    'ownership is a keyword only right after with and without': [
+        ['view Mine(', [['with', 'storage.modifier'], ['ownership', 'keyword.other.ownership']]],
+        ['view Rest(', [
+            ['with', 'storage.modifier'], ['Owner', 'support.class'], ['without', 'storage.modifier'],
+            ['ownership', 'keyword.other.ownership'],
+        ]],
+        ['view Flagged(', [
+            ['with', 'storage.modifier'], ['ownership', '!keyword'], ['Flag', 'entity.name.type'],
+            ['with', 'storage.modifier', 2], ['ownership', '!keyword', 2],
+        ]],
+        ['int Owned(', [['ownership', '!keyword'], ['ownership', '!keyword', 2]]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {

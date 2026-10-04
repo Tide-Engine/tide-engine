@@ -43,6 +43,8 @@ It's a normal component: it can be read, written, added and removed, and writing
 
 Entities without an `Owner`, or whose owner isn't a known player, get the **server's input**, and so do systems that run once per tick. That's how the server controls what no player owns. An input parameter doesn't pick entities: add `with Owner` to only run on owned ones.
 
+A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
+
 Players are `PlayerID`s, not ints or connections. Like `Entity`, a `PlayerID` is opaque, compared with `==`, and has a null value. A player who reconnects gets their `PlayerID` back, and keeps everything they owned. `PlayerID(0)` names a player by number, for local play and tests.
 
 ## Held, not pressed

@@ -19,6 +19,30 @@ Drawing is immediate mode: views call `Draw` functions every frame, and nothing 
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
+## Your own entities
+
+"My camera, my HUD, my health bar" is in every multiplayer game, so views have a filter for it. `with ownership` picks the entities this machine's player owns, and `without ownership` every other one:
+
+```csharp
+view RenderGame(Player player, with ownership)
+{
+    Draw.Camera(player.pos, player.rot, 75);
+}
+
+// Everyone else's body: a first-person camera doesn't draw its own
+view Bodies(Player player, Scenery scenery, without ownership)
+{
+    Draw.Mesh(scenery.crate, scenery.faces, float4x4.TRS(player.pos, player.rot, float3(1)), scenery.wood);
+}
+```
+
+- `with ownership`: the entity has an [`Owner`](./input.md#who-gets-which-input), and its `player` is `Session.player`, this machine's player.
+- `without ownership`: every other entity the view's parameters admit, which is another player's and those with no `Owner`. With `with Owner` beside it, only those whose owner is someone else.
+
+They're filters, beside `with` and `without`: the view takes neither `Owner` nor `Session` for them, and `if (owner.player != session.player) return;` goes. A view that wants both kinds at once, like one that draws your player yellow and the others gray, still takes `Owner` and `Session` and compares.
+
+Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+
 ## Draw functions
 
 Positions and sizes are in world units, with `y` up. The camera maps them to the screen.

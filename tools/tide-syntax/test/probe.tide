@@ -146,3 +146,9 @@ system Loops(Field field)
     parallel (var at in field.cells by 2 offset o) { }
     foreach (var tick in Both(Ticks(), Ticks())) { int in = 1; }
 }
+
+// Ownership: a word of its own right after with and without, a name anywhere else.
+view Mine(Body body, with ownership) { }
+view Rest(Body body, with Owner, without ownership) { }
+view Flagged(with ownership.Flag, with Game.ownership) { }
+int Owned(int ownership) { return ownership; }

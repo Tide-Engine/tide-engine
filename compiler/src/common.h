@@ -125,6 +125,11 @@ void suggest_consider(suggestion *s, str candidate);
 void suggest_consider_c(suggestion *s, const char *candidate);
 void suggest_note(const suggestion *s);
 
+// What to write in place of `wrong` (a slice of the source), which the last
+// diagnostic's note said in its own words: editors offer the change, as they
+// do a "did you mean".
+void suggest_replacement(str wrong, const char *instead);
+
 // Receives the name each "did you mean" note suggests, after the note, with
 // the name written (a slice of the source, where it's the source's): for
 // editors, to offer the change. The note belongs to the previous diagnostic.
