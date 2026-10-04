@@ -1,0 +1,5 @@
+// expect: these systems must each run after the next
+enum Phases { First }
+scene Main { }
+[Stage(Phases.First), After(Phases.First)]
+system Work() { }

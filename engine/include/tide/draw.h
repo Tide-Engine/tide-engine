@@ -14,8 +14,8 @@
 // and so does a game's C that a view hands its list (a `DrawList` parameter).
 //
 // Positions and sizes are in world units, with y up. The camera decides where
-// they land on screen. Commands draw in the order they were recorded, on a
-// frame that starts black. After a TIDE_DRAW_SCREEN command, they're in the
+// they land on screen. Commands draw in the order they were recorded. The
+// window starts black each frame; owned targets keep their contents. After a TIDE_DRAW_SCREEN command, they're in the
 // screen's pixels instead, from the top left with y down, as the GUI's are.
 //
 // 3D meshes (TIDE_DRAW_MESH_3D) go through a camera of their own
@@ -41,12 +41,15 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_CAMERA_3D, // camera: the 3D camera, for the 3D meshes after it
     TIDE_DRAW_MESH_3D,   // mesh3: a run of instances of a 3D mesh
     TIDE_DRAW_SHADED,    // shaded: a run of instances of a mesh, through a shader of the game's
+    TIDE_DRAW_TARGET,    // target: destination for subsequent commands; 0 is the window
+    TIDE_DRAW_BLIT,      // shaded: a fullscreen shaded run, replacing its destination
 } tide_draw_kind;
 
 typedef struct tide_draw_command {
     uint32_t kind; // tide_draw_kind
     uint32_t text; // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
     union {
+        uint32_t target; // TIDE_DRAW_TARGET: 1 + its place in tide_draw_list.targets, or 0
         struct {
             tide_float2 a;
             tide_float2 b;
@@ -106,6 +109,82 @@ typedef struct tide_texture {
     uint64_t version; // Any number that's another whenever these pixels are (see tide_texture_version)
 } tide_texture;
 
+// Texture's common sampling reference: either CPU pixels or a rendered image.
+// Copying this value never copies an image. The existing tide_texture remains
+// the CPU pixel descriptor used by C drawing callers.
+typedef struct tide_texture_ref {
+    tide_texture image;
+    uint64_t target; // A rendered image's identity; 0 for CPU pixels
+} tide_texture_ref;
+
+// Managed images share this state, including through a copied color reference.
+// Disposal keeps a small tombstone until the build unloads, so aliases remain
+// safe to inspect. The image attachments are released by the renderer.
+typedef struct tide_render_target_state {
+    struct tide_render_target_state *next;
+    struct tide_render_target_state **owner;
+    int32_t width, height;
+    uint64_t version;
+    uint64_t reload_id; // Temporary opaque identity while restoring another address space.
+    bool alive;
+} tide_render_target_state;
+
+#define TIDE_RENDER_MANAGED (UINT64_C(1) << 63)
+#define TIDE_RENDER_WINDOW UINT64_MAX
+#define TIDE_RENDER_INVALID (UINT64_MAX - UINT64_C(1))
+
+static inline bool tide_render_target_managed(const uint64_t id)
+{
+    return (id & TIDE_RENDER_MANAGED) && id != TIDE_RENDER_WINDOW && id != TIDE_RENDER_INVALID;
+}
+
+static inline tide_render_target_state *tide_render_target_state_of(const uint64_t id)
+{
+    return tide_render_target_managed(id) ? (tide_render_target_state *)(uintptr_t)(id & ~TIDE_RENDER_MANAGED) : NULL;
+}
+
+static inline bool tide_render_target_live(const uint64_t id)
+{
+    const tide_render_target_state *s = tide_render_target_state_of(id);
+    return s ? s->alive : id && id != TIDE_RENDER_WINDOW && id != TIDE_RENDER_INVALID;
+}
+
+static inline uint64_t tide_render_target_version(const uint64_t id)
+{
+    const tide_render_target_state *s = tide_render_target_state_of(id);
+    return s ? s->version : 0;
+}
+
+// A local destination reference. The window uses TIDE_RENDER_WINDOW. Borrowed
+// C descriptors use a nonzero id without the managed bit; their owner supplies
+// the dimensions. A zero-initialized reference is invalid.
+typedef struct tide_render_target {
+    uint64_t id;
+    int32_t width, height;
+} tide_render_target;
+
+tide_render_target tide_render_target_make(int32_t width, int32_t height);
+void tide_render_target_resize(tide_render_target target, int32_t width, int32_t height);
+void tide_render_target_dispose(tide_render_target target);
+void tide_render_target_adopt(tide_render_target target); // Native reload: move a live reference's bookkeeping.
+tide_render_target tide_render_target_recreate(tide_render_target previous); // Web reload: previous.id is opaque.
+void tide_render_targets_recreated(void); // Ends one web restoration's alias mapping.
+void tide_render_targets_free(void); // Build unload: references must no longer be used.
+
+static inline tide_render_target tide_render_target_resolve(tide_render_target target)
+{
+    const tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (s) target.width = s->alive ? s->width : 0, target.height = s->alive ? s->height : 0;
+    return target;
+}
+
+static inline tide_texture_ref tide_render_target_color(const tide_render_target target)
+{
+    const tide_render_target resolved = tide_render_target_resolve(target);
+    return (tide_texture_ref){.image = {.width = resolved.width, .height = resolved.height},
+                              .target = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? resolved.id : TIDE_RENDER_INVALID};
+}
+
 // A texture the list has, for the commands that draw with it: a copy of the
 // pixels as they were when a mesh last named them. One no command of a frame
 // named is let go when the next frame starts.
@@ -120,7 +199,17 @@ typedef struct tide_draw_texture {
     uint8_t *pixels;   // width * height * 4 bytes, rows from the first
 } tide_draw_texture;
 
-enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID };
+enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET };
+
+// A rendering destination named by recorded commands. Its identity is supplied
+// by the resource owner; its size is captured when the command is recorded.
+typedef struct tide_draw_target_data {
+    uint64_t id;
+    uint64_t version; // Resize revision, captured with its dimensions.
+    int32_t width, height;
+    uint32_t clipped;
+    uint32_t camera_2d, camera_3d; // Command indexes, 1 + their places; 0 for the defaults.
+} tide_draw_target_data;
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
 typedef struct tide_vertex3 {
@@ -275,6 +364,11 @@ typedef struct tide_draw_list {
     tide_draw_texture *textures; // What the meshes draw with, kept from frame to frame while they do
     uint32_t texture_count;
     uint32_t texture_capacity;
+    tide_draw_target_data *targets;
+    uint32_t target_count, target_capacity;
+    uint32_t target; // Current destination, 1 + its place above; 0 is the window
+    uint32_t window_clipped;
+    uint32_t window_camera_2d, window_camera_3d;
     tide_float4x4 *matrices; // The 3D cameras' and the instances' of 3D meshes
     uint32_t matrix_count;
     uint32_t matrix_capacity;
@@ -312,6 +406,24 @@ void tide_draw_free(tide_draw_list *d);
 // swapped for another build (hot reloading), whose C names other pixels than
 // the one before, maybe at the same address with the same version.
 void tide_draw_forget(tide_draw_list *d);
+
+// Selects the destination for commands recorded next. Re-selecting it records
+// nothing, so adjacent compatible draws can still batch. Each destination has
+// its own camera and clip for the frame. An id of 0 selects the window.
+tide_draw_list *tide_draw_to(tide_draw_list *d, uint64_t id, int32_t width, int32_t height);
+
+static inline tide_draw_list *tide_draw_render_target(tide_draw_list *d, const tide_render_target target)
+{
+    const tide_render_target resolved = tide_render_target_resolve(target);
+    return tide_draw_to(d, resolved.id == TIDE_RENDER_WINDOW ? 0 : resolved.id ? resolved.id : TIDE_RENDER_INVALID,
+                        resolved.width, resolved.height);
+}
+
+// A rendered destination's color as a texture slot, without a CPU copy.
+uint32_t tide_draw_target_texture(tide_draw_list *d, uint64_t id, int32_t width, int32_t height);
+
+// A CPU image or target color, copied or referenced as its source requires.
+uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
 
 // Fills the whole screen, or what the clip leaves of it.
 void tide_draw_clear(tide_draw_list *d, tide_color color);
@@ -454,6 +566,13 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mes
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instances,
                                 uint32_t count, const void *uniforms, const uint32_t *textures, uint32_t blended);
 
+// Runs a frag over the entire selected destination. The fixed Vertex mesh has
+// clip-space positions, top-left uvs, and white color. The camera is identity,
+// clipping is disabled for this draw alone, and output replaces destination
+// color without changing its depth. Texture bindings and packed shader data
+// are the same as tide_draw_shaded's. Sampling the destination is refused.
+void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const void *instance,
+                   const void *uniforms, const uint32_t *textures, uint32_t blended);
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
 // tide_draw_mesh_3d. Every shape is centered on `center`; its geometry is
@@ -482,12 +601,14 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 
 // ---------------------------------------------------------------------------
 // Coordinates through the current camera, for the commands recorded next.
-// `screen_size` is the window's width and height in logical pixels. Screen
+// `screen_size` is the window's width and height in logical pixels. When a
+// target is selected, its dimensions are used instead. Screen
 // positions are from the top left, with y down, as tide_draw_screen and the
 // GUI's are. Device positions are from the bottom left: change their y to
 // screen_size.y - y before passing them here.
 //
-// The 2D helpers use the most recent 2D camera or screen command, or the
+// Each target keeps its own cameras. The 2D helpers use its most recent
+// 2D camera or screen command, or the
 // default centered camera at one world unit per pixel. In screen mode both
 // are the identity. A 3D camera leaves them as they were, and 2D commands
 // leave the 3D camera as it was. Neither needs a frame to have been rendered.

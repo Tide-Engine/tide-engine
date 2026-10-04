@@ -1,0 +1,3 @@
+// expect: rendering resources belong to this machine, so the match can't keep them in a local
+scene Main { }
+system Work() { RenderTarget destination = default; }

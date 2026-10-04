@@ -28,6 +28,7 @@
 typedef struct gl_pipeline {
     GLuint program, vao;         // No program: a place that's free
     tide_gpu_pipeline_desc desc; // Its slots and attributes, and how it blends and tests depth
+    GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
 } gl_pipeline;
 
 typedef struct gl_target {
@@ -62,6 +63,7 @@ static GLuint samplers[2];
 static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
+static bool pass_texture; // Its rows go from the top, as uploaded textures' do
 
 // Room for names up to `name` in an array of `size`-byte elements, zeroed.
 static void *room(void *array, uint32_t *count, const uint32_t name, const size_t size)
@@ -159,8 +161,40 @@ static void gl_texture_free(const tide_gpu_id texture)
 static GLuint compile(const char *name, const GLenum kind, const char *source)
 {
     const GLuint shader = glCreateShader(kind);
-    const char *const sources[2] = {GLSL_VERSION, source};
-    glShaderSource(shader, 2, sources, NULL);
+    // OpenGL rasterizes from the bottom. A target's texture must instead have
+    // its top row at v = 0, just like an uploaded image. Flip only the final
+    // vertex position there, and give fragment code its original coordinates
+    // back, so Pixel.position and shaders using gl_FragCoord keep working.
+    const bool vertex = kind == GL_VERTEX_SHADER;
+    char *fragment = NULL;
+    if (!vertex) {
+        const char *from = "gl_FragCoord", *to = "tide_gpu_coord";
+        size_t count = 0;
+        for (const char *at = source; (at = strstr(at, from)); at += strlen(from)) count++;
+        fragment = tide_alloc(strlen(source) + count * (strlen(to) - strlen(from)) + 1u);
+        char *out = fragment;
+        const char *at = source, *next;
+        while ((next = strstr(at, from))) {
+            const size_t bytes = (size_t)(next - at);
+            memcpy(out, at, bytes);
+            out += bytes;
+            memcpy(out, to, strlen(to));
+            out += strlen(to);
+            at = next + strlen(from);
+        }
+        strcpy(out, at);
+    }
+    const char *const sources[] = {
+        GLSL_VERSION,
+        vertex ? "uniform int tide_gpu_height;\n#define main tide_gpu_main\n"
+               : "uniform int tide_gpu_height;\nvec4 tide_gpu_coord;\n#define main tide_gpu_main\n",
+        vertex ? source : fragment,
+        vertex ? "\n#undef main\nvoid main() { tide_gpu_main(); if (tide_gpu_height > 0) gl_Position.y = -gl_Position.y; }\n"
+               : "\n#undef main\nvoid main() { tide_gpu_coord = gl_FragCoord; "
+                 "if (tide_gpu_height > 0) tide_gpu_coord.y = float(tide_gpu_height) - tide_gpu_coord.y; tide_gpu_main(); }\n",
+    };
+    glShaderSource(shader, 4, sources, NULL);
+    free(fragment);
     glCompileShader(shader);
     GLint ok = 0;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
@@ -210,7 +244,8 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
         pipeline_count++;
     }
     gl_pipeline *p = &pipelines[place];
-    *p = (gl_pipeline){.program = program, .desc = *desc};
+    *p = (gl_pipeline){.program = program, .desc = *desc,
+                      .target_height = glGetUniformLocation(program, "tide_gpu_height")};
     glGenVertexArrays(1, &p->vao);
     glBindVertexArray(p->vao);
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
@@ -242,10 +277,8 @@ static tide_gpu_id gl_target_make(const int width, const int height)
     *t = (gl_target){.width = width, .height = height};
     glGenFramebuffers(1, &t->framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
-    glGenRenderbuffers(1, &t->color);
-    glBindRenderbuffer(GL_RENDERBUFFER, t->color);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, t->color);
+    t->color = gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0);
     glGenRenderbuffers(1, &t->depth);
     glBindRenderbuffer(GL_RENDERBUFFER, t->depth);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
@@ -262,9 +295,14 @@ static void gl_target_free(const tide_gpu_id target)
 {
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
-    glDeleteRenderbuffers(1, &t->color);
+    gl_texture_free(t->color);
     glDeleteRenderbuffers(1, &t->depth);
     *t = (gl_target){0};
+}
+
+static tide_gpu_id gl_target_texture(const tide_gpu_id target)
+{
+    return targets[target - 1u].color;
 }
 
 static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
@@ -274,18 +312,7 @@ static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // OpenGL's rows go from the bottom
-    const size_t row = (size_t)t->width * 4u;
-    uint8_t swap[1024];
-    for (int y = 0; y < t->height / 2; y++) {
-        uint8_t *top = rgba + (size_t)y * row, *bottom = rgba + (size_t)(t->height - 1 - y) * row;
-        for (size_t at = 0; at < row; at += sizeof swap) {
-            const size_t n = row - at < sizeof swap ? row - at : sizeof swap;
-            memcpy(swap, top + at, n);
-            memcpy(top + at, bottom + at, n);
-            memcpy(bottom + at, swap, n);
-        }
-    }
+    // The vertex wrapper draws the top row into OpenGL's first row.
 }
 
 static void gl_begin(const tide_gpu_id target, const bool clear)
@@ -300,6 +327,7 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         tide_window_pixel_size(&width, &height);
     }
     pass_height = height;
+    pass_texture = target != 0;
     // What a pass draws with is set here, whatever drew before: another
     // target's pass or, on the web, the program this one took over from.
     glViewport(0, 0, width, height);
@@ -334,13 +362,14 @@ static void gl_end(void)
 
 static void gl_scissor(const int x, const int y, const int width, const int height)
 {
-    glScissor(x, pass_height - (y + height), width, height); // OpenGL's are from the bottom left
+    glScissor(x, pass_texture ? y : pass_height - (y + height), width, height);
 }
 
 static void gl_use(const tide_gpu_id pipeline)
 {
     current = &pipelines[pipeline - 1u];
     glUseProgram(current->program);
+    glUniform1i(current->target_height, pass_texture ? pass_height : 0);
     glBindVertexArray(current->vao);
     if (current->desc.blend == TIDE_GPU_BLEND_ALPHA) {
         glEnable(GL_BLEND);
@@ -427,6 +456,7 @@ const tide_gpu tide_gpu_gl = {
     .pipeline = gl_pipeline_make,
     .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
+    .target_texture = gl_target_texture,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
     .begin = gl_begin,

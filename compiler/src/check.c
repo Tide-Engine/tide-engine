@@ -460,6 +460,8 @@ static param *find_param(const checker *c, const str name)
 
 static type check_expr(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e);
+static bool same_place(const expr *a, const expr *b);
+static bool gpu_refuses(const checker *c, loc at, const char *what, const char *instead);
 static type check_snap(checker *c, expr *e, decl *singleton);
 static void c_name_of(const decl *d, sb *out);
 
@@ -652,6 +654,33 @@ static void note_spawn(const checker *c)
 }
 
 static bool holds_list(type t);
+
+// Rendering handles belong to this machine. Structs can group them, but any
+// place that keeps the struct must obey the same local-state restriction.
+typedef struct resource_outer {
+    const decl *type;
+    const struct resource_outer *previous;
+} resource_outer;
+
+static bool holds_render_resource_in(const type t, const resource_outer *outer)
+{
+    if (t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
+        && t.kind != TY_GRID && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (const resource_outer *p = outer; p; p = p->previous) {
+        if (p->type == t.decl) return false;
+    }
+    const resource_outer here = {t.decl, outer};
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_render_resource_in(t.decl->fields.items[i].type, &here)) return true;
+    }
+    return false;
+}
+
+static bool holds_render_resource(const type t)
+{
+    return holds_render_resource_in(t, NULL);
+}
 
 // Text or a list: what a world keeps in its heap.
 static bool holds_heap(const type t)
@@ -979,6 +1008,10 @@ static bool list_element_ok(const type t, const loc at)
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
         return true;
     case TY_STRUCT:
+        if (holds_render_resource(t)) {
+            diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
+            return false;
+        }
         if (!holds_list(t)) return true;
         diag_error(at, "a list or a map can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(t.decl->name));
         diag_note("lists and maps can't hold lists or maps yet");
@@ -1063,6 +1096,10 @@ static bool grid_cell_ok(const type t, const loc at)
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM:
         return true;
     case TY_STRUCT:
+        if (holds_render_resource(t)) {
+            diag_error(at, "a grid's cells can't hold rendering resources, including inside a struct");
+            return false;
+        }
         if (!holds_heap(t) && !holds_grid(t)) return true;
         diag_error(at, "a grid's cells can't be '" STR_FMT "': it holds text or lists", STR_ARG(t.decl->name));
         diag_note("cells are plain values, side by side in their chunk: keep the text or list elsewhere, and a number for it in the cell");
@@ -1142,6 +1179,7 @@ static type check_map_method(checker *c, expr *e, type map);
 static bool always_returns(const stmt *s);
 static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
+static type check_grid_sample(const checker *c, expr *e, type grid);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
 
@@ -1399,6 +1437,30 @@ static type check_construct(checker *c, expr *e, const type target)
     const char *name = type_name(target);
     const type first = argc > 0 ? e->args.items[0]->type : T_VOID_;
 
+    if (target.kind == TY_RENDER_TARGET) {
+        if (gpu_refuses(c, e->at, "create a RenderTarget", "the view creates it and supplies its color image as a Texture")) return T_ERR;
+        if (!reading_code(c)) {
+            diag_error(e->at, "a RenderTarget is created in local code, not a field default or constant");
+            diag_note("leave the field at default and create its target in a view or local handler");
+            return T_ERR;
+        }
+        if (argc != 2 || first.kind != TY_INT || e->args.items[1]->type.kind != TY_INT) {
+            diag_error(e->at, "RenderTarget takes its width and height in pixels, two ints: 'RenderTarget(width, height)'");
+            return T_ERR;
+        }
+        e->call = CALL_BUILTIN;
+        e->c_callee = "tide_render_target_make";
+        e->resource_operation = true;
+        reading_code(c)->calls_c = true;
+        vec_push(e->arg_want, T_INT_);
+        vec_push(e->arg_want, T_INT_);
+        return target;
+    }
+    if (target.kind == TY_TEXTURE) {
+        diag_error(e->at, "%s has no constructor yet", name);
+        return T_ERR;
+    }
+
     // PlayerID(0): a player by index, for local play and tests.
     if (target.kind == TY_PLAYER) {
         if (argc == 1 && first.kind == TY_INT) {
@@ -1613,7 +1675,7 @@ static bool gpu_refuses(const checker *c, const loc at, const char *what, const 
     return true;
 }
 
-// Draw, GUI, GUILayout and Screen belong to a frame: views have one, and the
+// Draw2D, Draw3D, GUI, GUILayout and Screen belong to a frame: views have one, and the
 // functions they call use theirs. A function that uses them draws, and only
 // views and other functions can call it (see check_drawing_calls).
 static bool check_frame_use(checker *c, const loc at, const char *what)
@@ -1621,7 +1683,8 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
     if (gpu_code(c)) {
         const bool devices = strcmp(what, "Devices") == 0;
         const bool screen = strcmp(what, "Screen") == 0;
-        gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen" : builtin_draw_owner(str_from(what)) ? "draw" : "use the GUI",
+        gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen"
+                    : (builtin_draw_owner(str_from(what)) || strcmp(what, "Draw") == 0) ? "draw" : "use the GUI",
                     devices || screen ? "the view puts what it needs in a component or a singleton, which it takes"
                                       : "it writes its pixel or changes its vertex: a view draws, and names it at Draw2D.Mesh or Draw3D.Mesh");
         return false;
@@ -2641,6 +2704,11 @@ static const field *field_called(const decl *d, const char *name)
 
 static void note_mesh_forms(const expr *e)
 {
+    if (e->targeted) {
+        diag_note(e->instanced ? "target.Instanced(vertices, indices, instances) draws a 2D or 3D mesh; then come a texture and its filter, or a vert and a frag by name"
+                               : "target.Mesh(vertices, indices[, transform]) draws a 2D or 3D mesh; then come a texture and its filter, or a vert and a frag by name");
+        return;
+    }
     const str owner = e->object->name;
     if (e->instanced) {
         diag_note(STR_FMT ".Instanced(vertices, indices, instances) draws a %dD mesh; then come a texture and its filter, "
@@ -2692,6 +2760,77 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
     (void)e;
 }
 
+static bool shader_takes_texture(const decl *code)
+{
+    for (int i = 1; code && i < code->params.count; i++) {
+        if (code->params.items[i].type.kind == TY_TEXTURE) return true;
+    }
+    return false;
+}
+
+// A blit has a fixed full-destination Vertex quad. Its frag receives the
+// explicit source as a Texture, alongside the usual entity and singleton data.
+static type check_blit(checker *c, expr *e)
+{
+    e->blit = true;
+    decl *frag = e->args.count == 3 ? named_shader(c, e->args.items[2]) : NULL;
+    for (int i = 0; i < e->args.count; i++) {
+        if (i != 2 || !frag) check_expr(c, e->args.items[i]);
+    }
+    if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
+    if (e->args.count != 3) {
+        diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
+        return T_ERR;
+    }
+    const type source = e->args.items[0]->type;
+    const bool grid = source.kind == TY_GRID && source.decl->dims == 2 && source.decl->fields.items[0].type.kind == TY_COLOR;
+    bool ok = true;
+    if (source.kind != TY_TEXTURE && !grid && source.kind != TY_ERROR) {
+        diag_error(e->args.items[0]->at, "Blit's source is a Texture or Grid2<Color>, not %s", type_name(source));
+        ok = false;
+    }
+    if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
+        diag_error(e->args.items[1]->at, "Blit's destination is a RenderTarget, like Draw.window, not %s", type_name(e->args.items[1]->type));
+        ok = false;
+    }
+    const expr *source_expr = e->args.items[0];
+    if (source_expr->kind == E_MEMBER && str_eq_c(source_expr->member, "color")
+        && source_expr->object->type.kind == TY_RENDER_TARGET && same_place(source_expr->object, e->args.items[1])) {
+        diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
+        ok = false;
+    }
+    if (!frag || !frag->is_frag) {
+        diag_error(e->args.items[2]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
+        return T_ERR;
+    }
+    e->frag = frag;
+    if (!frag->params.count || frag->params.items[0].type.kind != TY_STRUCT
+        || frag->params.items[0].type.decl != c->prog->vertex) {
+        diag_error(e->args.items[2]->at, "Blit's frag runs on Vertex, its full-destination quad");
+        ok = false;
+    }
+    if (!shader_takes_texture(frag)) {
+        diag_error(e->args.items[2]->at, "Blit's frag takes its source as a read-only Texture parameter");
+        ok = false;
+    }
+    if (c->method || c->in_input || !in_view(c)) {
+        diag_error(e->at, "a Blit that names a frag goes in a view");
+        ok = false;
+    } else if (ok) {
+        const int errors = diag_error_count();
+        check_shader_binding(c, e, e->args.items[2], frag);
+        ok = diag_error_count() == errors;
+    }
+    if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
+    e->call = CALL_DRAW;
+    e->draw_dims = 2;
+    vec_push(e->arg_want, source);
+    vec_push(e->arg_want, e->args.items[1]->type);
+    const mesh_draw draw = {e, c->system};
+    vec_push(c->prog->mesh_draws, draw);
+    return T_VOID_;
+}
+
 // Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
 // A List<Vertex> or a List<Vertex3> with no vert and no frag is the built-in
 // call it always was. Anything else draws through a shader tidec writes (see
@@ -2700,9 +2839,10 @@ static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
     const str owner = e->object->name;
-    const int wanted_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+    const int wanted_dims = e->targeted ? 0 : str_eq_c(owner, "Draw3D") ? 3 : 2;
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
-    const char *draw_name = wanted_dims == 3 ? (instanced ? "Draw3D.Instanced" : "Draw3D.Mesh")
+    const char *draw_name = e->targeted ? (instanced ? "RenderTarget.Instanced" : "RenderTarget.Mesh")
+                           : wanted_dims == 3 ? (instanced ? "Draw3D.Instanced" : "Draw3D.Mesh")
                                           : (instanced ? "Draw2D.Instanced" : "Draw2D.Mesh");
     // The vert and the frag it names come last, the vert first
     int count = e->args.count;
@@ -2725,7 +2865,7 @@ static type check_mesh_draw(checker *c, expr *e)
         count--;
     }
     const bool shaded = e->vert || e->frag;
-    if (!check_frame_use(c, e->at, str_to_cstr(e->object->name))) {
+    if (!check_frame_use(c, e->at, e->targeted ? "Draw2D" : str_to_cstr(owner))) {
         for (int i = 0; i < count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
@@ -2752,7 +2892,7 @@ static type check_mesh_draw(checker *c, expr *e)
             decl *named = find_type(c, first->name, first->at);
             if (named && named->kind == DECL_STRUCT) vertex = named;
         }
-        if (!vertex) vertex = str_eq_c(e->object->name, "Draw3D") ? prog->vertex3 : prog->vertex;
+        if (!vertex) vertex = wanted_dims == 3 ? prog->vertex3 : prog->vertex;
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
         const type t = check_expr(c, vertices);
@@ -2797,7 +2937,8 @@ static type check_mesh_draw(checker *c, expr *e)
 
     const int dims = vertex_dims(vertex, vertices->at, true);
     if (dims == 0) return T_ERR;
-    if (dims != wanted_dims) {
+    e->draw_dims = dims;
+    if (wanted_dims && dims != wanted_dims) {
         diag_error(vertices->at, "%s draws %dD vertices, and '" STR_FMT "' has a float%d position",
                    draw_name, wanted_dims, STR_ARG(vertex->name), dims);
         diag_note("use Draw%dD." STR_FMT " for this vertex type", dims, STR_ARG(e->name));
@@ -2806,7 +2947,7 @@ static type check_mesh_draw(checker *c, expr *e)
 
     if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
         use_mesh_types(c);
-        const type result = resolve_builtin_call(e->object->name, e);
+        const type result = resolve_builtin_call(str_from(dims == 3 ? "Draw3D" : "Draw2D"), e);
         if (result.kind == TY_ERROR) return result;
         check_default_args(c, e);
         e->call = CALL_DRAW;
@@ -2866,26 +3007,42 @@ static type check_mesh_draw(checker *c, expr *e)
         diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2", STR_ARG(vertex->name));
         return T_ERR;
     }
-    // A texture and its filter, for a mesh with no frag
+    // A texture and its filter: grids retain their original no-frag form,
+    // while an explicit Texture also supplies a shader's Texture parameter.
     const expr *texture = NULL;
-    if (at < count && e->args.items[at]->type.kind == TY_GRID) {
+    const expr *draw_filter = NULL;
+    if (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
         texture = e->args.items[at++];
         const decl *grid = texture->type.decl;
-        if (grid->dims != 2 || grid->fields.items[0].type.kind != TY_COLOR) {
+        if (texture->type.kind == TY_GRID && (grid->dims != 2 || grid->fields.items[0].type.kind != TY_COLOR)) {
             diag_error(texture->at, "a texture is a Grid2<Color>, and this is a %s", type_name(texture->type));
             ok = false;
         }
-        if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) at++;
+        if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) {
+            draw_filter = e->args.items[at++];
+        }
     }
     if (at < count) {
         diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(e->args.items[at]->type));
         note_mesh_forms(e);
         return T_ERR;
     }
-    if (texture && e->frag) {
+    if (texture && e->frag && texture->type.kind == TY_GRID) {
         diag_error(texture->at, "a frag samples the grids it takes itself, so this draw takes no texture");
         diag_note("put the grid in a component or a singleton that '" STR_FMT "' takes, and read it there: "
                   "'color = models.wood.Sample(vertex.uv);'", STR_ARG(e->frag->name));
+        ok = false;
+    }
+    const bool direct = shader_takes_texture(e->vert) || shader_takes_texture(e->frag);
+    if (direct && (!texture || texture->type.kind != TY_TEXTURE)) {
+        diag_error(e->at, "this mesh's shader takes a Texture source: supply one after the mesh arguments");
+        ok = false;
+    } else if (texture && texture->type.kind == TY_TEXTURE && e->frag && !direct) {
+        diag_error(texture->at, "this mesh's frag has no Texture parameter for the explicit source");
+        ok = false;
+    }
+    if (e->frag && draw_filter) {
+        diag_error(draw_filter->at, "a frag chooses its texture filter at Sample: leave the draw's filter out");
         ok = false;
     }
     // With no frag, a pixel is its vertex's color times the texture at its uv
@@ -2932,7 +3089,7 @@ static type check_mesh_draw(checker *c, expr *e)
 
     if (instanced && transforms && vertex == prog->vertex3 && !shaded) {
         use_mesh_types(c);
-        const type result = resolve_builtin_call(e->object->name, e);
+        const type result = resolve_builtin_call(str_from("Draw3D"), e);
         if (result.kind == TY_ERROR) return result;
         check_default_args(c, e);
         e->call = CALL_DRAW;
@@ -3105,6 +3262,23 @@ static type check_world_call(checker *c, expr *e, param *world)
     return str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
+// Target receivers share the two drawing APIs: the argument's dimension picks
+// an overloaded camera or conversion, and the other methods belong to one API.
+static str target_draw_owner(const expr *e)
+{
+    bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
+        || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
+        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
+    if (e->args.count && (str_eq_c(e->name, "Camera") || str_eq_c(e->name, "WorldToScreen")
+                         || str_eq_c(e->name, "ScreenToWorld"))) {
+        const type_kind kind = e->args.items[0]->type.kind;
+        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (str_eq_c(e->name, "Camera") && e->args.count == 3);
+        if (str_eq_c(e->name, "Camera") && e->args.count == 2
+            && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
+    }
+    return str_from(three ? "Draw3D" : "Draw2D");
+}
+
 static type check_method(checker *c, expr *e)
 {
     // world.Get<Health>(e): the World parameter's methods
@@ -3139,6 +3313,12 @@ static type check_method(checker *c, expr *e)
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
+        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
+        if (str_eq_c(owner, "Draw")) {
+            diag_error(e->object->at, "unknown name 'Draw'");
+            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
+            return T_ERR;
+        }
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
@@ -3162,7 +3342,10 @@ static type check_method(checker *c, expr *e)
         if (result.kind == TY_ERROR) return result;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
-        if (builtin_draw_owner(owner)) e->call = CALL_DRAW;
+        if (builtin_draw_owner(owner)) {
+            e->call = CALL_DRAW;
+            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+        }
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -3204,6 +3387,54 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
+    if (obj.kind == TY_TEXTURE) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, obj);
+        diag_error(e->at, "a Texture has Sample(uv[, filter]), not '" STR_FMT "'", STR_ARG(e->name));
+        return T_ERR;
+    }
+    if (obj.kind == TY_RENDER_TARGET) {
+        if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
+            const bool resize = str_eq_c(e->name, "Resize");
+            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_INT_);
+            if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
+                diag_error(e->at, "Draw.window is owned by the platform: it can't be resized or disposed");
+                return T_ERR;
+            }
+            if (gpu_refuses(c, e->at, resize ? "resize a RenderTarget" : "dispose a RenderTarget", "the view owns the target")) return T_ERR;
+            if (e->args.count != (resize ? 2 : 0)) {
+                diag_error(e->at, resize ? "Resize takes width and height in pixels: 'target.Resize(width, height)'"
+                                       : "Dispose takes no arguments: 'target.Dispose()'");
+                return T_ERR;
+            }
+            for (int i = 0; i < e->args.count; i++) {
+                const type t = e->args.items[i]->type;
+                if (t.kind != TY_ERROR && t.kind != TY_INT) {
+                    diag_error(e->args.items[i]->at, "a render target's size is in pixels, an int, not %s", type_name(t));
+                }
+                vec_push(e->arg_want, T_INT_);
+            }
+            e->call = CALL_BUILTIN;
+            e->c_callee = resize ? "tide_render_target_resize" : "tide_render_target_dispose";
+            e->resource_operation = true;
+            decl *code = reading_code(c);
+            if (code) code->calls_c = true;
+            return T_VOID_;
+        }
+        e->targeted = true;
+        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced")) return check_mesh_draw(c, e);
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+        }
+        const str owner = target_draw_owner(e);
+        if (!check_frame_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+        const type result = resolve_builtin_call(owner, e);
+        if (result.kind == TY_ERROR) return result;
+        check_default_args(c, e);
+        e->call = CALL_DRAW;
+        e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+        return result;
+    }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
         for (int i = 0; i < e->args.count; i++) {
@@ -3837,6 +4068,11 @@ static type check_member(checker *c, expr *e)
 {
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
+        if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
+            diag_error(e->object->at, "unknown name 'Draw'");
+            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
+            return T_ERR;
+        }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
@@ -3870,6 +4106,22 @@ static type check_member(checker *c, expr *e)
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
+
+    if (obj.kind == TY_RENDER_TARGET) {
+        if (gpu_code(c)) {
+            gpu_refuses(c, e->at, "read a RenderTarget", "the view supplies its color image as a Texture instead");
+            return T_ERR;
+        }
+        if (str_eq_c(e->member, "color")) {
+            if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
+                diag_error(e->at, "Draw.window has no sampleable color image: draw into a RenderTarget first");
+                return T_ERR;
+            }
+            return (type){TY_TEXTURE, NULL};
+        }
+        diag_error(e->at, "a RenderTarget has 'color', not '" STR_FMT "'", STR_ARG(e->member));
+        return T_ERR;
+    }
 
     const int dim = type_dim(obj);
     if (dim >= 2) {
@@ -4442,6 +4694,7 @@ static void check_compare_expr(checker *c, const expr *e)
     default: break;
     }
     if (!what && e->kind == E_AWAIT) what = "wait";
+    if (e->resource_operation) what = "change rendering resources";
     if (!what && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method && e->method->is_extern) what = "call C";
     if (!what && (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method && e->method->is_async) what = "start tasks";
     if (what) {
@@ -4667,23 +4920,28 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
     if (!shader) {
-        diag_error(e->at, "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
-        diag_note("here, read a cell by its place: 'grid[x, y]'");
+        diag_error(e->at, grid.kind == TY_TEXTURE ? "Sample reads a Texture on the GPU: in a frag or a vert"
+                                               : "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
+        if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
         return T_ERR;
     }
-    if (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR) {
+    if (grid.kind == TY_GRID && (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR)) {
         diag_error(e->at, "a texture is a Grid2<Color>, and this is a %s", type_name(grid));
         return T_ERR;
     }
     const expr *of = e->object;
-    if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
-        || of->object->param->function_param) {
-        diag_error(of->at, "a %s samples a grid that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'",
-                   shader_word(shader));
+    const bool direct = grid.kind == TY_TEXTURE && of->kind == E_NAME && of->bind == BIND_PARAM
+                        && of->param->type.kind == TY_TEXTURE;
+    if (!direct && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                    || of->object->param->function_param)) {
+        diag_error(of->at, "a %s samples a %s that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'%s",
+                   shader_word(shader), grid.kind == TY_TEXTURE ? "Texture" : "grid",
+                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : "");
         return T_ERR;
     }
-    if (of->object->param->type.kind == TY_STRUCT) {
-        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled grid in a component or singleton");
+    if (!direct && of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled %s in a component or singleton",
+                   grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
     const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
@@ -5113,6 +5371,17 @@ static type check_expr_any(checker *c, expr *e)
         else diag_error(e->at, "operator %s can't be used with %s", op_str(e->op), type_name(operand));
         break;
     }
+    }
+    if (holds_render_resource(t) && !gpu_code(c)) {
+        decl *code = reading_code(c);
+        if (code) {
+            if (!code->render_resources) code->render_resources_at = e->at;
+            code->render_resources = true;
+            if (!c->method && !local_code(c)) {
+                diag_error(e->at, "rendering resources belong to this machine, so the match can't use them");
+                t = T_ERR;
+            }
+        }
     }
     e->type = t;
     // Text and lists that code makes go in the scratch area.
@@ -5558,6 +5827,7 @@ static bool step_own(const expr *e, const stmt *loop)
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
+    if (e->resource_operation) return false;
     switch (e->call) {
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
         break;
@@ -5693,6 +5963,7 @@ static void check_step_expr(checker *c, const expr *e)
     default: break;
     }
     if (e->kind == E_AWAIT) what = "wait";
+    if (e->resource_operation) what = "change rendering resources";
     if (e->type.kind == TY_DRAW_LIST) what = "draw";
     if (e->call == CALL_FUNCTION && e->method && e->method->is_async) what = "start tasks";
     if (e->call == CALL_GRID && same_place(e->object, c->parallel->value)) what = "change the whole grid";
@@ -5950,10 +6221,12 @@ static void check_assign(checker *c, const stmt *s)
 
 static void check_stmt(checker *c, stmt *s);
 
+static bool fold_bool(const expr *e, bool *out);
+
 // An int known while compiling, from a checked expression: a literal, an
-// enum's member, a constant whose value is one, and operators on them, which
-// give what they would at run time (tide/math.h). A case's value, and an enum
-// member's.
+// enum's member, constants, integer conversions, conditionals and operators
+// on them, which give what they would at run time (tide/math.h). A case's
+// value, an enum member's, and a Stage offset.
 static bool fold_int(const expr *e, int64_t *out)
 {
     int64_t l;
@@ -5961,6 +6234,10 @@ static bool fold_int(const expr *e, int64_t *out)
     switch (e->kind) {
     case E_INT:
         *out = e->int_value; // Within int's range unless it's a long
+        return true;
+    case E_DEFAULT:
+        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM) return false;
+        *out = 0;
         return true;
     case E_NAME:
     case E_MEMBER:
@@ -5974,6 +6251,33 @@ static bool fold_int(const expr *e, int64_t *out)
             return true;
         }
         return false;
+    case E_CONDITIONAL: {
+        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM) return false;
+        bool cond;
+        return fold_bool(e->cond, &cond) && fold_int(cond ? e->lhs : e->rhs, out);
+    }
+    case E_CALL:
+        if (e->call != CALL_CONSTRUCT || e->ctor != CTOR_SCALAR || !type_is_integer(e->type)
+            || e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
+        *out = e->type.kind == TY_LONG ? l : tide_i_from_l(l);
+        return true;
+    case E_METHOD: {
+        if (e->call != CALL_BUILTIN || !type_is_integer(e->type) || e->args.count < 1 || e->args.count > 3) return false;
+        int64_t args[3];
+        for (int i = 0; i < e->args.count; i++) {
+            if (!fold_int(e->args.items[i], &args[i])) return false;
+        }
+        l = args[0];
+        const bool wide = e->type.kind == TY_LONG;
+        if (str_eq_c(e->name, "Abs")) *out = wide ? tide_abs_l(l) : tide_abs_i((int32_t)l);
+        else if (str_eq_c(e->name, "Sign")) *out = wide ? tide_sign_l(l) : tide_sign_i((int32_t)l);
+        else if (str_eq_c(e->name, "Min")) *out = wide ? tide_min_l(l, args[1]) : tide_min_i((int32_t)l, (int32_t)args[1]);
+        else if (str_eq_c(e->name, "Max")) *out = wide ? tide_max_l(l, args[1]) : tide_max_i((int32_t)l, (int32_t)args[1]);
+        else if (str_eq_c(e->name, "Clamp")) {
+            *out = wide ? tide_clamp_l(l, args[1], args[2]) : tide_clamp_i((int32_t)l, (int32_t)args[1], (int32_t)args[2]);
+        } else return false;
+        return true;
+    }
     case E_UNARY:
         if (e->method || !type_is_integer(e->type) || !fold_int(e->lhs, &l)) return false;
         if (e->type.kind == TY_LONG) {
@@ -6021,6 +6325,54 @@ static bool fold_int(const expr *e, int64_t *out)
     }
     default:
         return false;
+    }
+}
+
+// Conditions of compile-time integer choices: bool constants, comparisons
+// of known integers and bools, and the same short-circuit logic as at runtime.
+static bool fold_bool(const expr *e, bool *out)
+{
+    if (e->kind == E_BOOL || (e->kind == E_DEFAULT && e->type.kind == TY_BOOL)) {
+        *out = e->kind == E_BOOL && e->bool_value;
+        return true;
+    }
+    if ((e->kind == E_NAME || e->kind == E_MEMBER) && e->bind == BIND_CONST) {
+        const decl *k = e->constant;
+        return k->index == 2 && k->return_type.kind == TY_BOOL && fold_bool(k->value, out);
+    }
+    bool l;
+    bool r;
+    if (e->kind == E_CONDITIONAL) return fold_bool(e->cond, &l) && fold_bool(l ? e->lhs : e->rhs, out);
+    if (e->kind == E_UNARY && !e->method && e->op == T_NOT && fold_bool(e->lhs, &l)) {
+        *out = !l;
+        return true;
+    }
+    if (e->kind != E_BINARY || e->method || e->type.kind != TY_BOOL) return false;
+    if (e->lhs->type.kind == TY_BOOL && fold_bool(e->lhs, &l)) {
+        if ((e->op == T_AND && !l) || (e->op == T_OR && l)) {
+            *out = l;
+            return true;
+        }
+        if (!fold_bool(e->rhs, &r)) return false;
+        switch (e->op) {
+        case T_EQ: *out = l == r; return true;
+        case T_NE: *out = l != r; return true;
+        case T_AND: *out = l && r; return true;
+        case T_OR: *out = l || r; return true;
+        default: return false;
+        }
+    }
+    int64_t a;
+    int64_t b;
+    if (!fold_int(e->lhs, &a) || !fold_int(e->rhs, &b)) return false;
+    switch (e->op) {
+    case T_EQ: *out = a == b; return true;
+    case T_NE: *out = a != b; return true;
+    case T_LT: *out = a < b; return true;
+    case T_LE: *out = a <= b; return true;
+    case T_GT: *out = a > b; return true;
+    case T_GE: *out = a >= b; return true;
+    default: return false;
     }
 }
 
@@ -6341,6 +6693,19 @@ static void check_var(checker *c, stmt *s)
         else diag_error(at, "a local can't hold '" STR_FMT "': it has a grid in it", STR_ARG(s->type.decl->name));
         diag_note("grids stay in their component, singleton or scene: read and change cells through it, like 'canvas.pixels[p]'");
         s->type = T_ERR;
+    }
+
+    if (holds_render_resource(s->type) && !gpu_code(c)) {
+        decl *code = reading_code(c);
+        if (code) {
+            if (!code->render_resources) code->render_resources_at = s->at;
+            code->render_resources = true;
+        }
+        if (!c->method && !local_code(c)) {
+            diag_error(s->type_at.line ? s->type_at : s->at, "rendering resources belong to this machine, so the match can't keep them in a local");
+            diag_note("keep the Texture or RenderTarget in local state and use it in a view");
+            s->type = T_ERR;
+        }
     }
 
     check_reserved(s->name, s->at);
@@ -6709,6 +7074,10 @@ static type constant_type(const checker *c, const decl *k)
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     type t;
     if (builtin_type_named(k->return_type_name, &t)) {
+        if (holds_render_resource(t)) {
+            diag_error(at, "a constant can't hold rendering resources");
+            return T_ERR;
+        }
         if (t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY) {
             diag_error(at, "an %s constant would always be the null entity", type_name(t));
             return T_ERR;
@@ -6722,6 +7091,10 @@ static type constant_type(const checker *c, const decl *k)
     }
     decl *const d = find_type(c, k->return_type_name, at);
     if (d && (d->kind == DECL_STRUCT || d->kind == DECL_ENUM)) {
+        if (holds_render_resource(decl_type(d))) {
+            diag_error(at, "a constant can't hold rendering resources, including inside a struct");
+            return T_ERR;
+        }
         if (holds_list(decl_type(d))) {
             diag_error(at, "a constant can't hold a list yet, and '" STR_FMT "' has one", STR_ARG(d->name));
             return T_ERR;
@@ -7257,6 +7630,15 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
+        if (holds_render_resource(f->type)) {
+            const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
+            if (d->kind != DECL_STRUCT && !d->is_local) {
+                diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
+                diag_note("Texture and RenderTarget belong to this machine: keep the field local, or use a local component or singleton");
+            } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
+                diag_error(at, "containers can't hold rendering resources, including inside a struct");
+            }
+        }
         if (holds_heap(f->type)) {
             if (d->kind == DECL_INPUT) {
                 const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
@@ -7427,6 +7809,10 @@ static void check_fails(const checker *c, decl *m)
 static void check_signature(const checker *c, decl *m)
 {
     m->return_type = method_type(c, m->return_type_name, m->return_type_qual_at, true);
+    if (holds_render_resource(m->return_type)) {
+        m->render_resources = true;
+        m->render_resources_at = m->return_type_at;
+    }
     for (int k = 0; k < m->params.count; k++) {
         param *p = &m->params.items[k];
         check_reserved(p->name, p->at);
@@ -7438,6 +7824,10 @@ static void check_signature(const checker *c, decl *m)
         decl *const singleton = m->is_async ? find_type(c, p->type_name, p->type_at) : NULL;
         if (singleton && singleton->kind == DECL_SINGLETON) p->type = decl_type(singleton);
         else p->type = method_type(c, p->type_name, p->type_qual_at, false);
+        if (holds_render_resource(p->type)) {
+            if (!m->render_resources) m->render_resources_at = p->type_at;
+            m->render_resources = true;
+        }
         if (p->mode == PARAM_IN && !m->is_extern) {
             diag_error(p->at, "only extern functions take 'in' parameters: C gets a read-only pointer to the value");
             diag_note("a Tide %s's parameters are read-only already; drop 'in'", m->owner ? "method" : "function");
@@ -7828,6 +8218,7 @@ static void check_shader_decl(const checker *c, decl *d)
     d->fails = T_VOID_;
     const param *color = NULL;
     const param *instance_data = NULL;
+    const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
@@ -7879,7 +8270,18 @@ static void check_shader_decl(const checker *c, decl *d)
             if (t) value = decl_type(t);
             p->type = value;
             p->function_param = true;
-            if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
+            if (value.kind == TY_TEXTURE) {
+                if (source_texture) {
+                    diag_error(p->at, "a %s takes one explicit Texture source, and this names two", word);
+                } else {
+                    source_texture = p;
+                }
+                if (p->mode == PARAM_MUT) {
+                    diag_error(p->at, "a %s reads its Texture source: drop 'mut'", word);
+                    p->mode = PARAM_READ;
+                }
+                p->function_param = false;
+            } else if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
                 color = p; // The pixel it writes
             } else if (t && t->kind == DECL_STRUCT && p->mode != PARAM_MUT) {
                 if (instance_data) {
@@ -8905,7 +9307,7 @@ static void add_device_records(program *prog)
 static bool is_builtin_name(const str name)
 {
     type dummy;
-    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name)
+    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
@@ -9561,13 +9963,122 @@ static bool fold_cell(const expr *e, const int dims, int64_t out[3])
     return true;
 }
 
-// [Before(X)] and [After(X)] order systems, and views among views.
+// An ordering attribute can name an enum's member as well as a declaration.
+// The enum name uses the same namespace and using rules as an ordinary type.
+// With `required`, this is Stage's argument, so every other name is an error.
+static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool required)
+{
+    str enum_name;
+    str member_name;
+    if (!split_qualified(q->text, &enum_name, &member_name)) {
+        if (!required) return false;
+        diag_error(q->name_at, "Stage names an enum member, like [Stage(RenderStages.Objects)]");
+        return true;
+    }
+    decl *other;
+    decl *enumeration = lookup(c->prog, d->unit, enum_name, NAME_TYPE, &other);
+    if (!enumeration) {
+        if (!required) return false;
+        diag_error(q->at, "unknown enum '" STR_FMT "'", STR_ARG(enum_name));
+        suggestion s = suggest_start(enum_name);
+        for (int i = 0; i < c->prog->decls.count; i++) {
+            if (c->prog->decls.items[i]->kind == DECL_ENUM) suggest_consider(&s, c->prog->decls.items[i]->name);
+        }
+        suggest_note(&s);
+        return true;
+    }
+    if (other) {
+        diag_error(q->at, "'" STR_FMT "' is ambiguous: both " STR_FMT " and " STR_FMT " have it", STR_ARG(enum_name),
+                   STR_ARG(decl_ns(enumeration)), STR_ARG(decl_ns(other)));
+        diag_note("write which one you mean, like '" STR_FMT "." STR_FMT "'", STR_ARG(enumeration->qualified),
+                  STR_ARG(member_name));
+        return true;
+    }
+    if (enumeration->kind != DECL_ENUM) {
+        if (!required) return false;
+        diag_error(q->at, "'" STR_FMT "' is %s, not an enum", STR_ARG(enum_name), decl_what(enumeration));
+        return true;
+    }
+    for (int i = 0; i < enumeration->members.count; i++) {
+        if (!str_eq(enumeration->members.items[i].name, member_name)) continue;
+        q->decl = enumeration;
+        q->enum_member = &enumeration->members.items[i];
+        return true;
+    }
+    diag_error(q->name_at, "enum '" STR_FMT "' has no member '" STR_FMT "'", STR_ARG(enumeration->name),
+               STR_ARG(member_name));
+    suggestion s = suggest_start(member_name);
+    for (int i = 0; i < enumeration->members.count; i++) suggest_consider(&s, enumeration->members.items[i].name);
+    suggest_note(&s);
+    return true;
+}
+
+static void check_stage_attribute(checker *c, decl *d, attribute *attr)
+{
+    if (d->kind != DECL_SYSTEM) {
+        diag_error(attr->at, "Stage orders systems, views and event handlers; '" STR_FMT "' is none of them", STR_ARG(d->name));
+        return;
+    }
+    if (attr->args.count != 1 || attr->values.count > 1) {
+        diag_error(attr->at, "Stage takes an enum member and an optional int offset: [Stage(RenderStages.Objects, 10)]");
+        return;
+    }
+    qname *q = &attr->args.items[0];
+    resolve_order_member(c, d, q, true);
+    int64_t offset = 0;
+    if (attr->values.count) {
+        expr *value = attr->values.items[0];
+        if (!is_constant(c, value)) {
+            diag_error(value->at, "a Stage offset must be a constant int");
+            suggest_constant(c, value);
+            return;
+        }
+        const type t = check_constant_expr(c, value, true, T_INT_);
+        if (t.kind == TY_ERROR) return;
+        if (t.kind != TY_INT) {
+            diag_error(value->at, "a Stage offset must be a constant int");
+            return;
+        }
+        if (!fold_int(value, &offset)) {
+            diag_error(value->at, "a Stage offset must be an int known while compiling");
+            diag_note("use int literals, named constants, integer conversions and operators, conditionals, or integer Math functions");
+            return;
+        }
+    }
+    if (!q->enum_member) return;
+    d->order_enum = q->decl;
+    d->order_member = q->enum_member;
+    d->order_offset = (int)offset;
+    d->order_at = attr->at;
+}
+
+static void order_after(decl *later, decl *earlier)
+{
+    for (int i = 0; i < later->after.count; i++) {
+        if (later->after.items[i] == earlier) return;
+    }
+    vec_push(later->after, earlier);
+}
+
+// [Before(X)] and [After(X)] order declarations or whole enum phases.
+// Stage assigns one of those phases and an offset within it.
 static void check_attributes(checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
+        c->unit = d->unit;
+        bool stage_seen = false;
         for (int a = 0; a < d->attributes.count; a++) {
             attribute *attr = &d->attributes.items[a];
+            if (str_eq_c(attr->name, "Stage")) {
+                if (stage_seen) {
+                    diag_error(attr->at, "'" STR_FMT "' already has a Stage", STR_ARG(d->name));
+                } else {
+                    check_stage_attribute(c, d, attr);
+                }
+                stage_seen = true;
+                continue;
+            }
             if (str_eq_c(attr->name, "NativeName")) { // Checked with the extern's signature
                 if (!d->is_extern) {
                     diag_error(attr->at, "NativeName names the C function of an extern function, and '" STR_FMT
@@ -9593,10 +10104,12 @@ static void check_attributes(checker *c)
                 suggestion s = suggest_start(attr->name);
                 suggest_consider_c(&s, "Before");
                 suggest_consider_c(&s, "After");
+                suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Sparse");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
+                          "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's C function, and Sparse, for a component that "
                           "entities gain and lose");
                 continue;
@@ -9622,6 +10135,7 @@ static void check_attributes(checker *c)
                 decl *other;
                 decl *target = lookup(c->prog, d->unit, q->text, NAME_SYSTEM, &other);
                 if (!target) {
+                    if (resolve_order_member(c, d, q, false)) continue;
                     diag_error(q->name_at, "unknown %s '" STR_FMT "'", kind, STR_ARG(q->text));
                     suggestion s = suggest_start(q->text);
                     for (int j = 0; j < c->prog->decls.count; j++) {
@@ -9654,9 +10168,152 @@ static void check_attributes(checker *c)
                     diag_error(q->name_at, "systems and views are ordered separately: views draw once per frame, "
                                            "after the ticks");
                 } else if (before) {
-                    vec_push(target->after, d);
+                    order_after(target, d);
                 } else {
-                    vec_push(d->after, target);
+                    order_after(d, target);
+                }
+            }
+        }
+    }
+}
+
+static bool has_phase_order(const decl *d)
+{
+    if (d->order_enum) return true;
+    for (int a = 0; a < d->attributes.count; a++) {
+        const attribute *attr = &d->attributes.items[a];
+        for (int k = 0; k < attr->args.count; k++) {
+            if (attr->args.items[k].enum_member) return true;
+        }
+    }
+    return false;
+}
+
+typedef struct order_node {
+    VEC(int) next;
+} order_node;
+
+typedef struct order_phase {
+    const decl *enumeration;
+    const decl *event; // Handlers of different events have independent phases.
+    int first;        // Two boundary nodes per member, in declaration order.
+} order_phase;
+
+typedef struct order_graph {
+    VEC(order_node) nodes;
+    VEC(order_phase) phases;
+} order_graph;
+
+static void order_edge(order_graph *g, const int from, const int to)
+{
+    vec_push(g->nodes.items[from].next, to);
+}
+
+// A phase has a beginning and an end even when no declaration belongs to it.
+// This preserves constraints such as After(Effects) plus Before(Objects),
+// whose contradiction must still be caught when either phase is empty.
+static int phase_begin(order_graph *g, const decl *enumeration, const enum_member *member, const decl *event)
+{
+    const int index = (int)(member - enumeration->members.items);
+    for (int i = 0; i < g->phases.count; i++) {
+        const order_phase *p = &g->phases.items[i];
+        if (p->enumeration == enumeration && p->event == event) return p->first + 2 * index;
+    }
+    const int first = g->nodes.count;
+    const order_phase phase = {enumeration, event, first};
+    vec_push(g->phases, phase);
+    for (int i = 0; i < enumeration->members.count * 2; i++) {
+        const order_node node = {0};
+        vec_push(g->nodes, node);
+    }
+    for (int i = 0; i < enumeration->members.count; i++) {
+        const int begin = first + 2 * i;
+        order_edge(g, begin, begin + 1);
+        if (i) order_edge(g, begin - 1, begin);
+    }
+    return first + 2 * index;
+}
+
+// Phase barriers produce many after links. Keep membership as bits while
+// adding them so duplicate detection costs O(1), even for large phases.
+static void phase_after(decl **list, const int later, const int earlier, uint64_t *edges, const size_t words)
+{
+    uint64_t *word = edges + (size_t)later * words + ((size_t)earlier >> 6);
+    const uint64_t bit = (uint64_t)1 << (earlier & 63);
+    if (*word & bit) return;
+    *word |= bit;
+    vec_push(list[later]->after, list[earlier]);
+}
+
+// Project phase boundaries onto declarations' existing after links, so both
+// the stable scheduler and parallel system waits obey the same constraints.
+// Enums are independent timelines; declaration Before/After can join them.
+static void order_phases(decl **list, const int n)
+{
+    bool any = false;
+    for (int i = 0; i < n && !any; i++) any = has_phase_order(list[i]);
+    if (!any) return;
+    const size_t words = ((size_t)n + 63u) / 64u;
+    uint64_t *edges = arena_alloc(sizeof(uint64_t) * words * (size_t)n);
+    for (int i = 0; i < n; i++) {
+        for (int k = 0; k < list[i]->after.count; k++) {
+            const decl *earlier = list[i]->after.items[k];
+            const int index = earlier->index;
+            if (index >= 0 && index < n && list[index] == earlier) {
+                edges[(size_t)i * words + ((size_t)index >> 6)] |= (uint64_t)1 << (index & 63);
+            }
+        }
+    }
+    order_graph g = {0};
+    for (int i = 0; i < n; i++) {
+        const order_node node = {0};
+        vec_push(g.nodes, node);
+    }
+    for (int i = 0; i < n; i++) {
+        decl *d = list[i];
+        const decl *event = d->is_handler ? d->event : NULL;
+        if (d->order_enum) {
+            const int begin = phase_begin(&g, d->order_enum, d->order_member, event);
+            order_edge(&g, begin, i);
+            order_edge(&g, i, begin + 1);
+        }
+        for (int a = 0; a < d->attributes.count; a++) {
+            const attribute *attr = &d->attributes.items[a];
+            const bool before = str_eq_c(attr->name, "Before");
+            if (!before && !str_eq_c(attr->name, "After")) continue;
+            for (int k = 0; k < attr->args.count; k++) {
+                const qname *q = &attr->args.items[k];
+                if (!q->enum_member) continue;
+                const int begin = phase_begin(&g, q->decl, q->enum_member, event);
+                order_edge(&g, before ? i : begin + 1, before ? begin : i);
+            }
+        }
+        // Offsets stay inside one phase; ties add no constraints and retain
+        // source order unless explicit declaration dependencies say otherwise.
+        for (int j = 0; d->order_enum && j < i; j++) {
+            decl *other = list[j];
+            if (other->order_enum != d->order_enum || other->order_member != d->order_member
+                || (d->is_handler && other->event != d->event)) continue;
+            if (other->order_offset < d->order_offset) phase_after(list, i, j, edges, words);
+            else if (other->order_offset > d->order_offset) phase_after(list, j, i, edges, words);
+        }
+    }
+    if (!g.phases.count) return;
+    bool *seen = arena_alloc(sizeof(bool) * (size_t)g.nodes.count);
+    int *stack = arena_alloc(sizeof(int) * (size_t)g.nodes.count);
+    for (int i = 0; i < n; i++) {
+        memset(seen, 0, sizeof(bool) * (size_t)g.nodes.count);
+        int count = 0;
+        stack[count++] = i;
+        while (count) {
+            const order_node *node = &g.nodes.items[stack[--count]];
+            for (int k = 0; k < node->next.count; k++) {
+                const int to = node->next.items[k];
+                if (to < n) {
+                    phase_after(list, to, i, edges, words);
+                } else if (!seen[to]) {
+                    seen[to] = true;
+                    stack[count++] = to;
                 }
             }
         }
@@ -9854,6 +10511,35 @@ static void check_drawing_calls(checker *c)
     }
 }
 
+// Resource values can pass through ordinary helpers or C without drawing.
+// Propagate that local-only contract too, including helpers that discard the
+// value and return a plain number to their caller.
+static void check_render_resource_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->render_resources || site->from->render_resources) continue;
+            site->from->render_resources = true;
+            site->from->render_resources_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->render_resources || site->from->kind == DECL_FUNCTION || site->from->kind == DECL_METHOD
+            || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' uses rendering resources, which belong to this machine: the match can't call it",
+                   STR_ARG(site->to->name));
+        diag_note_at(site->to->render_resources_at, "it uses a Texture or RenderTarget on line %d", site->to->render_resources_at.line);
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && d->is_async && d->render_resources) note_side(d, TASK_LOCAL, d->render_resources_at);
+    }
+}
+
 // A function that uses a component's local fields through a parameter is
 // given them with it, and so is one that passes the parameter on to it. So
 // only code that has them calls it: views, local handlers of Forgotten and
@@ -10040,8 +10726,16 @@ static void collect_device_uses(checker *c)
 static bool placed_all(const decl *d, const bool *placed, const decl *const *list, const int n)
 {
     for (int i = 0; i < d->after.count; i++) {
+        const decl *earlier = d->after.items[i];
+        const int index = earlier->index;
+        // Before scheduling, indexes are their original places in this list.
+        // Whole-phase barriers can have many predecessors: find each in O(1).
+        if (index >= 0 && index < n && list[index] == earlier) {
+            if (!placed[index]) return false;
+            continue;
+        }
         for (int k = 0; k < n; k++) {
-            if (list[k] == d->after.items[i] && !placed[k]) return false;
+            if (list[k] == earlier && !placed[k]) return false;
         }
     }
     return true;
@@ -10088,7 +10782,10 @@ static void schedule(decl **list, const int n)
                 sb_printf(&chain, STR_FMT, STR_ARG(d->qualified));
                 diag_error(d->at, "these %ss must each run after the next, which can't happen: %s", system_what(d),
                            chain.data);
-                diag_note("remove one of the Before or After attributes that form the loop");
+                bool phases = has_phase_order(d);
+                for (int i = seen >= 0 ? seen : 0; i < length; i++) phases |= has_phase_order(path[i]);
+                diag_note(phases ? "remove one of the Stage, Before or After attributes that form the loop"
+                                 : "remove one of the Before or After attributes that form the loop");
                 break;
             }
             path[length++] = d;
@@ -10210,6 +10907,7 @@ bool check(program *prog)
     }
     diag_phase("checking code");
     check_sends(&c);
+    check_render_resource_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
@@ -10231,6 +10929,9 @@ bool check(program *prog)
 
     check_attributes(&c);
     if (diag_error_count() == 0) {
+        order_phases(prog->systems.items, prog->systems.count);
+        order_phases(prog->views.items, prog->views.count);
+        order_phases(prog->handlers.items, prog->handlers.count);
         schedule(prog->systems.items, prog->systems.count);
         schedule(prog->views.items, prog->views.count);
         schedule(prog->handlers.items, prog->handlers.count);

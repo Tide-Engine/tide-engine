@@ -87,6 +87,13 @@ void tide_draw_mesh_grid(tide_draw_list *d, const tide_list vertices, const tide
                filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
 }
 
+void tide_draw_mesh_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
+                            const tide_texture_ref texture, const int32_t filter)
+{
+    mesh_lists(d, vertices, indices, tide_draw_texture_source(d, texture),
+               filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
+}
+
 // ---------------------------------------------------------------------------
 // 3D
 
@@ -203,6 +210,13 @@ void tide_draw_mesh3_grid(tide_draw_list *d, const tide_list vertices, const tid
                         filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
 }
 
+void tide_draw_mesh3_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
+                             const tide_float4x4 transform, const tide_texture_ref texture, const int32_t filter)
+{
+    tide_draw_instance(d, mesh3_slot(d, vertices, indices), transform, tide_draw_texture_source(d, texture),
+                        filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
+}
+
 static void mesh3_instances_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices,
                                   const tide_list transforms, const uint32_t texture, const tide_filter filter)
 {
@@ -228,5 +242,13 @@ void tide_draw_mesh3_instances_grid(tide_draw_list *d, const tide_list vertices,
 {
     if (tide_list_count(transforms) <= 0) return;
     mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_grid_texture(d, texture, shape),
+                          filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
+}
+
+void tide_draw_mesh3_instances_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
+                                       const tide_list transforms, const tide_texture_ref texture, const int32_t filter)
+{
+    if (tide_list_count(transforms) <= 0) return;
+    mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_texture_source(d, texture),
                           filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR);
 }

@@ -306,15 +306,15 @@ void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from)
     sb_printf(out, "%s" STR_FMT "%s", quote, STR_ARG(name), quote);
 }
 
-// Whether `sys` names `earlier` in [After(...)]: otherwise, the order comes from
-// [Before(...)] on `earlier`.
-static bool has_after(const decl *sys, const decl *earlier)
+// Whether a declaration directly names another in an ordering attribute.
+// Phase-derived after links have no such declaration reference.
+static bool has_order_attribute(const decl *sys, const decl *other, const char *name)
 {
     for (int i = 0; i < sys->attributes.count; i++) {
         const attribute *a = &sys->attributes.items[i];
-        if (!str_eq_c(a->name, "After")) continue;
+        if (!str_eq_c(a->name, name)) continue;
         for (int k = 0; k < a->args.count; k++) {
-            if (a->args.items[k].decl == earlier) return true;
+            if (a->args.items[k].decl == other) return true;
         }
     }
     return false;
@@ -363,10 +363,16 @@ void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb 
         first_part = false;
     }
     if (w->conflicts.count == 0) {
-        sb_printf(out, "%s%s", has_after(sys, w->on) ? "this has " : "it has ", quote);
-        sb_put(out, has_after(sys, w->on) ? "[After(" : "[Before(");
-        put_decl_name(out, has_after(sys, w->on) ? w->on : sys, "", has_after(sys, w->on) ? sys : w->on);
-        sb_printf(out, ")]%s", quote);
+        const bool after = has_order_attribute(sys, w->on, "After");
+        if (after || has_order_attribute(w->on, sys, "Before")) {
+            sb_printf(out, "%s%s", after ? "this has " : "it has ", quote);
+            sb_put(out, after ? "[After(" : "[Before(");
+            put_decl_name(out, after ? w->on : sys, "", after ? sys : w->on);
+            sb_printf(out, ")]%s", quote);
+        } else {
+            sb_put(out, "the stage order requires this to run after ");
+            put_decl_name(out, w->on, quote, sys);
+        }
     }
 }
 
