@@ -1,0 +1,8 @@
+// expect: the input is what players send to the match, so none of it can stay on this machine
+scene Main { }
+
+input Controls
+{
+    float move;
+    local float smoothed;
+}

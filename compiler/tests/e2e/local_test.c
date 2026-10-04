@@ -55,7 +55,7 @@ static void start(void)
 static void frame(const tide_world *w)
 {
     tide_draw_reset(&draw);
-    tide_frame(w, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
 }
 
 TIDE_TEST(local_views_change_local_state)

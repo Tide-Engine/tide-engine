@@ -39,7 +39,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `event` declares an event, and `event(...)` code that runs when one is sent (see Events).
 - `enum` declares an enum (see Enums and switch).
 - `scene` declares a scene (see Scenes).
-- `local` in front of a declaration makes it belong to the machine instead of the match (see Local state).
+- `local` in front of a declaration makes it belong to the machine instead of the match, and in front of a field of a match component or singleton, that field alone (see Local state).
 - A function, `ReturnType Name(parameters) { ... }` with no keyword, declares code that other code calls (see Functions).
 - `extern` declares a function written in C (see C functions).
 - `const` declares a constant (see Constants).
@@ -545,6 +545,7 @@ Implemented, awaiting approval:
 - **Built-in events** are declared like any other, and cost nothing where no handler takes them:
   - `Spawned` and `Destroyed` are sent to an entity when it's spawned or destroyed. `Destroyed` handlers run while its components can still be read.
   - `PlayerJoined` and `PlayerLeft` are sent to the world when a player joins or leaves, with the player's `PlayerID` in `player`. The server picks the tick, so every machine handles them on the same one.
+  - `Forgotten` is a local one: sent on this machine as an entity's local fields go, for local handlers to let go of what they hold (see Local state).
 
 ```csharp
 event Hit
@@ -1155,7 +1156,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 ### Provisional
 
-- `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state); input parameters are errors in a view.
+- `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
 - Views run in declaration order, after all the systems of the frame's ticks. Within a view, entities run in the same order as in systems.
 - `Draw` functions can only be called from views and the functions they call (see Functions). Calling them from systems needs to tell predicted ticks from verified or replayed ones, which comes with multiplayer.
 - `view` is only a keyword at the start of a declaration, like `input`.
@@ -1189,11 +1190,11 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - Instances of one 3D mesh drawn in a row, with the same texture and filter and nothing between them, are one draw: a view that runs for each entity and draws one mesh draws them all at once. Lists made along the way are the same mesh when they hold the same.
 - `Color` is a built-in value type with `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. It's built with `Color(r, g, b)` (alpha 1) or `Color(r, g, b, a)`. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`, with Unity's values and names. Components and singletons can hold colors. There are no operators on colors yet.
 - Text is written in double quotes, with the escapes `\"`, `\\` and `\n`. Its type is `string` (see Text).
-- Blending: a view's match components and singletons are copies, their fields that blend set between last tick's value and this tick's, as far as this moment is between the two ticks. Vectors, matrices, colors and rects blend component by component, quaternions the short way round (normalized), and structs field by field. An entity that wasn't there last tick is drawn as it is. Local state isn't blended: it's this machine's, as it is.
+- Blending: a view's match components and singletons are copies, their fields that blend set between last tick's value and this tick's, as far as this moment is between the two ticks. Their local fields aren't part of the copy: a view reads and writes those where they are (see Local state). Vectors, matrices, colors and rects blend component by component, quaternions the short way round (normalized), and structs field by field. An entity that wasn't there last tick is drawn as it is. Local state isn't blended: it's this machine's, as it is.
 - `[Snap]` goes on floats, vectors, quaternions, colors and rects of components, singletons and structs; on anything else it's an error that says why.
 - `entity.Snap()` is recorded and applied at the end of the tick, like `Destroy`, so it never makes systems wait. Each entity counts its snaps, and views only blend it between two ticks with the same count. `singleton.Snap()` needs the singleton as a `mut` parameter. Local state is never blended, so snapping it is an error, and so is `component.Snap()`, which says to snap the entity.
 - `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has an `Interpolate`. A `[Snap]` field of such a type is still drawn as it is.
-- Hosts pass the two ticks and how far between them this moment is to `tide_frame`; sessions work that out (`tide_session_view`).
+- Hosts pass the two ticks and how far between them this moment is to `tide_frame`, with the last world the server confirmed; sessions work those out (`tide_session_view`).
 - The cursor's lock:
   - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = Devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
   - Where neither goes, the error says where it does: the match is told that a view calls `Cursor.Lock()` and that `Sample` reads `Cursor.locked`; a task, a method and a local handler, that views ask every frame. `Cursor.Unlock()` is told that the cursor comes back once no view asks.
@@ -1345,6 +1346,13 @@ Implemented, awaiting approval:
 - Views run every frame, in a match or not. They read the match, and read and write local state: `mut` local parameters, and `Spawn`, `Add`, `Remove` and `Destroy` of local entities. A view only runs when everything it reads exists, so a view of match components or singletons doesn't run outside a match.
 - Local structural changes and local events are handled at the end of the frame, as the match's are at the end of the tick.
 - The GUI is immediate mode, drawn from views (see GUI).
+- **Local fields.** `local` before a field of a match component or singleton makes that field this machine's: it lives outside the match, starts at its default on every machine, and is never sent, hashed, snapshotted or rolled back. It's for what a machine keeps for the match's entities to show them: a baked mesh, an animation timer, a smoothed position, a C library's handle. The match's layout, world hash, deltas and what a joining player downloads are exactly what they'd be without the field.
+  - Match code can't see local fields: reading or writing one in a system, a match handler or a task is an error, and so is naming one in a `Spawn` or in a component value. The errors say why, and where the code belongs: a view.
+  - In a view, `mut Box box` allows writing the component's local fields only. Writing a match field through it stays an error ("a view can't change the match..."), `mut` on a match component with no local fields stays one too, and `mut` that writes no local field gets the usual warning.
+  - Nothing attaches or removes them: every entity with `Box` has its local fields, on every machine, however that machine learned of the entity (it ran the spawn, joined later, was sent the world again, took over as host, hot reloaded). They take memory only once written, and reading ones never written gives the defaults.
+  - An entity's local fields go when the entity is in neither the world views draw (the predicted one) nor the verified world. So a destroy the client predicted wrong, which the server undoes, keeps them, and a spawn it predicted that never happened leaves none. Nothing about it is timed.
+  - Singletons have them too, like a texture painted from the match's state.
+  - A view's match fields are blended copies, as ever; local fields aren't blended, and are read and written in place.
 - **The compiler enforces the boundary,** so no mistake can reach a running game:
   - Match code (systems, match event handlers, match scenes) can't read or write anything local, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends. The input's `Sample` reads this machine's, and writes only the input.
   - Local code (views, local event handlers, local scenes) can read the match but never change it: no `mut` on match components or singletons, and no spawning, changing or sending match things.
@@ -1375,20 +1383,85 @@ view DrawSparks(mut Spark spark)
 system Count(Spark spark) { }
 ```
 
+```csharp
+component Box
+{
+    float3 pos = float3(0, 0, 5);
+    local List<Vertex3> verts;
+    local List<int> faces;
+}
+
+// Bakes each box's mesh once, on this machine, and draws from it
+view DrawBox(mut Box box)
+{
+    if (box.verts.count == 0) Bake(box);
+    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+}
+
+void Bake(mut Box box)
+{
+    box.verts = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }, Vertex3 { position = float3(1, 1, 0) }];
+    box.faces = [0, 1, 2];
+}
+
+// Error: 'verts' is a local field of 'Box': it's this machine's, and the match can't see it.
+system Shrink(mut Box box) { box.verts.Clear(); }
+```
+
 ### Provisional
 
-- `local` is only a keyword at the start of a declaration. It goes before components, singletons, events and event handlers; before anything else it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match).
+- `local` is only a keyword at the start of a declaration, and before a field's type. It goes before components, singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
 - **`LocalEntity`** is an entity of the local world. `Spawn` in local code returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
 - A view runs for the entities of one world: its components are all local or all the match's.
-- Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now.
-- The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, local, draw, gui)` every frame. `tide_frame` runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
+- Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now, but a handler of `Forgotten`, which takes the match component or singleton whose local fields are going (below).
+- The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, local, draw, gui)` every frame. `tide_frame` lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
 - The local world has its own entity table and queue, which grow as they need, as the match's do.
+
+Local fields, beyond what's decided:
+
+- **What they hold** is what a local component's fields can: numbers, vectors, enums, structs, text, lists, maps, sets, grids, `Entity` and `LocalEntity`, each with a default like any field's. `[Snap]` on one is an error, as local state is never blended. A local field shares its name with no other field or method of its component.
+- **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local component or singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
+- **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
+  - a view's, read through `Box box` and written through `mut Box box`;
+  - a function's, which gets them with the component: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own parameter, `Bake(box)`. Such a function is local code: only views, handlers of `Forgotten` and functions like it call it, and calling it from a system is an error that says where it uses a local field;
+  - a handler of `Forgotten`'s (below).
+- **A component's value is the match's part.** A copy (`var b = box;`), a value written out (`Box { ... }`), and what `world.Get<Box>(entity)` or `default` gives have no local fields, and `b.verts` is an error that says to read them through the parameter. So is naming one in a value, `Box { verts = ... }`, and passing a copy to a function that uses them. Methods work on values, so they have none either; a function that takes the component does.
+- **One side at a time.** A function that changes a component's match fields through a parameter and uses its local fields through the same one is an error: no code could call it. A view can't pass a match component to a function that changes its match fields.
+- Tasks can't use local fields yet, in the match or in local code.
+- **Memory.** An entity's local fields take memory from the first frame a view leaves them other than their defaults; a view that takes them as `mut` and changes nothing takes none. Where a default needs the heap (text, a list with elements, a grid with a size), a view that takes them as `mut` makes the entity's own as it first runs for it. Their text, lists and grids are in the local state's heap; a game whose only such fields are local has no heap in the match.
+- **When they go.** At the start of a frame, before the views: an entity's, once it's in neither world, or has the component in neither; a singleton's, once there's no match, back to their defaults; and all of them once the match this machine was in is over (it left, was dropped, or the match ended), whatever match the next frame sees, as another match's entities have the same handles. Entities only come and go with ticks, so a frame looks when either world's tick changed since the last one did.
+- **`Forgotten`** is how a local handler hears of it, to let go of what the fields hold, like a C library's handle: a built-in local event, sent to an entity as its local fields of a component go, before they do.
+
+```csharp
+component Model
+{
+    int kind;
+    local int handle; // A C library's
+}
+
+local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
+{
+    ReleaseModel(model.handle);
+    loaded.count -= 1;
+}
+```
+
+  - The handler takes the one match component or singleton whose local fields are going, and local singletons. `this` is the entity's handle, an `Entity` that's no longer alive.
+  - The entity is gone from the match, so only its local fields are there to read: a match field, or the component as a whole, is an error. What the handler needs of the match goes in a local field while the entity is there.
+  - It runs for entities that had something written, as the others have nothing to let go of, and for a singleton once, as the match goes. It isn't async, and the program ending sends none.
+  - Games can't send it, and a handler of it is a local handler: `local event(Forgotten) ...`.
+- **In C**, the generated `Box` struct, `tide_get_Box` and the rest stay the match's part. The local fields are a struct of their own, `Box_local`, which the local state keeps: `tide_has_Box_local(local, entity)` says whether anything was written for an entity, `tide_get_Box_local(local, entity)` gives a copy (the defaults when nothing was, with text, lists and grids empty), and `tide_set_Box_local(local, entity, value)` sets them, as their bytes. A singleton's are `local->Arena_local`.
+- **Hosts** give the frame the last world the server confirmed: `tide_frame(w, previous, alpha, verified, local, draw, gui)`, where `tide_session_view` gives it with the other two (`tide_view_worlds.verified`). NULL is for a host with one world: `w` is all there is.
+- **Hot reloading** carries local fields over by name with the rest of the local state: an entity's as its component's, field by field, and a singleton's as a local singleton's. A component that's gone, or has no local fields left, takes them with it.
 
 ### Open
 
 - Local handlers of match events (see Events).
 - Time for local code, such as the frame's length.
 - Saving local state, such as settings, between runs.
+- **An entity's identity after a rollback.** Local fields are kept by the entity's handle, and a rollback can give a handle to another entity: a client predicts a spawn that gets ID 7, the server's order differs, and after the replay another entity is 7 and the predicted one is 8. Its local fields, and any `Entity` local code holds (a selected unit), then sit on a different entity. Until entities remember what they were spawned as (proposed: a hash of what each was spawned with and when, kept beside the world, and local fields reset when a replay spawns a handle with another), views treat local fields as a cache: they keep what they baked from beside what they baked, and bake again when it changed.
+- Local state for a component the game didn't declare, like a package's: a declaration of its own that says which component it's for, on the storage local fields have.
+- Local fields in tasks, and in a component's methods; another entity's, through the `World`.
 
 ## Scenes
 

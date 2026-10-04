@@ -43,6 +43,10 @@ tide_e2e_test(methods)
 tide_e2e_test(operators)
 tide_e2e_test(events)
 tide_e2e_test(local)
+# `local` fields of the match's components and singletons: this machine's, outside the match
+tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
+tide_e2e_test(local_fields_plain) # ...whose match is the same without them
+tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)

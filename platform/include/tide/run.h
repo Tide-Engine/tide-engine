@@ -47,10 +47,10 @@ static inline void tide_run_sample_input(const tide_devices *devices, const void
 }
 #endif
 
-static inline void tide_run_views(const void *world, const void *previous, const float alpha, void *local,
-                                  tide_draw_list *draw, tide_gui *gui)
+static inline void tide_run_views(const void *world, const void *previous, const float alpha, const void *verified,
+                                  void *local, tide_draw_list *draw, tide_gui *gui)
 {
-    tide_frame(world, previous, alpha, local, draw, gui);
+    tide_frame(world, previous, alpha, verified, local, draw, gui);
 }
 
 static inline void tide_run_frame_time(void *local, const float seconds)

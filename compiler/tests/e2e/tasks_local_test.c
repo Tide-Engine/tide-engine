@@ -13,7 +13,7 @@ static void frames(const tide_world *w, const int n, const float seconds)
     for (int i = 0; i < n; i++) {
         tide_local_frame_time(&local, seconds);
         tide_draw_reset(&draw);
-        tide_frame(w, NULL, 1.0f, &local, &draw, &gui);
+        tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
     }
 }
 

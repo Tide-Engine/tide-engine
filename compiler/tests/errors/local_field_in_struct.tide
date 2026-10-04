@@ -1,0 +1,7 @@
+// expect: structs belong to neither side, so a struct's field can't be local
+scene Main { }
+
+struct Mesh
+{
+    local List<int> verts;
+}

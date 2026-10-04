@@ -1,0 +1,14 @@
+// expect: 'box' is read-only
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+// declare the parameter as 'mut Box box' to write to it
+view Bake(Box box)
+{
+    box.bakes += 1;
+}

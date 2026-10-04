@@ -14,7 +14,7 @@ static void frame(const tide_world *previous, const float alpha)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(&now, previous, alpha, &local, &draw, &gui);
+    tide_frame(&now, previous, alpha, NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

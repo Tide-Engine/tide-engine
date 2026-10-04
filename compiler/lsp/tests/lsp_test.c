@@ -928,6 +928,135 @@ TIDE_TEST(lsp_local_state)
     TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Spark\",\"detail\":\"local component\""));
 }
 
+// `local` before a field of a match component or singleton: this machine's,
+// outside the match. Views have it, the match doesn't.
+#define LOCAL_FIELDS                                                           \
+    "component Box\n"                                                          \
+    "{\n"                                                                      \
+    "    float3 pos;\n"                                                        \
+    "    local List<int> verts;\n"                                             \
+    "    local int bakes = 0;\n"                                               \
+    "}\n"                                                                      \
+    "singleton Arena\n"                                                        \
+    "{\n"                                                                      \
+    "    float size;\n"                                                        \
+    "    local int painted;\n"                                                 \
+    "}\n"                                                                      \
+    "scene Main { }\n"                                                         \
+    "event(Spawned) Setup(with Main) { Spawn(Box); }\n"
+
+// The first code action of the last reply, applied to `original`.
+static const char *apply_first_action(const char *original)
+{
+    static char text[8192];
+    snprintf(text, sizeof text, "%s", original);
+    const json *reply = json_parse(last_sent(), strlen(last_sent()));
+    const json *result = json_get(reply, "result");
+    const json *edits = result && result->kind == JSON_ARRAY && result->count > 0
+                            ? json_path(result->items[0], "edit", "changes", "file:///test.tide", NULL)
+                            : NULL;
+    if (edits) apply_edits(text, sizeof text, edits);
+    json_release();
+    return text;
+}
+
+TIDE_TEST(lsp_local_fields)
+{
+    start();
+    static const char game[] = LOCAL_FIELDS
+        "void Bake(mut Box box) { box.verts.Add(1); box.bakes += 1; }\n"
+        "view Show(mut Box box, mut Arena arena) { if (box.verts.count == 0) Bake(box); arena.painted += 1; }\n"
+        "local event(Forgotten) Free(Box box) { Debug.Log($$\"{box.bakes}\"); }\n"
+        "system Slide(mut Box box) { box.pos.x += 1; }\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
+
+    // Hovers say they're local: the field where it's declared and where it's used, and its type
+    open_document(LOCAL_FIELDS "view Show(mut Box box) { box.ba$kes += 1; }\n");
+    const char *use = request("textDocument/hover");
+    TIDE_CHECK(has(use, "local int bakes = 0"));
+    TIDE_CHECK(has(use, "Local field of component `Box`: this machine's, outside the match"));
+    open_document("component Box\n{\n    float3 pos;\n    local List<int> ve$rts;\n}\nscene Main { }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "local List<int> verts"));
+    open_document(LOCAL_FIELDS "view Show(mut B$ox box) { box.bakes += 1; }\n");
+    const char *type = request("textDocument/hover");
+    TIDE_CHECK(has(type, "    float3 pos;") && has(type, "    local List<int> verts;") && has(type, "    local int bakes = 0;"));
+    open_document(LOCAL_FIELDS "local event(Forgo$tten) Free(Box box) { }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "local fields go"));
+
+    // Completion: in views, local handlers and functions; never in the match
+    const char *view = complete(LOCAL_FIELDS "view Show(mut Box box)\n{\n    box.$\n}\n");
+    TIDE_CHECK(offers(view, "pos") && offers(view, "verts") && offers(view, "bakes"));
+    TIDE_CHECK(has(view, "\"detail\":\"local List<int>\""));
+    const char *singleton = complete(LOCAL_FIELDS "view Paint(mut Arena arena)\n{\n    arena.$\n}\n");
+    TIDE_CHECK(offers(singleton, "size") && offers(singleton, "painted"));
+    const char *function = complete(LOCAL_FIELDS "void Bake(mut Box box)\n{\n    box.$\n}\n");
+    TIDE_CHECK(offers(function, "verts"));
+    const char *handler = complete(LOCAL_FIELDS "local event(Forgotten) Free(Box box)\n{\n    box.$\n}\n");
+    TIDE_CHECK(offers(handler, "bakes"));
+    const char *system = complete(LOCAL_FIELDS "system Slide(mut Box box)\n{\n    box.$\n}\n");
+    TIDE_CHECK(offers(system, "pos") && !offers(system, "verts") && !offers(system, "bakes"));
+    const char *chain = complete(LOCAL_FIELDS "view Show(Box box)\n{\n    var n = box.verts.$\n}\n");
+    TIDE_CHECK(offers(chain, "count"));
+    // A value hasn't got them
+    const char *literal = complete(LOCAL_FIELDS "system Reset(mut Box box)\n{\n    box = Box { $ };\n}\n");
+    TIDE_CHECK(offers(literal, "pos") && !offers(literal, "verts"));
+    // The event that says they're going, where a handler's trigger goes
+    TIDE_CHECK(offers(complete(LOCAL_FIELDS "local event($)\n"), "Forgotten"));
+
+    // Go to definition, and every use, through the component's parameter
+    open_document(LOCAL_FIELDS "void Bake(mut Box box) { box.bakes += 1; }\nview Show(mut Box box) { box.ba$kes += 1; Bake(box); }\n");
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":4,\"character\":14}"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"pos\""), "already"));
+
+    // The outline, and highlighting: `local` is a modifier (16) of the property (7)
+    open_document(game);
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"verts\",\"detail\":\"local List<int>\""));
+    TIDE_CHECK(has(symbols, "\"name\":\"pos\",\"detail\":\"float3\""));
+    open_document("component Box\n{\n    float3 pos;\n    local int bakes;\n}\nscene Main { }\n");
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, "0,7,3,7,1,"));  // pos, after its type: declared (1)
+    TIDE_CHECK(has(tokens, "0,4,5,7,17,")); // bakes, after its type: declared and local (16)
+    open_document(LOCAL_FIELDS "view Show(mut Box box) { box.bakes += 1; box.pos.x; }\n");
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",5,7,16,")); // Where it's used: local
+
+    // The errors, as diagnostics
+    open_document(LOCAL_FIELDS "system Slide(mut Box box) { box.bakes += 1; }\n");
+    TIDE_CHECK(has(last_sent(), "it's this machine's, and the match can't see it"));
+    open_document(LOCAL_FIELDS "view Show(mut Box box) { box.bakes += 1; box.pos.x = 0; }\n");
+    TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'pos' is a match field of 'Box'"));
+
+    // A view that writes one without mut: declare the parameter mut
+    static const char read_only[] = LOCAL_FIELDS "view Show(Box box) { box.bakes += 1; }\n";
+    open_document(read_only);
+    TIDE_CHECK(has(last_sent(), "'box' is read-only"));
+    TIDE_CHECK(has(actions_at(13), "Declare 'box' as mut"));
+    TIDE_CHECK(has(apply_first_action(read_only), "view Show(mut Box box) { box.bakes += 1; }"));
+    // ...and one that takes it mut and writes none: remove it
+    static const char unused[] = LOCAL_FIELDS "view Show(mut Box box) { if (box.bakes > 0) Draw.Clear(Color.black); }\n";
+    open_document(unused);
+    TIDE_CHECK(has(last_sent(), "'box' is declared mut but never written"));
+    TIDE_CHECK(has(actions_at(13), "Remove 'mut' from 'box'"));
+    TIDE_CHECK(has(apply_first_action(unused), "view Show(Box box) { if"));
+    // `local` on a field of a declaration that's local already: remove the word
+    static const char twice[] = "local component Spark\n{\n    float2 position;\n    local int frames;\n}\nscene Main { }\n";
+    open_document(twice);
+    TIDE_CHECK(has(last_sent(), "'Spark' is local already, and so is every field of it"));
+    TIDE_CHECK(has(actions_at(3), "Remove 'local'"));
+    TIDE_CHECK(has(apply_first_action(twice), "{\n    float2 position;\n    int frames;\n}"));
+
+    // Formatting keeps `local` with its field
+    static const char messy[] = "component Box\n{\nfloat3 pos;\n  local   List<int>  verts ;\nlocal int bakes=0;\n}\nscene Main { }\n";
+    static const char tidy[] = "component Box\n{\n    float3 pos;\n    local List<int> verts;\n    local int bakes = 0;\n}\nscene Main { }\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, tidy) == 0);
+    if (strcmp(formatted, tidy) != 0) printf("--- got:\n%s---\n", formatted);
+}
+
 
 TIDE_TEST(lsp_enums_and_switch)
 {

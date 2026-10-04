@@ -255,11 +255,15 @@ typedef struct tide_client_status {
 // What views draw: the latest tick's world, the one before it, and how far
 // this moment is between them (0 to 1), to blend them. Views draw a tick late
 // that way, but smoothly at any tick rate. `previous` is NULL right after the
-// world arrives.
+// world arrives. `verified` is the last world the server confirmed: an entity
+// in neither it nor `current` is gone for good, where one only `current` lost
+// may be back once the server says how the tick went, so what this machine
+// keeps for the match's entities (their local fields) goes by both.
 typedef struct tide_view_worlds {
     const void *current; // NULL outside a match
     const void *previous;
     float alpha;
+    const void *verified; // NULL outside a match
 } tide_view_worlds;
 
 tide_client *tide_client_create(const tide_client_desc *desc, double now);

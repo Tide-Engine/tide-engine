@@ -1,0 +1,7 @@
+// expect: 'Settings' is local already, and so is every field of it
+scene Main { }
+
+local singleton Settings
+{
+    local float volume = 1;
+}

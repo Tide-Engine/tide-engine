@@ -1,0 +1,15 @@
+// expect: 'bakes' is a local field of 'Box': it's this machine's, and the match can't see it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+event Hit { }
+
+event(Hit) Shake(mut Box box)
+{
+    box.pos.x += box.bakes;
+}

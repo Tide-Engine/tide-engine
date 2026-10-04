@@ -307,6 +307,8 @@ typedef struct old_world {
     uint32_t *counts;
     const uint8_t **task_rows; // Each table of tasks'
     uint32_t *task_counts;
+    const uint8_t **attached_rows; // Each table of local fields': its entities, then their values
+    uint32_t *attached_counts;
     const uint8_t *heap;  // Its heap's bytes, the rest of them
     uint32_t heap_size;
 } old_world;
@@ -318,6 +320,18 @@ static void free_old(old_world *w)
     free(w->counts);
     free(w->task_rows);
     free(w->task_counts);
+    free(w->attached_rows);
+    free(w->attached_counts);
+}
+
+// The old table of local fields that `p`'s carries over from: the one of the
+// type of the same name ("<Component> local"), or -1.
+static int32_t old_attached(const carry *c, const tide_layout_world *fw, const tide_layout_place *p)
+{
+    for (uint32_t i = 0; i < fw->attached_count && c->types[p->type] >= 0; i++) {
+        if (fw->attached[i].type == c->types[p->type]) return (int32_t)i;
+    }
+    return -1;
 }
 
 // The old table of tasks that `t` carries over from: one of the same name,
@@ -337,7 +351,9 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
     w->counts = calloc(fw->archetype_count ? fw->archetype_count : 1u, sizeof *w->counts);
     w->task_rows = calloc(fw->task_count ? fw->task_count : 1u, sizeof *w->task_rows);
     w->task_counts = calloc(fw->task_count ? fw->task_count : 1u, sizeof *w->task_counts);
-    if (!w->rows || !w->counts || !w->task_rows || !w->task_counts) {
+    w->attached_rows = calloc(fw->attached_count ? fw->attached_count : 1u, sizeof *w->attached_rows);
+    w->attached_counts = calloc(fw->attached_count ? fw->attached_count : 1u, sizeof *w->attached_counts);
+    if (!w->rows || !w->counts || !w->task_rows || !w->task_counts || !w->attached_rows || !w->attached_counts) {
         snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
         return false;
     }
@@ -360,6 +376,12 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
         const uint64_t bytes = (uint64_t)w->task_counts[t] * fw->tasks[t].size;
         ok = !r.failed && bytes <= r.size - r.at;
         if (ok) w->task_rows[t] = tide_read_bytes(&r, (uint32_t)bytes);
+    }
+    for (uint32_t t = 0; ok && t < fw->attached_count; t++) {
+        w->attached_counts[t] = tide_read_u32(&r);
+        const uint64_t bytes = (uint64_t)w->attached_counts[t] * (sizeof(tide_entity) + l->types[fw->attached[t].type].size);
+        ok = !r.failed && bytes <= r.size - r.at;
+        if (ok) w->attached_rows[t] = tide_read_bytes(&r, (uint32_t)bytes);
     }
     w->heap = from + r.at;
     w->heap_size = ok ? size - r.at : 0u;
@@ -433,6 +455,10 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     for (uint32_t k = 0; ok && k < tw->task_count; k++) {
         const int32_t t = old_tasks(fw, &tw->tasks[k]);
         size += 4u + (t >= 0 ? (uint64_t)old.task_counts[t] * tw->tasks[k].size : 0u);
+    }
+    for (uint32_t k = 0; ok && k < tw->attached_count; k++) {
+        const int32_t t = old_attached(&c, fw, &tw->attached[k]);
+        size += 4u + (t >= 0 ? (uint64_t)old.attached_counts[t] * (sizeof(tide_entity) + to_layout->types[tw->attached[k].type].size) : 0u);
     }
     if (tw->heap) size += fw->heap ? old.heap_size : empty_heap;
     uint8_t *to = ok && size <= UINT32_MAX ? calloc(1, (size_t)size) : NULL;
@@ -523,6 +549,22 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     if (tw->task_count && fw->task_count) {
         memcpy(to + tw->task_order, from + fw->task_order, sizeof(uint32_t));
         if (tw->frames && fw->frames) memcpy(to + tw->frames, from + fw->frames, sizeof(int32_t));
+    }
+    // The local fields kept for the match's entities carry over like any value,
+    // by their component's name: the entities as they are, then each one's value
+    for (uint32_t k = 0; k < tw->attached_count; k++) {
+        const int32_t t = old_attached(&c, fw, &tw->attached[k]);
+        const uint32_t count = t >= 0 ? old.attached_counts[t] : 0u;
+        tide_write_u32(&w, count);
+        if (!count) continue;
+        const int32_t new_type = tw->attached[k].type;
+        const int32_t old_type = fw->attached[t].type;
+        const uint32_t old_size = from_layout->types[old_type].size;
+        tide_write_bytes(&w, old.attached_rows[t], count * (uint32_t)sizeof(tide_entity));
+        const uint8_t *values = old.attached_rows[t] + (size_t)count * sizeof(tide_entity);
+        for (uint32_t row = 0; row < count; row++) {
+            carry_value(&c, new_type, old_type, take(&w, to_layout->types[new_type].size), values + (size_t)row * old_size);
+        }
     }
     if (tw->heap && fw->heap) tide_write_bytes(&w, old.heap, old.heap_size);
     else if (tw->heap) take(&w, empty_heap); // Zeros: an empty heap
@@ -627,6 +669,7 @@ static void pack_world(packer *p, const uint32_t at, const tide_layout_world *w)
     for (uint32_t i = 0; i < w->task_count; i++) {
         put_string(p, tasks + i * (uint32_t)sizeof(tide_layout_tasks) + offsetof(tide_layout_tasks, name), w->tasks[i].name);
     }
+    put_array(p, at + offsetof(tide_layout_world, attached), w->attached, w->attached_count, sizeof *w->attached);
 }
 
 void *tide_layout_pack(const tide_layout *l, uint32_t *size)
@@ -705,7 +748,7 @@ static bool unpack_world(uint8_t *b, const uint32_t size, tide_layout_world *w)
     for (uint32_t i = 0; i < w->task_count; i++) {
         if (!unpack_string(b, size, &tasks[i].name)) return false;
     }
-    return true;
+    return unpack_pointer(b, size, (void *)&w->attached, w->attached_count, sizeof *w->attached);
 }
 
 const tide_layout *tide_layout_unpack(void *block, const uint32_t size)

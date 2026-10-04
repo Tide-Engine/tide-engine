@@ -1,0 +1,81 @@
+// local_fields.tide without its local fields, and without the code that uses
+// them: its worlds have to be the same as that game's, byte for byte, as local
+// fields are outside the match (local_fields_same.h).
+
+component Box
+{
+    float3 pos = float3(0, 0, 5);
+    int sides = 4;
+}
+
+component Glow { }
+
+component Label
+{
+    int number;
+}
+
+singleton Arena
+{
+    float size = 8;
+}
+
+singleton Rules
+{
+    int drop;
+    bool shed;
+    int spawn;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box { pos = float3(1, 0, 5) }, Label { number = 1 });
+    Spawn(Box { pos = float3(2, 0, 5), sides = 3 }, Glow);
+    Spawn(Box { pos = float3(3, 0, 5), sides = 5 }, Glow, Label { number = 2 });
+}
+
+system Slide(mut Box box, Time time)
+{
+    box.pos.x += time.dt;
+}
+
+system Drop(Box box, Rules rules)
+{
+    if (box.sides == rules.drop) this.Destroy();
+}
+
+system Shed(Rules rules, with Glow)
+{
+    if (rules.shed) this.Remove(Glow);
+}
+
+system Arrive(mut Rules rules)
+{
+    if (rules.spawn == 0) return;
+    Spawn(Box { sides = rules.spawn });
+    rules.spawn = 0;
+}
+
+local singleton Stats
+{
+    int forgotten;
+    int lastBakes;
+    int arenas;
+    int corners;
+    int fresh;
+    bool pulsing;
+    Entity last;
+}
+
+local component Spark
+{
+    int of;
+}
+
+view Mark(Label label, Stats stats)
+{
+    if (!stats.pulsing) return;
+    Spawn(Spark { of = label.number });
+}

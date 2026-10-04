@@ -182,6 +182,8 @@ typedef struct field {
     int leaf;    // In the device records: 1 + where its values start among its record's (a value is one)
     bool window; // ...a position in this machine's window, which the match can't read
     bool typed;  // ...what the keyboard typed, as text: a frame's, which only views read, and no device value
+    bool is_local; // `local List<Vertex3> verts;` in a match component or singleton: this machine's, outside the match
+    loc local_at;  // ...the `local` keyword
 } field;
 
 typedef enum param_mode {
@@ -215,6 +217,12 @@ typedef struct param {
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
+    // A match component or singleton with local fields (its type's local_part):
+    bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
+    loc local_use_at;    // ...where it first does
+    bool local_written;  // ...and writes one
+    bool match_write;    // A function's: it changes the match's fields of it, itself or through a function it passes it to
+    loc match_write_at;  // ...where it first does
 } param;
 
 // Why a system waits for one that runs before it in the tick (see parallel.c).
@@ -305,6 +313,13 @@ typedef struct decl {
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    // A match component's or singleton's `local` fields are a declaration of
+    // their own, its local part: a local one of the same kind and name, which
+    // isn't in program.decls. A component's is kept for the match's entities
+    // in a table of the local world (tide/attached.h), a row for each entity
+    // something was written for; a singleton's is a local singleton.
+    struct decl *local_part; // Its local fields, or NULL when it has none
+    struct decl *part_of;    // A local part: the component or singleton it's of
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
     const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
@@ -370,6 +385,7 @@ typedef struct decl {
     bool is_view;        // A view: a DECL_SYSTEM that runs once per frame, reads the world and draws.
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event
+    struct decl *forgets; // A local handler of Forgotten: the match component or singleton whose local fields it hears go
     bool per_entity;     // Runs once per matching entity, not once per tick.
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
@@ -555,6 +571,7 @@ struct expr {
     const char *c_constant; // Static member such as quaternion.identity, as C.
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
+    bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
 
 
     // E_CALL, E_METHOD
@@ -753,9 +770,12 @@ typedef struct program {
     decl *session;       // The built-in local singleton Session: this machine's part in a match
     decl *connected;     // Built-in local events: this machine joined a match, and left it
     decl *disconnected;
+    decl *forgotten;     // ...and a match entity's local fields are going, as it's gone
+    VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
+    bool local_heap;     // Some local field of the match's does: the local world has a heap, whether the match has or not
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
     VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
@@ -808,6 +828,7 @@ typedef enum fix_kind {
     FIX_UNUSED_LOCAL, // A local that's never read, with nothing to offer: it's assigned later, or a for declares it
     FIX_REMOVE_LOCAL, // ...whose value does nothing: remove its declaration
     FIX_KEEP_CALL,    // ...whose value is a call that does something: keep the call, as a statement of its own
+    FIX_LOCAL_WORD,   // `local` on a field where it means nothing: remove the word
 } fix_kind;
 
 typedef struct fix {

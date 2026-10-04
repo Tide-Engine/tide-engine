@@ -1,0 +1,13 @@
+// expect: a handler of Forgotten can't be async: the local fields go as soon as it's done
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+local async event(Forgotten) Free(Box box)
+{
+    await Wait.Frames(1);
+}

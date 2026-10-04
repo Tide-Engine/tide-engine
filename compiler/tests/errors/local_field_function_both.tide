@@ -1,0 +1,14 @@
+// expect: 'Rebake' changes the match's fields of its 'box' and uses its local fields, so nothing could call it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+void Rebake(mut Box box)
+{
+    box.pos.y += 1;
+    box.bakes += 1;
+}

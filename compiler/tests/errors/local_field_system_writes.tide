@@ -1,0 +1,13 @@
+// expect: 'bakes' is a local field of 'Box': it's this machine's, and the match can't see it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+system Bake(mut Box box)
+{
+    box.bakes = 1;
+}

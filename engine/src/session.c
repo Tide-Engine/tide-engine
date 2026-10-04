@@ -2447,7 +2447,7 @@ tide_view_worlds tide_client_view(const tide_client *c)
     if (alpha < 0.0) alpha = 0.0;
     if (alpha > 1.0) alpha = 1.0;
     return (tide_view_worlds){world_at(c, c->ahead), c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
-                              (float)alpha};
+                              (float)alpha, world_at(c, c->verified)};
 }
 
 // ---------------------------------------------------------------------------
@@ -2766,7 +2766,7 @@ const void *tide_session_world(const tide_session *s)
 tide_view_worlds tide_session_view(const tide_session *s)
 {
     if (s->client && s->client->loaded) return tide_client_view(s->client);
-    if (s->stale) return (tide_view_worlds){tide_client_world(s->stale), NULL, 1.0f};
+    if (s->stale) return (tide_view_worlds){tide_client_world(s->stale), NULL, 1.0f, tide_client_verified_world(s->stale)};
     return (tide_view_worlds){0};
 }
 

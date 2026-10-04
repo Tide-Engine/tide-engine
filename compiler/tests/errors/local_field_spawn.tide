@@ -1,0 +1,13 @@
+// expect: 'verts' is a local field of 'Box', so a value of it doesn't have it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box { verts = [1, 2, 3] });
+}

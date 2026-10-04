@@ -610,6 +610,11 @@ bool attributes_before_field(const token *toks, int i)
         i++;
     } while (toks[i].kind == T_LBRACKET);
     const token *t = &toks[i];
+    // [Snap] local float x;: a local field, where `local` then a declaration's word starts one
+    if (t->kind == T_IDENT && str_eq_c(t->text, "local") && toks[i + 1].kind == T_IDENT && !is_decl_word(toks[i + 1].text)) {
+        const tok_kind after = toks[i + 2].kind;
+        return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION;
+    }
     return t->kind == T_IDENT && (toks[i + 1].kind == T_IDENT || toks[i + 1].kind == T_DOT || toks[i + 1].kind == T_QUESTION)
         && !is_decl_word(t->text);
 }
@@ -639,7 +644,12 @@ static bool at_decl_start_or_function(const parser *p, const bool functions)
     const token *t = peek(p);
     if (t->kind == T_COMPONENT || t->kind == T_SINGLETON || t->kind == T_SYSTEM) return true;
     if (t->kind == T_LBRACKET && t->at.col == 1) return !attributes_before_field(p->toks, p->pos);
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && is_decl_word(t->text)) return true;
+    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && is_decl_word(t->text)) {
+        // `local float x;` is a field; `local event Blink` starts a declaration
+        if (!str_eq_c(t->text, "local")) return true;
+        const str next = peek_at(p, 1)->text;
+        if (peek_at(p, 2)->kind != T_SEMI && (is_decl_word(next) || str_eq_c(next, "async"))) return true;
+    }
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LPAREN && str_eq_c(t->text, "event")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
@@ -1078,12 +1088,27 @@ static void parse_field_attributes(parser *p)
     expect(p, T_RBRACKET, "']' after attributes");
 }
 
-// Type name; [= default];
+// `local` before a field: the word, then the field's type and its name.
+// Anywhere else it's a name like any other, a type's too.
+static bool at_local_field(const parser *p)
+{
+    if (!at(p, T_IDENT) || !str_eq_c(peek(p)->text, "local") || peek_at(p, 1)->kind != T_IDENT) return false;
+    const tok_kind after = peek_at(p, 2)->kind;
+    return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION;
+}
+
+// [local] Type name; [= default];
 static void parse_field(parser *p, decl *d)
 {
+    // `local List<Vertex3> verts;`: this machine's, outside the match
+    const token *local = at_local_field(p) ? advance(p) : NULL;
     const qname type = parse_decl_type(p, "field type or '}'");
     const token *field_name = expect_ident(p, "field name");
     field f = {0};
+    if (local) {
+        f.is_local = true;
+        f.local_at = local->at;
+    }
     f.name = field_name->text;
     f.at = field_name->at;
     f.type_name = type.text;

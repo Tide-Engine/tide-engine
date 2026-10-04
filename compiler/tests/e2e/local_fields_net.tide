@@ -1,0 +1,95 @@
+// Local fields in a match on a network, where clients predict: what a wrong
+// prediction does to them. A shield one player raises decides whether a target
+// is destroyed and whether another comes, so a client that hasn't heard of the
+// shield yet predicts both wrong, until the server says how the ticks went.
+
+component Target
+{
+    int id;
+    int diesAt; // The tick it's destroyed, unless a shield is up then; 0 for never
+    int goesAt; // The tick it's destroyed whatever; 0 for never
+    local List<int> mesh;
+    local int bakes;
+    local int seen;
+    local int was;
+}
+
+component Player { }
+
+singleton Guard
+{
+    bool up;
+}
+
+singleton Plan
+{
+    int arrivesAt = 150; // A target comes then, unless a shield is up
+    int arrived;
+}
+
+input Controls
+{
+    bool shield;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Target { id = 1, diesAt = 90, goesAt = 210 });
+    Spawn(Target { id = 2 });
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+system Lower(mut Guard guard)
+{
+    guard.up = false;
+}
+
+system Raise(Controls controls, mut Guard guard, with Player)
+{
+    if (controls.shield) guard.up = true;
+}
+
+system Expire(Target target, Guard guard, Time time)
+{
+    if (target.goesAt != 0 && time.tick == target.goesAt) this.Destroy();
+    else if (target.diesAt != 0 && time.tick == target.diesAt && !guard.up) this.Destroy();
+}
+
+system Arrive(mut Plan plan, Guard guard, Time time)
+{
+    if (time.tick != plan.arrivesAt || guard.up) return;
+    Spawn(Target { id = 3 });
+    plan.arrived += 1;
+}
+
+local singleton Seen
+{
+    int bakes;
+    int forgotten;
+    int forgot; // A bit for each target's id
+}
+
+// Bakes each target once, and counts the frames it drew it
+view Look(mut Target target, mut Seen seen)
+{
+    if (target.mesh.count == 0)
+    {
+        target.mesh.Add(target.id);
+        target.was = target.id;
+        target.bakes += 1;
+        seen.bakes += 1;
+    }
+    target.seen += 1;
+}
+
+local event(Forgotten) Forget(Target target, mut Seen seen)
+{
+    seen.forgotten += 1;
+    seen.forgot |= 1 << target.was;
+}

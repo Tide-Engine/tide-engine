@@ -220,7 +220,27 @@ view Crates(Crate crate, Scenery scenery)
 
 ### Big scenes
 
-The lists a 3D mesh is drawn from are kept on the GPU while frames draw them. A list that didn't change costs next to nothing to draw again, however big it is, so keep meshes in fields, local or the match's, rather than making them each frame. A list that changed is sent again the next frame.
+The lists a 3D mesh is drawn from are kept on the GPU while frames draw them. A list that didn't change costs next to nothing to draw again, however big it is, so keep meshes in fields rather than making them each frame. A list that changed is sent again the next frame.
+
+A mesh baked for an entity of the match goes in [local fields](./local-state.md#local-fields) of its component: this machine's, which the view bakes once and draws from, and which the match never carries. A list in an ordinary field is part of the match, so every player who joins downloads it, though no system reads it.
+
+```csharp
+component Rock
+{
+    float3 position;
+    int seed;
+    local List<Vertex3> corners;
+    local List<int> faces;
+}
+
+view Rocks(mut Rock rock)
+{
+    if (rock.corners.count == 0) Carve(rock); // Fills corners and faces from the seed, once
+    Draw.Mesh(rock.corners, rock.faces, float4x4.Translate(rock.position));
+}
+```
+
+A mesh many entities share, like the crate above, is one list in a singleton, or a local one.
 
 A mesh drawn again and again in a row, from the same lists, with the same texture and filter, is drawn all at once: a view that runs for each of thousands of entities and draws one mesh costs the GPU one draw. Something drawn between them, like another mesh or a camera, starts another.
 

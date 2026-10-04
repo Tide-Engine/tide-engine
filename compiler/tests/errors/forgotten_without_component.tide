@@ -1,0 +1,15 @@
+// expect: a handler of Forgotten takes the match component or singleton whose local fields are going
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+local singleton Log { int count; }
+
+local event(Forgotten) Count(mut Log log)
+{
+    log.count += 1;
+}

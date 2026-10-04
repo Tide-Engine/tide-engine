@@ -16,6 +16,10 @@ component Unit
     Stats stats;
     string name = "unit";
     Entity target;
+    // Local fields: this machine's, which carry over with the local state
+    local int drawn;
+    local string seen = "never";
+    local float fade = 1;
 }
 
 // Sparse: a presence byte in the units' rows, which carries over with their values
@@ -25,6 +29,7 @@ component Marker { }
 singleton Score
 {
     int points = 10;
+    local int shown;
 }
 
 input Controls
@@ -64,6 +69,14 @@ async void Blink(mut Menu menu)
 {
     await Wait.Frames(10);
     menu.shown += 1;
+}
+
+view Count(mut Unit unit, mut Score score)
+{
+    unit.drawn += 1;
+    unit.seen = $"{unit.drawn} times";
+    unit.fade *= 0.5;
+    score.shown += 1;
 }
 
 view Show(mut Menu menu)

@@ -19,6 +19,10 @@
 // - The inputs carry over like singletons, and the heap as it is.
 // - A waiting task carries over to a build where its code and its frame are
 //   the same (its table has the same name); the others are dropped.
+// - The local fields of the match's components and singletons carry over with
+//   the local world, like any value: an entity's by its component's name, a
+//   singleton's as the local singleton they are. A component that's gone, or
+//   has no local fields left, takes them with it.
 //
 // A world whose scene is gone can't be carried over.
 //
