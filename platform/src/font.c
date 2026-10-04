@@ -1,5 +1,6 @@
 #include "font.h"
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -27,6 +28,23 @@ static float baseline;    // From a line's top to its baseline, for text of size
 static float line;        // From one line's top to the next's
 static int advances[256]; // The first code points' advances in font units, which most text is
 
+// What glyphs are fitted to pixels by (see Fitting, below), in font units: the
+// heights letters share, which are their tops (the x-height, the capitals')
+// or their bottoms (the baseline, the descenders'), how far from one an edge
+// is still at it, and how thick the font's stems usually are, upright ones
+// and flat ones.
+typedef struct zone {
+    float at;
+    bool top;
+} zone;
+
+static zone zones[5];
+static int zone_count;
+static float zone_reach;
+static float usual_stem[2];
+
+static void measure_fitting(void);
+
 static int advance_of(const uint32_t codepoint)
 {
     int advance = 0, bearing = 0;
@@ -52,6 +70,7 @@ static void start(void)
     line = (float)(up - down + gap) / em;
     if (line < 1.2f) line = 1.2f;
     for (uint32_t c = 32; c < 256; c++) advances[c] = advance_of(c);
+    measure_fitting();
 }
 
 uint32_t tide_utf8_next(const char **text)
@@ -187,12 +206,396 @@ static bool place(const int width, const int height, uint16_t *x, uint16_t *y)
     return true;
 }
 
-// A length of the glyph's outline, in font units, as whole pixels at `scale`:
-// one at least, as a stem thinner than a pixel is still to be seen.
-static float whole(const float units, const float scale)
+// ---------------------------------------------------------------------------
+// Fitting. The font has no hints of its own, and stb_truetype would read
+// none: an outline drawn where it falls has its edges between pixels, in
+// grays, which at the sizes text is read at is a blur. So each glyph's
+// outline is moved onto the pixels it's drawn on before it's drawn, as a
+// hinted font's is:
+//
+// - Its stems are a whole number of pixels thick, one at least, between pixel
+//   edges: the upright ones (a letter's strokes, the sides of its bowls) and
+//   the flat ones (its bars, the tops and bottoms of its bowls). A stem about
+//   as thick as the font's usual one is as thick as that one in pixels, so
+//   letters keep one weight.
+// - The heights letters share are on pixel edges, the same ones in every
+//   glyph, and what a round letter goes past one by is dropped until it's a
+//   pixel.
+// - The rest of the outline moves with what's around it: between two edges
+//   that moved, in proportion, and past the last, as far as it did.
+//
+// Stems are found in the outline: an edge is a run of it along one axis (a
+// straight side, or a curve where it turns back), ink starts at it or ends
+// there by the way the outline goes round, and two edges that are each
+// other's nearest across ink are a stem.
+
+enum {
+    CURVE_PIECES = 8, // Lines a curve is cut into
+    EDGES = 64,       // The most a glyph's edges along an axis are looked at
+    KNOTS = EDGES + 2,
+};
+
+// How far off its axis a run of the outline is still an edge, for each unit
+// along it, and the shortest one, in ems.
+#define EDGE_SLOPE 0.15f
+#define EDGE_SHORTEST 0.02f
+
+// A point of a glyph's outline: x, and y.
+typedef struct point {
+    float at[2];
+} point;
+
+// A glyph's outline, in font units, y up: closed runs of points, its curves
+// cut into lines.
+typedef struct outline {
+    point *points;
+    int8_t *ways; // For edges_of: which way each line goes along an axis
+    int *ends;    // Where each contour's points end
+    int point_count, contour_count;
+    bool clockwise; // Its outer contours go round clockwise, as TrueType's do: ink is on their right
+    float low[2], high[2];
+} outline;
+
+static void outline_free(outline *o)
 {
-    const float pixels = floorf(units * scale + 0.5f);
+    free(o->points);
+    free(o->ways);
+    free(o->ends);
+}
+
+static void outline_point(outline *o, const int first, const float x, const float y)
+{
+    if (o->point_count > first) {
+        const point *last = &o->points[o->point_count - 1];
+        if (last->at[0] == x && last->at[1] == y) return; // No line from a point to itself
+    }
+    o->points[o->point_count++] = (point){{x, y}};
+}
+
+// False for a glyph with nothing to draw.
+static bool outline_of(const int index, outline *o)
+{
+    *o = (outline){0};
+    stbtt_vertex *shape = NULL;
+    const int count = stbtt_GetGlyphShape(&font, index, &shape);
+    if (count <= 0) {
+        stbtt_FreeShape(&font, shape);
+        return false;
+    }
+    o->points = tide_alloc((size_t)count * CURVE_PIECES * sizeof(*o->points));
+    o->ways = tide_alloc((size_t)count * CURVE_PIECES);
+    o->ends = tide_alloc((size_t)count * sizeof(int));
+    int first = 0;
+    float x = 0.0f, y = 0.0f;
+    for (int i = 0; i <= count; i++) {
+        if (i == count || shape[i].type == STBTT_vmove) {
+            // A contour ends where it started: once is enough
+            if (o->point_count - first > 1) {
+                const float *start = o->points[first].at, *last = o->points[o->point_count - 1].at;
+                if (start[0] == last[0] && start[1] == last[1]) o->point_count--;
+            }
+            if (o->point_count - first >= 3) o->ends[o->contour_count++] = o->point_count;
+            else o->point_count = first;
+            first = o->point_count;
+            if (i == count) break;
+        }
+        const stbtt_vertex *v = &shape[i];
+        if (v->type == STBTT_vcurve || v->type == STBTT_vcubic) {
+            for (int k = 1; k <= CURVE_PIECES; k++) {
+                const float t = (float)k / (float)CURVE_PIECES, s = 1.0f - t;
+                if (v->type == STBTT_vcurve) {
+                    outline_point(o, first, s * s * x + 2.0f * s * t * (float)v->cx + t * t * (float)v->x,
+                                  s * s * y + 2.0f * s * t * (float)v->cy + t * t * (float)v->y);
+                } else {
+                    const float a = s * s * s, b = 3.0f * s * s * t, c = 3.0f * s * t * t, d = t * t * t;
+                    outline_point(o, first, a * x + b * (float)v->cx + c * (float)v->cx1 + d * (float)v->x,
+                                  a * y + b * (float)v->cy + c * (float)v->cy1 + d * (float)v->y);
+                }
+            }
+        } else {
+            outline_point(o, first, (float)v->x, (float)v->y);
+        }
+        x = (float)v->x;
+        y = (float)v->y;
+    }
+    stbtt_FreeShape(&font, shape);
+    if (o->contour_count == 0) {
+        outline_free(o);
+        return false;
+    }
+
+    // Which way it goes round is the sign of the area inside it, and the
+    // outer contours' is what's left of it after the holes in them
+    double area = 0.0;
+    o->low[0] = o->low[1] = FLT_MAX;
+    o->high[0] = o->high[1] = -FLT_MAX;
+    for (int c = 0, from = 0; c < o->contour_count; from = o->ends[c++]) {
+        const int n = o->ends[c] - from;
+        for (int i = 0; i < n; i++) {
+            const float *a = o->points[from + i].at, *b = o->points[from + (i + 1) % n].at;
+            area += (double)a[0] * (double)b[1] - (double)b[0] * (double)a[1];
+            for (int axis = 0; axis < 2; axis++) {
+                if (a[axis] < o->low[axis]) o->low[axis] = a[axis];
+                if (a[axis] > o->high[axis]) o->high[axis] = a[axis];
+            }
+        }
+    }
+    o->clockwise = area < 0.0;
+    return true;
+}
+
+typedef struct edge {
+    float at;       // Where it is on its axis
+    float from, to; // What it spans across it
+    bool closes;    // Ink ends at it, going up its axis (a stroke's right side, or its top): else it starts there
+    int pair;       // The edge nearest it across ink, -1 for none: a stem, when that one's is this one
+    bool placed;    // It has a pixel to be at...
+    float pixel;    // ...which is this one's edge
+} edge;
+
+// The outline's edges along `axis` (0: upright ones, at an x; 1: flat ones,
+// at a y), which are at least `shortest` long.
+static int edges_of(const outline *o, const int axis, const float shortest, edge *edges)
+{
+    const int across = 1 - axis;
+    int count = 0;
+    for (int c = 0, first = 0; c < o->contour_count; first = o->ends[c++]) {
+        const int n = o->ends[c] - first;
+        const point *p = o->points + first;
+        int8_t *way = o->ways + first;
+        for (int i = 0; i < n; i++) {
+            const float *a = p[i].at, *b = p[(i + 1) % n].at;
+            const float along = b[across] - a[across], off = b[axis] - a[axis];
+            way[i] = (int8_t)(along == 0.0f || fabsf(off) > EDGE_SLOPE * fabsf(along) ? 0 : along > 0.0f ? 1 : -1);
+        }
+        // From where a run starts, so that none is cut in two by where the contour's points do
+        int start = 0;
+        while (start < n && way[start] == way[(start + n - 1) % n]) start++;
+        if (start == n) continue;
+        for (int i = 0, length; i < n; i += length) {
+            const int s = (start + i) % n;
+            for (length = 1; i + length < n && way[(start + i + length) % n] == way[s]; length++) {}
+            if (way[s] == 0) continue;
+            float low = p[s].at[across], high = low, least = p[s].at[axis], most = least, sum = 0.0f, total = 0.0f;
+            for (int k = 0; k < length; k++) {
+                const float *a = p[(s + k) % n].at, *b = p[(s + k + 1) % n].at;
+                if (b[across] < low) low = b[across];
+                if (b[across] > high) high = b[across];
+                if (b[axis] < least) least = b[axis];
+                if (b[axis] > most) most = b[axis];
+                sum += (a[axis] + b[axis]) * 0.5f * fabsf(b[across] - a[across]);
+                total += fabsf(b[across] - a[across]);
+            }
+            if (high - low < shortest || count == EDGES) continue;
+            // A curve is an edge where it turns back, and a side that ends in
+            // a curve where it's straight: the end most of the run is near
+            const float mean = sum / total;
+            edges[count++] = (edge){
+                .at = most - mean < mean - least ? most : least,
+                .from = low,
+                .to = high,
+                .closes = ((axis == 1) == (way[s] > 0)) == o->clockwise,
+                .pair = -1,
+            };
+        }
+    }
+    return count;
+}
+
+// Each edge's nearest across ink, no further than `widest`: one that ink
+// ends at for one it starts at, beside it for a while.
+static void pair_edges(edge *edges, const int count, const float widest)
+{
+    for (int i = 0; i < count; i++) {
+        float nearest = widest, beside = 0.0f;
+        for (int j = 0; j < count; j++) {
+            if (edges[j].closes == edges[i].closes) continue;
+            const float width = edges[i].closes ? edges[i].at - edges[j].at : edges[j].at - edges[i].at;
+            const float from = edges[i].from > edges[j].from ? edges[i].from : edges[j].from;
+            const float to = edges[i].to < edges[j].to ? edges[i].to : edges[j].to;
+            if (width <= 0.0f || width > nearest || to - from <= 0.0f) continue;
+            if (width == nearest && to - from <= beside) continue;
+            nearest = width;
+            beside = to - from;
+            edges[i].pair = j;
+        }
+    }
+}
+
+// Whether the edge at `i` starts a stem: the edge that ends it is its pair.
+static bool starts_stem(const edge *edges, const int i)
+{
+    return !edges[i].closes && edges[i].pair >= 0 && edges[edges[i].pair].pair == i;
+}
+
+static float widest_stem(const int axis)
+{
+    return usual_stem[axis] > 0.0f ? usual_stem[axis] * 2.5f : em * 0.2f;
+}
+
+static float round_to_pixel(const float pixels)
+{
+    return floorf(pixels + 0.5f);
+}
+
+// How many pixels thick a stem of `width` is at `scale`.
+static float stem_pixels(float width, const int axis, const float scale)
+{
+    const float usual = usual_stem[axis];
+    if (usual > 0.0f && fabsf(width - usual) <= usual * 0.25f) width = usual;
+    const float pixels = round_to_pixel(width * scale);
     return pixels < 1.0f ? 1.0f : pixels;
+}
+
+// The height an edge at `at` is at, a top or a bottom: NULL for none.
+static const zone *zone_of(const float at, const bool top)
+{
+    const zone *nearest = NULL;
+    for (int i = 0; i < zone_count; i++) {
+        if (zones[i].top != top || fabsf(at - zones[i].at) > zone_reach) continue;
+        if (!nearest || fabsf(at - zones[i].at) < fabsf(at - nearest->at)) nearest = &zones[i];
+    }
+    return nearest;
+}
+
+// The pixel edge something at `at` is on, at that height: the height's own,
+// and the whole pixels it's past it.
+static float zone_pixel(const zone *z, const float at, const float scale)
+{
+    return round_to_pixel(z->at * scale) + round_to_pixel((at - z->at) * scale);
+}
+
+static void add_zone(const float at, const bool top)
+{
+    if (!zone_of(at, top)) zones[zone_count++] = (zone){at, top};
+}
+
+// The font's own measures, from letters that show them: start's.
+static void measure_fitting(void)
+{
+    zone_reach = em * 0.035f;
+    add_zone(0.0f, false);
+    static const struct {
+        char letter;
+        bool top;
+    } shown[] = {{'x', true}, {'H', true}, {'d', true}, {'p', false}};
+    for (size_t i = 0; i < sizeof(shown) / sizeof(shown[0]); i++) {
+        const int index = stbtt_FindGlyphIndex(&font, shown[i].letter);
+        int left = 0, bottom = 0, right = 0, top = 0;
+        if (index && stbtt_GetGlyphBox(&font, index, &left, &bottom, &right, &top)) {
+            add_zone((float)(shown[i].top ? top : bottom), shown[i].top);
+        }
+    }
+    outline o;
+    const int index = stbtt_FindGlyphIndex(&font, 'o');
+    if (!index || !outline_of(index, &o)) return;
+    for (int axis = 0; axis < 2; axis++) {
+        edge edges[EDGES];
+        const int count = edges_of(&o, axis, em * EDGE_SHORTEST, edges);
+        pair_edges(edges, count, em * 0.2f);
+        for (int i = 0; i < count; i++) {
+            if (!starts_stem(edges, i)) continue;
+            const float width = edges[edges[i].pair].at - edges[i].at;
+            if (usual_stem[axis] == 0.0f || width < usual_stem[axis]) usual_stem[axis] = width;
+        }
+    }
+    outline_free(&o);
+}
+
+// Where part of an outline goes: `at` in font units to `to` in pixels.
+typedef struct knot {
+    float at, to;
+} knot;
+
+// Where `v` goes, by knots in order: between two in proportion, and before
+// the first and after the last as far as it went.
+static float fitted(const knot *knots, const int count, const float scale, const float v)
+{
+    if (count == 0) return v * scale;
+    if (v <= knots[0].at) return knots[0].to + (v - knots[0].at) * scale;
+    for (int i = 1; i < count; i++) {
+        if (v > knots[i].at) continue;
+        const knot *a = &knots[i - 1], *b = &knots[i];
+        if (v == b->at) return b->to; // Its own pixel edge, to the bit
+        return a->to + (v - a->at) * (b->to - a->to) / (b->at - a->at);
+    }
+    return knots[count - 1].to + (v - knots[count - 1].at) * scale;
+}
+
+// One more knot, in its place: none where there's one already. Then none
+// goes before the one before it, so the outline never folds over itself.
+static int add_knot(knot *knots, const int count, const float at, const float to)
+{
+    int i = count;
+    while (i > 0 && knots[i - 1].at > at) i--;
+    if (count == KNOTS || (i > 0 && at - knots[i - 1].at < 0.5f) || (i < count && knots[i].at - at < 0.5f)) return count;
+    memmove(knots + i + 1, knots + i, (size_t)(count - i) * sizeof(knot));
+    knots[i] = (knot){at, to};
+    for (int k = 1; k <= count; k++) {
+        if (knots[k].to < knots[k - 1].to) knots[k].to = knots[k - 1].to;
+    }
+    return count + 1;
+}
+
+// The knots that fit an outline to pixels along `axis`, in pixels up it from
+// the pen or the baseline.
+static int fit(const outline *o, const int axis, const float scale, knot *knots)
+{
+    edge edges[EDGES];
+    const int edge_count = edges_of(o, axis, em * EDGE_SHORTEST, edges);
+    pair_edges(edges, edge_count, widest_stem(axis));
+    int count = 0;
+
+    if (axis == 1) {
+        // The heights letters share come first: edges at one, and the other
+        // sides of their stems, as thick as those are
+        for (int i = 0; i < edge_count; i++) {
+            const zone *z = zone_of(edges[i].at, edges[i].closes);
+            if (!z) continue;
+            edges[i].placed = true;
+            edges[i].pixel = zone_pixel(z, edges[i].at, scale);
+        }
+        for (int i = 0; i < edge_count; i++) {
+            if (!starts_stem(edges, i)) continue;
+            edge *a = &edges[i], *b = &edges[edges[i].pair];
+            if (a->placed == b->placed) continue;
+            const float thick = stem_pixels(b->at - a->at, axis, scale);
+            if (a->placed) b->pixel = a->pixel + thick;
+            else a->pixel = b->pixel - thick;
+            a->placed = b->placed = true;
+        }
+        for (int i = 0; i < edge_count; i++) {
+            if (edges[i].placed) count = add_knot(knots, count, edges[i].at, edges[i].pixel);
+        }
+        // A peak has no edge, and is at its height all the same
+        const zone *top = zone_of(o->high[1], true), *bottom = zone_of(o->low[1], false);
+        if (top) count = add_knot(knots, count, o->high[1], zone_pixel(top, o->high[1], scale));
+        if (bottom) count = add_knot(knots, count, o->low[1], zone_pixel(bottom, o->low[1], scale));
+    }
+
+    // The other stems, each where it falls among those: its middle moves the least
+    knot among[KNOTS];
+    const int among_count = count;
+    memcpy(among, knots, (size_t)count * sizeof(knot));
+    for (int i = 0; i < edge_count; i++) {
+        if (!starts_stem(edges, i) || edges[i].placed) continue;
+        edge *a = &edges[i], *b = &edges[edges[i].pair];
+        const float thick = stem_pixels(b->at - a->at, axis, scale);
+        const float middle = fitted(among, among_count, scale, (a->at + b->at) * 0.5f);
+        a->pixel = round_to_pixel(middle - thick * 0.5f);
+        b->pixel = a->pixel + thick;
+        a->placed = b->placed = true;
+        count = add_knot(knots, count, a->at, a->pixel);
+        count = add_knot(knots, count, b->at, b->pixel);
+    }
+
+    // An edge that's no stem's (a bar's end, a stroke cut flat): the nearest
+    // pixel edge to where the stems left it
+    for (int i = 0; i < edge_count; i++) {
+        if (edges[i].placed) continue;
+        count = add_knot(knots, count, edges[i].at, round_to_pixel(fitted(knots, count, scale, edges[i].at)));
+    }
+    return count;
 }
 
 bool tide_font_glyph_for(const uint32_t codepoint, const int pixels, tide_font_glyph *out)
@@ -205,42 +608,63 @@ bool tide_font_glyph_for(const uint32_t codepoint, const int pixels, tide_font_g
         return true;
     }
     tide_font_glyph g = {.codepoint = codepoint, .pixels = (uint16_t)pixels};
-    const int index = stbtt_FindGlyphIndex(&font, (int)codepoint);
     const float scale = (float)pixels / em;
     g.advance = (int16_t)advance_pixels(codepoint, pixels);
 
-    // The font has no hints of its own, and stb_truetype would read none: an
-    // outline drawn where it falls has its edges between pixels, in grays,
-    // which at the sizes text is read at is a blur. So each glyph is fitted to
-    // the pixels it's drawn on: its box from its left edge to its right one is
-    // a whole number of them, and so is its height above the baseline, with
-    // the left edge and the baseline on pixel edges. Upright stems at a
-    // glyph's sides and flat tops then fill their pixels. Letters as tall as
-    // each other in the font stay so, as they round the same way.
-    int left = 0, bottom = 0, right = 0, top = 0; // The outline's box, in font units, y up
-    if (stbtt_GetGlyphBox(&font, index, &left, &bottom, &right, &top) && right > left && top > bottom) {
-        // A hair under a whole pixel, so that what should fill one doesn't spill a sliver into the next
-        const float across = (whole((float)(right - left), scale) - 1.0f / 32.0f) / (float)(right - left);
-        const float up = top > 0 ? (whole((float)top, scale) - 1.0f / 32.0f) / (float)top : scale;
-        // Its left edge a whole number of pixels from the pen, by moving the outline to it
-        const float edge = floorf((float)left * scale + 0.5f);
-        const float shift = edge - (float)left * across + 1.0f / 64.0f;
-        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        stbtt_GetGlyphBitmapBoxSubpixel(&font, index, across, up, shift, 0.0f, &x0, &y0, &x1, &y1);
-        const int width = x1 - x0, height = y1 - y0;
+    outline o;
+    if (outline_of(stbtt_FindGlyphIndex(&font, (int)codepoint), &o)) {
+        // Its points where they're drawn, in pixels from the pen on the baseline, y down
+        knot across[KNOTS], up[KNOTS];
+        const int across_count = fit(&o, 0, scale, across), up_count = fit(&o, 1, scale, up);
+        float furthest = 0.0f;
+        for (int i = 0; i < o.point_count; i++) {
+            float *p = o.points[i].at;
+            p[0] = fitted(across, across_count, scale, p[0]);
+            p[1] = -fitted(up, up_count, scale, p[1]);
+            if (fabsf(p[0]) > furthest) furthest = fabsf(p[0]);
+            if (fabsf(p[1]) > furthest) furthest = fabsf(p[1]);
+        }
+        // stb_truetype draws shapes whose points are short integers: 64ths of
+        // a pixel, or as fine as they hold the glyph in. The glyph's pixels
+        // are the ones those points are in, so that an edge on a pixel's edge
+        // never takes one more
+        float steps = 64.0f;
+        while (steps > 1.0f && furthest * steps > 32000.0f) steps *= 0.5f;
+        stbtt_vertex *shape = tide_alloc((size_t)o.point_count * sizeof(stbtt_vertex));
+        float low[2] = {FLT_MAX, FLT_MAX}, high[2] = {-FLT_MAX, -FLT_MAX};
+        for (int c = 0, i = 0; c < o.contour_count; c++) {
+            for (const int first = i; i < o.ends[c]; i++) {
+                const float at[2] = {round_to_pixel(o.points[i].at[0] * steps), round_to_pixel(o.points[i].at[1] * steps)};
+                for (int axis = 0; axis < 2; axis++) {
+                    if (at[axis] < low[axis]) low[axis] = at[axis];
+                    if (at[axis] > high[axis]) high[axis] = at[axis];
+                }
+                shape[i] = (stbtt_vertex){
+                    .x = (stbtt_vertex_type)at[0],
+                    .y = (stbtt_vertex_type)at[1],
+                    .type = i == first ? STBTT_vmove : STBTT_vline,
+                };
+            }
+        }
+        const int x0 = (int)floorf(low[0] / steps), y0 = (int)floorf(low[1] / steps);
+        const int width = (int)ceilf(high[0] / steps) - x0, height = (int)ceilf(high[1] / steps) - y0;
         if (width > 0 && height > 0) {
             if (!place(width, height, &g.x, &g.y)) {
                 atlas_full = true;
+                free(shape);
+                outline_free(&o);
                 return false;
             }
-            stbtt_MakeGlyphBitmapSubpixel(&font, atlas + (size_t)g.y * ATLAS_WIDTH + g.x, width, height, ATLAS_WIDTH, across,
-                                          up, shift, 0.0f, index);
+            stbtt__bitmap bitmap = {width, height, ATLAS_WIDTH, atlas + (size_t)g.y * ATLAS_WIDTH + g.x};
+            stbtt_Rasterize(&bitmap, 0.35f, shape, o.point_count, 1.0f / steps, 1.0f / steps, 0.0f, 0.0f, x0, y0, 0, NULL);
             g.width = (uint16_t)width;
             g.height = (uint16_t)height;
             g.left = (int16_t)x0;
             g.top = (int16_t)y0; // From the baseline: above it is less than 0
             atlas_version++;
         }
+        free(shape);
+        outline_free(&o);
     }
     glyphs[slot] = g;
     glyph_count++;
