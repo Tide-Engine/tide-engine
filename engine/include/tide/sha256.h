@@ -6,9 +6,6 @@
 // SHA-256 (FIPS 180-4), for what needs a hash nobody can work back from:
 // the digests of players' cookies that sessions share for host migration
 // (tide/session.h), and WebRTC's crypto (platform/src/rtc).
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 typedef struct tide_sha256 {
     uint32_t h[8];

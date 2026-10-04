@@ -11,9 +11,6 @@
 // world's heap. Generated code calls the functions below with its grid type's
 // shape (tide_grid_shape), which it knows when it compiles.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A grid keeps its cells in chunks, a heap block each, as many cells along
 // each axis as a power of two: 4096 of them (64 by 64, or 16 by 16 by 16), or
 // fewer for cells bigger than 4 bytes, so a chunk is never more than a page.

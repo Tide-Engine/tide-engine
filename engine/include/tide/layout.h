@@ -7,9 +7,6 @@
 // its types, and where each world keeps what, by name. With it, a world can be
 // carried over to a build of the game whose layout changed. tidec only writes
 // it when asked (codegen_options.layout), so games tide builds don't have it.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 // How a field carries over to a field of the same name.
 typedef enum tide_layout_kind {

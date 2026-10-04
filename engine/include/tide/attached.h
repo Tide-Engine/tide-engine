@@ -11,9 +11,6 @@
 // match's components, which are this machine's (docs/spec.md, Local state).
 // Generated code calls these with each one's tide_columns.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // It's a table with three columns: the entity each row is of, its value,
 // which is one column, so code reads and writes a value where it is, and what
 // the entity was born as when the row was made (tide_entity_born). A row is

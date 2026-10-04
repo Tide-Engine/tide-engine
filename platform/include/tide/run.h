@@ -29,9 +29,6 @@
 //
 // The loop itself is in tide/host.h, which runs the game through
 // tide_host_game_api, made here from the game's header.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 #include "tide/host.h"
 

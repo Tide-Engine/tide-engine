@@ -10,9 +10,6 @@
 // components' string fields. It's part of the world, in pages its snapshots
 // share (see tide/page.h), and it grows as it needs, with no limit but memory.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // Deterministic: blocks come from size classes, reused in a fixed order, so
 // the same allocations and releases give the same offsets on every machine.
 // A released block is only reused once the code running now is done (see

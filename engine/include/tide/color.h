@@ -1,9 +1,7 @@
 #pragma once
 
-// Tide's Color: red, green, blue and alpha from 0 to 1, as in Unity.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later. Generated code uses the type and the constants below.
+// Tide's Color: red, green, blue and alpha from 0 to 1, as in Unity. Generated
+// code uses the type and the constants below.
 
 typedef struct tide_color {
     float r, g, b, a;

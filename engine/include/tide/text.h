@@ -15,9 +15,6 @@
 // Tide's `string`: text as a value. Generated code builds, joins, formats
 // and compares it with the functions below.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A tide_str is a view: where the text is, its length in bytes (UTF-8) and in
 // characters (code points), which is what Tide's Length counts. Text that
 // code makes (joining, formatting, Substring) goes in the scratch area, which

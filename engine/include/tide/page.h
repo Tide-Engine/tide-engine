@@ -15,9 +15,6 @@
 // entity table and its heap), shared with its snapshots until one of them
 // changes it.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A snapshot (tide_world_copy) points at the world's pages rather than copying
 // them. Whoever changes a shared page first gets a copy of their own
 // (tide_page_own), so a world and its snapshots only cost the memory of what's

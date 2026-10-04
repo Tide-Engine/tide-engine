@@ -11,13 +11,10 @@
 
 // The platform layer: a window, the frame loop, input devices and a renderer
 // for draw lists, on OpenGL (3.3, ES 3 or WebGL 2). Hosts use it; the
-// simulation never does (see AGENTS.md, Rendering and platform). This header
-// includes no system header, nor GLFW's, and a file that includes a game's
-// generated header shouldn't either: their names would clash with the game's
-// components (Transform, Camera, Rectangle...).
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
+// simulation never does. This header includes no system header, nor GLFW's,
+// and a file that includes a game's generated header shouldn't either: their
+// names would clash with the game's components (Transform, Camera,
+// Rectangle...).
 //
 // Pixels here are the display's logical pixels, as CSS pixels are on the web:
 // on a display scaled to 150%, one is 1.5 of the screen's real pixels wide.

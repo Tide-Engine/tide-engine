@@ -10,9 +10,6 @@
 //   or through a TURN server.
 // - DTLS 1.2: the encryption WebRTC requires, over ICE.
 // - SCTP: the data channels, over DTLS.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 #include <stdbool.h>
 #include <stddef.h>

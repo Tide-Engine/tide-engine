@@ -41,9 +41,6 @@
 //                                                A host whose match ended before the relay knew the
 //                                                room (on this connection) sends {host} first, at
 //                                                once: messages are read in order, hello or not
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';

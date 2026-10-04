@@ -10,9 +10,6 @@
 // and a `Grid2<Color>` to draw with, whose cell (0, 0) is the texture's first
 // pixel.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // The grid is the texture: nothing else holds its pixels. The draw list copies
 // its cells, a byte a channel, when they aren't what it last copied, which the
 // hashes the grid's heap keeps of its pages tell without reading the cells

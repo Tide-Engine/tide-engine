@@ -9,9 +9,6 @@
 
 // Sessions: how a machine takes part in a match.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A server runs the match. It ticks the one true world with the inputs players
 // send, and sends every player each tick: whose input changed and to what,
 // players joining and leaving, and a hash of the world after it.

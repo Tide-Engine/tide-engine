@@ -10,9 +10,6 @@
 // description of its entries (tide_map_kind) and handles the text in keys and
 // values itself, as it does for lists (see tide/list.h).
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A map is two lists where the map is (a world's heap, or the scratch area;
 // see tide/text.h for `where`), so it's chunked, shared with snapshots, hashed,
 // packed and carried over as lists are:
