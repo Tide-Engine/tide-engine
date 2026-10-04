@@ -76,7 +76,7 @@ And these build values:
 
 **Hashing:**
 
-`Math.Hash(value)` turns an `int`, `int2`, `int3` or `int4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
+`Math.Hash(value)` turns an `int`, `long`, `int2`, `int3` or `int4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
 
 ```csharp
 // About one cell in four starts as sand, the same cells everywhere.

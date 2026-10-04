@@ -991,6 +991,8 @@ static const char *builtin_type_doc(const type_kind kind)
     switch (kind) {
     case TY_BOOL: return "true or false.";
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
+    case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
+                         "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
     case TY_FLOAT: return "A 32-bit float. Results are identical on every platform.";
     case TY_INT2: case TY_INT3: case TY_INT4: return "A vector of ints: x, y, z, w.";
     case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: return "A vector of floats: x, y, z, w. Swizzles like `v.xz` work.";
@@ -1346,7 +1348,7 @@ static void describe_default(const type t, sb *out)
 {
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
-    case TY_INT: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
     case TY_STRING: sb_put(out, "Empty text"); break;
@@ -3135,7 +3137,7 @@ enum { ST_NAMESPACE, ST_TYPE, ST_STRUCT, ST_CLASS, ST_INTERFACE, ST_PARAMETER, S
 static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_INT: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
+    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
     case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
         return true;
     default:
@@ -3985,7 +3987,7 @@ static bool complete_in_namespace(completion *c, const str ns, const bool system
 }
 
 static const char *const value_types[] = {
-    "bool", "int", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
+    "bool", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
 };
 
@@ -5104,8 +5106,11 @@ static const struct {
     const char *forms[3];
     const char *doc;
 } call_forms[] = {
-    {"int", {"int(float value)"}, "Truncates toward zero and saturates at the int range. NaN gives 0."},
-    {"float", {"float(int value)"}, NULL},
+    {"int", {"int(float value)", "int(long value)"}, "From a float: truncates toward zero and saturates at the int range; NaN gives 0. "
+                                                   "From a long: its low 32 bits."},
+    {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "
+                                                     "An int converts by itself."},
+    {"float", {"float(int value)", "float(long value)"}, "A long rounds to the nearest float."},
     {"int2", {"int2(int x, int y)", "int2(int value)", "int2(float2 value)"}, NULL},
     {"int3", {"int3(int x, int y, int z)", "int3(int2 xy, int z)", "int3(int value)"}, NULL},
     {"int4", {"int4(int x, int y, int z, int w)", "int4(int3 xyz, int w)", "int4(int value)"}, NULL},

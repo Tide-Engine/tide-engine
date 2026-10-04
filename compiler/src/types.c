@@ -10,6 +10,7 @@ static const struct {
 } builtins[] = {
     {"bool", TY_BOOL, "b", "bool"},
     {"int", TY_INT, "i", "int32_t"},
+    {"long", TY_LONG, "l", "int64_t"},
     {"int2", TY_INT2, "i2", "tide_int2"},
     {"int3", TY_INT3, "i3", "tide_int3"},
     {"int4", TY_INT4, "i4", "tide_int4"},
@@ -76,6 +77,11 @@ bool type_is_numeric(const type t)
     return type_dim(t) > 0;
 }
 
+bool type_is_integer(const type t)
+{
+    return t.kind == TY_INT || t.kind == TY_LONG;
+}
+
 int matrix_dim(const type t)
 {
     switch (t.kind) {
@@ -125,6 +131,7 @@ bool type_assignable(const type to, const type from)
     if (to.kind == TY_OPTIONAL && from.kind != TY_OPTIONAL && from.kind != TY_FAILABLE) {
         return type_assignable(to.decl->fields.items[0].type, from);
     }
+    if (to.kind == TY_LONG) return from.kind == TY_INT; // An int fits a long; floats convert explicitly, both ways
     return type_is_float_based(to) && type_is_int_based(from) && type_dim(to) == type_dim(from);
 }
 

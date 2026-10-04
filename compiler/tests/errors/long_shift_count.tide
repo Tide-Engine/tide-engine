@@ -1,0 +1,7 @@
+// expect: a shift count is an int, not long
+scene Main { }
+
+int Bit(int bits, long which)
+{
+    return bits << which;
+}

@@ -34,11 +34,15 @@ static const tide_layout_field *find_field(const tide_layout_type *t, const char
     return NULL;
 }
 
-// Whether a field's value carries over to a field of the same name.
+// Whether a field's value carries over to a field of the same name: the same
+// type, or a number that converts as Tide converts them implicitly (int to
+// float and to long) or by a widening cast (long to float).
 static bool carries(const tide_layout_field *to, const tide_layout_field *from)
 {
     if (strcmp(to->type, from->type) == 0) return to->kind != TIDE_LAYOUT_PLAIN || to->size == from->size;
-    return from->kind == TIDE_LAYOUT_INT && to->kind == TIDE_LAYOUT_FLOAT && from->dim == to->dim;
+    if (from->dim != to->dim) return false;
+    if (from->kind == TIDE_LAYOUT_INT) return to->kind == TIDE_LAYOUT_FLOAT || to->kind == TIDE_LAYOUT_LONG;
+    return from->kind == TIDE_LAYOUT_LONG && to->kind == TIDE_LAYOUT_FLOAT;
 }
 
 static void carry_fields(const carry *c, int32_t to_type, int32_t from_type, uint8_t *to, const uint8_t *from);
@@ -95,12 +99,24 @@ static void carry_field(const carry *c, const tide_layout_field *tf, uint8_t *to
                         const uint8_t *from)
 {
     if (!carries(tf, ff)) return;
-    if (strcmp(tf->type, ff->type) != 0) { // Ints to floats
+    if (strcmp(tf->type, ff->type) != 0) { // A number converting (see carries)
         for (uint32_t i = 0; i < tf->dim; i++) {
-            int32_t n;
-            memcpy(&n, from + 4u * i, sizeof n);
-            const float f = (float)n;
-            memcpy(to + 4u * i, &f, sizeof f);
+            if (ff->kind == TIDE_LAYOUT_LONG) { // To a float
+                int64_t n;
+                memcpy(&n, from + 8u * i, sizeof n);
+                const float f = (float)n;
+                memcpy(to + 4u * i, &f, sizeof f);
+            } else if (tf->kind == TIDE_LAYOUT_LONG) { // An int to a long
+                int32_t n;
+                memcpy(&n, from + 4u * i, sizeof n);
+                const int64_t l = n;
+                memcpy(to + 8u * i, &l, sizeof l);
+            } else { // An int to a float
+                int32_t n;
+                memcpy(&n, from + 4u * i, sizeof n);
+                const float f = (float)n;
+                memcpy(to + 4u * i, &f, sizeof f);
+            }
         }
         return;
     }

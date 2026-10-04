@@ -61,6 +61,7 @@ static const type T_ERR = {TY_ERROR, NULL};
 static const type T_VOID_ = {TY_VOID, NULL};
 static const type T_BOOL_ = {TY_BOOL, NULL};
 static const type T_INT_ = {TY_INT, NULL};
+static const type T_LONG_ = {TY_LONG, NULL};
 static const type T_FLOAT_ = {TY_FLOAT, NULL};
 static const type T_ENTITY_ = {TY_ENTITY, NULL};
 
@@ -90,6 +91,19 @@ static bool has_fields(const type t)
 static bool is_scalar_number(const type t)
 {
     return t.kind == TY_INT || t.kind == TY_FLOAT;
+}
+
+// After a type mismatch between a long and another number: how to convert,
+// since nothing converts to or from a long by itself but an int going in.
+static void note_long_conversion(const type want, const type have)
+{
+    if (want.kind == TY_LONG && have.kind == TY_FLOAT) {
+        diag_note("long(x) makes a float a long, truncated toward zero");
+    } else if (want.kind == TY_FLOAT && have.kind == TY_LONG) {
+        diag_note("float(x) makes a long a float, rounded to the nearest");
+    } else if (want.kind == TY_INT && have.kind == TY_LONG) {
+        diag_note("int(x) makes a long an int, keeping its low 32 bits");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -738,7 +752,7 @@ static bool list_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_INT: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
         return true;
@@ -820,7 +834,7 @@ static bool grid_cell_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_INT: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM:
         return true;
@@ -888,7 +902,7 @@ static bool through_element(const expr *e)
 static bool equatable(const type t)
 {
     switch (t.kind) {
-    case TY_INT: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
+    case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
     case TY_STRING:
         return true;
     default:
@@ -1026,6 +1040,7 @@ static type check_literal(checker *c, expr *e)
         if (!type_assignable(init->field->type, value)) {
             diag_error(init->value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(init->name),
                        type_name(init->field->type), type_name(value));
+            note_long_conversion(init->field->type, value);
         }
     }
     return decl_type(d);
@@ -1183,15 +1198,15 @@ static type check_construct(checker *c, expr *e, const type target)
         return T_ERR;
     }
 
-    // int(page): an enum member's value.
-    if (target.kind == TY_INT && argc == 1 && first.kind == TY_ENUM) {
+    // int(page), long(page): an enum member's value.
+    if (type_is_integer(target) && argc == 1 && first.kind == TY_ENUM) {
         e->ctor = CTOR_SCALAR;
         return target;
     }
 
-    // float(x), int(x): conversions between the two number types.
-    if (is_scalar_number(target)) {
-        if (argc == 1 && is_scalar_number(first)) {
+    // float(x), int(x), long(x): conversions between the number types.
+    if (is_scalar_number(target) || target.kind == TY_LONG) {
+        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_LONG)) {
             e->ctor = CTOR_SCALAR;
             return target;
         }
@@ -1541,6 +1556,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
             diag_error(arg->at, "'" STR_FMT "' takes %s for '" STR_FMT "', not %s", STR_ARG(m->name), type_name(p->type),
                        STR_ARG(p->name), type_name(arg->type));
             if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw.list'");
+            note_long_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
                 diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
@@ -2528,7 +2544,7 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
-    case TY_STRING: case TY_INT: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
+    case TY_STRING: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
     case TY_PLAYER: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: case TY_ERROR:
         return true;
@@ -2612,16 +2628,16 @@ static int32_t text_format(const expr *value, const str format)
         digits = digits * 10 + format.ptr[i] - '0';
     }
     const bool floats = type_is_float_based(t) || t.kind == TY_QUATERNION || t.kind == TY_COLOR || t.kind == TY_RECT;
-    const bool ints = type_is_int_based(t);
+    const bool ints = type_is_int_based(t) || t.kind == TY_LONG;
     bool ok = false;
     if (letter == 'F' || letter == 'f') ok = (floats || ints) && digits <= 9;
     if (letter == 'D' || letter == 'd') ok = ints && digits <= 32;
-    if (letter == 'X' || letter == 'x') ok = ints && digits <= 8;
+    if (letter == 'X' || letter == 'x') ok = ints && digits <= (t.kind == TY_LONG ? 16 : 8);
     if (ok && digits_ok) return (int32_t)letter << 8 | digits;
     if (t.kind == TY_ERROR) return 0;
     diag_error(value->at, "'" STR_FMT "' isn't a format for %s", STR_ARG(format), type_name(t));
     if (floats) diag_note("floats take F and how many decimals, like '{x:F2}', up to F9");
-    else if (ints) diag_note("ints take D and how many digits ('{n:D3}' shows 007), X for hex, or F for decimals");
+    else if (ints) diag_note("ints and longs take D and how many digits ('{n:D3}' shows 007), X for hex, or F for decimals");
     else diag_note("only numbers have formats; %s shows as it is", type_name(t));
     return 0;
 }
@@ -2646,6 +2662,39 @@ static type binary_result(const tok_kind op, const type l, const type r, const l
     if (l.kind == TY_STRUCT || r.kind == TY_STRUCT) {
         *overload = find_operator(op, l, r, false, at);
         if (*overload) return (*overload)->return_type;
+    }
+
+    // Longs: with ints and longs, which widen to long. Never with floats by
+    // themselves: float(x) and long(x) say which way the value goes.
+    if (l.kind == TY_LONG || r.kind == TY_LONG) {
+        const type other = l.kind == TY_LONG ? r : l;
+        const bool integers = type_is_integer(l) && type_is_integer(r);
+        switch (op) {
+        case T_PLUS: case T_MINUS: case T_STAR: case T_SLASH: case T_PERCENT: case T_AMP: case T_PIPE: case T_CARET:
+            if (integers) return T_LONG_;
+            break;
+        case T_SHL: case T_SHR:
+            if (l.kind == TY_LONG && r.kind == TY_INT) return T_LONG_;
+            if (integers) {
+                diag_error(at, "a shift count is an int, not long");
+                diag_note("convert it with int(n), which keeps its low 32 bits; the shift uses the low 6");
+                return T_ERR;
+            }
+            break;
+        case T_LT: case T_LE: case T_GT: case T_GE: case T_EQ: case T_NE:
+            if (integers) return T_BOOL_;
+            break;
+        default:
+            break;
+        }
+        diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
+        if (other.kind == TY_FLOAT) {
+            diag_note("a long and a float don't mix by themselves: float(x) makes the long a float, and long(x) makes the "
+                      "float a long, truncated toward zero");
+        } else if (type_is_numeric(other)) {
+            diag_note("there are no long vectors: convert the long with int(x), which keeps its low 32 bits");
+        }
+        return T_ERR;
     }
 
     switch (op) {
@@ -3633,7 +3682,7 @@ static type check_expr_any(checker *c, expr *e)
     c->device_whole_ok = NULL;
     type t = T_ERR;
     switch (e->kind) {
-    case E_INT: t = T_INT_; break;
+    case E_INT: t = e->is_long ? T_LONG_ : T_INT_; break;
     case E_FLOAT: t = T_FLOAT_; break;
     case E_BOOL: t = T_BOOL_; break;
     case E_STRING: t = (type){TY_STRING, NULL}; break;
@@ -3735,8 +3784,8 @@ static type check_expr_any(checker *c, expr *e)
                 note_missing_operator(e->op, operand, T_ERR, true);
             }
         } else if (e->op == T_NOT && operand.kind == TY_BOOL) t = T_BOOL_;
-        else if (e->op == T_TILDE && operand.kind == TY_INT) t = T_INT_;
-        else if (e->op == T_MINUS && (type_is_numeric(operand) || matrix_dim(operand))) t = operand;
+        else if (e->op == T_TILDE && type_is_integer(operand)) t = operand;
+        else if (e->op == T_MINUS && (type_is_numeric(operand) || operand.kind == TY_LONG || matrix_dim(operand))) t = operand;
         else diag_error(e->at, "operator %s can't be used with %s", op_str(e->op), type_name(operand));
         break;
     }
@@ -4485,8 +4534,8 @@ static void check_assign(checker *c, const stmt *s)
         }
     }
 
-    if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && target.kind != TY_INT && target.kind != TY_FLOAT) {
-        diag_error(s->at, "'%s' works on ints and floats, not %s", s->op == T_PLUS_PLUS ? "++" : "--", type_name(target));
+    if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT) {
+        diag_error(s->at, "'%s' works on ints, longs and floats, not %s", s->op == T_PLUS_PLUS ? "++" : "--", type_name(target));
         diag_note("write '%s= 1' instead", s->op == T_PLUS_PLUS ? "+" : "-");
         return;
     }
@@ -4498,6 +4547,7 @@ static void check_assign(checker *c, const stmt *s)
     }
     if (!type_assignable(target, result)) {
         diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
+        note_long_conversion(target, result);
     }
 }
 
@@ -4513,13 +4563,13 @@ static bool fold_int(const expr *e, int64_t *out)
     int64_t r;
     switch (e->kind) {
     case E_INT:
-        *out = (int32_t)(uint32_t)e->int_value;
+        *out = e->int_value; // Within int's range unless it's a long
         return true;
     case E_NAME:
     case E_MEMBER:
         if (e->bind == BIND_CONST) {
             const decl *k = e->constant;
-            return k->index == 2 && (k->return_type.kind == TY_INT || k->return_type.kind == TY_ENUM)
+            return k->index == 2 && (type_is_integer(k->return_type) || k->return_type.kind == TY_ENUM)
                 && fold_int(k->value, out);
         }
         if (e->kind == E_MEMBER && e->enum_member) {
@@ -4528,13 +4578,34 @@ static bool fold_int(const expr *e, int64_t *out)
         }
         return false;
     case E_UNARY:
-        if (e->method || e->type.kind != TY_INT || !fold_int(e->lhs, &l)) return false;
+        if (e->method || !type_is_integer(e->type) || !fold_int(e->lhs, &l)) return false;
+        if (e->type.kind == TY_LONG) {
+            if (e->op == T_MINUS) *out = (int64_t)(0ull - (uint64_t)l);
+            else if (e->op == T_TILDE) *out = ~l;
+            else return false;
+            return true;
+        }
         if (e->op == T_MINUS) *out = (int32_t)(0u - (uint32_t)l);
         else if (e->op == T_TILDE) *out = ~(int32_t)l;
         else return false;
         return true;
     case E_BINARY: {
-        if (e->method || e->type.kind != TY_INT || !fold_int(e->lhs, &l) || !fold_int(e->rhs, &r)) return false;
+        if (e->method || !type_is_integer(e->type) || !fold_int(e->lhs, &l) || !fold_int(e->rhs, &r)) return false;
+        if (e->type.kind == TY_LONG) { // As tide/math.h's _l helpers work them out
+            switch (e->op) {
+            case T_PLUS: *out = (int64_t)((uint64_t)l + (uint64_t)r); return true;
+            case T_MINUS: *out = (int64_t)((uint64_t)l - (uint64_t)r); return true;
+            case T_STAR: *out = (int64_t)((uint64_t)l * (uint64_t)r); return true;
+            case T_SLASH: *out = r == 0 ? 0 : r == -1 ? (int64_t)(0ull - (uint64_t)l) : l / r; return true;
+            case T_PERCENT: *out = r == 0 || r == -1 ? 0 : l % r; return true;
+            case T_SHL: *out = (int64_t)((uint64_t)l << (r & 63)); return true;
+            case T_SHR: *out = l < 0 ? ~(~l >> (r & 63)) : l >> (r & 63); return true;
+            case T_AMP: *out = l & r; return true;
+            case T_PIPE: *out = l | r; return true;
+            case T_CARET: *out = l ^ r; return true;
+            default: return false;
+            }
+        }
         const int32_t a = (int32_t)l;
         const int32_t b = (int32_t)r;
         switch (e->op) {
@@ -4619,9 +4690,9 @@ static bool always_exits(const stmt *s)
 static void check_switch(checker *c, stmt *s)
 {
     const type value = check_expr(c, s->cond);
-    const bool switchable = value.kind == TY_INT || value.kind == TY_ENUM;
+    const bool switchable = type_is_integer(value) || value.kind == TY_ENUM;
     if (value.kind != TY_ERROR && !switchable) {
-        diag_error(s->cond->at, "switch works on ints and enums, not %s", type_name(value));
+        diag_error(s->cond->at, "switch works on ints, longs and enums, not %s", type_name(value));
         if (value.kind == TY_BOOL) diag_note("use if/else for a bool");
     }
     bool has_default = false;
@@ -4646,7 +4717,7 @@ static void check_switch(checker *c, stmt *s)
                 continue;
             }
             label->int_value = number; // What codegen writes, unless it's a literal or a member
-            if (!same_type(value, t)) {
+            if (!same_type(value, t) && !(value.kind == TY_LONG && t.kind == TY_INT)) { // An int case fits a long switch
                 diag_error(label->at, "the switch is on %s, so its cases are too, not %s", type_name(value), type_name(t));
                 continue;
             }
@@ -4694,6 +4765,7 @@ static void check_return(checker *c, const stmt *s)
     if (!type_assignable(m->return_type, value)) {
         diag_error(s->value->at, "'" STR_FMT "' returns %s, not %s", STR_ARG(m->name), type_name(m->return_type),
                    type_name(value));
+        note_long_conversion(m->return_type, value);
     }
 }
 
@@ -4839,6 +4911,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (!type_assignable(s->type, value)) {
             diag_error(s->value->at, "can't initialize %s with %s", type_name(s->type), type_name(value));
+            note_long_conversion(s->type, value);
         }
     }
 
@@ -5255,6 +5328,7 @@ static void check_constant(checker *c, decl *k)
         if (k->return_type.kind != TY_ERROR && t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
             diag_error(k->value->at, "constant '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type),
                        type_name(t));
+            note_long_conversion(k->return_type, t);
         }
     }
     c->unit = outer;
@@ -5449,6 +5523,7 @@ static void check_default(checker *c, const field *f)
     const type t = check_constant_expr(c, value, true, f->type);
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
         diag_error(value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
+        note_long_conversion(f->type, t);
     }
 }
 
@@ -5541,7 +5616,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         has_clamp |= clamp;
         has_min |= min;
         has_max |= max;
-        if (f->type.kind != TY_ERROR && !type_is_numeric(f->type)) {
+        if (f->type.kind != TY_ERROR && !type_is_numeric(f->type) && f->type.kind != TY_LONG) {
             diag_error(a->at, "[" STR_FMT "] works on numbers and vectors, not %s", STR_ARG(a->name), type_name(f->type));
             continue;
         }

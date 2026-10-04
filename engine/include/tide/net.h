@@ -173,6 +173,13 @@ void tide_bits_put_changed_varint(tide_bits *b, uint32_t now, uint32_t was);
 void tide_bits_put_changed_difference(tide_bits *b, uint32_t now, uint32_t was);
 uint32_t tide_bits_get_difference(tide_bits *b, uint32_t was);
 
+// The same for 64-bit values (longs): a varint of up to 10 groups (80 bits),
+// which reading stops after whatever the last says.
+void tide_bits_put_varint64(tide_bits *b, uint64_t v);
+uint64_t tide_bits_get_varint64(tide_bits *b);
+void tide_bits_put_changed_difference64(tide_bits *b, uint64_t now, uint64_t was);
+uint64_t tide_bits_get_difference64(tide_bits *b, uint64_t was);
+
 // A float's bits as part of a delta: whether they changed from `was`, then
 // their XOR with `was`, which is zeros where they're the same: nearby values
 // share their sign, exponent and first digits, and round ones end in zeros.
@@ -195,6 +202,16 @@ static inline uint32_t tide_zigzag(const int32_t v)
 static inline int32_t tide_unzigzag(const uint32_t u)
 {
     return (int32_t)(u >> 1 ^ (0u - (u & 1u)));
+}
+
+static inline uint64_t tide_zigzag64(const int64_t v)
+{
+    return (uint64_t)v << 1 ^ (v < 0 ? UINT64_MAX : 0ull);
+}
+
+static inline int64_t tide_unzigzag64(const uint64_t u)
+{
+    return (int64_t)(u >> 1 ^ (0ull - (u & 1ull)));
 }
 
 // Done writing: clears the rest of the last byte, so the same value always

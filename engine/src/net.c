@@ -460,6 +460,38 @@ uint32_t tide_bits_get_difference(tide_bits *b, const uint32_t was)
     return was + (uint32_t)tide_unzigzag(tide_bits_get_varint(b));
 }
 
+void tide_bits_put_varint64(tide_bits *b, uint64_t v)
+{
+    while (v >= 0x80u) {
+        tide_bits_put(b, (uint32_t)(v & 0x7Fu), 7);
+        tide_bits_put_bool(b, true);
+        v >>= 7;
+    }
+    tide_bits_put(b, (uint32_t)v, 7);
+    tide_bits_put_bool(b, false);
+}
+
+uint64_t tide_bits_get_varint64(tide_bits *b)
+{
+    uint64_t v = 0;
+    for (uint32_t shift = 0; shift < 70; shift += 7) {
+        v |= (uint64_t)tide_bits_get(b, 7) << shift; // Past 64 bits, the rest falls off
+        if (!tide_bits_get_bool(b)) break;
+    }
+    return v;
+}
+
+void tide_bits_put_changed_difference64(tide_bits *b, const uint64_t now, const uint64_t was)
+{
+    tide_bits_put_bool(b, now != was);
+    if (now != was) tide_bits_put_varint64(b, tide_zigzag64((int64_t)(now - was)));
+}
+
+uint64_t tide_bits_get_difference64(tide_bits *b, const uint64_t was)
+{
+    return was + (uint64_t)tide_unzigzag64(tide_bits_get_varint64(b));
+}
+
 void tide_bits_put_changed_xor(tide_bits *b, const uint32_t now, const uint32_t was)
 {
     const uint32_t x = now ^ was;

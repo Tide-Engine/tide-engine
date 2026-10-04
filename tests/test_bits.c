@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 
 #include "tide/net.h"
 #include "tide_test.h"
@@ -137,6 +138,54 @@ TIDE_TEST(bits_deltas_come_back_as_they_were)
         }
     }
     TIDE_CHECK(!r.overflow);
+}
+
+// 64-bit values (longs) the same way: varints of up to 10 groups, and deltas
+// by how much they changed, every value back bit for bit.
+TIDE_TEST(bits_64_bit_varints_and_deltas_come_back_as_they_were)
+{
+    static const uint64_t values[] = {0, 1, 127, 128, 16383, 16384, 0xFFFFFFFFull, 0x100000000ull, 3000000000ull,
+                                      0x7FFFFFFFFFFFFFFFull, 0x8000000000000000ull, UINT64_MAX};
+    static const int64_t signs[] = {0, 1, -1, 63, -64, 64, -65, 3000000000LL, -3000000000LL, INT64_MAX, INT64_MIN};
+    const size_t n = sizeof values / sizeof values[0];
+    const size_t n_signs = sizeof signs / sizeof signs[0];
+    uint8_t data[4096] = {0};
+    tide_bits b = {data, sizeof data, 0, false};
+    tide_bits_put_bool(&b, true); // Not on a byte boundary
+    for (size_t i = 0; i < n; i++) tide_bits_put_varint64(&b, values[i]);
+    for (size_t i = 0; i < n_signs; i++) tide_bits_put_varint64(&b, tide_zigzag64(signs[i]));
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n; j++) tide_bits_put_changed_difference64(&b, values[i], values[j]);
+    }
+    const uint32_t size = tide_bits_end(&b);
+    TIDE_REQUIRE(size > 0 && !b.overflow);
+
+    tide_bits r = {data, size, 0, false};
+    TIDE_CHECK(tide_bits_get_bool(&r));
+    for (size_t i = 0; i < n; i++) TIDE_CHECK(tide_bits_get_varint64(&r) == values[i]);
+    for (size_t i = 0; i < n_signs; i++) TIDE_CHECK(tide_unzigzag64(tide_bits_get_varint64(&r)) == signs[i]);
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n; j++) {
+            const uint64_t got = tide_bits_get_bool(&r) ? tide_bits_get_difference64(&r, values[j]) : values[j];
+            TIDE_CHECK(got == values[i]);
+        }
+    }
+    TIDE_CHECK(!r.overflow);
+
+    // Small values and small changes stay short, and the largest take 10 groups
+    tide_bits s = {data, sizeof data, 0, false};
+    tide_bits_put_varint64(&s, 100);
+    TIDE_CHECK(s.bit == 8);
+    tide_bits_put_varint64(&s, UINT64_MAX);
+    TIDE_CHECK(s.bit == 88);
+    tide_bits_put_changed_difference64(&s, 1000000000003ull, 1000000000000ull);
+    TIDE_CHECK(s.bit == 97);
+    // Bad input can't run on: a varint whose every group says more follows ends after 10
+    uint8_t ones[16];
+    memset(ones, 0xFF, sizeof ones);
+    tide_bits bad = {ones, sizeof ones, 0, false};
+    (void)tide_bits_get_varint64(&bad);
+    TIDE_CHECK(bad.bit == 80);
 }
 
 TIDE_TEST(bits_float_deltas_come_back_for_any_bits)

@@ -1,0 +1,4 @@
+// expect: integer '9223372036854775808' is too large for long
+scene Main { }
+
+const long MOST = 9223372036854775808;

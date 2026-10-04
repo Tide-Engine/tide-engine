@@ -628,31 +628,32 @@ static int write_float(char *out, const float v, const int32_t format)
 
 // An int in decimal (D: at least `digits` digits), hex (X: upper case, x:
 // lower, two's complement for negatives), or with F's decimals, all zeros.
-static int write_int(char *out, const int32_t v, const int32_t format)
+// An integer's digits with its format (TIDE_FORMAT): `u` is its magnitude,
+// `negative` its sign, and X writes `bits` of it as hex.
+static int write_integer(char *out, const uint64_t u0, const bool negative, const uint64_t bits, const int32_t format)
 {
     const char letter = (char)(format >> 8);
     const int digits = format & 0xFF;
     int len = 0;
-    char buf[16];
+    char buf[24];
     int n = 0;
     if (letter == 'X' || letter == 'x') {
         const char *hex = letter == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
-        uint32_t u = (uint32_t)v;
+        uint64_t b = bits;
         do {
-            buf[n++] = hex[u & 15u];
-            u >>= 4;
-        } while (u);
+            buf[n++] = hex[b & 15u];
+            b >>= 4;
+        } while (b);
         for (int i = n; i < digits; i++) out[len++] = '0';
         for (int i = n - 1; i >= 0; i--) out[len++] = buf[i];
         return len;
     }
-    // Negated as unsigned, so the lowest int works too.
-    uint32_t u = v < 0 ? 0u - (uint32_t)v : (uint32_t)v;
+    uint64_t u = u0;
     do {
         buf[n++] = (char)('0' + u % 10u);
         u /= 10u;
     } while (u);
-    if (v < 0) out[len++] = '-';
+    if (negative) out[len++] = '-';
     if (letter == 'D' || letter == 'd') {
         for (int i = n; i < digits; i++) out[len++] = '0';
     }
@@ -664,10 +665,29 @@ static int write_int(char *out, const int32_t v, const int32_t format)
     return len;
 }
 
+static int write_int(char *out, const int32_t v, const int32_t format)
+{
+    // Negated as unsigned, so the lowest int works too.
+    const uint32_t u = v < 0 ? 0u - (uint32_t)v : (uint32_t)v;
+    return write_integer(out, u, v < 0, (uint32_t)v, format);
+}
+
+static int write_long(char *out, const int64_t v, const int32_t format)
+{
+    const uint64_t u = v < 0 ? 0ull - (uint64_t)v : (uint64_t)v;
+    return write_integer(out, u, v < 0, (uint64_t)v, format);
+}
+
 tide_str tide_str_add_int(const tide_str a, const int32_t v, const int32_t format)
 {
     char buf[64];
     return add_ascii(a, buf, write_int(buf, v, format));
+}
+
+tide_str tide_str_add_long(const tide_str a, const int64_t v, const int32_t format)
+{
+    char buf[80];
+    return add_ascii(a, buf, write_long(buf, v, format));
 }
 
 tide_str tide_str_add_float(const tide_str a, const float v, const int32_t format)

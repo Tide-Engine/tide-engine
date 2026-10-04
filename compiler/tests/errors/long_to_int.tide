@@ -1,0 +1,13 @@
+// expect: can't assign long to int
+component Tally
+{
+    int small;
+    long total;
+}
+
+scene Main { }
+
+system Count(mut Tally tally)
+{
+    tally.small = tally.total;
+}

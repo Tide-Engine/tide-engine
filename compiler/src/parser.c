@@ -203,21 +203,31 @@ static expr *parse_primary(parser *p)
             digits.ptr += 2;
             digits.len -= 2;
         }
-        // Decimal literals go up to INT32_MAX. Hex and binary literals can use
-        // all 32 bits and are read as the int's bit pattern: 0xFFFFFFFF is -1.
-        const int64_t limit = base == 10 ? 2147483647LL : 4294967295LL;
-        int64_t v = 0;
+        // An L suffix makes a long, and so does a value past int's range.
+        // Decimal literals go up to INT64_MAX. Hex and binary literals can use
+        // all 32 bits of an int, or all 64 of a long, and are read as its bit
+        // pattern: 0xFFFFFFFF is -1, and 0xFFFFFFFFL is 4294967295.
+        bool suffix = false;
+        if (digits.len > 0 && (digits.ptr[digits.len - 1] == 'L' || digits.ptr[digits.len - 1] == 'l')) {
+            suffix = true;
+            digits.len--;
+        }
+        const uint64_t limit = base == 10 ? 9223372036854775807ull : UINT64_MAX;
+        uint64_t v = 0;
         for (int i = 0; i < digits.len; i++) {
             const char ch = digits.ptr[i];
             if (ch == '_') continue; // Digit separator.
-            const int d = ch <= '9' ? ch - '0' : (ch | 0x20) - 'a' + 10;
-            v = v * base + d;
-            if (v > limit) {
-                diag_error(t->at, "integer '" STR_FMT "' is too large for int", STR_ARG(t->text));
+            const uint64_t d = (uint64_t)(ch <= '9' ? ch - '0' : (ch | 0x20) - 'a' + 10);
+            if (v > (limit - d) / (uint64_t)base) {
+                diag_error(t->at, "integer '" STR_FMT "' is too large for long", STR_ARG(t->text));
                 longjmp(p->fail, 1);
             }
+            v = v * (uint64_t)base + d;
         }
-        e->int_value = base == 10 ? v : (int64_t)(int32_t)(uint32_t)v;
+        const uint64_t int_limit = base == 10 ? 2147483647ull : 4294967295ull;
+        e->is_long = suffix || v > int_limit;
+        if (e->is_long) e->int_value = (int64_t)v;
+        else e->int_value = base == 10 ? (int64_t)v : (int64_t)(int32_t)(uint32_t)v;
         return e;
     }
     case T_FLOAT: {
