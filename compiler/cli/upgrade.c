@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "install.h"
 #include "json.h"
 #include "release.h"
 #include "sha256.h"
@@ -210,59 +211,8 @@ static bool expected_hash(const char *sums, const char *file, char out[65])
 }
 
 // ---------------------------------------------------------------------------
-// Swapping the files
 
-typedef struct swap {
-    const char *root;
-    const char *from;
-    bool ok;
-} swap;
-
-// tide and tidels may be running (this very tide, or an editor's tidels).
-// Windows can't overwrite them, but it can rename them, so the old ones move
-// aside and tide_cleanup deletes them later.
-static void swap_program(void *user, const char *name, const bool is_dir)
-{
-    swap *s = user;
-    if (is_dir) return;
-    char *from = path_join(s->from, name);
-    char *bin = path_join(s->root, "bin");
-    char *to = path_join(bin, name);
-    if (sys_exists(to)) {
-        char aside[1024];
-        snprintf(aside, sizeof aside, "%s.old-%lld", to, (long long)sys_now());
-        if (!sys_rename(to, aside)) s->ok = false;
-    }
-    if (s->ok && !sys_rename(from, to)) s->ok = false;
-    free(from);
-    free(bin);
-    free(to);
-}
-
-static void swap_entry(void *user, const char *name, const bool is_dir)
-{
-    swap *s = user;
-    char *from = path_join(s->from, name);
-    if (is_dir && strcmp(name, "bin") == 0) {
-        char *bin = path_join(s->root, "bin");
-        sys_mkdirs(bin);
-        swap bin_swap = {s->root, from, true};
-        sys_list(from, swap_program, &bin_swap);
-        s->ok &= bin_swap.ok;
-        free(bin);
-    } else {
-        char *to = path_join(s->root, name);
-        char old[1024];
-        snprintf(old, sizeof old, "%s.old", to);
-        sys_remove_tree(old);
-        if (sys_exists(to) && !sys_rename(to, old)) s->ok = false;
-        if (s->ok && !sys_rename(from, to)) s->ok = false;
-        sys_remove_tree(old);
-        free(to);
-    }
-    free(from);
-}
-
+// The programs an upgrade moved aside while they ran (install.c).
 static void remove_old(void *user, const char *name, const bool is_dir)
 {
     const char *bin = user;
@@ -309,8 +259,11 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     }
     const char *next = tide_release_version(release);
     // Upgrading only ever goes forward; an exact version or another channel is what was asked for.
+    // An installation that isn't whole (an upgrade stopped partway) is installed again, whichever
+    // version its tide is.
+    const bool whole = tide_installation_whole(root, TIDE_VERSION);
     const int order = tide_version_compare(next, TIDE_VERSION);
-    if (order == 0 || (order < 0 && !version && !switching)) {
+    if (whole && (order == 0 || (order < 0 && !version && !switching))) {
         if (order == 0 && version) printf("tide %s is already installed.\n", TIDE_VERSION);
         else if (order == 0) printf("tide %s is the newest %s version.\n", TIDE_VERSION, channel);
         else printf("tide %s is newer than any %s version out (%s).\n", TIDE_VERSION, channel, next);
@@ -326,6 +279,7 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         fprintf(stderr, "tide: release %s has no package for this platform (%s)\n", next, PACKAGE);
         return 1;
     }
+    if (!whole) printf("This installation isn't whole (an upgrade stopped partway): installing tide %s over it.\n", next);
     printf("Downloading tide %s...\n", next);
     fflush(stdout);
     char *package = path_join(work, PACKAGE);
@@ -360,16 +314,21 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         fprintf(stderr, "tide: couldn't unpack the download\n");
         return 1;
     }
-    swap s = {root, fresh, true};
-    sys_list(fresh, swap_entry, &s);
-    if (!s.ok) {
-        fprintf(stderr, "tide: couldn't replace every file in %s; run `tide upgrade` again\n", root);
+    char *trash = path_join(work, "old");
+    char failed[1024];
+    if (!tide_install(root, fresh, trash, failed, sizeof failed)) {
+        fprintf(stderr, "tide: couldn't replace %s\n", failed);
+        fprintf(stderr, "  = note: another program may have it open, like an editor showing it or a game being built: "
+                        "close it, then run `tide upgrade` again\n");
+        if (tide_installation_whole(root, TIDE_VERSION)) fprintf(stderr, "  = note: nothing was changed\n");
+        else fprintf(stderr, "  = note: the upgrade stopped partway, and tide builds no games until it's finished\n");
         return 1;
     }
     char *channel_file = path_join(root, "channel");
     sys_write_text(channel_file, channel);
-    sys_remove_tree(work);
-    printf("Upgraded tide %s -> %s (%s).\n", TIDE_VERSION, next, channel);
+    sys_remove_tree(work); // What stays, a program still running has open: the next upgrade deletes it
+    if (order == 0) printf("Installed tide %s again (%s).\n", next, channel);
+    else printf("Upgraded tide %s -> %s (%s).\n", TIDE_VERSION, next, channel);
     fflush(stdout);
     // The new tide updates the editor extension, in the editors that have it.
 #ifdef _WIN32
