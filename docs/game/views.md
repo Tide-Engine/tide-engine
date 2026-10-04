@@ -320,10 +320,10 @@ While the cursor is locked:
 Asking isn't having. The system decides whether the window holds the cursor, and it differs:
 
 - **In a browser,** the lock is only given at a click or a key press, so it takes hold at the player's next one, or at once when the game asks right after one, like a Resume button's click. The browser lets the cursor go when the player presses Escape, which a page can't prevent and often never sees the key of, and when the page loses the focus. For a moment after Escape it won't lock again, and then it takes another click or key press.
-- **On desktop,** a window holds the cursor while it has the focus: Alt+Tab lets it go, and the lock returns with the focus if the game still asks.
+- **On desktop,** a window holds the cursor while it has the focus: Alt+Tab lets it go, and the lock returns with the focus if the game still asks. Escape lets it go too, as in a browser, and the game still gets the key: the cursor is the player's until they click on the window or press another key, or until the game stops asking and asks again, which locks at once.
 - **On Android,** it never locks, for now.
 
-So look only while `Cursor.locked`, and show the pause menu when it goes false while the game was looking, as above: in a browser that's what Escape does.
+So look only while `Cursor.locked`, and show the pause menu when it goes false while the game was looking, as above: that's what Escape does, in a browser and on desktop. A game with no pause menu just keeps asking, and the player's next click or key press locks the cursor again.
 :::
 
 Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor.locked`, and so does the input's `Sample`. The match can do neither: the cursor is this machine's, so what the match needs of it goes in the input. While a [modal](./gui.md#modals) is up the lock isn't asked for, whatever views ask, since its widgets need the pointer.

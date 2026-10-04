@@ -79,7 +79,9 @@ void tide_window_mouse_state(tide_window_mouse *out);
 // when the system lets it, and tide_window_mouse_state says whether it does:
 //
 // - A desktop window holds it while it has the focus: Alt+Tab lets the cursor
-//   go, and coming back takes it again while the game still asks.
+//   go, and coming back takes it again while the game still asks. Escape gives
+//   it back to the player, until a click on the window or another key's press,
+//   or until the game stops asking (desktop/cursor.h).
 // - A browser only gives it when asked from a click or a key press, so the page
 //   asks at the next one while the game wants it. It takes the cursor back
 //   itself when the player presses Escape, or the page loses the focus or is

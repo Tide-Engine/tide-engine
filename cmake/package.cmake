@@ -67,6 +67,11 @@ foreach(tree IN LISTS trees)
     endif()
 endforeach()
 
+# Every tree installs a VERSION, and the package's is its tide's: tide takes an
+# installation whose VERSION isn't its own version for an upgrade that stopped
+# partway (compiler/cli/install.c), whatever the other trees were configured as.
+file(COPY_FILE "${NATIVE}/package/VERSION" "${stage}/VERSION")
+
 if(NAME MATCHES "windows")
     set(archive "${dist}/${NAME}.zip")
     set(format --format=zip)

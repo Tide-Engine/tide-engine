@@ -2,9 +2,10 @@
 //
 // This window is hidden, as every test's is, so it never has the focus: the
 // game asks for the lock, frame after frame, and the platform says it isn't
-// locked, as it does for a game the player went away from with Alt+Tab. What a
-// window with the focus does with the cursor is GLFW's, which nothing here can
-// check without taking the screen and the mouse from whoever is at them.
+// locked, as it does for a game the player went away from with Alt+Tab. When a
+// window with the focus holds the cursor, cursor_rules.c checks. What it does
+// with one it holds is GLFW's, which nothing here can check without taking the
+// screen and the mouse from whoever is at them.
 
 #include <stdio.h>
 

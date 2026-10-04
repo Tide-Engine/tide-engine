@@ -12,6 +12,7 @@
 #include "compile.h"
 #include "fetch.h"
 #include "folders.h"
+#include "install.h"
 #include "libraries.h"
 #include "packages.h"
 #include "serve.h"
@@ -586,10 +587,18 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
     char *run_h = path_join(b->include, "tide/run.h");
     if (!sys_exists(run_h)) {
         fprintf(stderr, "tide: the engine files aren't next to tide, in %s\n", root);
-        fprintf(stderr, "  = note: reinstall tide, or for a build of this repo run `cmake --install` first\n");
+        fprintf(stderr, "  = note: run `tide upgrade`, which installs them again, or for a build of this repo run "
+                        "`cmake --install` first\n");
         return false;
     }
     free(run_h);
+    // An upgrade that stopped partway leaves files of two versions, which
+    // build nothing that works.
+    if (!tide_installation_whole(root, TIDE_VERSION)) {
+        fprintf(stderr, "tide: the installation in %s isn't whole: an upgrade of it stopped partway\n", root);
+        fprintf(stderr, "  = note: run `tide upgrade`, which installs it again\n");
+        return false;
+    }
 
 #ifdef TIDE_EMBEDDED_CLANG
     char *bin = sys_exe_dir();
