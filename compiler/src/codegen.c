@@ -459,6 +459,20 @@ static bool has_component(const comp_mask mask, const int component)
     return mask_has(mask, component);
 }
 
+// Whether a component is sparse: a presence byte and its lanes in every
+// archetype whose entities can have it, rather than part of the archetype.
+static bool comp_sparse(const gen *g, const int component)
+{
+    return mask_has(g->prog->sparse_mask, component);
+}
+
+// Whether archetype `a` stores component `c`: it's part of it, or sparse and
+// its entities can have it (program.possible).
+static bool arch_stores(const gen *g, const int a, const int c)
+{
+    return has_component(g->prog->archetypes.items[a], c) || (comp_sparse(g, c) && mask_has(g->prog->possible.items[a], c));
+}
+
 // "arch0_Transform_Player": the world member and, prefixed with tide_, the type.
 static const char *make_arch_name(const gen *g, const int index)
 {
@@ -585,14 +599,23 @@ static bool arch_scene_column(const gen *g, const int a)
     return has_scenes(g->prog, arch_local(g, a));
 }
 
-// A component's first lane.
+// A component's first lane in archetype `a`: after the entity, the scene, and
+// the components stored before it, each its lanes, after a presence byte for a
+// sparse one.
 static int arch_column(const gen *g, const int a, const int component)
 {
     int column = arch_scene_column(g, a) ? 2 : 1;
     for (int i = 0; i < component; i++) {
-        if (has_component(g->prog->archetypes.items[a], i)) column += comp_lanes(g->prog->components.items[i]);
+        if (!arch_stores(g, a, i)) continue;
+        column += (comp_sparse(g, i) ? 1 : 0) + comp_lanes(g->prog->components.items[i]);
     }
-    return column;
+    return column + (component < g->prog->components.count && comp_sparse(g, component) ? 1 : 0);
+}
+
+// A sparse component's presence byte in archetype `a`: the column before its lanes.
+static int arch_presence(const gen *g, const int a, const int component)
+{
+    return arch_column(g, a, component) - 1;
 }
 
 static int arch_column_count(const gen *g, const int a)
@@ -605,6 +628,21 @@ static const char *arch_columns(const gen *g, const int a)
 {
     sb b = {0};
     sb_printf(&b, "&tide_columns_%s", arch_name(g, a));
+    return b.data;
+}
+
+// "*(uint8_t *)tide_table_cell(...)": a row's presence byte of a sparse
+// component in archetype `a`, to change, or to read (const).
+static const char *presence_cell(const gen *g, const char *world, const int a, const int c, const char *row, const bool change)
+{
+    sb b = {0};
+    if (change) {
+        sb_printf(&b, "*(uint8_t *)tide_table_cell(&%s->%s, %s, %s, %d)", world, arch_name(g, a), arch_columns(g, a), row,
+                  arch_presence(g, a, c));
+    } else {
+        sb_printf(&b, "*(const uint8_t *)tide_table_get(&%s->%s, %s, %s, %d)", world, arch_name(g, a), arch_columns(g, a), row,
+                  arch_presence(g, a, c));
+    }
     return b.data;
 }
 
@@ -669,11 +707,22 @@ static bool is_queued(const program *prog, const decl *event)
 
 // Whether handler `h` runs for an entity of archetype `a`: one of its world
 // that matches its parameters.
+// Whether a system's (or handler's, or view's) filters admit archetype `a`:
+// the components it needs that aren't sparse are there, none it excludes,
+// and the sparse ones it needs are among what those entities can have. Which
+// rows have them is the loop's to check (gen_row_filter).
+static bool filters_admit(const program *prog, const decl *sys, const int a)
+{
+    const comp_mask mask = prog->archetypes.items[a];
+    if (!mask_subset(mask_andnot(sys->need_mask, prog->sparse_mask), mask)) return false;
+    if (mask_intersects(mask, mask_andnot(sys->without_mask, prog->sparse_mask))) return false;
+    return mask_subset(mask_and(sys->need_mask, prog->sparse_mask), prog->possible.items[a]);
+}
+
 static bool handler_runs_for(const program *prog, const decl *h, const int a)
 {
     if (h->is_local != prog->archetype_local.items[a]) return false;
-    const comp_mask mask = prog->archetypes.items[a];
-    return !h->per_entity || (mask_subset(h->need_mask, mask) && !mask_intersects(mask, h->without_mask));
+    return !h->per_entity || filters_admit(prog, h, a);
 }
 
 // Whether any handler of `event` runs for an entity of archetype `a`.
@@ -974,6 +1023,8 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
     int written = 0;
     for (int i = 0; i < e->args.count; i++) {
         const expr *arg = e->args.items[i];
+        // A sparse component is given: the row has it
+        if (arg->type_decl->is_sparse) sb_printf(o, "%s.tide_has_%s = 1", written++ ? ", " : "", type_cname(arg->type_decl));
         // A bare component with no declared defaults is all zeros; leave it out.
         if (arg->kind != E_LITERAL && !has_defaults(arg->type_decl)) continue;
         sb_printf(o, "%s.%s = ", written++ ? ", " : "", type_cname(arg->type_decl));
@@ -3963,7 +4014,7 @@ static int arch_shift(const gen *g, const int a)
 {
     int widest = 8; // The entity column
     for (int i = 0; i < g->prog->components.count; i++) {
-        if (!has_component(g->prog->archetypes.items[a], i)) continue;
+        if (!arch_stores(g, a, i)) continue;
         const int size = comp_width(g->prog->components.items[i]); // A lane's
         if (size > widest) widest = size;
     }
@@ -4043,14 +4094,13 @@ static void gen_header(gen *g)
     sb_put(o, "// in, then each component's lanes, from the column named for it. Hosts and tests\n");
     sb_put(o, "// read a row's component with TIDE_AT(world, arch0_Transform, Transform, row).\n\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
-        const comp_mask mask = prog->archetypes.items[a];
         const char *name = arch_name(g, a);
         sb_printf(o, "// %s\n", arch_label(g, a));
         sb_printf(o, "extern const tide_columns tide_columns_%s;\n", name);
         sb_printf(o, "enum { tide_column_%s_entity = 0", name);
         if (arch_scene_column(g, a)) sb_printf(o, ", tide_column_%s_scene = 1", name); // The scene each is in; a scene's is itself
         for (int i = 0; i < prog->components.count; i++) {
-            if (has_component(mask, i)) sb_printf(o, ", tide_column_%s_%s = %d", name, type_cname(prog->components.items[i]), arch_column(g, a, i));
+            if (arch_stores(g, a, i)) sb_printf(o, ", tide_column_%s_%s = %d", name, type_cname(prog->components.items[i]), arch_column(g, a, i));
         }
         sb_put(o, " };\n\n");
     }
@@ -4072,10 +4122,12 @@ static void gen_header(gen *g)
         if (!g->prog->spawn_target.items[a]) continue;
         const comp_mask mask = prog->archetypes.items[a];
         sb_printf(o, "typedef struct tide_spawn%d {\n", a);
-        if (!mask_any(mask)) sb_put(o, "    uint8_t tide_empty;\n");
+        if (!mask_any(mask) && !mask_any(prog->possible.items[a])) sb_put(o, "    uint8_t tide_empty;\n");
         for (int i = 0; i < prog->components.count; i++) {
-            if (!has_component(mask, i)) continue;
+            if (!arch_stores(g, a, i)) continue;
             const char *comp = type_cname(prog->components.items[i]);
+            // A sparse component the spawn gives, or not: its archetype's rows can have it either way
+            if (comp_sparse(g, i)) sb_printf(o, "    uint8_t tide_has_%s;\n", comp);
             sb_printf(o, "    %s %s;\n", comp, comp);
         }
         sb_printf(o, "} tide_spawn%d;\n\n", a);
@@ -4540,15 +4592,14 @@ static void gen_text_helpers(gen *g)
     // A spawn's values, as they go into the command queue or are dropped.
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!prog->spawn_target.items[a]) continue;
-        const comp_mask mask = prog->archetypes.items[a];
         bool any = false;
-        for (int c = 0; c < prog->components.count; c++) any |= has_component(mask, c) && decl_has_text(prog->components.items[c]);
+        for (int c = 0; c < prog->components.count; c++) any |= arch_stores(g, a, c) && decl_has_text(prog->components.items[c]);
         if (!any) continue;
         for (int pass = 0; pass < 2; pass++) {
             sb_printf(o, "TIDE_HELPER void tide_%s_spawn%d(tide_spawn%d *v, const uint32_t where)\n{\n", pass ? "release" : "own", a, a);
             for (int c = 0; c < prog->components.count; c++) {
                 const decl *comp = prog->components.items[c];
-                if (!has_component(mask, c) || !decl_has_text(comp)) continue;
+                if (!arch_stores(g, a, c) || !decl_has_text(comp)) continue;
                 sb_printf(o, "    tide_%s_%s(&v->%s, where);\n", pass ? "release" : "own", type_cname(comp), type_cname(comp));
             }
             sb_put(o, "}\n\n");
@@ -4648,7 +4699,7 @@ static void gen_show_helpers(gen *g)
 static bool spawn_has_text(const gen *g, const int a)
 {
     for (int c = 0; c < g->prog->components.count; c++) {
-        if (has_component(g->prog->archetypes.items[a], c) && decl_has_text(g->prog->components.items[c])) return true;
+        if (arch_stores(g, a, c) && decl_has_text(g->prog->components.items[c])) return true;
     }
     return false;
 }
@@ -4827,8 +4878,9 @@ static void gen_columns(gen *g)
         sb_printf(o, "static const uint32_t tide_sizes_%s[] = {sizeof(tide_entity)", name);
         if (arch_scene_column(g, a)) sb_put(o, ", sizeof(tide_entity)");
         for (int i = 0; i < prog->components.count; i++) {
-            if (!has_component(prog->archetypes.items[a], i)) continue;
+            if (!arch_stores(g, a, i)) continue;
             const decl *d = prog->components.items[i];
+            if (comp_sparse(g, i)) sb_put(o, ", 1u"); // Whether each row has it
             for (int k = 0; k < comp_lanes(d); k++) sb_printf(o, ", %du", comp_width(d)); // Its lanes
         }
         sb_printf(o, "};\nconst tide_columns tide_columns_%s = {%d, %d, tide_sizes_%s};\n\n", name, arch_column_count(g, a),
@@ -4867,19 +4919,25 @@ static void gen_component_access(gen *g)
                       put ? "" : "const ", w, put ? "const " : "", name);
             sb_put(o, "    (void)v;\n    const tide_location loc = tide_entity_location(&w->entities, e);\n    switch (loc.archetype) {\n");
             for (int a = 0; a < prog->archetypes.count; a++) {
-                if (!has_component(prog->archetypes.items[a], c)) continue;
-                sb_printf(o, "    case %d: tide_table_%s(&w->%s, %s, loc.row, %d, %du, %du, v); return true;\n", a,
-                          put ? "scatter" : "gather", arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), lanes, width);
+                if (!arch_stores(g, a, c)) continue;
+                sb_printf(o, "    case %d: ", a);
+                // A sparse one the row hasn't got isn't there to load or store
+                if (comp_sparse(g, c)) sb_printf(o, "if (!%s) return false; ", presence_cell(g, "w", a, c, "loc.row", false));
+                sb_printf(o, "tide_table_%s(&w->%s, %s, loc.row, %d, %du, %du, v); return true;\n", put ? "scatter" : "gather",
+                          arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), lanes, width);
             }
             sb_put(o, "    default: return false;\n    }\n}\n\n");
         }
         // For hosts (see the header)
-        sb_printf(o, "bool tide_has_%s(const %s *w, tide_entity e)\n{\n    switch (tide_entity_location(&w->entities, e).archetype) {\n",
+        sb_printf(o, "bool tide_has_%s(const %s *w, tide_entity e)\n{\n    const tide_location loc = tide_entity_location(&w->entities, e);\n"
+                     "    (void)loc;\n    switch (loc.archetype) {\n",
                   name, w);
         for (int a = 0; a < prog->archetypes.count; a++) {
-            if (has_component(prog->archetypes.items[a], c)) sb_printf(o, "    case %d:\n", a);
+            if (!arch_stores(g, a, c)) continue;
+            if (comp_sparse(g, c)) sb_printf(o, "    case %d: return %s != 0;\n", a, presence_cell(g, "w", a, c, "loc.row", false));
+            else sb_printf(o, "    case %d: return true;\n", a);
         }
-        sb_put(o, "        return true;\n    default: return false;\n    }\n}\n\n");
+        sb_put(o, "    default: return false;\n    }\n}\n\n");
         sb_printf(o, "%s tide_get_%s(const %s *w, tide_entity e)\n{\n    %s v;\n    memset(&v, 0, sizeof v);\n", name, name, w, name);
         sb_printf(o, "    tide_load_%s(w, e, &v);\n    return v;\n}\n\n", name);
         sb_printf(o, "bool tide_set_%s(%s *w, tide_entity e, %s value)\n{\n    return tide_store_%s(w, e, &value);\n}\n\n", name, w,
@@ -4916,6 +4974,7 @@ static void gen_moves(gen *g)
     sb *o = &g->c;
 
     for (int c = 0; c < prog->components.count; c++) {
+        if (comp_sparse(g, c)) continue; // Added and removed in place
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!same_world(g, c, a)) continue;
             const comp_mask mask = prog->archetypes.items[a];
@@ -4940,12 +4999,16 @@ static void gen_moves(gen *g)
                   arch_label(g, to));
         sb_printf(o, "static const int32_t tide_map%d_%d[] = {0", from, to);
         if (arch_scene_column(g, to)) sb_put(o, ", 1");
-        for (int c = 0; c < prog->components.count; c++) { // Lane by lane
-            if (!has_component(to_mask, c)) continue;
+        for (int c = 0; c < prog->components.count; c++) { // Lane by lane, after the presence byte of a sparse one
+            if (!arch_stores(g, to, c)) continue;
+            const bool had = arch_stores(g, from, c);
+            if (comp_sparse(g, c)) sb_printf(o, ", %d", had ? arch_presence(g, from, c) : -1);
             for (int k = 0; k < comp_lanes(prog->components.items[c]); k++) {
-                sb_printf(o, ", %d", has_component(from_mask, c) ? arch_column(g, from, c) + k : -1);
+                sb_printf(o, ", %d", had ? arch_column(g, from, c) + k : -1);
             }
         }
+        (void)from_mask;
+        (void)to_mask;
         sb_put(o, "};\n");
         sb_printf(o, "TIDE_HELPER uint32_t tide_move%d_%d(%s *w, uint32_t row)\n{\n", from, to, world_type(arch_local(g, from)));
         sb_printf(o, "    return tide_table_move(&w->%s, %s, row, %d, &w->%s, %s, %d, tide_map%d_%d, &w->entities);\n}\n\n",
@@ -5150,11 +5213,17 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, "        *%s = c->entity;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", true));
         if (has_scenes(prog, local)) sb_printf(o, "        *%s = c->scene;\n", arch_cell(g, "w", a, 1, "tide_entity", "row", true));
         for (int i = 0; i < prog->components.count; i++) {
-            if (!has_component(mask, i)) continue;
+            if (!arch_stores(g, a, i)) continue;
             sb value = {0};
             sb_printf(&value, "c->data.spawn%d.%s", a, type_cname(prog->components.items[i]));
+            if (comp_sparse(g, i)) { // Given, or not: the row has it when it was
+                sb_printf(o, "        if (c->data.spawn%d.tide_has_%s) { %s = 1; %s; }\n", a, type_cname(prog->components.items[i]),
+                          presence_cell(g, "w", a, i, "row", true), comp_put(g, "w", a, i, "row", value.data));
+                continue;
+            }
             sb_printf(o, "        %s;\n", comp_put(g, "w", a, i, "row", value.data));
         }
+        (void)mask;
         sb_printf(o, "        tide_entity_set_location(&w->entities, c->entity, (tide_location){%d, row});\n", a);
         if (handled_for(prog, prog->spawned, a)) sb_printf(o, "        %sdispatch_%s(w, c->entity, &(%s){0});\n", p, spawned, spawned);
         sb_put(o, "        break;\n    }\n");
@@ -5182,6 +5251,20 @@ static void gen_apply(gen *g, const bool local)
             const comp_mask mask = prog->archetypes.items[a];
             sb value = {0};
             sb_printf(&value, "c->data.%s", comp);
+            if (comp_sparse(g, comp_i)) { // In place: the row has it from now on, its old value's text gone
+                if (!arch_stores(g, a, comp_i)) {
+                    sb_printf(o, "        case %d: tide_unreachable_change(\"%s\"); break;\n", a, comp);
+                    continue;
+                }
+                sb_printf(o, "        case %d: {", a);
+                if (decl_has_text(prog->components.items[comp_i])) {
+                    sb_printf(o, " if (%s) { %s tide_old; %s; tide_release_%s(&tide_old, %s); }", presence_cell(g, "w", a, comp_i, "loc.row", false),
+                              comp, comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), comp, world_where(local));
+                }
+                sb_printf(o, " %s = 1; %s; break; }\n", presence_cell(g, "w", a, comp_i, "loc.row", true),
+                          comp_put(g, "w", a, comp_i, "loc.row", value.data));
+                continue;
+            }
             if (has_component(mask, comp_i)) {
                 if (decl_has_text(prog->components.items[comp_i])) { // The old value's text goes
                     sb_printf(o, "        case %d: { %s tide_old; %s; tide_release_%s(&tide_old, %s); %s; break; }\n", a, comp,
@@ -5214,9 +5297,19 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, "    case %d: // %s\n        switch (loc.archetype) {\n", comp_i, type_cname(prog->components.items[comp_i]));
         for (int a = 0; a < prog->archetypes.count; a++) {
             const comp_mask mask = prog->archetypes.items[a];
-            if (arch_local(g, a) != local || !has_component(mask, comp_i)) continue;
-            const int to = find_arch(g, mask_andnot(mask, mask_bit(comp_i)), local);
             const decl *comp = prog->components.items[comp_i];
+            if (arch_local(g, a) != local || !arch_stores(g, a, comp_i)) continue;
+            if (comp_sparse(g, comp_i)) { // In place: the row loses it, its value zeroed and its text released
+                sb_printf(o, "        case %d: if (%s) {", a, presence_cell(g, "w", a, comp_i, "loc.row", false));
+                if (decl_has_text(comp)) {
+                    sb_printf(o, " %s tide_old; %s; tide_release_%s(&tide_old, %s);", type_cname(comp),
+                              comp_take(g, "w", a, comp_i, "loc.row", "tide_old"), type_cname(comp), world_where(local));
+                }
+                sb_printf(o, " %s tide_none = {0}; %s; %s = 0; } break;\n", type_cname(comp),
+                          comp_put(g, "w", a, comp_i, "loc.row", "tide_none"), presence_cell(g, "w", a, comp_i, "loc.row", true));
+                continue;
+            }
+            const int to = find_arch(g, mask_andnot(mask, mask_bit(comp_i)), local);
             if (to < 0) { // No Remove reaches this archetype's entities, as tidec reckoned
                 sb_printf(o, "        case %d: tide_unreachable_change(\"%s\"); break;\n", a, type_cname(comp));
                 continue;
@@ -5244,7 +5337,8 @@ static void gen_apply(gen *g, const bool local)
         if (handled_for(prog, prog->destroyed, a)) sb_printf(o, " %sdispatch_%s(w, e, &(%s){0});", p, destroyed, destroyed);
         for (int c = 0; c < prog->components.count; c++) {
             const decl *comp = prog->components.items[c];
-            if (!has_component(prog->archetypes.items[a], c) || !decl_has_text(comp)) continue;
+            if (!arch_stores(g, a, c) || !decl_has_text(comp)) continue;
+            if (comp_sparse(g, c)) sb_printf(o, " if (%s)", presence_cell(g, "w", a, c, "loc.row", false));
             sb_printf(o, " { %s tide_old; %s; tide_release_%s(&tide_old, %s); }", type_cname(comp),
                       comp_take(g, "w", a, c, "loc.row", "tide_old"), type_cname(comp), world_where(local));
         }
@@ -5904,7 +5998,7 @@ static bool param_blends(const param *p)
 // input or the devices, and archetype `a`'s entities have an Owner.
 static bool reads_owner(const gen *g, const decl *sys, const int a)
 {
-    if (a < 0 || !has_component(g->prog->archetypes.items[a], g->prog->owner->index)) return false;
+    if (a < 0 || !arch_stores(g, a, g->prog->owner->index)) return false;
     for (int i = 0; i < sys->params.count; i++) {
         if (sys->params.items[i].type.kind == TY_INPUT || sys->params.items[i].type.kind == TY_RECORD) return true;
     }
@@ -5944,14 +6038,14 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         uint32_t bytes = 0;
         for (int c = 0; c < prog->components.count; c++) {
             const decl *d = prog->components.items[c];
-            if (has_component(prog->archetypes.items[a], c) && changes_component(sys, c, read_only)) {
+            if (arch_stores(g, a, c) && changes_component(sys, c, read_only)) {
                 bytes += (uint32_t)(comp_lanes(d) * comp_width(d)) + 16u * (uint32_t)comp_lanes(d);
             }
         }
         if (bytes) sb_printf(o, "%stide_table_lanes_reserve(tide_n * %uu);\n", pad, bytes);
     }
     for (int c = 0; c < prog->components.count; c++) {
-        if (!has_component(prog->archetypes.items[a], c)) continue;
+        if (!arch_stores(g, a, c)) continue;
         bool used = c == prog->owner->index && reads_owner(g, sys, a);
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
@@ -5975,6 +6069,27 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         }
         sb_put(o, "};\n");
     }
+    // Which rows have each sparse component it needs or excludes (gen_row_filter)
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+        sb_printf(o, "%sconst uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n", pad,
+                  type_cname(prog->components.items[c]), columns, arch_presence(g, a, c));
+    }
+}
+
+// Before a row runs: skip it (`skip`: "continue" in a loop, "break" in a
+// handler's case) unless it has every sparse component the system needs and
+// none it excludes. Rows are the archetype's: its other components are there.
+static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad, const char *skip)
+{
+    const program *prog = g->prog;
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        const char *comp = type_cname(prog->components.items[c]);
+        if (mask_has(sys->need_mask, c)) sb_printf(&g->c, "%sif (!tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
+        else if (mask_has(sys->without_mask, c)) sb_printf(&g->c, "%sif (tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
+    }
 }
 
 // After a loop over a chunk's rows: the lanes it changed go back, in the
@@ -5984,7 +6099,7 @@ static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char
     sb *o = &g->c;
     const program *prog = g->prog;
     for (int c = prog->components.count; c-- > 0;) {
-        if (!has_component(prog->archetypes.items[a], c) || !changes_component(sys, c, read_only)) continue;
+        if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
         const decl *d = prog->components.items[c];
         sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, arch_columns(g, a),
                   arch_column(g, a, c), comp_lanes(d), type_cname(d));
@@ -6111,7 +6226,14 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_put(o, "    switch (tide_loc.archetype) {\n");
             for (int a = 0; a < prog->archetypes.count; a++) {
                 if (!handler_runs_for(prog, h, a)) continue;
-                sb_printf(o, "    case %d: %stide_target, %s, ", a, start.data, local ? "true" : "false");
+                sb_printf(o, "    case %d: ", a);
+                // Only for an entity with the sparse components it needs, and none it excludes
+                for (int c = 0; c < prog->components.count; c++) {
+                    if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+                    if (mask_has(h->need_mask, c)) sb_printf(o, "if (!%s) break; ", presence_cell(g, world, a, c, "tide_loc.row", false));
+                    else if (mask_has(h->without_mask, c)) sb_printf(o, "if (%s) break; ", presence_cell(g, world, a, c, "tide_loc.row", false));
+                }
+                sb_printf(o, "%stide_target, %s, ", start.data, local ? "true" : "false");
                 if (arch_scene_column(g, a)) {
                     sb_printf(o, "*(const tide_entity *)tide_table_get(&%s->%s, %s, tide_loc.row, 1)); }%s break;\n", world,
                               arch_name(g, a), arch_columns(g, a), clear);
@@ -6137,6 +6259,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_printf(o, "        const uint32_t tide_c = tide_loc.row >> %d;\n", shift);
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
             gen_chunk_columns(g, h, a, "        ", false, false);
+            gen_row_filter(g, h, a, "        ", "break");
             gen_row_copies(g, h, a, "        ");
             sb_printf(o, "        %s", call.data);
             gen_system_args(g, h, a);
@@ -7102,8 +7225,7 @@ static bool gen_parallel_work(sb *o, const stmt *s)
 // Whether archetype `a` has the entities a system or view runs for.
 static bool runs_on(const gen *g, const decl *sys, const int a)
 {
-    const comp_mask mask = g->prog->archetypes.items[a];
-    return arch_local(g, a) == sys->entity_local && mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask);
+    return arch_local(g, a) == sys->entity_local && filters_admit(g->prog, sys, a);
 }
 
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
@@ -7130,6 +7252,7 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     gen_piece_rows(o, pad, pieced);
     gen_chunk_columns(g, sys, a, pad, read_only, true);
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
+    gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_copies(g, sys, a, inner.data);
     sb_printf(o, "%s%s", inner.data, call);
     gen_system_args(g, sys, a);
@@ -7228,7 +7351,7 @@ static void gen_system_own(gen *g, const decl *sys)
         sb_printf(o, "    { // %s\n        tide_table *tide_t = &tide_w->%s;\n", arch_label(g, a), arch_name(g, a));
         sb_put(o, "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n");
         for (int c = 0; c < prog->components.count; c++) {
-            if (!has_component(prog->archetypes.items[a], c) || !changes_component(sys, c, false)) continue;
+            if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
             const decl *d = prog->components.items[c];
             for (int k = 0; k < comp_lanes(d); k++) {
                 sb_printf(o, "            tide_table_column_mut(tide_t, %s, tide_c, %d);\n", arch_columns(g, a), arch_column(g, a, c) + k);
@@ -7255,7 +7378,7 @@ static void gen_settle_item(gen *g)
         if (!prog->spawn_target.items[a] || arch_local(g, a)) continue;
         path_list paths = {0};
         for (int i = 0; i < prog->components.count; i++) {
-            if (!has_component(prog->archetypes.items[a], i)) continue;
+            if (!arch_stores(g, a, i)) continue;
             sb prefix = {0};
             sb_printf(&prefix, "%s.", type_cname(prog->components.items[i]));
             entity_paths(prog->components.items[i], prefix.data, &paths);
@@ -7743,14 +7866,17 @@ static void gen_api(gen *g)
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         sb_put(o, "        printf(\"  #%u.%u\", (unsigned)e.index, (unsigned)e.generation);\n");
         for (int c = 0; c < prog->components.count; c++) {
-            if (!has_component(mask, c)) continue;
+            if (!arch_stores(g, a, c)) continue;
             const char *comp = type_cname(prog->components.items[c]);
+            if (comp_sparse(g, c)) sb_printf(o, "        if (%s) {\n", presence_cell(g, "w", a, c, "i", false)); // Only rows that have it
             sb_printf(o, "        const %s tide_value_%d = tide_row_%s(&w->%s, %s, %d, i);\n        (void)tide_value_%d;\n", comp, c,
                       comp, name, arch_columns(g, a), arch_column(g, a, c), c);
             char base[256];
             snprintf(base, sizeof base, "tide_value_%d", c);
             gen_print_fields(o, prog->components.items[c], base);
+            if (comp_sparse(g, c)) sb_put(o, "        }\n");
         }
+        (void)mask;
         sb_put(o, "        printf(\"\\n\");\n    }\n");
     }
     sb_put(o, "}\n");
@@ -8443,7 +8569,7 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
         for (int i = 0; i < prog->singletons.count; i++) {
             const decl *d = prog->singletons.items[i];
             if (d->is_local != local) continue;
-            sb_printf(o, "    {%d, offsetof(%s, %s)},\n", layout_index(types, d), world, type_cname(d));
+            sb_printf(o, "    {%d, offsetof(%s, %s), false},\n", layout_index(types, d), world, type_cname(d));
         }
         sb_put(o, "};\n\n");
     }
@@ -8452,11 +8578,12 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) != local) continue;
         archetypes++;
-        if (!mask_any(prog->archetypes.items[a])) continue;
+        if (!mask_any(prog->archetypes.items[a]) && !mask_any(prog->possible.items[a])) continue;
         sb_printf(o, "static const tide_layout_place tide_layout_arch%d[] = {\n", a);
-        for (int i = 0; i < prog->components.count; i++) {
-            if (!has_component(prog->archetypes.items[a], i)) continue;
-            sb_printf(o, "    {%d, %d},\n", layout_index(types, prog->components.items[i]), arch_column(g, a, i));
+        for (int i = 0; i < prog->components.count; i++) { // A sparse one from its presence byte, the column before its lanes
+            if (!arch_stores(g, a, i)) continue;
+            sb_printf(o, "    {%d, %d, %s},\n", layout_index(types, prog->components.items[i]),
+                      comp_sparse(g, i) ? arch_presence(g, a, i) : arch_column(g, a, i), comp_sparse(g, i) ? "true" : "false");
         }
         sb_put(o, "};\n\n");
     }
@@ -8465,7 +8592,7 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) != local) continue;
             int count = 0;
-            for (int i = 0; i < prog->components.count; i++) count += has_component(prog->archetypes.items[a], i);
+            for (int i = 0; i < prog->components.count; i++) count += arch_stores(g, a, i);
             sb_printf(o, "    {%s, ", arch_scene_column(g, a) ? "true" : "false");
             if (count) sb_printf(o, "%d, tide_layout_arch%d},\n", count, a);
             else sb_put(o, "0, NULL},\n");

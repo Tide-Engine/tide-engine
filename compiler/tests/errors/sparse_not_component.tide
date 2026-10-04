@@ -1,0 +1,7 @@
+// expect: Sparse marks a component that entities gain and lose, and 'Score' isn't one
+[Sparse]
+singleton Score
+{
+    int value;
+}
+scene Main { }

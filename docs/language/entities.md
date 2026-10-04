@@ -123,4 +123,20 @@ An archetype is a set of components that entities share, and entities with the s
 
 ## Limits
 
+A component that entities gain and lose all the time, like `Stunned` or `Selected`, would still double the archetypes it can reach. Mark it `[Sparse]`: it's kept as a presence bit and its value in every archetype it can reach, so `Add` and `Remove` of it move no entity, and systems that take or filter on it skip the rows that haven't got it. A tag (a component with no fields) that any `Add` or `Remove` names is sparse by itself; one only set at `Spawn` isn't, so `with Rock` costs nothing per entity.
+
+```csharp
+[Sparse]
+component Stunned
+{
+    float left;
+}
+
+system Recover(Time time, mut Stunned stunned)
+{
+    stunned.left -= time.dt;
+    if (stunned.left <= 0) this.Remove(Stunned);
+}
+```
+
 For now, a game has at most 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, the rows of each archetype, and the structural changes and events in a tick (see [C hosts](../engine/c-hosts.md#memory)).

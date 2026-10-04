@@ -12,13 +12,19 @@ typedef struct arch_set {
     uint64_t words[(MAX_ARCHETYPES + 63) / 64];
 } arch_set;
 
+// The archetypes whose entities a system can run for: those its filters admit,
+// the components it needs that aren't sparse there and none it excludes, and
+// the sparse ones it needs among what those entities can have (program.possible).
 static arch_set archetypes_of(const program *prog, const decl *sys)
 {
     arch_set set = {{0}};
+    const comp_mask need = mask_andnot(sys->need_mask, prog->sparse_mask);
+    const comp_mask without = mask_andnot(sys->without_mask, prog->sparse_mask);
+    const comp_mask sparse_need = mask_and(sys->need_mask, prog->sparse_mask);
     for (int a = 0; a < prog->archetypes.count && a < MAX_ARCHETYPES; a++) {
         const comp_mask mask = prog->archetypes.items[a];
         if (prog->archetype_local.items[a] != sys->entity_local) continue; // Another world's
-        if (mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask)) {
+        if (mask_subset(need, mask) && !mask_intersects(mask, without) && mask_subset(sparse_need, prog->possible.items[a])) {
             set.words[a / 64] |= (uint64_t)1 << (a % 64);
         }
     }
@@ -31,6 +37,17 @@ static bool share_archetypes(const arch_set *a, const arch_set *b)
         if (a->words[i] & b->words[i]) return true;
     }
     return false;
+}
+
+// Whether two systems can run for the same entity: they share an archetype,
+// and neither needs a sparse component the other excludes (a sparse
+// component is the row's, not the archetype's, so that's told entity by entity).
+static bool can_meet(const program *prog, const decl *a, const decl *b, const arch_set *sa, const arch_set *sb)
+{
+    if (!share_archetypes(sa, sb)) return false;
+    const comp_mask a_sparse = mask_and(a->need_mask, prog->sparse_mask);
+    const comp_mask b_sparse = mask_and(b->need_mask, prog->sparse_mask);
+    return !mask_intersects(a_sparse, b->without_mask) && !mask_intersects(b_sparse, a->without_mask);
 }
 
 static void add_conflict(system_wait *w, const conflict_kind kind)
@@ -139,7 +156,7 @@ void analyze_parallelism(program *prog)
             decl *earlier = prog->systems.items[i];
             system_wait w = {0};
             w.on = earlier;
-            find_conflicts(earlier, sys, share_archetypes(&sets[i], &sets[j]), &w);
+            find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), &w);
             w.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
             if (w.conflicts.count == 0 && !w.ordered) continue;
             vec_push(sys->waits, w);

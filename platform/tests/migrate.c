@@ -103,17 +103,17 @@ static const tide_layout_type old_types[] = {
 static const tide_layout_member old_kinds[] = {{"A", OLD_A}, {"B", OLD_B}, {"C", OLD_C}};
 static const tide_layout_enum old_enums[] = {{"Kind", 3, old_kinds}};
 
-static const tide_layout_place old_balls_columns[] = {{OLD_BALL, 2}};
-static const tide_layout_place old_tagged_columns[] = {{OLD_BALL, 2}, {OLD_TAG, 7}}; // Ball's 5 lanes, then Tag's
-static const tide_layout_place old_arenas_columns[] = {{OLD_ARENA, 2}};
-static const tide_layout_place old_tags_columns[] = {{OLD_TAG, 2}};
+static const tide_layout_place old_balls_columns[] = {{OLD_BALL, 2, false}};
+static const tide_layout_place old_tagged_columns[] = {{OLD_BALL, 2, false}, {OLD_TAG, 7, false}}; // Ball's 5 lanes, then Tag's
+static const tide_layout_place old_arenas_columns[] = {{OLD_ARENA, 2, false}};
+static const tide_layout_place old_tags_columns[] = {{OLD_TAG, 2, false}};
 static const tide_layout_archetype old_archetypes[] = {
     {true, 1, old_balls_columns},
     {true, 2, old_tagged_columns},
     {true, 1, old_arenas_columns},
     {true, 1, old_tags_columns},
 };
-static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_world, rules)}};
+static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_world, rules), false}};
 
 static const tide_layout old_layout = {
     5, old_types, 1, old_enums,
@@ -209,13 +209,13 @@ static const tide_layout_type new_types[] = {
 static const tide_layout_member new_kinds[] = {{"C", NEW_C}, {"A", NEW_A}};
 static const tide_layout_enum new_enums[] = {{"Kind", 2, new_kinds}};
 
-static const tide_layout_place new_arenas_columns[] = {{NEW_ARENA, 2}};
-static const tide_layout_place new_balls_columns[] = {{NEW_BALL, 2}};
+static const tide_layout_place new_arenas_columns[] = {{NEW_ARENA, 2, false}};
+static const tide_layout_place new_balls_columns[] = {{NEW_BALL, 2, false}};
 static const tide_layout_archetype new_archetypes[] = {
     {true, 1, new_arenas_columns},
     {true, 1, new_balls_columns},
 };
-static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_world, rules)}};
+static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_world, rules), false}};
 
 #define NEW_MATCH(archetypes, count)                                                                                \
     {sizeof(new_world), 1, new_singletons, count, archetypes, NEW_IN, offsetof(new_world, inputs),                  \

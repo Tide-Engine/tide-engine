@@ -36,6 +36,8 @@ component Wheel
     float angle;
 }
 
+// Sparse: a presence byte in the rocks' rows, added and removed in place, on threads
+[Sparse]
 component Fuse
 {
     int left;
