@@ -73,7 +73,15 @@ bool system_splits(const decl *sys)
 {
     if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
     for (int i = 0; i < sys->params.count; i++) {
-        if (sys->params.items[i].type.kind == TY_SINGLETON && sys->params.items[i].mode == PARAM_MUT) return false;
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
+        // A mut lookup writes any entity's component; a lookup of a component
+        // the system changes would read rows other threads are changing
+        if (p->type.kind == TY_LOOKUP && p->mode == PARAM_MUT) return false;
+        for (int k = 0; p->type.kind == TY_LOOKUP && k < sys->params.count; k++) {
+            const param *q = &sys->params.items[k];
+            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == p->type.decl) return false;
+        }
     }
     return true;
 }
@@ -89,7 +97,7 @@ bool system_splits(const decl *sys)
 static const decl *accessed(const param *p)
 {
     if (p->mode != PARAM_READ && p->mode != PARAM_MUT) return NULL;
-    return p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON ? p->type.decl : NULL;
+    return p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_LOOKUP ? p->type.decl : NULL;
 }
 
 static void find_conflicts(const decl *earlier, const decl *later, const bool same_entities, system_wait *w)
@@ -106,10 +114,11 @@ static void find_conflicts(const decl *earlier, const decl *later, const bool sa
         const param *a = &earlier->params.items[i];
         const decl *data = accessed(a);
         if (!data) continue;
-        if (data->kind == DECL_COMPONENT && !same_entities) continue;
         for (int k = 0; k < later->params.count; k++) {
             const param *b = &later->params.items[k];
             if (accessed(b) != data) continue;
+            // A component only counts where both can meet the same entity; a lookup reaches every entity
+            if (data->kind == DECL_COMPONENT && !same_entities && !a->lookup && !b->lookup) continue;
             const bool a_writes = a->mode == PARAM_MUT;
             const bool b_writes = b->mode == PARAM_MUT;
             if (!a_writes && !b_writes) continue;

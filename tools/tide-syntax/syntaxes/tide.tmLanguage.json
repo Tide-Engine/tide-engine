@@ -356,7 +356,7 @@
         {
           "comment": "Parameter and local modifiers",
           "name": "storage.modifier.tide",
-          "match": "\\b(mut|with|without)\\b"
+          "match": "\\b(mut|with|without|lookup)\\b"
         },
         {
           "comment": "The entity the code runs for",

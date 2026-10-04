@@ -876,7 +876,10 @@ static bool resolve_grid_type(const checker *c, const str text, const loc at, ty
 static bool through_element(const expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
-        if (e->kind == E_INDEX && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_GRID)) return true;
+        if (e->kind == E_INDEX
+            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_GRID || e->object->type.kind == TY_LOOKUP)) {
+            return true;
+        }
     }
     return false;
 }
@@ -2283,6 +2286,21 @@ static type check_method(checker *c, expr *e)
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
+    if (obj.kind == TY_LOOKUP) { // health.Has(e): whether that entity has one
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!str_eq_c(e->name, "Has")) {
+            diag_error(e->at, "a lookup has one method, 'Has(entity)'; its values are indexed: '" STR_FMT "[entity]'",
+                       STR_ARG(e->object->name));
+            return T_ERR;
+        }
+        const type_kind want = obj.decl->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
+        if (e->args.count != 1 || (e->args.items[0]->type.kind != TY_ERROR && e->args.items[0]->type.kind != want)) {
+            diag_error(e->at, "Has takes one entity's handle, %s", want == TY_ENTITY ? "an Entity" : "a LocalEntity");
+            return T_ERR;
+        }
+        e->call = CALL_HAS;
+        return T_BOOL_;
+    }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
         for (int i = 0; i < e->args.count; i++) {
@@ -3169,6 +3187,15 @@ static type check_index(checker *c, expr *e)
             diag_note(flat ? "like 'cells[x, y]', or 'cells[p]' for an int2 'p'" : "like 'cells[x, y, z]', or 'cells[p]' for an int3 'p'");
         }
         return grid_cell(obj);
+    }
+    if (obj.kind == TY_LOOKUP) { // health[e]: that entity's, or its zero when it has none
+        const type handle = check_expr(c, e->lhs);
+        const type_kind want = obj.decl->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
+        if (handle.kind != TY_ERROR && handle.kind != want) {
+            diag_error(e->lhs->at, "a lookup takes an entity's handle, %s, not %s", want == TY_ENTITY ? "an Entity" : "a LocalEntity",
+                       type_name(handle));
+        }
+        return decl_type(obj.decl);
     }
     const type index = check_expr(c, e->lhs);
     if (index.kind != TY_ERROR && index.kind != TY_INT) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
@@ -4416,6 +4443,9 @@ static void check_assign(checker *c, const stmt *s)
         if (at->object->type.kind == TY_GRID) {
             diag_error(s->target->at, "a grid's cell is a copy, so it can't be changed where it is");
             diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
+        } else if (at->object->type.kind == TY_LOOKUP) {
+            diag_error(s->target->at, "a lookup gives a copy of the entity's component, so it can't be changed where it is");
+            diag_note("take it out, change it, and put it back: 'mut var h = health[e]; h.value -= 5; health[e] = h;'");
         } else {
             diag_error(s->target->at, "a list's element is a copy, so it can't be changed where it is");
             diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
@@ -4749,6 +4779,11 @@ static void check_var(checker *c, stmt *s)
         if (value.kind == TY_DRAW_LIST) {
             diag_error(s->value->at, "the draw list is only passed on, to an extern function that takes a DrawList");
             diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
+            value = T_ERR;
+        }
+        if (value.kind == TY_LOOKUP) {
+            diag_error(s->value->at, "a lookup stays a parameter; its values are indexed by an entity's handle");
+            diag_note("like 'var h = " STR_FMT "[e];'", STR_ARG(s->value->name));
             value = T_ERR;
         }
         s->type = value;
@@ -6392,6 +6427,25 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
 
+        // `lookup Health health`: any entity's Health by its handle, health[e],
+        // read, or changed with mut. Access to every entity's, and no filter.
+        if (p->lookup) {
+            if (d->kind != DECL_COMPONENT) {
+                diag_error(p->at, "'lookup' is of a component, any entity's by its handle, and '" STR_FMT "' is %s",
+                           STR_ARG(d->name), d->kind == DECL_SINGLETON ? "a singleton, which the system takes as it is" : "not one");
+                p->type = T_ERR;
+                continue;
+            }
+            if (p->mode == PARAM_MUT && sys->is_view && !d->is_local) {
+                diag_error(p->at, "a view reads the match, and 'mut lookup' would change it");
+                diag_note("views draw: a system changes the match");
+                p->type = T_ERR;
+                continue;
+            }
+            p->type = (type){TY_LOOKUP, d};
+            continue;
+        }
+
         // An input parameter gives the input of the player who owns the entity,
         // or the server's input when no player does. It doesn't filter entities.
         if (d->kind == DECL_INPUT) {
@@ -6451,6 +6505,20 @@ static void check_params(const checker *c, decl *sys)
 
     if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
+    }
+    // A mut lookup changes any entity's component, this one's included, which
+    // its parameter would then put back as it was: one way or the other.
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (!p->lookup || p->mode != PARAM_MUT || p->type.kind != TY_LOOKUP) continue;
+        for (int j = 0; j < sys->params.count; j++) {
+            const param *q = &sys->params.items[j];
+            if (q->type.kind != TY_COMPONENT || q->type.decl != p->type.decl || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
+            diag_error(p->at, "'" STR_FMT "' changes any entity's " STR_FMT ", and the system takes this entity's too",
+                       STR_ARG(p->name), STR_ARG(p->type.decl->name));
+            diag_note("change this entity's through '" STR_FMT "', and look the others up with a 'lookup' that isn't mut, "
+                      "or send them an event", STR_ARG(q->name));
+        }
     }
     sys->per_entity = entity || mask_any(seen);
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;

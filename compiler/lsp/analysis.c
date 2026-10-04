@@ -1056,6 +1056,7 @@ static void format_param(const param *p, sb *out)
     case PARAM_WITHOUT: sb_put(out, "without "); break;
     case PARAM_READ: case PARAM_EVENT: break;
     }
+    if (p->lookup) sb_put(out, "lookup ");
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
 }
@@ -4542,6 +4543,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
+                item(&c, "lookup", CK_KEYWORD, "Any entity's component, by its handle: health[e]", NULL, NULL);
                 item(&c, "Devices", CK_CLASS, "The devices of the entity's owner, or the server's", NULL, NULL);
             }
             complete_types(&c, true, true, pk != T_MUT);

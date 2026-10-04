@@ -1352,6 +1352,12 @@ static void parse_query_rest(parser *p, decl *d)
                 what = "component name after 'without'";
             } else {
                 prm.mode = accept(p, T_MUT) ? PARAM_MUT : PARAM_READ;
+                // `lookup Health health`, or `mut lookup`: any entity's, by its handle
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT) {
+                    advance(p);
+                    prm.lookup = true;
+                    what = "component name after 'lookup'";
+                }
             }
             const qname type = parse_decl_type(p, what);
             prm.type_name = type.text;

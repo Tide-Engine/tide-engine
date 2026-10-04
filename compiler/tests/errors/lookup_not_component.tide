@@ -1,0 +1,7 @@
+// expect: 'lookup' is of a component, any entity's by its handle, and 'Score' is a singleton, which the system takes as it is
+singleton Score { int value; }
+component Health { int value; }
+scene Main { }
+system Count(lookup Score score, with Health)
+{
+}

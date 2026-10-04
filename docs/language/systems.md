@@ -20,8 +20,22 @@ A system's parameter list is its whole query. Each parameter's modifier says how
 | `mut` | Writes it |
 | `with` | The entity must have it. No data, so no data dependency. |
 | `without` | The entity must not have it. |
+| `lookup` | Any entity's, by its handle (below). |
 
 So `ClampPlayer` runs for every entity that has a `Transform` and a `Player`, and changes its `Transform`.
+
+A system often needs another entity's component in the same tick: the target it attacks, the leader it follows. `lookup` gives it, by the entity's handle:
+
+```csharp
+system Attack(Attacker attacker, lookup Health health, mut Stats stats)
+{
+    if (!health.Has(attacker.target)) return;
+    var target = health[attacker.target];
+    if (target.value <= attacker.damage) stats.kills += 1;
+}
+```
+
+`health[e]` is a copy of that entity's `Health`, or its zero value when it has none. `mut lookup` lets a system change it too, `health[e] = target;`, which does nothing for an entity without one. A lookup is access to every entity's component, so the engine schedules it like a system that touches them all, and one with a `mut lookup` runs on one thread. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 
 Keeping what a system touches (its access) apart from which entities it picks (its filters) is what lets the engine run systems side by side safely: two systems that only filter on the same component never wait for each other.
 
