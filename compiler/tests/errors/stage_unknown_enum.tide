@@ -1,0 +1,4 @@
+// expect: unknown enum 'Phases'
+scene Main { }
+[Stage(Phases.First)]
+system Work() { }

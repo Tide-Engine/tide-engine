@@ -117,6 +117,8 @@ typedef enum type_kind {
     TY_RECT,       // Rect: a GUI rectangle, x and y from the top left, width and height
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
+    TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
+    TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
@@ -157,6 +159,7 @@ typedef struct qname {
     loc at;      // The first part
     loc name_at; // The last part: the name itself
     struct decl *decl; // What it names, once checked
+    const struct enum_member *enum_member; // Ordering attributes: a phase in this enum
 } qname;
 
 // [Before(Physics.Integrate)]
@@ -164,7 +167,7 @@ typedef struct attribute {
     str name;
     loc at;
     VEC(qname) args;     // On declarations, names: [After(Physics.Gravity)]
-    VEC(expr *) values;  // On input fields, constant values: [Clamp(-1, 1)]; on declarations, text: [NativeName("f")]
+    VEC(expr *) values;  // Constant values: field bounds, NativeName's text, or Stage's optional offset
 } attribute;
 
 // ---------------------------------------------------------------------------
@@ -308,7 +311,7 @@ typedef enum decl_kind {
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
     int param;
-    int field;
+    int field;    // -1 for a direct Texture parameter; otherwise its component or singleton field
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
 } shader_sample;
@@ -413,6 +416,8 @@ typedef struct decl {
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
     loc draws_at;        // ...where it first does
+    bool render_resources; // Uses local rendering handles, directly or through its calls
+    loc render_resources_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -441,6 +446,10 @@ typedef struct decl {
     comp_mask without_mask;
     int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's `with ownership` or `without ownership`, which its rows are checked for
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
+    struct decl *order_enum; // [Stage]: the enum whose declaration order defines the phases
+    const enum_member *order_member;
+    int order_offset; // Position within the phase, not added to the enum's value
+    loc order_at;
 
     // Systems in the tick, from analyze_parallelism
     VEC(system_wait) waits;       // Earlier systems it must wait for: every one that's its own, and the first few through others
@@ -622,6 +631,10 @@ struct expr {
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
+    bool blit;           // Draw.Blit: source texture, destination target and a frag
+    bool targeted;       // A RenderTarget receiver supplies this draw's destination
+    bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
+    int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
@@ -773,6 +786,7 @@ typedef struct shader_texture {
     const struct decl *source;
     const field *field;
     bool blended;
+    bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
 } shader_texture;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
@@ -785,6 +799,9 @@ typedef struct shader {
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
+    bool direct_texture; // The draw supplies a Texture to its shader stages
+    bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
+    bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     const field *instance_transform; // The instance struct's optional float4x4 transform

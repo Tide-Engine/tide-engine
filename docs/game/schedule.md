@@ -75,6 +75,8 @@ In a big game, the long lists are cut short. Every wait that's a system's own is
 
 Two systems **conflict** when one writes a component or singleton the other reads or writes. Conflicting systems keep their order in the tick; `[Before]` and `[After]` order systems too. A system starts as soon as everything it waits for is done, with no barriers between stages: a system's stage is only how deep it is in that chain.
 
+[Named phases](./systems.md#named-phases), assigned with `[Stage(MyStages.Simulation)]`, add explicit ordering requirements to that plan. Later phases wait for earlier ones, and higher offsets wait for lower offsets within a phase. These names are separate from the numbered dependency stages printed above: systems at one phase and offset can share a dependency stage and run together. The schedule explains these waits as requirements of the stage order.
+
 Some things never make systems wait:
 
 - **Filters.** `with` and `without` read nothing.

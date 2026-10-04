@@ -20,6 +20,15 @@ static bool screen_valid(const tide_float2 screen)
     return finite2(screen) && screen.x > 0.0f && screen.y > 0.0f;
 }
 
+static tide_float2 target_size(const tide_draw_list *d, const tide_float2 window_size)
+{
+    if (!d->target) return window_size;
+    if (d->target > d->target_count) return tide_f2(0.0f, 0.0f);
+    const tide_draw_target_data *target = &d->targets[d->target - 1u];
+    if (!tide_render_target_live(target->id)) return tide_f2(0.0f, 0.0f);
+    return tide_f2((float)target->width, (float)target->height);
+}
+
 // The last 2D camera or screen command is what commands recorded now draw
 // through. A 3D camera never changes it, nor does it depend on a rendered frame.
 static bool camera2(const tide_draw_list *d, const tide_float2 screen, tide_float2 *center, float *scale, bool *pixels)
@@ -39,8 +48,9 @@ static bool camera2(const tide_draw_list *d, const tide_float2 screen, tide_floa
     return tide_is_finite_f(*scale) && *scale > 0.0f;
 }
 
-tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2 point, const tide_float2 screen_size)
+tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
 {
+    const tide_float2 screen_size = target_size(d, window_size);
     const tide_float2 zero = tide_f2(0.0f, 0.0f);
     if (!screen_valid(screen_size) || !finite2(point)) return zero;
     tide_float2 center;
@@ -53,8 +63,9 @@ tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2
     return finite2(result) ? result : zero;
 }
 
-tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2 point, const tide_float2 screen_size)
+tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
 {
+    const tide_float2 screen_size = target_size(d, window_size);
     const tide_float2 zero = tide_f2(0.0f, 0.0f);
     if (!screen_valid(screen_size) || !finite2(point)) return zero;
     tide_float2 center;
@@ -107,8 +118,9 @@ static bool unproject(const tide_float4x4 inverse, const tide_float3 point, cons
     return divide(tide_mul_f4x4_f4(inverse, clip), result);
 }
 
-tide_float3 tide_draw_world_to_screen_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 screen_size)
+tide_float3 tide_draw_world_to_screen_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 window_size)
 {
+    const tide_float2 screen_size = target_size(d, window_size);
     const tide_float3 zero = tide_f3(0.0f, 0.0f, 0.0f);
     tide_float4x4 matrix;
     tide_float3 clip;
@@ -119,8 +131,9 @@ tide_float3 tide_draw_world_to_screen_3d(const tide_draw_list *d, const tide_flo
     return finite3(result) ? result : zero;
 }
 
-tide_float3 tide_draw_screen_to_world_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 screen_size)
+tide_float3 tide_draw_screen_to_world_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 window_size)
 {
+    const tide_float2 screen_size = target_size(d, window_size);
     tide_float4x4 matrix;
     tide_float3 result;
     bool infinite;
@@ -137,8 +150,9 @@ tide_float3 tide_draw_screen_ray_origin(const tide_draw_list *d, const tide_floa
     return tide_draw_screen_to_world_3d(d, tide_f3(point.x, point.y, 0.0f), screen_size);
 }
 
-tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, const tide_float2 point, const tide_float2 screen_size)
+tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
 {
+    const tide_float2 screen_size = target_size(d, window_size);
     const tide_float3 zero = tide_f3(0.0f, 0.0f, 0.0f);
     tide_float4x4 matrix;
     tide_float3 near, middle;

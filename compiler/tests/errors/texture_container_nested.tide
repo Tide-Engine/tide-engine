@@ -1,0 +1,4 @@
+// expect: a list or a map can't hold rendering resources, including inside a struct
+scene Main { }
+struct Surface { Texture image; }
+local singleton Images { List<Surface> sources; }

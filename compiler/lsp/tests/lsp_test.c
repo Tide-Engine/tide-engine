@@ -1627,6 +1627,84 @@ TIDE_TEST(lsp_enums_and_switch)
     TIDE_CHECK(has(symbols, "\"name\":\"Playing\",\"detail\":\"5\",\"kind\":22"));
 }
 
+TIDE_TEST(lsp_scheduling_phases)
+{
+    start();
+    static const char declarations[] = "enum Phases { Setup = 30, Objects = 2, UI = 10 }\n"
+                                       "const int OFFSET = 4;\nconst float SCALE = 0.5;\n"
+                                       "scene Main { }\nview Existing() { }\n";
+    char text[2048];
+
+    snprintf(text, sizeof text, "%s[$]\nview V() { }\n", declarations);
+    TIDE_CHECK(offers(complete(text), "Stage"));
+    snprintf(text, sizeof text, "%s[Stage($)]\nview V() { }\n", declarations);
+    const char *completion = complete(text);
+    TIDE_CHECK(offers(completion, "Phases"));
+    TIDE_CHECK(!offers(completion, "Existing"));
+    snprintf(text, sizeof text, "%s[After($)]\nview V() { }\n", declarations);
+    completion = complete(text);
+    TIDE_CHECK(offers(completion, "Phases") && offers(completion, "Existing"));
+    snprintf(text, sizeof text, "%s[Stage(Phases.$)]\nview V() { }\n", declarations);
+    completion = complete(text);
+    TIDE_CHECK(offers(completion, "Setup") && offers(completion, "Objects") && offers(completion, "UI"));
+    snprintf(text, sizeof text, "%s[Stage(Phases.Objects, -$OFFSET)]\nview V() { }\n", declarations);
+    completion = complete(text);
+    TIDE_CHECK(offers(completion, "OFFSET"));
+    TIDE_CHECK(!offers(completion, "Existing") && !offers(completion, "Phases") && !offers(completion, "SCALE"));
+    snprintf(text, sizeof text, "%s[Stage(Phases.Objects, ($OFFSET + 1))]\nview V() { }\n", declarations);
+    TIDE_CHECK(offers(complete(text), "OFFSET"));
+
+    static const char game[] = "enum Phases { Setup = 30, Objects = 2, UI = 10 }\n"
+                               "const int OFFSET = 4;\nscene Main { }\n"
+                               "[Stage(Phases.Obj$ects, -OFFSET)]\nview DrawScene() { }\n"
+                               "[After(Phases.Objects)]\nview Present() { }\n"
+                               "[Stage(Phases.UI)]\nview Overlay() { }\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Phases.Objects = 2"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":26}"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    request_with("textDocument/rename", "\"newName\":\"Geometry\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "Geometry = 2") && has(renamed, "Stage(Phases.Geometry, -OFFSET)")
+               && has(renamed, "After(Phases.Geometry)"));
+
+    snprintf(text, sizeof text, "%s[Stage(Pha$ses.Objects, -OFFSET)]\nview V() { }\n", declarations);
+    open_document(text);
+    TIDE_CHECK(has(request("textDocument/hover"), "enum Phases"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
+    request_with("textDocument/rename", "\"newName\":\"FrameStages\"");
+    renamed = apply_reply(text, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum FrameStages") && has(renamed, "Stage(FrameStages.Objects, -OFFSET)"));
+
+    snprintf(text, sizeof text, "%s[Stage(Phases.Objects, -OFF$SET)]\nview V() { }\n", declarations);
+    open_document(text);
+    TIDE_CHECK(has(request("textDocument/hover"), "const int OFFSET = 4"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":10}"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+
+    snprintf(text, sizeof text, "%s[Sta$ge(Phases.Objects, -OFFSET)]\nview V() { }\n", declarations);
+    open_document(text);
+    TIDE_CHECK(has(request("textDocument/hover"), "enum's declaration order"));
+    snprintf(text, sizeof text, "%s[Stage(Phases.Objects, -OFFSET)]\nview V$() { }\n", declarations);
+    open_document(text);
+    TIDE_CHECK(has(request("textDocument/hover"), "Phase `Phases.Objects`, offset -4"));
+    snprintf(text, sizeof text, "%s[Stage(Phases.Objects, $-OFFSET)]\nview V() { }\n", declarations);
+    open_document(text);
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "Stage(Stages.Phase, int offset = 0)"));
+    TIDE_CHECK(has(signature, "\"activeParameter\":1"));
+
+    // A fully qualified phase indexes its namespace, enum type, and member separately.
+    open_document("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
+                  "[Stage(Frame.Pha$ses.Objects)]\nview V() { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
+    completion = complete("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
+                          "[Stage(Frame.$)]\nview V() { }\n");
+    TIDE_CHECK(offers(completion, "Phases") && !offers(completion, "Main") && !offers(completion, "V"));
+}
+
 TIDE_TEST(lsp_constants)
 {
     start();
@@ -3514,6 +3592,44 @@ TIDE_TEST(lsp_shaders_every_prefix_is_safe)
         cursor_character = program[n] == '\n' ? 0 : cursor_character + 1;
         if (program[n] == '\n') cursor_line++;
     }
+}
+
+TIDE_TEST(lsp_render_targets_texture_members_and_blit)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Buffers { RenderTarget scene; RenderTarget scratch; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "color") && offers(members, "Clear") && offers(members, "Mesh"));
+    TIDE_CHECK(offers(members, "Resize") && offers(members, "Dispose"));
+    TIDE_CHECK(!offers(members, "list") && !offers(members, "Blit"));
+    TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.window.$ }\n"), "Camera"));
+    TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.$ }\n"), "Blit"));
+    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, mut Color color, $"), "Texture"));
+    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, mut Color color, Texture source)\n"
+                              "{\n    color = source.$\n}\n"), "Sample"));
+    snprintf(program, sizeof program, "%sfrag Copy(Vertex v, mut Color color, Texture source)\n"
+                                      "{ color = source.Sample(v.uv); }\n"
+                                      "view V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget destination"));
+    TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Cl$ear(Color.black);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.Clear"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter]]"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(int width, int height)"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget(16, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(int width, int height)"));
+    snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Dis$pose();\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
 }
 
 // ---------------------------------------------------------------------------
