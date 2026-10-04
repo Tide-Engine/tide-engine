@@ -1,0 +1,585 @@
+{
+  "schema": 1,
+  "label": "native-phases",
+  "timestamp": "2026-10-04T22:23:57.740Z",
+  "results": "phases.jsonl",
+  "revision": "d6a284dda1ea7e2a5d208060f6f03acfefb8c408",
+  "dirty": "M bench/versus/CMakeLists.txt\n?? bench/results/phases.jsonl\n?? bench/versus/phases/",
+  "machine": {
+    "os": "win32",
+    "release": "10.0.26200",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor            ",
+    "logical_cpus": 24
+  },
+  "preset": "release",
+  "compiler": "Clang 23.1.2 (Windows MSVC target)",
+  "binary_sha256": {
+    "versus_life_control.exe": "4945ec942d6ff5ae98f563b0fba0a57b4dfe23b2bc2a082cc65b597d1aa4dd1b",
+    "versus_life_phases.exe": "81c8ce40681a3bc30ba2647eeee174b66c3b1b04c204c9b27dfc18199119b149",
+    "versus_events_control.exe": "a8351861192b9c96d90afafb2f1821ed3ec759f4a8810a0ef51df189086a3835",
+    "versus_events_phases.exe": "05f2319739423f53d533b2a5e62696713cc8cad74f4e20e54cf6b32caa9a9fc5"
+  },
+  "repeat": 5,
+  "threads": [
+    1,
+    12
+  ],
+  "protocol": "Sequential runs on an idle build: alternating control/profile order each repetition, identical fixture sizes/warmup/ticks and end-state digests. Control and profile share standalone harness and fixed counter-reset cache perturbation.",
+  "interpretation": [
+    "Life task phases sum elapsed worker spans, including descheduling; they are not tick-wall shares or CPU-cycle counts.",
+    "Life parallel_region includes all task phases; systems includes prepare/parallel/commit and scheduler work. Events apply/clear/heap are subintervals of replay. Do not add nested intervals.",
+    "Medians of phases do not add; mean shares only apply to compatible nonoverlapping intervals.",
+    "Clock and counter overhead is visible in paired whole-tick controls. Tiny copy/cleanup spans approach clock resolution; no mechanical clock subtraction is applied.",
+    "No snapshots in these fixtures; ordinary replay pays ownership checks, not shared-page clone cost.",
+    "Native Windows performance measurements only. WASI quick checks verify diagnostic correctness separately."
+  ],
+  "summary": [
+    {
+      "concept": "life",
+      "threads": 1,
+      "digest": "0xa8face01f7dcf932",
+      "control_ms": {
+        "median": 0.5706,
+        "min": 0.56925,
+        "max": 0.57415
+      },
+      "profiled_ms": {
+        "median": 0.61955,
+        "min": 0.611,
+        "max": 0.6236
+      },
+      "overhead_ratio": {
+        "median": 1.0857868909919384,
+        "min": 1.0733421168203776,
+        "max": 1.0885631528131308
+      },
+      "phases": {
+        "loop_prepare": {
+          "median_ms": {
+            "median": 0.0038,
+            "min": 0.0038,
+            "max": 0.0039
+          },
+          "mean_ms": {
+            "median": 0.00393,
+            "min": 0.003864,
+            "max": 0.004049
+          },
+          "calls_per_tick": 1
+        },
+        "window_gather": {
+          "median_ms": {
+            "median": 0.2133,
+            "min": 0.21045,
+            "max": 0.2169
+          },
+          "mean_ms": {
+            "median": 0.214834,
+            "min": 0.21115,
+            "max": 0.221379
+          },
+          "calls_per_tick": 256
+        },
+        "output_copy": {
+          "median_ms": {
+            "median": 0.01095,
+            "min": 0.0109,
+            "max": 0.0117
+          },
+          "mean_ms": {
+            "median": 0.011188,
+            "min": 0.010863,
+            "max": 0.011928
+          },
+          "calls_per_tick": 256
+        },
+        "cell_kernel": {
+          "median_ms": {
+            "median": 0.1721,
+            "min": 0.1708,
+            "max": 0.174
+          },
+          "mean_ms": {
+            "median": 0.172798,
+            "min": 0.171685,
+            "max": 0.178672
+          },
+          "calls_per_tick": 256
+        },
+        "window_writeback": {
+          "median_ms": {
+            "median": 0.15845,
+            "min": 0.1574,
+            "max": 0.16155
+          },
+          "mean_ms": {
+            "median": 0.155547,
+            "min": 0.15464,
+            "max": 0.164264
+          },
+          "calls_per_tick": 256
+        },
+        "grid_commit": {
+          "median_ms": {
+            "median": 0.0224,
+            "min": 0.022,
+            "max": 0.0227
+          },
+          "mean_ms": {
+            "median": 0.022535,
+            "min": 0.022078,
+            "max": 0.027506
+          },
+          "calls_per_tick": 1
+        },
+        "task_other": {
+          "median_ms": {
+            "median": 0.03,
+            "min": 0.02955,
+            "max": 0.0301
+          },
+          "mean_ms": {
+            "median": 0.029983,
+            "min": 0.029641,
+            "max": 0.03031
+          },
+          "calls_per_tick": 256
+        },
+        "parallel_region": {
+          "median_ms": {
+            "median": 0.5932,
+            "min": 0.58475,
+            "max": 0.5961
+          },
+          "mean_ms": {
+            "median": 0.591565,
+            "min": 0.583767,
+            "max": 0.610033
+          },
+          "calls_per_tick": 1
+        },
+        "systems": {
+          "median_ms": {
+            "median": 0.6194,
+            "min": 0.6109,
+            "max": 0.62355
+          },
+          "mean_ms": {
+            "median": 0.617704,
+            "min": 0.61004,
+            "max": 0.638478
+          },
+          "calls_per_tick": 1
+        },
+        "tick_cleanup": {
+          "median_ms": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "mean_ms": {
+            "median": 0.000026,
+            "min": 0.000024,
+            "max": 0.000031
+          },
+          "calls_per_tick": 1
+        }
+      },
+      "c_ms": {
+        "median": 0.078,
+        "min": 0.0776,
+        "max": 0.0782
+      }
+    },
+    {
+      "concept": "life",
+      "threads": 12,
+      "digest": "0xa8face01f7dcf932",
+      "control_ms": {
+        "median": 0.28725,
+        "min": 0.271,
+        "max": 0.2947
+      },
+      "profiled_ms": {
+        "median": 0.28915,
+        "min": 0.2793,
+        "max": 0.2997
+      },
+      "overhead_ratio": {
+        "median": 1.0306353350739772,
+        "min": 0.9584763212079616,
+        "max": 1.052502194907814
+      },
+      "phases": {
+        "loop_prepare": {
+          "median_ms": {
+            "median": 0.0052,
+            "min": 0.00485,
+            "max": 0.0055
+          },
+          "mean_ms": {
+            "median": 0.005269,
+            "min": 0.005181,
+            "max": 0.005515
+          },
+          "calls_per_tick": 1
+        },
+        "window_gather": {
+          "median_ms": {
+            "median": 0.38875,
+            "min": 0.3806,
+            "max": 0.39705
+          },
+          "mean_ms": {
+            "median": 0.391727,
+            "min": 0.382198,
+            "max": 0.400448
+          },
+          "calls_per_tick": 256
+        },
+        "output_copy": {
+          "median_ms": {
+            "median": 0.0174,
+            "min": 0.0167,
+            "max": 0.0185
+          },
+          "mean_ms": {
+            "median": 0.017404,
+            "min": 0.016805,
+            "max": 0.018598
+          },
+          "calls_per_tick": 256
+        },
+        "cell_kernel": {
+          "median_ms": {
+            "median": 0.1997,
+            "min": 0.18925,
+            "max": 0.2093
+          },
+          "mean_ms": {
+            "median": 0.201676,
+            "min": 0.193536,
+            "max": 0.212719
+          },
+          "calls_per_tick": 256
+        },
+        "window_writeback": {
+          "median_ms": {
+            "median": 0.47195,
+            "min": 0.46905,
+            "max": 0.4815
+          },
+          "mean_ms": {
+            "median": 0.47599,
+            "min": 0.47128,
+            "max": 0.48103
+          },
+          "calls_per_tick": 256
+        },
+        "grid_commit": {
+          "median_ms": {
+            "median": 0.1215,
+            "min": 0.10715,
+            "max": 0.12605
+          },
+          "mean_ms": {
+            "median": 0.119593,
+            "min": 0.111581,
+            "max": 0.124045
+          },
+          "calls_per_tick": 1
+        },
+        "task_other": {
+          "median_ms": {
+            "median": 0.12555,
+            "min": 0.1186,
+            "max": 0.12915
+          },
+          "mean_ms": {
+            "median": 0.126103,
+            "min": 0.119172,
+            "max": 0.128728
+          },
+          "calls_per_tick": 256
+        },
+        "parallel_region": {
+          "median_ms": {
+            "median": 0.11455,
+            "min": 0.11285,
+            "max": 0.11645
+          },
+          "mean_ms": {
+            "median": 0.117754,
+            "min": 0.113966,
+            "max": 0.118891
+          },
+          "calls_per_tick": 1
+        },
+        "systems": {
+          "median_ms": {
+            "median": 0.2886,
+            "min": 0.27915,
+            "max": 0.29945
+          },
+          "mean_ms": {
+            "median": 0.293374,
+            "min": 0.283364,
+            "max": 0.300476
+          },
+          "calls_per_tick": 1
+        },
+        "tick_cleanup": {
+          "median_ms": {
+            "median": 0.0001,
+            "min": 0.0001,
+            "max": 0.0001
+          },
+          "mean_ms": {
+            "median": 0.000107,
+            "min": 0.000096,
+            "max": 0.000122
+          },
+          "calls_per_tick": 1
+        }
+      },
+      "c_ms": {
+        "median": 0.0777,
+        "min": 0.0772,
+        "max": 0.078
+      }
+    },
+    {
+      "concept": "events",
+      "threads": 1,
+      "digest": "0x83c5fb492d556932",
+      "control_ms": {
+        "median": 0.88295,
+        "min": 0.87295,
+        "max": 0.93175
+      },
+      "profiled_ms": {
+        "median": 0.87845,
+        "min": 0.8726,
+        "max": 0.89285
+      },
+      "overhead_ratio": {
+        "median": 0.9902405810258739,
+        "min": 0.9427958143278776,
+        "max": 1.0136319376825706
+      },
+      "phases": {
+        "record_and_schedule": {
+          "median_ms": {
+            "median": 0.2056,
+            "min": 0.2051,
+            "max": 0.2078
+          },
+          "mean_ms": {
+            "median": 0.2085765,
+            "min": 0.20716,
+            "max": 0.216622
+          },
+          "calls_per_tick": 1
+        },
+        "replay_and_cleanup": {
+          "median_ms": {
+            "median": 0.6695,
+            "min": 0.6666,
+            "max": 0.6865
+          },
+          "mean_ms": {
+            "median": 0.680357,
+            "min": 0.6688485,
+            "max": 0.690709
+          },
+          "calls_per_tick": 1
+        },
+        "tick_other": {
+          "median_ms": {
+            "median": 0.0001,
+            "min": 0.0001,
+            "max": 0.0001
+          },
+          "mean_ms": {
+            "median": 0.00008163,
+            "min": 0.0000741,
+            "max": 0.0000866
+          },
+          "calls_per_tick": 1
+        },
+        "apply_commands": {
+          "median_ms": {
+            "median": 0.6684,
+            "min": 0.6657,
+            "max": 0.68545
+          },
+          "mean_ms": {
+            "median": 0.678951,
+            "min": 0.6678125,
+            "max": 0.689558
+          },
+          "calls_per_tick": 1
+        },
+        "queue_clear": {
+          "median_ms": {
+            "median": 0.0008,
+            "min": 0.0008,
+            "max": 0.001
+          },
+          "mean_ms": {
+            "median": 0.000914,
+            "min": 0.000877,
+            "max": 0.0012065
+          },
+          "calls_per_tick": 1
+        },
+        "heap_cleanup": {
+          "median_ms": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "mean_ms": {
+            "median": 0.000034,
+            "min": 0.000032,
+            "max": 0.0000425
+          },
+          "calls_per_tick": 1
+        }
+      },
+      "c_ms": {
+        "median": 0.1201,
+        "min": 0.1194,
+        "max": 0.122
+      }
+    },
+    {
+      "concept": "events",
+      "threads": 12,
+      "digest": "0x83c5fb492d556932",
+      "control_ms": {
+        "median": 0.88195,
+        "min": 0.8719,
+        "max": 0.88535
+      },
+      "profiled_ms": {
+        "median": 0.88065,
+        "min": 0.8751,
+        "max": 0.898
+      },
+      "overhead_ratio": {
+        "median": 0.996088213617552,
+        "min": 0.9956197735934922,
+        "max": 1.017102729640956
+      },
+      "phases": {
+        "record_and_schedule": {
+          "median_ms": {
+            "median": 0.2068,
+            "min": 0.2058,
+            "max": 0.211
+          },
+          "mean_ms": {
+            "median": 0.2110385,
+            "min": 0.2092935,
+            "max": 0.2232945
+          },
+          "calls_per_tick": 1
+        },
+        "replay_and_cleanup": {
+          "median_ms": {
+            "median": 0.67285,
+            "min": 0.66775,
+            "max": 0.68485
+          },
+          "mean_ms": {
+            "median": 0.6771665,
+            "min": 0.675114,
+            "max": 0.70239
+          },
+          "calls_per_tick": 1
+        },
+        "tick_other": {
+          "median_ms": {
+            "median": 0.0001,
+            "min": 0.0001,
+            "max": 0.0001
+          },
+          "mean_ms": {
+            "median": 0.000083125,
+            "min": 0.00006959,
+            "max": 0.000089595
+          },
+          "calls_per_tick": 1
+        },
+        "apply_commands": {
+          "median_ms": {
+            "median": 0.67145,
+            "min": 0.6666,
+            "max": 0.68375
+          },
+          "mean_ms": {
+            "median": 0.6757835,
+            "min": 0.673936,
+            "max": 0.701128
+          },
+          "calls_per_tick": 1
+        },
+        "queue_clear": {
+          "median_ms": {
+            "median": 0.0009,
+            "min": 0.0009,
+            "max": 0.0012
+          },
+          "mean_ms": {
+            "median": 0.0010495,
+            "min": 0.0010145,
+            "max": 0.0012045
+          },
+          "calls_per_tick": 1
+        },
+        "heap_cleanup": {
+          "median_ms": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "mean_ms": {
+            "median": 0.0000345,
+            "min": 0.0000325,
+            "max": 0.000046
+          },
+          "calls_per_tick": 1
+        }
+      },
+      "c_ms": {
+        "median": 0.1198,
+        "min": 0.1192,
+        "max": 0.1202
+      }
+    }
+  ],
+  "flags": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "validation": {
+    "native_quick": 8,
+    "wasi_quick": 8,
+    "requested_threads": [
+      1,
+      12
+    ],
+    "all_digests_match": true,
+    "transform_preserves_original_nonblank_lines": true
+  },
+  "sampling_limitation": "Windows xperf kernel PROFILE flags refused (0x3ec); WPR CPU profile refused enabling performance-profiling policy (0xc5585011). WPR status confirmed no trace running.",
+  "scheduler": {
+    "native_parallel_work_threshold": 20000000,
+    "events_default_estimated_system_work": 7601519,
+    "events_default_recording_is_serial": true
+  }
+}
