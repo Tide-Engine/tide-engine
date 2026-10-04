@@ -7,6 +7,7 @@
 
 #include "tide/platform.h"
 #include "tide/session.h"
+#include "tide/time.h"
 #include "tide_test.h"
 
 typedef struct world {
@@ -125,7 +126,47 @@ static void sample(void *user, const uint32_t t, void *input)
     memcpy(input, &value, 4);
 }
 
-TIDE_TEST(udp_players_play_together)
+typedef struct receiver {
+    tide_transport transport;
+    bool paused;
+} receiver;
+
+static void send(void *self, const tide_address to, const void *data, const uint32_t size)
+{
+    const receiver *r = self;
+    r->transport.send(r->transport.self, to, data, size);
+}
+
+static uint32_t receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+{
+    const receiver *r = self;
+    return r->paused ? 0u : r->transport.receive(r->transport.self, from, data, capacity);
+}
+
+static void close_receiver(void *self)
+{
+    const receiver *r = self;
+    r->transport.close(r->transport.self);
+}
+
+static bool drain(tide_server *server, tide_client *const clients[2], const double now, const uint32_t through)
+{
+    const uint64_t began = tide_time_now_ns();
+    for (;;) {
+        tide_server_update(server, now);
+        bool complete = true;
+        for (int i = 0; i < 2; i++) {
+            tide_client_update(clients[i], now);
+            const tide_client_status s = tide_client_status_of(clients[i]);
+            complete &= s.state == TIDE_SESSION_CONNECTED && s.verified_tick >= through;
+        }
+        if (complete) return true;
+        if (tide_time_now_ns() - began >= 5000000000ull) return false;
+        tide_yield();
+    }
+}
+
+static void players_play_together(const bool delayed)
 {
     // A free port: the first that opens
     tide_transport network;
@@ -144,18 +185,32 @@ TIDE_TEST(udp_players_play_together)
 
     int32_t factors[2] = {1, 3};
     tide_client *clients[2];
+    receiver receivers[2] = {0};
     for (int i = 0; i < 2; i++) {
-        tide_transport t;
-        TIDE_REQUIRE(tide_platform_udp_open_local(0, &t));
+        TIDE_REQUIRE(tide_platform_udp_open_local(0, &receivers[i].transport));
+        const tide_transport t = {.self = &receivers[i], .send = send, .receive = receive, .close = close_receiver};
         clients[i] = tide_client_create(&(tide_client_desc){.game = &game, .transport = t, .server = address,
                                                             .sample = sample, .user = &factors[i], .lead = 2},
                                         now);
+        TIDE_REQUIRE(clients[i] != NULL);
     }
     for (int frame = 0; frame < 240; frame++) {
         now += 1.0 / 60.0;
-        for (int i = 0; i < 2; i++) tide_client_update(clients[i], now);
+        for (int i = 0; i < 2; i++) {
+            receivers[i].paused = delayed && frame >= 224;
+            tide_client_update(clients[i], now);
+        }
         tide_server_update(server, now);
     }
+    const uint32_t through = tide_server_tick(server);
+    for (int i = 0; i < 2; i++) {
+        if (delayed) TIDE_CHECK(tide_client_status_of(clients[i]).verified_tick + 10u <= through);
+        receivers[i].paused = false;
+    }
+    // The simulation's four seconds can run before the kernel delivers its
+    // datagrams. Finish receiving those ticks without advancing the match.
+    TIDE_CHECK(drain(server, clients, now, through));
+    TIDE_CHECK(tide_server_tick(server) == through);
     const world *w = tide_server_world(server);
     TIDE_CHECK(w->joined == 2);
     TIDE_CHECK(w->sum != 0);
@@ -164,9 +219,20 @@ TIDE_TEST(udp_players_play_together)
         TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
         TIDE_CHECK(s.resyncs == 0);
         TIDE_CHECK(s.verified_tick + 10u > tide_server_tick(server));
+        TIDE_CHECK(s.verified_tick == through);
         tide_client_destroy(clients[i]);
     }
     tide_server_destroy(server);
+}
+
+TIDE_TEST(udp_players_play_together)
+{
+    players_play_together(false);
+}
+
+TIDE_TEST(udp_players_play_together_after_delayed_receive)
+{
+    players_play_together(true);
 }
 
 TIDE_TEST(udp_addresses)
