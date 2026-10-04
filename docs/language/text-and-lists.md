@@ -85,6 +85,32 @@ Changing a list needs something that can change: a `mut` component or singleton,
 
 Elements are built-in types, text, enums and structs. Lists of lists, and structs holding lists, aren't supported yet. ECS data doesn't go in lists either: keep an `Entity` instead.
 
+### Sorting
+
+`Sort` sorts a list by a comparison written after the call. Its two names are the elements it compares, and the block says whether the first goes before the second:
+
+```csharp
+system Rank(mut Scoreboard board)
+{
+    board.players.Sort(a, b) { return a.score > b.score; }
+}
+```
+
+The sort is stable: players with the same score keep the order they were in. The comparison can read anything around it, like a variable or a field, but it changes nothing: it runs again and again as the list sorts, in an order nothing promises, so it can't spawn, send, wait, draw or write outside itself either, and tidec says so. It returns a `bool` on every path.
+
+```csharp
+var center = arena.center;
+enemies.Sort(a, b)
+{
+    var da = Math.Distance(a.position, center);
+    var db = Math.Distance(b.position, center);
+    if (da != db) return da < db;
+    return a.id < b.id;
+}
+```
+
+Sorting works in systems, views, handlers and plain functions; not yet in methods or async code.
+
 ### Going through every element at once
 
 A `parallel` loop goes through a list's elements at once, on threads, as it goes through a grid's cells (see [Grids](./grids.md#going-through-every-cell)). Its places are the elements' indices:

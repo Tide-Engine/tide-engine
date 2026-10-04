@@ -1,0 +1,108 @@
+// List.Sort with a comparison block: stable, by whatever the block compares.
+
+struct Player
+{
+    string name;
+    int score;
+    int joined;
+}
+
+component Board
+{
+    List<int> numbers = [5, 3, 9, 1, 3, 8];
+    List<Player> players;
+    List<string> names = ["pear", "apple", "fig", "banana"];
+    List<int> big;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    string order;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Board, Results);
+}
+
+void Expect(mut Results t, bool ok)
+{
+    t.checks += 1;
+    if (ok) t.passed += 1;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+// A function sorts a list it's given, by a bound it's given
+List<int> Descending(List<int> values, int atLeast)
+{
+    mut var sorted = values;
+    sorted.Sort(a, b)
+    {
+        // Values under the bound go last, descending too
+        if (a < atLeast && b >= atLeast) return false;
+        if (a >= atLeast && b < atLeast) return true;
+        return a > b;
+    }
+    return sorted;
+}
+
+system Use(mut Board board, mut Results t)
+{
+    if (t.checks > 0) return; // Once
+
+    // Ascending, with the list's own copy of the elements
+    board.numbers.Sort(a, b) { return a < b; }
+    Expect(t, board.numbers[0] == 1 && board.numbers[1] == 3 && board.numbers[2] == 3 && board.numbers[5] == 9);
+
+    // Descending through a function, with a captured bound
+    var down = Descending(board.numbers, 4);
+    Expect(t, down[0] == 9 && down[1] == 8 && down[2] == 5 && down[3] == 3 && down[4] == 3 && down[5] == 1);
+
+    // Structs, by a field, captured locals, and stable: equal scores keep the order they joined in
+    board.players.Add(Player { name = "ann", score = 10, joined = 1 });
+    board.players.Add(Player { name = "bob", score = 30, joined = 2 });
+    board.players.Add(Player { name = "cid", score = 10, joined = 3 });
+    board.players.Add(Player { name = "dee", score = 20, joined = 4 });
+    board.players.Add(Player { name = "eve", score = 10, joined = 5 });
+    var bonus = 100;
+    board.players.Sort(a, b)
+    {
+        var x = a.score + bonus;
+        var y = b.score + bonus;
+        return x > y;
+    }
+    mut var order = "";
+    foreach (var p in board.players) order = $"{order}{p.name} ";
+    Expect(t, order == "bob dee ann cid eve ");
+    t.order = order;
+
+    // Text, by length then alphabetically by the first character
+    board.names.Sort(a, b)
+    {
+        if (a.length != b.length) return a.length < b.length;
+        return a.IndexOf("a") > b.IndexOf("a");
+    }
+    Expect(t, board.names[0] == "fig" && board.names[1] == "pear" && board.names[2] == "apple" && board.names[3] == "banana");
+
+    // Empty and single lists, and one with text keys in a map nearby
+    mut List<int> none = [];
+    none.Sort(a, b) { return a < b; }
+    mut List<int> one = [7];
+    one.Sort(a, b) { return a < b; }
+    Expect(t, none.count == 0 && one.count == 1 && one[0] == 7);
+
+    // A big list, in chunks, sorted as a whole
+    for (var i = 0; i < 6000; i++) board.big.Add((i * 7919) % 6007);
+    board.big.Sort(a, b) { return a < b; }
+    mut var inOrder = true;
+    for (var i = 1; i < board.big.count; i++)
+    {
+        if (board.big[i - 1] > board.big[i]) inOrder = false;
+    }
+    Expect(t, inOrder && board.big.count == 6000 && board.big[0] == 0 && board.big[5999] == 6006);
+}

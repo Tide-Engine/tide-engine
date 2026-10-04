@@ -567,6 +567,12 @@ static void walk_expr(const expr *e)
 
     case E_METHOD: {
         walk_expr(e->object);
+        for (int k = 0; k < 2; k++) { // items.Sort(a, b) { ... }: its two elements, declared by the call
+            const stmt *local = e->compare[k];
+            if (!local) continue;
+            add_occ((occurrence){.at = local->name_at, .len = local->name.len, .kind = OCC_LOCAL, .declaration = true, .local = local,
+                                 .name = local->name, .type = local->type});
+        }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
                         .call = e->call};
         if (e->call != CALL_NONE) vec_push(A.calls, e);
@@ -1310,6 +1316,7 @@ static const method_form list_calls[] = {
     {"Clear", "Clear()", "Removes every element."},
     {"Contains", "Contains(T item) -> bool", "Whether an element is equal to `item`."},
     {"IndexOf", "IndexOf(T item) -> int", "Where the first element equal to `item` is, or -1."},
+    {"Sort", "Sort(a, b) { ... }", "Sorts the elements, stable: the block says whether `a` goes before `b`, as `return a.x < b.x;`. It changes nothing else."},
 };
 
 // A map's and a set's methods, as the checker takes them: reading and writing values is indexing.
@@ -3495,7 +3502,12 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
             collect_bindings(s->cond, sc);
             collect_body(&s->then_stmt, at, sc);
         }
-        if (s->kind == S_EXPR && block_contains(s->value->block, at)) collect_locals(s->value->block, at, sc);
+        if (s->kind == S_EXPR && block_contains(s->value->block, at)) {
+            for (int k = 0; k < 2; k++) { // items.Sort(a, b) { ... }: its two elements
+                if (s->value->compare[k]) vec_push(sc->locals, s->value->compare[k]);
+            }
+            collect_locals(s->value->block, at, sc);
+        }
         if (s->kind == S_SWITCH && loc_cmp(at, s->end) <= 0) {
             // The section the cursor is in: from its first label to the next section's.
             for (int k = 0; k < s->cases.count; k++) {
@@ -4908,7 +4920,12 @@ static bool local_named(const stmt *s, const str name)
             }
         }
     }
-    if (s->kind == S_EXPR) return local_named(s->value->block, name);
+    if (s->kind == S_EXPR) {
+        for (int k = 0; k < 2; k++) {
+            if (s->value->compare[k] && str_eq(s->value->compare[k]->name, name)) return true;
+        }
+        return local_named(s->value->block, name);
+    }
     if (s->kind == S_FOREACH || s->kind == S_PARALLEL) return str_eq(s->name, name) || local_named(s->then_stmt, name);
     if (s->kind == S_WHILE || s->kind == S_FOR) return local_named(s->init, name) || local_named(s->then_stmt, name);
     return s->kind == S_IF && (local_named(s->then_stmt, name) || local_named(s->else_stmt, name));

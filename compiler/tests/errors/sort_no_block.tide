@@ -1,0 +1,12 @@
+// expect: Sort names the two elements it compares, then says in a block whether the first goes before the second
+component Board
+{
+    List<int> numbers;
+}
+
+scene Main { }
+
+system Order(mut Board board)
+{
+    board.numbers.Sort();
+}

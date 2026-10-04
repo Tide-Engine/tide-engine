@@ -660,11 +660,12 @@ system Advance(mut Match match)
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt` or `Clear`), can't end the loop, wait, spawn or send, and so on.
 - A parallel loop goes through a list the world keeps, a component's or a singleton's, not a variable's, and one whose elements hold no text: steps run on threads, where text can't be made.
+- `items.Sort(a, b) { return a.x < b.x; }` sorts a list, stable, by a comparison written after the call: its two names are the elements it compares, read-only copies of the element type, and the block says whether the first goes before the second, as `return a.x < b.x;`, on every path. Elements the comparison doesn't order keep their order. It runs again and again as the list sorts, in an order nothing promises, so it changes nothing outside it (not the list, not a field, not an outer variable), and can't spawn, send, wait, draw, use the GUI, change scenes or the session, or call C; it reads what it likes: fields, the code's parameters and variables. `break`, `continue` and the comparison's `return` are its own, not the code's around it. It sorts in systems, views, handlers and plain functions, and not yet in methods, async code, functions that take an Action, blocks written after a call, or the input's code. Merge sort, so the same comparisons in the same order on every machine.
 
 ### Open
 
 - Lists of lists, and lists of maps.
-- Sorting, and searching with a condition.
+- Searching with a condition, and sorting by a key.
 - Fixed-size arrays inside components, which need no heap.
 
 ## Maps and sets
