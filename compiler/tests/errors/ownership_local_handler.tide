@@ -1,0 +1,5 @@
+// expect: 'with ownership' filters the match's entities, and local handlers only take local state for now
+local event Blink { }
+scene Main { }
+view Show() { Send(Blink); }
+local event(Blink) Count(with ownership) { }

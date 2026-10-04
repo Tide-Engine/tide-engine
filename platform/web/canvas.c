@@ -144,6 +144,18 @@ void tide_window_mouse_state(tide_window_mouse *out)
     out->wheel_x = tide_web_take_wheel_x();
     out->wheel_y = tide_web_take_wheel_y();
     out->buttons = (uint32_t)tide_web_mouse_buttons();
+    // What the mouse moved is taken either way, so none of it is left for the
+    // next time the canvas has the cursor.
+    const float moved_x = tide_web_take_mouse_moved_x(), moved_y = tide_web_take_mouse_moved_y();
+    out->locked = tide_web_cursor_locked();
+    out->moved_x = out->locked ? moved_x : 0.0f;
+    out->moved_y = out->locked ? moved_y : 0.0f;
+}
+
+// The page asks the browser, when it can (tide.js).
+void tide_window_cursor_lock(const bool lock)
+{
+    tide_web_cursor_lock(lock);
 }
 
 void tide_window_gamepad_state(tide_window_gamepad *out)

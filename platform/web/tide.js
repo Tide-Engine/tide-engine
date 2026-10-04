@@ -64,6 +64,7 @@
     let stopped = false;
     function finish(code) {
         stopped = true;
+        endCursorLock();
         endThreads();
         flush(1);
         flush(2);
@@ -225,7 +226,14 @@
         document.body.appendChild(field);
         return field;
     }
-    addEventListener('keydown', event => { onKey(event, 1); onType(event); });
+    addEventListener('keydown', event => {
+        onKey(event, 1);
+        onType(event);
+        // A key press is when the browser gives the cursor's lock (see below):
+        // not Escape, which is how the player takes the cursor back, nor a key
+        // that's only still held
+        if (event.code !== 'Escape' && !event.repeat && !(field && event.target === field)) askForCursor();
+    });
     // Ctrl+V (Cmd+V) pastes as typing, but for newlines and tabs.
     addEventListener('paste', event => {
         const text = event.clipboardData ? event.clipboardData.getData('text') : '';
@@ -249,7 +257,8 @@
         canvas.focus();
     }
     addEventListener('keyup', event => onKey(event, 0));
-    addEventListener('blur', () => { keysHeld.fill(0); keysTapped.fill(0); }); // Keys released elsewhere never send keyup
+    // Keys and buttons released elsewhere never send keyup or mouseup
+    addEventListener('blur', () => { keysHeld.fill(0); keysTapped.fill(0); mouse.buttons = 0; });
 
     // The canvas's size in CSS pixels, which the program counts in, as desktop
     // builds count in the display's logical pixels. It renders devicePixelRatio
@@ -275,9 +284,16 @@
 
     // The mouse over the canvas, in CSS pixels. Buttons in tide_mouse's order:
     // left, right, middle, back, forward (the DOM's is left, middle, right, ...).
-    const mouse = { x: 0, y: 0, buttons: 0, tapped: 0, wheelX: 0, wheelY: 0 }; // Taps as for keys
+    // While the canvas has the cursor's lock (below), the cursor stays where
+    // it was, and what the mouse moved adds up until the program takes it.
+    const mouse = { x: 0, y: 0, buttons: 0, tapped: 0, wheelX: 0, wheelY: 0, movedX: 0, movedY: 0 }; // Taps as for keys
     const buttonBit = [1, 4, 2, 8, 16];
     function onMouseMove(event) {
+        if (cursor.locked) { // Its events say where the cursor was locked, and how the mouse moved
+            mouse.movedX += event.movementX || 0;
+            mouse.movedY += event.movementY || 0;
+            return;
+        }
         const rect = canvas.getBoundingClientRect();
         mouse.x = (event.clientX - rect.left) * size.width / (rect.width || 1);
         mouse.y = (event.clientY - rect.top) * size.height / (rect.height || 1);
@@ -288,6 +304,7 @@
         mouse.buttons |= buttonBit[event.button] || 0;
         mouse.tapped |= buttonBit[event.button] || 0;
         canvas.focus();
+        askForCursor(); // A click is when the browser gives the lock
     });
     addEventListener('mouseup', event => { mouse.buttons &= ~(buttonBit[event.button] || 0); });
     canvas.addEventListener('wheel', event => {
@@ -295,6 +312,59 @@
         mouse.wheelY -= Math.sign(event.deltaY); // Positive away from the user
         event.preventDefault();
     }, { passive: false });
+
+    // The cursor's lock (tide_web_cursor_lock): the canvas's pointer lock,
+    // which hides the cursor and keeps it there, for a camera that looks
+    // around. The program says whether it wants it, and the browser decides:
+    //
+    // - It only gives the lock when asked from a click or a key press. So the
+    //   page asks at the next one while the program wants it, and at once when
+    //   the program starts wanting it, which works while the last one still
+    //   counts (a button's click that starts the game).
+    // - It takes the lock back when the player presses Escape, which the page
+    //   can't prevent, and may never see the key of. So Escape never asks.
+    // - It takes it back when the page loses the focus or is hidden, too.
+    // - For a moment after Escape, it refuses to give it again.
+    //
+    // The program is told what the browser says (pointerlockchange), never
+    // what was asked. Nothing asks again on its own, on a timer or otherwise:
+    // a lock refused or taken back waits for the player's next click or key.
+    const cursor = { wanted: false, locked: false, asking: false };
+    function askForCursor(plain) {
+        if (!cursor.wanted || cursor.locked || cursor.asking || document.hidden || !canvas.requestPointerLock) return;
+        cursor.asking = true;
+        let asked;
+        try {
+            // The mouse's own movement, without the system's acceleration, where the browser has it
+            asked = plain ? canvas.requestPointerLock() : canvas.requestPointerLock({ unadjustedMovement: true });
+        } catch {
+            cursor.asking = false;
+            return;
+        }
+        // Browsers that answer say why they refused; all of them send an event
+        if (asked && asked.catch) {
+            asked.catch(error => {
+                cursor.asking = false;
+                // This system has no such movement: the usual kind, which is the same request
+                if (!plain && error && error.name === 'NotSupportedError') askForCursor(true);
+            });
+        }
+    }
+    function letCursorGo() {
+        if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+    }
+    // The program is over: nothing wants the cursor any more.
+    function endCursorLock() {
+        cursor.wanted = false;
+        letCursorGo();
+    }
+    document.addEventListener('pointerlockchange', () => {
+        cursor.asking = false;
+        cursor.locked = document.pointerLockElement === canvas;
+        mouse.movedX = mouse.movedY = 0;
+        if (cursor.locked && !cursor.wanted) letCursorGo(); // Given after the program stopped wanting it
+    });
+    document.addEventListener('pointerlockerror', () => { cursor.asking = false; });
 
     // Fingers on the canvas, from pointer events, in the order they happened;
     // the program takes them each frame. A finger is only the touchscreen's:
@@ -431,6 +501,17 @@
         mouse_buttons() { const held = mouse.buttons | mouse.tapped; mouse.tapped = 0; return held; },
         take_wheel_x() { const v = mouse.wheelX; mouse.wheelX = 0; return v; },
         take_wheel_y() { const v = mouse.wheelY; mouse.wheelY = 0; return v; },
+        take_mouse_moved_x() { const v = mouse.movedX; mouse.movedX = 0; return v; },
+        take_mouse_moved_y() { const v = mouse.movedY; mouse.movedY = 0; return v; },
+        cursor_lock(lock) {
+            lock = !!lock;
+            if (lock === cursor.wanted) return;
+            cursor.wanted = lock;
+            if (!lock) letCursorGo();
+            // At once, if a click or a key press still counts; else at the next one
+            else if (!navigator.userActivation || navigator.userActivation.isActive) askForCursor();
+        },
+        cursor_locked: () => cursor.locked && !document.hidden ? 1 : 0,
         touchscreen: () => (navigator.maxTouchPoints || 0) > 0 ? 1 : 0,
         take_touch() { touchTaken = touches.shift() || null; return touchTaken ? 1 : 0; },
         touch_phase: () => touchTaken ? touchTaken.phase : 0,
@@ -1278,6 +1359,7 @@
 
     function fail(error) {
         stopped = true;
+        endCursorLock();
         endThreads();
         printErr('tide: ' + (error && error.stack || error));
         if (config.onAbort) config.onAbort(error);

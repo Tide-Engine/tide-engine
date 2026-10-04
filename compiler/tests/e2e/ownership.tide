@@ -1,0 +1,111 @@
+// Ownership: a view `with ownership` runs for the entities this machine's
+// player owns, and one `without ownership` for every other.
+
+component Body
+{
+    float2 position;
+}
+
+component Flag
+{
+    int color;
+}
+
+component Hidden { }
+
+singleton Trick
+{
+    bool hide;
+}
+
+local singleton Tally
+{
+    int mine;
+    int rest;
+    int share;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float2(1, 0) }, Owner { player = PlayerID(0) });
+    Spawn(Body { position = float2(2, 0) }, Owner { player = PlayerID(1) });
+    Spawn(Body { position = float2(3, 0) });        // No Owner at all
+    Spawn(Body { position = float2(4, 0) }, Owner); // An Owner, of no player
+    Spawn(Flag, Owner { player = PlayerID(0) });    // Player 0's too, in another archetype
+}
+
+system Drift(mut Body body)
+{
+    body.position.y += 1;
+}
+
+// Hidden is a tag that's added, so it's sparse: a row's filter, like ownership.
+system Hide(Trick trick, Owner owner)
+{
+    if (trick.hide && owner.player == PlayerID(1)) this.Add(Hidden);
+}
+
+view Mine(Body body, with ownership)
+{
+    Draw.Circle(body.position, 1, Color.yellow);
+}
+
+// Other players' entities, nobody's, and those with no Owner
+view Others(Body body, without ownership)
+{
+    Draw.Rect(body.position, float2(1, 1), Color.gray);
+}
+
+// With `with Owner`: only those somebody else owns, or nobody
+view Rivals(Body body, with Owner, without ownership)
+{
+    Draw.WireCircle(body.position, 1, Color.red);
+}
+
+// The Owner it filters by is a parameter like any other
+view Named(Body body, Owner owner, with ownership)
+{
+    Draw.WireRect(body.position, float2(owner.player == PlayerID(0) ? 10 : 20), Color.white);
+}
+
+// Beside a sparse component's filter
+view Shown(Body body, with ownership, without Hidden)
+{
+    Draw.Line(body.position, body.position + float2(1, 0), Color.green);
+}
+
+// By the filter alone: once for each entity
+view CountMine(mut Tally tally, with ownership)
+{
+    tally.mine += 1;
+}
+
+view CountRest(mut Tally tally, without ownership)
+{
+    tally.rest += 1;
+}
+
+// `ownership` is a word of its own only right after `with` and `without`:
+// everywhere else it's a name like any other.
+local singleton ownership
+{
+    int ownership = 3;
+}
+
+int Twice(int ownership)
+{
+    return ownership * 2;
+}
+
+int Thrice(int value)
+{
+    var ownership = value * 3;
+    return ownership;
+}
+
+view Share(mut Tally tally, ownership ownership)
+{
+    tally.share = Twice(ownership.ownership) + Thrice(ownership.ownership);
+}

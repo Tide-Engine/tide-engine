@@ -1594,6 +1594,57 @@ static bool check_typed_use(checker *c, const loc at)
     return check_frame_use(c, at, "Devices");
 }
 
+// Cursor.Lock() and Cursor.locked: the mouse's cursor is this machine's, so
+// the match never calls or reads either. A view asks for the lock each frame
+// it wants the mouse, as do the functions it calls, and they read whether the
+// window holds it. The input's Sample reads that too, once per tick, with the
+// devices it's sampling.
+static bool check_cursor_use(checker *c, const loc at, const bool lock)
+{
+    const char *what = lock ? "call Cursor.Lock" : "read Cursor.locked";
+    if (c->in_input && !c->method) {
+        if (!lock && !c->in_sanitize) return true;
+        if (c->in_sanitize) {
+            diag_error(at, "Sanitize runs on every machine for every player's input, so it can't %s", what);
+            diag_note(lock ? "a view calls it, every frame the game wants the mouse"
+                           : "Sample reads it, on the machine the input comes from");
+        } else {
+            diag_error(at, "Sample makes this machine's input once per tick, so it can't call Cursor.Lock");
+            diag_note("a view calls it, every frame the game wants the mouse; Sample reads 'Cursor.locked'");
+        }
+        return false;
+    }
+    const decl *code = c->method ? NULL : c->system;
+    if (code && code->kind == DECL_SYSTEM && !code->is_view && !code->is_local) {
+        diag_error(at, "the match runs the same on every machine, so it can't %s", what);
+        diag_note(lock ? "the cursor is this machine's: a view calls it, every frame the game wants the mouse"
+                       : "the cursor is this machine's: the input's Sample reads it, and puts what the match needs in "
+                         "the input, like 'if (Cursor.locked) look = Devices.mouse.delta;'");
+        return false;
+    }
+    if (in_async_function(c)) {
+        diag_error(at, "a task runs between frames, so it can't %s", what);
+        diag_note(lock ? "a view calls it, every frame the game wants the mouse"
+                       : "read it in the view that starts it, and pass it what it needs");
+        return false;
+    }
+    if (c->method && c->method->kind == DECL_FUNCTION) {
+        if (!c->method->draws) {
+            c->method->draws = true;
+            c->method->draws_at = at;
+            c->method->frame_cursor = true;
+        }
+        return true;
+    }
+    if (!c->method && in_view(c)) return true;
+    diag_error(at, lock ? "Cursor.Lock can only be called in views, and in functions they call"
+                        : "Cursor.locked can only be read in views, in functions they call, and in the input's Sample");
+    if (c->method) diag_note("methods can't; a function can, like 'void Look(Camera camera) { ... }'");
+    else if (lock) diag_note("it's asked every frame the game wants the mouse, and views run once per frame");
+    else diag_note("views run once per frame: keep what a handler needs in local state");
+    return false;
+}
+
 // The event Send takes: `RoundOver` with its defaults, `Hit { ... }`, or any
 // value of an event type, like a handler's own event passed on. Returns the
 // event, or NULL after reporting an error.
@@ -2628,12 +2679,21 @@ static type check_method(checker *c, expr *e)
             else if (arg->kind != E_DEFAULT) check_expr(c, arg);
         }
         const bool gui = str_eq_c(owner, "GUI") || str_eq_c(owner, "GUILayout");
+        const bool cursor = str_eq_c(owner, "Cursor");
+        if (cursor && !str_eq_c(e->name, "Lock")) {
+            diag_error(e->at, "Cursor has no '" STR_FMT "'; it has Lock", STR_ARG(e->name));
+            // Nothing lets the cursor go: it's asked for, frame by frame
+            diag_note("the cursor comes back once no view calls Cursor.Lock: call it only in the frames the game wants "
+                      "the mouse, like 'if (!menu.paused) Cursor.Lock();'");
+            return T_ERR;
+        }
         if ((gui || str_eq_c(owner, "Draw")) && !check_frame_use(c, e->at, gui ? "The GUI" : "Draw")) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
+        if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
         if (str_eq_c(owner, "Draw")) e->call = CALL_DRAW;
-        if (gui) return check_gui_call(c, e, result);
+        if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
 
@@ -3212,7 +3272,15 @@ static type check_member(checker *c, expr *e)
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !check_frame_use(c, e->at, "Draw")) return T_ERR;
-        return resolve_builtin_member(e->object->name, e);
+        const type member = resolve_builtin_member(e->object->name, e);
+        if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
+            diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
+        } else if (str_eq_c(e->object->name, "Cursor")) {
+            if (!check_cursor_use(c, e->at, false)) return T_ERR;
+            // Sample reads it of the devices it samples; views of their frame's
+            if (c->in_input && !c->method) e->c_constant = "tide_dev->mouse.locked";
+        }
+        return member;
     }
 
     decl *const enum_decl = named_enum(c, e->object);
@@ -3731,6 +3799,14 @@ static const char *compare_example(const expr *sort)
 
 static void check_compare_stmt(checker *c, const stmt *s);
 
+// What a call the GUI takes does, as messages say it: Cursor.Lock is one, as the
+// GUI collects the frame's ask.
+static const char *gui_call_what(const expr *e)
+{
+    const bool cursor = e->object && e->object->kind == E_NAME && str_eq_c(e->object->name, "Cursor");
+    return cursor ? "lock the cursor" : "use the GUI";
+}
+
 // What a comparison can't do: anything with an effect, since it runs again
 // and again as the list sorts, in an order nothing promises.
 static void check_compare_expr(checker *c, const expr *e)
@@ -3745,7 +3821,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
     case CALL_DRAW: what = "draw"; break;
-    case CALL_GUI: what = "use the GUI"; break;
+    case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SNAP: what = "snap"; break;
     case CALL_WAIT: what = "wait"; break;
     case CALL_ACTION: what = "run a block"; break;
@@ -4907,7 +4983,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "add, remove or destroy"; break;
     case CALL_SEND: what = "send events"; break;
     case CALL_DRAW: what = "draw"; break;
-    case CALL_GUI: what = "use the GUI"; break;
+    case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load and unload scenes"; break;
     case CALL_SNAP: what = "snap"; break;
@@ -7038,6 +7114,40 @@ static bool check_param_side(const decl *sys, const param *p, const decl *d)
     return true;
 }
 
+// `with ownership` and `without ownership`: whether this machine's player owns
+// the entity, by its Owner. Only local code has a machine to ask about, and of
+// it only views run for the match's entities. `with` needs an Owner, as `with
+// Owner` does; `without` takes entities with one and with none, and which
+// rows pass is the loop's to check, like a sparse component (gen_row_filter).
+static void check_ownership(const checker *c, decl *sys, param *p)
+{
+    const bool with = p->mode == PARAM_WITH;
+    const char *word = with ? "with" : "without";
+    p->type = (type){TY_VOID, NULL};
+    if (!is_local_code(sys)) {
+        diag_error(p->type_at, "the match runs the same on every machine, so %s can't filter by '%s ownership'",
+                   sys->is_handler ? "an event handler" : "a system", word);
+        diag_note("ownership is whether this machine's player owns the entity, which views ask; for entities that have "
+                  "%s owner, write '%s Owner'", with ? "any" : "no", word);
+        suggest_replacement(p->type_name, "Owner");
+        return;
+    }
+    if (!sys->is_view) {
+        diag_error(p->type_at, "'%s ownership' filters the match's entities, and local handlers only take local state for now",
+                   word);
+        return;
+    }
+    const int ownership = with ? OWNERSHIP_WITH : OWNERSHIP_WITHOUT;
+    if (sys->ownership) {
+        if (sys->ownership == ownership) diag_error(p->at, "'%s ownership' appears twice", word);
+        else diag_error(p->at, "view '" STR_FMT "' takes entities both 'with ownership' and 'without ownership', and none is both",
+                        STR_ARG(sys->name));
+        return;
+    }
+    sys->ownership = ownership;
+    if (with) sys->need_mask = mask_or(sys->need_mask, bit(c->prog->owner));
+}
+
 static void check_params(const checker *c, decl *sys)
 {
     const program *prog = c->prog;
@@ -7050,6 +7160,10 @@ static void check_params(const checker *c, decl *sys)
 
     for (int i = 0; i < sys->params.count; i++) {
         param *p = &sys->params.items[i];
+        if (p->ownership) {
+            check_ownership(c, sys, p);
+            continue;
+        }
         decl *d = find_type(c, p->type_name, p->type_at);
         const bool is_entity = str_eq_c(p->type_name, "Entity");
         const bool is_local_entity = str_eq_c(p->type_name, "LocalEntity");
@@ -7132,6 +7246,7 @@ static void check_params(const checker *c, decl *sys)
                        STR_ARG(p->type_name));
             suggestion s = suggest_start(p->type_name);
             suggest_decls(&s, prog, true, p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT, true);
+            if (sys->is_view && (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT)) suggest_consider_c(&s, "ownership");
             suggest_note(&s);
             const fix create = {.kind = FIX_CREATE_COMPONENT, .at = p->type_at.line ? p->type_at : p->at, .name = p->type_name};
             vec_push(c->prog->fixes, create);
@@ -7226,11 +7341,23 @@ static void check_params(const checker *c, decl *sys)
             side_of = d;
         }
     }
+    // Owners are the match's: local entities have none to filter by.
+    for (int i = 0; sys->ownership && side_of && side_of->is_local && i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (!p->ownership) continue;
+        diag_error(p->type_at, "'%s ownership' filters the match's entities, and '" STR_FMT "' is local",
+                   p->mode == PARAM_WITH ? "with" : "without", STR_ARG(side_of->name));
+        diag_note("local entities live on this machine, and no player owns them");
+        break;
+    }
 
-    if (mask_intersects(sys->need_mask, sys->without_mask)) {
+    if (sys->ownership == OWNERSHIP_WITH && mask_has(sys->without_mask, prog->owner->index)) {
+        diag_error(sys->at, "view '" STR_FMT "' takes entities 'with ownership' and 'without Owner', and an entity "
+                   "without an Owner is nobody's", STR_ARG(sys->name));
+    } else if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }
-    sys->per_entity = entity || mask_any(seen);
+    sys->per_entity = entity || mask_any(seen) || sys->ownership;
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
 
     // A handler that takes components reads the entity its event is sent to,
@@ -7671,8 +7798,8 @@ static bool is_builtin_name(const str name)
     type dummy;
     return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
-        || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Action")
-        || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
+        || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
+        || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
 // What a declaration is called in generated C: Combat_Health for Combat.Health.
@@ -8501,6 +8628,7 @@ static void check_drawing_calls(checker *c)
                 fn->draws = true;
                 fn->draws_at = fn->callee_at.items[k];
                 fn->frame_devices = fn->callees.items[k]->frame_devices;
+                fn->frame_cursor = fn->callees.items[k]->frame_cursor;
                 changed = true;
             }
         }
@@ -8510,20 +8638,24 @@ static void check_drawing_calls(checker *c)
         if (!site->to->draws || (site->from->kind == DECL_FUNCTION && !site->from->is_async)) continue;
         if (site->from->kind == DECL_SYSTEM && site->from->is_view) continue;
         const bool devices = site->to->frame_devices;
+        const bool cursor = site->to->frame_cursor;
+        const char *does = devices ? "reads this frame's Devices" : cursor ? "uses this frame's Cursor" : "draws";
         if (site->from->is_async) {
-            diag_error(site->call->at, "'" STR_FMT "' %s, and a task runs between frames", STR_ARG(site->to->name),
-                       devices ? "reads this frame's Devices" : "draws");
-            diag_note("set what to show in local state, and draw that in a view");
+            diag_error(site->call->at, "'" STR_FMT "' %s, and a task runs between frames", STR_ARG(site->to->name), does);
+            diag_note(cursor ? "a view locks the cursor, every frame the game wants the mouse, and reads whether it holds"
+                             : "set what to show in local state, and draw that in a view");
             continue;
         }
         diag_error(site->call->at, "'" STR_FMT "' %s, so only views and the functions they call can call it",
-                   STR_ARG(site->to->name), devices ? "reads this frame's Devices" : "draws");
-        diag_note_at(site->to->draws_at, "it %s on line %d, and %s", devices ? "reads them" : "draws",
+                   STR_ARG(site->to->name), does);
+        diag_note_at(site->to->draws_at, "it %s on line %d, and %s", devices ? "reads them" : cursor ? "uses Cursor" : "draws",
                      site->to->draws_at.line,
                      site->from->kind == DECL_METHOD ? "methods can't"
                      : site->from->kind == DECL_INPUT ? "the input's code runs without a frame"
                                                       : "systems and handlers run in the tick, without a frame");
-        if (devices && site->from->kind == DECL_INPUT) {
+        if (cursor && site->from->kind == DECL_INPUT) {
+            diag_note("Sample reads 'Cursor.locked' itself: pass the function what it needs, like 'bool locked'");
+        } else if (devices && site->from->kind == DECL_INPUT) {
             diag_note("pass them instead: take 'Devices devices', and call it with 'Devices'");
         } else if (devices && site->from->kind == DECL_SYSTEM) {
             diag_note("pass it the owner's instead: take 'Devices devices' in both");

@@ -32,6 +32,8 @@ Other parameters:
 
 - **The `World`**: any other entity's components (below).
 
+Views take the same parameters, and one filter more: `with ownership` and `without ownership`, the entities this machine's player owns, or doesn't (see [Your own entities](./views.md#your-own-entities)). It's for views only: a system runs the same on every machine, so there it's an error, which points to `with Owner`, the entities any player owns.
+
 The entity itself isn't a parameter: it's `this` (see [Entity handles](./entities.md#entity-handles)).
 
 ## Other entities: the World

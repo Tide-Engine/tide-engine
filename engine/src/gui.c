@@ -262,6 +262,7 @@ static void frame_devices(tide_gui *g, const tide_devices *now)
     d->mouse.position = now->mouse.position;
     d->mouse.delta = now->mouse.poll_delta;
     d->mouse.scroll = now->mouse.poll_scroll;
+    d->mouse.locked = now->mouse.locked;
     d->gamepad.connected = now->gamepad.connected;
     d->gamepad.leftStick = now->gamepad.leftStick;
     d->gamepad.rightStick = now->gamepad.rightStick;
@@ -322,11 +323,19 @@ static void hide_pointer(tide_devices *d)
 
 #undef RELEASE
 
+// Whether the pointer in `d` is a mouse whose cursor the window holds
+// (Cursor.Lock): it's hidden, so it points at nothing.
+static bool cursor_hidden(const tide_devices *d)
+{
+    return d->mouse.locked && !d->pointer.touch;
+}
+
 // Where the pointer in `d` is, in the GUI's pixels: false for a finger that's
-// off the screen, which is nowhere.
+// off the screen and for a mouse whose cursor is locked, which are nowhere.
 static bool pointer_place(const tide_gui *g, const tide_devices *d, tide_float2 *at)
 {
     const tide_pointer *p = &d->pointer;
+    if (cursor_hidden(d)) return false;
     if (p->touch && !p->press.held && !p->press.pressed && !p->press.up) return false;
     *at = tide_f2(p->position.x, g->height - p->position.y);
     return true;
@@ -433,14 +442,19 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
 
     // The pointer: the mouse, or a finger. The devices count from the bottom
     // left, y up; the GUI from the top left, y down. A finger that's off the
-    // screen is nowhere, once it lifted, so nothing stays hovered.
+    // screen is nowhere, once it lifted, so nothing stays hovered. So is a
+    // mouse whose cursor is locked, and it presses nothing: a button still
+    // held as the cursor comes back was pressed for the game, not on a widget.
     const tide_pointer *p = &devices->pointer;
-    g->mouse = tide_f2(p->position.x, screen.y - p->position.y);
-    g->mouse_held = p->press.held;
-    if (p->touch && !g->mouse_held && !g->mouse_was_held) g->mouse = tide_f2(-1e30f, -1e30f);
-    g->mouse_pressed = g->mouse_held && !g->mouse_was_held;
+    const tide_float2 nowhere = tide_f2(-1e30f, -1e30f);
+    const bool hidden = cursor_hidden(devices);
+    g->mouse = hidden ? nowhere : tide_f2(p->position.x, screen.y - p->position.y);
+    g->mouse_held = p->press.held && !hidden;
+    if (p->touch && !g->mouse_held && !g->mouse_was_held) g->mouse = nowhere;
+    g->mouse_pressed = g->mouse_held && !g->press_was_held;
     g->mouse_released = !g->mouse_held && g->mouse_was_held;
     g->mouse_was_held = g->mouse_held;
+    g->press_was_held = p->press.held;
     const uint32_t keys = nav_keys(devices);
     g->keys_pressed = keys & ~g->keys;
     g->keys = keys;
@@ -510,6 +524,8 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
     g->claim_rect_count_next = 0;
     g->keyboard_shown = g->keyboard_shown_next;
     g->keyboard_shown_next = false;
+    g->cursor_lock = g->cursor_lock_next;
+    g->cursor_lock_next = false;
     g->view = 0;
 
     if (g->list.count > 0) {
@@ -522,6 +538,11 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
 bool tide_gui_typing(const tide_gui *g)
 {
     return g->editing != 0 || g->keyboard_shown;
+}
+
+bool tide_gui_cursor_lock(const tide_gui *g)
+{
+    return g->cursor_lock && !g->modal; // A modal's widgets need the pointer
 }
 
 void tide_gui_hide(tide_gui *g, tide_devices *d)
@@ -581,6 +602,11 @@ void tide_gui_claim_pointer_at(tide_gui *g, const tide_rect rect)
 void tide_gui_show_keyboard(tide_gui *g)
 {
     g->keyboard_shown_next = true;
+}
+
+void tide_gui_lock_cursor(tide_gui *g)
+{
+    g->cursor_lock_next = true;
 }
 
 // ---------------------------------------------------------------------------

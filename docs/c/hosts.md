@@ -98,8 +98,11 @@ tide_local_frame_time(&local, seconds);
 tide_frame(w, previous, alpha, &local, &draw, &gui);
 tide_gui_end(&gui, &draw);
 tide_platform_typing(tide_gui_typing(&gui)); // Phones show their keyboard while the player types, or a view asks
+tide_platform_cursor_lock(tide_gui_cursor_lock(&gui)); // The cursor is locked while a view asks (Cursor.Lock)
 tide_platform_draw(&draw);
 ```
+
+Asking for the cursor's lock isn't having it: the system decides, and `tide_platform_poll` says whether the window holds the cursor, as `devices.mouse.locked`, which `Cursor.locked` reads. A host that fills the devices itself sets it.
 
 ## Memory
 

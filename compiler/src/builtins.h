@@ -3,11 +3,12 @@
 #include "ast.h"
 
 // Built-in functions and constants reached through a type, `Math`, `Draw`,
-// `GUI`, `GUILayout` or `Screen`: Math.Dot(a, b), quaternion.AxisAngle(axis,
-// angle), Draw.Circle(...), GUILayout.Button(text), Color.red, Screen.width.
+// `GUI`, `GUILayout`, `Screen` or `Cursor`: Math.Dot(a, b),
+// quaternion.AxisAngle(axis, angle), Draw.Circle(...), GUILayout.Button(text),
+// Color.red, Screen.width, Cursor.Lock().
 
 // Is `name` something that can own static members: Math, Draw, GUI, GUILayout,
-// Screen or a built-in type?
+// Screen, Cursor or a built-in type?
 bool builtin_owner(str name);
 
 // The program's Anchor enum, which GUILayout.Area takes. Call before resolving

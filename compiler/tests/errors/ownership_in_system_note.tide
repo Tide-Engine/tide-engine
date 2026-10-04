@@ -1,0 +1,6 @@
+// expect: for entities that have any owner, write 'with Owner'
+component Body { float2 position; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body, Owner { player = PlayerID(0) }); }
+system Move(mut Body body, with ownership) { body.position.x += 1; }

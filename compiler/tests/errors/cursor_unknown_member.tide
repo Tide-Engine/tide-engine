@@ -1,0 +1,7 @@
+// expect: Cursor has no member 'visible'
+local scene Main { }
+local singleton Menu { bool shown; }
+view Show(mut Menu menu)
+{
+    menu.shown = Cursor.visible;
+}

@@ -360,6 +360,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     game->frame(match, view.previous, view.alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_platform_typing(tide_gui_typing(&tide_run_gui));
+    tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
     tide_platform_draw(&tide_run_draw);
 
     if (tide_run_settings.stats) {

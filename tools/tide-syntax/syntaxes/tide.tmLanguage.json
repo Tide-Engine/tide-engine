@@ -354,6 +354,14 @@
           }
         },
         {
+          "comment": "view Camera(Player player, with ownership), without ownership: a view's filter by this machine's player. A name anywhere else, and in with ownership.Flag",
+          "match": "\\b(with|without)\\s+(ownership)\\b(?!\\s*\\.)",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "keyword.other.ownership.tide" }
+          }
+        },
+        {
           "comment": "Parameter and local modifiers",
           "name": "storage.modifier.tide",
           "match": "\\b(mut|with|without)\\b"
@@ -488,7 +496,7 @@
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Anchor|Vertex|Vertex3|Filter|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|List|Map|Set|Grid2|Grid3)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Anchor|Vertex|Vertex3|Filter|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|List|Map|Set|Grid2|Grid3)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

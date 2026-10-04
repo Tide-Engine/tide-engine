@@ -1,0 +1,12 @@
+// expect: 'Hold' uses this frame's Cursor, so only views and the functions they call can call it
+bool Hold()
+{
+    Cursor.Lock();
+    return Cursor.locked;
+}
+scene Main { }
+singleton Aim { bool looking; }
+system Look(mut Aim aim)
+{
+    aim.looking = Hold();
+}

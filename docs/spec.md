@@ -235,6 +235,7 @@ system ClampPlayer(mut Transform trs, with Player)
 }
 ```
 
+- A view has one filter more, by who owns the entity: `with ownership` and `without ownership` (see Views and drawing). In match code they're errors.
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.
@@ -937,7 +938,7 @@ Implemented, awaiting approval:
 
 - One `input` declaration per game describes one player's input for one tick. It's what the network sends.
 - Input is one value per player per tick. The engine writes it, and the simulation can only read it.
-- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over.
+- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over. A view runs for the entities this machine's player owns with `with ownership` (see Views and drawing).
 - Players are identified by a built-in `PlayerID` type, not an `int`. Like `Entity`, it's opaque, comparable with `==`, and has a null value. The simulation only sees `PlayerID`s and never connections, so a player who reconnects and gets their `PlayerID` back keeps everything they owned. `PlayerID(0)` names a player by index, for local play and tests.
 - **Sampling is Tide code:** the input's `Sample()` method. The engine calls it on the client once per tick. Fields start at their defaults, and `Sample` assigns them by name, without `mut`. It runs outside the simulation: it reads this machine's `Devices`, and the local singletons it takes, but not the match.
 - **Devices are read both ways.** Local code (views, and the input's `Sample`) reads this machine's as `Devices`: `Devices.keyboard.escape.down`. Match code takes a parameter, `Devices devices`: the devices of the player who owns the entity, or the server's, as with an input parameter. The input sends what match code reads of them, and nothing else, and the engine repairs them, since it knows their ranges.
@@ -950,7 +951,7 @@ Implemented, awaiting approval:
 - **Input is an attack point,** so the engine is forgiving with it. Before `Sanitize` runs, NaN and infinite floats become the field's default. Nothing a client sends can put NaN in the simulation, and `Sanitize` only deals with values that are merely out of range.
 - `Devices` has a keyboard, a mouse, a gamepad, a touchscreen and the pointer; pen, joysticks and sensors come later. Every button has `.pressed` (held), `.down` (went down since the last sample) and `.up` (went up), named as in Unity: the Input System's `isPressed`, and the old `GetKeyDown` and `GetKeyUp`.
   - **Keyboard:** every key by physical position, named after the US layout (`keys.w`, `keys.space`, `keys.leftShift`, `keys.digit1`, `keys.upArrow`, `keys.f1`). WASD works on AZERTY. `text` is what was typed since the last frame, a `string`, which follows the keyboard's layout as keys don't. It's a frame's: views read it, and the functions they call. `Sample` and the match can't, and the input never sends it.
-  - **Mouse:** `position`, `delta` and `scroll` (`float2`), and buttons `left`, `right` and `middle`.
+  - **Mouse:** `position`, `delta` and `scroll` (`float2`), and buttons `left`, `right` and `middle`. While its cursor is locked (see Views and drawing), `position` stays and `delta` is the mouse's own movement.
   - **Gamepad:** `connected`; `leftStick` and `rightStick` (`float2`); `leftTrigger` and `rightTrigger` (`float`, 0 to 1); face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`); `dpad.up` and the other directions; `leftShoulder`, `rightShoulder`, `start` and `select`.
   - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers, as Unity's. A `Touch` has `press` (a button: `.down` when the finger touched, Unity's Began, and `.up` when it lifted, Ended), `id` (Unity's `touchId`: the same while the finger touches, a new one for each touch), and `position`, `delta` and `startPosition` (`float2`). A finger keeps its slot while it touches. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts. A finger that touches and lifts between two samples reads as held for one, so no tap is lost. A finger is never the mouse, as in Unity's Input System.
   - **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last, as Unity's `Pointer.current`. Code that reads it works with a mouse and a finger alike.
@@ -1046,11 +1047,66 @@ component Body
 ```
 
 - Something that jumps, like a respawn, a portal or a camera cut, says so from match code: `entity.Snap()` or `singleton.Snap()`. For the tick it happens in, views draw it as it is instead of sliding from where it was.
+- A view filters its entities by whether this machine's player owns them, with `with ownership` and `without ownership`, beside `with` and `without`:
+
+```csharp
+view RenderGame(Player player, with ownership)
+{
+    Draw.Camera(player.pos, player.rot, 75);
+}
+
+view Nameplates(Player player, without ownership) { ... }
+```
+
+  - `with ownership`: the view runs only for entities that have the built-in `Owner` component and whose `Owner.player` equals `Session.player`, this machine's player.
+  - `without ownership`: every other entity the view's other parameters and filters admit: entities with no `Owner`, and entities another player owns.
+  - They're filters: they create no data dependency, and the view needs no `Owner` or `Session` parameter for them. It can still take either, and `with Owner` still means "has any owner": `with Owner, without ownership` is the entities whose `Owner` isn't this machine's player: another player's, or no player's. A view that takes both `with ownership` and `without ownership`, or `with ownership` and `without Owner`, is an error, as no entity is both.
+  - A view with no component parameter runs once per entity through them, as through `with Player`: `view Hud(with ownership)`.
+  - Only local code that runs for the match's entities has them, which is views. In match code (systems, the match's event handlers, tasks) they're errors, since the match has no "this machine": the message points to `with Owner`, the entities that have any owner, or `without Owner`. Local handlers only take local state, and local entities have no owner, so there they're errors too.
+  - Outside a match, a view with either doesn't run, like any view that reads the match.
+  - `ownership` is a keyword only right after `with` or `without`, where it's never a component's name. Anywhere else it's a name like any other: a field, a local, a parameter or a declaration can be called `ownership`, and a qualified name starts with it as with any namespace (`with ownership.Flag`).
 - Meshes are the general shape: `Draw.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with the other Draw calls. The engine gives general primitives rather than a helper for each case.
 - A texture is a grid of colors: `Draw.Mesh(vertices, indices, texture)` takes a `Grid2<Color>` with a size. There's no texture type and no handle. The pixels are the game's state, local or the match's, and the engine keeps a copy on the GPU, which it uploads again when the cells change. So hot reloading carries textures as it carries any state, on every platform.
 - Filtering is how a draw reads the pixels, not part of them: `Draw.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.
 - `Draw.Clip(rect)` keeps the Draw calls after it inside a rectangle, and `Draw.Clip()` ends it.
 - `Draw.Screen()` puts the Draw calls after it in the screen's pixels, from the top left with `y` down, as the GUI's are. What views draw there is under the GUI's widgets.
+- **The mouse's cursor is locked by asking, frame by frame.** `Cursor.Lock()` asks for the cursor's lock, for a camera that looks around. A view, or a function it calls, calls it every frame it wants the mouse, as with `GUI.ShowKeyboard()`: the lock is held while some view asked in the frame that just ended. When no view asks (a pause menu is up, the match ended), the cursor comes back on its own. There's no `Unlock`.
+- `Cursor.locked` is whether the lock holds right now, a `bool`. It's what the platform says, not what was asked, since a platform may refuse the lock or drop it.
+- While the cursor is locked, it's hidden, `Devices.mouse.position` and the pointer's stay where they were, `Devices.mouse.delta` keeps coming with no screen's edge to stop at (the mouse's own movement, without acceleration, where the system gives it), and the GUI sees no pointer: nothing hovers, and a click presses no widget.
+- The match never calls `Cursor.Lock()` or reads `Cursor.locked`: the cursor is this machine's.
+- Platforms differ, and games read `Cursor.locked` rather than assume. The usual pattern shows the pause menu when the lock goes away:
+  - **The web** only gives the lock when it's asked for from a click or a key press, so the page asks at the next one while the game wants it, and at once when the game starts wanting it, which works shortly after one (a Resume button's click). The browser lets the cursor go itself when the player presses Escape, which a page can't prevent and may never see the key of, and when the page loses the focus or is hidden. For a moment after Escape it refuses the lock. Nothing asks again on its own: the player's next click or key press does.
+  - **Desktop** windows hold the cursor while they have the focus. Alt+Tab lets it go, `Cursor.locked` is false meanwhile, and the lock returns with the focus if the game still asks.
+  - **Android** never locks it, for now: `Cursor.locked` stays false.
+
+```csharp
+input PlayerInput
+{
+    float2 look;
+
+    Sample()
+    {
+        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+    }
+}
+
+local singleton Menu
+{
+    bool paused;
+    bool looking; // The window held the cursor last frame
+}
+
+view Look(Viewer viewer, mut Menu menu)
+{
+    Draw.Camera(viewer.position, viewer.rotation, 75);
+    if (Devices.keyboard.escape.down) menu.paused = true;
+    if (!menu.paused) Cursor.Lock();
+    // The lock went away on its own, as a browser's does at Escape: the pause menu
+    if (menu.looking && !Cursor.locked) menu.paused = true;
+    menu.looking = Cursor.locked;
+}
+```
+
 - A struct or component can say how it blends with an `Interpolate` override: `T Interpolate(T from, T to, float t)`, declared in it like an operator, with no value of its own. It replaces the default blend for that type wherever views see it:
 
 ```csharp
@@ -1121,6 +1177,17 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - `entity.Snap()` is recorded and applied at the end of the tick, like `Destroy`, so it never makes systems wait. Each entity counts its snaps, and views only blend it between two ticks with the same count. `singleton.Snap()` needs the singleton as a `mut` parameter. Local state is never blended, so snapping it is an error, and so is `component.Snap()`, which says to snap the entity.
 - `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has an `Interpolate`. A `[Snap]` field of such a type is still drawn as it is.
 - Hosts pass the two ticks and how far between them this moment is to `tide_frame`; sessions work that out (`tide_session_view`).
+- The cursor's lock:
+  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = Devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
+  - Where neither goes, the error says where it does: the match is told that a view calls `Cursor.Lock()` and that `Sample` reads `Cursor.locked`; a task, a method and a local handler, that views ask every frame. `Cursor.Unlock()` is told that the cursor comes back once no view asks.
+  - A function that uses `Cursor` needs the frame, like one that draws: views and the functions they call can call it.
+  - While a modal is up (`GUILayout.Modal`), the lock isn't asked for, whatever views ask: its widgets need the pointer. It's asked for again once the modal closes.
+  - A finger isn't the mouse: it presses the widgets it touches while the mouse's cursor is locked.
+  - A mouse button still held as the cursor comes back (the browser took the lock at Escape while the player fired) was pressed for the game: it presses no widget, and letting it go on one is no click.
+  - `Cursor` is built into the language, as `Screen` and `GUI` are: a game can't declare the name, in a namespace or outside one.
+  - On the web, Escape never asks for the lock again, nor does a held key repeating. The page asks for the mouse's own movement (`unadjustedMovement`) and, where the system has none, for the usual kind. A lock the browser gives after the game stopped wanting it is let go at once. On desktop, the mouse's own movement is GLFW's raw motion, where the system supports it.
+  - While it's locked, the position that stays is where the cursor was when it was locked, and the cursor comes back there.
+  - Hosts pass the frame's ask on with `tide_platform_cursor_lock(tide_gui_cursor_lock(gui))`, after `tide_gui_end`, and `tide_platform_poll` says whether the window holds the cursor: `tide_devices.mouse.locked`, which `Cursor.locked` reads, in views of the frame's devices and in `Sample` of the ones it samples.
 
 ```csharp
 view DrawBalls(Body body, Ball ball)
@@ -1139,7 +1206,8 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- 3D: code of the game's own that runs on the GPU for each pixel and each corner, in Tide, which takes what it reads of the view around it implicitly (as a parallel loop's step does), with more of a corner (normals) once it can read them; drawing into a texture that later meshes sample, for shadows, reflections and effects; meshes in the grid's chunks, for voxels; capturing the mouse, for cameras that look around.
+- 3D: code of the game's own that runs on the GPU for each pixel and each corner, in Tide, which takes what it reads of the view around it implicitly (as a parallel loop's step does), with more of a corner (normals) once it can read them; drawing into a texture that later meshes sample, for shadows, reflections and effects; meshes in the grid's chunks, for voxels.
+- The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
 - Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
 

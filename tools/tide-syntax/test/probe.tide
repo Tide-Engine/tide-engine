@@ -105,6 +105,7 @@ view Show(Devices devices)
     Vertex3 corner3 = default;
     DrawUI(Draw.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
+    if (!Cursor.locked) Cursor.Lock();
 }
 
 // Operators that aren't what they look like.
@@ -154,3 +155,9 @@ system Track(Seeker seeker, mut World world)
     world.Set<Health>(seeker.target, target);
     var lookup = seeker.range < target.value;
 }
+
+// Ownership: a word of its own right after with and without, a name anywhere else.
+view Mine(Body body, with ownership) { }
+view Rest(Body body, with Owner, without ownership) { }
+view Flagged(with ownership.Flag, with Game.ownership) { }
+int Owned(int ownership) { return ownership; }
