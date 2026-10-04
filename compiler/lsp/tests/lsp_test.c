@@ -382,6 +382,22 @@ TIDE_TEST(lsp_complete_draw_only_in_views)
     TIDE_CHECK(!offers(view, "Body")); // Views spawn local entities, never the match's
 }
 
+TIDE_TEST(lsp_complete_io_in_local_code)
+{
+    start();
+    const char *reply = complete("local scene Main { }\nlocal event(Spawned) Setup(with Main) { $ }\n");
+    TIDE_CHECK(offers(reply, "File") && offers(reply, "Directory") && offers(reply, "Application") && offers(reply, "Path"));
+    reply = complete("scene Main { }\nevent(Spawned) Setup(with Main) { $ }\n");
+    TIDE_CHECK(!offers(reply, "File") && !offers(reply, "Directory") && !offers(reply, "Application"));
+    TIDE_CHECK(offers(reply, "Path"));
+    reply = complete("local scene Main { }\nlocal event(Spawned) Setup(with Main) { File.$ }\n");
+    TIDE_CHECK(offers(reply, "ReadAllText") && offers(reply, "ReadAllBytes") && offers(reply, "WriteAllBytes"));
+    TIDE_CHECK(has(reply, "List<byte>"));
+    TIDE_CHECK(has(reply, "fails IOError"));
+    reply = complete("local scene Main { }\nlocal event(Spawned) Setup(with Main) { Application.$ }\n");
+    TIDE_CHECK(offers(reply, "persistentDataPath") && offers(reply, "temporaryCachePath"));
+}
+
 TIDE_TEST(lsp_complete_names_in_scope)
 {
     start();
@@ -827,7 +843,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(code, "Draw2D") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
     TIDE_CHECK(!offers(code, "while") && !offers(code, "foreach") && !offers(code, "switch") && !offers(code, "this"));
-    TIDE_CHECK(!offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
+    TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw2D") && !offers(value, "null"));
@@ -1855,6 +1871,18 @@ TIDE_TEST(lsp_default_value)
     static const char tidy[] = "singleton S { int n; bool on; }\nscene Main { }\n"
                                "system Pick(mut S s)\n{\n    s.n = s.on ? default : 2;\n    s.n = s.on ? 1 : default;\n}\n";
     TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_byte_scalar_hover_and_completion)
+{
+    start();
+    open_document("singleton Data { by$te value = 255; List<byte> content = [0, 255]; }\nscene Main { }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "An unsigned 8-bit integer, from 0 to 255"));
+    TIDE_CHECK(offers(complete("singleton Data { $ }\nscene Main { }\n"), "byte"));
+    open_document("singleton Data { byte value; }\nscene Main { }\nsystem Reset(mut Data data) { data.value = def$ault; }\n");
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "default: byte") && has(hover, "`0`"));
 }
 
 TIDE_TEST(lsp_format_switch)

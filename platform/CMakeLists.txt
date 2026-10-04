@@ -192,6 +192,13 @@ target_link_libraries(tide_platform_font PRIVATE tide_platform)
 add_test(NAME tide_platform_font COMMAND tide_platform_font)
 
 if(NOT TIDE_WEB)
+    # Files and directories, with no window or GPU, including Unicode names
+    # and recursive operations that do not enter directory symlinks.
+    add_executable(tide_platform_io tests/io.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_io PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tide_platform_io PRIVATE tide_platform)
+    add_test(NAME tide_platform_io COMMAND tide_platform_io)
+
     # The WebRTC stack (src/rtc), piece by piece.
     add_executable(tide_platform_rtc tests/rtc.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tide_platform_rtc PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
@@ -319,6 +326,15 @@ endif()
 
 if(TIDE_WEB)
     # Keys by physical position on the web, where the typed character would be wrong.
+    add_executable(tide_platform_web_io tests/web_io.c)
+    target_link_libraries(tide_platform_web_io PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_io SHELL tests/web_io.html)
+    add_test(NAME tide_platform_web_io
+        COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
+            "$<TARGET_FILE_DIR:tide_platform_web_io>/tide_platform_web_io.html"
+            "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_io-browser" "backend=webgl")
+    set_tests_properties(tide_platform_web_io PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+
     add_executable(tide_platform_web_keys tests/web_keys.c)
     target_link_libraries(tide_platform_web_keys PRIVATE tide_platform)
     tide_web_page(tide_platform_web_keys SHELL web/test_shell.html)

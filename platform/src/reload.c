@@ -152,6 +152,7 @@ static bool resume(void)
     tide_migration match_done = {0};
     bool ok = local && (world || !h.world_size);
     if (ok) {
+        tide_run_bind_io(game, local);
         ok = carry_bytes(old, &old->local, block + h.local, h.local_size, game->layout, &game->layout->local,
                          game->local_unpack, local, &local_done);
     }
@@ -381,6 +382,7 @@ static bool carry_over(const tide_host_game *next)
     match_carry match = {old, next, {0}, {0}, 0};
     bool ok = local && start;
     if (ok) {
+        tide_run_bind_io(next, local);
         ok = carry_world(old->local_pack, tide_run_local, old->layout, &old->layout->local, next->layout,
                          &next->layout->local, next->local_unpack, local, &local_done);
     }
@@ -422,6 +424,7 @@ static void swap(const tide_host_game *next, void *library)
         tide_run_game = next;
         tide_run_begin();
     }
+    if (retained) tide_run_bind_io(next, tide_run_local);
     if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
     fflush(stdout);
     old->unload();
