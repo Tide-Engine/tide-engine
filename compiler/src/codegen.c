@@ -6831,10 +6831,20 @@ static bool flat_list_stmt(const stmt *s, const stmt *loop)
     return true;
 }
 
-static bool flat_list_loop(const stmt *s)
+static bool plain_list_loop(const stmt *s)
 {
     return s->value->type.kind == TY_LIST && flat_list_value(list_elem(s->value->type.decl))
         && flat_list_stmt(s->then_stmt, s);
+}
+
+static int batch_list_inner(const stmt *s);
+
+static bool flat_list_loop(const stmt *s)
+{
+    // The copy pays for repeated reads in the batched counted-loop path.
+    // Single-pass list kernels keep their existing chunk input and avoid an
+    // additional whole-list copy/allocation.
+    return batch_list_inner(s) >= 0;
 }
 
 // Before a system's function: each of its loops' captures, and its step's prototype.
@@ -7233,7 +7243,7 @@ static bool batch_list_invariant(const expr *e, const stmt *loop)
 
 static int batch_list_inner(const stmt *s)
 {
-    if (!flat_list_loop(s) || s->block[0] != 1 || s->then_stmt->kind != S_BLOCK) return -1;
+    if (!plain_list_loop(s) || s->block[0] != 1 || s->then_stmt->kind != S_BLOCK) return -1;
     int inner = -1;
     for (int i = 0; i < s->then_stmt->stmts.count; i++) {
         const stmt *p = s->then_stmt->stmts.items[i];
