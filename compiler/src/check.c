@@ -169,6 +169,7 @@ typedef enum name_kind {
     NAME_SYSTEM,   // Systems and views, in [Before] and [After]
     NAME_FUNCTION,
     NAME_CONST,
+    NAME_SHADER,   // Frags and verts, where Draw.Mesh names them
 } name_kind;
 
 static bool is_kind(const decl *d, const name_kind kind)
@@ -176,7 +177,8 @@ static bool is_kind(const decl *d, const name_kind kind)
     if (kind == NAME_SYSTEM) return d->kind == DECL_SYSTEM;
     if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION;
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
-    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST;
+    if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
+    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -1589,11 +1591,41 @@ static bool check_component_side(const checker *c, const expr *arg, const decl *
 
 static const char *routines(const checker *c);
 
+// The frag or vert being checked, which the GPU runs, or NULL.
+static const decl *gpu_code(const checker *c)
+{
+    return c->method && c->method->kind == DECL_SHADER ? c->method : NULL;
+}
+
+static const char *shader_word(const decl *d)
+{
+    return d->is_frag ? "frag" : "vert";
+}
+
+// Something only the CPU does, in a frag or vert: reports it, with what to
+// write instead, and returns true. False in any other code.
+static bool gpu_refuses(const checker *c, const loc at, const char *what, const char *instead)
+{
+    const decl *s = gpu_code(c);
+    if (!s) return false;
+    diag_error(at, "a %s runs on the GPU, for each %s, so it can't %s", shader_word(s), s->is_frag ? "pixel" : "vertex", what);
+    if (instead) diag_note("%s", instead);
+    return true;
+}
+
 // Draw, GUI, GUILayout and Screen belong to a frame: views have one, and the
 // functions they call use theirs. A function that uses them draws, and only
 // views and other functions can call it (see check_drawing_calls).
 static bool check_frame_use(checker *c, const loc at, const char *what)
 {
+    if (gpu_code(c)) {
+        const bool devices = strcmp(what, "Devices") == 0;
+        const bool screen = strcmp(what, "Screen") == 0;
+        gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen" : strcmp(what, "Draw") == 0 ? "draw" : "use the GUI",
+                    devices || screen ? "the view puts what it needs in a component or a singleton, which it takes"
+                                      : "it writes its pixel or changes its vertex: a view draws, and names it at Draw.Mesh");
+        return false;
+    }
     if (in_async_function(c)) {
         const bool devices = strcmp(what, "Devices") == 0;
         diag_error(at, "a task runs between frames, so it can't %s", devices ? "read this frame's Devices" : "draw");
@@ -1645,6 +1677,7 @@ static bool check_typed_use(checker *c, const loc at)
 static bool check_cursor_use(checker *c, const loc at, const bool lock)
 {
     const char *what = lock ? "call Cursor.Lock" : "read Cursor.locked";
+    if (gpu_refuses(c, at, what, "the cursor is the view's: it puts what the GPU needs in a component or a singleton")) return false;
     if (c->in_input && !c->method) {
         if (!lock && !c->in_sanitize) return true;
         if (c->in_sanitize) {
@@ -1945,6 +1978,7 @@ static type check_block_call(const checker *c, expr *e, param *p)
 // "methods" or "functions", for messages about the code being checked.
 static const char *routines(const checker *c)
 {
+    if (c->method->kind == DECL_SHADER) return c->method->is_frag ? "frags" : "verts";
     return c->method->kind == DECL_FUNCTION ? "functions" : "methods";
 }
 
@@ -2019,6 +2053,12 @@ static type check_call(checker *c, expr *e)
     if (d && (d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_EVENT)) {
         diag_error(e->at, "write '" STR_FMT " { ... }' to make %s value", STR_ARG(e->name),
                    d->kind == DECL_STRUCT ? "a struct" : d->kind == DECL_EVENT ? "an event" : "a component");
+        return T_ERR;
+    }
+    const decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
+    if (shader) {
+        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, and nothing calls it", STR_ARG(e->name), shader_word(shader));
+        diag_note("a view's Draw.Mesh names it, last: the engine gives it what its parameters say");
         return T_ERR;
     }
     diag_error(e->at, "unknown function '" STR_FMT "'", STR_ARG(e->name));
@@ -2524,6 +2564,306 @@ static void use_mesh_types(checker *c)
                       pixels, c->prog->filter);
 }
 
+// The frag or vert an argument of Draw.Mesh names, or NULL: `Shade`, or
+// `Effects.Shade`.
+static decl *named_shader(const checker *c, expr *arg)
+{
+    str text;
+    const expr *root = chain_root(arg);
+    if (root->kind != E_NAME || !qualified_text(arg, &text)) return NULL;
+    if (find_local(c, root->name) || find_param(c, root->name) || field_in_scope(c, root->name)) return NULL;
+    decl *other;
+    decl *d = lookup(c->prog, c->unit, text, NAME_SHADER, &other);
+    if (!d) return NULL;
+    if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
+    arg->bind = BIND_SHADER;
+    arg->type_decl = d;
+    arg->type = T_VOID_;
+    return d;
+}
+
+// What a mesh's vertex struct has to be: a `position`, a float2 for a 2D mesh
+// or a float3 for a 3D one, and fields the GPU reads from a list as they are:
+// floats, ints, their vectors and colors. Its position's size, or 0 after an
+// error at `at`.
+static int vertex_dims(const decl *s, const loc at, const bool report)
+{
+    int dims = 0;
+    for (int i = 0; i < s->fields.count; i++) {
+        const field *f = &s->fields.items[i];
+        const bool number = type_is_numeric(f->type) || f->type.kind == TY_COLOR;
+        if (!number && f->type.kind != TY_ERROR) {
+            if (report) {
+                diag_error(at, "'" STR_FMT "' can't be a mesh's vertex: its '" STR_FMT "' is %s", STR_ARG(s->name), STR_ARG(f->name),
+                           type_name(f->type));
+                diag_note("a vertex's fields are floats, ints, their vectors and colors, which the GPU reads from the list as "
+                          "they are");
+            }
+            return 0;
+        }
+        if (!str_eq_c(f->name, "position")) continue;
+        if (f->type.kind == TY_FLOAT2) dims = 2;
+        else if (f->type.kind == TY_FLOAT3) dims = 3;
+        else if (f->type.kind != TY_ERROR) {
+            if (report) {
+                diag_error(at, "'" STR_FMT "' can't be a mesh's vertex: its 'position' is %s", STR_ARG(s->name), type_name(f->type));
+                diag_note("a vertex's 'position' is a float2 for a 2D mesh, or a float3 for a 3D one");
+            }
+            return 0;
+        }
+    }
+    if (dims == 0 && report) {
+        diag_error(at, "'" STR_FMT "' can't be a mesh's vertex: it has no 'position'", STR_ARG(s->name));
+        diag_note("a vertex says where it is: 'float2 position;' for a 2D mesh, or 'float3 position;' for a 3D one");
+    }
+    if (dims != 0 && s->fields.count > 12) {
+        if (report) {
+            diag_error(at, "'" STR_FMT "' has %d fields, and a mesh's vertex has 12 at most", STR_ARG(s->name), s->fields.count);
+            diag_note("a GPU reads 16 values for each vertex, and a draw's transform and its entity's fields take the rest");
+        }
+        return 0;
+    }
+    return dims;
+}
+
+static int shader_dims(const decl *vertex)
+{
+    return vertex_dims(vertex, (loc){0, 0, 0}, false);
+}
+
+static const field *field_called(const decl *d, const char *name)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        if (str_eq_c(d->fields.items[i].name, name)) return &d->fields.items[i];
+    }
+    return NULL;
+}
+
+static void note_mesh_forms(void)
+{
+    diag_note("Draw.Mesh(vertices, indices) draws a 2D mesh, and Draw.Mesh(vertices, indices, transform) a 3D one; then come a "
+              "texture and its filter, or a vert and a frag by name");
+}
+
+// A view's Draw.Mesh through a frag or a vert: the components they read are
+// those of the entity the view runs for, so it has to have them.
+static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
+{
+    decl *view = c->system;
+    for (int i = 1; i < shader->params.count; i++) {
+        const param *p = &shader->params.items[i];
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
+        const decl *d = p->type.decl;
+        for (int k = 0; k < view->params.count; k++) { // What a frag reads of it is a use of it
+            param *own = &view->params.items[k];
+            if (own->type.decl == d && (own->type.kind == TY_COMPONENT || own->type.kind == TY_SINGLETON)
+                && (own->mode == PARAM_READ || own->mode == PARAM_MUT)) {
+                own->read = true;
+            }
+        }
+        if (p->type.kind != TY_COMPONENT || mask_has(view->need_mask, d->index)) continue;
+        diag_error(name->at, "view '" STR_FMT "' doesn't guarantee its entity has a '" STR_FMT "', which %s '" STR_FMT "' reads",
+                   STR_ARG(view->name), STR_ARG(d->name), shader_word(shader), STR_ARG(shader->name));
+        if (!view->per_entity) {
+            diag_note("the view runs once per frame, for no entity: take the component, or require it, so it runs for each "
+                      "entity that has one: 'view " STR_FMT "(with " STR_FMT ")'", STR_ARG(view->name), STR_ARG(d->name));
+        } else {
+            diag_note("a %s reads the components of the entity the view runs for: add 'with " STR_FMT "' to the view's "
+                      "parameters", shader_word(shader), STR_ARG(d->name));
+        }
+    }
+    (void)e;
+}
+
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// A List<Vertex> or a List<Vertex3> with no vert and no frag is the built-in
+// call it always was. Anything else draws through a shader tidec writes (see
+// shader.c): a vertex struct of the game's, a vert, a frag.
+static type check_mesh_draw(checker *c, expr *e)
+{
+    program *prog = c->prog;
+    // The vert and the frag it names come last, the vert first
+    int count = e->args.count;
+    bool order_said = false;
+    while (count > 0) {
+        expr *name = e->args.items[count - 1];
+        decl *shader = named_shader(c, name);
+        if (!shader) break;
+        decl **slot = shader->is_frag ? &e->frag : &e->vert;
+        if (*slot) {
+            diag_error(name->at, "Draw.Mesh takes one %s, and this names two", shader_word(shader));
+        } else if (!shader->is_frag && e->frag && !order_said) {
+            // Peeled from the end: a vert found after a frag was written before it, as it should be
+        } else if (shader->is_frag && e->vert && !order_said) {
+            diag_error(name->at, "the vert comes before the frag, as the GPU runs them: 'Draw.Mesh(..., " STR_FMT ", " STR_FMT ")'",
+                       STR_ARG(e->vert->name), STR_ARG(shader->name));
+            order_said = true;
+        }
+        *slot = shader;
+        count--;
+    }
+    const bool shaded = e->vert || e->frag;
+    if (!check_frame_use(c, e->at, "Draw")) {
+        for (int i = 0; i < count; i++) {
+            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+        }
+        return T_ERR;
+    }
+    if (count < 2) {
+        for (int i = 0; i < count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Draw.Mesh takes a mesh's vertices and its indices first");
+        note_mesh_forms();
+        return T_ERR;
+    }
+
+    // The vertices: a list of the struct its vert or frag runs on, or the one
+    // the list's first value names
+    expr *vertices = e->args.items[0];
+    decl *vertex = NULL;
+    if (vertices->kind == E_LIST) {
+        const decl *shader = e->vert ? e->vert : e->frag;
+        const expr *first = vertices->args.count ? vertices->args.items[0] : NULL;
+        if (shader && shader->params.count && shader->params.items[0].type.kind == TY_STRUCT) {
+            vertex = shader->params.items[0].type.decl;
+        } else if (first && first->kind == E_LITERAL) {
+            decl *named = find_type(c, first->name, first->at);
+            if (named && named->kind == DECL_STRUCT) vertex = named;
+        }
+        if (!vertex) vertex = prog->vertex;
+        check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
+    } else {
+        const type t = check_expr(c, vertices);
+        if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_STRUCT) {
+            vertex = t.decl->fields.items[0].type.decl;
+        } else if (t.kind != TY_ERROR) {
+            diag_error(vertices->at, "Draw.Mesh draws a list of vertices, and this is %s", type_name(t));
+            diag_note("a List<Vertex> in 2D, a List<Vertex3> in 3D, or a list of a struct of the game's with a 'position'");
+        }
+    }
+    expr *indices = e->args.items[1];
+    const type index_list = list_of(prog, T_INT_);
+    const type index_type = indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
+    for (int i = 2; i < count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->kind != E_DEFAULT) check_expr(c, arg);
+    }
+    if (!vertex) return T_ERR;
+
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded) {
+        use_mesh_types(c);
+        const type result = resolve_builtin_call(e->object->name, e);
+        if (result.kind == TY_ERROR) return result;
+        check_default_args(c, e);
+        e->call = CALL_DRAW;
+        return result;
+    }
+
+    bool ok = true;
+    if (index_type.kind != TY_ERROR && (index_type.kind != TY_LIST || index_type.decl != index_list.decl)) {
+        diag_error(indices->at, "a mesh's indices are a List<int>, three for each triangle, and this is %s", type_name(index_type));
+        ok = false;
+    }
+    const int dims = vertex_dims(vertex, vertices->at, true);
+    if (dims == 0) return T_ERR;
+    for (int i = 2; i < count; i++) {
+        if (e->args.items[i]->kind == E_DEFAULT) {
+            diag_error(e->args.items[i]->at, "'default' doesn't say what it stands for here: write the value itself");
+            return T_ERR;
+        }
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
+    }
+    // A 3D mesh's transform
+    int at = 2;
+    const type f4x4 = {TY_FLOAT4X4, NULL};
+    if (dims == 3) {
+        if (at >= count || e->args.items[at]->type.kind != TY_FLOAT4X4) {
+            diag_error(at < count ? e->args.items[at]->at : e->at, "a 3D mesh takes the transform that places it in the world, "
+                       "a float4x4, after its indices");
+            diag_note("like 'Draw.Mesh(vertices, indices, float4x4.Translate(position));': '" STR_FMT "' is a 3D mesh's vertex, "
+                      "as its 'position' is a float3", STR_ARG(vertex->name));
+            return T_ERR;
+        }
+        at++;
+    } else if (at < count && e->args.items[at]->type.kind == TY_FLOAT4X4) {
+        diag_error(e->args.items[at]->at, "a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform");
+        diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2", STR_ARG(vertex->name));
+        return T_ERR;
+    }
+    // A texture and its filter, for a mesh with no frag
+    const expr *texture = NULL;
+    if (at < count && e->args.items[at]->type.kind == TY_GRID) {
+        texture = e->args.items[at++];
+        const decl *grid = texture->type.decl;
+        if (grid->dims != 2 || grid->fields.items[0].type.kind != TY_COLOR) {
+            diag_error(texture->at, "a texture is a Grid2<Color>, and this is a %s", type_name(texture->type));
+            ok = false;
+        }
+        if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) at++;
+    }
+    if (at < count) {
+        diag_error(e->args.items[at]->at, "Draw.Mesh doesn't take %s here", type_name(e->args.items[at]->type));
+        note_mesh_forms();
+        return T_ERR;
+    }
+    if (texture && e->frag) {
+        diag_error(texture->at, "a frag samples the grids it takes itself, so this draw takes no texture");
+        diag_note("put the grid in a component or a singleton that '" STR_FMT "' takes, and read it there: "
+                  "'color = models.wood.Sample(vertex.uv);'", STR_ARG(e->frag->name));
+        ok = false;
+    }
+    // With no frag, a pixel is its vertex's color times the texture at its uv
+    if (!e->frag) {
+        const field *color = field_called(vertex, "color");
+        const field *uv = field_called(vertex, "uv");
+        if (color && color->type.kind != TY_COLOR && color->type.kind != TY_ERROR) {
+            diag_error(vertices->at, "with no frag, a mesh's pixels are its vertices' 'Color color', and " STR_FMT "'s 'color' is %s",
+                       STR_ARG(vertex->name), type_name(color->type));
+            diag_note("make it a Color, or name a frag that reads it, last in the call");
+            ok = false;
+        }
+        if (texture && (!uv || uv->type.kind != TY_FLOAT2)) {
+            diag_error(texture->at, "a texture is read at a vertex's 'float2 uv', which " STR_FMT " %s", STR_ARG(vertex->name),
+                       uv ? "has as another type" : "doesn't have");
+            ok = false;
+        }
+    }
+    // The vert and the frag run on this mesh's vertex
+    for (int i = count; i < e->args.count; i++) {
+        const expr *name = e->args.items[i];
+        const decl *shader = name->type_decl;
+        const type on = shader->params.count ? shader->params.items[0].type : T_ERR;
+        if (on.kind == TY_STRUCT && on.decl != vertex) {
+            diag_error(name->at, "%s '" STR_FMT "' runs on a " STR_FMT ", and this mesh's vertices are a List<" STR_FMT ">",
+                       shader_word(shader), STR_ARG(shader->name), STR_ARG(on.decl->name), STR_ARG(vertex->name));
+            diag_note("a %s's first parameter is the vertex of the meshes it's drawn with", shader_word(shader));
+            ok = false;
+        } else if (on.kind != TY_STRUCT) {
+            ok = false; // Its declaration said why
+        }
+    }
+    if (shaded && (c->method || c->in_input || !in_view(c))) {
+        diag_error(e->at, "a Draw.Mesh that names a vert or a frag goes in a view");
+        diag_note("the components they read are those of the entity the view runs for; a function can draw the mesh "
+                  "without them");
+        ok = false;
+    } else if (shaded && ok) {
+        const int errors = diag_error_count();
+        for (int i = count; i < e->args.count; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
+        ok = diag_error_count() == errors;
+    }
+    if (!ok) return T_ERR;
+
+    e->call = CALL_DRAW;
+    e->c_callee = NULL;
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, vertices->type);
+    vec_push(e->arg_want, index_list);
+    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 ? f4x4 : e->args.items[i]->type);
+    const mesh_draw draw = {e, c->method ? c->method : c->system};
+    vec_push(prog->mesh_draws, draw);
+    return T_VOID_;
+}
+
 static const char *system_what(const decl *sys);
 
 // A component code reaches through its World: a use the schedule counts as
@@ -2713,7 +3053,7 @@ static type check_method(checker *c, expr *e)
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
-        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Mesh")) use_mesh_types(c);
+        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Mesh")) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
         for (int i = 0; i < e->args.count; i++) {
@@ -2761,6 +3101,19 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_ERROR) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
+    }
+    if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // pixel.Discard(): the frag's pixel isn't drawn
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!str_eq_c(e->name, "Discard") || e->args.count) {
+            diag_error(e->at, "a Pixel has one method, 'Discard()', which leaves the pixel undrawn; the rest are its fields");
+            return T_ERR;
+        }
+        if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
+            diag_error(e->at, "'" STR_FMT ".Discard()' is a statement of its own: it ends the frag there", STR_ARG(e->object->name));
+            return T_ERR;
+        }
+        e->call = CALL_DISCARD;
+        return T_VOID_;
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
@@ -3145,6 +3498,17 @@ static type binary_result(const tok_kind op, const type l, const type r, const l
         return T_ERR;
     }
 
+    // Colors: channel by channel with another, and scaled by a number.
+    if (l.kind == TY_COLOR || r.kind == TY_COLOR) {
+        const type other = l.kind == TY_COLOR ? r : l;
+        if ((op == T_PLUS || op == T_MINUS || op == T_STAR) && other.kind == TY_COLOR) return l;
+        if (op == T_STAR && is_scalar_number(other)) return (type){TY_COLOR, NULL};
+        if (op == T_SLASH && l.kind == TY_COLOR && is_scalar_number(r)) return l;
+        diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
+        diag_note("colors add, subtract and multiply channel by channel, and scale by a number: 'color * tint * 0.5'");
+        return T_ERR;
+    }
+
     switch (op) {
     case T_PLUS:
     case T_MINUS:
@@ -3361,7 +3725,7 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         diag_note("read and write them in a view, and keep what the task needs in local state of its own");
         return T_ERR;
     }
-    if (c->method && c->method->kind != DECL_FUNCTION) {
+    if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
                    STR_ARG(f->name), STR_ARG(d->name));
         diag_note("write a function that takes the component instead: 'void Name(mut " STR_FMT " %s) { ... }'",
@@ -3666,6 +4030,18 @@ static type check_name(checker *c, expr *e)
     }
     decl *k = find_named(c, e->name, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
+    decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
+    if (shader) {
+        e->bind = BIND_SHADER;
+        e->type_decl = shader;
+        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, for the meshes a Draw.Mesh names it for", STR_ARG(e->name),
+                   shader_word(shader));
+        diag_note("name it last in a view's Draw.Mesh, like 'Draw.Mesh(vertices, indices, %s" STR_FMT ");'",
+                  shader->params.count && shader->params.items[0].type.kind == TY_STRUCT
+                          && shader_dims(shader->params.items[0].type.decl) == 3 ? "transform, " : "",
+                  STR_ARG(e->name));
+        return T_ERR;
+    }
     const decl *d = find_type(c, e->name, e->at);
     if (d) {
         diag_error(e->at, "'" STR_FMT "' is a type, not a value", STR_ARG(e->name));
@@ -3705,6 +4081,10 @@ static type check_name(checker *c, expr *e)
 static type check_this(const checker *c, const expr *e)
 {
     decl *m = c->method;
+    if (gpu_refuses(c, e->at, "name the entity",
+                    "it takes the entity's components as parameters, and reads their fields")) {
+        return T_ERR;
+    }
     if (m && m->kind == DECL_FUNCTION) {
         diag_error(e->at, "functions don't run for an entity, so they have no 'this'");
         diag_note("pass it the entity as a parameter, like 'Entity entity'");
@@ -4191,12 +4571,56 @@ static type check_new_grid(checker *c, expr *e, const type want)
 }
 
 // cells.Clear(): a grid's one method, every cell back to zero.
+// texture.Sample(uv) and texture.Sample(uv, Filter.Point): a grid of colors
+// read as a texture, in a frag or vert. The grid is a field of one of its
+// parameters, and the filter is written there: the GPU is told both before
+// any pixel runs.
+static type check_grid_sample(const checker *c, expr *e, const type grid)
+{
+    const decl *shader = gpu_code(c);
+    if (!shader) {
+        diag_error(e->at, "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
+        diag_note("here, read a cell by its place: 'grid[x, y]'");
+        return T_ERR;
+    }
+    if (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR) {
+        diag_error(e->at, "a texture is a Grid2<Color>, and this is a %s", type_name(grid));
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+        || of->object->param->function_param) {
+        diag_error(of->at, "a %s samples a grid that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'",
+                   shader_word(shader));
+        return T_ERR;
+    }
+    const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
+    const bool filter_ok = e->args.count < 2 || (e->args.items[1]->type.kind == TY_ENUM && e->args.items[1]->type.decl == c->prog->filter);
+    if (e->args.count < 1 || e->args.count > 2 || (uv.kind != TY_ERROR && uv.kind != TY_FLOAT2) || !filter_ok) {
+        if (uv.kind != TY_ERROR || e->args.count != 1) {
+            diag_error(e->at, "Sample takes where to read, a float2 from (0, 0) to (1, 1), and how, a Filter: "
+                              "'texture.Sample(uv)' or 'texture.Sample(uv, Filter.Point)'");
+        }
+        return T_ERR;
+    }
+    if (e->args.count == 2 && !e->args.items[1]->enum_member) {
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point' or 'Filter.Bilinear': the GPU is told how a "
+                                         "texture is read before any pixel runs");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = grid.decl;
+    return (type){TY_COLOR, NULL};
+}
+
 static type check_grid_method(checker *c, expr *e, const type grid)
 {
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, grid);
     if (!str_eq_c(e->name, "Clear")) {
         diag_error(e->at, "a grid has no method '" STR_FMT "'", STR_ARG(e->name));
         suggestion sg = suggest_start(e->name);
+        suggest_consider_c(&sg, "Sample");
         suggest_consider_c(&sg, "Clear");
         suggest_note(&sg);
         return T_ERR;
@@ -4750,7 +5174,13 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' changes its '" STR_FMT "'", STR_ARG(called->name), STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
-        if (root->param->function_param) {
+        if (gpu_code(c) && root->param == &c->method->params.items[0]) {
+            diag_note("a frag gets its vertex blended across the triangle, to read; a vert changes it: 'vert Name(mut "
+                      STR_FMT " " STR_FMT ")'", STR_ARG(root->param->type_name), STR_ARG(root->name));
+        } else if (gpu_code(c)) {
+            diag_note("a %s reads what it's given: %s", shader_word(c->method),
+                      c->method->is_frag ? "it writes its pixel's color, 'mut Color color'" : "it changes its vertex");
+        } else if (root->param->function_param) {
             diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to change the caller's variable, or copy "
                       "it into a 'mut var'", STR_ARG(root->param->type_name), STR_ARG(root->name));
             const fix f = {.kind = FIX_ADD_MUT, .at = root->at, .param = root->param};
@@ -5641,6 +6071,17 @@ static void check_return(checker *c, const stmt *s)
         }
         return;
     }
+    if (m->kind == DECL_SHADER && s->value) {
+        diag_error(s->value->at, "a %s returns nothing: it %s", shader_word(m),
+                   m->is_frag ? "writes its pixel's color through its 'mut Color' parameter" : "changes its vertex in place");
+        for (int i = 0; m->is_frag && i < m->params.count; i++) {
+            const param *p = &m->params.items[i];
+            if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
+                diag_note("write '" STR_FMT " = ...;', then 'return;' to end it here", STR_ARG(p->name));
+            }
+        }
+        return;
+    }
     if (m->return_type.kind == TY_VOID) {
         if (s->value) diag_error(s->value->at, "'" STR_FMT "' returns nothing; use 'return;'", STR_ARG(m->name));
         return;
@@ -5858,10 +6299,10 @@ static bool stands_alone(const expr *e)
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
-        || call == CALL_SNAP
+        || call == CALL_SNAP || call == CALL_DISCARD
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
-        || call == CALL_GRID
+        || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
         || (call == CALL_WORLD && str_eq_c(called->name, "Set"))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || e->kind == E_TRY // Passes an error on, even from a variable
@@ -7269,6 +7710,138 @@ static void check_function_decl(const checker *c, decl *fn)
     if (fn->is_async) check_async_decl(fn);
 }
 
+// What a frag or vert takes that isn't the game's state: a plain value.
+static void refuse_shader_value(const decl *d, const param *p)
+{
+    const char *word = shader_word(d);
+    diag_error(p->type_at.line ? p->type_at : p->at, "a %s takes no plain values: '" STR_FMT "' is %s", word, STR_ARG(p->name),
+               type_name(p->type));
+    diag_note("what a %s reads lives in a component, the entity's, or in a singleton, which it takes as a parameter and "
+              "the engine supplies: 'singleton Sun { float3 direction; }' and '%s " STR_FMT "(..., Sun sun)'",
+              word, word, STR_ARG(d->name));
+}
+
+// frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun) and
+// vert Wave(mut BoxVertex vertex, Time time): the vertex first, a struct; a
+// frag's pixel, its one `mut Color`; then what the engine supplies as it does
+// to a view: the entity's components, singletons of either side, and Pixel
+// and Instance.
+static void check_shader_decl(const checker *c, decl *d)
+{
+    const program *prog = c->prog;
+    const char *word = shader_word(d);
+    const char *vertex_form = d->is_frag ? "frag Name(BoxVertex vertex, mut Color color, ...)" : "vert Name(mut BoxVertex vertex, ...)";
+    d->return_type = T_VOID_;
+    d->result = T_VOID_;
+    d->fails = T_VOID_;
+    const param *color = NULL;
+    for (int i = 0; i < d->params.count; i++) {
+        param *p = &d->params.items[i];
+        const loc at = p->type_at.line ? p->type_at : p->at;
+        p->type = T_ERR;
+        if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT) {
+            diag_error(p->at, "a %s has no entities to filter: it takes what it reads, and the view that draws the mesh says "
+                              "which entities", word);
+            continue;
+        }
+        if (str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at)) {
+            diag_error(at, "a %s can't reach other entities: the GPU is sent the components of the one being drawn", word);
+            diag_note("the view copies what it needs of the others into a component of this entity, or into a singleton");
+            continue;
+        }
+        if (p->name.len > 0) {
+            check_reserved(p->name, p->at);
+            for (int j = 0; j < i; j++) {
+                if (str_eq(d->params.items[j].name, p->name)) {
+                    diag_error(p->name_at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
+                }
+            }
+        }
+        decl *t = find_type(c, p->type_name, p->type_at);
+        type value = T_ERR;
+        const bool plain = !t && builtin_type_named(p->type_name, &value);
+
+        if (i == 0) { // The vertex
+            if (!t || t->kind != DECL_STRUCT) {
+                diag_error(at, "a %s's first parameter is the vertex it runs on, a struct, and '" STR_FMT "' is %s", word,
+                           STR_ARG(p->type_name), t ? decl_what(t) : plain ? type_name(value) : "unknown");
+                diag_note("like '%s': the struct is what the mesh's list holds, a 'List<BoxVertex>'", vertex_form);
+                continue;
+            }
+            if (vertex_dims(t, at, true) == 0) continue;
+            p->type = decl_type(t);
+            p->function_param = true;
+            if (d->is_frag && p->mode == PARAM_MUT) {
+                diag_error(p->at, "a frag reads its vertex, blended across the triangle; a vert changes it");
+                diag_note("drop 'mut'; the pixel it writes is its 'mut Color' parameter");
+                p->mode = PARAM_READ;
+            } else if (!d->is_frag && p->mode != PARAM_MUT) {
+                diag_error(p->at, "a vert changes its vertex in place, so it takes it 'mut': '%s'", vertex_form);
+                p->mode = PARAM_MUT;
+            }
+            continue;
+        }
+
+        if (plain || (t && (t->kind == DECL_STRUCT || t->kind == DECL_ENUM))) {
+            if (t) value = decl_type(t);
+            p->type = value;
+            p->function_param = true;
+            if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
+                color = p; // The pixel it writes
+            } else if (d->is_frag && p->mode == PARAM_MUT) {
+                diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
+                                                         : "a frag writes its pixel's color, a 'mut Color', for now");
+                diag_note("%s comes with drawing into a texture", value.kind == TY_COLOR ? "a second output" : "another type");
+            } else if (p->mode == PARAM_MUT) {
+                diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
+                diag_note("put what it works out in a field of the vertex, which the frag reads blended");
+            } else {
+                refuse_shader_value(d, p);
+            }
+            continue;
+        }
+        if (!t && str_eq_c(p->type_name, "Pixel")) {
+            if (!d->is_frag) {
+                diag_error(at, "a vert runs for a vertex, before there are pixels: 'Pixel' is a frag's");
+                continue;
+            }
+            t = prog->pixel;
+        } else if (!t && str_eq_c(p->type_name, "Instance")) {
+            t = prog->instance;
+        }
+        if (!t) {
+            diag_error(at, "unknown component or singleton '" STR_FMT "'", STR_ARG(p->type_name));
+            suggestion s = suggest_start(p->type_name);
+            suggest_decls(&s, prog, true, true, false);
+            suggest_consider_c(&s, "Instance");
+            if (d->is_frag) suggest_consider_c(&s, "Pixel");
+            suggest_note(&s);
+            continue;
+        }
+        if (t->kind != DECL_COMPONENT && t->kind != DECL_SINGLETON && t->kind != DECL_RECORD) {
+            diag_error(at, "'" STR_FMT "' is %s; a %s takes components and singletons", STR_ARG(t->name), decl_what(t), word);
+            continue;
+        }
+        for (int j = 0; j < i; j++) {
+            if (d->params.items[j].type.decl == t) diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(t->name));
+        }
+        p->type = decl_type(t);
+        if (p->mode == PARAM_MUT) {
+            diag_error(p->at, "a %s reads '" STR_FMT "', and can't change it: drop 'mut'", word, STR_ARG(t->name));
+            diag_note(d->is_frag ? "what it writes is its pixel's color, 'mut Color color'" : "what it changes is its vertex");
+            p->mode = PARAM_READ;
+        }
+    }
+    if (d->params.count == 0) {
+        diag_error(d->at, "a %s takes the vertex it runs on first: '%s'", word, vertex_form);
+    } else if (d->is_frag && !color) {
+        diag_error(d->at, "frag '" STR_FMT "' has no pixel to write: it takes the pixel's color as 'mut Color color'", STR_ARG(d->name));
+        diag_note("like 'frag " STR_FMT "(" STR_FMT " " STR_FMT ", mut Color color, ...) { color = ...; }': what 'color' holds "
+                  "when it ends is the pixel", STR_ARG(d->name), STR_ARG(d->params.items[0].type_name),
+                  STR_ARG(d->params.items[0].name));
+    }
+}
+
 static void check_method_body(checker *c, decl *m)
 {
     c->method = m;
@@ -7674,6 +8247,13 @@ static void warn_unused_params(checker *c, const decl *sys)
         // A Forgotten handler's component says whose local fields it hears go, read or not
         if (sys->forgets && p->type.decl == sys->forgets && !p->read) continue;
         const str type = p->type_name;
+        if (sys->kind == DECL_SHADER) { // What it takes, the engine sends to the GPU: nothing waits for it
+            if (!p->read) {
+                diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
+                diag_note("remove it");
+            }
+            continue;
+        }
         if (!p->read && kind == TY_COMPONENT) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             if (sys->is_handler || sys->is_view) {
@@ -7822,6 +8402,35 @@ static void add_builtins(program *prog)
     const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
+    prog->time = time;
+
+    // What a frag and a vert take beside the game's state, as parameters:
+    // Pixel { float2 position; float depth; float3 world; }, where a frag's
+    // pixel is, and Instance { float4x4 transform; }, how the mesh was drawn.
+    // Not declarations: a game's own Pixel or Instance is the game's.
+    static const char *const pixel_fields[][2] = {{"position", "float2"}, {"depth", "float"}, {"world", "float3"}};
+    decl *pixel = NEW(decl);
+    pixel->kind = DECL_RECORD;
+    pixel->name = str_from("Pixel");
+    pixel->builtin = true;
+    for (int i = 0; i < (int)(sizeof pixel_fields / sizeof pixel_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(pixel_fields[i][0]);
+        f.type_name = str_from(pixel_fields[i][1]);
+        builtin_type_named(f.type_name, &f.type);
+        vec_push(pixel->fields, f);
+    }
+    prog->pixel = pixel;
+    decl *instance = NEW(decl);
+    instance->kind = DECL_RECORD;
+    instance->name = str_from("Instance");
+    instance->builtin = true;
+    field transform = {0};
+    transform.name = str_from("transform");
+    transform.type_name = str_from("float4x4");
+    transform.type = (type){TY_FLOAT4X4, NULL};
+    vec_push(instance->fields, transform);
+    prog->instance = instance;
 
     // component Owner { PlayerID player; }: ties an entity to a player.
     decl *owner = NEW(decl);
@@ -8299,7 +8908,8 @@ static void collect_decls(program *prog)
                 const decl *other = prog->decls.items[j];
                 const bool both_types = is_kind(d, NAME_TYPE) && is_kind(other, NAME_TYPE);
                 const bool both_systems = d->kind == DECL_SYSTEM && other->kind == DECL_SYSTEM;
-                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION;
+                const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_SHADER
+                                   || other->kind == DECL_SHADER;
                 const bool constant = d->kind == DECL_CONST || other->kind == DECL_CONST;
                 if (!both_types && !both_systems && !function && !constant) continue;
                 if (str_eq(d->name, other->name) && str_eq(ns, decl_ns(other))) {
@@ -8340,6 +8950,10 @@ static void collect_decls(program *prog)
                 break;
             case DECL_CONST:
                 diag_error(d->local_at, "constants belong to neither side: every machine has the same ones");
+                break;
+            case DECL_SHADER:
+                diag_error(d->local_at, "a %s runs on the GPU for the meshes a view draws, so it's local already; drop 'local'",
+                           d->is_frag ? "frag" : "vert");
                 break;
             default:
                 diag_error(d->local_at, "functions belong to neither side, so they can't be local");
@@ -8404,6 +9018,7 @@ static void collect_decls(program *prog)
         case DECL_RESULT:
         case DECL_FUNCTION:
         case DECL_CONST:
+        case DECL_SHADER:
         case DECL_SETTINGS: // Not in prog->decls
             break;
         case DECL_SYSTEM:
@@ -9453,11 +10068,17 @@ bool check(program *prog)
         decl *d = prog->decls.items[i];
         c.unit = d->unit;
         if (d->kind == DECL_FUNCTION) check_function_decl(&c, d);
+        else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == DECL_FUNCTION && !d->is_extern) check_method_body(&c, d);
+        if (d->kind == DECL_SHADER) {
+            const int errors = diag_error_count();
+            check_method_body(&c, d);
+            if (diag_error_count() == errors) warn_unused_params(&c, d);
+        }
         for (int k = 0; k < d->methods.count; k++) check_method_body(&c, d->methods.items[k]);
     }
     if (prog->input) {
@@ -9482,6 +10103,7 @@ bool check(program *prog)
     check_this_calls(&c);
     check_drawing_calls(&c);
     check_local_field_calls(&c);
+    if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     collect_device_uses(&c);

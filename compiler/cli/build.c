@@ -1202,7 +1202,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (!inputs) return false;
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
     b->externs = (sb){0};
-    const codegen_options codegen = {"game", gen, true, layout, &b->externs, &b->info};
+    const codegen_options codegen = {"game", gen, true, layout, &b->externs, &b->info, false};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     free(inputs);
     free_files(&paths);
@@ -1995,7 +1995,7 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
     return seen ? 0 : 1;
 }
 
-bool tide_schedule(const char *folder_arg)
+bool tide_schedule(const char *folder_arg, const bool shaders)
 {
     char *folder = path_absolute(folder_arg);
     game_packages packages = {0};
@@ -2003,7 +2003,7 @@ bool tide_schedule(const char *folder_arg)
     int count = 0;
     compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count) : NULL;
     if (!inputs) return false;
-    const codegen_options codegen = {game_name(folder), NULL, true, false, NULL, NULL};
+    const codegen_options codegen = {game_name(folder), NULL, true, false, NULL, NULL, shaders};
     sb text = {0};
     if (!compile_inputs(inputs, count, &codegen, &text)) return false;
     fputs(text.data, stdout);

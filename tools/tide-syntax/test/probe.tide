@@ -172,3 +172,21 @@ component Mesh
     int local;
 }
 view Bake(mut Mesh mesh) { var local = mesh.local; }
+
+// Frags and verts: their words start a declaration, and are names anywhere else.
+frag Shade(BoxVertex vertex, mut Color color, Box box, Pixel pixel)
+{
+    color = box.wood.Sample(vertex.uv) * box.tint;
+    if (pixel.position.x < 10) pixel.Discard();
+}
+vert Wave(mut BoxVertex vertex, Time time, Instance instance) { }
+float Blend(float frag, float vert)
+{
+    float both = frag + vert;
+    frag = both;
+    return vert * both;
+}
+view Boxes(with Box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, Wave, Shade);
+}

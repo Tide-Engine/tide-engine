@@ -1,0 +1,192 @@
+// frag and vert, written in Tide (shaders.tide), through the whole path:
+// tidec's GLSL and WGSL, the draw list, the renderer and the GPU, read back
+// from an offscreen render. Every backend compiles every shader the game
+// uses, and has to give the same pixels: OpenGL 3.3 natively, and in a
+// browser WebGL 2 and WebGPU, whose device is then lost and found again.
+//
+// The game draws a 24 pixel square in the middle of 32 pixel cells, each
+// through another frag or vert: `cell` is a pixel in one.
+
+#include <stdio.h>
+#include <string.h>
+
+#include "game.h"
+#include "tide/platform.h"
+
+#ifdef __wasm__
+#include "tide_web.h" // The page, to lose WebGPU's device
+#endif
+
+#define SIZE 256
+
+static tide_world world;
+static tide_local local;
+static tide_draw_list list;
+static tide_gui gui;
+static tide_devices devices;
+static int failures;
+
+typedef struct check {
+    int column, row;   // The cell
+    float dx, dy;      // From its middle, in pixels, y down
+    float r, g, b;
+    const char *what;
+} check;
+
+static const float back = 0.1f;
+
+#define YELLOW 1.0f, 0.92156863f, 0.015686275f // Color.yellow, which is Unity's
+
+static const check checks[] = {
+    // What a frag reads
+    {0, 0, 0, 0, 1, 0, 0, "a frag writes a color from its entity's component, times a singleton's"},
+    {1, 0, 0, 0, 0, 1, 0, "the next instance of the draw has its own component"},
+    {2, 0, 0, 0, 0, 0, 0.5f, "and the third, whose blue the singleton halves"},
+    {4, 0, 0, 0, 1, 1, 1, "a frag that leaves its color as it starts draws white"},
+    {5, 0, 0, 0, 1, 1, 1, "a vertex with only a position draws white, with no frag"},
+    {6, 0, 0, 0, YELLOW, "with no frag, a pixel is its vertex's color"},
+    {0, 1, 0, 0, back, back, back, "a vert moved the mesh away from where it was drawn"},
+    {2, 1, 0, 0, YELLOW, "to where the singleton says"},
+    {4, 1, -6, -6, 1, 0, 0, "a frag samples a grid: its cell (0, 0) at uv (0, 0)"},
+    {4, 1, 6, -6, 0, 1, 0, "cell (1, 0) to the right"},
+    {4, 1, -6, 6, 0, 0, 1, "cell (0, 1) below"},
+    {4, 1, 6, 6, 1, 1, 1, "and cell (1, 1), the nearest cell each"},
+    {5, 1, 0, 0, 0.5f, 0.54f, 0.54f, "sampled between its cells, they blend, by how near each is"},
+    {6, 1, -6, -6, 1, 0, 0, "with no frag, the draw's texture times the vertex's color"},
+    {6, 1, 6, 6, YELLOW, "at each of its cells"},
+    // Where the pixel is
+    {0, 2, -6, 0, 1, 0, 0, "pixel.position counts the screen's pixels from the left"},
+    {0, 2, 6, 0, 0, 0, 1, "on both sides of the line"},
+    {1, 2, 0, 0, back, back, back, "pixel.Discard leaves the pixel undrawn"},
+    {1, 2, 9, 0, 1, 0, 1, "and the others drawn"},
+    {2, 2, -6, 0, 1, 0, 0, "pixel.world is where the pixel is in the world"},
+    {2, 2, 6, 0, 0, 1, 0, "on both sides of the line"},
+    {3, 2, 0, 0, 0.4905f, 0, 0, "pixel.depth is how far it is between the camera's near and far sides"},
+    {4, 2, 0, 0, 0.5f, 1, 0.5f, "a vert turns a normal by instance.transform, and the frag gets it"},
+    {5, 2, 0, 0, 0, 1, 1, "a frag reads instance.transform"},
+    // Ints, bools, enums and structs of a component
+    {0, 3, 0, 0, 0, 1, 0, "a frag branches on an int of its instance"},
+    {1, 3, 0, 0, 0.5f, 0, 0.5f, "on an enum and a bool, and reads a struct's fields"},
+    {2, 3, 0, 0, 0, 0, 1, "and neither"},
+    // 2D
+    {0, 4, 0, 0, 0, 1, 0, "a rect drawn after a 2D mesh is over it"},
+    {0, 4, 8, 0, 1, 0.5f, 0, "the mesh, through its frag, over the rect before it"},
+    {0, 4, 14, 14, 0, 0, 1, "which shows around it"},
+    {2, 4, 0, 0, 1, 1, 1, "a 2D vertex with only a position draws white"},
+    {3, 4, -6, -6, 1, 0, 0, "a 2D mesh with no frag samples the draw's texture"},
+    {3, 4, 6, 6, 1, 1, 1, "at each of its cells"},
+    {4, 4, 0, -6, YELLOW, "a 2D mesh on the screen's pixels: pixel.position from the top"},
+    {4, 4, 0, 6, 0, 1, 1, "on both sides of the line"},
+    {5, 4, 0, 0, back, back, back, "a vert moved the 2D mesh away"},
+    {7, 4, 0, 0, 1, 1, 1, "to where the singleton says"},
+    // The language
+    {0, 5, 0, 0, 0, 1, 0, "a frag's numbers, vectors, matrices, structs, functions and loops come out as on the CPU"},
+    {1, 5, 0, 0, 0, 1, 0, "a vert reads its vertex's ints, samples a grid, and changes the color its pixels get"},
+    {2, 5, 0, 0, 0, 1, 0, "and so do its matrices, int vectors, assignments, counting loops, structs in structs and the rest of Math"},
+    // Instances of a 2D mesh
+    {0, 6, 0, 0, 1, 0, 0, "three entities in one 2D draw: the vert puts each where its component says"},
+    {1, 6, 0, 0, 0, 1, 0, "the second"},
+    {2, 6, 0, 0, 0, 0, 1, "and the third"},
+    {3, 6, 0, 0, back, back, back, "and nothing where there's none"},
+};
+
+#define CHECKS ((int)(sizeof checks / sizeof checks[0]))
+
+static void expect(const bool ok, const char *what)
+{
+    printf("%s: %s\n", ok ? "ok" : "FAIL", what);
+    if (!ok) failures++;
+}
+
+static uint8_t byte(const float v)
+{
+    return (uint8_t)(v * 255.0f + 0.5f);
+}
+
+// The run of instances drawn through the shader named `name`: how many
+// commands draw through it, and how many instances the first has.
+static uint32_t runs_through(const char *name, uint32_t *instances)
+{
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < list.count; i++) {
+        if (list.commands[i].kind != TIDE_DRAW_SHADED) continue;
+        const tide_draw_run *r = &list.runs[list.commands[i].shaded.run];
+        if (!r->shader || strcmp(r->shader->name, name) != 0) continue;
+        if (found++ == 0) *instances = r->count;
+    }
+    return found;
+}
+
+// A frame of the game, and its pixels against what they should be.
+static void run_checks(const char *when)
+{
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+
+    uint32_t instances = 0;
+    expect(runs_through("Tinted on Corner3", &instances) == 1 && instances == 3, "three entities through one frag are one draw");
+    expect(runs_through("Place and Glow on Corner2", &instances) == 1 && instances == 3, "and so are three through a 2D vert");
+
+    static tide_float2 points[CHECKS];
+    static uint32_t got[CHECKS];
+    for (int i = 0; i < CHECKS; i++) {
+        points[i] = tide_f2(16.0f + 32.0f * (float)checks[i].column + checks[i].dx, 16.0f + 32.0f * (float)checks[i].row + checks[i].dy);
+    }
+    tide_platform_read_pixels(&list, points, CHECKS, got);
+    for (int i = 0; i < CHECKS; i++) {
+        const uint8_t want[3] = {byte(checks[i].r), byte(checks[i].g), byte(checks[i].b)};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", checks[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
+static int frame(void *user, const float seconds)
+{
+    (void)user, (void)seconds;
+    static bool said;
+    if (!said) printf("renderer: %s\n", tide_platform_renderer()); // What a test of one backend looks for
+    said = true;
+#ifdef __wasm__
+    // WebGPU's device can go away, taking the pipelines made from the game's
+    // shaders with it: once everything checked out, the page loses it, and
+    // on the next one they're made again and draw the same.
+    static int lost; // 1: lost, and waiting for another; 2: checking again
+    if (lost == 1) {
+        if (!tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
+        printf("the device was lost, and the page found another\n");
+        lost = 2;
+    }
+    if (lost == 2) {
+        run_checks(", on another device");
+        return failures;
+    }
+#endif
+    run_checks("");
+    // A second frame draws the same from what the list and the renderer kept
+    run_checks(", again");
+#ifdef __wasm__
+    if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
+        tide_web_eval("Tide.loseDevice()");
+        lost = 1;
+        return TIDE_KEEP_RUNNING;
+    }
+#endif
+    return failures;
+}
+
+int main(void)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_tick(&world); // The entities are there
+    tide_local_init(&local);
+    tide_platform_open(&(tide_window_desc){.title = "shaders", .width = SIZE, .height = SIZE, .hidden = true});
+    tide_platform_run(frame, NULL);
+}

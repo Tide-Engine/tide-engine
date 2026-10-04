@@ -1392,6 +1392,24 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
     const type rt = r->type;
     const type float_t = {TY_FLOAT, NULL};
 
+    // Colors: channel by channel with another, or scaled by a number.
+    if (result.kind == TY_COLOR) {
+        if (lt.kind == TY_COLOR && rt.kind == TY_COLOR) {
+            sb_printf(o, "tide_%s_color(", op == T_PLUS ? "add" : op == T_MINUS ? "sub" : "mul");
+            gen_expr(g, o, l);
+            sb_put(o, ", ");
+            gen_expr(g, o, r);
+        } else {
+            expr *color = lt.kind == TY_COLOR ? l : r;
+            sb_printf(o, "tide_%s_color(", op == T_STAR ? "scale" : "divs");
+            gen_expr(g, o, color);
+            sb_put(o, ", ");
+            gen_as(g, o, color == l ? r : l, float_t);
+        }
+        sb_put(o, ")");
+        return;
+    }
+
     // Vectors: component-wise, with both sides converted to the result type.
     if (type_dim(result) >= 2) {
         const char *name = op == T_PLUS ? "add" : op == T_MINUS ? "sub" : op == T_STAR ? "mul" : op == T_SLASH ? "div" : "mod";
@@ -2373,6 +2391,31 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
                 gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            }
+            sb_put(o, ")");
+        } else if (e->call == CALL_DRAW && e->shader) {
+            // Draw.Mesh through a shader: its values, then what the frag and the vert read of the view's
+            const shader *sh = e->shader;
+            bool filter = false;
+            sb_printf(o, "tide_shade_%d(tide_draw", sh->index);
+            for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
+                expr *arg = e->args.items[i];
+                sb_put(o, ", ");
+                gen_as(g, o, arg, e->arg_want.items[i]);
+                if (arg->type.kind == TY_GRID) sb_printf(o, ", &%s", grid_shape_name(arg->type.decl));
+                filter |= arg->type.kind == TY_ENUM;
+            }
+            if (sh->textured && !filter) sb_put(o, ", TIDE_FILTER_BILINEAR");
+            for (int b = 0; b < sh->bound.count; b++) {
+                for (int k = 0; g->code && k < g->code->params.count; k++) {
+                    const param *p = &g->code->params.items[k];
+                    const bool takes = (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
+                                    && (p->mode == PARAM_READ || p->mode == PARAM_MUT);
+                    if (!takes || p->type.decl != sh->bound.items[b]) continue;
+                    sb_printf(o, ", %s", local_cname(g, p->name));
+                    if (shader_reads_local(sh, sh->bound.items[b])) sb_printf(o, ", %s", fields_name(g, p->name));
+                    break;
+                }
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW
@@ -10091,6 +10134,190 @@ static void setting_text(char *out, const size_t size, const expr *setting)
     out[n] = '\0';
 }
 
+// ---------------------------------------------------------------------------
+// Shaders (see shader.c): each as a tide_shader, and a function that draws a
+// mesh through it, which a Draw.Mesh calls with what the view has.
+
+// A shader's source as an array of chars: C only promises string literals of
+// 4095.
+static void gen_shader_text(sb *o, const char *name, const char *text)
+{
+    sb_printf(o, "static const char %s[] = {", name);
+    for (size_t i = 0; text[i]; i++) sb_printf(o, "%s%d,", i % 40 == 0 ? "\n    " : "", text[i]);
+    sb_put(o, "0};\n");
+}
+
+static uint64_t hash_more(uint64_t h, const void *data, const size_t size)
+{
+    for (size_t i = 0; i < size; i++) h = (h ^ ((const uint8_t *)data)[i]) * 0x100000001B3ull;
+    return h;
+}
+
+// Statements that put the value of type `t` at the C expression `access`
+// into the floats and ints `to` holds, at words *f and *i, as shader.c reads
+// them back.
+static void gen_shader_value(sb *o, const char *to, const type t, const char *access, int *f, int *i)
+{
+    const int dim = type_dim(t);
+    const int n = matrix_dim(t);
+    const int floats = dim > 0 && type_is_float_based(t) ? dim : t.kind == TY_COLOR || t.kind == TY_QUATERNION ? 4 : n * n;
+    if (floats > 0) {
+        sb_printf(o, "    memcpy(&%s.f[%d], &%s, %d * sizeof(float));\n", to, *f, access, floats);
+        *f += floats;
+    } else if (dim > 0) {
+        sb_printf(o, "    memcpy(&%s.i[%d], &%s, %d * sizeof(int32_t));\n", to, *i, access, dim);
+        *i += dim;
+    } else if (t.kind == TY_BOOL) {
+        sb_printf(o, "    %s.i[%d] = %s ? 1 : 0;\n", to, (*i)++, access);
+    } else if (t.kind == TY_ENUM) {
+        sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
+    } else {
+        for (int k = 0; k < t.decl->fields.count; k++) {
+            const field *fl = &t.decl->fields.items[k];
+            if (fl->hidden) continue;
+            sb inner = {0};
+            sb_printf(&inner, "%s.%s", access, field_cname(fl));
+            gen_shader_value(o, to, fl->type, inner.data, f, i);
+        }
+    }
+}
+
+// Words, as the float4s or int4s that hold them.
+static int word_packs(const int words)
+{
+    return (words + 3) / 4;
+}
+
+// A struct of the floats and ints a draw sends, zeroed: `name`, or nothing
+// when there are none.
+static bool gen_shader_words(sb *o, const char *name, const int floats, const int ints)
+{
+    if (floats + ints == 0) return false;
+    sb_put(o, "    struct {");
+    if (floats) sb_printf(o, " float f[%d];", word_packs(floats) * 4);
+    if (ints) sb_printf(o, " int32_t i[%d];", word_packs(ints) * 4);
+    sb_printf(o, " } %s;\n    memset(&%s, 0, sizeof %s);\n", name, name, name);
+    return true;
+}
+
+static void gen_shaders(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->shaders.count == 0) return;
+    sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    for (int s = 0; s < prog->shaders.count; s++) {
+        const shader *sh = prog->shaders.items[s];
+        const char *vertex = type_cname(sh->vertex);
+        char name[64];
+        snprintf(name, sizeof name, "tide_shader_%d_vertex", s);
+        gen_shader_text(o, name, sh->glsl_vertex);
+        snprintf(name, sizeof name, "tide_shader_%d_fragment", s);
+        gen_shader_text(o, name, sh->glsl_fragment);
+        sb_put(o, "#ifdef __wasm__\n");
+        snprintf(name, sizeof name, "tide_shader_%d_wgsl", s);
+        gen_shader_text(o, name, sh->wgsl);
+        sb_put(o, "#endif\n");
+
+        const int numbers[] = {sh->dims, sh->vertex->fields.count, sh->instance_floats, sh->instance_ints,
+                               sh->uniform_floats, sh->uniform_ints, sh->textures.count};
+        uint64_t id = hash_more(0xCBF29CE484222325ull, sh->glsl_vertex, strlen(sh->glsl_vertex));
+        id = hash_more(id, sh->glsl_fragment, strlen(sh->glsl_fragment));
+        id = hash_more(id, sh->wgsl, strlen(sh->wgsl));
+        id = hash_more(id, numbers, sizeof numbers);
+
+        sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
+        gen_c_raw_literal(o, str_from(sh->name));
+        sb_printf(o, ",\n    .glsl_vertex = tide_shader_%d_vertex,\n    .glsl_fragment = tide_shader_%d_fragment,\n", s, s);
+        sb_printf(o, "#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
+        sb_printf(o, "    .id = 0x%llxull,\n    .dims = %d,\n    .vertex_size = sizeof(%s),\n    .attribute_count = %d,\n"
+                     "    .attributes = {",
+                  (unsigned long long)id, sh->dims, vertex, sh->vertex->fields.count);
+        for (int i = 0; i < sh->vertex->fields.count; i++) {
+            const field *f = &sh->vertex->fields.items[i];
+            const int dim = f->type.kind == TY_COLOR ? 4 : type_dim(f->type);
+            sb_printf(o, "%s{TIDE_SHADER_%s + %d, offsetof(%s, %s)}", i ? ", " : "", type_is_int_based(f->type) ? "INT" : "FLOAT",
+                      dim - 1, vertex, field_cname(f));
+        }
+        sb_printf(o, "},\n    .instance_floats = %d,\n    .instance_ints = %d,\n    .uniform_floats = %d,\n"
+                     "    .uniform_ints = %d,\n    .texture_count = %d,\n};\n\n",
+                  word_packs(sh->instance_floats), word_packs(sh->instance_ints), word_packs(sh->uniform_floats),
+                  word_packs(sh->uniform_ints), sh->textures.count);
+
+        // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
+        sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw, tide_list tide_vertices, tide_list tide_indices", s);
+        if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
+        if (sh->textured) sb_put(o, ", tide_grid tide_texture, const tide_grid_shape *tide_shape, int32_t tide_filter");
+        for (int b = 0; b < sh->bound.count; b++) {
+            const decl *d = sh->bound.items[b];
+            sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
+            // Its local fields, which this machine keeps apart
+            if (shader_reads_local(sh, d)) sb_printf(o, ", const %s *tide_lb%d", type_cname(d->local_part), b);
+        }
+        sb_put(o, ")\n{\n");
+        for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
+        const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
+        const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
+        unsigned blended = 0;
+        for (int v = 0; v < sh->values.count; v++) {
+            const shader_value *value = &sh->values.items[v];
+            int f = value->float_at, i = value->int_at;
+            const char *to = value->per_instance ? "tide_instance" : "tide_uniforms";
+            if (!value->source) {
+                gen_shader_value(o, to, (type){TY_FLOAT4X4, NULL}, "tide_transform", &f, &i);
+                continue;
+            }
+            int b = 0;
+            while (sh->bound.items[b] != value->source) b++;
+            sb access = {0};
+            sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
+            gen_shader_value(o, to, value->field->type, access.data, &f, &i);
+        }
+        sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
+        for (int t = 0; t < sh->textures.count; t++) {
+            const shader_texture *texture = &sh->textures.items[t];
+            if (!texture->source) { // The one the draw was given, read as it said
+                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_texture, tide_shape);\n", t);
+                continue;
+            }
+            int b = 0;
+            while (sh->bound.items[b] != texture->source) b++;
+            sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_%sb%d->%s, &%s);\n", t,
+                      texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
+            if (texture->blended) blended |= 1u << t;
+        }
+        char mask[64];
+        if (sh->textured) snprintf(mask, sizeof mask, "tide_filter != TIDE_FILTER_POINT ? 1u : 0u"); // As the draw said
+        else snprintf(mask, sizeof mask, "0x%xu", blended);
+        sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n}\n\n",
+                  s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
+    }
+}
+
+// What a view's frags and verts read that it doesn't take itself, it's
+// handed as if it did: its entity's components and the singletons, blended
+// like its own.
+static void bind_views(const program *prog)
+{
+    for (int i = 0; i < prog->views.count; i++) {
+        decl *view = prog->views.items[i];
+        for (int b = 0; b < view->bound.count; b++) {
+            decl *d = view->bound.items[b];
+            sb name = {0};
+            sb_printf(&name, "tide_bound%d", b);
+            param p = {0};
+            p.mode = PARAM_READ;
+            p.type = (type){d->kind == DECL_COMPONENT ? TY_COMPONENT : TY_SINGLETON, d};
+            p.type_name = d->name;
+            p.name = str_from(name.data);
+            p.read = true;
+            p.local_use = d->local_part != NULL; // Its local fields too, for a frag that reads them
+            vec_push(view->params, p);
+        }
+        view->bound.count = 0;
+    }
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
     if (opts->info) {
@@ -10117,6 +10344,7 @@ bool codegen(program *prog, const codegen_options *opts)
         if (prog->decls.items[i]->is_extern) sb_printf(opts->externs, "%s\n", prog->decls.items[i]->c_name);
     }
 
+    bind_views(prog);
     name_program(&g);
     collect_tasks(&g);
     gen_header(&g);
@@ -10138,6 +10366,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_dispatch_prototypes(&g);
     gen_apply(&g, false);
     gen_apply(&g, true);
+    gen_shaders(&g);
     gen_routines(&g);
     gen_blend_helpers(&g); // After the routines: a type's Interpolate is one
     if (prog->match_devices) gen_keep_devices(&g);

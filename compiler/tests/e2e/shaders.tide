@@ -1,0 +1,180 @@
+// frag and vert: Draw.Mesh through code the GPU runs, and what it records for
+// them. A vertex struct of the game's, the fields a frag and a vert read of
+// the view's entity (for each instance) and of singletons (for each draw),
+// grids as textures, and a mesh with neither, drawn as its vertices are.
+
+scene Main { }
+
+struct BoxVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+// A 2D mesh's corner: its position is a float2
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+// Only where it is: 12 bytes a vertex
+struct Dot
+{
+    float3 position;
+}
+
+struct Finish
+{
+    float shine = 0.5;
+    int layers = 3;
+}
+
+enum Wear { New, Worn, Broken }
+
+component Box
+{
+    float3 pos;
+    Color tint = Color.white;
+    int kind;
+    bool lit = true;
+    float glow;
+    Finish finish;
+    Wear wear;
+    float unread = 7; // No frag reads it, so it isn't sent
+    local float sparkle = 0.5; // This machine's, beside the match's: a frag reads it like any field
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+    float strength = 2;
+    float unread = 9;
+    local float dim = 0.125;
+}
+
+local singleton Models
+{
+    List<BoxVertex> crate;
+    List<int> faces;
+    List<Corner> flat;
+    List<Dot> dots;
+    Grid2<Color> wood = Grid2(2, 2);
+    Grid2<Color> moss = Grid2(2, 2);
+    float fade = 0.25;
+    int frames;
+}
+
+const float AMBIENT = 0.1;
+
+// An ordinary function, which the CPU runs too
+float Lit(float3 normal, float3 toward)
+{
+    return Math.Max(Math.Dot(Math.Normalize(normal), toward), AMBIENT);
+}
+
+void Brighten(mut Color color, float by)
+{
+    color = color * by;
+}
+
+struct Wave3
+{
+    float height = 0.1;
+
+    float At(float x)
+    {
+        return Math.Sin(x) * height;
+    }
+}
+
+// Once for each vertex: changes it in place
+vert Wave(mut BoxVertex vertex, Time time, Instance instance)
+{
+    float seconds = time.tick * time.dt;
+    Wave3 wave = Wave3 { height = 0.2 };
+    vertex.position.y += wave.At(seconds * 2 + vertex.position.x);
+    vertex.normal = Math.Rotate(instance.transform, vertex.normal);
+    vertex.position.xz = vertex.position.xz * 1.5;
+}
+
+// Once for each pixel: its vertex blended across the triangle, and its color
+frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)
+{
+    float light = Lit(vertex.normal, -sun.direction) * sun.strength;
+    color = models.wood.Sample(vertex.uv) * models.moss.Sample(vertex.uv, Filter.Point) * box.tint * light;
+    if (box.kind == 2 && box.lit) Brighten(color, 2);
+    for (int i = 0; i < box.finish.layers; i++)
+    {
+        color.a = color.a * box.finish.shine;
+    }
+    if (box.wear == Wear.Broken || pixel.position.x < 0) pixel.Discard();
+    color.g += pixel.world.y * 0.01 + box.glow + models.fade + pixel.depth;
+    color.b += box.sparkle * sun.dim;
+    color.g = Math.Saturate(color.g);
+}
+
+// Leaves its pixel as it starts: white
+frag Blank(BoxVertex vertex, mut Color color)
+{
+}
+
+frag Tint(Corner vertex, mut Color color, Models models)
+{
+    color = vertex.color * models.fade;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box { pos = float3(1, 0, 5), tint = Color.red, kind = 2, wear = Wear.Worn });
+    Spawn(Box { pos = float3(-1, 0, 5), tint = Color.green, lit = false, finish = Finish { shine = 0.75, layers = 5 } });
+}
+
+system Glow(mut Box box)
+{
+    box.glow += 1;
+}
+
+view Fill(mut Models models)
+{
+    models.frames += 1;
+    if (models.frames > 1) return;
+    models.crate.Add(BoxVertex { position = float3(0, 0, 0), normal = float3(0, 0, -1) });
+    models.crate.Add(BoxVertex { position = float3(1, 0, 0), normal = float3(0, 0, -1), uv = float2(1, 0) });
+    models.crate.Add(BoxVertex { position = float3(0, 1, 0), normal = float3(0, 0, -1), uv = float2(0, 1) });
+    models.faces = [0, 1, 2];
+    models.flat = [Corner { }, Corner { position = float2(1, 0) }, Corner { position = float2(0, 1), color = Color.blue }];
+    models.dots = [Dot { }, Dot { position = float3(1, 0, 0) }, Dot { position = float3(0, 1, 0) }];
+    models.wood[0, 0] = Color.red;
+}
+
+view Sparkle(mut Box box)
+{
+    if (box.kind == 2) box.sparkle = 3;
+}
+
+// The view only requires the component: the frag reads it, and the engine hands it over
+view Boxes(with Box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);
+}
+
+// A frag alone, a vert alone, and what the view takes itself
+view Others(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Blank);
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), models.wood, Filter.Point, Wave);
+}
+
+// With neither: the vertices as they are, their color times the texture
+view Plain(Models models)
+{
+    Draw.Mesh(models.dots, [0, 1, 2], float4x4.identity);
+    Draw.Mesh(models.flat, [0, 1, 2]);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(models.flat, [0, 1, 2], models.wood);
+    Draw.Mesh(models.flat, [0, 1, 2], Tint);
+    Draw.Mesh([Corner { }, Corner { position = float2(2, 0) }, Corner { position = float2(0, 2) }], [0, 1, 2]);
+}

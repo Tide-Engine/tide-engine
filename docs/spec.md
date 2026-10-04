@@ -1086,6 +1086,45 @@ view Nameplates(Player player, without ownership) { ... }
 - Meshes are the general shape: `Draw.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with the other Draw calls. The engine gives general primitives rather than a helper for each case.
 - A texture is a grid of colors: `Draw.Mesh(vertices, indices, texture)` takes a `Grid2<Color>` with a size. There's no texture type and no handle. The pixels are the game's state, local or the match's, and the engine keeps a copy on the GPU, which it uploads again when the cells change. So hot reloading carries textures as it carries any state, on every platform.
 - Filtering is how a draw reads the pixels, not part of them: `Draw.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.
+- **Code the GPU runs is written in Tide: `frag` and `vert`.** They're declaration kinds, like `view`: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. Their signature says what they read, and the engine supplies it. Neither returns a value. A `Draw.Mesh` names them after its other arguments, the vert first, and both are optional.
+
+```csharp
+struct BoxVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+// Once per vertex: changes it in place, as a system changes a component
+vert Wave(mut BoxVertex vertex, Time time)
+{
+    float seconds = time.tick * time.dt;
+    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+}
+
+// Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write
+frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models)
+{
+    float light = Math.Max(Math.Dot(Math.Normalize(vertex.normal), -sun.direction), 0.1);
+    color = models.wood.Sample(vertex.uv) * box.tint * light;
+}
+
+view DrawBox(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Wave, Shade);
+}
+```
+
+  - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A `Draw.Mesh` that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
+  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. The screen is the only target for now, so a frag takes exactly one `mut` parameter, a `Color`: another type, or a second output, comes with drawing into a texture. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
+  - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`.
+  - There are no plain value parameters, on purpose: what a frag or vert reads lives in a component or a singleton, local ones included, like everything else.
+  - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
+  - With no vert, the vertices are used as they are. With no frag, a pixel is its vertex's `color` times the texture's at its `uv`, where the vertex struct has them: white, and untextured, where it doesn't. So a struct with only a `position` draws with no code of the game's, at 12 bytes a vertex.
+  - 2D meshes take them too: a vertex struct whose `position` is a `float2` is drawn through the 2D camera or the screen, in order with the other 2D calls.
+  - They call ordinary Tide functions, which then have to stay within what the GPU runs.
+  - What the GPU computes differs between machines, so it never reaches the match: frags and verts are local code, as views are, and `Math` there is the GPU's own, not Tide's deterministic functions.
 - `Draw.Clip(rect)` keeps the Draw calls after it inside a rectangle, and `Draw.Clip()` ends it.
 - `Draw.Screen()` puts the Draw calls after it in the screen's pixels, from the top left with `y` down, as the GUI's are. What views draw there is under the GUI's widgets.
 - **The mouse's cursor is locked by asking, frame by frame.** `Cursor.Lock()` asks for the cursor's lock, for a camera that looks around. A view, or a function it calls, calls it every frame it wants the mouse, as with `GUI.ShowKeyboard()`: the lock is held while some view asked in the frame that just ended. When no view asks (a pause menu is up, the match ended), the cursor comes back on its own. There's no `Unlock`.
@@ -1156,6 +1195,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 ### Provisional
 
+- `frag` and `vert` declare code the GPU runs for a mesh's pixels and vertices (above, and GPU code below).
 - `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
 - Views run in declaration order, after all the systems of the frame's ticks. Within a view, entities run in the same order as in systems.
 - `Draw` functions can only be called from views and the functions they call (see Functions). Calling them from systems needs to tell predicted ticks from verified or replayed ones, which comes with multiplayer.
@@ -1171,6 +1211,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw.Mesh(vertices, indices)`, `Draw.Mesh(vertices, indices, texture)` and `Draw.Mesh(vertices, indices, texture, filter)`: a `List<Vertex>`, a `List<int>`, a `Grid2<Color>` and a `Filter`.
   - `Draw.Clip(rect)` and `Draw.Clip()`, and `Draw.Screen()`.
   - In 3D: `Draw.Camera(position, rotation, fieldOfView)` and `Draw.Camera(transform, projection)`, and `Draw.Mesh(vertices, indices, transform)`, `Draw.Mesh(vertices, indices, transform, texture)` and `Draw.Mesh(vertices, indices, transform, texture, filter)`: a `List<Vertex3>`, a `List<int>`, a `float4x4`, a `Grid2<Color>` and a `Filter`.
+  - Either `Draw.Mesh` takes a list of a vertex struct of the game's instead, and after its other arguments, a vert and a frag by name (GPU code, below).
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
 - `Vertex` is a built-in struct: `float2 position`, `float2 uv` and `Color color = Color.white`, so a corner that leaves its color out takes the texture's as it is. `Filter` is a built-in enum, `Point` and `Bilinear`, with the values of Unity's `FilterMode`. A game can't declare either name outside a namespace.
 - Triangles draw whichever way round their corners go. A triangle with an index past the vertices is left out, and so are the one or two indices after the last whole triangle. Colors blend over what's behind them by their alpha, which isn't premultiplied.
@@ -1182,13 +1223,38 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - `Draw.Clip`'s `Rect` goes from (x, y) to (x + width, y + height) in the units the calls are in: the world's under a camera, with `y` up, and pixels after `Draw.Screen()`. It's set where it lands on the screen then, to whole pixels, and stays there when the camera changes. `Draw.Clear` fills the clip. Each frame starts with none, and a view's clip never clips the GUI.
 - `Draw.Camera` after `Draw.Screen()` goes back to the world.
 - 3D meshes go through a camera of their own, which the 2D one and `Draw.Screen()` leave as it is, and the other calls go through theirs whatever the 3D camera is.
+- GPU code (`frag`, `vert` and the functions they call):
+  - **`color` starts as `Color.white`** (to confirm). It isn't the pixel already on the screen, which a GPU doesn't let a frag read, though `mut` elsewhere means reading what's there and changing it. A frag that never writes it draws white.
+  - `frag` and `vert` are keywords only at the start of a declaration, like `view`. They share their names with functions: a frag and a function can't have the same name. Nothing calls one, and its name is no value: only a `Draw.Mesh` names it. `local` before one is an error, as it's local already.
+  - `Draw.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])` draws a 2D mesh, and `Draw.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])` a 3D one. The vertices are a list of a struct with a `position`: a `float2` makes the mesh 2D and a `float3` 3D. Its other fields are floats, ints, their vectors and colors, 12 fields at most, and the GPU reads them from the list as they are. A 3D mesh takes its transform, and a 2D one takes none. The texture and its filter are for a draw with no frag, whose vertex then needs a `float2 uv`; a frag samples the grids it takes, so a texture beside a frag is an error. With no frag, a field named `color` has to be a `Color`. A `List<Vertex>` or a `List<Vertex3>` with neither a vert nor a frag is drawn as it was before.
+  - A draw that names a vert or a frag is in the view itself, not in a function the view calls: the components they read are the view's entity's. A function draws a mesh of any vertex struct without them.
+  - The view needn't take what its frags and verts read: `with Box` is enough for a frag that reads `Box`, and a singleton needs no mention. The engine hands them over as it does the view's own parameters, blended between ticks the same way, and a view whose frag reads the match doesn't run outside a match. What the view does take is sent as the view has it when it draws.
+  - Only the fields the code reads are sent: a component's with each instance, and a singleton's once for the draw. Reading a parameter whole, as a value passed on, sends all of its fields.
+  - A `local` field of the match's component or singleton (see Local state) is read like any other field of it: what this machine keeps for the entity being drawn, or the field's default where nothing was written.
+  - A frag or vert takes no `World`: the GPU is sent the components of the entity being drawn, and the view copies what it needs of others into a component of it or a singleton.
+  - **`Pixel pixel`** (to confirm) is a parameter a frag can take, which says where its pixel is: `pixel.position`, a `float2` in the screen's pixels from the top left, as `Draw.Screen()`'s; `pixel.depth`, a `float` from 0 at the camera's near side to 1; and `pixel.world`, a `float3`, where on the mesh it is in the world: the vertex's position after the vert, through the draw's transform, blended. A 2D mesh's is its position in the units it's drawn in, with `z` 0.
+  - **`Instance instance`** (to confirm) is a parameter a frag or a vert can take: `instance.transform` is the `float4x4` the draw was given, and the identity for a 2D mesh. A normal in the world is `Math.Rotate(instance.transform, vertex.normal)`, in the vert or in the frag.
+  - `Pixel` and `Instance` are built in only as a frag's or vert's parameter types. A game that declares a type of its own with either name gets its own there.
+  - The camera isn't given: a game keeps where its camera is in its own state, which a frag takes like any singleton.
+  - **`pixel.Discard()`** (to confirm) leaves the pixel undrawn, its depth too, and ends the frag there. It's a statement of its own, in the frag itself.
+  - **`grid.Sample(uv)`** (to confirm) reads a `Grid2<Color>` that's a field of a parameter, blended between its cells, as `Draw.Mesh`'s texture is unless it says otherwise, and `grid.Sample(uv, Filter.Point)` reads the nearest cell. The filter is written there, `Filter.Point` or `Filter.Bilinear`: the GPU is told how a texture is read before any pixel runs. `uv` is a mesh's: (0, 0) and (1, 1) are the grid's outer corners, and past them it reads the cells at the edge. A grid with no size samples white. Verts sample too.
+  - What the GPU runs: bools, ints, floats, vectors, matrices, colors, enums, and structs of those; locals; `if`; `?:` between numbers, vectors and colors; `for` loops that count (a variable of the loop's own, compared with a bound, that only its step changes), with `break` and `continue`; `return;`; the game's functions, methods and operators; `Math`'s functions on numbers, vectors and matrices, but `Inverse` and `Hash`; constructors, constants and `default`. `Math.Normalize` gives zero for a zero vector there too; the rest of `Math` is the GPU's own.
+  - Not there yet: `while`, `switch`, quaternion math, and the functions that build quaternions and matrices (`float4x4.TRS`).
+  - Never there: lists, maps and sets, text, entities and players, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw`, the GUI, `Screen`, `Devices`, `Cursor`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it.
+  - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.
+  - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
+  - What a GPU takes, on every backend, is checked at the `Draw.Mesh`, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components); 4000 bytes of singletons' fields for a draw; and 8 grids sampled, one sampled with both filters counting twice.
+  - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
+  - A function both the CPU and the GPU run compiles for both.
+  - `tide shaders` (`tidec --shaders`) prints each shader, as GLSL and as WGSL. No game sees a shader compiler's error: what tidec writes always compiles.
+- Colors: `+`, `-` and `*` between two colors work channel by channel, alpha too, and a color times a number, or divided by one, scales every channel.
 - `Draw.Camera(position, rotation, fieldOfView)` is a perspective camera: at `position`, looking along `rotation`'s `+z` with its `+x` to the right of the screen and `+y` up, as Unity's, and seeing `fieldOfView` degrees up and down (clamped to 0.00001 to 179, as Unity does), as much across as the screen's shape gives. It sees from 0.3 units in front of it on, as Unity's cameras, and has no far side, which costs depth precision next to nothing. Each frame starts with one at the origin, looking along `+z`, with 60 degrees.
 - `Draw.Camera(transform, projection)` is any camera: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees, looking down `-z` (OpenGL's and Unity's view space), to clip space, the screen's shape included. `Screen.width / Screen.height` is the shape.
 - `Vertex3` is a built-in struct: `float3 position`, `float2 uv` and `Color color = Color.white`. A game can't declare the name outside a namespace.
 - 3D meshes are the only calls that test and write depth: they hide each other by how far they are, whatever their order, and every other call draws over what's there, in order. `Draw.Clear` clears depth too, within the clip. A see-through 3D mesh blends with what's behind it and writes depth like any other. Triangles, textures and filters are as a mesh's: either side draws, and there's no lighting.
 - A 3D mesh is its two lists. The engine keeps a copy of each it draws, on the GPU too, and only copies it again when it changed: a world's list tells from the hashes its heap keeps of its pages (a list in chunks, of each chunk's), so drawing one that didn't change costs a hash for each of its pages; a list made along the way is read. A mesh no call of a frame draws is let go. A mesh that changed is another copy, so what a frame drew before it changed stays as it was.
 - Instances of one 3D mesh drawn in a row, with the same texture and filter and nothing between them, are one draw: a view that runs for each entity and draws one mesh draws them all at once. Lists made along the way are the same mesh when they hold the same.
-- `Color` is a built-in value type with `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. It's built with `Color(r, g, b)` (alpha 1) or `Color(r, g, b, a)`. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`, with Unity's values and names. Components and singletons can hold colors. There are no operators on colors yet.
+- `Color` is a built-in value type with `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. It's built with `Color(r, g, b)` (alpha 1) or `Color(r, g, b, a)`. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`, with Unity's values and names. Components and singletons can hold colors, and colors add, subtract, multiply and scale (below).
 - Text is written in double quotes, with the escapes `\"`, `\\` and `\n`. Its type is `string` (see Text).
 - Blending: a view's match components and singletons are copies, their fields that blend set between last tick's value and this tick's, as far as this moment is between the two ticks. Their local fields aren't part of the copy: a view reads and writes those where they are (see Local state). Vectors, matrices, colors and rects blend component by component, quaternions the short way round (normalized), and structs field by field. An entity that wasn't there last tick is drawn as it is. Local state isn't blended: it's this machine's, as it is.
 - `[Snap]` goes on floats, vectors, quaternions, colors and rects of components, singletons and structs; on anything else it's an error that says why.
@@ -1224,7 +1290,8 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- 3D: code of the game's own that runs on the GPU for each pixel and each corner, in Tide, which takes what it reads of the view around it implicitly (as a parallel loop's step does), with more of a corner (normals) once it can read them; drawing into a texture that later meshes sample, for shadows, reflections and effects; meshes in the grid's chunks, for voxels.
+- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); drawing into a texture that later meshes sample, for shadows, reflections and effects, and with it outputs other than one `Color`; code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
+- 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
 - Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
@@ -1711,6 +1778,7 @@ Implemented, awaiting approval:
 - An `Action` and the devices can't be passed to C, nor structs that hold text or lists.
 - `DrawList` is only an extern function's parameter, a `tide_draw_list *` in C, neither `mut` nor `in`. `Draw.list` is only an argument for one: a local, a field or a Tide function's parameter can't hold it. It needs the frame, as `Draw` does, so it's an error in systems, tasks and a parallel loop's steps.
 - C draws meshes with `tide_draw_mesh`, or `tide_draw_vertices` and `tide_draw_triangles` for vertices that several batches share, and clips with `tide_draw_clip` and `tide_draw_no_clip`. `tide_vertex` is `Vertex`.
+- Shaders are tidec's to write: generated code draws through them with `tide_draw_mesh_shaded` (`tide/mesh.h`) and a `tide_shader` (`tide/draw.h`), and C has no frag or vert of its own yet.
 - C draws 3D meshes with `tide_draw_mesh_3d`, through `tide_draw_camera_3d` and `tide_draw_camera_matrices`. `tide_vertex3` is `Vertex3`. A `tide_mesh` is its vertices and indices where C keeps them, and a `version`, as a texture's: the draw list copies them when it hasn't got that version, and C says they changed by changing it (`tide_mesh_version` hashes them).
 - C's textures are pixels it keeps: `tide_texture` is their address, `width`, `height` and a `version`, 4 bytes a pixel (red, green, blue, alpha), rows from the first. The draw list copies them when their version or size isn't what it last copied, so C can free or change them once the call returns, and says they changed by changing the version. C holds no handle, and nothing is created or freed.
 - At a hot reload the draw list forgets the textures it copied, as the new build's C may name other pixels at the same address and version.

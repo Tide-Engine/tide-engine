@@ -54,6 +54,7 @@ export const sidebar: Group[] = [
         text: 'Presentation',
         items: [
             { text: 'Views and drawing', link: '/game/views' },
+            { text: 'Frags and verts', link: '/game/shaders' },
             { text: 'Local state', link: '/game/local-state' },
             { text: 'GUI', link: '/game/gui' },
         ],

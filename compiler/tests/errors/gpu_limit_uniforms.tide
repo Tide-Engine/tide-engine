@@ -1,0 +1,166 @@
+// expect: this draw reads 4032 bytes of singletons (Sun), and a draw's hold 4000
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float4x4 bone0 = float4x4.identity;
+    float4x4 bone1 = float4x4.identity;
+    float4x4 bone2 = float4x4.identity;
+    float4x4 bone3 = float4x4.identity;
+    float4x4 bone4 = float4x4.identity;
+    float4x4 bone5 = float4x4.identity;
+    float4x4 bone6 = float4x4.identity;
+    float4x4 bone7 = float4x4.identity;
+    float4x4 bone8 = float4x4.identity;
+    float4x4 bone9 = float4x4.identity;
+    float4x4 bone10 = float4x4.identity;
+    float4x4 bone11 = float4x4.identity;
+    float4x4 bone12 = float4x4.identity;
+    float4x4 bone13 = float4x4.identity;
+    float4x4 bone14 = float4x4.identity;
+    float4x4 bone15 = float4x4.identity;
+    float4x4 bone16 = float4x4.identity;
+    float4x4 bone17 = float4x4.identity;
+    float4x4 bone18 = float4x4.identity;
+    float4x4 bone19 = float4x4.identity;
+    float4x4 bone20 = float4x4.identity;
+    float4x4 bone21 = float4x4.identity;
+    float4x4 bone22 = float4x4.identity;
+    float4x4 bone23 = float4x4.identity;
+    float4x4 bone24 = float4x4.identity;
+    float4x4 bone25 = float4x4.identity;
+    float4x4 bone26 = float4x4.identity;
+    float4x4 bone27 = float4x4.identity;
+    float4x4 bone28 = float4x4.identity;
+    float4x4 bone29 = float4x4.identity;
+    float4x4 bone30 = float4x4.identity;
+    float4x4 bone31 = float4x4.identity;
+    float4x4 bone32 = float4x4.identity;
+    float4x4 bone33 = float4x4.identity;
+    float4x4 bone34 = float4x4.identity;
+    float4x4 bone35 = float4x4.identity;
+    float4x4 bone36 = float4x4.identity;
+    float4x4 bone37 = float4x4.identity;
+    float4x4 bone38 = float4x4.identity;
+    float4x4 bone39 = float4x4.identity;
+    float4x4 bone40 = float4x4.identity;
+    float4x4 bone41 = float4x4.identity;
+    float4x4 bone42 = float4x4.identity;
+    float4x4 bone43 = float4x4.identity;
+    float4x4 bone44 = float4x4.identity;
+    float4x4 bone45 = float4x4.identity;
+    float4x4 bone46 = float4x4.identity;
+    float4x4 bone47 = float4x4.identity;
+    float4x4 bone48 = float4x4.identity;
+    float4x4 bone49 = float4x4.identity;
+    float4x4 bone50 = float4x4.identity;
+    float4x4 bone51 = float4x4.identity;
+    float4x4 bone52 = float4x4.identity;
+    float4x4 bone53 = float4x4.identity;
+    float4x4 bone54 = float4x4.identity;
+    float4x4 bone55 = float4x4.identity;
+    float4x4 bone56 = float4x4.identity;
+    float4x4 bone57 = float4x4.identity;
+    float4x4 bone58 = float4x4.identity;
+    float4x4 bone59 = float4x4.identity;
+    float4x4 bone60 = float4x4.identity;
+    float4x4 bone61 = float4x4.identity;
+    float4x4 bone62 = float4x4.identity;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, mut Color color, Sun sun)
+{
+    mut float4 at = float4(1);
+    at = Math.Mul(sun.bone0, at);
+    at = Math.Mul(sun.bone1, at);
+    at = Math.Mul(sun.bone2, at);
+    at = Math.Mul(sun.bone3, at);
+    at = Math.Mul(sun.bone4, at);
+    at = Math.Mul(sun.bone5, at);
+    at = Math.Mul(sun.bone6, at);
+    at = Math.Mul(sun.bone7, at);
+    at = Math.Mul(sun.bone8, at);
+    at = Math.Mul(sun.bone9, at);
+    at = Math.Mul(sun.bone10, at);
+    at = Math.Mul(sun.bone11, at);
+    at = Math.Mul(sun.bone12, at);
+    at = Math.Mul(sun.bone13, at);
+    at = Math.Mul(sun.bone14, at);
+    at = Math.Mul(sun.bone15, at);
+    at = Math.Mul(sun.bone16, at);
+    at = Math.Mul(sun.bone17, at);
+    at = Math.Mul(sun.bone18, at);
+    at = Math.Mul(sun.bone19, at);
+    at = Math.Mul(sun.bone20, at);
+    at = Math.Mul(sun.bone21, at);
+    at = Math.Mul(sun.bone22, at);
+    at = Math.Mul(sun.bone23, at);
+    at = Math.Mul(sun.bone24, at);
+    at = Math.Mul(sun.bone25, at);
+    at = Math.Mul(sun.bone26, at);
+    at = Math.Mul(sun.bone27, at);
+    at = Math.Mul(sun.bone28, at);
+    at = Math.Mul(sun.bone29, at);
+    at = Math.Mul(sun.bone30, at);
+    at = Math.Mul(sun.bone31, at);
+    at = Math.Mul(sun.bone32, at);
+    at = Math.Mul(sun.bone33, at);
+    at = Math.Mul(sun.bone34, at);
+    at = Math.Mul(sun.bone35, at);
+    at = Math.Mul(sun.bone36, at);
+    at = Math.Mul(sun.bone37, at);
+    at = Math.Mul(sun.bone38, at);
+    at = Math.Mul(sun.bone39, at);
+    at = Math.Mul(sun.bone40, at);
+    at = Math.Mul(sun.bone41, at);
+    at = Math.Mul(sun.bone42, at);
+    at = Math.Mul(sun.bone43, at);
+    at = Math.Mul(sun.bone44, at);
+    at = Math.Mul(sun.bone45, at);
+    at = Math.Mul(sun.bone46, at);
+    at = Math.Mul(sun.bone47, at);
+    at = Math.Mul(sun.bone48, at);
+    at = Math.Mul(sun.bone49, at);
+    at = Math.Mul(sun.bone50, at);
+    at = Math.Mul(sun.bone51, at);
+    at = Math.Mul(sun.bone52, at);
+    at = Math.Mul(sun.bone53, at);
+    at = Math.Mul(sun.bone54, at);
+    at = Math.Mul(sun.bone55, at);
+    at = Math.Mul(sun.bone56, at);
+    at = Math.Mul(sun.bone57, at);
+    at = Math.Mul(sun.bone58, at);
+    at = Math.Mul(sun.bone59, at);
+    at = Math.Mul(sun.bone60, at);
+    at = Math.Mul(sun.bone61, at);
+    at = Math.Mul(sun.bone62, at);
+    color = Color.white * at.x;
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}
