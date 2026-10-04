@@ -1071,6 +1071,10 @@ static const setting settings[] = {
      "frame's work takes, the ping, the bandwidth, the tick, the entity count, the threads, the memory, what draws "
      "and in how many draw calls, and the systems that took longest in the last tick. It's part of the build, so "
      "what `tide build` makes shows them too: take it out before players get the game."},
+    {"debugViews", TY_BOOL, "false",
+     "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
+     "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "
+     "until it's shown. Starting the game with `--debug-views` turns them on too, whatever this says."},
 };
 
 #define SETTING_COUNT (sizeof settings / sizeof settings[0])

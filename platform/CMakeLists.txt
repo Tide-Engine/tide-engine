@@ -321,6 +321,13 @@ if(TIDE_WEB)
     tide_web_page(tide_platform_web_cursor SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_cursor TARGET tide_platform_web_cursor)
 
+    # The standard host's debug views (tide/host.h): F7 shows the profiler where
+    # they're on, by the command line or the game's setting, and nowhere else.
+    tide_add_game(tide_platform_web_debug_views SOURCES tests/debug_views.tide NAME game HOST tests/web_debug_views.c)
+    target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
+
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.
     add_executable(tide_platform_web_rooms tests/web_rooms.c)

@@ -10,6 +10,7 @@ typedef struct build_options {
     const char *output; // Where the program goes; NULL for <folder>/build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats overlay, whether or not the game's stats setting does
+    bool debug_views;   // The debug views are on, whatever the game's debugViews setting says: F7 shows the profiler
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,
