@@ -26,6 +26,7 @@ The editors' formatter lays code out this way (see [Editors](../guide/editors.md
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](./gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
 | `List<T>` | A list of values (see [Text and lists](./text-and-lists.md)) |
+| `Map<K, V>`, `Set<K>` | Values by key, and keys each once, in the order they were added (see [Text and lists](./text-and-lists.md#maps-and-sets)) |
 | `Grid2<T>`, `Grid3<T>` | Cells at `int2` or `int3` positions, in fields (see [Grids](./grids.md)) |
 | `Entity` | A handle to an entity (see [Components and entities](./entities.md)) |
 | `LocalEntity` | A handle to one of this machine's own entities (see [Local state](./local-state.md)) |

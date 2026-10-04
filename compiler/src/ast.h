@@ -118,6 +118,8 @@ typedef enum type_kind {
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
+    TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
+    TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
     TY_LOOKUP,     // lookup Health: a system parameter that reads (or with mut, changes) any entity's Health by handle; decl is the component
     TY_COMPONENT,
@@ -256,6 +258,7 @@ typedef enum decl_kind {
     DECL_EVENT,    // event Hit { fields }: something that happened, sent with Send
     DECL_ENUM,     // enum Page { Title, Options }: a type with named values
     DECL_LIST,     // List<T>, one per element type: its one field is the element; in program.lists
+    DECL_MAP,      // Map<K, V> or Set<K>, one per key and value type: fields key and (maps) value; in program.maps
     DECL_GRID,     // Grid2<T> or Grid3<T>, one per cell type and dimensions: its one field is the cell; in program.grids
     DECL_RESULT,   // T? or `T fails E`, one per combination: field 0 is the value, field 1 the error; in program.results
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
@@ -294,8 +297,11 @@ typedef struct decl {
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
-    int index; // Component bit / singleton index / event index / system order / list or grid number. Constants: 1 while checking, 2 once checked.
+    int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
     int dims;  // Grids: 2 or 3
+    bool is_set;          // Maps: a Set<K>, with no values
+    struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
+    struct decl *optional; // Maps: the V? that Get gives, once something calls it
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -440,6 +446,7 @@ typedef enum builtin_call {
     CALL_TEXT,      // name.Contains(...), text's methods: calls c_callee with the text first
     CALL_HAS,       // health.Has(e): whether an entity has the component a lookup parameter is of
     CALL_LIST,      // items.Add(...), a list's methods: `name` says which
+    CALL_MAP,       // scores.Has(k), a map's or a set's methods: `name` says which; type_decl is the map
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
@@ -708,6 +715,7 @@ typedef struct program {
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
+    VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     decl *owner;         // The built-in Owner component.

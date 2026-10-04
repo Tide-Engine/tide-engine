@@ -1,0 +1,7 @@
+// expect: a map's key is an int, a long, an enum, an Entity, a PlayerID or text, not float
+component Heights
+{
+    Map<float, int> byHeight;
+}
+
+scene Main { }

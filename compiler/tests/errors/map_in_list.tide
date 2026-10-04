@@ -1,0 +1,12 @@
+// expect: a list or a map can't hold 'Table': it has a list or a map in it
+struct Table
+{
+    Map<int, int> cells;
+}
+
+component Nested
+{
+    List<Table> tables;
+}
+
+scene Main { }

@@ -127,9 +127,46 @@ Each step reads the list as the loop found it and changes only its own element, 
 
 The list is one the world keeps, a component's or a singleton's, and its elements hold no text: the steps run on threads, where text can't be made.
 
+## Maps and sets
+
+`Map<K, V>` holds values by key, and `Set<K>` holds keys, each once. Both start empty, and `[a, b]` makes a set where one goes:
+
+```csharp
+component Scoreboard
+{
+    Map<PlayerID, int> scores;
+    Map<string, Stats> byName;
+    Set<Entity> tagged = [];
+}
+
+system Score(mut Scoreboard board, Hit hit)
+{
+    board.scores[hit.by] += 10;            // Adds the key, or changes its value
+    if (board.tagged.Add(hit.target))      // Whether it was new
+        board.byName["last"] = Stats { wins = board.scores[hit.by] };
+}
+```
+
+Keys are `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
+
+### Members
+
+- `count`.
+- A map: `scores[key]` to read, which gives the value type's zero when the key isn't there, and `scores[key] = value` or `scores[key] += x` to write. `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`.
+- A set: `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`.
+- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. The order is the same on every machine.
+
+```csharp
+foreach (var e in board.scores)
+    GUILayout.Label($"{e.key}: {e.value}");
+GUILayout.Label($"{board.scores}"); // {PlayerID(0): 30, PlayerID(1): 10}
+```
+
+A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps.
+
 ## Where they live
 
-A world keeps the text and lists in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, with no limit but memory.
+A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, with no limit but memory.
 
 Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, so what code makes can be of any size; only running out of memory ends the program.
 

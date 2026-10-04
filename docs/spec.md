@@ -663,9 +663,37 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, dictionaries and sets.
+- Lists of lists, and lists of maps.
 - Sorting, and searching with a condition.
 - Fixed-size arrays inside components, which need no heap.
+
+## Maps and sets
+
+### Decided
+
+- `Map<K, V>` holds values by key, and `Set<K>` keys each once, as values: assigning or passing one copies it, and changing a copy never changes the original.
+- A world keeps its maps and sets in its heap, like lists and text (see Lists).
+- Nothing about them fails: a key that isn't there reads as the value type's zero, and removing it does nothing. They grow with the heap, with no limit but memory.
+- Going through a map or a set gives its keys in the order they were added, the same on every machine.
+
+### Provisional
+
+- A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
+- Keys are `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
+- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps or structs holding them.
+- A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
+- A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
+- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
+- Text shows maps as `{1: "a", 2: "b"}` and sets as `{1, 2}`, the keys in their order.
+- Changing a map or a set needs something that can change: a `mut` component or singleton, or a `mut` local. Systems that change the match's maps wait for each other, as they do for text and lists: they share its heap.
+- Components, singletons, structs and events can hold maps and sets; inputs can't, and neither can lists, grids' cells or other maps. They don't go to C.
+- How they're kept (`tide/map.h`): a map is two lists in the heap. Its entries, each a live flag, the key and the value, in the order they were added, a removed one left dead in its place until more than half are dead, when adding a key packs the live ones together; and an index, a power of two of slots by the key's hash, kept under half full. So an entry's bytes depend on nothing but what's in it, and the same adds and removes give the same bytes on every machine.
+
+### Open
+
+- Map literals, `[1: "a", 2: "b"]`.
+- Struct keys, and keys by several values.
+- Maps of maps, and maps in lists.
 
 ## Grids
 
