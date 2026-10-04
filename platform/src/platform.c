@@ -292,7 +292,7 @@ void tide_platform_poll(tide_devices *devices)
 }
 
 // ---------------------------------------------------------------------------
-// The renderer: a draw list's commands, on OpenGL.
+// The renderer: a draw list's commands, through gpu.h, whichever API is under it.
 
 // The camera maps world units (y up) to window pixels (y down). Each frame's
 // list starts at the origin with 1 unit per pixel. After TIDE_DRAW_SCREEN, it
