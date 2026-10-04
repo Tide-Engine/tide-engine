@@ -173,7 +173,7 @@ system Score(mut Scoreboard board, Hit hit)
 }
 ```
 
-Keys are `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
+Keys are `byte`, `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
 
 ### Members
 

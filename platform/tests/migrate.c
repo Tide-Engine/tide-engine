@@ -14,6 +14,70 @@ extern const tide_layout tide_game_layout;
 
 #define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f)}
 
+typedef struct byte_before {
+    uint8_t a, b, c, keep;
+    int32_t narrow;
+} byte_before;
+
+typedef struct byte_after {
+    int32_t a;
+    int64_t b;
+    float c;
+    uint8_t keep, narrow;
+} byte_after;
+
+static void byte_after_defaults(void *value)
+{
+    memset(value, 0, sizeof(byte_after));
+    ((byte_after *)value)->narrow = 9;
+}
+
+TIDE_TEST(migrate_byte_fields_widen_and_keep_their_unsigned_value)
+{
+    const tide_layout_field before_fields[] = {
+        FIELD(byte_before, a, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, b, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, c, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, keep, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, narrow, "int", TIDE_LAYOUT_INT, 1, -1),
+    };
+    const tide_layout_field after_fields[] = {
+        FIELD(byte_after, a, "int", TIDE_LAYOUT_INT, 1, -1),
+        FIELD(byte_after, b, "long", TIDE_LAYOUT_LONG, 1, -1),
+        FIELD(byte_after, c, "float", TIDE_LAYOUT_FLOAT, 1, -1),
+        FIELD(byte_after, keep, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_after, narrow, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+    };
+    const tide_layout_type before_type = {"Bytes", sizeof(byte_before), false, 5, before_fields, NULL};
+    const tide_layout_type after_type = {"Bytes", sizeof(byte_after), false, 5, after_fields, byte_after_defaults};
+    const tide_layout_place place = {0, 0, false};
+    const tide_layout before = {.type_count = 1, .types = &before_type,
+        .match = {.size = sizeof(byte_before), .singleton_count = 1, .singletons = &place, .input = -1}};
+    const tide_layout after = {.type_count = 1, .types = &after_type,
+        .match = {.size = sizeof(byte_after), .singleton_count = 1, .singletons = &place, .input = -1}};
+    uint8_t packed[1024];
+    const byte_before header = {255, 128, 200, 231, 77};
+    tide_writer w = {packed, sizeof packed, 0, false, false};
+    tide_write_bytes(&w, &header, sizeof header);
+    tide_entities entities = {0};
+    tide_entities_pack(&entities, &w);
+    tide_write_u32(&w, 0); // Empty command queue.
+    TIDE_REQUIRE(!w.overflow);
+    void *bytes = NULL;
+    uint32_t size = 0;
+    tide_migration migration;
+    TIDE_REQUIRE(tide_migrate_world(&before, &before.match, packed, w.size, &after, &after.match,
+                                   &bytes, &size, &migration));
+    TIDE_REQUIRE(size >= sizeof(byte_after));
+    byte_after result;
+    memcpy(&result, bytes, sizeof result);
+    TIDE_CHECK(result.a == 255 && result.b == 128 && result.c == 200.0f);
+    TIDE_CHECK(result.keep == 231 && result.narrow == 9);
+    TIDE_CHECK(tide_layout_fields_reset(&before, &after) == 1);
+    tide_entities_free(&entities);
+    free(bytes);
+}
+
 // ---------------------------------------------------------------------------
 // The old build: enum Kind { A, B, C }; Ball, Tag and the scene Arena; Rules;
 // the input In. Its archetypes: Ball; Ball and Tag; Arena; Tag. Each has the

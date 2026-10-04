@@ -28,12 +28,23 @@ static const type T_ANCHOR = {TY_ENUM, NULL};
 static const decl *anchor_decl;
 
 static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *transforms_decl;
+static const decl *bytes_decl, *paths_decl;
+static decl io_bytes, io_paths;
+static const type T_BYTES = {TY_LIST, &io_bytes};
+static const type T_PATHS = {TY_LIST, &io_paths};
+
+void builtins_use_io(const decl *bytes, const decl *paths)
+{
+    bytes_decl = bytes;
+    paths_decl = paths;
+}
 
 void builtins_use(const decl *anchor)
 {
     anchor_decl = anchor;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
+    bytes_decl = paths_decl = NULL;
 }
 
 // What Draw2D.Mesh and Draw3D.Mesh take, the same way: these stand for the program's own
@@ -71,6 +82,8 @@ static bool mesh_type(const type t)
 // A signature's type as a program sees it.
 static type real_type(const type t)
 {
+    if (t.decl == &io_bytes && bytes_decl) return (type){TY_LIST, (decl *)bytes_decl};
+    if (t.decl == &io_paths && paths_decl) return (type){TY_LIST, (decl *)paths_decl};
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
     if (t.decl == &mesh_vertices3 && vertices3_decl) return (type){TY_LIST, (decl *)vertices3_decl};
@@ -83,6 +96,8 @@ static type real_type(const type t)
 
 static const char *signature_type_name(const type t)
 {
+    if (t.decl == &io_bytes) return "List<byte>";
+    if (t.decl == &io_paths) return "List<string>";
     if (t.decl == &mesh_vertices) return "List<Vertex>";
     if (t.decl == &mesh_vertices3) return "List<Vertex3>";
     if (t.decl == &mesh_indices) return "List<int>";
@@ -135,7 +150,7 @@ typedef struct signature {
     int gui;                 // GUI_ID and GUI_CONTAINER
 } signature;
 
-#define MAX_SIGNATURES 224
+#define MAX_SIGNATURES 288
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -573,6 +588,33 @@ static void build_signatures(void)
             "mouse: the cursor comes back once no view asks. The system may refuse, or take the cursor back (when "
             "the player presses Escape, until their next click or key press), so read `Cursor.locked` for whether it "
             "holds.");
+
+    describe(add("File", "Exists", T_BOOL, "tide_file_exists", 1, T_STR, T_NONE, T_NONE), "path",
+             "Whether a file exists on this machine. Returns false for missing or inaccessible paths.");
+    describe(add("File", "Create", T_NONE, "tide_file_create", 1, T_STR, T_NONE, T_NONE), "path", "Creates or replaces an empty file. Fails with IOError.");
+    describe(add("File", "ReadAllText", T_STR, "tide_file_read_all_text", 1, T_STR, T_NONE, T_NONE), "path", "Reads the whole file as UTF-8 text. Fails with IOError.");
+    describe(add("File", "WriteAllText", T_NONE, "tide_file_write_all_text", 2, T_STR, T_STR, T_NONE), "path, contents", "Creates or replaces a UTF-8 text file. Fails with IOError.");
+    describe(add("File", "AppendAllText", T_NONE, "tide_file_append_all_text", 2, T_STR, T_STR, T_NONE), "path, contents", "Appends UTF-8 text, creating the file if missing. Fails with IOError.");
+    describe(add("File", "ReadAllBytes", T_BYTES, "tide_file_read_all_bytes", 1, T_STR, T_NONE, T_NONE), "path", "Reads the whole file into List<byte>. Fails with IOError.");
+    describe(add("File", "WriteAllBytes", T_NONE, "tide_file_write_all_bytes", 2, T_STR, T_BYTES, T_NONE), "path, contents", "Creates or replaces a binary file. Fails with IOError.");
+    for (int overwrite = 0; overwrite < 2; overwrite++) {
+        describe(add("File", "Copy", T_NONE, "tide_file_copy", 2 + overwrite, T_STR, T_STR, T_BOOL), "source, destination, overwrite", "Copies a file; overwrite defaults to false. Fails with IOError.");
+        describe(add("File", "Move", T_NONE, "tide_file_move", 2 + overwrite, T_STR, T_STR, T_BOOL), "source, destination, overwrite", "Moves a file; overwrite defaults to false. Fails with IOError.");
+    }
+    describe(add("File", "Delete", T_NONE, "tide_file_delete", 1, T_STR, T_NONE, T_NONE), "path", "Deletes a file. A missing file succeeds. Fails with IOError.");
+    describe(add("Directory", "Exists", T_BOOL, "tide_directory_exists", 1, T_STR, T_NONE, T_NONE), "path", "Whether a directory exists on this machine.");
+    describe(add("Directory", "CreateDirectory", T_NONE, "tide_directory_create_directory", 1, T_STR, T_NONE, T_NONE), "path", "Creates missing parents; an existing directory succeeds. Fails with IOError.");
+    for (int recursive = 0; recursive < 2; recursive++) {
+        describe(add("Directory", "GetFiles", T_PATHS, "tide_directory_get_files", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Lists file paths sorted by name; recursive defaults to false. Fails with IOError.");
+        describe(add("Directory", "GetDirectories", T_PATHS, "tide_directory_get_directories", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Lists directory paths sorted by name; recursive defaults to false. Fails with IOError.");
+        describe(add("Directory", "Delete", T_NONE, "tide_directory_delete", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Deletes a directory; recursive defaults to false. Fails with IOError.");
+    }
+    describe(add("Directory", "Move", T_NONE, "tide_directory_move", 2, T_STR, T_STR, T_NONE), "source, destination", "Moves a directory, refusing an existing destination. Fails with IOError.");
+    describe(add("Path", "Combine", T_STR, "tide_path_combine", 2, T_STR, T_STR, T_NONE), "first, second", "Combines two paths without accessing storage.");
+    describe(add("Path", "GetFileName", T_STR, "tide_path_get_file_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the last path segment.");
+    describe(add("Path", "GetDirectoryName", T_STR, "tide_path_get_directory_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the parent path, or an empty string.");
+    describe(add("Path", "GetExtension", T_STR, "tide_path_get_extension", 1, T_STR, T_NONE, T_NONE), "path", "Returns the extension, including its dot, or an empty string.");
+    describe(add("Storage", "Flush", T_NONE, "tide_storage_flush_begin", 0, T_NONE, T_NONE, T_NONE), NULL, "Await until preceding filesystem changes are committed to persistent storage. Fails with IOError.");
 }
 
 // ---------------------------------------------------------------------------
@@ -584,6 +626,8 @@ static const struct {
     type_kind kind;
     const char *c_constant;
 } members[] = {
+    {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
+    {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
     {"Math", "TAU", TY_FLOAT, "TIDE_TAU_F"},
     {"Math", "E", TY_FLOAT, "TIDE_E_F"},
@@ -636,6 +680,8 @@ bool builtin_owner(const str name)
     type ignored;
     return str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Debug")
+        || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
         || builtin_type_named(name, &ignored);
 }
 
@@ -703,7 +749,10 @@ static void format_signature(const signature *s, sb *out)
     }
     if (s->gui & GUI_CONTAINER) sb_printf(out, "%sBlock content", s->argc ? ", " : "");
     sb_put(out, ")");
-    if (s->result.kind != TY_VOID) sb_printf(out, " -> %s", type_name(s->result));
+    if (s->result.kind != TY_VOID) sb_printf(out, " -> %s", signature_type_name(s->result));
+    if ((strcmp(s->owner, "File") == 0 || strcmp(s->owner, "Directory") == 0) && strcmp(s->name, "Exists") != 0)
+        sb_put(out, " fails IOError");
+    if (strcmp(s->owner, "Storage") == 0) sb_put(out, " fails IOError");
 }
 
 // Whether signature `s` takes the call's arguments. `default`, unchecked yet,
@@ -831,7 +880,7 @@ type resolve_builtin_call(const str owner, expr *e)
         e->c_callee = s->c_name;
         e->arg_mut = s->mut;
         e->gui = s->gui;
-        return s->result;
+        return real_type(s->result);
     }
 
     if (!known) {

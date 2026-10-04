@@ -1601,6 +1601,287 @@
     }
     platform.threads = () => shared ? Math.max(1, Math.min(navigator.hardwareConcurrency || 1, 32)) : 1;
 
+    // Local files live in the page, including while a new build takes over.
+    // Load them before main: IndexedDB is asynchronous, whereas a game's
+    // whole-file reads and directory queries operate on this memory tree.
+    const ioError = { notFound: 1, exists: 2, denied: 3, path: 4, notDirectory: 5,
+        notEmpty: 6, space: 7, unavailable: 8, data: 9, failed: 10 };
+    const fileTrees = new Map();
+    const flushTickets = new Map();
+    let filesDB = null, filesError = 0, files = null, nextFlush = 0;
+    function storageError(error) {
+        return error && error.name === 'QuotaExceededError' ? ioError.space
+            : error && error.name === 'SecurityError' ? ioError.denied : ioError.unavailable;
+    }
+    function fileTree(id) {
+        if (!fileTrees.has(id)) {
+            const persistent = '/persistent/' + id, temporary = '/temp/' + id;
+            fileTrees.set(id, { id, persistent, temporary,
+                entries: new Map([[persistent, { directory: true }], [temporary, { directory: true }]]),
+                dirty: new Map(), queued: false, chain: Promise.resolve(0) });
+        }
+        return fileTrees.get(id);
+    }
+    async function loadFiles() {
+        try {
+            await new Promise((resolve, reject) => {
+                const request = indexedDB.open('tide-files', 1);
+                request.onupgradeneeded = () => request.result.createObjectStore('files', { keyPath: ['appId', 'path'] });
+                request.onerror = () => reject(request.error);
+                request.onblocked = () => reject(new Error('file database is blocked'));
+                request.onsuccess = () => {
+                    filesDB = request.result;
+                    filesDB.onversionchange = () => { filesDB.close(); filesDB = null; filesError = ioError.unavailable; };
+                    try {
+                        const transaction = filesDB.transaction('files', 'readonly');
+                        const cursor = transaction.objectStore('files').openCursor();
+                        cursor.onsuccess = () => {
+                            const at = cursor.result;
+                            if (!at) return;
+                            const row = at.value;
+                            if (typeof row.appId === 'string' && typeof row.path === 'string') {
+                                const tree = fileTree(row.appId);
+                                if (row.path.startsWith(tree.persistent + '/'))
+                                    tree.entries.set(row.path, row.directory ? { directory: true }
+                                        : { directory: false, bytes: new Uint8Array(row.data) });
+                            }
+                            at.continue();
+                        };
+                        transaction.oncomplete = resolve;
+                        transaction.onabort = () => reject(transaction.error);
+                    } catch (error) { reject(error); }
+                };
+            });
+        } catch (error) { filesError = storageError(error); }
+    }
+    let filesReady = null;
+    function saveFiles(tree) {
+        const changes = [...tree.dirty];
+        tree.chain = tree.chain.then(() => {
+            if (!filesDB || filesError) return filesError || ioError.unavailable;
+            if (!changes.length) return 0;
+            return new Promise(resolve => {
+                let transaction;
+                try {
+                    // The strict hint asks the browser to flush a save before
+                    // completing its transaction, where it supports the hint.
+                    try { transaction = filesDB.transaction('files', 'readwrite', { durability: 'strict' }); }
+                    catch (error) {
+                        if (!(error instanceof TypeError)) throw error;
+                        transaction = filesDB.transaction('files', 'readwrite');
+                    }
+                    transaction.oncomplete = () => {
+                        for (const [path, change] of changes)
+                            if (tree.dirty.get(path) === change) tree.dirty.delete(path);
+                        resolve(0);
+                    };
+                    transaction.onabort = () => resolve(storageError(transaction.error));
+                    const store = transaction.objectStore('files');
+                    for (const [path, change] of changes) {
+                        if (!change.node) store.delete([tree.id, path]);
+                        else store.put({ appId: tree.id, path, directory: change.node.directory,
+                            data: change.node.directory ? null : change.node.bytes.buffer });
+                    }
+                } catch (error) {
+                    if (transaction) transaction.abort();
+                    resolve(storageError(error));
+                }
+            });
+        });
+        return tree.chain;
+    }
+    function changedFile(tree, path, node) {
+        if (node) tree.entries.set(path, node); else tree.entries.delete(path);
+        if (path !== tree.persistent && !path.startsWith(tree.persistent + '/')) return;
+        tree.dirty.set(path, { node });
+        if (!tree.queued) {
+            tree.queued = true;
+            queueMicrotask(() => { tree.queued = false; saveFiles(tree); });
+        }
+    }
+    function filePath(ptr) {
+        if (!files) return { error: ioError.unavailable };
+        let path = string(ptr).replaceAll('\\', '/');
+        if (!path || /^[A-Za-z]:/.test(path)) return { error: ioError.path };
+        if (!path.startsWith('/')) path = files.persistent + '/' + path;
+        const parts = [];
+        for (const part of path.split('/')) {
+            if (!part || part === '.') continue;
+            if (part === '..') {
+                if (!parts.length) return { error: ioError.denied };
+                parts.pop();
+            } else parts.push(part);
+        }
+        path = '/' + parts.join('/');
+        const persistent = path === files.persistent || path.startsWith(files.persistent + '/');
+        if (!persistent && path !== files.temporary && !path.startsWith(files.temporary + '/'))
+            return { error: ioError.denied };
+        if (persistent && (filesError || !filesDB)) return { error: filesError || ioError.unavailable };
+        return { path, error: 0 };
+    }
+    function fileParent(path) { return path.substring(0, path.lastIndexOf('/')); }
+    function checkParent(path) {
+        const parent = files.entries.get(fileParent(path));
+        return !parent ? ioError.notFound : !parent.directory ? ioError.notDirectory : 0;
+    }
+    function fileList(ptr, directories, recursive) {
+        const found = filePath(ptr);
+        if (found.error) return found;
+        const node = files.entries.get(found.path);
+        if (!node) return { error: ioError.notFound };
+        if (!node.directory) return { error: ioError.notDirectory };
+        const prefix = found.path + '/';
+        const paths = [...files.entries].filter(([path, entry]) => path.startsWith(prefix)
+            && !!entry.directory === !!directories && (recursive || !path.slice(prefix.length).includes('/')))
+            .map(([path]) => path).sort();
+        return { error: 0, bytes: encoder.encode(paths.map(path => path + '\0').join('')) };
+    }
+    Object.assign(platform, {
+        io_init(id) { files = fileTree(string(id)); },
+        io_path(kind, out, capacity) {
+            if (!files || (kind !== 1 && kind !== 2)) return -1;
+            const bytes = encoder.encode(kind === 1 ? files.persistent : files.temporary);
+            if (out && capacity > bytes.length) { u8().set(bytes, out); u8()[out + bytes.length] = 0; }
+            return bytes.length;
+        },
+        io_exists(ptr, directory) {
+            const found = filePath(ptr);
+            const node = !found.error && files.entries.get(found.path);
+            return !!node && !!node.directory === !!directory;
+        },
+        io_create(ptr, directory) {
+            const found = filePath(ptr);
+            if (found.error) return found.error;
+            const old = files.entries.get(found.path);
+            if (directory) {
+                if (old) return old.directory ? 0 : ioError.notDirectory;
+                const parts = found.path.split('/');
+                for (let n = 3; n <= parts.length; ++n) {
+                    const path = parts.slice(0, n).join('/');
+                    const node = files.entries.get(path);
+                    if (node && !node.directory) return ioError.notDirectory;
+                }
+                for (let n = 3; n <= parts.length; ++n) {
+                    const path = parts.slice(0, n).join('/');
+                    if (!files.entries.has(path)) changedFile(files, path, { directory: true });
+                }
+                return 0;
+            }
+            if (old && old.directory) return ioError.failed;
+            const error = checkParent(found.path);
+            if (!error) changedFile(files, found.path, { directory: false, bytes: new Uint8Array() });
+            return error;
+        },
+        io_read_size(ptr, size) {
+            const found = filePath(ptr);
+            if (found.error) return found.error;
+            const node = files.entries.get(found.path);
+            if (!node) return ioError.notFound;
+            if (node.directory) return ioError.failed;
+            view().setUint32(size, node.bytes.length, true);
+            return 0;
+        },
+        io_read(ptr, out, capacity) {
+            const found = filePath(ptr);
+            if (found.error) return found.error;
+            const node = files.entries.get(found.path);
+            if (!node) return ioError.notFound;
+            if (node.directory || capacity < node.bytes.length) return ioError.failed;
+            u8().set(node.bytes, out);
+            return 0;
+        },
+        io_write(ptr, data, size, append) {
+            const found = filePath(ptr);
+            if (found.error) return found.error;
+            const old = files.entries.get(found.path);
+            if (old && old.directory) return ioError.failed;
+            const error = checkParent(found.path);
+            if (error) return error;
+            const bytes = u8().slice(data, data + size);
+            let content = bytes;
+            if (append && old) {
+                content = new Uint8Array(old.bytes.length + bytes.length);
+                content.set(old.bytes); content.set(bytes, old.bytes.length);
+            }
+            changedFile(files, found.path, { directory: false, bytes: content });
+            return 0;
+        },
+        io_copy(source, destination, overwrite) {
+            const from = filePath(source), to = filePath(destination);
+            if (from.error || to.error) return from.error || to.error;
+            const node = files.entries.get(from.path), old = files.entries.get(to.path);
+            if (!node) return ioError.notFound;
+            if (node.directory || (old && old.directory)) return ioError.failed;
+            if (from.path === to.path) return ioError.path;
+            if (old && !overwrite) return ioError.exists;
+            const error = checkParent(to.path);
+            if (!error) changedFile(files, to.path, { directory: false, bytes: node.bytes.slice() });
+            return error;
+        },
+        io_move(source, destination, overwrite, directory) {
+            const from = filePath(source), to = filePath(destination);
+            if (from.error || to.error) return from.error || to.error;
+            const node = files.entries.get(from.path), old = files.entries.get(to.path);
+            if (!node) return ioError.notFound;
+            if (!!node.directory !== !!directory) return directory ? ioError.notDirectory : ioError.failed;
+            if (from.path === files.persistent || from.path === files.temporary) return ioError.denied;
+            if (from.path === to.path || to.path.startsWith(from.path + '/')) return ioError.path;
+            if (old && (directory || !overwrite)) return ioError.exists;
+            if (old && old.directory) return ioError.failed;
+            const error = checkParent(to.path);
+            if (error) return error;
+            const moved = [...files.entries].filter(([path]) => path === from.path || path.startsWith(from.path + '/'));
+            for (const [path, entry] of moved) {
+                changedFile(files, to.path + path.slice(from.path.length), entry);
+                changedFile(files, path, null);
+            }
+            return 0;
+        },
+        io_delete(ptr, directory, recursive) {
+            const found = filePath(ptr);
+            if (found.error) return found.error;
+            const node = files.entries.get(found.path);
+            if (!node) return directory ? ioError.notFound : 0;
+            if (!!node.directory !== !!directory) return directory ? ioError.notDirectory : ioError.failed;
+            if (found.path === files.persistent || found.path === files.temporary) return ioError.denied;
+            const children = [...files.entries.keys()].filter(path => path.startsWith(found.path + '/'));
+            if (children.length && !recursive) return ioError.notEmpty;
+            for (const path of children) changedFile(files, path, null);
+            changedFile(files, found.path, null);
+            return 0;
+        },
+        io_list_size(ptr, directories, recursive, size) {
+            const list = fileList(ptr, directories, recursive);
+            if (!list.error) view().setUint32(size, list.bytes.length, true);
+            return list.error;
+        },
+        io_list(ptr, directories, recursive, out, capacity) {
+            const list = fileList(ptr, directories, recursive);
+            if (list.error) return list.error;
+            if (capacity < list.bytes.length) return ioError.failed;
+            u8().set(list.bytes, out);
+            return 0;
+        },
+        io_flush_begin() {
+            do { nextFlush = (nextFlush + 1) >>> 0; } while (!nextFlush || flushTickets.has(nextFlush));
+            const result = { done: false, error: 0 }, ticket = nextFlush;
+            flushTickets.set(ticket, result);
+            (files ? saveFiles(files) : Promise.resolve(ioError.unavailable)).then(error => {
+                result.error = error; result.done = true;
+            });
+            return ticket;
+        },
+        io_flush_poll(ticket, error) {
+            const result = flushTickets.get(ticket);
+            if (!result) { view().setInt32(error, ioError.failed, true); return true; }
+            if (!result.done) return false;
+            flushTickets.delete(ticket);
+            view().setInt32(error, result.error, true);
+            return true;
+        },
+        io_flush_forget(ticket) { flushTickets.delete(ticket); },
+    });
+
     const imports = {
         wasi_snapshot_preview1: lenient('WASI', wasi, () => ENOSYS),
         wasi: { 'thread-spawn': spawnThread },
@@ -1649,6 +1930,15 @@
             if (!(error instanceof RangeError)) throw error;
             instance = await WebAssembly.instantiate(compiled, all);
         }
+        // Games without file access start without opening browser storage.
+        // Standalone C hosts have no generated predicate: their imports say
+        // whether they use the filesystem provider.
+        const needsFiles = instance.exports.tide_uses_io ? instance.exports.tide_uses_io()
+            : WebAssembly.Module.imports(compiled).some(i => i.module === 'tide' && i.name === 'io_init');
+        if (needsFiles) {
+            filesReady = filesReady || loadFiles();
+            await filesReady;
+        }
         return { instance, module: compiled, shared: isShared };
     }
 
@@ -1668,7 +1958,8 @@
         }
     }
 
-    // The program starts once the page knows what it draws with.
+    // The program starts once the page knows its GPU; instantiate loads its
+    // saved files too when the program uses them.
     await deviceAsked;
 
     // <tide run>

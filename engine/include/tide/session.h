@@ -122,6 +122,7 @@ typedef struct tide_game {
     // The game's settings (`settings { ... }`), 0 or NULL where it sets none
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
     const char *title;   // title: the window's, unless the host says
+    const char *app_id;  // appId: stable identity for this game's local saves
     bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
     // maxPlayers: how many players its matches take, up to TIDE_PLAYERS_MOST;

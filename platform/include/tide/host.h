@@ -36,6 +36,8 @@ typedef struct tide_host_game {
     uint32_t local_size; // sizeof(tide_local): local state starts as that many zeros
     bool main_is_local;  // TIDE_MAIN_IS_LOCAL: the program starts outside any match
     void (*local_init)(void *local);
+    // The host owns the filesystem provider across game library reloads.
+    void (*set_io)(void *local, const tide_io *io);
     // Lets go of what local state has, before its memory goes, and the local
     // state as bytes and back, as tide_game's worlds (tide_local_pack).
     void (*local_free)(void *local);
@@ -246,6 +248,23 @@ static inline tide_session *tide_run_new_session(void)
     });
 }
 
+// Bind local files before startup handlers or restored tasks can use them.
+static inline void tide_run_bind_io(const tide_host_game *game, void *local)
+{
+    if (!game->set_io) return;
+    char fallback[512];
+    const char *id = game->game->app_id;
+    if (!id) {
+        const char *name = tide_run_settings.game_name ? tide_run_settings.game_name : "game";
+        snprintf(fallback, sizeof fallback, "dev.tide.%s", name);
+        for (char *p = fallback; *p; ++p)
+            if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.'))
+                *p = '_';
+        id = fallback;
+    }
+    game->set_io(local, tide_platform_io_init(id));
+}
+
 // Starts tide_run_game: its local state and a session, then the match the
 // command line asks for, or Main's if it's the match's.
 static inline void tide_run_begin(void)
@@ -255,6 +274,7 @@ static inline void tide_run_begin(void)
     tide_run_local = calloc(1, game->local_size);
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_local || !tide_run_start) abort();
+    tide_run_bind_io(game, tide_run_local);
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
     tide_session_request request = {0};

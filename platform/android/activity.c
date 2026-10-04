@@ -203,6 +203,28 @@ void *tide_android_vm(void)
     return java_vm;
 }
 
+const char *tide_android_internal_data_path(void)
+{
+    return app.activity ? app.activity->internalDataPath : NULL;
+}
+
+const char *tide_android_cache_path(void)
+{
+    // NativeActivity exposes its files directory; Android's cache directory
+    // is its sibling. Both belong to the package and need no permission.
+    static char *cache;
+    if (cache || !app.activity || !app.activity->internalDataPath) return cache;
+    const char *data = app.activity->internalDataPath;
+    const char *end = strrchr(data, '/');
+    if (!end) return NULL;
+    const size_t parent = (size_t)(end - data);
+    cache = malloc(parent + sizeof "/cache");
+    if (!cache) abort();
+    memcpy(cache, data, parent);
+    memcpy(cache + parent, "/cache", sizeof "/cache");
+    return cache;
+}
+
 // What the app was started with, for main: the intent's "tide.args", words
 // apart (as `tide run --android` gives --host, --join or --connect), into
 // `argv` after the program's name. Returns how many arguments that makes.

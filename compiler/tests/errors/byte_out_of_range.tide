@@ -1,0 +1,5 @@
+// expect: can't assign int to byte
+scene Main { }
+component Bytes { byte value; }
+event(Spawned) Setup(with Main) { Spawn(Bytes); }
+system Bad(mut Bytes bytes) { bytes.value = 256; }

@@ -1,0 +1,5 @@
+// expect: 'Save' accesses the filesystem, which only local code can use
+scene Main { }
+void Write() { File.Delete("save")!; }
+void Save() { Write(); }
+event(Spawned) Setup(with Main) { Save(); }

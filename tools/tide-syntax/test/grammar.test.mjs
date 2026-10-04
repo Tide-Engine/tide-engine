@@ -184,6 +184,12 @@ const cases = {
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
         ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],
+        ['async void SaveBytes(List<byte> bytes) fails IOError', [['List', 'support.class'], ['byte', 'storage.type.primitive'], ['IOError', 'support.class']]],
+        ['var root = Application.persistentDataPath;', [['Application', 'support.class'], ['persistentDataPath', '!support.class']]],
+        ['Directory.CreateDirectory(root)!;', [['Directory', 'support.class'], ['CreateDirectory', 'entity.name.function.call']]],
+        ['try File.WriteAllBytes(Path.Combine(root,', [['File', 'support.class'], ['WriteAllBytes', 'entity.name.function.call'], ['Path', 'support.class'], ['Combine', 'entity.name.function.call']]],
+        ['try await Storage.Flush();', [['Storage', 'support.class'], ['Flush', 'entity.name.function.call']]],
+        ['fail IOError.OutOfSpace;', [['IOError', 'support.class'], ['OutOfSpace', '!support.class']]],
     ],
     "operators that aren't what they look like": [
         ['int value = Parse(text)!;', [['!', 'keyword.operator.or-default'], ['!', '!keyword.operator.logical']]],
