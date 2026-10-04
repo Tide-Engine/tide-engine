@@ -1774,14 +1774,18 @@ static void describe_order(const decl *d, sb *out)
         sb_put(out, ": ");
         describe_wait(d, w, "`", out);
     }
-    if (d->alongside.count == 0) {
+    if (d->waits_unlisted) sb_printf(out, "\n- %d more, through those", d->waits_unlisted);
+    if (d->alongside_count == 0) {
         sb_put(out, "\n\nNo other system can run at the same time.");
     } else {
+        // The analysis lists the first few
+        const int more = d->alongside_count - d->alongside.count;
         sb_put(out, "\n\nCan run at the same time as ");
         for (int i = 0; i < d->alongside.count; i++) {
-            sb_put(out, i == 0 ? "" : i == d->alongside.count - 1 ? " and " : ", ");
+            sb_put(out, i == 0 ? "" : i == d->alongside.count - 1 && !more ? " and " : ", ");
             put_decl_name(out, d->alongside.items[i], "`", d);
         }
+        if (more) sb_printf(out, " and %d more", more);
         sb_put(out, ".");
     }
 }
@@ -1806,16 +1810,16 @@ void analysis_code_lenses(jbuf *out)
             sb_put(&title, ": ");
             describe_wait(d, w, "", &title);
         }
-        if (d->alongside.count == 0 && A.prog->systems.count > 1) {
+        if (d->alongside_count == 0 && A.prog->systems.count > 1) {
             sb_put(&title, " \u00B7 nothing runs alongside");
-        } else if (d->alongside.count > 0) {
+        } else if (d->alongside_count > 0) {
             sb_put(&title, " \u00B7 alongside ");
             const int shown = d->alongside.count > 3 ? 3 : d->alongside.count;
             for (int k = 0; k < shown; k++) {
                 if (k) sb_put(&title, ", ");
                 put_decl_name(&title, d->alongside.items[k], "", d);
             }
-            if (d->alongside.count > shown) sb_printf(&title, " and %d more", d->alongside.count - shown);
+            if (d->alongside_count > shown) sb_printf(&title, " and %d more", d->alongside_count - shown);
         }
         if (written++) jb_put(out, ",");
         jb_put(out, "{\"range\":");

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -132,15 +133,33 @@ void sb_printf(sb *b, const char *fmt, ...)
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-#define MAX_SOURCES 1024
-
-static const source *sources[MAX_SOURCES];
+static const source **sources; // As many as the program has files: it grows
 static int source_count;
+static int source_room;
 static int error_count;
 static diag_sink sink;
 static void *sink_user;
 static diag_suggestion_sink suggestion_sink;
 static void *suggestion_user;
+
+// With TIDEC_TIMES set in the environment, says on stderr how long each phase
+// of a compile took: the time since the last call, under `what`.
+void diag_phase(const char *what)
+{
+    static int enabled = -1;
+    static struct timespec last;
+    if (enabled < 0) {
+        const char *set = getenv("TIDEC_TIMES");
+        enabled = set && set[0] && set[0] != '0';
+        timespec_get(&last, TIME_UTC);
+    }
+    if (!enabled) return;
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
+    if (what) fprintf(stderr, "tidec: %-22s %9.1f ms\n", what, ms);
+    last = now;
+}
 
 void diag_reset(void)
 {
@@ -150,9 +169,13 @@ void diag_reset(void)
 
 void diag_add_source(source *src)
 {
-    if (source_count == MAX_SOURCES) {
-        fprintf(stderr, "tidec: more than %d source files\n", MAX_SOURCES);
-        exit(1);
+    if (source_count == source_room) {
+        source_room = source_room ? source_room * 2 : 256;
+        sources = realloc(sources, (size_t)source_room * sizeof *sources);
+        if (!sources) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
     }
     src->file = source_count;
     sources[source_count++] = src;

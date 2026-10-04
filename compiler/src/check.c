@@ -156,10 +156,60 @@ static bool is_kind(const decl *d, const name_kind kind)
     return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST;
 }
 
+static void c_name_of(const decl *d, sb *out);
+
+// FNV-1a, going on from `h`.
+#define NAME_HASH 2166136261u
+static uint32_t name_hash(uint32_t h, const char *bytes, const size_t len)
+{
+    for (size_t i = 0; i < len; i++) h = (h ^ (uint8_t)bytes[i]) * 16777619u;
+    return h;
+}
+
+// A game has thousands of declarations, and every name written is looked up
+// among them: the program keeps them by a hash of their namespace and name,
+// and of their name in generated C, each bucket's in decls' order
+// (decl_index). It's made the first time it's asked for, and again if decls
+// has another count.
+static const decl_index *decls_by(const program *prog, const bool c_names)
+{
+    decl_index *index = c_names ? &((program *)prog)->by_c_name : &((program *)prog)->by_name;
+    const int n = prog->decls.count;
+    if (index->first && index->count == n) return index;
+    int buckets = 64;
+    while (buckets < n * 2) buckets *= 2;
+    index->first = arena_alloc(sizeof(int) * (size_t)buckets);
+    index->next = arena_alloc(sizeof(int) * (size_t)(n ? n : 1));
+    index->buckets = buckets;
+    index->count = n;
+    for (int i = 0; i < buckets; i++) index->first[i] = -1;
+    for (int i = n - 1; i >= 0; i--) { // Backwards, so the first of a bucket is the first in decls
+        const decl *d = prog->decls.items[i];
+        const str ns = decl_ns(d);
+        uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), d->name.ptr, (size_t)d->name.len);
+        if (c_names) {
+            sb name = {0};
+            c_name_of(d, &name);
+            h = name_hash(NAME_HASH, name.data, name.len);
+        }
+        index->next[i] = index->first[h & (uint32_t)(buckets - 1)];
+        index->first[h & (uint32_t)(buckets - 1)] = i;
+    }
+    return index;
+}
+
+// The first declaration in the bucket of a name in generated C: -1 for none.
+static int first_c_named(const decl_index *index, const char *bytes, const size_t len)
+{
+    return index->first[name_hash(NAME_HASH, bytes, len) & (uint32_t)(index->buckets - 1)];
+}
+
 // A declaration of that kind named exactly `name` in `ns`.
 static decl *find_in(const program *prog, const str ns, const str name, const name_kind kind)
 {
-    for (int i = 0; i < prog->decls.count; i++) {
+    const decl_index *index = decls_by(prog, false);
+    const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
+    for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) return d;
     }
@@ -6157,12 +6207,13 @@ static void check_enum(checker *c, decl *d)
         }
         m->number = next++;
         // Other declarations' names in C, like Page_Title for a struct Page.Title
-        for (int k = 0; k < c->prog->decls.count; k++) {
+        sb mine = {0};
+        c_name_of(d, &mine);
+        sb_printf(&mine, "_" STR_FMT, STR_ARG(m->name));
+        const decl_index *by_c_name = decls_by(c->prog, true);
+        for (int k = first_c_named(by_c_name, mine.data, mine.len); k >= 0; k = by_c_name->next[k]) {
             const decl *other = c->prog->decls.items[k];
-            sb mine = {0};
             sb theirs = {0};
-            c_name_of(d, &mine);
-            sb_printf(&mine, "_" STR_FMT, STR_ARG(m->name));
             c_name_of(other, &theirs);
             if (strcmp(mine.data, theirs.data) == 0) {
                 diag_error(m->at, "'" STR_FMT "." STR_FMT "' and '" STR_FMT "' would have the same name in generated C, %s",
@@ -6692,7 +6743,8 @@ static void check_extern_decl(const checker *c, decl *fn)
             return;
         }
     }
-    for (int i = 0; i < c->prog->decls.count; i++) {
+    const decl_index *by_c_name = decls_by(c->prog, true);
+    for (int i = first_c_named(by_c_name, fn->c_name, strlen(fn->c_name)); i >= 0; i = by_c_name->next[i]) {
         const decl *other = c->prog->decls.items[i];
         if (other->kind == DECL_FUNCTION || other->kind == DECL_SYSTEM || other->builtin) continue;
         sb theirs = {0};
@@ -7486,6 +7538,7 @@ static const char *package_of(const decl *d)
 
 static void collect_decls(program *prog)
 {
+    const decl_index *by_c_name = decls_by(prog, true);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         const str ns = decl_ns(d);
@@ -7502,7 +7555,12 @@ static void collect_decls(program *prog)
             if (is_builtin_name(d->name)) {
                 diag_error(d->at, "'" STR_FMT "' is built into the language", STR_ARG(d->name));
             }
-            for (int j = 0; j < i; j++) {
+            // Against those before it that it could clash with: the ones with
+            // its name in generated C (which the same name in the same
+            // namespace has too), in decls' order
+            sb mine = {0};
+            c_name_of(d, &mine);
+            for (int j = first_c_named(by_c_name, mine.data, mine.len); j >= 0 && j < i; j = by_c_name->next[j]) {
                 const decl *other = prog->decls.items[j];
                 const bool both_types = is_kind(d, NAME_TYPE) && is_kind(other, NAME_TYPE);
                 const bool both_systems = d->kind == DECL_SYSTEM && other->kind == DECL_SYSTEM;
@@ -7522,9 +7580,7 @@ static void collect_decls(program *prog)
                     continue;
                 }
                 // Different names that generated C would spell the same: Combat.Health and Combat_Health.
-                sb mine = {0};
                 sb theirs = {0};
-                c_name_of(d, &mine);
                 c_name_of(other, &theirs);
                 if (strcmp(mine.data, theirs.data) == 0) {
                     diag_error(d->at, "'" STR_FMT "' and '" STR_FMT "' would have the same name in generated C, %s",
@@ -8532,6 +8588,7 @@ bool check(program *prog)
     }
     check_settings(&c);
     add_scene_player_words(prog);
+    diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_STRUCT) order_struct(prog, prog->decls.items[i]);
         if (prog->decls.items[i]->kind == DECL_ENUM) {
@@ -8572,6 +8629,7 @@ bool check(program *prog)
         check_stmt(&c, d->body);
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
+    diag_phase("checking code");
     check_sends(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
@@ -8625,13 +8683,17 @@ bool check(program *prog)
 
     if (diag_error_count() > 0) return false;
 
+    diag_phase("checking the rest");
     derive_archetypes(&c);
+    diag_phase("deriving archetypes");
     if (diag_error_count() > 0) return false;
 
     warn_unmatched(prog, (const decl *const *)prog->systems.items, prog->systems.count);
     warn_unmatched(prog, (const decl *const *)prog->views.items, prog->views.count);
     warn_unmatched(prog, (const decl *const *)prog->handlers.items, prog->handlers.count);
     warn_unsent(&c);
+    diag_phase("warnings");
     analyze_parallelism(prog);
+    diag_phase("scheduling");
     return true;
 }

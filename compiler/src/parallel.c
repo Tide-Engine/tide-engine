@@ -1,11 +1,15 @@
-// Which systems in the tick could run at the same time, and why the others
-// wait. The tick doesn't run on threads yet; this is the plan it will follow,
-// shown in editors (above each system, and on hover) and by `tidec --schedule`
-// so game code can be written for it now.
+// Which systems in the tick can run at the same time, and why the others
+// wait: the schedule the tick's threads follow (tide/jobs.h), shown in editors
+// (above each system, and on hover) and by `tidec --schedule`.
 
 #include <string.h>
 
 #include "ast.h"
+
+// How many of a system's waits through others, and of the systems it can run
+// alongside, the analysis lists by name: a big game has thousands of each, and
+// it counts the rest (decl.waits_unlisted, decl.alongside_count).
+#define SCHEDULE_LISTED 32
 
 // The archetypes a system runs on, as a bitset.
 typedef struct arch_set {
@@ -50,10 +54,11 @@ static bool can_meet(const program *prog, const decl *a, const decl *b, const ar
     return !mask_intersects(a_sparse, b->without_mask) && !mask_intersects(b_sparse, a->without_mask);
 }
 
-static void add_conflict(system_wait *w, const conflict_kind kind)
+static bool add_conflict(system_wait *w, const conflict_kind kind)
 {
     const conflict c = {NULL, kind};
-    vec_push(w->conflicts, c);
+    if (w) vec_push(w->conflicts, c);
+    return true;
 }
 
 int parallel_loops(const stmt *s)
@@ -100,16 +105,20 @@ static const decl *accessed(const param *p)
     return p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_LOOKUP ? p->type.decl : NULL;
 }
 
-static void find_conflicts(const decl *earlier, const decl *later, const bool same_entities, system_wait *w)
+// Whether there are any; with a `w`, it lists them there, and without one it
+// stops at the first.
+static bool find_conflicts(const decl *earlier, const decl *later, const bool same_entities, system_wait *w)
 {
+    bool any = false;
     // Starting a task runs its code until it first waits, which can spawn and
     // change text, and the match keeps its tasks in the order they start.
     if (earlier->starts_tasks || later->starts_tasks) {
-        if ((earlier->writes_text || earlier->spawns) && (later->writes_text || later->spawns)) add_conflict(w, CONFLICT_TASKS);
+        if ((earlier->writes_text || earlier->spawns) && (later->writes_text || later->spawns)) any = add_conflict(w, CONFLICT_TASKS);
     } else {
-        if (earlier->writes_text && later->writes_text) add_conflict(w, CONFLICT_TEXT);
-        if (earlier->spawns && later->spawns && !system_splits(later)) add_conflict(w, CONFLICT_SPAWN);
+        if (earlier->writes_text && later->writes_text) any = add_conflict(w, CONFLICT_TEXT);
+        if (earlier->spawns && later->spawns && !system_splits(later)) any = add_conflict(w, CONFLICT_SPAWN);
     }
+    if (any && !w) return true;
     for (int i = 0; i < earlier->params.count; i++) {
         const param *a = &earlier->params.items[i];
         const decl *data = accessed(a);
@@ -122,12 +131,15 @@ static void find_conflicts(const decl *earlier, const decl *later, const bool sa
             const bool a_writes = a->mode == PARAM_MUT;
             const bool b_writes = b->mode == PARAM_MUT;
             if (!a_writes && !b_writes) continue;
+            if (!w) return true;
             const conflict c = {(decl *)data, a_writes && b_writes ? CONFLICT_BOTH_WRITE
                                               : a_writes         ? CONFLICT_EARLIER_WRITES
                                                                  : CONFLICT_EARLIER_READS};
             vec_push(w->conflicts, c);
+            any = true;
         }
     }
+    return any;
 }
 
 static bool contains(const decl *const *items, const int count, const decl *d)
@@ -138,55 +150,107 @@ static bool contains(const decl *const *items, const int count, const decl *d)
     return false;
 }
 
-// Where a system is in the tick.
-static int position(const program *prog, const decl *sys)
+// Systems as bits, by where they are in the tick: 64 a word.
+static bool has_bit(const uint64_t *bits, const int i)
 {
-    for (int i = 0; i < prog->systems.count; i++) {
-        if (prog->systems.items[i] == sys) return i;
-    }
-    return 0;
+    return (bits[i >> 6] >> (i & 63)) & 1u;
 }
 
+// The lowest system of a word that has one, `word` words in.
+static int first_bit(const size_t word, const uint64_t bits)
+{
+    return (int)(word * 64u) + __builtin_ctzll(bits);
+}
+
+// A game has thousands of systems, so this keeps who runs after whom as bits
+// and only spells out the waits it lists: pair by pair, whether they conflict
+// is a yes or no, and what each wait is over is worked out for those.
 void analyze_parallelism(program *prog)
 {
     const int n = prog->systems.count;
     if (n == 0) return;
+    const size_t words = ((size_t)n + 63u) / 64u;
+    const size_t row_size = sizeof(uint64_t) * words;
     arch_set *sets = arena_alloc(sizeof(arch_set) * (size_t)n);
-    // before[j * n + i]: system j runs after system i, directly or through others.
-    bool *before = arena_alloc(sizeof(bool) * (size_t)n * (size_t)n);
-    memset(before, 0, sizeof(bool) * (size_t)n * (size_t)n);
+    // before + j * words: the systems j runs after, directly or through others.
+    uint64_t *before = arena_alloc(row_size * (size_t)n);
+    uint64_t *waits = arena_alloc(row_size);                // The system's own: those it conflicts with or is ordered after
+    uint64_t *indirect = arena_alloc(row_size);             // ...of which, those another of them already waits for
+    int *through = arena_alloc(sizeof(int) * (size_t)n);    // ...and for each of those, the first that does
+    int *followers = arena_alloc(sizeof(int) * (size_t)n);  // How many systems run after each
+    memset(before, 0, row_size * (size_t)n);
+    memset(followers, 0, sizeof(int) * (size_t)n);
     for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, prog->systems.items[i]);
 
     // The systems are in tick order, so everything a system waits for comes first.
     for (int j = 0; j < n; j++) {
         decl *sys = prog->systems.items[j];
+        uint64_t *row = before + (size_t)j * words;
+        const size_t used = ((size_t)j + 63u) / 64u; // The words earlier systems are in
+        memset(waits, 0, row_size);
+        memset(indirect, 0, row_size);
         sys->stage = 1;
+        sys->waits_unlisted = 0;
         for (int i = 0; i < j; i++) {
-            decl *earlier = prog->systems.items[i];
-            system_wait w = {0};
-            w.on = earlier;
-            find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), &w);
-            w.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
-            if (w.conflicts.count == 0 && !w.ordered) continue;
-            vec_push(sys->waits, w);
-            before[j * n + i] = true;
-            for (int k = 0; k < i; k++) before[j * n + k] |= before[i * n + k];
+            const decl *earlier = prog->systems.items[i];
+            if (!contains((const decl *const *)sys->after.items, sys->after.count, earlier)
+                && !find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), NULL)) {
+                continue;
+            }
+            waits[i >> 6] |= (uint64_t)1 << (i & 63);
             if (earlier->stage + 1 > sys->stage) sys->stage = earlier->stage + 1;
         }
-        // A wait goes through another when that other system already waits for it.
-        for (int a = 0; a < sys->waits.count; a++) {
-            system_wait *w = &sys->waits.items[a];
-            for (int b = 0; b < sys->waits.count && !w->through; b++) {
-                decl *other = sys->waits.items[b].on;
-                if (other != w->on && before[position(prog, other) * n + position(prog, w->on)]) w->through = other;
+        // It runs after everything those run after. A wait goes through
+        // another when that other system already waits for it: the first of
+        // them in the tick that does.
+        for (size_t w = 0; w < used; w++) {
+            for (uint64_t left = waits[w]; left; left &= left - 1u) {
+                const int i = first_bit(w, left);
+                const uint64_t *theirs = before + (size_t)i * words;
+                for (size_t k = 0; k <= w; k++) { // What it runs after comes before it
+                    row[k] |= theirs[k];
+                    uint64_t found = theirs[k] & waits[k] & ~indirect[k];
+                    indirect[k] |= found;
+                    for (; found; found &= found - 1u) through[first_bit(k, found)] = i;
+                }
+            }
+        }
+        for (size_t w = 0; w < used; w++) {
+            row[w] |= waits[w];
+            for (uint64_t left = row[w]; left; left &= left - 1u) followers[first_bit(w, left)]++;
+        }
+        // The waits it lists: every one that's its own, and the first few through others
+        int listed = 0;
+        for (size_t w = 0; w < used; w++) {
+            for (uint64_t left = waits[w]; left; left &= left - 1u) {
+                const int i = first_bit(w, left);
+                const bool goes_through = has_bit(indirect, i);
+                if (goes_through && listed++ >= SCHEDULE_LISTED) {
+                    sys->waits_unlisted++;
+                    continue;
+                }
+                decl *earlier = prog->systems.items[i];
+                system_wait wait = {0};
+                wait.on = earlier;
+                find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), &wait);
+                wait.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
+                wait.through = goes_through ? prog->systems.items[through[i]] : NULL;
+                vec_push(sys->waits, wait);
             }
         }
     }
 
+    // A system runs alongside those it neither waits for nor is waited for by
     for (int j = 0; j < n; j++) {
         decl *sys = prog->systems.items[j];
-        for (int k = 0; k < n; k++) {
-            if (k != j && !before[j * n + k] && !before[k * n + j]) vec_push(sys->alongside, prog->systems.items[k]);
+        const uint64_t *row = before + (size_t)j * words;
+        int earlier = 0;
+        for (size_t w = 0; w < words; w++) earlier += __builtin_popcountll(row[w]);
+        sys->alongside_count = n - 1 - earlier - followers[j];
+        const int list = sys->alongside_count < SCHEDULE_LISTED ? sys->alongside_count : SCHEDULE_LISTED;
+        for (int k = 0; k < n && sys->alongside.count < list; k++) {
+            if (k == j || (k < j ? has_bit(row, k) : has_bit(before + (size_t)k * words, j))) continue;
+            vec_push(sys->alongside, prog->systems.items[k]);
         }
     }
 }
@@ -288,7 +352,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
         if (sys->stage > stages) stages = sys->stage;
-        if (sys->alongside.count > 0) parallel++;
+        if (sys->alongside_count > 0) parallel++;
     }
     sb_printf(out, "%s: %d system%s each tick, %d stage%s deep", game, prog->systems.count,
               prog->systems.count == 1 ? "" : "s", stages, stages == 1 ? "" : "s");
@@ -321,12 +385,16 @@ void print_schedule(const program *prog, const char *game, sb *out)
             }
             sb_put(out, "\n");
         }
+        if (sys->waits_unlisted) sb_printf(out, "         after %d more, through those\n", sys->waits_unlisted);
         sb_put(out, "         alongside ");
         for (int k = 0; k < sys->alongside.count; k++) {
             if (k) sb_put(out, ", ");
             put_decl_name(out, sys->alongside.items[k], "", NULL);
         }
-        sb_put(out, sys->alongside.count ? "\n" : "nothing\n");
+        if (sys->alongside_count > sys->alongside.count) {
+            sb_printf(out, " and %d more", sys->alongside_count - sys->alongside.count);
+        }
+        sb_put(out, sys->alongside_count ? "\n" : "nothing\n");
     }
 
     if (prog->views.count > 0) {

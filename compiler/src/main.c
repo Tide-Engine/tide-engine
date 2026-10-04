@@ -12,6 +12,8 @@ static void usage(void)
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
+            "  @<list>        the files a text file lists, one per line: for more files\n"
+            "                 than a command line holds\n"
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
@@ -19,8 +21,46 @@ static void usage(void)
             "                 wait, instead of generating code\n");
 }
 
+// The files a list names, one per line, added to `inputs`: a game of thousands
+// of files is more than a command line holds (32,767 characters on Windows).
+// False when the list can't be read.
+static bool add_listed(const char *path, const char ***inputs, int *count, int *room)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "tidec: can't read the list of files '%s'\n", path);
+        return false;
+    }
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *text = malloc((size_t)(size > 0 ? size : 0) + 1u); // Kept: the inputs are its lines
+    const size_t read = text && size > 0 ? fread(text, 1, (size_t)size, f) : 0u;
+    fclose(f);
+    if (!text) return false;
+    text[read] = '\0';
+    for (char *line = text; *line;) {
+        char *end = line;
+        while (*end && *end != '\n' && *end != '\r') end++;
+        char *next = end;
+        while (*next == '\n' || *next == '\r') next++;
+        *end = '\0';
+        if (*line) {
+            if (*count == *room) {
+                *room = *room ? *room * 2 : 64;
+                *inputs = realloc(*inputs, (size_t)*room * sizeof(char *));
+                if (!*inputs) return false;
+            }
+            (*inputs)[(*count)++] = line;
+        }
+        line = next;
+    }
+    return true;
+}
+
 int main(const int argc, char **argv)
 {
+    int input_room = argc;
     const char **inputs = calloc((size_t)argc, sizeof(char *));
     int input_count = 0;
     codegen_options opts = {NULL, NULL, true, false, NULL, NULL};
@@ -40,7 +80,14 @@ int main(const int argc, char **argv)
         } else if (argv[i][0] == '-') {
             usage();
             return 2;
+        } else if (argv[i][0] == '@') {
+            if (!add_listed(argv[i] + 1, &inputs, &input_count, &input_room)) return 2;
         } else {
+            if (input_count == input_room) {
+                input_room *= 2;
+                inputs = realloc(inputs, (size_t)input_room * sizeof(char *));
+                if (!inputs) return 2;
+            }
             inputs[input_count++] = argv[i];
         }
     }

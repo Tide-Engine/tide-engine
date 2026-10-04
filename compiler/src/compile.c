@@ -54,6 +54,7 @@ bool compile_program(const char **inputs, const int count, const codegen_options
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();
+    diag_phase(NULL);
     program *prog = program_new();
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
@@ -72,6 +73,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!parse_file(prog, src, toks, false)) return false;
     }
 
+    diag_phase("lexing and parsing");
     if (!check(prog)) return false;
 
     codegen_options named = *opts;
@@ -80,5 +82,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         print_schedule(prog, named.name, schedule);
         return true;
     }
-    return codegen(prog, &named);
+    const bool ok = codegen(prog, &named);
+    diag_phase("generating C");
+    return ok;
 }
