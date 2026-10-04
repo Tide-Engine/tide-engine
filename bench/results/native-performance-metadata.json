@@ -1,0 +1,284 @@
+{
+  "schema": 1,
+  "date": "2026-10-04",
+  "results": "versus.jsonl",
+  "labels": [
+    "native-performance-before",
+    "native-performance-fixed"
+  ],
+  "before_revision": "9a7576d5e1349980fe87401dca9524806424ab5e",
+  "after_revision": "c59c024814c21020a825580becec112365f37df6",
+  "inherited_dev_revision": "ed7d069",
+  "before_source": "Copied, tested native dev executables from before this optimization pass.",
+  "after_source": "Committed native performance changes with current dev file IO/byte integration. Benchmark source, input sizes, C baselines and determinism flags are unchanged.",
+  "machine": {
+    "os": "Windows 11 Pro",
+    "os_version": "10.0.26200",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physical_cores": 12,
+    "logical_processors": 24
+  },
+  "compiler": "Clang 23.1.2",
+  "preset": "release",
+  "build_type": "RelWithDebInfo",
+  "flags": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "protocol": "Five repetitions per concept and variant. Run life, nbody, events sequentially in each repetition; alternate before/fixed order each repetition. Start only after agent/root builds and tests finish. Each executable times Tide and unchanged C implementations with matching one-thread and twelve-thread configurations. Default warmup/tick counts retained. No phase timers in measured builds.",
+  "aggregation": "Median of five reported tick medians; ranges of those medians. Ratio is median of each run Tide time / fastest C implementation time, not ratio of independently aggregated medians.",
+  "options": [
+    {
+      "benchmark": "versus_events",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "targets": 50000,
+        "turrets": 200000
+      },
+      "digest": "0x83c5fb492d556932"
+    },
+    {
+      "benchmark": "versus_life",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "size": 1024
+      },
+      "digest": "0xa8face01f7dcf932"
+    },
+    {
+      "benchmark": "versus_nbody",
+      "options": {
+        "warmup": 2,
+        "ticks": 30,
+        "count": 2000
+      },
+      "digest": "0xd5bf49e60e24dc2f"
+    }
+  ],
+  "summary": [
+    {
+      "benchmark": "versus_life",
+      "threads": 1,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 0.70415,
+      "tide_ms_min": 0.67525,
+      "tide_ms_max": 0.8949,
+      "ratio_to_best_c_median": 8.835006273525723
+    },
+    {
+      "benchmark": "versus_life",
+      "threads": 1,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 0.58055,
+      "tide_ms_min": 0.57815,
+      "tide_ms_max": 0.58875,
+      "ratio_to_best_c_median": 7.339443742098609
+    },
+    {
+      "benchmark": "versus_life",
+      "threads": 12,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 0.315,
+      "tide_ms_min": 0.30215,
+      "tide_ms_max": 0.3776,
+      "ratio_to_best_c_median": 3.9923954372623576
+    },
+    {
+      "benchmark": "versus_life",
+      "threads": 12,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 0.298,
+      "tide_ms_min": 0.29215,
+      "tide_ms_max": 0.3281,
+      "ratio_to_best_c_median": 3.784126984126984
+    },
+    {
+      "benchmark": "versus_nbody",
+      "threads": 1,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 8.09315,
+      "tide_ms_min": 8.02365,
+      "tide_ms_max": 8.21985,
+      "ratio_to_best_c_median": 3.995038996939481
+    },
+    {
+      "benchmark": "versus_nbody",
+      "threads": 1,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 3.56025,
+      "tide_ms_min": 3.4989,
+      "tide_ms_max": 3.6713,
+      "ratio_to_best_c_median": 1.7665488868572556
+    },
+    {
+      "benchmark": "versus_nbody",
+      "threads": 12,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 1.1609,
+      "tide_ms_min": 1.0225,
+      "tide_ms_max": 1.3917,
+      "ratio_to_best_c_median": 3.6439771917320023
+    },
+    {
+      "benchmark": "versus_nbody",
+      "threads": 12,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 0.5868,
+      "tide_ms_min": 0.55385,
+      "tide_ms_max": 0.6397,
+      "ratio_to_best_c_median": 2.020661157024793
+    },
+    {
+      "benchmark": "versus_events",
+      "threads": 1,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 1.1721,
+      "tide_ms_min": 1.12965,
+      "tide_ms_max": 1.17815,
+      "ratio_to_best_c_median": 9.63721881390593
+    },
+    {
+      "benchmark": "versus_events",
+      "threads": 1,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 0.91195,
+      "tide_ms_min": 0.89065,
+      "tide_ms_max": 0.9447,
+      "ratio_to_best_c_median": 7.485736925515055
+    },
+    {
+      "benchmark": "versus_events",
+      "threads": 12,
+      "label": "native-performance-before",
+      "repetitions": 5,
+      "tide_ms_median": 1.28475,
+      "tide_ms_min": 1.1277,
+      "tide_ms_max": 1.4328,
+      "ratio_to_best_c_median": 10.556696795398521
+    },
+    {
+      "benchmark": "versus_events",
+      "threads": 12,
+      "label": "native-performance-fixed",
+      "repetitions": 5,
+      "tide_ms_median": 0.89615,
+      "tide_ms_min": 0.88615,
+      "tide_ms_max": 0.912,
+      "ratio_to_best_c_median": 7.393976897689769
+    }
+  ],
+  "executables": [
+    {
+      "concept": "life",
+      "variant": "before",
+      "path": "build/native-perf-baseline/versus_life.exe",
+      "sha256": "609b18005fc67801509f3c06e4122fe04343b8243c1d7e8fdaaf941ab9b303f6"
+    },
+    {
+      "concept": "life",
+      "variant": "fixed",
+      "path": "build/release/bin/versus_life.exe",
+      "sha256": "e954fda6aca912e13dcdf4d93d4759a85404b93a122866242c6dee8d3abbbb7e"
+    },
+    {
+      "concept": "nbody",
+      "variant": "before",
+      "path": "build/native-perf-baseline/versus_nbody.exe",
+      "sha256": "577c31f60e7e9e1b9d383420f2f95a478198b4bde27e968f2780d73521c01409"
+    },
+    {
+      "concept": "nbody",
+      "variant": "fixed",
+      "path": "build/release/bin/versus_nbody.exe",
+      "sha256": "98d10919b49ee2bcbff165ab59950280865ed78a1e76fd636e167b58e689bb71"
+    },
+    {
+      "concept": "events",
+      "variant": "before",
+      "path": "build/native-perf-baseline/versus_events.exe",
+      "sha256": "4d8672fe10be7720d98d0a243d0187be6a020dba29265e6baf229e6ad7bd16ae"
+    },
+    {
+      "concept": "events",
+      "variant": "fixed",
+      "path": "build/release/bin/versus_events.exe",
+      "sha256": "4b14b5207c6f5e3d0f35741b3228cfd05dad059a7c821010837915dbdd488dba"
+    }
+  ],
+  "validation": {
+    "native_release_full": "859/859 passed",
+    "web_release_full": "857/857 passed",
+    "end_state_digests": "All thirty final runs pass and agree within each concept across before/fixed and C ways.",
+    "floats": "Finite reduction order, signed zero, subnormals and infinity-preserving results compare exact bytes. NaN-producing sqrt inputs compare classification, following the existing language contract that NaN payload bits are not portable. The original pre-pass compiler also fails the exploratory NaN-payload oracle. No production NaN canonicalization or math flag changes.",
+    "observable_behavior": "Queue format/hash/packed bytes, page crossings and reuse, C observers/defaults/constants, sparse filters, deferred event order, handler-appended events, snapshots/unpacked worlds, task tails and loop bounds tested.",
+    "native_nbody_assembly": {
+      "sqrtps": 1,
+      "divps": 1,
+      "sqrtss": 1,
+      "divss": 2,
+      "description": "Counts in final generated game object; vector inner loop and scalar tail use exact hardware math."
+    }
+  },
+  "diagnostics": [
+    {
+      "labels": [
+        "native-internals-before"
+      ],
+      "source": "Unchanged copied 9a7576d baseline",
+      "outcome": "Initial three repetitions per concept before experiments."
+    },
+    {
+      "labels": [
+        "native-event-run-diagnostic-before",
+        "native-event-run-diagnostic"
+      ],
+      "source": "Baseline versus ignored generated-C prototype caching mutable Health columns during compatible event replay",
+      "outcome": "About 9% improvement; replay prototype discarded. No replay cache retained."
+    },
+    {
+      "labels": [
+        "native-event-record-diagnostic-before",
+        "native-event-record-diagnostic"
+      ],
+      "source": "Baseline versus ignored generated-C prototype reserving page runs for Shoot",
+      "outcome": "About 23% improvement motivated generic pure-send production path; final code and final timing rows are separate."
+    },
+    {
+      "labels": [
+        "native-list-batch-before",
+        "native-list-batch-fixed"
+      ],
+      "source": "Copied baseline versus early generic list batching before final IO integration and guards",
+      "outcome": "Timing drift inflated baseline and C runs. Exploratory gains motivated final exclusive alternating comparison; use final labels for claims."
+    },
+    {
+      "labels": [
+        "native-grid-byte-normalized-diagnostic",
+        "native-grid-byte-direct-diagnostic"
+      ],
+      "source": "Ignored generated-C byte-window experiments after relative addressing",
+      "outcome": "Inconclusive/noisy; no byte lowering retained. See native-performance-life-diagnostics.json."
+    }
+  ],
+  "limitations": [
+    "Runtime timings here are for this Windows machine only. Web tests establish correctness, not a web speedup.",
+    "Life twelve-thread ranges overlap, so no consistent worker speedup is claimed.",
+    "Events and Life still take about seven times as long as the best C comparison; graphics still has no direct handwritten GPU baseline.",
+    "Earlier diagnostics had visible machine variation. No machine-dependent timing threshold is a correctness test."
+  ]
+}

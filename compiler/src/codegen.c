@@ -100,6 +100,7 @@ typedef struct gen {
     int call_temps;      // Temporaries for hoisted GUI calls, per function
     const expr *raw_place; // A text field being generated as the tide_text it is, not read as text
     uint64_t game_hash;    // Of the header: tells builds of different games apart
+    bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool list_caches;      // The function being generated has tide_lc, a cache for each list type (gen_grid_caches)
     VEC(task_info) tasks;  // Every async function and handler that runs, callees before what awaits them
@@ -111,6 +112,7 @@ typedef struct gen {
     VEC(const struct stmt *) pars;
     VEC(const char *) par_names;
     const struct stmt *par_loop;
+    bool par_flat; // This numeric list loop reads one immutable flat input, apart from its output buffers.
     // Its Sort calls with a comparison block, each one's name for its
     // comparison function and what it captures; the one being generated, or NULL.
     VEC(const struct expr *) sorts;
@@ -1329,6 +1331,20 @@ static void gen_text_ref(gen *g, sb *o, const expr *e)
 
 static bool in_window(const gen *g, const expr *index);
 
+// A parallel list's field, including its binding: a shadowed name is another
+// place even when it is spelt alike. The checker only admits names and fields
+// as the list a parallel loop changes.
+static bool same_list_place(const expr *a, const expr *b)
+{
+    if (a->kind != b->kind) return false;
+    if (a->kind == E_NAME) return a->bind == b->bind && str_eq(a->name, b->name)
+        && (a->bind != BIND_LOCAL || a->local == b->local)
+        && (a->bind != BIND_PARAM || a->param == b->param);
+    if (a->kind == E_MEMBER) return a->field == b->field && str_eq(a->member, b->member)
+        && same_list_place(a->object, b->object);
+    return a->kind == E_THIS;
+}
+
 static bool scalar_kind(const type t)
 {
     return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT || t.kind == TY_ENUM;
@@ -2048,6 +2064,17 @@ static bool in_window(const gen *g, const expr *index)
 
 // Where a cell near the step's place is in its window: rows of tide_ww cells
 // from tide_lo, layers of tide_wh rows.
+static void gen_window_axis(gen *g, sb *o, const expr *index, const int axis)
+{
+    const stmt *loop = g->par_loop;
+    // The global origin cancels: at = origin + k * block, and lo = origin
+    // + from * block + window_lo. Each task's k is at least from, and the
+    // checker included this access in window_lo, so both terms are bounded,
+    // nonnegative offsets. Unsigned subtraction also works for negative tiles.
+    sb_printf(o, "((size_t)((uint32_t)tide_k%d - (uint32_t)tide_%c0) * %du + %du)", axis, "xyz"[axis],
+              loop->block[axis], index->window_offset[axis] - loop->window_lo[axis]);
+}
+
 static void gen_window_index(gen *g, sb *o, const expr *index)
 {
     const char *at = local_cname(g, g->par_loop->name);
@@ -2055,10 +2082,16 @@ static void gen_window_index(gen *g, sb *o, const expr *index)
     if (g->par_loop->value->type.kind == TY_LIST) { // The task's copy of its elements, from tide_lo
         sb_printf(o, "%s + (%d) - tide_lo", at, d[0]);
     } else if (g->par_loop->value->type.decl->dims == 3) {
-        sb_printf(o, "((%s.z + (%d) - tide_lz) * tide_wh + (%s.y + (%d) - tide_ly)) * tide_ww + (%s.x + (%d) - tide_lx)", at, d[2],
-                  at, d[1], at, d[0]);
+        sb_put(o, "(");
+        gen_window_axis(g, o, index, 2);
+        sb_put(o, " * (size_t)tide_wh + ");
+        gen_window_axis(g, o, index, 1);
+        sb_put(o, ") * (size_t)tide_ww + ");
+        gen_window_axis(g, o, index, 0);
     } else {
-        sb_printf(o, "(%s.y + (%d) - tide_ly) * tide_ww + (%s.x + (%d) - tide_lx)", at, d[1], at, d[0]);
+        gen_window_axis(g, o, index, 1);
+        sb_put(o, " * (size_t)tide_ww + ");
+        gen_window_axis(g, o, index, 0);
     }
 }
 
@@ -2112,6 +2145,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
+        if (g->par_flat && e->object->type.kind == TY_LIST && same_list_place(e->object, g->par_loop->value)) {
+            sb_printf(o, "tide_list%d_flatget(tide_in, tide_count, ", e->object->type.decl->index);
+            gen_expr(g, o, e->lhs);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_GRID && in_window(g, e)) { // A parallel step's cell near its place
             sb_put(o, "tide_win[");
             gen_window_index(g, o, e);
@@ -2564,11 +2603,84 @@ static void gen_method(gen *g, const expr *e)
 
 // Send(RoundOver { ... }) and target.Send(Hit { ... }): recorded, and handled
 // at the end of the tick.
+static bool event_batch_value(const expr *e)
+{
+    if (!e) return true;
+    if (e->bind == BIND_CONST) return event_batch_value(e->constant->value);
+    if (e->kind == E_DEFAULT) {
+        switch (e->type.kind) {
+        case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_STRUCT: case TY_EVENT:
+            if (has_defaults(e->type.decl)) return false;
+            break;
+        default: break;
+        }
+    }
+    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
+        || e->io_operation || e->path_operation || e->storage_flush) return false;
+    if (e->call != CALL_NONE && e->call != CALL_CONSTRUCT) return false;
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_DEFAULT: case E_THIS: break;
+    case E_NAME:
+        if (e->bind != BIND_PARAM && e->bind != BIND_CONST && e->bind != BIND_TYPE) return false;
+        break;
+    case E_MEMBER: case E_CALL: case E_BINARY: case E_UNARY: case E_CONDITIONAL: break;
+    case E_LITERAL:
+        // Defaults are constant, but nested defaults can call constructors or
+        // functions: leave those on the ordinary path unless written out.
+        for (int i = 0; i < e->type_decl->fields.count; i++) {
+            const field *f = &e->type_decl->fields.items[i];
+            if (!event_batch_value(declared_default(f)) || (f->type.kind == TY_STRUCT && has_defaults(f->type.decl))) return false;
+        }
+        break;
+    default: return false;
+    }
+    if (!event_batch_value(e->object) || !event_batch_value(e->lhs) || !event_batch_value(e->rhs)
+        || !event_batch_value(e->cond)) return false;
+    for (int i = 0; i < e->args.count; i++) if (!event_batch_value(e->args.items[i])) return false;
+    for (int i = 0; i < e->inits.count; i++) if (!event_batch_value(e->inits.items[i].value)) return false;
+    return true;
+}
+
+static const expr *batch_event(const decl *sys)
+{
+    if (sys->is_view || sys->is_handler || sys->is_local || !sys->per_entity || sys->body->stmts.count != 1) return NULL;
+    const stmt *s = sys->body->stmts.items[0];
+    if (s->kind != S_EXPR || !s->value || s->value->call != CALL_SEND) return NULL;
+    const expr *send = s->value;
+    if (send->type_decl->is_command || send->local_world || decl_has_text(send->type_decl)) return NULL;
+    // A literal's explicit values and defaults can read only stable values.
+    if (send->args.items[0]->kind != E_LITERAL || !event_batch_value(send->object)
+        || !event_batch_value(send->args.items[0])) return NULL;
+    for (int i = 0; i < sys->params.count; i++) {
+        if (sys->params.items[i].mode == PARAM_MUT || sys->params.items[i].type.kind == TY_WORLD) return NULL;
+    }
+    return send;
+}
+
 static void gen_send(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const decl *event = e->type_decl;
     const expr *arg = e->args.items[0];
+    if (g->reserved_send) {
+        line(g, o, "if (tide_reserved) {");
+        g->indent++;
+        line(g, o, "tide_reserved->kind = TIDE_CMD_EVENT;");
+        line(g, o, "tide_reserved->id = %d;", event->index);
+        line(g, o, "tide_reserved->depth = tide_w->tide_chain;");
+        indent(g, o);
+        sb_put(o, "tide_reserved->entity = ");
+        if (e->kind == E_METHOD) gen_expr(g, o, e->object);
+        else sb_put(o, "(tide_entity){0}");
+        sb_put(o, ";\n");
+        indent(g, o);
+        sb_printf(o, "tide_reserved->data.event_%s = ", type_cname(event));
+        gen_expr(g, o, arg);
+        sb_put(o, ";\n");
+        g->indent--;
+        line(g, o, "} else {");
+        g->indent++;
+    }
     indent(g, o);
     sb_printf(o, "%s_%s(%s, ", event->is_command ? "tide_local_send" : "tide_cmd_send", type_cname(event),
               e->local_world ? "tide_l" : "tide_w");
@@ -2578,6 +2690,10 @@ static void gen_send(gen *g, const expr *e)
     if (arg->kind == E_NAME && arg->bind == BIND_TYPE) gen_value(g, o, event, NULL, 0); // Its defaults
     else gen_expr(g, o, arg);
     sb_put(o, ");\n");
+    if (g->reserved_send) {
+        g->indent--;
+        line(g, o, "}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4999,6 +5115,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
             sb_printf(o, "// List<%s>\n", type_name(e));
             sb_printf(o, "TIDE_HELPER %s tide_list%d_get(tide_list l, int32_t i);\n", vc, k);
             sb_printf(o, "TIDE_HELPER %s tide_list%d_cget(tide_list_cache *cache, tide_list l, int32_t i);\n", vc, k);
+            if (!text) sb_printf(o, "TIDE_HELPER %s tide_list%d_flatget(const %s *elements, int32_t count, int32_t i);\n", vc, k, ec);
             sb_printf(o, "TIDE_HELPER void tide_list%d_set(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_add(tide_list *l, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_insert(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
@@ -5028,6 +5145,8 @@ static void gen_list_helpers(gen *g, const bool bodies)
         sb_printf(o, "    const %s *p = tide_list_cached_at(cache, l, i, sizeof(%s));\n", ec, sz);
         if (e.kind == TY_STRING) sb_put(o, "    return p ? tide_text_view(*p) : TIDE_STR_EMPTY;\n}\n\n");
         else sb_printf(o, "    return p ? *p : (%s){0};\n}\n\n", ec);
+        if (!text) sb_printf(o, "TIDE_HELPER %s tide_list%d_flatget(const %s *elements, const int32_t count, const int32_t i)\n{\n"
+                               "    return (uint32_t)i < (uint32_t)count ? elements[i] : (%s){0};\n}\n\n", vc, k, ec, ec);
         // Putting a value in a slot, and taking one out: its text the list's own
         sb_printf(o, "TIDE_HELPER void tide_list%d_put(%s *slot, const %s v, const uint32_t where)\n{\n", k, ec, vc);
         if (e.kind == TY_STRING) sb_put(o, "    tide_text_set(slot, v, where);\n}\n\n");
@@ -6632,6 +6751,102 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
     return out;
 }
 
+// A plain list's steps can read a flat input without watching heap moves:
+// their only writes are their own output blocks and plain locals. Calls into
+// user or C code, heap values and resource operations keep the ordinary path.
+static bool flat_list_value(const type t)
+{
+    switch (t.kind) {
+    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
+    case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
+    case TY_STRUCT:
+        for (int i = 0; i < t.decl->fields.count; i++) if (!flat_list_value(t.decl->fields.items[i].type)) return false;
+        return true;
+    default: return false;
+    }
+}
+
+static bool flat_list_expr(const expr *e);
+
+static bool flat_list_defaults(const type t)
+{
+    if (t.kind != TY_STRUCT && t.kind != TY_COMPONENT && t.kind != TY_SINGLETON
+        && t.kind != TY_INPUT && t.kind != TY_EVENT) return true;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        if (!flat_list_expr(declared_default(f)) || !flat_list_defaults(f->type)) return false;
+    }
+    return true;
+}
+
+static bool flat_list_expr(const expr *e)
+{
+    if (!e) return true;
+    if (e->bind == BIND_CONST) return flat_list_expr(e->constant->value);
+    if ((e->kind == E_LITERAL || e->kind == E_DEFAULT) && !flat_list_defaults(e->type)) return false;
+    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
+        || e->io_operation || e->path_operation || e->storage_flush) return false;
+    if (e->call != CALL_NONE && e->call != CALL_BUILTIN && e->call != CALL_CONSTRUCT) return false;
+    if (e->call == CALL_BUILTIN && e->type.kind == TY_VOID) return false;
+    switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_NAME: case E_MEMBER: case E_CALL: case E_METHOD:
+    case E_BINARY: case E_UNARY: case E_LITERAL: case E_DEFAULT: case E_THIS:
+    case E_CONDITIONAL: break;
+    case E_INDEX:
+        if (e->object->type.kind != TY_LIST || !flat_list_value(e->type)) return false;
+        break;
+    default: return false;
+    }
+    if (!flat_list_expr(e->object) || !flat_list_expr(e->lhs) || !flat_list_expr(e->rhs) || !flat_list_expr(e->cond)) return false;
+    for (int i = 0; i < e->args.count; i++) if (!flat_list_expr(e->args.items[i])) return false;
+    for (int i = 0; i < e->inits.count; i++) if (!flat_list_expr(e->inits.items[i].value)) return false;
+    return true;
+}
+
+static bool flat_list_stmt(const stmt *s, const stmt *loop)
+{
+    if (!s) return true;
+    switch (s->kind) {
+    case S_BLOCK: case S_IF: case S_FOR: case S_WHILE: case S_CONTINUE: case S_BREAK: break;
+    case S_VAR:
+        if (!flat_list_value(s->type)) return false;
+        break;
+    case S_ASSIGN: {
+        const expr *t = s->target;
+        if (s->operator_decl) return false;
+        if (t->kind == E_INDEX && t->window && same_list_place(t->object, loop->value)) break;
+        while (t->kind == E_MEMBER) t = t->object;
+        if (t->kind != E_NAME || t->bind != BIND_LOCAL || !declared_in(loop->then_stmt, t->local)
+            || !flat_list_value(t->type)) return false;
+        break;
+    }
+    default: return false;
+    }
+    if (!flat_list_expr(s->cond) || !flat_list_expr(s->value) || !flat_list_expr(s->target)
+        || !flat_list_stmt(s->init, loop) || !flat_list_stmt(s->step, loop)
+        || !flat_list_stmt(s->then_stmt, loop) || !flat_list_stmt(s->else_stmt, loop)) return false;
+    for (int i = 0; i < s->stmts.count; i++) if (!flat_list_stmt(s->stmts.items[i], loop)) return false;
+    return true;
+}
+
+static bool plain_list_loop(const stmt *s)
+{
+    return s->value->type.kind == TY_LIST && flat_list_value(list_elem(s->value->type.decl))
+        && flat_list_stmt(s->then_stmt, s);
+}
+
+static int batch_list_inner(const stmt *s);
+
+static bool flat_list_loop(const stmt *s)
+{
+    // The copy pays for repeated reads in the batched counted-loop path.
+    // Single-pass list kernels keep their existing chunk input and avoid an
+    // additional whole-list copy/allocation.
+    return batch_list_inner(s) >= 0;
+}
+
 // Before a system's function: each of its loops' captures, and its step's prototype.
 static void gen_par_heads(gen *g, const decl *sys)
 {
@@ -6644,6 +6859,8 @@ static void gen_par_heads(gen *g, const decl *sys)
         const capture_list caps = par_captures(g, sys, g->pars.items[i]);
         const bool list = g->pars.items[i]->value->type.kind == TY_LIST;
         sb_printf(o, "typedef struct %s_ctx {\n    %s *loop;\n", name, list ? "tide_par_list" : "tide_par_loop");
+        if (flat_list_loop(g->pars.items[i])) sb_printf(o, "    const %s *input;\n    int32_t count;\n",
+            elem_ctype(list_elem(g->pars.items[i]->value->type.decl)));
         for (int k = 0; k < caps.count; k++) sb_printf(o, "    %s%s%s;\n", caps.items[k].ctype,
                                                        caps.items[k].ctype[strlen(caps.items[k].ctype) - 1] == '*' ? "" : " ",
                                                        caps.items[k].name);
@@ -6887,13 +7104,23 @@ static void gen_parallel_call(gen *g, const stmt *s)
         sb_put(o, "tide_par_list_begin(&tide_pl, &(");
         gen_expr(g, o, s->value);
         sb_printf(o, "), sizeof(%s), %d, tide_o);\n", elem_ctype(list_elem(grid)), s->block[0]);
+        const bool flat = flat_list_loop(s);
+        if (flat) {
+            line(g, o, "bool tide_copied = false;");
+            line(g, o, "const int32_t tide_count = tide_list_count(*tide_pl.list);");
+            line(g, o, "const %s *const tide_in = tide_pl.tasks ? tide_list_flatten(*tide_pl.list, sizeof(%s), false, &tide_copied) : NULL;",
+                 elem_ctype(list_elem(grid)), elem_ctype(list_elem(grid)));
+        }
         indent(g, o);
         sb_printf(o, "const %s_ctx tide_cx = {&tide_pl", name);
+        if (flat) sb_put(o, ", tide_in, tide_count");
         for (int k = 0; k < caps.count; k++) sb_printf(o, ", %s", caps.items[k].name);
         sb_put(o, "};\n");
         line(g, o, "tide_parallel_for(tide_pl.tasks, %s, (void *)(uintptr_t)&tide_cx, tide_pl.steps * %lluu);", name,
              (unsigned long long)(cost < 1000000u ? cost : 1000000u));
         line(g, o, "tide_par_list_end(&tide_pl);");
+        if (flat) line(g, o, "tide_list_unflatten(*tide_pl.list, (void *)(uintptr_t)tide_in, sizeof(%s), false, tide_copied);",
+                       elem_ctype(list_elem(grid)));
         g->indent--;
         line(g, o, "}");
         return;
@@ -6931,7 +7158,7 @@ static void gen_parallel_call(gen *g, const stmt *s)
 // A task's loops over its blocks, `base` deep, with each step in them. Where
 // the grid has no chunk at the tile (`live`), a block that takes in none of
 // its chunks is outside the loop.
-static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base, const bool live)
+static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base, const bool live, const bool tail)
 {
     sb *o = &g->c;
     const bool list = s->value->type.kind == TY_LIST; // One axis: its elements' indices
@@ -6947,7 +7174,8 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
         line(g, o, "for (int32_t tide_k1 = tide_y0; tide_k1 < tide_y1; tide_k1++) {");
         g->indent = ++depth;
     }
-    line(g, o, "for (int32_t tide_k0 = tide_x0; tide_k0 < tide_x1; tide_k0++) {");
+    if (tail) line(g, o, "for (; tide_k0 < tide_x1; tide_k0++) {");
+    else line(g, o, "for (int32_t tide_k0 = tide_x0; tide_k0 < tide_x1; tide_k0++) {");
     g->indent = ++depth;
     const char *at = local_cname(g, s->name);
     if (list) {
@@ -6981,6 +7209,120 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     }
 }
 
+// Four independent output steps around one common inner counted loop. Each
+// output keeps its own accumulator and the original order of operations;
+// the C compiler can combine the independent math with SLP, without folding
+// a reduction in a different order. This deliberately accepts only straight
+// plain-value code, one inner loop and bounds that don't depend on a step.
+static bool batch_list_expr(const expr *e)
+{
+    if (!e) return true;
+    if (e->kind == E_CONDITIONAL || !flat_list_expr(e)) return false;
+    if (!batch_list_expr(e->object) || !batch_list_expr(e->lhs) || !batch_list_expr(e->rhs)) return false;
+    for (int i = 0; i < e->args.count; i++) if (!batch_list_expr(e->args.items[i])) return false;
+    for (int i = 0; i < e->inits.count; i++) if (!batch_list_expr(e->inits.items[i].value)) return false;
+    return true;
+}
+
+static bool batch_list_straight(const stmt *s)
+{
+    if (s->kind != S_VAR && s->kind != S_ASSIGN) return false;
+    return batch_list_expr(s->value) && batch_list_expr(s->target);
+}
+
+static bool batch_list_invariant(const expr *e, const stmt *loop)
+{
+    if (!e) return true;
+    if (e->bind == BIND_LOCAL && (e->local == loop || declared_in(loop->then_stmt, e->local))) return false;
+    if (!batch_list_invariant(e->object, loop) || !batch_list_invariant(e->lhs, loop)
+        || !batch_list_invariant(e->rhs, loop) || !batch_list_invariant(e->cond, loop)) return false;
+    for (int i = 0; i < e->args.count; i++) if (!batch_list_invariant(e->args.items[i], loop)) return false;
+    for (int i = 0; i < e->inits.count; i++) if (!batch_list_invariant(e->inits.items[i].value, loop)) return false;
+    return true;
+}
+
+static int batch_list_inner(const stmt *s)
+{
+    if (!plain_list_loop(s) || s->block[0] != 1 || s->then_stmt->kind != S_BLOCK) return -1;
+    int inner = -1;
+    for (int i = 0; i < s->then_stmt->stmts.count; i++) {
+        const stmt *p = s->then_stmt->stmts.items[i];
+        if (p->kind != S_FOR) {
+            if (!batch_list_straight(p)) return -1;
+            continue;
+        }
+        if (inner >= 0 || !p->init || p->init->kind != S_VAR || p->init->type.kind != TY_INT || p->init->is_mut
+            || !p->cond || p->cond->kind != E_BINARY || p->cond->op != T_LT
+            || !p->cond->lhs || p->cond->lhs->kind != E_NAME || p->cond->lhs->local != p->init
+            || !p->step || p->step->kind != S_ASSIGN
+            || p->step->target->kind != E_NAME || p->step->target->local != p->init
+            || (p->step->op != T_PLUS_PLUS && (p->step->op != T_PLUS_ASSIGN || !p->step->value
+                || p->step->value->kind != E_INT || p->step->value->int_value <= 0))
+            || !batch_list_expr(p->init->value) || !batch_list_expr(p->cond->rhs)
+            || !batch_list_invariant(p->init->value, s) || !batch_list_invariant(p->cond->rhs, s)
+            || p->then_stmt->kind != S_BLOCK) return -1;
+        for (int k = 0; k < p->then_stmt->stmts.count; k++) {
+            const stmt *part = p->then_stmt->stmts.items[k];
+            if (!batch_list_straight(part)) return -1;
+            if (part->kind == S_ASSIGN && part->target->kind == E_NAME && part->target->local == p->init) return -1;
+        }
+        inner = i;
+    }
+    return inner;
+}
+
+static void gen_par_list_batch(gen *g, const decl *sys, const stmt *s, const capture_list caps, const int inner)
+{
+    sb *o = &g->c;
+    const stmt *body = s->then_stmt, *loop = body->stmts.items[inner];
+    gen_frame lane[4] = {{0}};
+    const char *prefixes[4] = {"tide_lane0_", "tide_lane1_", "tide_lane2_", "tide_lane3_"};
+    g->code = sys;
+    g->routine = NULL;
+    g->task = NULL;
+    g->par_loop = s;
+    g->list_caches = true;
+    g->indent = 1;
+    line(g, o, "int32_t tide_k0 = tide_x0;");
+    line(g, o, "for (; tide_x1 - tide_k0 >= 4; tide_k0 += 4) {");
+    g->indent = 2;
+    for (int l = 0; l < 4; l++) {
+        lane[l].prefix = prefixes[l];
+        for (int k = 0; k < caps.count; k++) {
+            const par_capture *c = &caps.items[k];
+            line(g, o, "%s%s%s%s = %s;", c->ctype, c->ctype[strlen(c->ctype) - 1] == '*' ? "" : " ",
+                 prefixes[l], c->name, c->name);
+            line(g, o, "(void)%s%s;", prefixes[l], c->name);
+        }
+        g->frame = &lane[l];
+        line(g, o, "const int32_t %s = tide_o0 + tide_k0 + %d;", local_cname(g, s->name), l);
+        line(g, o, "(void)%s;", local_cname(g, s->name));
+        for (int k = 0; k < inner; k++) gen_stmt(g, body->stmts.items[k]);
+    }
+    line(g, o, "{");
+    g->indent++;
+    for (int l = 0; l < 4; l++) { g->frame = &lane[l]; gen_stmt(g, loop->init); }
+    g->frame = &lane[0];
+    line(g, o, "while (%s) {", expr_text(g, loop->cond));
+    g->indent++;
+    for (int k = 0; k < loop->then_stmt->stmts.count; k++) {
+        for (int l = 0; l < 4; l++) { g->frame = &lane[l]; gen_stmt(g, loop->then_stmt->stmts.items[k]); }
+    }
+    for (int l = 0; l < 4; l++) { g->frame = &lane[l]; gen_stmt(g, loop->step); }
+    g->indent--;
+    line(g, o, "}");
+    g->indent--;
+    line(g, o, "}");
+    for (int k = inner + 1; k < body->stmts.count; k++) {
+        for (int l = 0; l < 4; l++) { g->frame = &lane[l]; gen_stmt(g, body->stmts.items[k]); }
+    }
+    g->frame = NULL;
+    g->par_loop = NULL;
+    g->list_caches = false;
+    g->indent = 1;
+    line(g, o, "}");
+}
+
 // After a system's function: its loops' steps, each task a tile of blocks
 // (see tide/grid.h).
 static void gen_par_steps(gen *g, const decl *sys)
@@ -7004,11 +7346,17 @@ static void gen_par_steps(gen *g, const decl *sys)
         if (g->prog->lists.count) sb_printf(o, "    tide_list_cache tide_lc[%d] = {{0}};\n    (void)tide_lc;\n", g->prog->lists.count);
         if (list) { // Its blocks of the list, and its copy of their elements, which its steps write
             const char *element = elem_ctype(list_elem(grid));
+            g->par_flat = flat_list_loop(s);
+            if (g->par_flat) sb_printf(o, "    const %s *restrict const tide_in = tide_cx->input;\n"
+                                         "    const int32_t tide_count = tide_cx->count;\n    (void)tide_in;\n    (void)tide_count;\n", element);
             sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    int32_t tide_x0, tide_x1;\n");
             sb_printf(o, "    %s *restrict const tide_wout = tide_par_list_task(tide_pl, tide_task, &tide_x0, &tide_x1);\n", element);
             sb_printf(o, "    const int32_t tide_o0 = tide_pl->offset, tide_lo = tide_o0 + tide_x0 * %d;\n", s->block[0]);
             sb_put(o, "    (void)tide_wout;\n    (void)tide_lo;\n");
-            gen_par_nest(g, sys, s, 1, false);
+            const int inner = batch_list_inner(s);
+            if (inner >= 0) gen_par_list_batch(g, sys, s, caps, inner);
+            gen_par_nest(g, sys, s, 1, false, inner >= 0);
+            g->par_flat = false;
             g->indent = 0;
             sb_put(o, "    tide_scratch_reset(tide_mark);\n}\n\n");
             line_reset(g);
@@ -7042,7 +7390,6 @@ static void gen_par_steps(gen *g, const decl *sys)
             sb_printf(o, "    const int32_t tide_own1[3] = {tide_o[0] + tide_to[0] * %d - 1, tide_o[1] + tide_to[1] * %d - 1, "
                          "tide_o[2] + tide_to[2] * %d - 1};\n",
                       b[0], b[1], b[2]);
-            sb_put(o, "    const int32_t tide_lx = tide_lo[0], tide_ly = tide_lo[1], tide_lz = tide_lo[2];\n    (void)tide_lz;\n");
             sb_put(o, "    const int32_t tide_ww = tide_hi[0] - tide_lo[0] + 1, tide_wh = tide_hi[1] - tide_lo[1] + 1;\n");
             sb_put(o, "    (void)tide_wh;\n");
             sb_put(o, "    const size_t tide_wn = (size_t)tide_ww * (size_t)tide_wh * (size_t)(tide_hi[2] - tide_lo[2] + 1);\n");
@@ -7054,12 +7401,12 @@ static void gen_par_steps(gen *g, const decl *sys)
         }
         if (s->windowed) { // Two of its loops: a tile where the grid has no chunk checks each block first
             sb_put(o, "    if (!tide_sparse) {\n");
-            gen_par_nest(g, sys, s, 2, false);
+            gen_par_nest(g, sys, s, 2, false, false);
             sb_put(o, "    } else {\n");
-            gen_par_nest(g, sys, s, 2, true);
+            gen_par_nest(g, sys, s, 2, true, false);
             sb_put(o, "    }\n");
         } else {
-            gen_par_nest(g, sys, s, 1, true);
+            gen_par_nest(g, sys, s, 1, true, false);
         }
         g->indent = 0;
         if (s->windowed) sb_put(o, "    tide_par_window_put(tide_pl, tide_lo, tide_hi, tide_own0, tide_own1, tide_wout, tide_win);\n");
@@ -7220,6 +7567,8 @@ static void gen_system_body(gen *g, const decl *sys)
     g->has_scene = sys->per_entity && has_scenes(g->prog, sys->entity_local);
     g->scene_local = sys->entity_local;
     if (g->has_scene) sb_put(o, ", tide_entity tide_scene");
+    g->reserved_send = batch_event(sys) != NULL;
+    if (g->reserved_send) sb_put(o, ", tide_command *tide_reserved");
     sb_put(o, ")\n{\n");
     g->indent = 1;
     g->spawn_temps = 0;
@@ -7240,6 +7589,7 @@ static void gen_system_body(gen *g, const decl *sys)
     }
     gen_grid_caches(g);
     for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
+    g->reserved_send = false;
     g->list_caches = false;
     g->indent = 0;
     sb_put(o, "}\n");
@@ -7578,6 +7928,7 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
     }
     // The scene of the entity, last, for its spawns to join.
     if (a >= 0 && has_scenes(g->prog, sys->entity_local)) sb_put(o, ", tide_scn[tide_i]");
+    if (batch_event(sys)) sb_put(o, ", tide_reserved");
 }
 
 // Runs an event's handlers of one world in order. One that takes data from the
@@ -8910,6 +9261,29 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     // it changed earlier in this run: so they're written in place, the same
     // everywhere, rather than into a copy some pages would have and others not
     gen_chunk_columns(g, sys, a, pad, read_only, !world_reads_own_writes(sys));
+    const expr *send = batch_event(sys);
+    bool batch = send != NULL;
+    for (int c = 0; batch && c < g->prog->components.count; c++) {
+        if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) batch = false;
+    }
+    if (batch) {
+        sb_printf(o, "%stide_queue *restrict const tide_queue_out = tide_recording(&tide_w->commands);\n", pad);
+        sb_printf(o, "%sconst uint32_t tide_record_size = (TIDE_COMMAND_SIZE(event_%s) + 7u) & ~7u;\n", pad, type_cname(send->type_decl));
+        sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to;) {\n", pad);
+        sb_printf(o, "%s    uint32_t tide_run_count = tide_to - tide_i;\n", pad);
+        sb_printf(o, "%s    uint8_t *const tide_records = tide_queue_push_run(tide_queue_out, tide_record_size, &tide_run_count);\n", pad);
+        sb_printf(o, "%s    for (uint32_t tide_record = 0; tide_record < tide_run_count; tide_record++, tide_i++) {\n", pad);
+        sb_printf(o, "%s        tide_command *const tide_reserved = (tide_command *)(tide_records + tide_record * tide_record_size);\n", pad);
+        sb inner_batch = {0};
+        sb_printf(&inner_batch, "%s        ", pad);
+        gen_row_copies(g, sys, a, inner_batch.data);
+        sb_printf(o, "%s%s", inner_batch.data, call);
+        gen_system_args(g, sys, a);
+        sb_printf(o, ");%s\n", clear);
+        sb_printf(o, "%s    }\n%s}\n", pad, pad);
+        return;
+    }
+    if (send) sb_printf(o, "%stide_command *const tide_reserved = NULL;\n", pad);
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_copies(g, sys, a, inner.data);

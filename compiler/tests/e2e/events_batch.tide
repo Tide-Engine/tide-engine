@@ -1,0 +1,111 @@
+// Many senders cross queue pages and ECS chunks. Pure sends may be batched;
+// sparse filters and expressions that call C must retain ordinary recording.
+scene Main { }
+component Sender { int sequence; }
+component Health { int hits; }
+[Sparse]
+component Marked { }
+singleton Audit { List<int> trace; int seenBefore; }
+event Note { int sequence; int group; }
+event Echo { int sequence; }
+event WorldNote { int sequence; }
+
+extern int event_mark(int value);
+struct Mark
+{
+    int key;
+    Mark operator +(Mark a, Mark b) { return Mark { key = event_mark(a.key + b.key) }; }
+}
+const Mark VALUE = Mark { key = 1 } + Mark { key = 2 };
+component Source { int amount = VALUE.key; }
+struct Stamp { Mark mark = VALUE; }
+struct Payload { int amount = VALUE.key; }
+event DefaultNote { int sequence; Stamp stamp; }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 4097; i++)
+    {
+        var e = Spawn(Sender { sequence = i }, Source { amount = 3 }, Health);
+        if (i % 2 == 0) e.Add(Marked);
+    }
+}
+
+system Pure(Sender sender)
+{
+    this.Send(Note { sequence = sender.sequence, group = 1 });
+}
+[After(Pure)]
+system Included(Sender sender, with Marked)
+{
+    this.Send(Note { sequence = sender.sequence, group = 2 });
+}
+[After(Included)]
+system Excluded(Sender sender, without Marked)
+{
+    this.Send(Note { sequence = sender.sequence, group = 3 });
+}
+[After(Excluded)]
+system ExplicitCall(Sender sender)
+{
+    this.Send(Note { sequence = event_mark(sender.sequence), group = 4 });
+}
+[After(ExplicitCall)]
+system ImplicitDefault(Sender sender)
+{
+    this.Send(DefaultNote { sequence = sender.sequence });
+}
+[After(ImplicitDefault)]
+system ExpandedConstant(Sender sender)
+{
+    this.Send(Note { sequence = sender.sequence + VALUE.key - 3, group = 6 });
+}
+[After(ExpandedConstant)]
+system ProjectedDefault(Sender sender)
+{
+    this.Send(Note {
+        sequence = sender.sequence + (sender.sequence >= 0 ? default : Payload { amount = 3 }).amount - 3,
+        group = 7
+    });
+}
+[After(ProjectedDefault)]
+system ProjectedComponent(Sender sender, Source source)
+{
+    this.Send(Note {
+        sequence = sender.sequence + (sender.sequence >= 0 ? default : source).amount - 3,
+        group = 8
+    });
+}
+[After(ProjectedComponent)]
+system WorldSend(Sender sender)
+{
+    Send(WorldNote { sequence = sender.sequence });
+}
+[After(WorldSend)]
+system Observe(Health health, mut Audit audit)
+{
+    audit.seenBefore += health.hits; // None of this tick's events has applied.
+}
+
+event(Note note) Count(mut Health health)
+{
+    health.hits++;
+    if (note.group == 1 && note.sequence % 100 == 0) this.Send(Echo { sequence = note.sequence });
+}
+event(Note note) Record(mut Audit audit)
+{
+    audit.trace.Add(note.group * 100000 + note.sequence);
+}
+event(DefaultNote note) RecordDefault(mut Audit audit, mut Health health)
+{
+    health.hits++;
+    audit.trace.Add(500000 + note.sequence + note.stamp.mark.key - 3);
+}
+event(Echo echo) RecordEcho(mut Audit audit)
+{
+    audit.trace.Add(1000000 + echo.sequence);
+}
+event(WorldNote note) RecordWorld(mut Audit audit)
+{
+    audit.trace.Add(900000 + note.sequence);
+}
