@@ -40,6 +40,7 @@ TIDE_TEST(queries_select_a_second_set_and_defer_events)
     TIDE_CHECK(shot.markedVisits == 0 && miss.markedVisits == 0);
     TIDE_CHECK(tide_has_Seen(&world, FAR) && tide_has_Seen(&world, NEAR) && !tide_has_Seen(&world, SHIELDED));
     TIDE_CHECK(world.Stats.healthBeforeEvents == 150 && world.Stats.handles == 5);
+    TIDE_CHECK(world.Stats.workVisits == 8192 && world.Stats.workPrefix == 4096 && world.Stats.impossibleVisits == 0);
     TIDE_CHECK(tide_get_Health(&world, NEAR).value == 33);
     TIDE_CHECK(tide_get_Health(&world, FAR).value == 50 && tide_get_Health(&world, SHIELDED).value == 30);
     // The query's with Fighter did not filter the outer bullets away.
@@ -88,6 +89,9 @@ static uint64_t semantic_hash(const tide_world *w)
     uint64_t hash = UINT64_C(0xCBF29CE484222325);
     hash = hash_word(hash, (uint32_t)w->Stats.healthBeforeEvents);
     hash = hash_word(hash, (uint32_t)w->Stats.handles);
+    hash = hash_word(hash, (uint32_t)w->Stats.workVisits);
+    hash = hash_word(hash, (uint32_t)w->Stats.workPrefix);
+    hash = hash_word(hash, (uint32_t)w->Stats.impossibleVisits);
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&w->entities, i);
         hash = hash_word(hash_word(hash, e.index), e.generation);
@@ -126,7 +130,7 @@ TIDE_TEST(queries_match_across_platforms)
     tide_world_init(&world, 1.0f / 60.0f);
     for (int i = 0; i < 16; i++) tide_world_tick(&world);
     const uint64_t hash = semantic_hash(&world);
-    const uint64_t expected = UINT64_C(0x57E6D6854B0A7384);
+    const uint64_t expected = UINT64_C(0x23FB1DD4AEBCB224);
     if (hash != expected) printf("    queries: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", hash, expected);
     TIDE_CHECK(hash == expected);
     tide_world_free(&world);
@@ -177,6 +181,7 @@ TIDE_TEST(queries_threads_and_snapshots_change_nothing)
             if (tide_world_hash(&world) != tide_world_hash(&many)) printf("    %u threads differ at tick %d\n", threads, t);
             TIDE_REQUIRE(tide_world_hash(&world) == tide_world_hash(&many));
             TIDE_REQUIRE(tide_world_hash(&snapshot) == before);
+            TIDE_REQUIRE(many.Stats.workVisits == 8192 && many.Stats.workPrefix == 4096 && many.Stats.impossibleVisits == 0);
         }
         TIDE_CHECK(limited.runs > 0); // Actually entered the threaded schedule.
         TIDE_CHECK(semantic_hash(&world) == semantic_hash(&many));

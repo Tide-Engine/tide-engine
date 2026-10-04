@@ -395,11 +395,14 @@ static void put_access(sb *out, const decl *sys, const bool writes)
 int world_use_names(const decl *sys, const bool writes, const char *quote, const decl *from, sb *out)
 {
     int count = 0;
-    for (int i = 0; i < sys->world_uses.count; i++) count += sys->world_uses.items[i].writes == writes;
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        const world_use *u = &sys->world_uses.items[i];
+        count += writes ? u->writes : !u->writes || u->query_read;
+    }
     int written = 0;
     for (int i = 0; i < sys->world_uses.count; i++) {
         const world_use *u = &sys->world_uses.items[i];
-        if (u->writes != writes) continue;
+        if (writes ? !u->writes : u->writes && !u->query_read) continue;
         sb_put(out, written == 0 ? "" : written == count - 1 ? " and " : ", ");
         put_decl_name(out, u->component, quote, from);
         written++;
