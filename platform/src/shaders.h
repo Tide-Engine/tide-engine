@@ -163,6 +163,13 @@ static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
 // Text: its pixels are its color, as much as the font atlas says its glyph
 // covers each. Its corners are a mesh's, their uv in the atlas's pixels, so
 // the atlas can grow under them: `texel` is 1 over its size.
+//
+// Colors blend as the display's values, not as light, which leaves a pixel
+// that light text half covers darker than half: a glyph's slanted and round
+// strokes, which cover pixels in part, would fade beside its stems, which
+// fill theirs. So the lighter the text, the more a part counts for: its share
+// to a power under 1, down to 0.55 for white (about what blending as light
+// would give it on a dark background). Dark text is left as it is.
 
 static const char text_glsl_fragment[] =
     "in vec2 at;\n"
@@ -171,12 +178,18 @@ static const char text_glsl_fragment[] =
     "layout(std140) uniform uniforms { mat4 screen; vec2 texel; };\n"
     "out vec4 pixel;\n"
     "void main() {\n"
-    "    pixel = vec4(tint.rgb, tint.a * texture(pixels, at * texel).r);\n"
+    "    float cover = texture(pixels, at * texel).r;\n"
+    "    float light = dot(tint.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    if (cover > 0.0) cover = pow(cover, 1.0 - 0.45 * light);\n"
+    "    pixel = vec4(tint.rgb, tint.a * cover);\n"
     "}\n";
 
 static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return vec4f(in.tint.rgb, in.tint.a * textureSample(pixels, how, in.at * u.texel).r);\n"
+    "    var cover = textureSample(pixels, how, in.at * u.texel).r;\n"
+    "    let light = dot(in.tint.rgb, vec3f(0.2126, 0.7152, 0.0722));\n"
+    "    if (cover > 0.0) { cover = pow(cover, 1.0 - 0.45 * light); }\n"
+    "    return vec4f(in.tint.rgb, in.tint.a * cover);\n"
     "}\n");
 
 // 3D meshes: a mesh's corners go through its instance's transform and the

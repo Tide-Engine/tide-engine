@@ -185,6 +185,12 @@ target_link_libraries(tide_platform_jobs PRIVATE tide_platform)
 add_test(NAME tide_platform_jobs COMMAND tide_platform_jobs)
 set_tests_properties(tide_platform_jobs PROPERTIES TIMEOUT 120)
 
+# The font's glyphs, fitted to the pixels they're drawn on: no window or GPU.
+add_executable(tide_platform_font tests/font.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_font PRIVATE tide_platform)
+add_test(NAME tide_platform_font COMMAND tide_platform_font)
+
 if(NOT TIDE_WEB)
     # The WebRTC stack (src/rtc), piece by piece.
     add_executable(tide_platform_rtc tests/rtc.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")

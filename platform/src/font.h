@@ -8,10 +8,11 @@
 // A text's size is its font size, as CSS's and Unity's: the height of a line
 // of it, with its capitals in the line's middle. It's drawn on the target's
 // own pixels, never between them: at the whole number of pixels nearest its
-// size, each glyph fitted to them (see tide_font_glyph_for), and each a whole
-// number of them from the last. So text is sharp at the sizes it's read at,
-// and `scale`, the target's pixels in one of the units a size is in, is part
-// of how wide it comes out.
+// size, each glyph's stems and the heights letters share moved onto pixel
+// edges (see Fitting in font.c), and each glyph a whole number of pixels from
+// the last. So text is sharp at the sizes it's read at, and `scale`, the
+// target's pixels in one of the units a size is in, is part of how wide it
+// comes out.
 
 #include <stdbool.h>
 #include <stdint.h>
