@@ -10,6 +10,7 @@
 #define GLFW_INCLUDE_NONE // Its OpenGL is ours (src/gl.h)
 #include <GLFW/glfw3.h>
 
+#include "cursor.h"
 #include "gl.h"
 #include "touch_win32.h"
 
@@ -112,8 +113,8 @@ static bool pasting; // Taking the clipboard's text, which it may hold none of
 // The cursor's lock (see tide_window_cursor_lock): GLFW's disabled cursor,
 // which is hidden, kept in the window, and moves a position of GLFW's own
 // that has no screen's edge to stop at.
-static bool lock_wanted;                  // The game asks for it
-static bool locked;                       // ...and the window holds it: it has the focus too
+static tide_cursor cursor;                // Whether the game asks for it, and the player took it back (cursor.h)
+static bool locked;                       // The window holds it
 static double locked_x, locked_y;         // Where the cursor was when it was locked, which it's said to stay at
 static double moved_from_x, moved_from_y; // GLFW's own position for it as of the last tide_window_mouse_state
 
@@ -140,6 +141,8 @@ static void on_scroll(GLFWwindow *from, const double x, const double y)
 static void on_key(GLFWwindow *from, const int key, const int scancode, const int action, const int mods)
 {
     (void)from, (void)scancode;
+    // Escape gives the player the cursor back, and another key takes it again (cursor.h)
+    if (action == GLFW_PRESS) tide_cursor_key(&cursor, key == GLFW_KEY_ESCAPE);
     // Ctrl+V, or Cmd+V on macOS
     if (key == GLFW_KEY_V && action == GLFW_PRESS && (mods & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER))) paste_asked = true;
     if (key < 0 || key > GLFW_KEY_LAST || !key_of[key]) return; // A key Tide has no name for
@@ -151,6 +154,7 @@ static void on_key(GLFWwindow *from, const int key, const int scancode, const in
 static void on_mouse_button(GLFWwindow *from, const int button, const int action, const int mods)
 {
     (void)from, (void)mods;
+    if (action == GLFW_PRESS) tide_cursor_click(&cursor); // Takes the cursor again, if the player had it back
     // GLFW's first five are left, right, middle, and the two mice send for back and forward
     if (button < 0 || button > 4) return;
     if (action == GLFW_PRESS) mouse_held |= 1u << button, mouse_tapped |= 1u << button;
@@ -199,7 +203,8 @@ bool tide_window_open(const tide_window_desc *desc)
     // gives it: no acceleration, which a camera turns evenly with. It only
     // applies while the cursor is locked.
     if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-    lock_wanted = locked = false;
+    cursor = (tide_cursor){0};
+    locked = false;
 #ifdef _WIN32
     tide_win32_touch_attach(glfwGetWin32Window(window));
 #endif
@@ -295,13 +300,14 @@ bool tide_window_key_held(const tide_key key)
     return held;
 }
 
-// Takes the cursor or lets it go, as the game asks and the focus allows. Only
-// a window with the focus holds the cursor: one that loses it (Alt+Tab) lets
-// the cursor go, and takes it again when it has the focus back, if the game
-// still asks.
+// Takes the cursor or lets it go, as the game asks and the player and the
+// focus allow (cursor.h). Only a window with the focus holds the cursor: one
+// that loses it (Alt+Tab) lets the cursor go, and takes it again when it has
+// the focus back, if the game still asks. Escape lets it go too, until the
+// player clicks on the window or presses another key.
 static void follow_lock(void)
 {
-    const bool hold = lock_wanted && glfwGetWindowAttrib(window, GLFW_FOCUSED);
+    const bool hold = tide_cursor_held(&cursor, glfwGetWindowAttrib(window, GLFW_FOCUSED));
     if (hold == locked) return;
     if (hold) glfwGetCursorPos(window, &locked_x, &locked_y);
     // Letting go puts the cursor back where it was when it was taken
@@ -312,7 +318,7 @@ static void follow_lock(void)
 
 void tide_window_cursor_lock(const bool lock)
 {
-    lock_wanted = lock;
+    tide_cursor_ask(&cursor, lock);
     follow_lock();
 }
 
@@ -322,7 +328,7 @@ void tide_window_mouse_state(tide_window_mouse *out)
     // on macOS, the display's own elsewhere.
     double x = 0.0, y = 0.0;
     int across = 0, down = 0, width, height;
-    follow_lock(); // The focus may have changed since the game last asked
+    follow_lock(); // The focus may have changed since the game last asked, or the player pressed Escape, or clicked
     glfwGetCursorPos(window, &x, &y);
     glfwGetWindowSize(window, &across, &down);
     tide_window_size(&width, &height);

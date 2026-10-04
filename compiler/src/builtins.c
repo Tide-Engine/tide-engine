@@ -473,8 +473,9 @@ static void build_signatures(void)
     add_gui("Cursor", "Lock", T_NONE, "tide_gui_lock_cursor", "", 0,
             "Locks the mouse's cursor for a camera that looks around: it's hidden and stays where it is, and "
             "`Devices.mouse.delta` keeps coming however far the mouse goes. Call it every frame the game wants the "
-            "mouse: the cursor comes back once no view asks. The system may refuse, or take the cursor back (a "
-            "browser does when the player presses Escape), so read `Cursor.locked` for whether it holds.");
+            "mouse: the cursor comes back once no view asks. The system may refuse, or take the cursor back (when "
+            "the player presses Escape, until their next click or key press), so read `Cursor.locked` for whether it "
+            "holds.");
 }
 
 // ---------------------------------------------------------------------------
@@ -517,8 +518,9 @@ static const char *member_doc(const size_t i)
 {
     if (strcmp(members[i].owner, "Cursor") == 0) {
         return "Whether the window holds the mouse's cursor right now: what the system says, not what `Cursor.Lock` "
-               "asked. A browser only locks it at a click or a key press and lets it go when the player presses "
-               "Escape, and a window that loses the focus lets it go too. Views read it, and the input's `Sample`.";
+               "asked. A browser only locks it at a click or a key press, Escape gives the cursor back to the player "
+               "until the next one, and a window that loses the focus lets it go too. Views read it, and the input's "
+               "`Sample`.";
     }
     return NULL;
 }
