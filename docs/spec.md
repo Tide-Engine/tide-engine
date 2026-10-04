@@ -1135,7 +1135,7 @@ view DrawBox(Box box, Models models)
 - The match never calls `Cursor.Lock()` or reads `Cursor.locked`: the cursor is this machine's.
 - Platforms differ, and games read `Cursor.locked` rather than assume. The usual pattern shows the pause menu when the lock goes away:
   - **The web** only gives the lock when it's asked for from a click or a key press, so the page asks at the next one while the game wants it, and at once when the game starts wanting it, which works shortly after one (a Resume button's click). The browser lets the cursor go itself when the player presses Escape, which a page can't prevent and may never see the key of, and when the page loses the focus or is hidden. For a moment after Escape it refuses the lock. Nothing asks again on its own: the player's next click or key press does.
-  - **Desktop** windows hold the cursor while they have the focus. Alt+Tab lets it go, `Cursor.locked` is false meanwhile, and the lock returns with the focus if the game still asks.
+  - **Desktop** windows hold the cursor while they have the focus. Alt+Tab lets it go, `Cursor.locked` is false meanwhile, and the lock returns with the focus if the game still asks. Escape lets it go too, as on the web, though the game still gets the key: while the game goes on asking, the player's next click on the window or press of another key locks it again, and Escape never does. Once a frame goes by without the game asking, that's over: its next ask locks at once.
   - **Android** never locks it, for now: `Cursor.locked` stays false.
 
 ```csharp
@@ -1160,7 +1160,7 @@ view Look(Viewer viewer, mut Menu menu)
     Draw.Camera(viewer.position, viewer.rotation, 75);
     if (Devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
-    // The lock went away on its own, as a browser's does at Escape: the pause menu
+    // The lock went away on its own, as it does at Escape: the pause menu
     if (menu.looking && !Cursor.locked) menu.paused = true;
     menu.looking = Cursor.locked;
 }

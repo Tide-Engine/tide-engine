@@ -102,8 +102,8 @@ typedef struct tide_mouse {
     tide_float2 poll_scroll;
     // ...and whether the window holds the cursor (Cursor.locked): hidden, and
     // kept from leaving. It's what the system says, not what the game asked
-    // (Cursor.Lock): a browser lets the cursor go when the player presses
-    // Escape, and a window that loses the focus doesn't hold it.
+    // (Cursor.Lock): the cursor goes back to the player at Escape, and a
+    // window that loses the focus doesn't hold it.
     bool locked;
     uint8_t tide_pad[3]; // Written out: no padding the compiler adds (see below)
 } tide_mouse;

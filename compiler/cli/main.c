@@ -6,6 +6,7 @@
 
 #include "build.h"
 #include "editors.h"
+#include "install.h"
 #include "packages_cmd.h"
 #include "sys.h"
 #include "toolchain.h"
@@ -83,6 +84,9 @@ static char *install_root(void)
 static int version(const char *root)
 {
     printf("tide %s (%s)\ninstalled in %s\n", TIDE_VERSION, tide_channel(root), root);
+    if (!tide_installation_whole(root, TIDE_VERSION)) {
+        printf("the installation isn't whole (an upgrade of it stopped partway): run `tide upgrade`\n");
+    }
 #ifdef TIDE_EMBEDDED_CLANG
     printf("clang:   built in (LLVM %s)\n", TIDE_LLVM_VERSION);
 #else

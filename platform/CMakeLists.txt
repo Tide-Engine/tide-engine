@@ -290,6 +290,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_link_libraries(tide_platform_cursor PRIVATE tide_platform)
     add_test(NAME tide_platform_cursor COMMAND tide_platform_cursor)
     set_tests_properties(tide_platform_cursor PROPERTIES LABELS gpu)
+
+    # What a window with the focus does with it (desktop/cursor.h): Escape gives
+    # the cursor back to the player, and a click or a key takes it again. No
+    # window, so it runs everywhere.
+    add_executable(tide_platform_cursor_rules tests/cursor_rules.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_cursor_rules PRIVATE "${PROJECT_SOURCE_DIR}/tests" desktop)
+    target_link_libraries(tide_platform_cursor_rules PRIVATE tide)
+    add_test(NAME tide_platform_cursor_rules COMMAND tide_platform_cursor_rules)
 endif()
 
 if(TIDE_WEB)
