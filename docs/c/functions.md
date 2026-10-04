@@ -134,7 +134,7 @@ Extern functions take and return plain data, by value:
 | an enum | `int32_t`, or `uint8_t` and `uint16_t` for `: byte` and `: ushort` |
 | a struct or component | a struct with the same fields, in the same order |
 
-A system that splits its entities across threads gives the entities it spawns temporary handles until it's done (see [The schedule](../engine/schedule.md#splitting-across-threads)), so an `Entity` C gets from one may be temporary: `tide_entity_is_temporary(e)`, from `tide/entity.h`, tells. Tide gives the real handle to what the system kept, but not to C, so C that keeps entities should keep real ones.
+A system that splits its entities across threads gives the entities it spawns temporary handles until it's done (see [The schedule](../game/schedule.md#splitting-across-threads)), so an `Entity` C gets from one may be temporary: `tide_entity_is_temporary(e)`, from `tide/entity.h`, tells. Tide gives the real handle to what the system kept, but not to C, so C that keeps entities should keep real ones.
 
 C often takes pointers. Tide has none, and no pointer arithmetic: the parameter says how a value goes to C, and the call takes its address by itself. Every pointer is only good until C returns.
 
@@ -195,7 +195,7 @@ bool RayCast(tide_float3 from, tide_float3 direction, Hit *hit)
 
 Tide's types have no padding the compiler adds, so a C struct with the same fields lines up with them. Structs that hold text or lists can't go to C, and neither can lists of text or `T?` values.
 
-C functions can't `fail` (see [Errors](./errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
+C functions can't `fail` (see [Errors](../language/errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
 
 ## Drawing from C
 
@@ -272,6 +272,6 @@ The compiler doesn't look inside C. It takes each call as touching nothing it tr
 - **State.** Variables C keeps aren't in the world, so they aren't sent, rolled back or hashed. Keep what the match depends on in components and singletons.
 - **Threads.** Once systems run in parallel, two that call the same C function can run at the same time.
 
-C also changes how players join. When starting a match calls no C (no match event handler does, through anything it calls), a player joining a big world starts the match on its own machine too, and only gets what changed since (see [Sending worlds](../engine/networking.md#sending-worlds)). C called while a match starts could do something outside the world on every joining machine, so a game whose match start calls C sends joining players the whole world instead.
+C also changes how players join. When starting a match calls no C (no match event handler does, through anything it calls), a player joining a big world starts the match on its own machine too, and only gets what changed since (see [Sending worlds](../multiplayer/networking.md#sending-worlds)). C called while a match starts could do something outside the world on every joining machine, so a game whose match start calls C sends joining players the whole world instead.
 
 tidec declares each extern function from its Tide signature. If it doesn't match the C function, the call goes wrong the way it would in C.

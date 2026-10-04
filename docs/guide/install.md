@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/insta
 
 The installer uses `curl`, `tar` and `python3`. Native games also need the system's own headers and libraries:
 
-- **Linux** (x64): your distribution's C development files, which come with gcc: `sudo apt install build-essential` on Debian and Ubuntu, `sudo dnf install gcc` on Fedora. Playing in [rooms](../language/multiplayer.md#rooms) needs OpenSSL's `libssl` too, which nearly every distribution has, and so do the players of your game.
+- **Linux** (x64): your distribution's C development files, which come with gcc: `sudo apt install build-essential` on Debian and Ubuntu, `sudo dnf install gcc` on Fedora. Playing in [rooms](../multiplayer/matches.md#rooms) needs OpenSSL's `libssl` too, which nearly every distribution has, and so do the players of your game.
 - **macOS** (Apple Silicon): Apple's command-line tools, `xcode-select --install`. Install them before tide: they bring the `python3` the installer uses.
 
 ## What the installer does
@@ -33,7 +33,7 @@ tide version
 
 This shows tide's version and channel, where it's installed, and which compilers it found.
 
-The installer also adds Tide to the editors it finds (see [Editors](./editors.md)). If you run it again when `tide` is already there, it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`, and adds Tide to editors installed since.
+The installer also adds Tide to the editors it finds (see [Editors](../tools/editors.md)). If you run it again when `tide` is already there, it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`, and adds Tide to editors installed since.
 
 ## Nightly versions
 

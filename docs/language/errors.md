@@ -123,4 +123,4 @@ Most of Tide never fails, so there's nothing to handle:
 - Text clamps positions past its end.
 - `Math` is forgiving with bad values: `Math.Clamp` always returns a value in range.
 
-Failures that happen later, rather than during a call, are events: a match that ends or a server that goes away sends `Disconnected` (see [Multiplayer](./multiplayer.md)).
+Failures that happen later, rather than during a call, are events: a match that ends or a server that goes away sends `Disconnected` (see [Matches](../multiplayer/matches.md)).

@@ -98,8 +98,8 @@ github.com/someone/tide-math 9f2c1e07d4b8a3f6e5c2d1b0a9f8e7d6c5b4a392
 - What a game has one of is the game's: a package can't declare `Main`, the input or the settings. Its systems can take `Devices`, which the game's input sends with its own fields.
 - `tide 0.3` is the oldest `tide` it builds with. With an older one, a game that uses it says so, and to run `tide upgrade`.
 - Its other lines are the packages it needs, as a game lists them. One from git only needs packages from git, since a folder on your machine isn't on anyone else's.
-- Its C goes in its folder, as a game's does (see [Calling C](../language/c-functions.md)), and compiles with the game.
-- A package's systems run before the game's: packages' files compile first, each package after those it needs, and the game's files last (see [Systems](../language/systems.md#order)).
+- Its C goes in its folder, as a game's does (see [Calling C](../c/functions.md)), and compiles with the game.
+- A package's systems run before the game's: packages' files compile first, each package after those it needs, and the game's files last (see [Systems](../game/systems.md#order)).
 
 To try a package as you write it, make a game in a folder of its own inside it, whose `tide.packages` lists the package's folder:
 

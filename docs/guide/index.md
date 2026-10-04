@@ -24,9 +24,9 @@ system Poison(mut Health health, with Poisoned)
 }
 ```
 
-**Systems say what they touch.** `mut` means a system writes a component, and a plain parameter that it only reads it. `with` and `without` pick entities without reading anything. From that, the compiler plans which systems can run at the same time and which have to wait, and shows you why (see [the schedule](../engine/schedule.md)).
+**Systems say what they touch.** `mut` means a system writes a component, and a plain parameter that it only reads it. `with` and `without` pick entities without reading anything. From that, the compiler plans which systems can run at the same time and which have to wait, and shows you why (see [the schedule](../game/schedule.md)).
 
-**Everything is a match.** The simulation, called the match, is what every machine runs the same way. It runs on a server, and even single-player is a match on a server this machine runs itself. The engine has rollback netcode built in: clients predict ahead with no input delay, and correct themselves when the server disagrees. See [multiplayer](../language/multiplayer.md).
+**Everything is a match.** The simulation, called the match, is what every machine runs the same way. It runs on a server, and even single-player is a match on a server this machine runs itself. The engine has rollback netcode built in: clients predict ahead with no input delay, and correct themselves when the server disagrees. See [Matches](../multiplayer/matches.md).
 
 **Local state is everything else.** Menus, settings, particles and the camera belong to one machine and are never sent. **Views** read the match and draw it once per frame, and they can change local state but never the match. The compiler enforces that boundary, so a view can't break the simulation by accident.
 
@@ -47,6 +47,7 @@ The screen updates every **frame**, as fast as the display allows:
 ## Where to go next
 
 - [Install tide](./install.md), then make [your first game](./first-game.md).
-- Read about [the language](../language/basics.md), a topic at a time.
-- See how the engine keeps every machine in step: [determinism](../engine/determinism.md) and [networking](../engine/networking.md).
+- Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md).
+- See how machines share a match, and how the engine keeps them in step: [matches](../multiplayer/matches.md), [networking](../multiplayer/networking.md) and [determinism](../multiplayer/determinism.md).
+- Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).
 - [Play falling sand](./sand.md) in your browser, alone or with friends.

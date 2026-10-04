@@ -24,7 +24,7 @@ event(Spawned) Setup(with Main)
 }
 ```
 
-A match `Main`, like this one, starts a single-player match with it right away. A local `Main` starts the program outside any match, usually in a menu, which starts one later (see [Local state](./local-state.md) and [Multiplayer](./multiplayer.md)).
+A match `Main`, like this one, starts a single-player match with it right away. A local `Main` starts the program outside any match, usually in a menu, which starts one later (see [Local state](./local-state.md) and [Matches](../multiplayer/matches.md)).
 
 ## Loading and unloading
 
@@ -39,7 +39,7 @@ Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`.
 
 `Main` is the fallback. When the last scene of its world unloads, `Main` loads again at the end of that tick, set up by its `Spawned` handlers as at the start: a match `Main` in the match, a local one in the local state. Unloading one scene and loading another in the same tick never brings it back, and entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
 
-A match can't load a local `Main`, so when `Main` is local, a match whose last scene unloads ends there. Every machine in it goes back offline, to its `Main`, and gets `Disconnected` with the reason `Ended` (see [Multiplayer](./multiplayer.md)). Local state carries on as it was.
+A match can't load a local `Main`, so when `Main` is local, a match whose last scene unloads ends there. Every machine in it goes back offline, to its `Main`, and gets `Disconnected` with the reason `Ended` (see [Matches](../multiplayer/matches.md)). Local state carries on as it was.
 
 ```csharp
 // Sets up each arena. The floor joins that arena.

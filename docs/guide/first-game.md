@@ -80,7 +80,7 @@ In the folder:
 tide run
 ```
 
-`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Leave the window open: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](./cli.md#hot-reload)). The next part adds players.
+`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Leave the window open: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)). The next part adds players.
 
 ## Players and input
 
@@ -162,7 +162,7 @@ This builds the game as a web page, which draws with WebGPU (or WebGL 2 where th
 tide build --release --web
 ```
 
-It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Multiplayer](../language/multiplayer.md#rooms)).
+It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
 
 ## The whole game
 
@@ -234,6 +234,6 @@ view DrawPlayers(Body body, Owner owner, Session session)
 
 ## Next
 
-- `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../engine/schedule.md).
-- Learn the language a topic at a time, starting with [the basics](../language/basics.md).
+- `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../game/schedule.md).
+- Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md). The language itself starts with [the basics](../language/basics.md).
 - [Falling sand](./sand.md) is a bigger game, with a grid, a parallel loop and rooms to play in together.

@@ -16,55 +16,81 @@ export interface Group {
 
 export const nav: (Link & { match: string })[] = [
     { text: 'Guide', link: '/guide', match: '/guide' },
+    { text: 'Game', link: '/game/entities', match: '/game/' },
+    { text: 'Multiplayer', link: '/multiplayer/matches', match: '/multiplayer/' },
     { text: 'Language', link: '/language/basics', match: '/language/' },
-    { text: 'Engine', link: '/engine/determinism', match: '/engine/' },
+    { text: 'Tools', link: '/tools/cli', match: '/tools/' },
     { text: 'Spec', link: '/spec', match: '/spec' },
     { text: 'Demo', link: '/guide/sand', match: '/guide/sand' },
 ];
 
+// A group is one subject, and its pages are in a folder of that subject:
+// `game/` is what a game is made of, the match (Simulation) and what one
+// machine shows of it (Presentation), and `language/` is the language those
+// are written in.
 export const sidebar: Group[] = [
     {
-        text: 'Guide',
+        text: 'Get started',
         items: [
             { text: 'Introduction', link: '/guide' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first game', link: '/guide/first-game' },
-            { text: 'The tide command', link: '/guide/cli' },
-            { text: 'Packages', link: '/guide/packages' },
-            { text: 'Editors', link: '/guide/editors' },
             { text: 'Falling sand', link: '/guide/sand' },
+        ],
+    },
+    {
+        text: 'Simulation',
+        items: [
+            { text: 'Components and entities', link: '/game/entities' },
+            { text: 'Systems', link: '/game/systems' },
+            { text: 'The schedule', link: '/game/schedule' },
+            { text: 'Events', link: '/game/events' },
+            { text: 'Scenes', link: '/game/scenes' },
+            { text: 'Async and tasks', link: '/game/tasks' },
+            { text: 'Input', link: '/game/input' },
+        ],
+    },
+    {
+        text: 'Presentation',
+        items: [
+            { text: 'Views and drawing', link: '/game/views' },
+            { text: 'Local state', link: '/game/local-state' },
+            { text: 'GUI', link: '/game/gui' },
+        ],
+    },
+    {
+        text: 'Multiplayer',
+        items: [
+            { text: 'Matches', link: '/multiplayer/matches' },
+            { text: 'Networking', link: '/multiplayer/networking' },
+            { text: 'Determinism', link: '/multiplayer/determinism' },
         ],
     },
     {
         text: 'Language',
         items: [
             { text: 'Basics', link: '/language/basics' },
-            { text: 'Components and entities', link: '/language/entities' },
-            { text: 'Systems', link: '/language/systems' },
             { text: 'Structs and functions', link: '/language/functions' },
             { text: 'Errors', link: '/language/errors' },
             { text: 'Math', link: '/language/math' },
             { text: 'Text and lists', link: '/language/text-and-lists' },
             { text: 'Grids', link: '/language/grids' },
-            { text: 'Events', link: '/language/events' },
-            { text: 'Async and tasks', link: '/language/tasks' },
-            { text: 'Scenes', link: '/language/scenes' },
-            { text: 'Input', link: '/language/input' },
-            { text: 'Views and drawing', link: '/language/views' },
-            { text: 'GUI', link: '/language/gui' },
-            { text: 'Local state', link: '/language/local-state' },
-            { text: 'Multiplayer', link: '/language/multiplayer' },
             { text: 'Namespaces and files', link: '/language/namespaces' },
-            { text: 'Calling C', link: '/language/c-functions' },
         ],
     },
     {
-        text: 'Engine',
+        text: 'Tools',
         items: [
-            { text: 'Determinism', link: '/engine/determinism' },
-            { text: 'Networking', link: '/engine/networking' },
-            { text: 'The schedule', link: '/engine/schedule' },
-            { text: 'C hosts', link: '/engine/c-hosts' },
+            { text: 'The tide command', link: '/tools/cli' },
+            { text: 'Editors', link: '/tools/editors' },
+            { text: 'Packages', link: '/tools/packages' },
+        ],
+    },
+    {
+        text: 'C',
+        items: [
+            { text: 'Calling C', link: '/c/functions' },
+            { text: 'C hosts', link: '/c/hosts' },
         ],
     },
     {

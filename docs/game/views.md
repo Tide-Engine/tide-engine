@@ -77,7 +77,7 @@ A mesh is one call however many triangles it has, and meshes drawn one after ano
 
 ## Textures
 
-A texture is a grid of colors with a size, `Grid2<Color>` (see [Grids](./grids.md)). Give one to `Draw.Mesh`, and each pixel is the triangle's color times the grid's at its `uv`: (0, 0) is the outer corner of cell (0, 0), and (1, 1) the outer corner of the last cell.
+A texture is a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). Give one to `Draw.Mesh`, and each pixel is the triangle's color times the grid's at its `uv`: (0, 0) is the outer corner of cell (0, 0), and (1, 1) the outer corner of the last cell.
 
 ```csharp
 local singleton Art
@@ -116,7 +116,7 @@ The last argument says how the texture is read between cells: `Filter.Bilinear` 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
 
-A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](./c-functions.md#drawing-from-c).
+A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
 ## Clipping
 
@@ -211,7 +211,7 @@ view Isometric(Viewer viewer)
 }
 ```
 
-A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](./c-functions.md#drawing-from-c).
+A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](../c/functions.md#drawing-from-c).
 
 ## Smooth at any tick rate
 
