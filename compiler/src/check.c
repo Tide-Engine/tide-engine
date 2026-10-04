@@ -6,6 +6,7 @@
 #include "ast.h"
 #include "builtins.h"
 #include "tide/devices.h"
+#include "tide/player.h" // How many players a game can take
 #include "types.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
@@ -5864,6 +5865,19 @@ static void check_settings(checker *c)
                 } else {
                     prog->tick_rate = (uint32_t)rate;
                 }
+            } else if (str_eq_c(f->name, "maxPlayers")) {
+                int64_t players;
+                if (!fold_int(value, &players)) {
+                    diag_error(value->at, "maxPlayers is an int known while compiling, like 'maxPlayers = 64;'");
+                } else if (players < 1 || players > TIDE_PLAYERS_MOST) {
+                    diag_error(value->at, "maxPlayers is from 1 to %u players, not %lld", TIDE_PLAYERS_MOST, (long long)players);
+                    if (players > TIDE_PLAYERS_MOST) {
+                        diag_note("every player's input goes to every other each tick, so a match's traffic grows with the "
+                                  "square of its players");
+                    }
+                } else {
+                    prog->max_players = (uint32_t)players;
+                }
             } else if (str_eq_c(f->name, "hostMigration")) {
                 const expr *known = value;
                 while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
@@ -8474,6 +8488,28 @@ static void schedule(decl **list, const int n)
     }
 }
 
+// The players who see a scene are bits of its hidden tide_players, 32 a word:
+// a game that takes more players than a word has gets the words after it,
+// tide_players1 and on, once its maxPlayers is known.
+static void add_scene_player_words(program *prog)
+{
+    const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_COMPONENT || !d->is_scene) continue;
+        for (uint32_t word = 1; word * 32u < players; word++) {
+            char *name = arena_alloc(24);
+            snprintf(name, 24, "tide_players%u", (unsigned)word);
+            field more = {0};
+            more.name = str_from(name);
+            more.type_name = str_from("int");
+            more.type = T_INT_;
+            more.hidden = true;
+            vec_push(d->fields, more);
+        }
+    }
+}
+
 bool check(program *prog)
 {
     checker c = {0};
@@ -8495,6 +8531,7 @@ bool check(program *prog)
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
     }
     check_settings(&c);
+    add_scene_player_words(prog);
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_STRUCT) order_struct(prog, prog->decls.items[i]);
         if (prog->decls.items[i]->kind == DECL_ENUM) {

@@ -12,7 +12,7 @@
 typedef struct world {
     uint32_t tick;
     uint32_t joined;
-    int32_t inputs[TIDE_MAX_PLAYERS + 1];
+    int32_t inputs[TIDE_PLAYERS_DEFAULT + 1];
     int32_t sum; // Every input, added up every tick
 } world;
 
@@ -37,7 +37,7 @@ static void tick(void *w, const tide_jobs *jobs)
 {
     (void)jobs;
     world *x = w;
-    for (uint32_t i = 0; i <= TIDE_MAX_PLAYERS; i++) x->sum += x->inputs[i];
+    for (uint32_t i = 0; i <= TIDE_PLAYERS_DEFAULT; i++) x->sum += x->inputs[i];
     x->tick++;
 }
 
@@ -61,7 +61,7 @@ static void set_input(void *w, const tide_player_id player, const void *input)
 
 static void set_server_input(void *w, const void *input)
 {
-    memcpy(&((world *)w)->inputs[TIDE_MAX_PLAYERS], input, 4);
+    memcpy(&((world *)w)->inputs[TIDE_PLAYERS_DEFAULT], input, 4);
 }
 
 static uint32_t write_input(const void *input, uint8_t *out, const uint32_t capacity)

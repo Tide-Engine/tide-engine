@@ -73,7 +73,7 @@ void tide_address_format(const tide_address a, char *out, const size_t size)
 // ---------------------------------------------------------------------------
 // Loopback
 
-#define LOOPBACK_ENDPOINTS 64u
+#define LOOPBACK_ENDPOINTS 1024u // Enough for a match of the most players a game takes, and the one that takes it over
 
 typedef struct datagram {
     uint32_t to;

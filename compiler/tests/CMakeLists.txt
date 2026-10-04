@@ -78,6 +78,7 @@ tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, an
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
 tide_e2e_test(settings)
 tide_e2e_test(handover)
+tide_e2e_test(players) # A match of 150 players, in a game whose maxPlayers is 200
 tide_e2e_test(delta)
 
 # An endless chain of events stops the program, naming the event: here past

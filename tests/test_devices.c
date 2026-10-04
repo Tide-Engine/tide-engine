@@ -161,7 +161,7 @@ TIDE_TEST(player_ids)
     TIDE_CHECK(tide_player_index(none) == -1);
     TIDE_CHECK(tide_player_index(tide_player_from_index(0)) == 0);
     TIDE_CHECK(tide_player_index(tide_player_from_index(3)) == 3);
-    TIDE_CHECK(tide_player_index(tide_player_from_index((int32_t)TIDE_MAX_PLAYERS)) == -1);
+    TIDE_CHECK(tide_player_index(tide_player_from_index((int32_t)TIDE_PLAYERS_MOST)) == -1);
     TIDE_CHECK(tide_player_is_null(tide_player_from_index(-1)));
     TIDE_CHECK(tide_player_equal(tide_player_from_index(2), tide_player_from_index(2)));
 }

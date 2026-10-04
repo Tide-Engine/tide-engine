@@ -90,7 +90,7 @@ TIDE_TEST(input_changing_owner_changes_whose_input_applies)
 TIDE_TEST(input_ignores_players_out_of_range)
 {
     tide_world_init(&world, 1.0f);
-    tide_world_set_input(&world, tide_player_from_index((int32_t)TIDE_MAX_PLAYERS), moving_right(false));
+    tide_world_set_input(&world, tide_player_from_index((int32_t)TIDE_GAME_PLAYERS), moving_right(false));
     tide_world_tick(&world);
     TIDE_CHECK(tide_get_Transform(&world, FIRST).position.x == 0.0f);
 }

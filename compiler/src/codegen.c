@@ -7,6 +7,7 @@
 #include "types.h"
 
 #include "tide/devices.h" // tide_devices' size, which the input holds when match code reads devices
+#include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
 // Emits C for a checked program. Everything specific to the game is generated
 // here: component structs, archetype storage, deferred structural changes and
@@ -4292,6 +4293,9 @@ static void gen_header(gen *g)
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n\n");
+    sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
+    sb_put(o, "// an input for each, and the server's after them.\n");
+    sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
 
     bool enums = false;
     for (int i = 0; i < prog->decls.count; i++) {
@@ -4331,7 +4335,7 @@ static void gen_header(gen *g)
         sb_put(o, "// For hosts that work with any game: whether it has an input, and its type by a fixed name.\n");
         sb_printf(o, "#define TIDE_HAS_INPUT 1\ntypedef %s tide_input;\n\n", name);
         sb_put(o, "// The server's slot in tide_world's inputs, after the players'.\n");
-        sb_put(o, "#define TIDE_SERVER_INPUT TIDE_MAX_PLAYERS\n\n");
+        sb_put(o, "#define TIDE_SERVER_INPUT TIDE_GAME_PLAYERS\n\n");
     }
 
     sb_put(o, "// Archetypes: storage for each component combination the program can create, a\n");
@@ -4419,8 +4423,8 @@ static void gen_header(gen *g)
         const char *name = type_cname(prog->input);
         sb_put(o, "    // Each player's input for this tick and the last, then the server's (TIDE_SERVER_INPUT).\n");
         sb_put(o, "    // Last tick's gives .down and .up.\n");
-        sb_printf(o, "    %s inputs[TIDE_MAX_PLAYERS + 1];\n", name);
-        sb_printf(o, "    %s previous_inputs[TIDE_MAX_PLAYERS + 1];\n", name);
+        sb_printf(o, "    %s inputs[TIDE_GAME_PLAYERS + 1];\n", name);
+        sb_printf(o, "    %s previous_inputs[TIDE_GAME_PLAYERS + 1];\n", name);
     }
     if (prog->uses_heap) sb_put(o, "    tide_heap heap; // The text its fields hold\n");
     sb_put(o, "} tide_world;\n\n");
@@ -4458,7 +4462,7 @@ static void gen_header(gen *g)
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
-    sb_put(o, "    tide_session_request tide_kicks[TIDE_MAX_PLAYERS]; // Session.Kick and KickAll, after those\n");
+    sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick and KickAll, after those\n");
     sb_put(o, "    uint32_t tide_kick_count;\n");
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
@@ -5249,7 +5253,7 @@ static void gen_session_helpers(gen *g)
     sb_put(o, "// Session.Kick(player, message) and Session.KickAll(message), in order, up to a\n");
     sb_put(o, "// kick per player each frame. The message is cut where a character starts.\n");
     sb_put(o, "TIDE_HELPER void tide_request_kick(tide_local *l, uint32_t kind, tide_player_id player, const char *message)\n{\n");
-    sb_put(o, "    if (l->tide_kick_count == TIDE_MAX_PLAYERS) return;\n");
+    sb_put(o, "    if (l->tide_kick_count == TIDE_GAME_PLAYERS) return;\n");
     sb_put(o, "    tide_session_request *r = &l->tide_kicks[l->tide_kick_count++];\n");
     sb_put(o, "    *r = (tide_session_request){.kind = kind, .player = player};\n");
     sb_put(o, "    size_t n = strlen(message);\n");
@@ -5825,18 +5829,27 @@ static void gen_apply(gen *g, const bool local)
     }
     sb_put(o, "}\n\n");
 
-    // Who sees a scene, as bits of its tide_players.
+    // Who sees a scene, as bits of its tide_players: 32 players a word, as
+    // many words as the game's players take (tide_players, tide_players1, ...).
     if (!local) {
+        const unsigned players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
+        sb words = {0};
+        for (unsigned word = 0; word * 32u < players; word++) {
+            if (word) sb_printf(&words, ", &s.tide_players%u", word);
+            else sb_put(&words, "&s.tide_players");
+        }
         sb_put(o, "TIDE_HELPER void tide_apply_scene_player(tide_world *w, tide_command *c)\n{\n");
-        sb_put(o, "    const int32_t index = tide_player_index(c->data.player);\n    if (index < 0) return;\n");
-        sb_put(o, "    const int32_t bit = (int32_t)(1u << index);\n    (void)bit;\n");
+        sb_put(o, "    const int32_t index = tide_player_index(c->data.player);\n");
+        sb_put(o, "    if (index < 0 || index >= (int32_t)TIDE_GAME_PLAYERS) return;\n");
+        sb_put(o, "    const int32_t bit = (int32_t)(1u << (index & 31));\n    (void)bit;\n");
         sb_put(o, "    const tide_location loc = tide_entity_location(&w->entities, c->entity);\n    switch (loc.archetype) {\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             const decl *scene = arch_scene(g, a);
             if (arch_local(g, a) || !scene) continue;
             sb_printf(o, "    case %d: {\n        %s s;\n        %s;\n", a, type_cname(scene),
                       comp_take(g, "w", a, scene->index, "loc.row", "s"));
-            sb_put(o, "        if (c->id) s.tide_players |= bit;\n        else s.tide_players &= ~bit;\n");
+            sb_printf(o, "        int32_t *const words[] = {%s};\n", words.data);
+            sb_put(o, "        if (c->id) *words[index >> 5] |= bit;\n        else *words[index >> 5] &= ~bit;\n");
             sb_printf(o, "        %s;\n        break;\n    }\n", comp_put(g, "w", a, scene->index, "loc.row", "s"));
         }
         sb_put(o, "    default: break;\n    }\n}\n\n");
@@ -5910,7 +5923,7 @@ static void gen_apply(gen *g, const bool local)
         sb_put(o, "// A player's input, this tick's or last tick's. No player, or an unknown one, means the server's.\n");
         sb_printf(o, "TIDE_HELPER const %s *tide_input_of(const tide_world *w, tide_player_id player, bool previous)\n{\n", name);
         sb_put(o, "    int32_t index = tide_player_index(player);\n");
-        sb_put(o, "    if (index < 0) index = TIDE_SERVER_INPUT;\n");
+        sb_put(o, "    if (index < 0 || index >= (int32_t)TIDE_GAME_PLAYERS) index = TIDE_SERVER_INPUT;\n");
         sb_put(o, "    return previous ? &w->previous_inputs[index] : &w->inputs[index];\n}\n\n");
     }
 }
@@ -7550,7 +7563,7 @@ static void gen_keep_devices(gen *g)
     sb_put(o, "// against last tick's input, so an input guessed by repeating the last one\n");
     sb_put(o, "// doesn't press them again.\n");
     sb_put(o, "static void tide_device_edges(tide_world *w)\n{\n");
-    sb_put(o, "    for (uint32_t i = 0; i <= TIDE_MAX_PLAYERS; i++) {\n");
+    sb_put(o, "    for (uint32_t i = 0; i <= TIDE_GAME_PLAYERS; i++) {\n");
     sb_put(o, "        tide_devices *restrict d = &w->inputs[i].tide_dev;\n");
     sb_put(o, "        const tide_devices *restrict last = &w->previous_inputs[i].tide_dev;\n");
     sb_put(o, "        (void)d; (void)last;\n");
@@ -8563,7 +8576,7 @@ static void gen_api(gen *g)
         sb_printf(o, "void tide_world_set_input(tide_world *w, tide_player_id player, %s input)\n{\n",
                   type_cname(prog->input));
         sb_put(o, "    const int32_t index = tide_player_index(player);\n");
-        sb_put(o, "    if (index < 0) return;\n    w->inputs[index] = ");
+        sb_put(o, "    if (index < 0 || index >= (int32_t)TIDE_GAME_PLAYERS) return;\n    w->inputs[index] = ");
         gen_incoming_input(g, o, "input");
         sb_put(o, ";\n}\n\n");
         sb_printf(o, "void tide_world_set_server_input(tide_world *w, %s input)\n{\n", type_cname(prog->input));
@@ -9221,6 +9234,7 @@ static void gen_game_api(gen *g)
     }
     sb_put(o, "    .ended = tide_game_ended,\n");
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");
+    sb_put(o, "    .max_players = TIDE_GAME_PLAYERS,\n"); // In the header too: the world's inputs are as many
     // Its settings: here rather than in the header, so they don't change the game's hash
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
@@ -9366,7 +9380,7 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     if (archetypes) sb_printf(o, "tide_layout_%s_archetypes, \\\n    ", side);
     else sb_put(o, "NULL, \\\n    ");
     if (!local && prog->input) {
-        sb_printf(o, "%d, offsetof(tide_world, inputs), offsetof(tide_world, previous_inputs), TIDE_MAX_PLAYERS + 1, ",
+        sb_printf(o, "%d, offsetof(tide_world, inputs), offsetof(tide_world, previous_inputs), TIDE_GAME_PLAYERS + 1, ",
                   layout_index(types, prog->input));
     } else {
         sb_put(o, "-1, 0, 0, 0, ");

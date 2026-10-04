@@ -936,6 +936,10 @@ static const setting settings[] = {
     {"tickRate", TY_INT, "60",
      "How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / tickRate. The machine that runs "
      "the match decides, and every player ticks at its rate. A new rate takes effect when a match starts."},
+    {"maxPlayers", TY_INT, "16",
+     "How many players a match takes, from 1 to 256. The world keeps an input for each, and every player's "
+     "input goes to every other each tick, so a match's traffic grows with the square of its players. Builds "
+     "with different maxPlayers can't play together."},
     {"appId", TY_STRING, "dev.tide.<the game's name>",
      "The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by, the "
      "same for every version. Parts of letters and digits, each starting with a letter, between dots. Without it, "
