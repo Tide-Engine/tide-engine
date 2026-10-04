@@ -2615,7 +2615,8 @@ static bool event_batch_value(const expr *e)
         default: break;
         }
     }
-    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE) return false;
+    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
+        || e->io_operation || e->path_operation || e->storage_flush) return false;
     if (e->call != CALL_NONE && e->call != CALL_CONSTRUCT) return false;
     switch (e->kind) {
     case E_INT: case E_FLOAT: case E_BOOL: case E_DEFAULT: case E_THIS: break;
@@ -6785,7 +6786,8 @@ static bool flat_list_expr(const expr *e)
     if (!e) return true;
     if (e->bind == BIND_CONST) return flat_list_expr(e->constant->value);
     if ((e->kind == E_LITERAL || e->kind == E_DEFAULT) && !flat_list_defaults(e->type)) return false;
-    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE) return false;
+    if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
+        || e->io_operation || e->path_operation || e->storage_flush) return false;
     if (e->call != CALL_NONE && e->call != CALL_BUILTIN && e->call != CALL_CONSTRUCT) return false;
     if (e->call == CALL_BUILTIN && e->type.kind == TY_VOID) return false;
     switch (e->kind) {
