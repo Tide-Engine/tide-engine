@@ -313,7 +313,7 @@ TIDE_TEST(lsp_sanitize)
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "Runs on every input before the simulation reads it"));
 
-    open_document("input PlayerInput\n{\n    bool jump;\n    Sam$ple() { jump = Devices.keyboard.space.pressed; }\n}\n"
+    open_document("input PlayerInput\n{\n    bool jump;\n    Sam$ple(Devices devices) { jump = devices.keyboard.space.pressed; }\n}\n"
          "scene Main { }\n");
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "Builds the player's input from this machine's `Devices`"));
@@ -414,40 +414,41 @@ TIDE_TEST(lsp_complete_names_in_scope)
 TIDE_TEST(lsp_complete_in_constructor)
 {
     start();
-    const char *devices = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample()\n    {\n"
-                                   "        var keys = Devices.$\n    }\n}\nscene Main { }\n");
+    const char *devices = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample(Devices devices)\n    {\n"
+                                   "        var keys = devices.$\n    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(devices, "keyboard"));
     TIDE_CHECK(offers(devices, "gamepad"));
 
-    const char *keys = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample()\n    {\n"
-                                "        var keys = Devices.keyboard;\n        if (keys.$\n    }\n}\nscene Main { }\n");
+    const char *keys = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample(Devices devices)\n    {\n"
+                                "        var keys = devices.keyboard;\n        if (keys.$\n    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(keys, "space"));
     TIDE_CHECK(offers(keys, "leftShift"));
 
-    // Sample takes local singletons; Devices is a name.
+    // Sample takes the devices and local singletons as explicit parameters.
     const char *params = complete("local singleton Menu { bool open; }\ninput PlayerInput\n{\n    float2 move;\n\n"
                                   "    Sample($)\n    {\n    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(params, "Menu"));
-    TIDE_CHECK(!offers(params, "Devices"));
-    const char *names = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample()\n    {\n        move = $\n"
+    TIDE_CHECK(offers(params, "Devices"));
+    const char *names = complete("input PlayerInput\n{\n    float2 move;\n\n    Sample(Devices devices)\n    {\n        move = $\n"
                                  "    }\n}\nscene Main { }\n");
-    TIDE_CHECK(offers(names, "Devices"));
+    TIDE_CHECK(offers(names, "devices") && !offers(names, "Devices"));
 
     // Views read them too, and systems take them.
-    const char *view = complete("scene Main { }\nview Pause()\n{\n    if (Devices.keyboard.$\n}\n");
+    const char *view = complete("scene Main { }\nview Pause(Devices devices)\n{\n    if (devices.keyboard.$\n}\n");
     TIDE_CHECK(offers(view, "escape"));
     // What's typed is a frame's: views and functions read it, not Sample or systems.
     TIDE_CHECK(offers(view, "text"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nview Pause()\n{\n    var keys = Devices.$\n}\n"), "keyboard"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Typed(Keyboard keys)\n{\n    return keys.$\n}\n"), "text"));
-    TIDE_CHECK(!offers(complete("input PlayerInput\n{\n    float2 move;\n\n    Sample()\n    {\n"
-                                "        if (Devices.keyboard.$\n    }\n}\nscene Main { }\n"),
+    TIDE_CHECK(!offers(complete("input PlayerInput\n{\n    float2 move;\n\n    Sample(Devices devices)\n    {\n"
+                                "        if (devices.keyboard.$\n    }\n}\nscene Main { }\n"),
                        "text"));
     TIDE_CHECK(!offers(complete("scene Main { }\ncomponent Body { float x; }\n"
                                 "system Move(Devices devices, mut Body body)\n{\n    body.x += devices.keyboard.$\n}\n"),
                        "text"));
-    TIDE_CHECK(offers(complete("scene Main { }\nview Chat()\n{\n    var n = Devices.keyboard.text.$\n}\n"), "length"));
+    TIDE_CHECK(offers(complete("scene Main { }\nview Chat(Devices devices)\n{\n    var n = devices.keyboard.text.$\n}\n"), "length"));
     open_document("scene Main { }\nlocal singleton Chat { string line; }\n"
-                  "view Type(mut Chat chat)\n{\n    chat.line += Devices.keyboard.te$xt;\n}\n");
+                  "view Type(Devices devices, mut Chat chat)\n{\n    chat.line += devices.keyboard.te$xt;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *typed = request("textDocument/hover");
     TIDE_CHECK(has(typed, "string text"));
@@ -1336,19 +1337,19 @@ TIDE_TEST(lsp_definition_in_c)
     TIDE_CHECK(has(c_definition(IN_SYSTEM("var c = Color.red.g$;")), "float r, g, b, a;"));
     TIDE_CHECK(strcmp(c_definition(GAME_TYPES "system S(Ti$me time) { }\n"), "") == 0); // Generated: no C definition
 
-    static const char constructor[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample()\n    {\n"
-                                      "        var keys = Devices.key$board;\n        fire = keys.space.pressed;\n    }\n}\n"
+    static const char constructor[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample(Devices devices)\n    {\n"
+                                      "        var keys = devices.key$board;\n        fire = keys.space.pressed;\n    }\n}\n"
                                       "scene Main { }\n";
     TIDE_CHECK(has(c_definition(constructor), "tide_keyboard keyboard;"));
-    static const char key[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample()\n    {\n"
-                              "        var keys = Devices.keyboard;\n        fire = keys.spa$ce.pressed;\n    }\n}\n"
+    static const char key[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample(Devices devices)\n    {\n"
+                              "        var keys = devices.keyboard;\n        fire = keys.spa$ce.pressed;\n    }\n}\n"
                               "scene Main { }\n";
     TIDE_CHECK(has(c_definition(key), "X(space)"));
-    static const char button[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample()\n    {\n"
-                                 "        fire = Devices.mouse.left.pre$ssed;\n    }\n}\nscene Main { }\n";
+    static const char button[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample(Devices devices)\n    {\n"
+                                 "        fire = devices.mouse.left.pre$ssed;\n    }\n}\nscene Main { }\n";
     TIDE_CHECK(has(c_definition(button), "bool pressed;"));
-    static const char devices[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample()\n    {\n"
-                                  "        fire = Devi$ces.mouse.left.pressed;\n    }\n}\nscene Main { }\n";
+    static const char devices[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample(Devi$ces devices)\n    {\n"
+                                  "        fire = devices.mouse.left.pressed;\n    }\n}\nscene Main { }\n";
     TIDE_CHECK(has(c_definition(devices), "typedef struct tide_devices"));
 #undef IN_SYSTEM
 #undef IN_VIEW
@@ -1482,6 +1483,37 @@ TIDE_TEST(lsp_local_state)
 
     open_document(game);
     TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Spark\",\"detail\":\"local component\""));
+}
+
+TIDE_TEST(lsp_commands)
+{
+    start();
+    static const char prefix[] = GAME_TYPES
+        "command Bump { float amount; }\n"
+        "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body) { if (sender != owner.player) return; body.radius += bump.amount; }\n";
+    open_document(prefix);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Bump\",\"detail\":\"command\""));
+    TIDE_CHECK(has(symbols, "\"name\":\"Handle\",\"detail\":\"command handler\""));
+    open_document(GAME_TYPES "command Bump { float amount; }\n"
+                  "command(Bump bump, PlayerID sender) Han$dle(Owner owner, mut Body body) { if (sender != owner.player) return; body.radius += bump.amount; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body)"));
+    open_document(GAME_TYPES "command Bump { float amount; }\n"
+                  "command(Bump bump, PlayerID sender) Handle(Owner owner, mut Body body) { if (sen$der != owner.player) return; body.radius += bump.amount; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "authenticated by the connection"));
+    const char *trigger = complete(GAME_TYPES "command Bump { float amount; }\nevent Hit { }\ncommand($)\n");
+    TIDE_CHECK(offers(trigger, "Bump"));
+    TIDE_CHECK(!offers(trigger, "Hit"));
+    TIDE_CHECK(!offers(trigger, "Spawned"));
+    const char *sender = complete(GAME_TYPES "command Bump { }\ncommand(Bump bump, $)\n");
+    TIDE_CHECK(offers(sender, "PlayerID"));
+    const char *entity = complete(GAME_TYPES "command Bump { }\nview Menu(with Body) { this.$ }\n");
+    TIDE_CHECK(offers(entity, "Send"));
+    TIDE_CHECK(!offers(entity, "Destroy"));
+    const char *top = complete(GAME_TYPES "\n$");
+    TIDE_CHECK(offers(top, "command"));
+    TIDE_CHECK(offers(top, "command handler"));
 }
 
 // `local` before a field of a match component or singleton: this machine's,
@@ -1786,6 +1818,10 @@ TIDE_TEST(lsp_settings)
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Settings are the engine's"));
     open_document("settings\n{\n    hostMig$ration = true;\n}\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "bool hostMigration"));
+    open_document("settings\n{\n    sta$ts = true;\n}\nscene Main { }\n");
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "bool stats"));
+    TIDE_CHECK(has(hover, "as `tide run --stats` does"));
     open_document("settings\n{\n    vers$ion = \"1.2.0\";\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "string version"));
@@ -1920,7 +1956,7 @@ TIDE_TEST(lsp_gui)
     // The cursor's lock: views ask for it and read whether it holds, and so
     // do the functions they call; the input's Sample only reads; the match
     // has neither.
-    static const char look[] = "input In\n{\n    float2 look;\n    Sample()\n    {\n        $\n    }\n"
+    static const char look[] = "input In\n{\n    float2 look;\n    Sample(Devices devices)\n    {\n        $\n    }\n"
                                "    Sanitize()\n    {\n        look = float2(0, 0);\n    }\n}\nscene Main { }\n";
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Cursor"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Cursor"));
@@ -1928,12 +1964,12 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "Cursor"));
     const char *cursor = complete("scene Main { }\nview V()\n{\n    Cursor.$\n}\n");
     TIDE_CHECK(offers(cursor, "Lock") && offers(cursor, "locked"));
-    const char *sampled = complete("input In\n{\n    float2 look;\n    Sample()\n    {\n        if (Cursor.$) look = Devices.mouse.delta;\n"
+    const char *sampled = complete("input In\n{\n    float2 look;\n    Sample(Devices devices)\n    {\n        if (Cursor.$) look = devices.mouse.delta;\n"
                                    "    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(sampled, "locked") && !offers(sampled, "Lock"));
     const char *in_match = complete("scene Main { }\nsystem S()\n{\n    Cursor.$\n}\n");
     TIDE_CHECK(!offers(in_match, "locked") && !offers(in_match, "Lock"));
-    static const char camera[] = "input In\n{\n    float2 look;\n    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }\n}\n"
+    static const char camera[] = "input In\n{\n    float2 look;\n    Sample(Devices devices) { if (Cursor.locked) look = devices.mouse.delta; }\n}\n"
                                  "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    if (Cursor.locked) Draw2D.Clear(Color.black);\n}\n";
     open_document(camera);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -3432,7 +3468,7 @@ TIDE_TEST(lsp_format_braces)
     start();
     static const char js[] =
         "component Body {\n    float2 position;\n}\n"
-        "input Keys {\n    bool fire;\n\n    Sample() {\n        fire = Devices.keyboard.space.pressed; }\n}\n"
+        "input Keys {\n    bool fire;\n\n    Sample(Devices devices) {\n        fire = devices.keyboard.space.pressed; }\n}\n"
         "system Move(mut Body body) { // Every body\n"
         "    if (body.position.x > 1) {\n        body.position.x = 0;\n    } else {\n        body.position.x += 1;\n    }\n"
         "    if (body.position.y > 1) { return; } else {\n        body.position.y = 0;\n    }\n"
@@ -3443,7 +3479,7 @@ TIDE_TEST(lsp_format_braces)
         "system Main() { }\n";
     static const char expected[] =
         "component Body\n{\n    float2 position;\n}\n"
-        "input Keys\n{\n    bool fire;\n\n    Sample()\n    {\n        fire = Devices.keyboard.space.pressed;\n    }\n}\n"
+        "input Keys\n{\n    bool fire;\n\n    Sample(Devices devices)\n    {\n        fire = devices.keyboard.space.pressed;\n    }\n}\n"
         "system Move(mut Body body)\n{ // Every body\n"
         "    if (body.position.x > 1)\n    {\n        body.position.x = 0;\n    }\n    else\n    {\n        body.position.x += 1;\n    }\n"
         "    if (body.position.y > 1) { return; }\n    else\n    {\n        body.position.y = 0;\n    }\n"
@@ -3562,8 +3598,8 @@ TIDE_TEST(lsp_every_prefix_is_safe)
         "    mut void Scale(float by) { lo *= by; hi *= by; }\n}\n"
         "float Grow(mut Range range, float by)\n{\n    range.Scale(by);\n    return range.Width();\n}\n"
         "[NativeName(\"c_noise\")]\nextern float Noise(float x, mut Range range);\n"
-        "input Controls\n{\n    float2 aim;\n\n    Sample()\n    {\n"
-        "        var keys = Devices.keyboard;\n        if (keys.w.pressed) aim.y += 1;\n    }\n}\n"
+        "input Controls\n{\n    float2 aim;\n\n    Sample(Devices devices)\n    {\n"
+        "        var keys = devices.keyboard;\n        if (keys.w.pressed) aim.y += 1;\n    }\n}\n"
         "system Move(Controls controls, Devices devices, Time time, mut Body body, without Arena)\n{\n"
         "    if (devices.gamepad.buttonSouth.down) body.radius += 1;\n"
         "    mut var speed = Math.Length(body.position.xy) * 2;\n"

@@ -623,6 +623,29 @@ event(Spawned) Arm(with Player)
 - Local handlers, such as playing a sound when a `Hit` happens (`local event(Hit hit) PlayHitSound()`). They have to run once even when rollback re-runs the tick that sent the event, and choose between predicted and verified ticks.
 - Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for loops over queries.
 
+## Commands
+
+### Decided
+
+- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, and structs of those. Lists, grids, components and device records are not command payloads.
+- Local views and handlers send commands with `entity.Send(value)` or `Send(value)`, while connected to a match. The compiler distinguishes commands from events by their declaration. An entity target is required when the command handler takes components.
+- Each command has one void handler: `command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)`. The first parentheses contain the read-only payload and connection-derived sender. The second take the same match state as event handlers. Components and `this` come from the target.
+- Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction. The handler checks permissions and game rules, and can send events after acting.
+- Sending copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order.
+- Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The handler remains responsible for authorization and game-specific rules.
+
+```csharp
+command Rename { string name; }
+
+command(Rename rename, PlayerID sender) RenamePlayer(
+    Owner owner, mut Name name)
+{
+    if (sender != owner.player) return;
+    if (rename.name.length == 0 || rename.name.length > 32) return;
+    name.value = rename.name;
+}
+```
+
 ## Enums and switch
 
 ### Decided
@@ -991,8 +1014,8 @@ Implemented, awaiting approval:
 - Input is one value per player per tick. The engine writes it, and the simulation can only read it.
 - `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over. A view runs for the entities this machine's player owns with `with ownership` (see Views and drawing).
 - Players are identified by a built-in `PlayerID` type, not an `int`. Like `Entity`, it's opaque, comparable with `==`, and has a null value. The simulation only sees `PlayerID`s and never connections, so a player who reconnects and gets their `PlayerID` back keeps everything they owned. `PlayerID(0)` names a player by index, for local play and tests.
-- **Sampling is Tide code:** the input's `Sample()` method. The engine calls it on the client once per tick. Fields start at their defaults, and `Sample` assigns them by name, without `mut`. It runs outside the simulation: it reads this machine's `Devices`, and the local singletons it takes, but not the match.
-- **Devices are read both ways.** Local code (views, and the input's `Sample`) reads this machine's as `Devices`: `Devices.keyboard.escape.down`. Match code takes a parameter, `Devices devices`: the devices of the player who owns the entity, or the server's, as with an input parameter. The input sends what match code reads of them, and nothing else, and the engine repairs them, since it knows their ranges.
+- **Sampling is Tide code:** the input's `Sample(Devices devices)` method. The engine calls it on the client once per tick. Fields start at their defaults, and `Sample` assigns them by name, without `mut`. It runs outside the simulation: it reads this machine's `Devices`, and the local singletons it takes, but not the match.
+- **Device access always takes a parameter**, `Devices devices`. Views and the input's `Sample` receive this machine's devices; match code receives the devices of the player who owns the entity, or the server's, as with an input parameter. The input sends what match code reads of them, and nothing else, and the engine repairs them, since it knows their ranges.
 - The input stays, for what's worked out on the player's machine: an aim direction from the mouse, or anything that depends on local state. The match can't read positions on the screen (the mouse's, a touch's, the pointer's), which are in this machine's window; `Sample` works out what the match needs from them.
 - Singletons stay parameters, in `Sample` too: `Sample(Settings settings)`.
 - **Input carries whether buttons are held, not whether they just went down,** because a missing remote input is guessed by repeating the last one. On a device, `.pressed` means down at any point since the last sample, so a quick tap between ticks is never lost. In the simulation, `bool` input fields get `.down` and `.up`, computed against the previous tick, inside structs too (`input.aim.fire.down`).
@@ -1014,13 +1037,13 @@ input PlayerInput
     float2 move;
     bool jump;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed) move.x += 1;
         if (keys.a.pressed) move.x -= 1;
-        move += Devices.gamepad.leftStick;
-        jump = keys.space.pressed || Devices.gamepad.buttonSouth.pressed;
+        move += devices.gamepad.leftStick;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
     }
 }
 
@@ -1045,7 +1068,7 @@ input PlayerInput
     [Min(0), Max(3)] int gear = 1;
     bool boost;
 
-    Sample() { move = Devices.gamepad.leftStick; }
+    Sample(Devices devices) { move = devices.gamepad.leftStick; }
 
     // After the bounds: what attributes can't say.
     Sanitize()
@@ -1065,10 +1088,10 @@ input PlayerInput
 - Extra device members beyond the list above: mouse `back` and `forward`, gamepad `leftStickButton` and `rightStickButton`, and the full key list in `engine/include/tide/devices.h`.
 - The types inside `Devices` are `Keyboard`, `Mouse`, `Gamepad`, `Dpad`, `Touchscreen`, `Touch`, `Pointer` and `Button`. Functions take them and `Devices` as parameters, read-only, passed without a copy: `float2 Steer(Gamepad pad)`.
 - `touches` is a fixed-size array, read-only: `touches[i]` (an empty touch past the last, as forgiving as a list), `touches.count` (10: every slot, touching or not) and `foreach`, which goes through every slot. Its type has no name in Tide yet: it's the first fixed-size array, and fixed-size arrays in components (see Lists, Open) will decide how one is written.
-- `Sample` takes local singletons, read-only: `Sample(Settings settings)`. Hosts pass the local state to `tide_input_sample`.
-- `Devices` in views is this frame's: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. What the GUI is using is hidden from views, as from `Sample`, and so is what another view claimed (see GUI). A function that reads `Devices` needs the frame, like one that draws: views and the functions they call can call it, and `Sample` can't (pass it `Devices` instead).
-- `keyboard.text` is the characters typed since the last frame, with Shift, dead keys and a phone's keyboard applied, and what's pasted too, but for newlines and tabs. Backspace, Enter and the arrows are keys, not characters. It holds up to 32 characters a frame: the platform keeps the rest for the frames after, up to 1024, so a long paste comes over a few frames, as it does into the GUI's fields. It's empty while the GUI has the keyboard (a widget with the focus, a field being typed into, a modal). A function that reads it through a `Keyboard` or `Devices` parameter needs the frame, as one that reads `Devices` does, so `Sample` and systems can't call it. It can't be written, like the rest of the devices.
-- A `Devices` parameter goes in systems and match event handlers, one per system; views and local handlers read `Devices`. Match code can't read `Devices`: the error says to take the parameter.
+- `Sample` takes `Devices` and local singletons, read-only: `Sample(Devices devices, Settings settings)`. Either can be omitted when unused. Hosts pass the local state to `tide_input_sample`.
+- `Devices` in views is this frame's: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. What the GUI is using is hidden from views, as from `Sample`, and so is what another view claimed (see GUI). Helpers take the devices or a part of them explicitly; reading `keyboard.text` still requires a frame.
+- `keyboard.text` is the characters typed since the last frame, with Shift, dead keys and a phone's keyboard applied, and what's pasted too, but for newlines and tabs. Backspace, Enter and the arrows are keys, not characters. It holds up to 32 characters a frame: the platform keeps the rest for the frames after, up to 1024, so a long paste comes over a few frames, as it does into the GUI's fields. It's empty while the GUI has the keyboard (a widget with the focus, a field being typed into, a modal). A function that reads it through a `Keyboard` or `Devices` parameter needs the frame, so `Sample` and systems can't call it. It can't be written, like the rest of the devices.
+- A `Devices` parameter goes in `Sample`, views, systems and match event handlers, at most one per declaration. Functions and methods take the devices or their parts as explicit parameters. Bare `Devices` is a type, never a value. Local event handlers and tasks can't take devices.
 - What the input sends of the devices comes from the whole program: each value read through a `Devices` parameter, in systems and handlers and in the functions and methods they call, and every value of a part used whole, like `var pad = devices.gamepad;`, but its positions in the window, which count once they're read. A `Touch` read through a function's parameter or a copy (a `foreach` over `touches`, `touches[i]` at an index that isn't a number) is sent for every place it could be: the primary touch, every slot, or both. A game without an `input` declaration gets one that only sends the devices.
 - Buttons are sent as held (`.pressed`), like bool input fields: `.down` and `.up` in match code are against last tick's input, so a guessed input that repeats the last one doesn't press them again. A button let go and pressed again between two ticks is one press.
 - Repairs: sticks -1 to 1 on each axis, with NaN 0; triggers 0 to 1; the `delta` and `scroll` of the mouse, and the `delta` of touches and the pointer, finite, or 0.
@@ -1164,7 +1187,7 @@ view DrawBox(Box box, Models models)
 - `Draw2D.Screen()` puts the Draw calls after it in the screen's pixels, from the top left with `y` down, as the GUI's are. What views draw there is under the GUI's widgets.
 - **The mouse's cursor is locked by asking, frame by frame.** `Cursor.Lock()` asks for the cursor's lock, for a camera that looks around. A view, or a function it calls, calls it every frame it wants the mouse, as with `GUI.ShowKeyboard()`: the lock is held while some view asked in the frame that just ended. When no view asks (a pause menu is up, the match ended), the cursor comes back on its own. There's no `Unlock`.
 - `Cursor.locked` is whether the lock holds right now, a `bool`. It's what the platform says, not what was asked, since a platform may refuse the lock or drop it.
-- While the cursor is locked, it's hidden, `Devices.mouse.position` and the pointer's stay where they were, `Devices.mouse.delta` keeps coming with no screen's edge to stop at (the mouse's own movement, without acceleration, where the system gives it), and the GUI sees no pointer: nothing hovers, and a click presses no widget.
+- While the cursor is locked, it's hidden, `devices.mouse.position` and the pointer's stay where they were, `devices.mouse.delta` keeps coming with no screen's edge to stop at (the mouse's own movement, without acceleration, where the system gives it), and the GUI sees no pointer: nothing hovers, and a click presses no widget.
 - The match never calls `Cursor.Lock()` or reads `Cursor.locked`: the cursor is this machine's.
 - Platforms differ, and games read `Cursor.locked` rather than assume. The usual pattern shows the pause menu when the lock goes away:
   - **The web** only gives the lock when it's asked for from a click or a key press, so the page asks at the next one while the game wants it, and at once when the game starts wanting it, which works shortly after one (a Resume button's click). The browser lets the cursor go itself when the player presses Escape, which a page can't prevent and may never see the key of, and when the page loses the focus or is hidden. For a moment after Escape it refuses the lock. Nothing asks again on its own: the player's next click or key press does.
@@ -1176,9 +1199,9 @@ input PlayerInput
 {
     float2 look;
 
-    Sample()
+    Sample(Devices devices)
     {
-        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+        if (Cursor.locked) look = devices.mouse.delta * 0.003;
     }
 }
 
@@ -1188,10 +1211,10 @@ local singleton Menu
     bool looking; // The window held the cursor last frame
 }
 
-view Look(Viewer viewer, mut Menu menu)
+view Look(Devices devices, Viewer viewer, mut Menu menu)
 {
     Draw3D.Camera(viewer.position, viewer.rotation, 75);
-    if (Devices.keyboard.escape.down) menu.paused = true;
+    if (devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
     // The lock went away on its own, as it does at Escape: the pause menu
     if (menu.looking && !Cursor.locked) menu.paused = true;
@@ -1250,7 +1273,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
-  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - Devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
+  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
   - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` supplies only `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
@@ -1305,7 +1328,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has an `Interpolate`. A `[Snap]` field of such a type is still drawn as it is.
 - Hosts pass the two ticks and how far between them this moment is to `tide_frame`, with the last world the server confirmed; sessions work those out (`tide_session_view`).
 - The cursor's lock:
-  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = Devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
+  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
   - Where neither goes, the error says where it does: the match is told that a view calls `Cursor.Lock()` and that `Sample` reads `Cursor.locked`; a task, a method and a local handler, that views ask every frame. `Cursor.Unlock()` is told that the cursor comes back once no view asks.
   - A function that uses `Cursor` needs the frame, like one that draws: views and the functions they call can call it.
   - While a modal is up (`GUILayout.Modal`), the lock isn't asked for, whatever views ask: its widgets need the pointer. It's asked for again once the modal closes.
@@ -1367,10 +1390,10 @@ local singleton Settings
     float volume = 1;
 }
 
-view Options(mut Settings settings)
+view Options(Devices devices, mut Settings settings)
 {
     if (GUI.Button(Rect(Screen.width - 210, 10, 200, 40), "Options")) settings.open = true;
-    if (Devices.keyboard.escape.down || Devices.gamepad.start.down) settings.open = true;
+    if (devices.keyboard.escape.down || devices.gamepad.start.down) settings.open = true;
 
     GUILayout.Modal(Anchor.MiddleCenter, settings.open)
     {
@@ -1387,9 +1410,9 @@ local singleton Toolbox
 }
 
 // A widget of the view's own, in the window's lower left corner
-view Tools(mut Toolbox box)
+view Tools(Devices devices, mut Toolbox box)
 {
-    var pointer = Devices.pointer;
+    var pointer = devices.pointer;
     var over = pointer.position.x < 200 && pointer.position.y < 200;
     if (over && pointer.press.down) box.dragging = true;
     if (!pointer.press.pressed) box.dragging = false;
@@ -1399,8 +1422,8 @@ view Tools(mut Toolbox box)
     {
         GUI.ClaimKeyboard();
         GUI.ShowKeyboard();
-        box.name += Devices.keyboard.text;
-        if (Devices.keyboard.enter.down) box.renaming = false;
+        box.name += devices.keyboard.text;
+        if (devices.keyboard.enter.down) box.renaming = false;
     }
 }
 ```
@@ -1746,7 +1769,7 @@ Implemented, awaiting approval:
 - Values are constant expressions, and can name constants.
 - Settings are part of the build, so every machine in a match has the same ones.
 - The editor completes the settings' names and shows each one's default and what it does. A name that isn't a setting is an error that says which one was meant.
-- The first settings are `title` (the window's), `tickRate` (ticks per second, 60 by default), `maxPlayers` (how many players a match takes, 16 by default), `hostMigration` (see Sessions), `prediction` (how clients keep up with the match, see below), `appId` (the app's ID on phones) and `version` (the version people see). The window's size and the default port can come later.
+- The first settings are `title` (the window's), `tickRate` (ticks per second, 60 by default), `maxPlayers` (how many players a match takes, 16 by default), `hostMigration` (see Sessions), `prediction` (how clients keep up with the match, see below), `appId` (the app's ID on phones), `version` (the version people see), `stats` (the stats overlay, see below) and `debugViews` (the engine's debug views, like the profiler, see below). The window's size and the default port can come later.
 - `prediction` is one of the built-in enum `Prediction`: `Rollback` (the default) or `Delay`. With `Rollback`, a client runs ahead of the server with no input delay, guessing other players' inputs, and runs ticks again when a guess was wrong; when running them again would cost more than a frame's budget, it delays its input a tick at a time, predicting less, until it fits, and takes the delay back once there's been room to spare for a while. With `Delay`, clients never predict: their inputs are delayed so every player's reach the server before its tick, and ticks run once each, as the server confirms them, as many ticks behind as that takes. A game that would rather every machine ran each tick once, like one whose ticks are expensive, or whose views can't show a rollback well, picks `Delay`.
 
 ```csharp
@@ -1763,12 +1786,14 @@ settings
 Implemented, awaiting approval:
 
 - `hostMigration` is true or false, or a constant that is.
+- `debugViews` is true or false, or a constant that is, false by default: the engine's debug views are on in the game. The standard host then shows the profiler at F7, and hides it at F7 again: where a frame's time goes (input, the match's ticks and its netcode, each view, drawing) and a tick's (each system, then its changes and events), as averages over half a second. `--debug-views` on the game's command line (`debug-views` in a web page's address), `tide run --debug-views` and `tide_run_desc.debug_views` turn them on whatever the setting says. Nothing is measured while the profiler is hidden. In generated C it's `tide_game_api.debug_views`, read each frame, so under `tide run` a reload changes it. The names (`debugViews`, `--debug-views`), the key and what the profiler shows are to confirm.
 - `maxPlayers` is an int from 1 to 256, known while compiling: how many players a match takes. The world keeps an input for each, and the server's after them, so it's part of the game's data layout: builds with different `maxPlayers` are different games, which can't share a match, and under `tide run` a reload that changes it starts the match over. Every player's input goes to every other each tick, so a match's traffic grows with the square of its players: the limit is what the game is built for, not a number to raise for the sake of it. In generated C it's `TIDE_GAME_PLAYERS` and `tide_game_api.max_players`.
 - `prediction` is `Prediction.Rollback` or `Prediction.Delay`, or a constant that is. It's the client's: the server runs the match the same either way, and players of both kinds share a match. In generated C it's `tide_game_api.prediction`, a `tide_prediction`.
 - The input delay (`tide_client_status.delay_ticks`, which `tide run --stats` shows) is how many ticks before a tick runs its input is sampled. A client samples inputs as its clock says, as far ahead as it ever predicted, and runs ticks that many short of them. Predicting, it starts at none, and adds a tick when the ticks it would run again cost more than its budget (`tide_client_desc.resim_budget`, 4 ms a frame unless the host says, measured with the host's clock; without one, as in tests and benchmarks, there's no delay), one change per round trip. Not predicting, it starts at the lead and round trip its inputs go ahead by, plus half a round trip for the frame to come back and two ticks for it to be late by; it adds a tick when its clock reached a tick whose frame hadn't come, and takes one back once frames have come three ticks early for five seconds. Either way, a frame whose tick the clock hasn't reached waits for the clock, so ticks run at the match's pace however early their frames come, and views blend up to the clock less the delay.
 - `tickRate` is an int from 1 to 1000, known while compiling. The machine that runs a match decides its rate (its desc's, or its game's), and the players who join tick at it. A new `tickRate` under `tide run` takes effect when a match starts.
 - `title` is text written out, or a constant that is. `--title` and CMake's `TITLE` go over it, and without any of them, the window has the game's name: its folder's under `tide`, its target's under CMake. Under `tide run`, a new title shows the next time the game runs. On Android it's the app's name under its icon.
 - `appId` is text written out, or a constant that is: what Android and iOS, and their app stores, know the app by, like `com.studio.game`, the same for every version. It's two parts or more between dots, of letters and digits, each starting with a letter: what Android and iOS both take. Without it, apps are `dev.tide.<the game's name>`, which is fine to test with; an app made to ship (`tide build --android --release`) needs one.
+- `stats` is true or false, or a constant that is. With it, the window shows the stats in its bottom right corner with no option asking for them, as `tide run --stats` and CMake's `STATS` do: the frame rate and what a frame's work takes on its thread (`cpu`: everything but the wait for the display), the ping, the input delay when there is one, the bandwidth, the tick, the entity count, the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls, and the three systems that took longest in the last tick. It's part of the build like every setting, so what `tide build` makes shows them too: a game takes it out before players get it. Under `tide run`, setting it or taking it out shows at the next reload. In generated C it's `tide_game_api.stats`, which the standard host reads beside its own `tide_run_desc.stats`.
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
 - A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The last two say that a game's own values are constants.
 - In generated C, the settings are in `tide_game_api` (`tick_rate` and `title`), in the `.c` rather than the header, so they don't change the game's hash.
@@ -1870,7 +1895,7 @@ Implemented, awaiting approval:
 - Files compile with each package's first, in an order where each package comes after those it needs (by name where that leaves a choice), each package's by path, then the game's. That's the default order of systems.
 - A subfolder with a `tide.packages` of its own is a game or a package of its own, and isn't part of the folder's game or package: a package's example game lives inside it, listing `..`.
 - A version-looking ref (`v1`, `v1.2`, `1.2.3`) follows the newest tag whose numbers start with it, leaving out pre-releases; any other ref is a branch, or else a tag, of that name.
-- Packages from git download as their host's archive of the commit (GitHub, GitLab, Codeberg and Bitbucket), with curl and tar, into a cache shared by every game: `$TIDE_PACKAGES`, or `%LOCALAPPDATA%/Tide/packages` on Windows and `~/.tide/packages` elsewhere, at `<host>/<owner>/<repo>/<commit>`. `tide run` and `tide build` download what's missing. Branches and tags come from git's own list of them (`info/refs`), which every host serves.
+- Packages from git download as their host's archive of the commit (GitHub, GitLab, Codeberg and Bitbucket), with curl and tar, into a cache shared by every game: `$TIDE_PACKAGES`, or `%LOCALAPPDATA%/Tide/packages` on Windows and `~/.tide/packages` elsewhere, at `<host>/<owner>/<repo>/<commit>`. A commit's files go there one by one, and a file named `.tide-fetched` last, which says they're all there: a folder without it is downloaded again. `tide run` and `tide build` download what's missing. Branches and tags come from git's own list of them (`info/refs`), which every host serves.
 - `tide add <source>` takes URLs as people copy them (`https://...git`, `git@host:owner/repo`) and writes the source as `tide.packages` does. `tide update [names]` matches a package by its name, its repository's or folder's name, or its source, and only changes commits, leaving the rest of the file as it is.
 - A package's systems that match no entity, and its handlers of events nothing sends, aren't warned about: a game may use only part of a package.
 - The language server analyzes a game with its packages, and a package's file with an open game that uses it, or else the package on its own, which needs no `Main`.

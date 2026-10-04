@@ -1,6 +1,13 @@
 // Cases the grammar once colored wrong, which grammar.test.mjs checks by
 // finding their lines. Not a game: some lines are wrong on purpose.
 
+command Rename { string name; }
+command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
+{
+    if (sender != owner.player) return;
+    name.value = rename.name;
+}
+
 // Text is one line: an unclosed string ends with its line.
 string Unclosed(int score)
 {

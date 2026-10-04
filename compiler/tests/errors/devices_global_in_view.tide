@@ -1,0 +1,7 @@
+// expect: 'Devices' is a type, not a value: take a 'Devices devices' parameter
+local singleton Menu { bool open; }
+local scene Main { }
+view Show(mut Menu menu)
+{
+    menu.open = Devices.keyboard.escape.down;
+}

@@ -1,0 +1,4 @@
+// expect: 'Rename' is a command; receive it with 'command(...)'
+command Rename { string name; }
+event(Rename rename) Handle() { }
+scene Main { }

@@ -1,0 +1,25 @@
+// A game for the standard host to show its debug views over
+// (platform/tests/web_debug_views.c): a system and a view for the profiler to
+// name. It doesn't set debugViews: the test turns them on each way there is.
+
+component Dot
+{
+    float2 position;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Dot);
+}
+
+system Drift(mut Dot dot, Time time)
+{
+    dot.position.x += time.dt;
+}
+
+view Dots(Dot dot)
+{
+    Draw2D.Circle(dot.position, 1, Color.white);
+}

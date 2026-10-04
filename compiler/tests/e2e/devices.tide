@@ -62,3 +62,18 @@ system Swipe(Devices devices, mut Walker w)
     w.fingers = fingers;
     w.slots = devices.touchscreen.touches.count;
 }
+
+local singleton Seen
+{
+    int entities;
+    bool held;
+    float2 pointer;
+}
+
+// A view receives this machine's frame, even for another player's entities.
+view Observe(Devices frame, with Walker, mut Seen seen)
+{
+    seen.entities += 1;
+    seen.held = frame.keyboard.space.pressed;
+    seen.pointer = frame.pointer.position;
+}

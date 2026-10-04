@@ -128,6 +128,15 @@ const char *tide_platform_renderer(void);
 // the operating system's permissions. Browser paths stay in its app's roots.
 const tide_io *tide_platform_io_init(const char *app_id);
 
+// How many draw calls the last list drawn took (tide_platform_draw), the
+// overlay's aside: a run of shapes, of text, or of one mesh's instances is one.
+uint32_t tide_platform_draw_calls(void);
+
+// How much memory the program has, in bytes, as the system counts it: what it
+// keeps in RAM or, on the web, its WebAssembly memory, which only grows. 0
+// where the system doesn't say.
+uint64_t tide_platform_memory(void);
+
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
 
@@ -196,6 +205,7 @@ bool tide_platform_host_open(uint16_t port, tide_transport *out);
 // On the web, its threads are workers, which only a cross-origin isolated page
 // has (NULL elsewhere), started the first time a tick has work for them.
 const tide_jobs *tide_platform_jobs(void);
-// Where ticks on the pool say how long each system took (tide_profile), or
-// NULL to stop. Nothing without a pool (one core, or a page without threads).
+// Where ticks on the pool say how long each system took (tide/profile.h), or
+// NULL to stop. Nothing without a pool (one core, or a page without threads):
+// a host gives its own tide_jobs of one thread a profile there.
 void tide_platform_jobs_profile(tide_profile *profile);

@@ -65,7 +65,8 @@ typedef struct game_packages {
 } game_packages;
 
 // Gets a git package that isn't on this machine yet into `dir`
-// (packages_repo_dir), reporting what went wrong if it can't.
+// (packages_repo_dir), so that it's fetched (packages_fetched), reporting what
+// went wrong if it can't.
 typedef bool (*packages_fetch_fn)(void *user, const package_line *line, const char *dir);
 
 // Reads the tide.packages of the game (or package) in `folder` and finds its
@@ -97,6 +98,14 @@ char *packages_cache(void);
 // Where a git line's repository is, at its commit: <cache>/<host>/<owner>/
 // <repo>/<commit>/. malloc'd; NULL for a folder's line or one with no commit.
 char *packages_repo_dir(const package_line *line);
+
+// The file that says a commit's folder has all of its files: they go in one
+// by one, and this one last, so a folder without it is one a download stopped
+// partway into.
+#define PACKAGES_FETCHED ".tide-fetched"
+
+// Whether the commit in `dir` (packages_repo_dir) is all there.
+bool packages_fetched(const char *dir);
 
 // A package's own folder, ending in '/': a local line's, relative to `base`
 // (the folder of the file it's in), or the repository's, or the folder in it.

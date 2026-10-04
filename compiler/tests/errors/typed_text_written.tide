@@ -1,6 +1,6 @@
 // expect: devices can only be read
 local scene Main { }
-view Editor()
+view Editor(Devices devices)
 {
-    Devices.keyboard.text = "typed";
+    devices.keyboard.text = "typed";
 }

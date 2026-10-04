@@ -1,0 +1,3 @@
+// expect: debugViews is true or false, or a constant that is
+settings { debugViews = !false; }
+scene Main { }
