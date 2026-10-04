@@ -1,0 +1,6 @@
+// expect: no version of Debug.Assert takes (int)
+scene Main { }
+system Check(Time time)
+{
+    Debug.Assert(time.tick);
+}

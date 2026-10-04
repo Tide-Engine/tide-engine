@@ -1537,6 +1537,45 @@ static void gen_text_literal(sb *o, const str text, const bool values)
 }
 
 // Text for a C function that takes a `const char *`, like Draw.Text's.
+// The source line `at` is on, without the space around it: what an assertion
+// that fails shows.
+static str source_line(const loc at)
+{
+    const source *src = diag_source(at.file);
+    if (!src || at.line < 1) return str_from("");
+    const char *p = src->text;
+    const char *end = src->text + src->len;
+    for (int line = 1; line < at.line && p < end; p++) {
+        if (*p == '\n') line++;
+    }
+    const char *stop = p;
+    while (stop < end && *stop != '\n' && *stop != '\r') stop++;
+    while (p < stop && (*p == ' ' || *p == '\t')) p++;
+    while (stop > p && (stop[-1] == ' ' || stop[-1] == '\t')) stop--;
+    return (str){p, (int)(stop - p)};
+}
+
+// Raw text (a source line, not a lexed literal) as a C string literal: its
+// quotes and backslashes escaped, its other bytes as gen_c_literal writes them.
+static void gen_c_raw_literal(sb *o, const str text)
+{
+    sb_put(o, "\"");
+    for (int i = 0; i < text.len; i++) {
+        const unsigned char c = (unsigned char)text.ptr[i];
+        if (c == '\\' || c == '"') {
+            sb_put(o, "\\");
+            sb_putn(o, &text.ptr[i], 1);
+        } else if (c == '?') {
+            sb_put(o, "\\?");
+        } else if (c >= 0x80 || c < 0x20) {
+            sb_printf(o, "\\%03o", c);
+        } else {
+            sb_putn(o, &text.ptr[i], 1);
+        }
+    }
+    sb_put(o, "\"");
+}
+
 static void gen_c_text(gen *g, sb *o, const expr *e)
 {
     if (e->kind == E_STRING) {
@@ -2128,6 +2167,19 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 if (i == texture) sb_printf(o, ", &%s", grid_shape_name(e->args.items[texture]->type.decl));
             }
             sb_put(o, e->args.count == texture + 1 ? ", TIDE_FILTER_BILINEAR)" : ")");
+        } else if (e->call == CALL_BUILTIN && e->c_callee && strcmp(e->c_callee, "tide_debug_assert") == 0) {
+            // Debug.Assert(condition, message): with where it is, and its source line, for the message when it fails
+            sb_put(o, "tide_debug_assert(");
+            gen_as(g, o, e->args.items[0], (type){TY_BOOL, NULL});
+            sb_put(o, ", ");
+            gen_c_raw_literal(o, source_line(e->at));
+            sb_put(o, ", ");
+            const source *src = diag_source(e->at.file);
+            gen_c_raw_literal(o, str_from(src ? src->path : "?"));
+            sb_printf(o, ", %d, ", e->at.line);
+            if (e->args.count > 1) gen_c_text(g, o, e->args.items[1]);
+            else sb_put(o, "\"\"");
+            sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW) {
             sb_printf(o, "%s(%s", e->c_callee, e->call == CALL_DRAW ? "tide_draw" : "");
             for (int i = 0; i < e->args.count; i++) {
@@ -3763,7 +3815,8 @@ static void gen_stmt(gen *g, const stmt *s)
         } else if (s->value->call == CALL_ACTION) {
             gen_block_run(g);
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
-                   || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_GRID) {
+                   || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_GRID
+                   || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
@@ -4071,7 +4124,7 @@ static void gen_header(gen *g)
     sb_put(o, "#include <stdbool.h>\n#include <stdint.h>\n\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
-              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/text.h\"\n\n");
+              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n\n");
 
     bool enums = false;
     for (int i = 0; i < prog->decls.count; i++) {
@@ -7775,8 +7828,10 @@ static void gen_api(gen *g)
             if (sys->waits.count) sb_printf(o, "tide_waits_%s", name);
             else sb_put(o, "NULL");
             sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", settles ? "true" : "false");
-            if (settles && settles_fields(sys)) sb_printf(o, "tide_settle_%s},\n", name);
-            else sb_put(o, "NULL},\n");
+            if (settles && settles_fields(sys)) sb_printf(o, "tide_settle_%s, ", name);
+            else sb_put(o, "NULL, ");
+            gen_c_literal(o, sys->qualified, false); // Its name, for the profile
+            sb_put(o, "},\n");
         }
         sb_put(o, "};\n\n");
     }

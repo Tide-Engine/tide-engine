@@ -5049,6 +5049,7 @@ static void check_stmt(checker *c, stmt *s)
                          || call == CALL_SNAP
                          || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
                          || call == CALL_GRID
+                         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
                          || e->kind == E_TRY // Passes an error on, even from a variable
                          || called->kind == E_AWAIT;
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
@@ -6953,7 +6954,7 @@ static bool is_builtin_name(const str name)
     return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Action")
-        || str_eq_c(name, "DrawList") || str_eq_c(name, "string");
+        || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
 // What a declaration is called in generated C: Combat_Health for Combat.Health.

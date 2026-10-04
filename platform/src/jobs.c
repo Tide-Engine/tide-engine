@@ -22,6 +22,11 @@ const tide_jobs *tide_platform_jobs(void)
     return NULL; // Built without threads
 }
 
+void tide_platform_jobs_profile(tide_profile *profile)
+{
+    (void)profile; // No pool to time ticks on
+}
+
 #elif defined(__wasm__)
 
 // On the web, threads are workers that share the program's memory, which a
@@ -114,8 +119,13 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run};
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, NULL};
     return p->jobs.threads > 1 ? &p->jobs : NULL;
+}
+
+void tide_platform_jobs_profile(tide_profile *profile)
+{
+    the_pool.jobs.profile = profile;
 }
 
 #else
@@ -268,7 +278,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run};
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, NULL};
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     InitializeConditionVariable(&p->start);
@@ -294,6 +304,11 @@ const tide_jobs *tide_platform_jobs(void)
     }
     p->jobs.threads = threads;
     return threads > 1 ? &p->jobs : NULL;
+}
+
+void tide_platform_jobs_profile(tide_profile *profile)
+{
+    the_pool.jobs.profile = profile;
 }
 
 #endif

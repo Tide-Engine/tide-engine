@@ -98,6 +98,7 @@ static void *tide_run_start;  // A tide_start, for what local code asks
 static tide_devices tide_run_devices;
 static tide_draw_list tide_run_draw;
 static tide_gui tide_run_gui;
+static tide_profile tide_run_profile; // How long each system took, with --stats
 static tide_run_desc tide_run_settings;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
@@ -248,6 +249,7 @@ static inline tide_session *tide_run_new_session(void)
 static inline void tide_run_begin(void)
 {
     const tide_host_game *game = tide_run_game;
+    if (tide_run_settings.stats) tide_platform_jobs_profile(&tide_run_profile); // The slowest systems, for the overlay
     tide_run_local = calloc(1, game->local_size);
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_local || !tide_run_start) abort();
@@ -376,14 +378,31 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     if (tide_run_settings.stats && match) {
         const tide_jobs *jobs = tide_platform_jobs(); // What the session ticks on
-        char stats[240];
+        char stats[400];
         char delay[32] = "";
         if (status.client.delay_ticks) snprintf(delay, sizeof delay, "\ndelay %u ticks", (unsigned)status.client.delay_ticks);
-        snprintf(stats, sizeof stats,
-                 "%.0f fps\nping %u ms%s\nup %.1f KB/s\ndown %.1f KB/s\ntick %d\n%u entities\nthreads %u\n%s",
-                 tide_run_fps, (unsigned)status.client.ping_ms, delay, tide_run_up / 1024.0, tide_run_down / 1024.0,
-                 (int)game->tick(match), (unsigned)game->entity_count(match), jobs ? (unsigned)jobs->threads : 1u,
-                 tide_platform_renderer());
+        int n = snprintf(stats, sizeof stats,
+                         "%.0f fps\nping %u ms%s\nup %.1f KB/s\ndown %.1f KB/s\ntick %d\n%u entities\nthreads %u\n%s",
+                         tide_run_fps, (unsigned)status.client.ping_ms, delay, tide_run_up / 1024.0, tide_run_down / 1024.0,
+                         (int)game->tick(match), (unsigned)game->entity_count(match), jobs ? (unsigned)jobs->threads : 1u,
+                         tide_platform_renderer());
+        // The three systems that took longest in the last tick
+        const tide_system_time *times = tide_run_profile.times;
+        const uint32_t count = tide_run_profile.count;
+        bool shown[3] = {false, false, false};
+        uint32_t slow[3] = {0, 0, 0};
+        for (int k = 0; k < 3 && n > 0 && (size_t)n < sizeof stats; k++) {
+            uint32_t best = UINT32_MAX;
+            for (uint32_t s = 0; s < count; s++) {
+                bool taken = false;
+                for (int j = 0; j < k; j++) taken |= shown[j] && slow[j] == s;
+                if (!taken && times[s].ms > 0.0 && (best == UINT32_MAX || times[s].ms > times[best].ms)) best = s;
+            }
+            if (best == UINT32_MAX) break;
+            shown[k] = true;
+            slow[k] = best;
+            n += snprintf(stats + n, sizeof stats - (size_t)n, "\n%s %.2f ms", times[best].name, times[best].ms);
+        }
         tide_platform_draw_overlay(stats);
     }
 

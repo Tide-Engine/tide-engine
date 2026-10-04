@@ -61,6 +61,41 @@ static uint32_t pieces_for(const uint32_t chunks, const uint64_t work, const uin
 static TIDE_THREAD_LOCAL task_context *running;
 TIDE_THREAD_LOCAL tide_queue *tide_task_queue;
 
+// Profiling (tide_profile): the pool's, when the host gave it one; the
+// systems' first start and last end while a tick runs on threads.
+static void profile_begin(tide_profile *p, const uint32_t systems)
+{
+    if (systems > p->room) {
+        p->times = tide_realloc(p->times, p->room * sizeof *p->times, systems * sizeof *p->times);
+        p->room = systems;
+    }
+    p->count = systems;
+}
+
+static void profile_set(tide_profile *p, const uint32_t s, const char *name, const uint64_t from_ns, const uint64_t to_ns)
+{
+    tide_system_time *t = &p->times[s];
+    size_t n = 0;
+    for (; name && name[n] && n + 1u < sizeof t->name; n++) t->name[n] = name[n];
+    t->name[n] = '\0';
+    t->ms = to_ns > from_ns ? (double)(to_ns - from_ns) * 1e-6 : 0.0;
+}
+
+// The least and the most of an atomic clock reading.
+static void note_least(_Atomic uint64_t *least, const uint64_t t)
+{
+    uint64_t seen = atomic_load(least);
+    while ((seen == 0 || t < seen) && !atomic_compare_exchange_weak(least, &seen, t)) {
+    }
+}
+
+static void note_most(_Atomic uint64_t *most, const uint64_t t)
+{
+    uint64_t seen = atomic_load(most);
+    while (t > seen && !atomic_compare_exchange_weak(most, &seen, t)) {
+    }
+}
+
 tide_entity tide_new_entity(tide_entities *t)
 {
     if (!running || !running->settles) return tide_entity_create(t);
@@ -134,6 +169,8 @@ typedef struct system_state {
     uint32_t pieces;      // Each of its chunks runs in this many
     uint32_t first;       // Its first task among all the tick's
     uint32_t next_settle; // The system that spawns after it, if it settles its spawns
+    _Atomic uint64_t began; // Profiling: when its first task started, and its last ended
+    _Atomic uint64_t ended;
 } system_state;
 
 // A loop a running system shares out (tide_parallel_for), on its stack.
@@ -164,6 +201,7 @@ typedef struct tick_run {
     tide_queue *queues;        // Each task's
     uint32_t *spawned;         // Each task's temporary handles
     atomic_uint finished;      // Systems done
+    tide_profile *profile;     // The pool's, to time each system, or NULL
 } tick_run;
 
 // Waiting for another thread to finish what this one needs: a hint to the CPU.
@@ -216,7 +254,9 @@ static bool work_once(tick_run *r)
         if (task >= st->tasks) continue;
         tide_memory_sync(); // What the systems before it made on other threads
         task_context context = {&r->queues[st->first + task], st->first + task, 0, system->settles};
+        if (r->profile) note_least(&st->began, tide_time_now_ns());
         run_task(r->world, system, &context, task, st->pieces);
+        if (r->profile) note_most(&st->ended, tide_time_now_ns());
         r->spawned[st->first + task] = context.spawned;
         finish_task(r, s);
         return true;
@@ -333,7 +373,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 {
     const uint32_t count = tick->count;
     tick_run r = {.world = world, .tick = tick, .state = zeroed(count, sizeof(system_state)),
-                  .first_dependent = zeroed(count + 1u, sizeof(uint32_t))};
+                  .first_dependent = zeroed(count + 1u, sizeof(uint32_t)), .profile = jobs->profile};
     for (uint32_t i = 0; i < LOOP_SLOTS; i++) {
         atomic_init(&r.loops[i].job, NULL);
         atomic_init(&r.loops[i].users, 0u);
@@ -356,6 +396,8 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         atomic_init(&st->done, 0u);
         atomic_init(&st->waiting, system->wait_count);
         atomic_init(&st->settle_claimed, 0u);
+        atomic_init(&st->began, 0u);
+        atomic_init(&st->ended, 0u);
         // Spawns hand out IDs in the tick's order: a system that settles its
         // spawns does so once its tasks are done and the one before it is
         // (one that hands them out as it runs waits for it in the schedule)
@@ -383,6 +425,12 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 
     jobs->run(jobs->self, work, &r);
     tide_memory_sync(); // What the other threads made (see tide/page.h)
+    if (r.profile) {
+        profile_begin(r.profile, count);
+        for (uint32_t s = 0; s < count; s++) {
+            profile_set(r.profile, s, tick->systems[s].name, atomic_load(&r.state[s].began), atomic_load(&r.state[s].ended));
+        }
+    }
 
     // What they recorded, in the order one thread would have
     for (uint32_t t = 0; t < tasks; t++) {
@@ -414,6 +462,8 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
     // One thread, in order, recording straight into the world's queue, with
     // the same tasks, temporary handles and settling as on threads
     if (tick->prepare) tick->prepare(world);
+    tide_profile *profile = jobs ? jobs->profile : NULL;
+    if (profile) profile_begin(profile, tick->count);
     uint32_t first = 0;
     for (uint32_t s = 0; s < tick->count; s++) {
         const tide_system_tasks *system = &tick->systems[s];
@@ -421,12 +471,14 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         const uint32_t tasks = system->count(world, &work);
         uint32_t *spawned = system->settles ? zeroed(tasks, sizeof(uint32_t)) : NULL;
         const uint32_t from = tick->queue->count;
+        const uint64_t began = profile ? tide_time_now_ns() : 0u;
         for (uint32_t task = 0; task < tasks; task++) {
             task_context context = {NULL, first + task, 0, system->settles};
             run_task(world, system, &context, task, 1u);
             if (spawned) spawned[task] = context.spawned;
         }
         if (spawned) settle_system(world, tick, system, first, tasks, 1u, spawned, NULL, from);
+        if (profile) profile_set(profile, s, system->name, began, tide_time_now_ns());
         free(spawned);
         first += tasks;
     }
