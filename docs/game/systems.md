@@ -97,6 +97,32 @@ system Move(mut Body body, Time time)
 
 Of the systems whose constraints are met, the earliest in the default order runs next. Constraints that form a loop are an error that names the loop. Hover a system in your editor to see its place in the order.
 
+### Named phases
+
+An enum gives shared names to parts of the tick. Assign systems to its phases with `Stage`:
+
+```csharp
+enum TickStages { Input, Simulation, Late }
+
+[Stage(TickStages.Simulation)]
+system Move(mut Body body, Time time)
+{
+    body.position += body.velocity * time.dt;
+}
+
+[Stage(TickStages.Simulation, 10)]
+system Collisions(...) { ... }
+
+[After(TickStages.Simulation)]
+system Finish(...) { ... }
+```
+
+Phases follow the enum members' declaration order. The optional comma-separated offset orders systems within a phase: lower first, with 0 as the default. Negative offsets work too, and the enum needs no numeric spacing. Equal offsets keep the usual order and can use `Before` or `After` on particular systems.
+
+`After(TickStages.Simulation)` follows every system in that phase, including its offsets; `Before` precedes all of them. Empty phases keep their position. A system in a later phase waits for the earlier phases to finish, while systems at the same offset can still run alongside each other. Unassigned systems keep their default order wherever the constraints allow. Separate enums have independent phase orders.
+
+The same attributes order views among views and event handlers among the handlers of one event. They don't move code between the tick, the frame and event handling.
+
 ## Running side by side
 
 Two systems that write the same component isn't a mistake: it's normal. Such systems run one after the other, in the order above. Systems that share nothing they write can run at the same time. The compiler works this out from the parameters, and can tell you why each system waits (see [The schedule](./schedule.md)):

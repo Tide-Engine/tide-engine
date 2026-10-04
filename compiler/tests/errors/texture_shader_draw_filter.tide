@@ -1,0 +1,5 @@
+// expect: a frag chooses its texture filter at Sample: leave the draw's filter out
+scene Main { }
+local singleton Image { Texture source; }
+frag Copy(Vertex vertex, mut Color color, Texture source) { color = source.Sample(vertex.uv); }
+view Show(Image image) { Draw2D.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], image.source, Filter.Point, Copy); }

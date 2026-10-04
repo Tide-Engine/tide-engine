@@ -110,9 +110,15 @@ typedef struct tide_gpu {
     void (*pipeline_free)(tide_gpu_id pipeline);
 
     // Pixels of its own to draw into, with depth, and to read back: 4 bytes
-    // each, rows from the top.
+    // each, rows from the top. Its color is also a texture, with the same UVs
+    // as an uploaded image: (0, 0) is its top left. The target owns that
+    // texture; only target_free frees it. It can't be sampled in a pass that
+    // draws into it, or written with texture_write.
     tide_gpu_id (*target)(int width, int height);
+    tide_gpu_id (*target_texture)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
+    // The browser's synchronous canvas readback reports opaque alpha; the
+    // sampleable color texture itself retains its original alpha.
     void (*target_read)(tide_gpu_id target, uint8_t *rgba);
 
     // A pass on `target`, or the window for 0: cleared to black, depth too, or

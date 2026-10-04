@@ -1,0 +1,6 @@
+// expect: 'Count' uses rendering resources, which belong to this machine: the match can't call it
+scene Main { }
+extern Texture GetImage();
+void UseImage(Texture image) { }
+int Count() { UseImage(GetImage()); return 1; }
+system Work() { int count = Count(); }

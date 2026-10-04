@@ -1,0 +1,5 @@
+// expect: enum 'Phases' has no member 'Missing'
+enum Phases { First }
+scene Main { }
+[After(Phases.Missing)]
+view Work() { }
