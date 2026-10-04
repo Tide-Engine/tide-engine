@@ -1,0 +1,56 @@
+// Explicit texture inputs share bindings between stages and keep each filter.
+// A grid is uploaded when Blit records its source; render target colors stay GPU images.
+scene Main { }
+
+component Material
+{
+    local Texture image;
+}
+
+local singleton Images
+{
+    Texture source;
+    RenderTarget destination;
+    Grid2<Color> pixels = Grid2(2, 2);
+    List<Vertex> vertices;
+    List<int> indices;
+}
+
+vert Offset(mut Vertex vertex, Texture source)
+{
+    Color nearest = source.Sample(vertex.uv, Filter.Point);
+    Color smooth = source.Sample(vertex.uv);
+    vertex.position.x += nearest.r * smooth.g;
+}
+
+frag Copy(Vertex vertex, mut Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+frag Combine(Vertex vertex, mut Color color, Texture source, Images images, Material material)
+{
+    color = source.Sample(vertex.uv, Filter.Point)
+          * source.Sample(vertex.uv)
+          * images.source.Sample(vertex.uv)
+          * material.image.Sample(vertex.uv, Filter.Point)
+          * images.pixels.Sample(vertex.uv);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Material);
+}
+
+view Post(Images images)
+{
+    Draw.Blit(images.source, images.destination, Copy);
+    Draw.Blit(images.pixels, Draw.window, Copy);
+    images.destination.Mesh(images.vertices, images.indices, images.source, Offset, Copy);
+    Draw.Mesh(images.vertices, images.indices, images.source, Filter.Point, Offset);
+}
+
+view DrawMaterial(with Material, Images images)
+{
+    Draw.Blit(images.destination.color, Draw.window, Combine);
+}

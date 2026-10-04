@@ -1,0 +1,34 @@
+enum Phases { First, Empty, Last }
+singleton A { int n; }
+singleton B { int n; }
+singleton C { int n; }
+singleton D { int n; }
+singleton E { int n; }
+scene Main { }
+
+[Stage(Phases.Last)]
+system Last(mut D d) { d.n += 1; }
+
+[After(Phases.Empty, Early), Before(Phases.Last)]
+system Gap(mut C c) { c.n += 1; }
+
+[Stage(Phases.First, 1)]
+system Higher(mut B b) { b.n += 1; }
+
+[Stage(Phases.First, -1)]
+system Early(mut A a) { a.n += 1; }
+
+[Stage(Phases.First, -1)]
+system Alongside(mut E e) { e.n += 1; }
+
+[Stage(Phases.Last)]
+view FinalView() { Draw.Clear(Color.white); }
+
+[Stage(Phases.First)]
+view FirstView() { Draw.Clear(Color.black); }
+
+[After(Phases.First), Before(Phases.Last)]
+event(Spawned) MiddleHandler(with Main) { }
+
+[Stage(Phases.First)]
+event(Spawned) FirstHandler(with Main) { }

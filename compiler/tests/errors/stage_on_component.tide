@@ -1,0 +1,5 @@
+// expect: Stage orders systems, views and event handlers
+enum Phases { First }
+[Stage(Phases.First)]
+component Body { int n; }
+scene Main { }

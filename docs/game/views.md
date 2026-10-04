@@ -15,7 +15,71 @@ view DrawHud(Arena arena)
 }
 ```
 
-Drawing is immediate mode: views call `Draw` functions every frame, and nothing is kept between frames. Views run after the frame's ticks, in the order they're declared, and later ones draw on top. `[Before]` and `[After]` order views among themselves, as they do systems. A frame can draw as much as it needs: shapes go to the GPU together, so tens of thousands of rects or circles a frame are cheap, on the web too.
+Drawing is immediate mode: views record their drawing calls every frame. Views run after the frame's ticks, in the order they're declared, and later ones draw on top. `[Before]` and `[After]` order views among themselves, as they do systems. A frame can draw as much as it needs: shapes go to the GPU together, so tens of thousands of rects or circles a frame are cheap, on the web too.
+
+Views can share [named phases](./systems.md#named-phases) instead of depending on individual view names:
+
+```csharp
+enum RenderStages { Prepare, Objects, Effects, UI }
+
+[Stage(RenderStages.Prepare)]
+view ClearScene() { Draw.Clear(Color.black); }
+
+[Stage(RenderStages.Objects)]
+view DrawBalls(Body body, Ball ball)
+{
+    Draw.Circle(body.position, body.radius, ball.color);
+}
+
+[After(RenderStages.Objects), Before(RenderStages.UI)]
+view Effects() { ... }
+```
+
+An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects`. `After(RenderStages.Objects)` waits until every view in that phase has run for all its entities, including views with offsets.
+
+## Targets and post-processing
+
+`RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
+
+Create a target with `RenderTarget(width, height)`, using positive pixel dimensions. Its color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+
+```csharp
+local singleton RenderState { RenderTarget scene; bool initialized; }
+enum RenderStages { Prepare, Objects, Effects }
+
+frag Blur(Vertex vertex, mut Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+[Stage(RenderStages.Prepare)]
+view Prepare(mut RenderState render)
+{
+    if (!render.initialized)
+    {
+        render.scene = RenderTarget(1280, 720);
+        render.initialized = true;
+    }
+    render.scene.Clear(Color.black);
+    render.scene.Camera(float2(0), 10);
+}
+
+[Stage(RenderStages.Objects)]
+view Objects(Body body, RenderState render)
+{
+    render.scene.Circle(body.position, body.radius, Color.white);
+}
+
+[Stage(RenderStages.Effects)]
+view Present(RenderState render)
+{
+    Draw.Blit(render.scene.color, Draw.window, Blur);
+}
+```
+
+`Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
+
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, dimensions and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
@@ -108,7 +172,7 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-A texture is a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). Give one to `Draw.Mesh`, and each pixel is the triangle's color times the grid's at its `uv`: (0, 0) is the outer corner of cell (0, 0), and (1, 1) the outer corner of the last cell.
+An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw.Mesh` also accepts a `Texture` reference, including a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
 ```csharp
 local singleton Art

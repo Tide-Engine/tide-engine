@@ -529,6 +529,7 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
     g->view = 0;
 
     if (g->list.count > 0) {
+        tide_draw_to(draw, 0, 0, 0);
         if (draw->clipped) tide_draw_no_clip(draw); // Whatever the views clipped, the GUI isn't
         tide_draw_screen(draw);
         tide_draw_append(draw, &g->list);

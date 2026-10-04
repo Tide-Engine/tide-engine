@@ -1,0 +1,75 @@
+enum RenderPhases { Prepare, Objects, Effects, Present }
+scene Main { }
+struct Resources { RenderTarget target; Texture image; int retained; }
+component Object { float2 position; local Resources resources; }
+local component Graphic { Resources resources; }
+local singleton Buffers
+{
+    RenderTarget scene;
+    RenderTarget scratch;
+    Texture image;
+    Grid2<Color> pixels = Grid2(2, 2);
+    Resources nested;
+    Resources resumed;
+    int beginTask;
+    RenderTarget windowAlias;
+    RenderTarget borrowed;
+}
+
+async void Keep(Resources resources, mut Buffers buffers)
+{
+    await Wait.Frames(2);
+    buffers.resumed = resources;
+}
+
+view ResourceState(mut Buffers buffers)
+{
+    if (buffers.beginTask == 1)
+    {
+        buffers.beginTask = 2;
+        Spawn(Graphic { resources = buffers.nested });
+        Keep(buffers.nested, buffers);
+    }
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Object { position = float2(-1, 0) });
+    Spawn(Object { position = float2(1, 0) });
+}
+
+frag Copy(Vertex vertex, mut Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
+}
+
+[Stage(RenderPhases.Present)]
+view Present(Buffers buffers)
+{
+    Draw.Blit(buffers.scratch.color, Draw.window, Copy);
+    Draw.window.Rect(float2(0), float2(1), Color.white);
+    Draw.Clear(Color.black);
+}
+
+[Stage(RenderPhases.Objects)]
+view Objects(Object object, Buffers buffers)
+{
+    buffers.scene.Rect(object.position, float2(1), Color.red);
+}
+
+[Stage(RenderPhases.Effects)]
+view Effects(Buffers buffers)
+{
+    Draw.Blit(buffers.scene.color, buffers.scratch, Copy);
+    Draw.Blit(buffers.image, buffers.scene, Copy);
+    Draw.Blit(buffers.pixels, buffers.scratch, Copy);
+}
+
+[Stage(RenderPhases.Prepare)]
+view Prepare(Buffers buffers)
+{
+    buffers.scene.Clear(Color.black);
+    buffers.scene.Camera(float2(0), 4);
+    buffers.scene.Clip(Rect(-2, -2, 4, 4));
+    buffers.scratch.Clear(Color.blue);
+}
