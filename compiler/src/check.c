@@ -43,6 +43,7 @@ typedef struct checker {
     int parallel_locals;      // ...and how many locals were in scope before it: the rest are the step's own
     const expr *compare;      // Checking a Sort's comparison block: the call
     int compare_locals;       // ...and how many locals were in scope before its own
+    const expr *member_object; // a.b's a, about to be checked: a Forgotten handler's component is only named for its local fields
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -90,6 +91,26 @@ static bool has_fields(const type t)
 {
     return t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
         || t.kind == TY_STRUCT || t.kind == TY_EVENT;
+}
+
+// A local field of a match component or singleton, by name: one of its local
+// part's (decl.local_part).
+static field *local_field_of(const decl *d, const str name)
+{
+    const decl *part = d ? d->local_part : NULL;
+    for (int i = 0; part && i < part->fields.count; i++) {
+        if (str_eq(part->fields.items[i].name, name)) return &part->fields.items[i];
+    }
+    return NULL;
+}
+
+// A name for a parameter of type `d` in a message's example: its name with a
+// small first letter.
+static const char *example_name(const decl *d)
+{
+    char *name = str_to_cstr(d->name);
+    name[0] = (char)tolower((unsigned char)name[0]);
+    return name;
 }
 
 // int or float, not a vector.
@@ -667,7 +688,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -728,10 +749,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1021,7 +1042,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -1231,6 +1252,14 @@ static type check_literal(checker *c, expr *e)
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
         }
         const type value = check_expr_want(c, init->value, init->field ? init->field->type : T_ERR);
+        if (!init->field && local_field_of(d, init->name)) {
+            diag_error(init->at, "'" STR_FMT "' is a local field of '" STR_FMT "', so a value of it doesn't have it",
+                       STR_ARG(init->name), STR_ARG(d->name));
+            diag_note("local fields are this machine's, outside the match: each starts at its default, and a view sets it "
+                      "through its parameter, like 'view Name(mut " STR_FMT " %s) { %s." STR_FMT " = ...; }'",
+                      STR_ARG(d->name), example_name(d), example_name(d), STR_ARG(init->name));
+            continue;
+        }
         if (!init->field) {
             diag_error(init->at, "%s '" STR_FMT "' has no field '" STR_FMT "'",
                        d->kind == DECL_STRUCT ? "struct" : d->kind == DECL_EVENT ? "event" : "component", STR_ARG(d->name),
@@ -1750,6 +1779,7 @@ static type check_send(checker *c, expr *e)
         diag_error(e->args.items[0]->at, "the engine sends '" STR_FMT "'; games can't", STR_ARG(event->name));
         if (event == c->prog->spawned) diag_note("it's sent to each entity as it's spawned");
         else if (event == c->prog->destroyed) diag_note("it's sent to each entity as it's destroyed");
+        else if (event == c->prog->forgotten) diag_note("it's sent to an entity of the match as its local fields go");
         else if (event->is_local) diag_note("it's sent when this machine joins or leaves a match");
         else diag_note("it's sent when a player joins or leaves");
         return T_ERR;
@@ -3280,6 +3310,79 @@ static decl *named_enum(const checker *c, const expr *e)
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
+// The parameter local fields are reached through: `box` in box.verts, a
+// view's, a Forgotten handler's or a function's, of the component or singleton
+// itself. Anything else of its type is a copy of its value, the match's part,
+// which has no local fields.
+static param *local_fields_param(const expr *object, const decl *d)
+{
+    if (object->kind != E_NAME || object->bind != BIND_PARAM) return NULL;
+    param *p = object->param;
+    const bool data = p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON;
+    return data && p->type.decl == d && !p->task_ref ? p : NULL;
+}
+
+// Whether a place is in a local field: box.verts, box.verts[i], box.stats.hp.
+static bool through_local_field(const expr *target)
+{
+    for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+        if (e->kind == E_MEMBER && e->local_field) return true;
+    }
+    return false;
+}
+
+// A Forgotten handler's component or singleton: its entity is gone from the
+// match, so only its local fields are left to read.
+static bool is_forgotten_param(const checker *c, const param *p)
+{
+    const decl *sys = c->method ? NULL : c->system;
+    return sys && sys->kind == DECL_SYSTEM && sys->forgets && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
+        && p->type.decl == sys->forgets;
+}
+
+// box.verts, where `verts` is a local field of the match's `Box`: this
+// machine's, read and written in place through the parameter of a view, of a
+// local handler of Forgotten, or of a function they pass it to. The match
+// never sees it, and a copy of the component hasn't got it.
+static type check_local_field(const checker *c, expr *e, field *f, const type obj)
+{
+    const decl *d = obj.decl;
+    const decl *code = c->method ? NULL : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "': it's this machine's, and the match can't see it",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("the match runs the same on every machine; read and write local fields in a view, like 'view Name(mut "
+                  STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
+        return T_ERR;
+    }
+    if (async_code(c)) {
+        diag_error(e->at, "a task can't use local fields yet, and '" STR_FMT "' is one of '" STR_FMT "''s", STR_ARG(f->name),
+                   STR_ARG(d->name));
+        diag_note("read and write them in a view, and keep what the task needs in local state of its own");
+        return T_ERR;
+    }
+    if (c->method && c->method->kind != DECL_FUNCTION) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("write a function that takes the component instead: 'void Name(mut " STR_FMT " %s) { ... }'",
+                  STR_ARG(d->name), example_name(d));
+        return T_ERR;
+    }
+    param *p = local_fields_param(e->object, d);
+    if (!p) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and this is a copy of its value, which has none",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("local fields stay with the entity on this machine: read them through the parameter of a view, or of a "
+                  "function the view passes it to");
+        return T_ERR;
+    }
+    if (!p->local_use) p->local_use_at = e->at;
+    p->local_use = true;
+    e->field = f;
+    e->local_field = true;
+    return f->type;
+}
+
 static type check_member(checker *c, expr *e)
 {
     // quaternion.identity, Math.PI
@@ -3314,6 +3417,7 @@ static type check_member(checker *c, expr *e)
     }
 
     c->device_whole_ok = e->object; // devices.gamepad reads what it names, not all of devices
+    c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
 
@@ -3454,11 +3558,20 @@ static type check_member(checker *c, expr *e)
                     e->typed_text = true;
                     return check_typed_use(c, e->at) ? f->type : T_ERR;
                 }
+                // A Forgotten handler's entity is gone from the match
+                if (e->object->kind == E_NAME && e->object->bind == BIND_PARAM && is_forgotten_param(c, e->object->param)) {
+                    diag_error(e->at, "'" STR_FMT "' is a match field of '" STR_FMT "', and the entity is gone: only its "
+                               "local fields are left", STR_ARG(f->name), STR_ARG(obj.decl->name));
+                    diag_note("keep what the handler needs of the match in a local field, set while the entity was there");
+                    return T_ERR;
+                }
                 e->field = f;
                 if (f->leaf && !device_group_type(f->type)) note_device_member(c, e);
                 return f->type;
             }
         }
+        field *local = (obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) ? local_field_of(obj.decl, e->member) : NULL;
+        if (local) return check_local_field(c, e, local, obj);
         diag_error(e->at, "%s has no field '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
         if (obj.kind == TY_RECORD && str_eq_c(obj.decl->name, "Button") && str_eq_c(e->member, "released")) {
             diag_note("'up' is true on the tick the button went up");
@@ -3515,6 +3628,13 @@ static type check_name(checker *c, expr *e)
             diag_note("it's the code the caller wrote after the call, and it runs where it's run");
             return T_ERR;
         }
+        if (c->member_object != e && is_forgotten_param(c, p)) {
+            diag_error(e->at, "the entity is gone from the match, so '" STR_FMT "' is only here for its local fields",
+                       STR_ARG(e->name));
+            diag_note("read them one by one, like '" STR_FMT "." STR_FMT "', and pass those on", STR_ARG(e->name),
+                      STR_ARG(p->type.decl->local_part->fields.items[0].name));
+            return T_ERR;
+        }
         if (p->type.kind == TY_WORLD) {
             diag_error(e->at, "the World is no value: code calls it, like '" STR_FMT ".Get<Health>(entity)'", STR_ARG(e->name));
             diag_note("Get gives a copy of an entity's component, Has tells whether it has one, and Set, with 'mut World', "
@@ -3534,6 +3654,15 @@ static type check_name(checker *c, expr *e)
         e->bind = BIND_FIELD;
         e->field = f;
         return f->type;
+    }
+    // A method's own local fields aren't in scope: a value has none
+    if (c->method && c->method->owner && local_field_of(c->method->owner, e->name)) {
+        const decl *owner = c->method->owner;
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
+                   STR_ARG(e->name), STR_ARG(owner->name));
+        diag_note("write a function that takes the component instead: 'void Name(mut " STR_FMT " %s) { ... }'",
+                  STR_ARG(owner->name), example_name(owner));
+        return T_ERR;
     }
     decl *k = find_named(c, e->name, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
@@ -4634,7 +4763,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("an event can't change once it's sent; copy it into a 'mut var' to send a changed one");
         } else if (root->param->type.kind == TY_SINGLETON && root->param->type.decl->builtin) {
             diag_note("'" STR_FMT "' is managed by the engine", STR_ARG(root->param->type_name));
-        } else if (in_view(c) && root->param->type.decl && !root->param->type.decl->is_local) {
+        } else if (in_view(c) && root->param->type.decl && !root->param->type.decl->is_local
+                   && !through_local_field(target) && !(arg_of && target == root && root->param->type.decl->local_part)) {
             diag_note("a view can't change the match: put what it wants in the input, and change it in a system");
         } else {
             diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to write to it",
@@ -4643,6 +4773,41 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             vec_push(c->prog->fixes, f);
         }
         return false;
+    }
+    // A match component or singleton with local fields. Local code that takes
+    // it as mut writes those, never the match's; a function says which it
+    // writes, for the code that calls it (see check_local_field_calls).
+    if (root->bind == BIND_PARAM && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON)
+        && !root->param->type.decl->is_local && root->param->type.decl->local_part) {
+        param *p = root->param;
+        const bool local = through_local_field(target);
+        const bool passed_on = arg_of && target == root; // To another function, whose parameter says what it writes
+        if (local) {
+            p->local_written = true;
+        } else if (p->function_param) {
+            if (!passed_on && !p->match_write) {
+                p->match_write = true;
+                p->match_write_at = target->at;
+            }
+        } else if (!c->method && is_local_code(c->system) && !passed_on) {
+            const char *what = local_code_what(c->system);
+            const field *changed = NULL; // The component's own field the place is in: `pos` in box.pos.x
+            for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+                if (e->kind == E_MEMBER && e->object == root) changed = e->field;
+            }
+            if (changed) {
+                diag_error(target->at, "%s can't change the match, and '" STR_FMT "' is a match field of '" STR_FMT "'", what,
+                           STR_ARG(changed->name), STR_ARG(p->type.decl->name));
+            } else {
+                diag_error(target->at, "%s can't change the match, and this changes '" STR_FMT "'", what,
+                           STR_ARG(p->type.decl->name));
+            }
+            diag_note("'mut " STR_FMT " " STR_FMT "' lets it write the local fields of '" STR_FMT "', like '" STR_FMT "'; put "
+                      "what it wants of the match in the input, and change the match in a system",
+                      STR_ARG(p->type_name), STR_ARG(p->name), STR_ARG(p->type.decl->name),
+                      STR_ARG(p->type.decl->local_part->fields.items[0].name));
+            return false;
+        }
     }
     if (root->bind == BIND_LOCAL && !root->local->is_mut && root->local == c->loop_var) return true; // A for's step
     if (root->bind == BIND_LOCAL && !root->local->is_mut && root->local->loop_var) {
@@ -6564,12 +6729,15 @@ static void check_fields(checker *c, const decl *d)
                 const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
                 diag_error(at, holds_text(f->type) ? "an input can't hold text" : "an input can't hold a list");
                 diag_note("players send what they do each tick, as numbers, bools and enums");
+            } else if (d->part_of) {
+                c->prog->local_heap = true; // The match's local fields: the local world's heap alone, as they're outside the match
             } else {
                 c->prog->uses_heap = true; // Worlds keep their text and lists in a heap
             }
         }
         if (f->type.kind == TY_GRID) {
-            c->prog->uses_heap = true; // Grids keep their chunks in the heap
+            if (d->part_of) c->prog->local_heap = true;
+            else c->prog->uses_heap = true; // Grids keep their chunks in the heap
             if (d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) {
                 const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
                 diag_error(at, "%s can't hold a grid", d->kind == DECL_STRUCT  ? "a struct"
@@ -6602,6 +6770,38 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("local entities only exist on this machine");
             }
         }
+    }
+}
+
+// A local part's fields share their component's or singleton's names: one
+// name, one field. And its struct in generated C, <Name>_local, is no other
+// declaration's.
+static void check_local_part(const checker *c, const decl *part)
+{
+    const decl *of = part->part_of;
+    for (int i = 0; i < part->fields.count; i++) {
+        const field *f = &part->fields.items[i];
+        for (int j = 0; j < of->fields.count; j++) {
+            if (str_eq(of->fields.items[j].name, f->name)) diag_error(f->at, "field '" STR_FMT "' is declared twice", STR_ARG(f->name));
+        }
+        for (int j = 0; j < of->methods.count; j++) {
+            if (str_eq(of->methods.items[j]->name, f->name)) {
+                diag_error(f->at, "'" STR_FMT "' is already a method of '" STR_FMT "'", STR_ARG(f->name), STR_ARG(of->name));
+            }
+        }
+    }
+    sb mine = {0};
+    c_name_of(of, &mine);
+    sb_put(&mine, "_local");
+    const decl_index *by_c_name = decls_by(c->prog, true);
+    for (int k = first_c_named(by_c_name, mine.data, mine.len); k >= 0; k = by_c_name->next[k]) {
+        const decl *other = c->prog->decls.items[k];
+        sb theirs = {0};
+        c_name_of(other, &theirs);
+        if (strcmp(mine.data, theirs.data) != 0 || other->kind == DECL_SYSTEM) continue;
+        diag_error(other->at, "'" STR_FMT "' and the local fields of '" STR_FMT "' would have the same name in generated C, %s",
+                   STR_ARG(other->qualified), STR_ARG(of->qualified), mine.data);
+        diag_note("rename one of them");
     }
 }
 
@@ -7132,14 +7332,24 @@ static bool check_param_side(const decl *sys, const param *p, const decl *d)
         diag_note("local state belongs to one machine, and the match runs the same on every one");
         return false;
     }
+    // A local handler of Forgotten takes the match component or singleton
+    // whose local fields are going (see check_forgotten)
+    const bool forgets = sys->is_handler && sys->is_local && sys->event && sys->event->builtin
+                      && str_eq_c(sys->event->name, "Forgotten");
+    if (!d->is_local && forgets && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
     if (!d->is_local && sys->is_handler && sys->is_local) {
         diag_error(at, "'" STR_FMT "' belongs to the match, and local handlers only take local state for now",
                    STR_ARG(d->name));
+        if (forgets) diag_note("a handler of Forgotten takes the one whose local fields are going, as a parameter");
+        else if (d->local_part) diag_note("to let go of what its local fields hold as its entity goes, handle Forgotten: "
+                                          "'local event(Forgotten) Name(" STR_FMT " %s) { ... }'", STR_ARG(d->name),
+                                          example_name(d));
         return false;
     }
-    if (!d->is_local && sys->is_view && p->mode == PARAM_MUT) {
+    if (!d->is_local && sys->is_view && p->mode == PARAM_MUT && !d->local_part) {
         diag_error(p->at, "a view can't change the match, and '" STR_FMT "' belongs to it", STR_ARG(d->name));
-        diag_note("put what the view wants in the input, and change '" STR_FMT "' in a system", STR_ARG(d->name));
+        diag_note("put what the view wants in the input, and change '" STR_FMT "' in a system; what only this machine "
+                  "keeps for it goes in local fields, which a view writes: 'local float timer;'", STR_ARG(d->name));
         return false;
     }
     return true;
@@ -7177,6 +7387,44 @@ static void check_ownership(const checker *c, decl *sys, param *p)
     }
     sys->ownership = ownership;
     if (with) sys->need_mask = mask_or(sys->need_mask, bit(c->prog->owner));
+}
+
+// A local handler of Forgotten: `local event(Forgotten) Free(Box box)`. It
+// runs as an entity's local fields go, the entity gone from the match (or the
+// match's, for a singleton), with the one component or singleton it takes of
+// the match there for its local fields alone, to let go of what they hold.
+static void check_forgotten(decl *sys)
+{
+    bool said = false; // Something about its parameters already
+    if (sys->is_async) {
+        diag_error(sys->async_at, "a handler of Forgotten can't be async: the local fields go as soon as it's done");
+        diag_note("start a task from it instead, with what the task needs of them as arguments");
+    }
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        said |= p->type.kind == TY_ERROR;
+        if ((p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) || p->type.decl->is_local) continue;
+        if (p->mode != PARAM_READ && p->mode != PARAM_MUT) continue;
+        const decl *d = p->type.decl;
+        const loc at = p->type_at.line ? p->type_at : p->at;
+        if (!d->local_part) {
+            said = true;
+            diag_error(at, "'" STR_FMT "' has no local fields, so this machine keeps nothing for it to forget", STR_ARG(d->name));
+            diag_note("Forgotten is sent as an entity's local fields go, like 'local List<Vertex3> verts;' in '" STR_FMT "'",
+                      STR_ARG(d->name));
+        } else if (sys->forgets) {
+            diag_error(at, "a handler of Forgotten hears one component's or singleton's local fields go, and '" STR_FMT
+                       "' is already it", STR_ARG(sys->forgets->name));
+            diag_note("write another handler for '" STR_FMT "'", STR_ARG(d->name));
+        } else {
+            sys->forgets = p->type.decl;
+        }
+    }
+    if (!sys->forgets && !said) {
+        diag_error(sys->at, "a handler of Forgotten takes the match component or singleton whose local fields are going");
+        diag_note("like 'local event(Forgotten) " STR_FMT "(Box box) { ... }', which runs for each entity's 'Box' as this "
+                  "machine forgets it", STR_ARG(sys->name));
+    }
 }
 
 static void check_params(const checker *c, decl *sys)
@@ -7390,6 +7638,7 @@ static void check_params(const checker *c, decl *sys)
     }
     sys->per_entity = entity || mask_any(seen) || sys->ownership;
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
+    if (sys->is_handler && sys->is_local && sys->event == prog->forgotten) check_forgotten(sys);
 
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
@@ -7422,6 +7671,8 @@ static void warn_unused_params(checker *c, const decl *sys)
             vec_push(c->prog->fixes, f);
         }
         if (p->name.len == 0 || (kind != TY_COMPONENT && kind != TY_SINGLETON)) continue;
+        // A Forgotten handler's component says whose local fields it hears go, read or not
+        if (sys->forgets && p->type.decl == sys->forgets && !p->read) continue;
         const str type = p->type_name;
         if (!p->read && kind == TY_COMPONENT) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
@@ -7567,8 +7818,8 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
 
@@ -7577,7 +7828,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -7638,7 +7889,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false};
+                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -7658,7 +7909,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false};
+                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -7706,7 +7957,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false};
+                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -7715,8 +7966,12 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0},
-                                {0, 0, 0}, false, 0, false, false};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(prog->disconnected->fields, reason_field);
+    // Forgotten: sent to a match entity (or the match) whose local fields are
+    // going, for local handlers to let go of what they hold (see check_forgotten).
+    prog->forgotten = builtin_event("Forgotten", false);
+    prog->forgotten->is_local = true;
 
     VEC(decl *) decls = {0};
     vec_push(decls, time);
@@ -7736,6 +7991,7 @@ static void add_builtins(program *prog)
     vec_push(decls, prog->destroyed);
     vec_push(decls, prog->player_joined);
     vec_push(decls, prog->player_left);
+    vec_push(decls, prog->forgotten); // After the others, whose numbers the match's queue keeps
     for (int i = 0; i < prog->decls.count; i++) vec_push(decls, prog->decls.items[i]);
     prog->decls.items = decls.items;
     prog->decls.count = decls.count;
@@ -7755,7 +8011,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, f);
 }
 
@@ -7951,10 +8207,69 @@ static const char *package_of(const decl *d)
     return d->unit ? d->unit->src->package : NULL;
 }
 
+// A match component's or singleton's `local` fields leave it for a declaration
+// of their own, its local part: this machine's, outside the match, so nothing
+// that lays the match out, hashes it or sends it ever sees them. The part is a
+// local declaration of the same kind and name, which no name finds: its
+// fields are reached through the component's (see check_local_field).
+// Anywhere else `local` on a field is an error that says why.
+static void split_local_fields(program *prog, decl *d)
+{
+    int kept = 0;
+    for (int i = 0; i < d->fields.count; i++) {
+        field *f = &d->fields.items[i];
+        if (!f->is_local) {
+            d->fields.items[kept++] = *f;
+            continue;
+        }
+        const bool data = d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON;
+        if (data && !d->is_local) {
+            if (!d->local_part) {
+                decl *part = NEW(decl);
+                part->kind = d->kind;
+                part->name = d->name;
+                part->qualified = d->qualified;
+                part->at = d->at;
+                part->end = d->end;
+                part->unit = d->unit;
+                part->is_local = true;
+                part->local_at = f->local_at;
+                part->part_of = d;
+                d->local_part = part;
+                vec_push(prog->local_parts, part);
+            }
+            vec_push(d->local_part->fields, *f);
+            continue;
+        }
+        if (data) {
+            diag_error(f->local_at, "'" STR_FMT "' is local already, and so is every field of it", STR_ARG(d->name));
+            diag_note("'local' before a field is for the match's components and singletons: it keeps that field on this "
+                      "machine, outside the match");
+            const fix remove = {.kind = FIX_LOCAL_WORD, .at = f->local_at};
+            vec_push(prog->fixes, remove);
+        } else if (d->kind == DECL_STRUCT) {
+            diag_error(f->local_at, "structs belong to neither side, so a struct's field can't be local");
+            diag_note("make the field that holds the struct local, in a component or singleton of the match: 'local " STR_FMT
+                      " value;'", STR_ARG(d->name));
+        } else if (d->kind == DECL_INPUT) {
+            diag_error(f->local_at, "the input is what players send to the match, so none of it can stay on this machine");
+            diag_note("what Sample needs between ticks goes in a local singleton, which it reads");
+        } else {
+            diag_error(f->local_at, "an event is sent whole, so none of its fields can be local");
+            diag_note("'local' before a field is for the match's components and singletons: it keeps that field on this "
+                      "machine, outside the match");
+        }
+        f->is_local = false;
+        d->fields.items[kept++] = *f;
+    }
+    d->fields.count = kept;
+}
+
 static void collect_decls(program *prog)
 {
     const decl_index *by_c_name = decls_by(prog, true);
-    for (int i = 0; i < prog->decls.count; i++) {
+    const int declared = prog->decls.count;
+    for (int i = 0; i < declared; i++) {
         decl *d = prog->decls.items[i];
         const str ns = decl_ns(d);
         if (ns.len > 0) {
@@ -7964,6 +8279,7 @@ static void collect_decls(program *prog)
         } else {
             d->qualified = d->name;
         }
+        if (!d->builtin) split_local_fields(prog, d);
 
         if (!d->builtin) {
             check_reserved(d->name, d->at);
@@ -8064,6 +8380,10 @@ static void collect_decls(program *prog)
         case DECL_SINGLETON:
             d->index = prog->singletons.count;
             vec_push(prog->singletons, d);
+            if (d->local_part) { // Its local fields: a local singleton of their own
+                d->local_part->index = prog->singletons.count;
+                vec_push(prog->singletons, d->local_part);
+            }
             break;
         case DECL_EVENT:
             d->index = prog->events.count;
@@ -8808,6 +9128,100 @@ static void check_drawing_calls(checker *c)
     }
 }
 
+// A function that uses a component's local fields through a parameter is
+// given them with it, and so is one that passes the parameter on to it. So
+// only code that has them calls it: views, local handlers of Forgotten and
+// functions like it, with a parameter of their own, never a copy. And a view
+// can't pass a match component to a function that changes its match fields.
+static void check_local_field_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (site->to->kind != DECL_FUNCTION || site->from->kind != DECL_FUNCTION || site->from->is_async) continue;
+            for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
+                const param *q = &site->to->params.items[k];
+                const expr *arg = site->call->args.items[k];
+                if (q->type.kind != TY_COMPONENT || !q->type.decl->local_part) continue;
+                if (arg->kind != E_NAME || arg->bind != BIND_PARAM || !arg->param->function_param) continue;
+                param *p = arg->param;
+                if (p->type.kind != TY_COMPONENT || p->type.decl != q->type.decl) continue;
+                if (q->local_use && !p->local_use) {
+                    p->local_use = true;
+                    p->local_use_at = arg->at;
+                    changed = true;
+                }
+                if (q->local_written && !p->local_written) {
+                    p->local_written = true;
+                    changed = true;
+                }
+                if (q->mode == PARAM_MUT && q->match_write && !p->match_write) {
+                    p->match_write = true;
+                    p->match_write_at = arg->at;
+                    changed = true;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *fn = c->prog->decls.items[i];
+        if (fn->kind != DECL_FUNCTION) continue;
+        for (int k = 0; k < fn->params.count; k++) {
+            const param *p = &fn->params.items[k];
+            if (!p->local_use || !p->match_write) continue;
+            diag_error(p->at, "'" STR_FMT "' changes the match's fields of its '" STR_FMT "' and uses its local fields, so "
+                       "nothing could call it", STR_ARG(fn->name), STR_ARG(p->name));
+            diag_note_at(p->match_write_at, "it changes the match on line %d, which views can't", p->match_write_at.line);
+            diag_note_at(p->local_use_at, "and uses a local field on line %d, which the match can't", p->local_use_at.line);
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const decl *from = site->from;
+        const decl *to = site->to;
+        if (to->kind != DECL_FUNCTION) continue;
+        const bool local_code = from->kind == DECL_SYSTEM && is_local_code(from);
+        for (int k = 0; k < site->call->args.count && k < to->params.count; k++) {
+            const param *q = &to->params.items[k];
+            const expr *arg = site->call->args.items[k];
+            if (q->type.kind != TY_COMPONENT || !q->type.decl->local_part || arg->type.kind == TY_ERROR) continue;
+            const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && !arg->param->task_ref
+                          && arg->param->type.kind == TY_COMPONENT && arg->param->type.decl == q->type.decl;
+            if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
+                diag_error(arg->at, "%s can't change the match, and '" STR_FMT "' changes its '" STR_FMT "''s match fields",
+                           local_code_what(from), STR_ARG(to->name), STR_ARG(q->name));
+                diag_note_at(q->match_write_at, "it does on line %d", q->match_write_at.line);
+                diag_note("put what it wants of the match in the input, and change the match in a system");
+                continue;
+            }
+            if (!q->local_use) continue;
+            const decl *d = q->type.decl;
+            if (from->kind == DECL_SYSTEM && !local_code) {
+                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which are this machine's, "
+                           "and the match can't see them", STR_ARG(to->name), STR_ARG(d->name));
+                diag_note_at(q->local_use_at, "it does on line %d", q->local_use_at.line);
+                diag_note("the match runs the same on every machine: call it from a view");
+            } else if (from->is_async) {
+                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a task can't yet",
+                           STR_ARG(to->name), STR_ARG(d->name));
+                diag_note("call it from a view, and keep what the task needs in local state of its own");
+            } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION) {
+                diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which only views, local "
+                           "handlers and the functions they call have", STR_ARG(to->name), STR_ARG(d->name));
+            } else if (!own) {
+                diag_error(arg->at, "'" STR_FMT "' uses its '" STR_FMT "''s local fields, and this is a copy of the "
+                           "component's value, which has none", STR_ARG(to->name), STR_ARG(q->name));
+                diag_note("pass the parameter of the view, or of the function, itself");
+            } else if (from->kind == DECL_SYSTEM) { // The view's own: its local fields go with it
+                if (!arg->param->local_use) arg->param->local_use_at = arg->at;
+                arg->param->local_use = true;
+                arg->param->local_written |= q->local_written;
+            }
+        }
+    }
+}
+
 // A component's method that uses `this` is given the entity its component
 // belongs to, and so is one that calls it on the same value. The entity is only
 // known for the components code runs for, its parameters: a copy belongs to no
@@ -9007,6 +9421,10 @@ bool check(program *prog)
         c.unit = d->unit;
         if (d->kind != DECL_SYSTEM) resolve_field_types(&c, d);
     }
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        c.unit = prog->local_parts.items[i]->unit;
+        resolve_field_types(&c, prog->local_parts.items[i]);
+    }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
     }
@@ -9024,6 +9442,11 @@ bool check(program *prog)
         const decl *d = prog->decls.items[i];
         c.unit = d->unit;
         if (d->kind != DECL_SYSTEM) check_fields(&c, d);
+    }
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        c.unit = prog->local_parts.items[i]->unit;
+        check_fields(&c, prog->local_parts.items[i]);
+        check_local_part(&c, prog->local_parts.items[i]);
     }
     // Every signature first, so bodies can call any method or function.
     for (int i = 0; i < prog->decls.count; i++) {
@@ -9058,6 +9481,7 @@ bool check(program *prog)
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
+    check_local_field_calls(&c);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     collect_device_uses(&c);

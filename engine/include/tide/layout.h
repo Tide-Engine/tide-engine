@@ -83,7 +83,7 @@ typedef struct tide_layout_tasks {
 // The match (tide_world) or the local world (tide_local), as its bytes are
 // (tide_world_pack): its struct with the storage zeroed, then its entity
 // table, its archetypes' tables in this order, its queue, its tables of tasks
-// in this order, and its heap.
+// in this order, its tables of local fields in this order, and its heap.
 typedef struct tide_layout_world {
     uint32_t size; // Of its struct
     uint32_t singleton_count;
@@ -99,6 +99,12 @@ typedef struct tide_layout_world {
     const tide_layout_tasks *tasks;
     uint32_t task_order;   // With tasks: where its struct counts the tasks started so far
     uint32_t frames;       // With tasks, the local world: where it counts its frames, which its tasks wait for
+    // The local world: what it keeps for the match's entities, the local
+    // fields of the match's components (tide/attached.h). Each is a table of
+    // two columns, the entity and a value of the place's type, "<Component>
+    // local", which carries over by that name.
+    uint32_t attached_count;
+    const tide_layout_place *attached;
 } tide_layout_world;
 
 typedef struct tide_layout {

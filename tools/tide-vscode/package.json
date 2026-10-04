@@ -148,6 +148,23 @@
         }
       ]
     },
+    "semanticTokenModifiers": [
+      {
+        "id": "local",
+        "description": "A local field of a match component or singleton: this machine's, outside the match"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "tide",
+        "scopes": {
+          "property.local": [
+            "variable.other.property.local.tide",
+            "variable.other.property.tide"
+          ]
+        }
+      }
+    ],
     "configurationDefaults": {
       "[tide]": {
         "editor.semanticHighlighting.enabled": true

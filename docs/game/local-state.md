@@ -47,12 +47,95 @@ Local structural changes and local events apply at the end of the frame, as the 
 
 A view only runs when everything it reads exists, so a view of the match's components or singletons doesn't run outside a match. A view runs for the entities of one world: its components are all local, or all the match's.
 
+## Local fields
+
+Some of what a machine keeps is about the match's own entities: a mesh baked for each, an animation timer, a smoothed position, a C library's handle. It isn't part of the match, since the simulation never reads it, and every machine can work it out for itself. `local` before a field of a match component or singleton makes that field this machine's:
+
+```csharp
+component Box
+{
+    float3 pos = float3(0, 0, 5);
+    local List<Vertex3> verts;
+    local List<int> faces;
+}
+
+view DrawBox(mut Box box)
+{
+    if (box.verts.count == 0) Bake(box);
+    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+}
+
+void Bake(mut Box box)
+{
+    box.verts = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }, Vertex3 { position = float3(1, 1, 0) }];
+    box.faces = [0, 1, 2];
+}
+```
+
+A local field lives outside the match. It's never sent, hashed, snapshotted or rolled back, and the match is exactly what it would be without it: the same world, the same hash, the same download for a player who joins. A mesh of a hundred thousand corners costs a joining player nothing; their machine bakes its own.
+
+- **Every entity with the component has them**, on every machine, however that machine learned of the entity: it ran the spawn, joined later, took over as host, or hot reloaded. Nothing attaches or removes them. Each starts at its default, and takes memory only once a view writes it.
+- **Views read and write them through their parameter.** `Box box` reads them, and `mut Box box` writes them, and only them: the match's fields stay a blended copy the view can't change. A function that takes the component gets them with it, like `Bake` above, and then only views and functions like it can call it.
+- **The match can't see them.** Reading or writing one in a system, a match handler or a task is an error, and so is naming one in a `Spawn` or a component value. A component's value is the match's part: a copy, `var b = box;`, has no local fields.
+- **They go with the entity**, once it's in neither the world views draw nor the last one the server confirmed. So a destroy this machine predicted wrong, which the server undoes, takes nothing with it, and a spawn it predicted that never happened leaves nothing behind. Losing the component loses them, and a match that's over takes them all.
+
+Singletons have them too, like a texture painted from the match's state:
+
+```csharp
+singleton Arena
+{
+    float size = 8;
+    local Grid2<Color> floor = Grid2(64, 64);
+    local bool painted;
+}
+```
+
+A local field holds what a local component's field can: text, lists, maps, sets, grids and a `LocalEntity` among them. `local` on a field of a struct, the input, an event, or a declaration that's local already is an error that says why.
+
+::: warning After a rollback
+Local fields are kept by the entity's handle. When this machine predicted a spawn and the server's order turned out otherwise, the same handle can be another entity after the replay, with the first one's local fields. Until the engine tells those apart, treat local fields as a cache: keep what a mesh was baked from beside it, and bake again when that changed.
+
+```csharp
+component Box
+{
+    int sides = 4;
+    local List<Vertex3> verts;
+    local int bakedSides;
+}
+
+view DrawBox(mut Box box)
+{
+    if (box.bakedSides != box.sides) Bake(box);
+    ...
+}
+```
+:::
+
+### Letting go
+
+When local fields hold something to let go of, like a C library's handle, a local handler of `Forgotten` hears that they're going, with the fields still there:
+
+```csharp
+component Model
+{
+    int kind;
+    local int handle;
+}
+
+local event(Forgotten) FreeModel(Model model)
+{
+    ReleaseModel(model.handle);
+}
+```
+
+It takes the one component or singleton whose local fields are going, and local singletons. The entity is gone from the match by then, so only its local fields are there to read: what the handler needs of the match goes in a local field while the entity is there. It runs for the entities something was written for, and a singleton's runs once, as the match goes.
+
 ## The compiler keeps them apart
 
 No mistake here can reach a running game, because the compiler enforces the boundary:
 
-- **Match code** (systems, match event handlers, match scenes) can't read or write anything local, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
-- **Local code** (views, local event handlers, local scenes) can read the match, but never change it: no `mut` on the match's components or singletons, and no spawning, changing or sending match things.
+- **Match code** (systems, match event handlers, match scenes) can't read or write anything local, a component's [local fields](#local-fields) included, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
+- **Local code** (views, local event handlers, local scenes) can read the match, but never change it: `mut` on one of the match's components or singletons only writes its local fields, and there's no spawning, changing or sending match things.
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
 The only way from local code into the match is input. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
@@ -70,4 +153,4 @@ A local `Main` starts the program outside any match, usually in a menu:
 local scene Main { }
 ```
 
-Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now.
+Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now, but a handler of [`Forgotten`](#letting-go), which takes the component whose local fields are going.

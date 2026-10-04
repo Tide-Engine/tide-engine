@@ -161,3 +161,14 @@ view Mine(Body body, with ownership) { }
 view Rest(Body body, with Owner, without ownership) { }
 view Flagged(with ownership.Flag, with Game.ownership) { }
 int Owned(int ownership) { return ownership; }
+
+// Local fields: `local` before a field of a match component or singleton, a name anywhere else.
+component Mesh
+{
+    local List<Vertex3> verts;
+    local float fade = 1;
+    local Combat.Stats stats;
+    local int? picked;
+    int local;
+}
+view Bake(mut Mesh mesh) { var local = mesh.local; }

@@ -1,0 +1,11 @@
+// expect: 'Body' has no local fields, so this machine keeps nothing for it to forget
+scene Main { }
+
+component Body
+{
+    float3 pos;
+}
+
+local event(Forgotten) Free(Body body)
+{
+}

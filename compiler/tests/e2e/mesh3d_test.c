@@ -9,7 +9,7 @@ static tide_gui gui;
 static void frame(void)
 {
     tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
 }
 
 static const tide_draw_command *command(const uint32_t i)

@@ -198,6 +198,13 @@
           }
         },
         {
+          "comment": "local List<Vertex3> verts;, local float fade = 1;: a local field of a match component or singleton, where a field starts. A name anywhere else",
+          "match": "(?:^|(?<=\\]))\\s*(local)(?=\\s+[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^;=(){}]*>)?\\??\\s+[A-Za-z_][A-Za-z0-9_]*\\s*(?:;|=))",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" }
+          }
+        },
+        {
           "comment": "Money operator +(Money a, Money b), in a struct",
           "match": "\\b(operator)\\s*(==|!=|<=|>=|<<|>>|\\+|-|\\*|/|%|<|>|&|\\||\\^|!|~)(?=\\s*\\()",
           "captures": {

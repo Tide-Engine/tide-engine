@@ -91,6 +91,7 @@ Carrying the game over works like this:
 - An entity keeps its ID. When you remove a component, entities that had it keep their other components. An entity whose remaining components can't exist together in the new code is dropped.
 - A changed default doesn't change existing entities, only new ones.
 - A waiting [task](../game/tasks.md) carries on when its async function's code is the same, and is dropped when it changed: where it was waiting is gone.
+- [Local fields](../game/local-state.md#local-fields) carry over with the rest of the local state, by name: a mesh a view baked stays baked. Change what bakes it and it stays as it was, until the view bakes again or you start the game over.
 - If the scene the game is in is gone, the game starts over.
 
 `tide` says what happened after each reload, like `reloaded, and carried the game over to its new data layout; 1 field reset; 2 entities dropped`.

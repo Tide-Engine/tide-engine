@@ -1,0 +1,15 @@
+// expect: 'Box' belongs to the match, and local handlers only take local state for now
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+local event Blink { }
+
+local event(Blink) Flash(mut Box box)
+{
+    box.bakes = 0;
+}

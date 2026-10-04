@@ -238,6 +238,18 @@ static void collect_suggestion(void *user, const str wrong, const str best)
     }
 }
 
+// A declaration's fields as its source has them: its own, then its local
+// ones, which the checker moves to its local part (decl.local_part).
+static int local_field_count(const decl *d)
+{
+    return d->local_part ? d->local_part->fields.count : 0;
+}
+
+static const field *field_of(const decl *d, const int i)
+{
+    return i < d->fields.count ? &d->fields.items[i] : &d->local_part->fields.items[i - d->fields.count];
+}
+
 static void add_occ(occurrence o)
 {
     o.order = A.occs.count;
@@ -859,8 +871,10 @@ static void index_program(void)
                                  .decl = d, .name = member->name});
             walk_expr(member->value);
         }
-        for (int f = 0; f < d->fields.count; f++) {
-            const field *fl = &d->fields.items[f];
+        // Its fields, then its local ones (`local List<int> faces;`), which the
+        // checker keeps apart, in its local part
+        for (int f = 0; f < d->fields.count + local_field_count(d); f++) {
+            const field *fl = field_of(d, f);
             type_ref(fl->type_qual_at.line ? fl->type_qual_at : fl->type_at, fl->type_at, fl->type_name, fl->type);
             add_occ((occurrence){.at = fl->at, .len = fl->name.len, .kind = OCC_FIELD, .declaration = true, .field = fl,
                                  .decl = d, .name = fl->name, .type = fl->type});
@@ -1177,6 +1191,11 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
     if (d == prog->destroyed) return "Sent to each entity as it's destroyed, while its components can still be read.";
     if (d == prog->player_joined) return "Sent to the world when a player joins.";
     if (d == prog->player_left) return "Sent to the world when a player leaves.";
+    if (d == prog->forgotten) {
+        return "Sent as an entity's local fields go: the entity is in neither the world views draw nor the last one the "
+               "server confirmed, or lost the component, or the match is over. A local handler takes the component (or "
+               "singleton) whose local fields are going, and reads them one last time, to let go of what they hold.";
+    }
     return NULL;
 }
 
@@ -1231,12 +1250,13 @@ static void format_data_decl(const decl *d, sb *out)
     for (int i = 0; i < d->members.count; i++) {
         sb_printf(out, "    " STR_FMT " = %lld,\n", STR_ARG(d->members.items[i].name), (long long)d->members.items[i].number);
     }
-    for (int i = 0; i < d->fields.count; i++) {
-        const field *f = &d->fields.items[i];
+    for (int i = 0; i < d->fields.count + local_field_count(d); i++) {
+        const field *f = field_of(d, i);
         if (f->hidden) continue;
         const char *type = f->type_name.len > 0 ? NULL : type_name(f->type);
-        if (type) sb_printf(out, "    %s " STR_FMT, type, STR_ARG(f->name));
-        else sb_printf(out, "    " STR_FMT " " STR_FMT, STR_ARG(f->type_name), STR_ARG(f->name));
+        sb_printf(out, "    %s", f->is_local ? "local " : "");
+        if (type) sb_printf(out, "%s " STR_FMT, type, STR_ARG(f->name));
+        else sb_printf(out, STR_FMT " " STR_FMT, STR_ARG(f->type_name), STR_ARG(f->name));
         if (!d->builtin) format_default(f, out);
         sb_put(out, ";\n");
     }
@@ -1619,10 +1639,17 @@ static void describe(const occurrence *o, sb *out)
         sb_put(out, "\n\nConstant: the same on every machine. Any code can read it, and reading it makes no system wait.");
         break;
     case OCC_FIELD:
-        sb_printf(&code, "%s " STR_FMT, type_name(o->field->type), STR_ARG(o->field->name));
+        sb_printf(&code, "%s%s " STR_FMT, o->field->is_local ? "local " : "", type_name(o->field->type), STR_ARG(o->field->name));
         if (o->decl && !o->decl->builtin) format_default(o->field, &code);
         code_block(out, code.data);
-        if (o->decl) sb_printf(out, "\n\nField of %s `" STR_FMT "`.", decl_keyword(o->decl), STR_ARG(o->decl->name));
+        if (o->decl && o->field->is_local) {
+            sb_printf(out, "\n\nLocal field of %s `" STR_FMT "`: this machine's, outside the match. It's never sent, hashed or "
+                           "rolled back, and starts at its default on every machine. Views read and write it through their "
+                           "parameter (`mut " STR_FMT "` to write), and the match can't see it.",
+                      decl_keyword(o->decl), STR_ARG(o->decl->name), STR_ARG(o->decl->name));
+        } else if (o->decl) {
+            sb_printf(out, "\n\nField of %s `" STR_FMT "`.", decl_keyword(o->decl), STR_ARG(o->decl->name));
+        }
         if (button_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", button_field_doc(o->decl, o->field->name));
         break;
     case OCC_PARAM:
@@ -2404,6 +2431,14 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             preferred = false;
             break;
         }
+        case FIX_LOCAL_WORD: { // `local` on a field of a declaration that's local already: up to the field's type
+            const int t = token_at(f->at);
+            if (t < 0) continue;
+            sb_put(&title, "Remove 'local'");
+            end = DOC->toks[t + 1].at;
+            sb_put(&text, "");
+            break;
+        }
         case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
             continue; // Their own actions, above
         }
@@ -2584,15 +2619,17 @@ void analysis_symbols(jbuf *out)
             jb_put(out, "}");
         }
         bool first_child = d->members.count == 0;
-        for (int f = 0; f < d->fields.count; f++) {
-            const field *fl = &d->fields.items[f];
+        for (int f = 0; f < d->fields.count + local_field_count(d); f++) {
+            const field *fl = field_of(d, f);
             if (fl->hidden) continue;
             if (!first_child) jb_put(out, ",");
             first_child = false;
             jb_put(out, "{\"name\":");
             jb_string_n(out, fl->name.ptr, (size_t)fl->name.len);
             jb_put(out, ",\"detail\":");
-            jb_string_n(out, fl->type_name.ptr, (size_t)fl->type_name.len);
+            sb detail = {0};
+            sb_printf(&detail, "%s" STR_FMT, fl->is_local ? "local " : "", STR_ARG(fl->type_name));
+            jb_string(out, detail.data);
             jb_printf(out, ",\"kind\":%d,\"range\":", SYMBOL_FIELD);
             write_range(out, fl->at, fl->name.len);
             jb_put(out, ",\"selectionRange\":");
@@ -3005,7 +3042,7 @@ static void selection_spans(const loc at, span_list *spans)
             select_in_stmt(d->body, at, spans);
         }
         select_in_expr(d->value, at, spans); // A constant's
-        for (int f = 0; f < d->fields.count; f++) select_in_expr(d->fields.items[f].default_value, at, spans);
+        for (int f = 0; f < d->fields.count + local_field_count(d); f++) select_in_expr(field_of(d, f)->default_value, at, spans);
         break;
     }
     // The word at the cursor
@@ -3405,8 +3442,10 @@ static bool is_keyword_type(const type t)
     }
 }
 
-static const char *const token_modifiers[] = {"declaration", "readonly", "static", "defaultLibrary"};
-enum { SM_DECLARATION = 1, SM_READONLY = 2, SM_STATIC = 4, SM_DEFAULT_LIBRARY = 8 };
+// `local` is Tide's own: a local field of the match's component or singleton,
+// which editors can color apart from the match's fields.
+static const char *const token_modifiers[] = {"declaration", "readonly", "static", "defaultLibrary", "local"};
+enum { SM_DECLARATION = 1, SM_READONLY = 2, SM_STATIC = 4, SM_DEFAULT_LIBRARY = 8, SM_LOCAL = 16 };
 
 void analysis_semantic_legend(jbuf *out)
 {
@@ -3451,6 +3490,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_FIELD:
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
+        if (o->field && o->field->is_local) *mods |= SM_LOCAL;
         break;
     case OCC_PARAM:
         *type = ST_PARAMETER;
@@ -3793,8 +3833,8 @@ static type member_type(const type t, const str member)
 {
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
-        for (int i = 0; i < t.decl->fields.count; i++) {
-            if (str_eq(t.decl->fields.items[i].name, member)) return t.decl->fields.items[i].type;
+        for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
+            if (str_eq(field_of(t.decl, i)->name, member)) return field_of(t.decl, i)->type;
         }
     }
     const int dim = type_dim(t);
@@ -3897,6 +3937,18 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 continue;
             }
             item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), button_field_doc(t.decl, f->name), NULL);
+        }
+        // Its local fields, where code has them: views, local handlers and the
+        // functions they call. The match can't see them.
+        const bool local_code = sc->decl && !sc->decl->is_async && !sc->in_input
+                             && (sc->decl->kind == DECL_FUNCTION
+                                 || (sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local)));
+        for (int i = 0; local_code && i < local_field_count(t.decl); i++) {
+            const field *f = field_of(t.decl, t.decl->fields.count + i);
+            sb detail = {0};
+            sb_printf(&detail, "local %s", type_name(f->type));
+            item(c, str_to_cstr(f->name), CK_FIELD, detail.data,
+                 "A local field: this machine's, outside the match. Views read and write it in place.", NULL);
         }
         if (t.kind == TY_SINGLETON && t.decl->builtin && str_eq_c(t.decl->name, "Session")) {
             item(c, "room", CK_FIELD, "string",
@@ -5276,8 +5328,8 @@ static const char *check_new_name(const occurrence *target, const str name)
             for (int i = 0; i < owner->methods.count; i++) {
                 if (owner->methods.items[i] != target->decl && str_eq(owner->methods.items[i]->name, name)) clash = true;
             }
-            for (int i = 0; i < owner->fields.count; i++) {
-                if (str_eq(owner->fields.items[i].name, name)) clash = true;
+            for (int i = 0; i < owner->fields.count + local_field_count(owner); i++) {
+                if (str_eq(field_of(owner, i)->name, name)) clash = true;
             }
         } else {
             for (int i = 0; i < A.prog->decls.count; i++) {
@@ -5287,8 +5339,8 @@ static const char *check_new_name(const occurrence *target, const str name)
         }
         break;
     case OCC_FIELD:
-        for (int i = 0; i < target->decl->fields.count; i++) {
-            const field *f = &target->decl->fields.items[i];
+        for (int i = 0; i < target->decl->fields.count + local_field_count(target->decl); i++) {
+            const field *f = field_of(target->decl, i);
             if (f != target->field && str_eq(f->name, name)) clash = true;
         }
         break;

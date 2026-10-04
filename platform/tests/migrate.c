@@ -118,7 +118,7 @@ static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_worl
 static const tide_layout old_layout = {
     5, old_types, 1, old_enums,
     {sizeof(old_world), 1, old_singletons, 4, old_archetypes, OLD_IN, offsetof(old_world, inputs),
-     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0},
+     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL},
     {0},
 };
 
@@ -220,7 +220,7 @@ static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_worl
 
 #define NEW_MATCH(archetypes, count)                                                                                \
     {sizeof(new_world), 1, new_singletons, count, archetypes, NEW_IN, offsetof(new_world, inputs),                  \
-     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0}
+     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL}
 
 static const tide_layout new_layout = {4, new_types, 1, new_enums, NEW_MATCH(new_archetypes, 2), {0}};
 
@@ -568,7 +568,7 @@ TIDE_TEST(migrate_carries_waiting_tasks_whose_code_is_the_same)
     tide_local *local = calloc(1, sizeof *local);
     tide_local *local_copy = calloc(1, sizeof *local_copy);
     tide_local_init(local);
-    for (int i = 0; i < 3; i++) tide_frame(NULL, NULL, 1.0f, local, &draw, &gui);
+    for (int i = 0; i < 3; i++) tide_frame(NULL, NULL, 1.0f, NULL, local, &draw, &gui);
     TIDE_REQUIRE(local->tide_tasks_function_Blink.count == 1);
     const uint32_t size = tide_local_pack(local, NULL, 0);
     uint8_t *bytes = malloc(size);
@@ -579,9 +579,9 @@ TIDE_TEST(migrate_carries_waiting_tasks_whose_code_is_the_same)
     TIDE_CHECK(m.tasks_dropped == 0);
     TIDE_REQUIRE(tide_local_unpack(local_copy, carried, carried_size));
     TIDE_CHECK(local_copy->tide_frames == 3 && local_copy->tide_tasks_function_Blink.count == 1);
-    for (int i = 0; i < 7; i++) tide_frame(NULL, NULL, 1.0f, local_copy, &draw, &gui);
+    for (int i = 0; i < 7; i++) tide_frame(NULL, NULL, 1.0f, NULL, local_copy, &draw, &gui);
     TIDE_CHECK(local_copy->Menu.shown == 0);
-    tide_frame(NULL, NULL, 1.0f, local_copy, &draw, &gui); // Frame 10: it started in frame 0
+    tide_frame(NULL, NULL, 1.0f, NULL, local_copy, &draw, &gui); // Frame 10: it started in frame 0
     TIDE_CHECK(local_copy->Menu.shown == 1);
     free(bytes);
     free(carried);
@@ -697,4 +697,120 @@ TIDE_TEST(migrate_a_game_keeps_what_has_the_same_name)
     tide_world_free(copy);
     free(w);
     free(copy);
+}
+
+// The local state's bytes, carried over from layout `from` to the game's own, into `copy`.
+static bool carry_local(const tide_layout *from, const tide_local *local, tide_local *copy, tide_migration *m)
+{
+    const tide_layout *l = &tide_game_layout;
+    const uint32_t size = tide_local_pack(local, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    tide_local_pack(local, bytes, size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    bool ok = tide_migrate_world(from, &from->local, bytes, size, l, &l->local, &carried, &carried_size, m);
+    ok = ok && tide_local_unpack(copy, carried, carried_size);
+    free(bytes);
+    free(carried);
+    return ok;
+}
+
+static bool local_text_is(const tide_local *local, const tide_text text, const char *want)
+{
+    const tide_str s = tide_text_read(&local->heap, text);
+    return s.bytes == (int32_t)strlen(want) && memcmp(s.ptr, want, strlen(want)) == 0;
+}
+
+// The local fields of the match's components and singletons carry over with
+// the local state, by name: an entity's as rows of "<Component> local", a
+// singleton's as the local singleton they are.
+TIDE_TEST(migrate_carries_local_fields_by_name)
+{
+    static tide_draw_list draw;
+    static tide_gui gui;
+    const tide_layout *l = &tide_game_layout;
+    TIDE_REQUIRE(l->local.attached_count == 1);
+    TIDE_REQUIRE(type_named(l, "Unit local") != NULL && type_named(l, "Score local") != NULL);
+    TIDE_CHECK(type_named(l, "Unit")->size == sizeof(Unit)); // The match's part, with no local fields
+
+    tide_world *w = calloc(1, sizeof *w);
+    tide_local *local = calloc(1, sizeof *local);
+    tide_local *copy = calloc(1, sizeof *copy);
+    tide_world_init(w, 1.0f / 60.0f);
+    tide_local_init(local);
+    for (int i = 0; i < 3; i++) tide_frame(w, NULL, 1.0f, NULL, local, &draw, &gui);
+    const tide_entity first = unit_named(w, "first");
+    TIDE_REQUIRE(tide_has_Unit_local(local, first) && local->tide_fields_Unit.rows.count == 2);
+    TIDE_REQUIRE(tide_get_Unit_local(local, first).drawn == 3 && local->Score_local.shown == 6);
+
+    // To the same layout: all of them, as they were
+    tide_migration m;
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    Unit_local carried = tide_get_Unit_local(copy, first);
+    TIDE_CHECK(copy->tide_fields_Unit.rows.count == 2 && tide_has_Unit_local(copy, first));
+    TIDE_CHECK(carried.drawn == 3 && carried.fade == 0.125f && local_text_is(copy, carried.seen, "3 times"));
+    TIDE_CHECK(copy->Score_local.shown == 6);
+    // ...and views go on from there
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 4 && copy->Score_local.shown == 8);
+
+    // From a build where `drawn` was called `frames`: it starts at its default,
+    // and the rest carries over
+    tide_layout_type *types = malloc(l->type_count * sizeof *types);
+    memcpy(types, l->types, l->type_count * sizeof *types);
+    tide_layout old = *l;
+    old.types = types;
+    tide_layout_field *unit_fields = NULL;
+    for (uint32_t i = 0; i < old.type_count; i++) {
+        if (strcmp(types[i].name, "Unit local") != 0) continue;
+        unit_fields = malloc(types[i].field_count * sizeof *unit_fields);
+        memcpy(unit_fields, types[i].fields, types[i].field_count * sizeof *unit_fields);
+        for (uint32_t k = 0; k < types[i].field_count; k++) {
+            if (strcmp(unit_fields[k].name, "drawn") == 0) unit_fields[k].name = "frames";
+        }
+        types[i].fields = unit_fields;
+    }
+    TIDE_REQUIRE(unit_fields != NULL);
+    TIDE_REQUIRE(carry_local(&old, local, copy, &m));
+    carried = tide_get_Unit_local(copy, first);
+    TIDE_CHECK(tide_has_Unit_local(copy, first));
+    TIDE_CHECK(carried.drawn == 0); // Another name: the default
+    TIDE_CHECK(carried.fade == 0.125f && local_text_is(copy, carried.seen, "3 times"));
+    TIDE_CHECK(copy->Score_local.shown == 6);
+
+    // From a build whose Unit had no local fields: nothing to carry, and views start them
+    tide_layout none = *l;
+    none.local.attached_count = 0;
+    none.local.attached = NULL;
+    tide_local *bare = calloc(1, sizeof *bare);
+    tide_local_init(bare);
+    bare->Score_local.shown = 5;
+    // Its bytes, as that build packed them: with no table of local fields
+    {
+        const uint32_t size = tide_local_pack(bare, NULL, 0);
+        uint8_t *bytes = malloc(size);
+        tide_local_pack(bare, bytes, size);
+        const uint32_t heap = tide_heap_packed_size(&bare->heap);
+        memmove(bytes + size - heap - 4u, bytes + size - heap, heap); // The empty table's count goes
+        void *moved = NULL;
+        uint32_t moved_size = 0;
+        TIDE_REQUIRE(tide_migrate_world(&none, &none.local, bytes, size - 4u, l, &l->local, &moved, &moved_size, &m));
+        TIDE_REQUIRE(tide_local_unpack(copy, moved, moved_size));
+        free(bytes);
+        free(moved);
+    }
+    TIDE_CHECK(copy->tide_fields_Unit.rows.count == 0 && copy->Score_local.shown == 5);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 1 && local_text_is(copy, tide_get_Unit_local(copy, first).seen, "1 times"));
+
+    free(unit_fields);
+    free(types);
+    tide_world_free(w);
+    tide_local_free(local);
+    tide_local_free(copy);
+    tide_local_free(bare);
+    free(w);
+    free(local);
+    free(copy);
+    free(bare);
 }

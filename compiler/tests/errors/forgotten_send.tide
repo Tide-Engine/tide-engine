@@ -1,0 +1,13 @@
+// expect: the engine sends 'Forgotten'; games can't
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+view Clear(Box box)
+{
+    if (box.bakes > 3) Send(Forgotten);
+}

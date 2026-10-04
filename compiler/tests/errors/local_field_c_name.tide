@@ -1,0 +1,13 @@
+// expect: 'Box_local' and the local fields of 'Box' would have the same name in generated C, Box_local
+scene Main { }
+
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+
+struct Box_local
+{
+    int count;
+}

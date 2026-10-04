@@ -509,6 +509,12 @@ static void name_program(gen *g)
 {
     const program *prog = g->prog;
     for (int i = 0; i < prog->decls.count; i++) prog->decls.items[i]->gen_name = make_cname(prog->decls.items[i]);
+    for (int i = 0; i < prog->local_parts.count; i++) { // A component's or singleton's local fields: <Name>_local
+        decl *part = prog->local_parts.items[i];
+        sb b = {0};
+        sb_printf(&b, "%s_local", part->part_of->gen_name);
+        part->gen_name = b.data;
+    }
     for (int i = 0; i < prog->results.count; i++) prog->results.items[i]->gen_name = result_cname(prog->results.items[i]);
     for (int i = 0; i < prog->maps.count; i++) { // A map's entries, as a foreach gives them
         decl *entry = prog->maps.items[i]->entry;
@@ -518,12 +524,13 @@ static void name_program(gen *g)
         entry->gen_name = b.data;
     }
     uint32_t capacity = 16;
-    while (capacity < 2u * (uint32_t)prog->decls.count) capacity *= 2;
+    while (capacity < 2u * (uint32_t)(prog->decls.count + prog->local_parts.count)) capacity *= 2;
     g->taken = arena_alloc(sizeof(const char *) * capacity);
     g->taken_mask = capacity - 1;
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind != DECL_SYSTEM) take_name(g, prog->decls.items[i]->gen_name);
     }
+    for (int i = 0; i < prog->local_parts.count; i++) take_name(g, prog->local_parts.items[i]->gen_name);
     g->arch_names = arena_alloc(sizeof(const char *) * (size_t)(prog->archetypes.count > 0 ? prog->archetypes.count : 1));
     for (int i = 0; i < prog->archetypes.count; i++) g->arch_names[i] = make_arch_name(g, i);
 }
@@ -542,6 +549,15 @@ static const char *arch_label(const gen *g, const int index)
     }
     if (first) sb_put(&b, "no components");
     return b.data;
+}
+
+// Whether a world has a heap, for the text, lists and grids its fields hold.
+// Both do when any declaration holds some. The local fields of the match's
+// components and singletons are outside the match, so what they hold gives
+// the local world a heap and leaves the match as it would be without them.
+static bool world_heap(const program *prog, const bool local)
+{
+    return prog->uses_heap || (local && prog->local_heap);
 }
 
 // The match (tide_world) or the local world (tide_local): its C type, and the prefix of its helpers.
@@ -715,10 +731,47 @@ static bool is_pointer_param(const param *p)
 }
 
 // Events that wait in the command queue. Spawned and Destroyed are handled
-// right as the spawn or destroy is applied, so they never do.
+// right as the spawn or destroy is applied, and Forgotten as an entity's local
+// fields go (gen_forget), so they never do.
 static bool is_queued(const program *prog, const decl *event)
 {
-    return event != prog->spawned && event != prog->destroyed;
+    return event != prog->spawned && event != prog->destroyed && event != prog->forgotten;
+}
+
+// The local fields of the match's components and singletons (decl.local_part):
+// each one's are a struct of their own, <Name>_local, in the local world. A
+// singleton's is a local singleton. A component's are in a table there,
+// tide_fields_<Name> (tide/attached.h): a row for each of the match's entities
+// that something was written for, which code finds by the entity's handle.
+
+// The local part of a match component's or singleton's type, or NULL.
+static const decl *local_part_of(const type t)
+{
+    if (t.kind != TY_COMPONENT && t.kind != TY_SINGLETON) return NULL;
+    return t.decl && !t.decl->is_local ? t.decl->local_part : NULL;
+}
+
+// Whether a parameter's local fields come with it: code reads or writes them
+// through it, so it has a second pointer, to its local part where it's kept.
+static bool has_fields_ptr(const param *p)
+{
+    return p->local_use && local_part_of(p->type) != NULL;
+}
+
+// "tide_fields_Box": the local world's table of a component's local fields.
+static const char *fields_table(const decl *part)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_fields_%s", part->part_of->gen_name);
+    return b.data;
+}
+
+// "&tide_columns_fields_Box": its columns, the entity and the value.
+static const char *fields_columns(const decl *part)
+{
+    sb b = {0};
+    sb_printf(&b, "&tide_columns_fields_%s", part->part_of->gen_name);
+    return b.data;
 }
 
 // Whether handler `h` runs for an entity of archetype `a`: one of its world
@@ -1167,11 +1220,24 @@ static const char *where_name(const gen *g, const str name)
     return b.data;
 }
 
+// The pointer that comes with a parameter whose local fields code uses
+// (has_fields_ptr): to its local part, where the local world keeps it.
+static const char *fields_name(const gen *g, const str name)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_lf_%s", local_cname(g, name));
+    return b.data;
+}
+
 // Where a place's memory is, as C, for its text and lists (see tide/text.h):
 // a world's, for what's part of one, which owns them, or the scratch area's,
 // for what isn't, which borrows. A field or list element is where its value is.
 static const char *place_where(const gen *g, const expr *e)
 {
+    // In a local field of the match's component or singleton: the local world's
+    for (const expr *part = e; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        if (part->kind == E_MEMBER && part->local_field) return "TIDE_IN_LOCAL";
+    }
     while (e->kind == E_MEMBER || e->kind == E_INDEX) e = e->object;
     if (e->kind != E_NAME) return "TIDE_IN_SCRATCH";
     // A mut method's own fields: where its caller's value is
@@ -1882,6 +1948,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         } else {
             gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
         }
+        // Its local fields go with it: the caller's own parameter's
+        if (has_fields_ptr(&m->params.items[i])) sb_printf(o, ", %s", fields_name(g, e->args.items[i]->name));
     }
     sb_put(o, ")");
 }
@@ -2151,6 +2219,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         const char *access = object_access(g, e->object);
+        if (e->local_field) { // box.verts: in its local part, through the pointer that comes with `box`
+            sb_printf(o, "%s->%s", fields_name(g, e->object->name), field_cname(e->field));
+            break;
+        }
         if (e->swizzle_len > 1) {
             sb_printf(o, "(%s){", c_type(e->type));
             for (int i = 0; i < e->swizzle_len; i++) sb_printf(o, "%s%s%s", i ? ", " : "", access, xyzw[e->swizzle[i]]);
@@ -3410,6 +3482,15 @@ static void gen_inline(gen *g, const expr *e)
             sb_put(o, ";\n");
         }
         line(g, o, "(void)%s;", names[i]);
+        if (has_fields_ptr(p)) { // Its local fields, where the caller's are
+            gen_frame *caller_frame = g->frame;
+            g->frame = &frame;
+            const char *fields = fields_name(g, p->name);
+            g->frame = caller_frame;
+            line(g, o, "%s%s *const %s = %s;", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)), fields,
+                 fields_name(g, e->args.items[i]->name));
+            line(g, o, "(void)%s;", fields);
+        }
     }
     g->frame = &frame;
     g->routine = fn;
@@ -4310,7 +4391,7 @@ static void gen_header(gen *g)
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
-              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n\n");
+              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n\n");
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
@@ -4342,6 +4423,21 @@ static void gen_header(gen *g)
 
     sb_put(o, "// Components\n\n");
     for (int i = 0; i < prog->components.count; i++) gen_type(g, o, prog->components.items[i]);
+
+    // The local fields of the match's components: this machine's, outside the match
+    bool local_fields = false;
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) continue;
+        if (!local_fields) {
+            sb_put(o, "// The local fields of the match's components: this machine's, outside the match, so\n"
+                      "// none of the structs above has them. The local state keeps each entity's once\n"
+                      "// something is written for it, and lets them go once the entity is in neither the\n"
+                      "// world views draw nor the last one the server confirmed (tide_frame).\n\n");
+        }
+        local_fields = true;
+        gen_type(g, o, part);
+    }
 
     sb_put(o, "// Singletons: one per world\n\n");
     for (int i = 0; i < prog->singletons.count; i++) gen_type(g, o, prog->singletons.items[i]);
@@ -4480,12 +4576,26 @@ static void gen_header(gen *g)
     }
     sb_put(o, "    tide_queue commands; // Of tide_command\n");
     sb_put(o, "    uint32_t tide_chain; // While changes apply: how far down a chain of events what's recorded now is\n");
+    // What it keeps for the match: the local fields of its components, a table
+    // for each (tide/attached.h); its singletons' are local singletons, above
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) continue;
+        sb_printf(o, "    tide_attached %s; // The local fields of " STR_FMT ": a row for each of the match's entities that has any\n",
+                  fields_table(part), STR_ARG(part->qualified));
+    }
+    if (prog->local_parts.count) {
+        sb_put(o, "    uint32_t tide_forget;        // The match this machine was in is over: what it kept for it goes at the next frame\n");
+        sb_put(o, "    uint32_t tide_in_match;      // A frame saw a match since its singletons' local fields were last their defaults\n");
+        sb_put(o, "    uint32_t tide_kept_drawn;    // The tick of the world its last frame drew, plus one, or 0 for none,\n");
+        sb_put(o, "    uint32_t tide_kept_verified; // ...and of the verified one: what's kept is looked over when either changes\n");
+    }
     gen_task_tables(g, true);
     if (world_has_tasks(g, true)) {
         sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
         sb_put(o, "    float tide_frame_seconds;  // This frame's length, which they count down (tide_local_frame_time)\n");
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap heap;\n");
+    if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
@@ -4564,8 +4674,12 @@ static void gen_header(gen *g)
     sb_put(o, "// Views draw at the frame rate, and see the match between its last two ticks: floats\n");
     sb_put(o, "// blended from `previous` to `w` by `alpha` (0 to 1), so motion is smooth at any tick\n");
     sb_put(o, "// rate; everything else as it is in `w`. Pass NULL and 1 to see `w` as it is.\n");
-    sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, tide_local *local, tide_draw_list *draw,\n"
-              "                tide_gui *gui);\n\n");
+    sb_put(o, "// `verified` is the last world the server confirmed (tide_view_worlds.verified), or\n");
+    sb_put(o, "// NULL where `w` is all there is: the local fields this machine keeps for the match's\n");
+    sb_put(o, "// entities go, before the views run, once an entity is in neither `w` nor `verified`,\n");
+    sb_put(o, "// so one a wrong prediction destroyed keeps them until the server says so too.\n");
+    sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
+              "                tide_local *local, tide_draw_list *draw, tide_gui *gui);\n\n");
     sb_put(o, "// Send PlayerJoined or PlayerLeft to the world. They're handled at the end of the\n");
     sb_put(o, "// next tick, before anything that tick sends; every machine calls them before\n");
     sb_put(o, "// the same tick.\n");
@@ -4604,6 +4718,22 @@ static void gen_header(gen *g)
         sb_printf(o, "bool tide_has_%s(const %s *%s, tide_entity e);\n", name, w, arg);
         sb_printf(o, "%s tide_get_%s(const %s *%s, tide_entity e);\n", name, name, w, arg);
         sb_printf(o, "bool tide_set_%s(%s *%s, tide_entity e, %s value);\n", name, w, arg, name);
+    }
+    if (local_fields) {
+        sb_put(o, "\n// A match entity's local fields, in the local state: whether anything was written\n");
+        sb_put(o, "// for it, a copy of them (their defaults when nothing was, with text, lists and grids\n");
+        sb_put(o, "// empty), and setting them, as their bytes: text and lists in them stay where they\n");
+        sb_put(o, "// are in the local state's heap. What's set for an entity in neither world goes at\n");
+        sb_put(o, "// the first tide_frame after a tick. A singleton's are in tide_local, as\n");
+        sb_put(o, "// <Singleton>_local.\n");
+    }
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) continue;
+        const char *name = type_cname(part);
+        sb_printf(o, "bool tide_has_%s(const tide_local *local, tide_entity e);\n", name);
+        sb_printf(o, "%s tide_get_%s(const tide_local *local, tide_entity e);\n", name, name);
+        sb_printf(o, "void tide_set_%s(tide_local *local, tide_entity e, %s value);\n", name, name);
     }
 
     if (prog->input) {
@@ -4749,7 +4879,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false};
+    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d.fields, live);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -4970,14 +5100,18 @@ static void gen_text_helpers(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (!prog->uses_heap && prog->lists.count == 0 && prog->maps.count == 0) return;
+    if (!world_heap(prog, true) && prog->lists.count == 0 && prog->maps.count == 0) return;
     sb_put(o, "// Text, lists, maps and grids in values: a world's own going in, released going out, never shared.\n\n");
     gen_list_helpers(g, false);
     gen_map_helpers(g, false);
     gen_grid_helpers(g);
-    // The program's value types, then the maps' entries (what a foreach gives)
-    for (int i = 0; i < prog->decls.count + prog->maps.count; i++) {
-        const decl *d = i < prog->decls.count ? prog->decls.items[i] : prog->maps.items[i - prog->decls.count]->entry;
+    // The program's value types, the local parts of the match's components and
+    // singletons, then the maps' entries (what a foreach gives)
+    const int parts = prog->decls.count + prog->local_parts.count;
+    for (int i = 0; i < parts + prog->maps.count; i++) {
+        const decl *d = i < prog->decls.count ? prog->decls.items[i]
+                      : i < parts             ? prog->local_parts.items[i - prog->decls.count]
+                                              : prog->maps.items[i - parts]->entry;
         if (!d) continue;
         const bool value_type = d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON
                              || d->kind == DECL_EVENT;
@@ -5415,6 +5549,69 @@ static void gen_component_access(gen *g)
     }
 }
 
+// The local fields of the match's components (see local_part_of): each one's
+// table in the local world, a new row with the defaults, and what hosts read
+// and set them with.
+static void gen_local_fields(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    bool any = false;
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) continue;
+        if (!any) sb_put(o, "// The local fields of the match's components, a table each (tide/attached.h): the entity, then its value\n\n");
+        any = true;
+        const char *type = type_cname(part);
+        const char *table = fields_table(part);
+        const char *columns = fields_columns(part);
+        const bool text = decl_has_text(part);
+        // Rows a chunk: as many as keep a page of values to 16 KiB
+        const int size = decl_layout(part).size;
+        int shift = 4;
+        while ((16384 >> (shift + 1)) >= (size > 8 ? size : 8)) shift++;
+        sb_printf(o, "static const uint32_t tide_sizes_fields_%s[] = {sizeof(tide_entity), sizeof(%s)};\n", part->part_of->gen_name, type);
+        sb_printf(o, "static const tide_columns tide_columns_fields_%s = {2, %d, tide_sizes_fields_%s};\n\n", part->part_of->gen_name, shift,
+                  part->part_of->gen_name);
+
+        // For hosts: the defaults, with nothing borrowed
+        path_list paths = {0};
+        text_paths(part, "", &paths);
+        sb_printf(o, "TIDE_HELPER void tide_fresh_%s(%s *v)\n{\n", type, type);
+        if (paths.count) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+        sb_put(o, "    *v = ");
+        gen_value(g, o, part, NULL, 0);
+        sb_put(o, ";\n");
+        for (int k = 0; k < paths.count; k++) sb_printf(o, "    memset(&v->%s, 0, sizeof v->%s);\n", paths.items[k].path, paths.items[k].path);
+        if (paths.count) sb_put(o, "    tide_scratch_reset(mark);\n");
+        sb_put(o, "}\n\n");
+
+        sb_printf(o, "// A row for an entity that has none, with the defaults, its own\n");
+        sb_printf(o, "TIDE_HELPER uint32_t tide_attach_%s(tide_local *l, const tide_entity e)\n{\n", type);
+        sb_printf(o, "    const uint32_t row = tide_attached_add(&l->%s, %s, e);\n", table, columns);
+        if (has_defaults(part)) {
+            sb_printf(o, "    %s *v = tide_attached_cell(&l->%s, %s, row);\n", type, table, columns);
+            if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+            sb_put(o, "    *v = ");
+            gen_value(g, o, part, NULL, 0);
+            sb_put(o, ";\n");
+            if (text) sb_printf(o, "    tide_own_%s(v, TIDE_IN_LOCAL);\n    tide_scratch_reset(mark);\n", type);
+        }
+        sb_put(o, "    return row;\n}\n\n");
+
+        sb_printf(o, "bool tide_has_%s(const tide_local *local, tide_entity e)\n{\n", type);
+        sb_printf(o, "    return tide_attached_find(&local->%s, %s, e) != TIDE_ATTACHED_NONE;\n}\n\n", table, columns);
+        sb_printf(o, "%s tide_get_%s(const tide_local *local, tide_entity e)\n{\n    %s v;\n", type, type, type);
+        sb_printf(o, "    const uint32_t row = tide_attached_find(&local->%s, %s, e);\n", table, columns);
+        sb_printf(o, "    if (row != TIDE_ATTACHED_NONE) memcpy(&v, tide_attached_get(&local->%s, %s, row), sizeof v);\n", table, columns);
+        sb_printf(o, "    else tide_fresh_%s(&v);\n    return v;\n}\n\n", type);
+        sb_printf(o, "void tide_set_%s(tide_local *local, tide_entity e, %s value)\n{\n", type, type);
+        sb_printf(o, "    uint32_t row = tide_attached_find(&local->%s, %s, e);\n", table, columns);
+        sb_printf(o, "    if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(&local->%s, %s, e);\n", table, columns);
+        sb_printf(o, "    memcpy(tide_attached_cell(&local->%s, %s, row), &value, sizeof value);\n}\n\n", table, columns);
+    }
+}
+
 static int find_arch(const gen *g, const comp_mask mask, const bool local)
 {
     for (int a = 0; a < g->prog->archetypes.count; a++) {
@@ -5665,6 +5862,7 @@ static void gen_dispatch_prototypes(gen *g)
     if (prog->handlers.count == 0) return;
     sb_put(o, "// Event dispatchers, defined after the handlers they call\n\n");
     for (int i = 0; i < prog->events.count; i++) {
+        if (prog->events.items[i] == prog->forgotten) continue; // Its handlers run as local fields go (gen_forget)
         for (int side = 0; side < 2; side++) {
             if (has_handlers(prog->events.items[i], side == 1)) {
                 sb_printf(o, "%s;\n", dispatch_signature(prog->events.items[i], side == 1));
@@ -6141,6 +6339,9 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
         capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
+        if (has_fields_ptr(p)) {
+            capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))), fields_name(g, p->name));
+        }
     }
     stmt_list locals = {0};
     outer_locals_stmt(loop->then_stmt, loop->then_stmt, loop, &locals);
@@ -6240,6 +6441,10 @@ static capture_list sort_captures(gen *g, const expr *sort)
             if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
             capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
+            if (has_fields_ptr(p)) {
+                capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))),
+                        fields_name(g, p->name));
+            }
         }
     } else if (fn) {
         if (fn->draws) {
@@ -6255,6 +6460,10 @@ static capture_list sort_captures(gen *g, const expr *sort)
             else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
             else capture(&out, c_type(p->type), local_cname(g, p->name));
             if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
+            if (has_fields_ptr(p)) {
+                capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))),
+                        fields_name(g, p->name));
+            }
         }
     }
     stmt_list locals = {0};
@@ -6720,6 +6929,11 @@ static void gen_system_body(gen *g, const decl *sys)
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
         }
+        // Its local fields, where the local world keeps them: read and written in place
+        if (has_fields_ptr(p)) {
+            sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
+                      fields_name(g, p->name));
+        }
     }
     // The scene of the entity it runs for, for its spawns to join
     g->has_scene = sys->per_entity && has_scenes(g->prog, sys->entity_local);
@@ -6741,6 +6955,7 @@ static void gen_system_body(gen *g, const decl *sys)
         const param *p = &sys->params.items[i];
         if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_WORLD) line(g, o, "(void)%s;", local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
+        if (has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
     }
     gen_grid_caches(g);
     for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
@@ -6779,12 +6994,21 @@ static bool decl_blends(const decl *d)
     return false;
 }
 
-// A view's parameter it sees blended: the match's data, with fields that blend.
+// A view's parameter it sees blended: the match's data, with fields that
+// blend. A mut one is the same: what a view writes of it is its local fields.
 static bool param_blends(const param *p)
 {
     const type_kind k = p->type.kind;
-    return (k == TY_COMPONENT || k == TY_SINGLETON) && (p->mode == PARAM_READ) && !p->type.decl->is_local
+    return (k == TY_COMPONENT || k == TY_SINGLETON) && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && !p->type.decl->is_local
         && decl_blends(p->type.decl);
+}
+
+// A view's singleton parameter it gets a copy of: one it sees blended, or the
+// match's taken as mut for its local fields, which a function it passes it to
+// takes by address, where the match's own is only to read.
+static bool view_copies(const param *p)
+{
+    return p->type.kind == TY_SINGLETON && !p->type.decl->is_local && (param_blends(p) || p->mode == PARAM_MUT);
 }
 
 // Whether a system reads an input through its entities' Owner: it takes the
@@ -6926,6 +7150,58 @@ static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char
     }
 }
 
+// Whether a local part's defaults need the heap: a field that holds text, a
+// list, a map or a grid declares one, like `local Grid2<Color> tex = Grid2(16, 16);`.
+static bool heap_defaults(const decl *d)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (!type_has_text(f->type)) continue;
+        if (declared_default(f)) return true;
+        if (f->type.kind == TY_STRUCT && heap_defaults(f->type.decl)) return true;
+    }
+    return false;
+}
+
+// Whether a view writes a component's local fields into a row made for it up
+// front, rather than a copy of the defaults that's only kept if it changed.
+static bool attaches_first(const param *p)
+{
+    return p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type));
+}
+
+// Before a view runs for row tide_i: its component parameter `p`'s local
+// fields, as tide_lf<i>. They're where the local world keeps them, for an
+// entity something was written for (its row in tide_fields_<Component>), and
+// the defaults otherwise: tide_fresh<i> to read, and for a mut parameter a
+// copy of it, tide_ln<i>, which gen_row_puts keeps if the view changed it. So
+// only entities with something written take memory. Defaults that need the
+// heap can't be compared that way, so a mut parameter makes those a row.
+static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
+{
+    sb *o = &g->c;
+    const decl *part = local_part_of(p->type);
+    const char *type = type_cname(part);
+    const char *table = fields_table(part);
+    const char *columns = fields_columns(part);
+    if (attaches_first(p)) {
+        sb_printf(o, "%suint32_t tide_lr%d = tide_attached_find(&tide_l->%s, %s, tide_ent[tide_i]);\n", pad, i, table, columns);
+        sb_printf(o, "%sif (tide_lr%d == TIDE_ATTACHED_NONE) tide_lr%d = tide_attach_%s(tide_l, tide_ent[tide_i]);\n", pad, i, i, type);
+        sb_printf(o, "%s%s *tide_lf%d = tide_attached_cell(&tide_l->%s, %s, tide_lr%d);\n", pad, type, i, table, columns, i);
+        return;
+    }
+    sb_printf(o, "%sconst uint32_t tide_lr%d = tide_attached_find(&tide_l->%s, %s, tide_ent[tide_i]);\n", pad, i, table, columns);
+    if (p->mode != PARAM_MUT) {
+        sb_printf(o, "%sconst %s *tide_lf%d = tide_lr%d != TIDE_ATTACHED_NONE ? (const %s *)tide_attached_get(&tide_l->%s, %s, tide_lr%d) "
+                     ": &tide_fresh%d;\n", pad, type, i, i, type, table, columns, i, i);
+        return;
+    }
+    sb_printf(o, "%s%s tide_ln%d;\n%s%s *tide_lf%d = &tide_ln%d;\n", pad, type, i, pad, type, i, i);
+    sb_printf(o, "%sif (tide_lr%d != TIDE_ATTACHED_NONE) tide_lf%d = tide_attached_cell(&tide_l->%s, %s, tide_lr%d);\n", pad, i, i, table,
+              columns, i);
+    sb_printf(o, "%selse tide_ln%d = tide_fresh%d;\n", pad, i, i);
+}
+
 // Before a system or handler runs for row tide_i of a chunk: copies of its
 // components from their lanes (gen_chunk_columns), blended for a view, and its
 // Owner, for its input. After: the ones it changed, put back.
@@ -6943,12 +7219,24 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                          "&tide_p%d), tide_alpha); }\n",
                       pad, c, i, c, i, c, i);
         }
+        if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
     if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, pad); // Its filter got it already
 }
 
 static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool read_only)
 {
+    // Local fields a view wrote for an entity that had none: a row of its own
+    for (int i = 0; sys->is_view && i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT || !has_fields_ptr(p) || attaches_first(p)) continue;
+        const decl *part = local_part_of(p->type);
+        sb_printf(&g->c, "%sif (tide_lr%d == TIDE_ATTACHED_NONE && memcmp(&tide_ln%d, &tide_fresh%d, sizeof tide_ln%d) != 0) {\n", pad, i,
+                  i, i, i);
+        sb_printf(&g->c, "%s    *(%s *)tide_attached_cell(&tide_l->%s, %s, tide_attached_add(&tide_l->%s, %s, tide_ent[tide_i])) = "
+                         "tide_ln%d;\n%s}\n", pad, type_cname(part), fields_table(part), fields_columns(part), fields_table(part),
+                  fields_columns(part), i, pad);
+    }
     for (int i = 0; i < sys->params.count && !read_only; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT) continue;
@@ -6969,11 +7257,14 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
         const param *p = &sys->params.items[i];
         switch (p->type.kind) {
         case TY_SINGLETON:
-            if (g->blending == sys && param_blends(p)) sb_printf(o, ", &tide_v%d", i);
+            if (g->blending == sys && view_copies(p)) sb_printf(o, ", &tide_v%d", i);
             else sb_printf(o, ", &%s->%s", p->type.decl->is_local ? "tide_l" : "tide_w", type_cname(p->type.decl));
+            // Its local fields: a local singleton of their own
+            if (g->blending == sys && has_fields_ptr(p)) sb_printf(o, ", &tide_l->%s", type_cname(local_part_of(p->type)));
             break;
-        case TY_COMPONENT: // Its copy, from gen_row_copies
+        case TY_COMPONENT: // Its copy, from gen_row_copies, and its local fields, from gen_row_fields
             if (p->mode == PARAM_READ || p->mode == PARAM_MUT) sb_printf(o, ", &tide_v%d", i);
+            if (g->blending == sys && has_fields_ptr(p)) sb_printf(o, ", tide_lf%d", i);
             break;
         case TY_INPUT:
             // This tick's input and last tick's: the owner's, or the server's for
@@ -7027,7 +7318,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         sb clear_text = {0};
         const bool its_text = touches_text(h);
         if (prog->uses_text && its_text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
-        if (prog->uses_heap && its_text) sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", world);
+        if (world_heap(prog, local) && its_text) sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", world);
         const char *clear = clear_text.data ? clear_text.data : "";
         if (h->is_async) { // A task: its frame has the event, and it gets its components itself
             const task_info *ti = task_of(g, h);
@@ -7086,6 +7377,116 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         sb_put(o, "    default: break;\n    }\n");
     }
     sb_put(o, "}\n\n");
+}
+
+// A local singleton's defaults, into `l->`: as tide_local_init sets them.
+static void gen_local_singleton_defaults(gen *g, const decl *d, const char *pad)
+{
+    sb *o = &g->c;
+    const char *name = type_cname(d);
+    if (!has_defaults(d)) {
+        sb_printf(o, "%smemset(&l->%s, 0, sizeof l->%s);\n", pad, name, name);
+        return;
+    }
+    const bool text = decl_has_text(d);
+    if (text) sb_printf(o, "%s{\n%sconst uint32_t tide_fresh_mark = tide_scratch_mark();\n", pad, pad);
+    sb_printf(o, "%sl->%s = ", pad, name);
+    gen_value(g, o, d, NULL, 0);
+    sb_put(o, ";\n");
+    if (text) sb_printf(o, "%stide_own_%s(&l->%s, TIDE_IN_LOCAL);\n%stide_scratch_reset(tide_fresh_mark);\n%s}\n", pad, name, name, pad, pad);
+}
+
+// The handlers of Forgotten for the local fields of `part`'s component or
+// singleton, in the order they run, each called with them: `value` is a
+// pointer to them, and `entity` the entity they were kept for (a component's).
+static void gen_forgotten_calls(gen *g, const decl *part, const char *pad, const char *entity, const char *value)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    for (int i = 0; i < prog->forgotten->handlers.count; i++) {
+        const decl *h = prog->forgotten->handlers.items[i];
+        if (h->forgets != part->part_of) continue;
+        sb_printf(o, "%s// " STR_FMT "\n%stide_handler_%s(l, &(%s){0}", pad, STR_ARG(h->qualified), pad, decl_cname(h),
+                  type_cname(prog->forgotten));
+        if (h->per_entity) sb_printf(o, ", %s", entity);
+        for (int k = 0; k < h->params.count; k++) {
+            const param *p = &h->params.items[k];
+            if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
+            if (p->mode != PARAM_READ && p->mode != PARAM_MUT) continue;
+            if (p->type.decl == h->forgets) {
+                // The match's part is gone: nothing reads it (see check_forgotten)
+                sb_printf(o, ", &(%s){0}", type_cname(p->type.decl));
+                if (has_fields_ptr(p)) sb_printf(o, ", %s", value);
+            } else {
+                sb_printf(o, ", &l->%s", type_cname(p->type.decl)); // A local singleton
+            }
+        }
+        if (h->per_entity && has_scenes(prog, h->entity_local)) sb_put(o, ", (tide_entity){0}"); // In no scene now
+        sb_put(o, ");");
+        if (touches_text(h)) {
+            if (prog->uses_text) sb_put(o, " tide_scratch_reset(tide_mark);");
+            if (world_heap(prog, true)) sb_put(o, " tide_heap_flush(&l->heap);");
+        }
+        sb_put(o, "\n");
+    }
+}
+
+// What the local state keeps for the match goes with it: the local fields of
+// an entity that's in neither the world views draw nor the last one the server
+// confirmed (so a destroy the client predicted wrong takes nothing with it),
+// or that lost its component in both; and a singleton's, back to their
+// defaults, once there's no match. A match that ended takes all of it
+// (tide_local_disconnected), whatever match this frame sees. Handlers of
+// Forgotten run first, with the fields still there. Entities only come and go
+// with ticks, so a frame that sees the ticks the last one saw has nothing to
+// look for.
+static void gen_forget(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (prog->local_parts.count == 0) return;
+    sb_put(o, "// Lets go of what's kept for entities the match no longer has (see tide_frame)\n");
+    sb_put(o, "static void tide_local_forget(tide_local *l, const tide_world *w, const tide_world *verified)\n{\n");
+    sb_put(o, "    const uint32_t drawn = w ? (uint32_t)w->Time.tick + 1u : 0u;\n");
+    sb_put(o, "    const uint32_t confirmed = verified ? (uint32_t)verified->Time.tick + 1u : 0u;\n");
+    sb_put(o, "    const bool all = l->tide_forget != 0u;\n");
+    sb_put(o, "    if (!all && drawn == l->tide_kept_drawn && confirmed == l->tide_kept_verified) return; // No tick since\n");
+    sb_put(o, "    l->tide_kept_drawn = drawn;\n    l->tide_kept_verified = confirmed;\n    l->tide_forget = 0u;\n");
+    if (prog->uses_text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
+    bool singletons = false;
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) {
+            singletons = true;
+            continue;
+        }
+        const char *type = type_cname(part);
+        const char *of = type_cname(part->part_of);
+        const char *columns = fields_columns(part);
+        sb_printf(o, "    { // " STR_FMT "\n        tide_attached *a = &l->%s;\n", STR_ARG(part->qualified), fields_table(part));
+        sb_put(o, "        for (uint32_t row = a->rows.count; row-- > 0;) {\n");
+        sb_printf(o, "            const tide_entity e = tide_attached_entity(a, %s, row);\n", columns);
+        sb_printf(o, "            if (!all && ((w && tide_has_%s(w, e)) || (verified && tide_has_%s(verified, e)))) continue;\n", of, of);
+        sb_printf(o, "            %s *v = tide_attached_cell(a, %s, row);\n            (void)v;\n", type, columns);
+        gen_forgotten_calls(g, part, "            ", "e", "v");
+        if (decl_has_text(part)) sb_printf(o, "            tide_release_%s(v, TIDE_IN_LOCAL);\n", type);
+        sb_printf(o, "            tide_attached_remove(a, %s, row);\n        }\n    }\n", columns);
+    }
+    if (singletons) {
+        sb_put(o, "    if (l->tide_in_match && (all || (!w && !verified))) { // The match went: its singletons' local fields start over\n");
+        for (int i = 0; i < prog->local_parts.count; i++) {
+            const decl *part = prog->local_parts.items[i];
+            if (part->kind != DECL_SINGLETON) continue;
+            const char *type = type_cname(part);
+            sb value = {0};
+            sb_printf(&value, "&l->%s", type);
+            gen_forgotten_calls(g, part, "        ", "(tide_entity){0}", value.data);
+            if (decl_has_text(part)) sb_printf(o, "        tide_release_%s(&l->%s, TIDE_IN_LOCAL);\n", type, type);
+            gen_local_singleton_defaults(g, part, "        ");
+        }
+        sb_put(o, "        l->tide_in_match = 0u;\n    }\n");
+    }
+    sb_put(o, "    if (w) l->tide_in_match = 1u;\n}\n\n");
 }
 
 // The input's Sample, as tide_input_sample: fields start at their defaults
@@ -7195,6 +7596,11 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else sb_printf(o, "%s%s", n++ ? ", " : "", const_decl(p->type, local_cname(g, p->name)));
         if (takes_where(p)) sb_printf(o, ", const uint32_t %s", where_name(g, p->name));
+        // A component whose local fields it uses comes with them, where they're kept
+        if (has_fields_ptr(p)) {
+            sb_printf(o, ", %s%s *%s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
+                      fields_name(g, p->name));
+        }
     }
     if (n == 0) sb_put(o, "void");
     sb_put(o, ")");
@@ -7219,6 +7625,7 @@ static void gen_routine(gen *g, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
+        if (has_fields_ptr(&m->params.items[i])) line(g, o, "(void)%s;", fields_name(g, m->params.items[i].name));
     }
     gen_grid_caches(g);
     for (int i = 0; i < m->body->stmts.count; i++) gen_stmt(g, m->body->stmts.items[i]);
@@ -8273,6 +8680,7 @@ static void gen_system_run(gen *g, const decl *sys)
         sb_printf(&call, "tide_system_%s(tide_w", name);
     }
     const bool split = system_splits(sys);
+    bool fresh_mark = false; // A view's: it borrowed text for its entities' default local fields
 
     if (view) {
         sb_printf(o, "static void tide_run_view_%s(const tide_world *tide_w, const tide_world *tide_prev, float tide_alpha, "
@@ -8285,10 +8693,24 @@ static void gen_system_run(gen *g, const decl *sys)
         sb_put(o, "    const bool tide_blend = tide_prev && tide_alpha < 1.0f;\n    (void)tide_blend;\n");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
-            if (p->type.kind != TY_SINGLETON || !param_blends(p)) continue;
+            if (!view_copies(p)) continue;
             const char *s = type_cname(p->type.decl);
             sb_printf(o, "    %s tide_v%d = tide_w->%s;\n", s, i, s);
-            sb_printf(o, "    if (tide_blend) tide_blend_%s(&tide_v%d, &tide_prev->%s, tide_alpha);\n", s, i, s);
+            if (param_blends(p)) sb_printf(o, "    if (tide_blend) tide_blend_%s(&tide_v%d, &tide_prev->%s, tide_alpha);\n", s, i, s);
+        }
+        // The local fields of an entity nothing was written for: their defaults
+        // (gen_row_fields), made once for the view's whole run
+        for (int i = 0; i < sys->params.count; i++) {
+            const param *p = &sys->params.items[i];
+            if (p->type.kind != TY_COMPONENT || !has_fields_ptr(p) || attaches_first(p)) continue;
+            const decl *part = local_part_of(p->type);
+            if (heap_defaults(part) && !fresh_mark) {
+                sb_put(o, "    const uint32_t tide_fresh_mark = tide_scratch_mark(); // Their text and lists are borrowed\n");
+                fresh_mark = true;
+            }
+            sb_printf(o, "    const %s tide_fresh%d = ", type_cname(part), i);
+            gen_value(g, o, part, NULL, 0);
+            sb_printf(o, ";\n    (void)tide_fresh%d;\n", i);
         }
         g->blending = sys;
     } else {
@@ -8338,7 +8760,7 @@ static void gen_system_run(gen *g, const decl *sys)
     sb clear_text = {0};
     const bool text = view || touches_text(sys);
     if (prog->uses_text && text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
-    if (prog->uses_heap && text && (view || sys->writes_text)) {
+    if (world_heap(prog, view) && text && (view || sys->writes_text)) {
         sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", view ? "tide_l" : "tide_w");
     }
     const char *clear = clear_text.data ? clear_text.data : "";
@@ -8373,6 +8795,7 @@ static void gen_system_run(gen *g, const decl *sys)
         }
     }
     g->blending = NULL;
+    if (fresh_mark) sb_put(o, "    tide_scratch_reset(tide_fresh_mark);\n");
     sb_put(o, "}\n\n");
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
     if (!view && split && system_owns(g, sys)) gen_system_own(g, sys);
@@ -8607,7 +9030,7 @@ static void gen_api(gen *g)
     }
 
     sb_put(o, "void tide_local_init(tide_local *local)\n{\n    tide_local_free(local);\n");
-    if (prog->uses_heap) sb_put(o, "    tide_text_use(NULL, &local->heap);\n");
+    if (world_heap(prog, true)) sb_put(o, "    tide_text_use(NULL, &local->heap);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
         if (!d->is_local || !has_defaults(d)) continue;
@@ -8628,13 +9051,18 @@ static void gen_api(gen *g)
     }
     sb_put(o, "}\n\n");
 
-    sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, tide_local *local, tide_draw_list *draw,\n"
-              "                tide_gui *gui)\n{\n");
-    sb_put(o, "    (void)previous;\n    (void)alpha;\n");
+    sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
+              "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
+    sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n");
     if (prog->uses_heap) {
         // Views only read the match, so its heap is theirs to read, not change.
         sb_put(o, "    tide_text_use(w ? (tide_heap *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
+    } else if (world_heap(prog, true)) {
+        sb_put(o, "    tide_text_use(NULL, &local->heap); // The match holds no text or lists\n");
     }
+    // The local fields of entities that are gone go first: with no verified
+    // world given, the one views draw is all there is
+    if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
     for (int i = 0; i < prog->views.count; i++) {
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(prog->views.items[i]));
     }
@@ -8906,7 +9334,15 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    tide_table_free(&w->tide_tasks_%s, &tide_columns_tasks_%s);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_free(&w->heap);\n");
+    // The local fields it keeps for the match's entities (tide/attached.h)
+    VEC(const decl *) fields = {0};
+    for (int i = 0; local && i < prog->local_parts.count; i++) {
+        if (prog->local_parts.items[i]->kind == DECL_COMPONENT) vec_push(fields, prog->local_parts.items[i]);
+    }
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    tide_attached_free(&w->%s, %s);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    tide_heap_free(&w->heap);\n");
     sb_put(o, "    memset(w, 0, sizeof *w);\n}\n\n");
 
     sb_printf(o, "uint32_t %spack(const %s *w, uint8_t *out, const uint32_t capacity)\n{\n", prefix, world);
@@ -8920,7 +9356,10 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    size += tide_table_packed_size(&w->tide_tasks_%s, &tide_columns_tasks_%s);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    size += tide_heap_packed_size(&w->heap);\n");
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    size += tide_attached_packed_size(&w->%s, %s);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    size += tide_heap_packed_size(&w->heap);\n");
     sb_put(o, "    if (size > UINT32_MAX) tide_out_of_memory();\n");
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s header; // The struct, with its storage's pointers left out\n    memcpy(&header, w, sizeof header);\n", world);
@@ -8934,7 +9373,10 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    memset(&header.tide_tasks_%s, 0, sizeof header.tide_tasks_%s);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    memset(&header.heap, 0, sizeof header.heap);\n");
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    memset(&header.%s, 0, sizeof header.%s);\n", fields_table(fields.items[i]), fields_table(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    memset(&header.heap, 0, sizeof header.heap);\n");
     sb_put(o, "    tide_writer bytes = {out, capacity, 0, false, false};\n");
     sb_put(o, "    tide_write_bytes(&bytes, &header, sizeof header);\n");
     sb_put(o, "    tide_entities_pack(&w->entities, &bytes);\n");
@@ -8947,7 +9389,10 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    tide_table_pack(&w->tide_tasks_%s, &tide_columns_tasks_%s, &bytes);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    tide_heap_pack(&w->heap, &bytes);\n");
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    tide_attached_pack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    tide_heap_pack(&w->heap, &bytes);\n");
     sb_put(o, "    return bytes.size;\n}\n\n");
 
     // Unpacking: bytes from the network or another build, so each part is
@@ -8982,7 +9427,10 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    memset(&w->tide_tasks_%s, 0, sizeof w->tide_tasks_%s);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    memset(&w->%s, 0, sizeof w->%s);\n", fields_table(fields.items[i]), fields_table(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
     sb_put(o, "    tide_reader bytes = {data, size, sizeof *w, false};\n");
     sb_put(o, "    bool ok = tide_entities_unpack(&w->entities, &bytes);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -8994,7 +9442,10 @@ static void gen_world_bytes(gen *g, const bool local)
         const char *id = task_id(g->tasks.items[i].fn);
         sb_printf(o, "    ok = ok && tide_table_unpack(&w->tide_tasks_%s, &tide_columns_tasks_%s, &bytes);\n", id, id);
     }
-    if (prog->uses_heap) sb_put(o, "    ok = ok && tide_heap_unpack(&w->heap, &bytes);\n");
+    for (int i = 0; i < fields.count; i++) {
+        sb_printf(o, "    ok = ok && tide_attached_unpack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
+    }
+    if (world_heap(prog, local)) sb_put(o, "    ok = ok && tide_heap_unpack(&w->heap, &bytes);\n");
     sb_put(o, "    ok = ok && bytes.at == size;\n");
     sb_printf(o, "    ok = ok && %splaced(w);\n", prefix);
     sb_printf(o, "    if (!ok) %sfree(w);\n    return ok;\n}\n\n", prefix);
@@ -9225,6 +9676,9 @@ static void gen_game_api(gen *g)
     sb_put(o, "    if (n >= sizeof local->tide_message) n = sizeof local->tide_message - 1u;\n");
     sb_put(o, "    memcpy(local->tide_message, message ? message : \"\", n);\n");
     sb_put(o, "    memset(local->tide_message + n, 0, sizeof local->tide_message - n);\n");
+    // The match is over: what was kept for its entities goes at the next frame,
+    // whatever match that frame sees, as another's entities have the same handles
+    if (prog->local_parts.count) sb_put(o, "    local->tide_forget = 1u;\n");
     sb_printf(o, "    tide_cmd_send_%s(local, (tide_entity){0}, (%s){.%s = (int32_t)reason});\n}\n\n", disconnected,
               disconnected, field_cname(&prog->disconnected->fields.items[0]));
 
@@ -9342,9 +9796,13 @@ static layout_decls layout_types(const program *prog)
     for (int i = 0; i < prog->structs.count; i++) vec_push(out, prog->structs.items[i]);
     for (int i = 0; i < prog->components.count; i++) vec_push(out, prog->components.items[i]);
     for (int i = 0; i < prog->singletons.count; i++) vec_push(out, prog->singletons.items[i]);
+    for (int i = 0; i < prog->local_parts.count; i++) { // The components' local fields; the singletons' are singletons
+        if (prog->local_parts.items[i]->kind == DECL_COMPONENT) vec_push(out, prog->local_parts.items[i]);
+    }
     if (prog->input) vec_push(out, prog->input);
     return out;
 }
+
 
 static layout_decls layout_enums(const program *prog)
 {
@@ -9370,6 +9828,17 @@ static const char *layout_name(const type t)
     char *out = arena_alloc(strlen(name) + 1);
     memcpy(out, name, strlen(name));
     return out;
+}
+
+// A type's name in the layout: a component's or singleton's local fields are
+// a type of their own, "<Name> local".
+static const char *layout_type_name(const decl *d)
+{
+    const type t = {d->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, (decl *)d};
+    if (!d->part_of) return layout_name(t);
+    sb b = {0};
+    sb_printf(&b, STR_FMT " local", STR_ARG(d->qualified));
+    return b.data;
 }
 
 static const char *layout_kind(const type t)
@@ -9456,6 +9925,16 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     }
     if (tasks) sb_put(o, "};\n\n");
 
+    // The local world's tables of the match's components' local fields
+    int attached = 0;
+    for (int i = 0; local && i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT) continue;
+        if (attached++ == 0) sb_put(o, "static const tide_layout_place tide_layout_local_attached[] = {\n");
+        sb_printf(o, "    {%d, 0, false},\n", layout_index(types, part));
+    }
+    if (attached) sb_put(o, "};\n\n");
+
     sb_printf(o, "#define TIDE_LAYOUT_%s {sizeof(%s), %d, ", local ? "LOCAL" : "MATCH", world, singletons);
     if (singletons) sb_printf(o, "tide_layout_%s_singletons, ", side);
     else sb_put(o, "NULL, ");
@@ -9468,13 +9947,15 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     } else {
         sb_put(o, "-1, 0, 0, 0, ");
     }
-    sb_printf(o, "%s, ", prog->uses_heap ? "true" : "false");
+    sb_printf(o, "%s, ", world_heap(prog, local) ? "true" : "false");
     if (tasks) {
-        sb_printf(o, "%d, tide_layout_%s_tasks, offsetof(%s, tide_task_order), %s}\n\n", tasks, side, world,
+        sb_printf(o, "%d, tide_layout_%s_tasks, offsetof(%s, tide_task_order), %s, ", tasks, side, world,
                   local ? "offsetof(tide_local, tide_frames)" : "0");
     } else {
-        sb_put(o, "0, NULL, 0, 0}\n\n");
+        sb_put(o, "0, NULL, 0, 0, ");
     }
+    if (attached) sb_printf(o, "%d, tide_layout_local_attached}\n\n", attached);
+    else sb_put(o, "0, NULL}\n\n");
 }
 
 static void gen_layout(gen *g)
@@ -9521,8 +10002,7 @@ static void gen_layout(gen *g)
     sb_put(o, "static const tide_layout_type tide_layout_types[] = {\n");
     for (int i = 0; i < types.count; i++) {
         const decl *d = types.items[i];
-        const type t = {d->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, (decl *)d};
-        sb_printf(o, "    {\"%s\", sizeof(%s), %s, %d, ", layout_name(t), type_cname(d),
+        sb_printf(o, "    {\"%s\", sizeof(%s), %s, %d, ", layout_type_name(d), type_cname(d),
                   d->kind == DECL_COMPONENT && d->is_scene ? "true" : "false", d->fields.count);
         if (d->fields.count) sb_printf(o, "tide_layout_fields%d, tide_layout_defaults%d},\n", i, i);
         else sb_printf(o, "NULL, tide_layout_defaults%d},\n", i);
@@ -9607,6 +10087,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_show_helpers(&g);
     gen_columns(&g);
     gen_component_access(&g);
+    gen_local_fields(&g);
     gen_moves(&g);
     gen_command_recorders(&g);
     gen_dispatch_prototypes(&g);
@@ -9625,10 +10106,12 @@ bool codegen(program *prog, const codegen_options *opts)
         if (!prog->handlers.items[i]->is_async) gen_system_body(&g, prog->handlers.items[i]); // Those are tasks
     }
     for (int i = 0; i < prog->events.count; i++) {
+        if (prog->events.items[i] == prog->forgotten) continue; // Its handlers run as local fields go
         for (int side = 0; side < 2; side++) {
             if (has_handlers(prog->events.items[i], side == 1)) gen_dispatcher(&g, prog->events.items[i], side == 1);
         }
     }
+    gen_forget(&g);
     for (int i = 0; i < prog->systems.count; i++) gen_system_run(&g, prog->systems.items[i]);
     for (int i = 0; i < prog->views.count; i++) gen_system_run(&g, prog->views.items[i]);
     gen_api(&g);

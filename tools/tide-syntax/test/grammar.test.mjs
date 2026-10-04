@@ -231,6 +231,14 @@ const cases = {
         ]],
         ['int Owned(', [['ownership', '!keyword'], ['ownership', '!keyword', 2]]],
     ],
+    'local before a field is a modifier, and a name anywhere else': [
+        ['local List<Vertex3> verts;', [['local', 'storage.modifier'], ['Vertex3', '!storage.modifier']]],
+        ['local float fade = 1;', [['local', 'storage.modifier'], ['float', 'storage.type'], ['1', 'constant.numeric']]],
+        ['local Combat.Stats stats;', [['local', 'storage.modifier']]],
+        ['local int? picked;', [['local', 'storage.modifier']]],
+        ['int local;', [['local', '!storage.modifier']]],
+        ['view Bake(', [['local', '!storage.modifier'], ['local', '!storage.modifier', 2]]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {

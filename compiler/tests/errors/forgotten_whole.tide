@@ -1,0 +1,20 @@
+// expect: the entity is gone from the match, so 'box' is only here for its local fields
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+local singleton Log { int corners; }
+
+int Corners(Box box)
+{
+    return box.verts.count;
+}
+
+local event(Forgotten) Free(Box box, mut Log log)
+{
+    log.corners = Corners(box);
+}

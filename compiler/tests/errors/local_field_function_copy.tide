@@ -1,0 +1,19 @@
+// expect: 'Corners' uses its 'box''s local fields, and this is a copy of the component's value, which has none
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+int Corners(Box box)
+{
+    return box.verts.count;
+}
+
+view Count(Box box)
+{
+    var copy = box;
+    if (Corners(copy) > 0) Draw.Clear(Color.black);
+}

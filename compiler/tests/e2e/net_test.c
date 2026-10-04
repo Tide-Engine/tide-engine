@@ -511,7 +511,7 @@ TIDE_TEST(net_local_code_starts_a_match)
     local.Menu.play = true;
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     tide_session_request request;
     tide_start start;
@@ -571,7 +571,7 @@ static void run_views(void)
     tide_devices devices = {0};
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 

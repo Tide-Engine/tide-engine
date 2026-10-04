@@ -1,0 +1,10 @@
+// expect: 'bakes' is a local field of 'Box', and methods work on values, which have none
+scene Main { }
+
+component Box
+{
+    float3 pos;
+    local int bakes;
+
+    bool Baked() { return bakes > 0; }
+}

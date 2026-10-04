@@ -1,0 +1,20 @@
+// expect: 'Corners' uses the local fields of 'Box', which are this machine's, and the match can't see them
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+int Corners(Box box)
+{
+    return box.verts.count;
+}
+
+singleton Count { int corners; }
+
+system Tally(Box box, mut Count count)
+{
+    count.corners += Corners(box);
+}

@@ -78,6 +78,7 @@ The engine sends these. They cost nothing where no handler takes them.
 | `Destroyed` | The entity | It's destroyed, while its components can still be read |
 | `PlayerJoined` | The world | A player joins, with their `PlayerID` in `player` |
 | `PlayerLeft` | The world | A player leaves, with their `PlayerID` in `player` |
+| `Forgotten` | The entity, on this machine | Its [local fields](./local-state.md#letting-go) go: a local event, for local handlers |
 
 ```csharp
 // Spawned has no fields, so it needs no name.

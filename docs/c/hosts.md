@@ -64,7 +64,8 @@ The generated header is the API between the game and its host. Namespaced declar
 **Local state**
 
 - `tide_local` is this machine's local state, outside every world. `tide_local_init(local)` clears it and sets its defaults, and `tide_local_free(local)` lets it go. `tide_local_pack(local, out, capacity)` and `tide_local_unpack(local, data, size)` are it as bytes, as hot reloading carries it over. `TIDE_MAIN_IS_LOCAL` is defined when `Main` is local.
-- `tide_frame(w, previous, alpha, local, draw, gui)` runs every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match.
+- `tide_frame(w, previous, alpha, verified, local, draw, gui)` runs every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two: an entity's [local fields](../game/local-state.md#local-fields) go once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is.
+- A match component's local fields are a struct of their own, `<Component>_local`, which the local state keeps for the entities something was written for: `tide_has_<Component>_local(local, entity)`, `tide_get_<Component>_local(local, entity)` (their defaults when nothing was, with text, lists and grids empty) and `tide_set_<Component>_local(local, entity, value)`. `tide_get_<Component>` and the component's own struct are the match's part. A singleton's are `local-><Singleton>_local`.
 - `tide_local_frame_time(local, seconds)` says how long this frame is, before `tide_frame`: local tasks' `Wait.Seconds` counts it down. Without it, they wait forever.
 
 **Input**
@@ -95,7 +96,7 @@ A zeroed `tide_draw_list` and `tide_gui` are ready to use. A draw list grows as 
 tide_draw_reset(&draw);
 tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
 tide_local_frame_time(&local, seconds);
-tide_frame(w, previous, alpha, &local, &draw, &gui);
+tide_frame(w, previous, alpha, verified, &local, &draw, &gui);
 tide_gui_end(&gui, &draw);
 tide_platform_typing(tide_gui_typing(&gui)); // Phones show their keyboard while the player types, or a view asks
 tide_platform_cursor_lock(tide_gui_cursor_lock(&gui)); // The cursor is locked while a view asks (Cursor.Lock)

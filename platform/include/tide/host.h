@@ -46,8 +46,10 @@ typedef struct tide_host_game {
     bool (*local_unpack)(void *local, const uint8_t *data, uint32_t size);
     // tide_input_sample, into `input`; NULL for a game without an input
     void (*sample_input)(const tide_devices *devices, const void *local, void *input);
-    void (*frame)(const void *world, const void *previous, float alpha, void *local, tide_draw_list *draw,
-                  tide_gui *gui);
+    // tide_frame: `verified` is the last world the server confirmed, which the
+    // local fields of the match's entities are kept by, with `world`
+    void (*frame)(const void *world, const void *previous, float alpha, const void *verified, void *local,
+                  tide_draw_list *draw, tide_gui *gui);
     // How long this frame is, before `frame`: local tasks' Wait.Seconds counts it down
     void (*frame_time)(void *local, float seconds);
     bool (*take_request)(void *local, tide_session_request *request, void *start);
@@ -357,7 +359,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_draw_reset(&tide_run_draw);
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
     game->frame_time(tide_run_local, seconds);
-    game->frame(match, view.previous, view.alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
+    game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_platform_typing(tide_gui_typing(&tide_run_gui));
     tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
