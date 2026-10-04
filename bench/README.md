@@ -19,6 +19,48 @@ All thirty runs match their handwritten C end-state digests. The retained change
 
 Life and Events still have substantial gaps. The Life worker timings overlap, so these runs do not establish a consistent worker speedup. Machine variation also affected exploratory runs: their labels identify diagnostics, and their results do not describe retained code. [Measurement metadata](results/native-performance-metadata.json) identifies source revisions, executable hashes, options, ranges and diagnostics; [Life diagnostics](results/native-performance-life-diagnostics.json) records discarded experiments.
 
+## Life and Events phase measurements
+
+Build the optional diagnostic programs, which instrument a copy of generated C and leave ordinary versus executables and runtime code unchanged:
+
+```powershell
+cmake --build --preset release --target versus_life_phases versus_life_control versus_events_phases versus_events_control
+node bench/versus/phases/measure.mjs --repeat 5 --threads 1,12 --label native-phases
+```
+
+The 2026-10-04 UTC measurements use the same Windows/Ryzen/Clang configuration and fixture sizes as above. Five alternating control/profile pairs at each thread count are kept in [phases.jsonl](results/phases.jsonl); [metadata](results/phase-metadata.json) includes executable hashes, repeated-run ranges and the protocol. The controls use the same standalone harness with no phase clocks. Both variants reset counters outside the tick timer, so their cache conditions differ from ordinary versus runs; compare the matched controls for instrumentation overhead.
+
+One-thread measurements, rounded medians of five reported phase medians:
+
+| Life, 1024² cells | ms/tick |
+| --- | ---: |
+| Whole tick, untouched control | 0.571 |
+| Whole tick, instrumented | 0.620 |
+| Window gathering, including halo/border handling | 0.213 |
+| Cell calculation | 0.172 |
+| Window writeback, including comparisons and chunk buffers | 0.158 |
+| Final grid commit | 0.022 |
+| Window output copy | about 0.011 |
+
+Preparing windows and putting results back cost more than the calculation. The calculation itself still takes about twice the handwritten C whole tick (0.078 ms), so removing memory passes alone would not establish parity. Life's clocks/counters add about 8.6% in paired one-thread runs; the smallest copy spans approach clock resolution, and no mechanical timer-cost subtraction is applied.
+
+With twelve workers, the parallel region is about 0.115 ms, but the final commit is about 0.122 ms, versus 0.022 ms on one thread. The whole control tick is 0.287 ms. This locates a significant serial cost after worker computation; these measurements do not split its copying, cache transfers, ownership checks and pool bookkeeping. Worker task intervals are summed elapsed spans (including descheduling), so their totals are neither CPU time nor percentages of the threaded tick. The parallel region contains those task intervals; the systems interval contains prepare, parallel work, commit and scheduling. Do not add nested intervals.
+
+| Events, 200,000 sends / 50,000 targets, one thread | ms/tick |
+| --- | ---: |
+| Whole tick, untouched control | 0.883 |
+| Scheduling and recording | 0.206 |
+| Replay and cleanup | 0.670 |
+| Command application, within replay | 0.668 |
+| Queue clearing, within replay | about 0.001 |
+| Heap cleanup, within replay | below useful resolution |
+
+Replay is about 76% of measured time, from the per-run mean shares. Clearing/settlement is negligible; lookup, ownership checks, dispatch and handler work remain grouped inside application. This fixture takes no snapshots, so shared-page copying is not the explanation. The default recording work estimate is 7,601,519, below the native scheduler threshold of 20,000,000; offering twelve threads keeps it on one thread. Its replay is also sequential. Even eliminating all recording would limit the gain to roughly 1.3× with current replay. Batching replay and hoisting stable table/page metadata while keeping exact record/handler order are more relevant than recording-only improvements.
+
+Events' paired profile/control variation is around measurement noise. Phase medians do not add to the tick median; percentages use nonoverlapping per-run means. Every one of the forty full measurements matches its C digest. Sixteen native/WASI quick checks cover control/profile on one/twelve requested threads. System sampling was attempted for replay internals, but Windows refused enabling the profiling policy; no trace was left running. Internal replay attribution still needs a usable sampling profiler.
+
+A dense Life path can remove window/output/chunk staging after the compiler proves complete writes, keeping old inputs immutable, separate outputs, snapshot ownership and fallback paths for sparse or skipped writes. Events can process eligible adjacent queue runs without repeating generic dispatch scaffolding for every hit. These are implementation opportunities, not measured speedups; full-write and handler-side-effect proofs are prerequisites.
+
 ## Compile and iteration time
 
 Run the compile benchmark against a complete Tide installation, with Node:
