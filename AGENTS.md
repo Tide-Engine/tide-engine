@@ -272,6 +272,8 @@ It's for quick iteration, and only under `tide run`, native and web: `tide build
 
 ### Runtime written by Claude for now
 
+Who wrote and who maintains what is said here, never in the files: users read the package's headers and sources, so their comments are about the code, and don't point at this file, which the package doesn't have.
+
 - `engine/include/tide/entity.h` and `engine/src/entity.c` (the entity table) are a temporary implementation Claude wrote so generated code could run. The owner takes them over later. Until then Claude maintains them. Generated code depends on the functions declared in `entity.h`.
 - `engine/include/tide/devices.h`, `engine/src/devices.c` (input devices) and `engine/include/tide/player.h` (`PlayerID`) are Claude's too, on the same terms. tidec reads the device member lists from `devices.h`, so Tide and C always agree. `tide_devices` has no padding the compiler adds: the input holds one when match code reads devices.
 - `engine/include/tide/math.h` and `engine/src/math.c` (vectors, quaternions, matrices and transcendental functions) are Claude's too, on the same terms. Generated code calls them by the names `tide_<function>_<type>`. The transcendental functions are in-house, computed in double from basic operations; CORE-MATH remains an option to replace them.
