@@ -1,0 +1,4 @@
+// expect: declare the parameter as 'mut Score score' to change the caller's variable
+singleton Score { int value; }
+void Add(Score score) { score.value += 1; }
+scene Main { }

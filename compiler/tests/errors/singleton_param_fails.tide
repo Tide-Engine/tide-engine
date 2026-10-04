@@ -1,0 +1,4 @@
+// expect: an error can't be Score
+singleton Score { int value; }
+int Read() fails Score { return 1; }
+scene Main { }

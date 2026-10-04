@@ -1,0 +1,6 @@
+// expect: 'ReplaceThrough' changes its 'score''s match fields
+singleton Score { int value; local int paint; }
+void Replace(mut Score score) { score = default; }
+void ReplaceThrough(mut Score score) { Replace(score); }
+scene Main { }
+view Change(mut Score score) { ReplaceThrough(score); }

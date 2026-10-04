@@ -1,0 +1,6 @@
+// expect: 'Menu' is local
+local singleton Menu { int presses; }
+int Count(Menu menu) { return menu.presses; }
+singleton Score { int value; }
+scene Main { }
+system Change(Menu menu, mut Score score) { score.value = Count(menu); }
