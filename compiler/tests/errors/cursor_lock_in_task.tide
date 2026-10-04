@@ -1,0 +1,8 @@
+// expect: a task runs between frames, so it can't call Cursor.Lock
+local scene Main { }
+
+async void Resume()
+{
+    await Wait.Frames(1);
+    Cursor.Lock();
+}

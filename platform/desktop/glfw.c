@@ -109,6 +109,14 @@ static unsigned typed_start, typed_count;
 
 static bool pasting; // Taking the clipboard's text, which it may hold none of
 
+// The cursor's lock (see tide_window_cursor_lock): GLFW's disabled cursor,
+// which is hidden, kept in the window, and moves a position of GLFW's own
+// that has no screen's edge to stop at.
+static bool lock_wanted;                  // The game asks for it
+static bool locked;                       // ...and the window holds it: it has the focus too
+static double locked_x, locked_y;         // Where the cursor was when it was locked, which it's said to stay at
+static double moved_from_x, moved_from_y; // GLFW's own position for it as of the last tide_window_mouse_state
+
 static void on_error(const int code, const char *text)
 {
     // Only while pasting: it's also how a window with no OpenGL to be had says why
@@ -187,6 +195,11 @@ bool tide_window_open(const tide_window_desc *desc)
     glfwSetScrollCallback(window, on_scroll);
     glfwSetKeyCallback(window, on_key);
     glfwSetMouseButtonCallback(window, on_mouse_button);
+    // A locked cursor moves by what the mouse itself says, where the system
+    // gives it: no acceleration, which a camera turns evenly with. It only
+    // applies while the cursor is locked.
+    if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    lock_wanted = locked = false;
 #ifdef _WIN32
     tide_win32_touch_attach(glfwGetWin32Window(window));
 #endif
@@ -282,17 +295,49 @@ bool tide_window_key_held(const tide_key key)
     return held;
 }
 
+// Takes the cursor or lets it go, as the game asks and the focus allows. Only
+// a window with the focus holds the cursor: one that loses it (Alt+Tab) lets
+// the cursor go, and takes it again when it has the focus back, if the game
+// still asks.
+static void follow_lock(void)
+{
+    const bool hold = lock_wanted && glfwGetWindowAttrib(window, GLFW_FOCUSED);
+    if (hold == locked) return;
+    if (hold) glfwGetCursorPos(window, &locked_x, &locked_y);
+    // Letting go puts the cursor back where it was when it was taken
+    glfwSetInputMode(window, GLFW_CURSOR, hold ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    locked = hold;
+    glfwGetCursorPos(window, &moved_from_x, &moved_from_y);
+}
+
+void tide_window_cursor_lock(const bool lock)
+{
+    lock_wanted = lock;
+    follow_lock();
+}
+
 void tide_window_mouse_state(tide_window_mouse *out)
 {
     // The cursor is in the units the system counts windows in: logical pixels
     // on macOS, the display's own elsewhere.
     double x = 0.0, y = 0.0;
     int across = 0, down = 0, width, height;
+    follow_lock(); // The focus may have changed since the game last asked
     glfwGetCursorPos(window, &x, &y);
     glfwGetWindowSize(window, &across, &down);
     tide_window_size(&width, &height);
-    out->x = across > 0 ? (float)(x * (double)width / (double)across) : 0.0f;
-    out->y = down > 0 ? (float)(y * (double)height / (double)down) : 0.0f;
+    const double scale_x = across > 0 ? (double)width / (double)across : 0.0;
+    const double scale_y = down > 0 ? (double)height / (double)down : 0.0;
+    out->locked = locked;
+    out->moved_x = out->moved_y = 0.0f;
+    if (locked) { // GLFW's position for a locked cursor goes on past the window: only how it moves means anything
+        out->moved_x = (float)((x - moved_from_x) * scale_x);
+        out->moved_y = (float)((y - moved_from_y) * scale_y);
+        moved_from_x = x, moved_from_y = y;
+        x = locked_x, y = locked_y;
+    }
+    out->x = (float)(x * scale_x);
+    out->y = (float)(y * scale_y);
     out->wheel_x = (float)wheel_x;
     out->wheel_y = (float)wheel_y;
     wheel_x = wheel_y = 0.0;

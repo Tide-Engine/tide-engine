@@ -63,7 +63,7 @@ Input carries whether buttons are held, not whether they just went down: when a 
   - `minus`, `equals`, `leftBracket`, `rightBracket`, `backslash`, `semicolon`, `quote`, `comma`, `period`, `slash`, `backquote`
   - `numpad0` to `numpad9`, `numpadEnter`, `numpadPlus`, `numpadMinus`, `numpadMultiply`, `numpadDivide`, `numpadPeriod`
   - `text`, a `string`: what was typed since the last frame, which views read (see [Typed text](#typed-text))
-- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left.
+- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left. While the cursor is [locked](#locking-the-cursor), `position` stays where it was and `delta` is the mouse's own movement.
 - **Gamepad:** `connected`, `leftStick` and `rightStick` (`float2`), `leftTrigger` and `rightTrigger` (0 to 1), the face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`, which is A, B, X and Y on Xbox), `dpad.up` and the other directions, `leftShoulder`, `rightShoulder`, `leftStickButton`, `rightStickButton`, `start` and `select`.
 - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers. Each `Touch` has:
   - `press`, a button: `.down` when the finger touched, and `.up` when it lifted
@@ -117,6 +117,26 @@ input Brush
 ```
 
 Touches come from the web, on phones and desktops alike, and from touchscreens on Windows. Android and iOS come next. Elsewhere, `connected` is false and no finger ever touches.
+
+### Locking the cursor
+
+A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./views.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: a browser lets the cursor go when the player presses Escape, and a desktop window when it loses the focus.
+
+`Sample` reads `Cursor.locked`, so the mouse only turns the camera while the cursor is locked, and moving it over a menu doesn't:
+
+```csharp
+input PlayerInput
+{
+    float2 look;
+
+    Sample()
+    {
+        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+    }
+}
+```
+
+`Sample` can't call `Cursor.Lock()`: it runs once per tick, and the lock is asked for every frame, by views. The match can't read `Cursor.locked`, as it can't read anything of this machine's: put what it needs in the input, as `look` is here.
 
 ### Typed text
 

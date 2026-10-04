@@ -1135,6 +1135,43 @@ TIDE_TEST(lsp_gui)
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
 
+    // The cursor's lock: views ask for it and read whether it holds, and so
+    // do the functions they call; the input's Sample only reads; the match
+    // has neither.
+    static const char look[] = "input In\n{\n    float2 look;\n    Sample()\n    {\n        $\n    }\n"
+                               "    Sanitize()\n    {\n        look = float2(0, 0);\n    }\n}\nscene Main { }\n";
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Cursor"));
+    TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Cursor"));
+    TIDE_CHECK(offers(complete(look), "Cursor"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "Cursor"));
+    const char *cursor = complete("scene Main { }\nview V()\n{\n    Cursor.$\n}\n");
+    TIDE_CHECK(offers(cursor, "Lock") && offers(cursor, "locked"));
+    const char *sampled = complete("input In\n{\n    float2 look;\n    Sample()\n    {\n        if (Cursor.$) look = Devices.mouse.delta;\n"
+                                   "    }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(sampled, "locked") && !offers(sampled, "Lock"));
+    const char *in_match = complete("scene Main { }\nsystem S()\n{\n    Cursor.$\n}\n");
+    TIDE_CHECK(!offers(in_match, "locked") && !offers(in_match, "Lock"));
+    static const char camera[] = "input In\n{\n    float2 look;\n    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }\n}\n"
+                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    var held = Cursor.locked;\n}\n";
+    open_document(camera);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *lock = request("textDocument/hover");
+    TIDE_CHECK(has(lock, "Cursor.Lock()"));
+    TIDE_CHECK(has(lock, "Call it every frame the game wants the mouse"));
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    var held = Cursor.loc$ked;\n}\n");
+    const char *locked = request("textDocument/hover");
+    TIDE_CHECK(has(locked, "Cursor.locked: bool"));
+    TIDE_CHECK(has(locked, "what the system says"));
+    open_document("scene Main { }\nview Look()\n{\n    Cur$sor.Lock();\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "The mouse's cursor"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
+    // In the match, the error says where it goes instead
+    open_document("scene Main { }\nsystem S()\n{\n    Cursor.Lock();\n}\n");
+    TIDE_CHECK(has(last_sent(), "so it can't call Cursor.Lock"));
+    // ...and a signature, as the GUI's calls have
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cursor.Lock()"));
+
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"
                   "view V(mut M m)\n{\n    Twice()\n    {\n        m.o$n = true;\n    }\n}\n");
