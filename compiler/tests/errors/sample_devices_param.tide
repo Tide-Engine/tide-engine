@@ -1,7 +1,7 @@
-// expect: Sample reads this machine's devices as 'Devices', not as a parameter
+// expect: Sample can only have one Devices parameter
 input PlayerInput
 {
     bool jump;
-    Sample(Devices devices) { jump = devices.keyboard.space.pressed; }
+    Sample(Devices devices, Devices other) { jump = devices.keyboard.space.pressed; }
 }
 scene Main { }

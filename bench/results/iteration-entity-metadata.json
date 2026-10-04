@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-04",
+  "results": "versus.jsonl",
+  "labels": ["iteration-before-entity", "iteration-single-entity-lookup"],
+  "source_revision": "fce97b124d37bcb081511b89d9f0681c1a022a4a",
+  "os": "windows",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+  "physical_cores": 12,
+  "logical_processors": 24,
+  "compiler": "Clang 23.1.2",
+  "preset": "release",
+  "build_type": "RelWithDebInfo",
+  "flags": ["-O2", "-DNDEBUG", "-fno-fast-math", "-ffp-contract=off"],
+  "repetitions_per_concept_and_label": 3,
+  "concepts": ["versus_events", "versus_churn"],
+  "before_source": "Entity lookup from the source revision above.",
+  "after_source": "Temporary change in engine/include/tide/entity.h: tide_entity_location validated generation and read location from one tide_entity_slot_of call, removing its second atomic page lookup. Other runtime source was unchanged.",
+  "outcome": "Discarded: events showed no consistent speedup, and churn timings increased. These records measure the experiment, not the final source. All end-state digests agreed; 15 entity-filter tests passed during the experiment. No runtime performance improvement is claimed."
+}

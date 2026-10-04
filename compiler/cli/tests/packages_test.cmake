@@ -217,3 +217,14 @@ tide("${game}" ARGS schedule . FAILS EXPECT "Physics needs tide 99.0 or newer")
 file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\ngithub.com/test/maths ${M1}\n")
 file(REMOVE_RECURSE "${WORK}/cache")
 tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/physics at 2222222222" "Physics.Integrate")
+
+# A commit is here once the file that says so is, which goes in last. One
+# whose download stopped partway has some of its files and not that one: it's
+# downloaded again, and what's missing comes.
+set(stopped "${WORK}/cache/github.com/test/physics/${P1}")
+if(NOT EXISTS "${stopped}/.tide-fetched")
+    message(FATAL_ERROR "${stopped} should have .tide-fetched, which says all of its files are there")
+endif()
+file(REMOVE "${stopped}/.tide-fetched" "${stopped}/packages/physics/body.tide")
+tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/physics at 2222222222" "Physics.Integrate")
+tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")

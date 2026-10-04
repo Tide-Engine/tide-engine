@@ -28,13 +28,39 @@ tide <command> [folder] [options]
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
-| `--stats` | Shows the frame rate, the ping, the input delay when there is one, the bandwidth (what goes over the network each second, up and down), the tick, the entity count, the threads ticks run on, what draws (WebGPU, WebGL 2 or OpenGL) and the three systems that took longest in the last tick |
+| `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does |
+| `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
 A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2 where it doesn't; games draw the same with either. Adding `?backend=webgl` (or `?backend=webgpu`) to the page's address picks one, for example to check a problem a player reports with the other.
+
+### Stats
+
+`--stats` shows what the game is doing in the window's bottom right corner. So does `stats = true;` in the game's [settings](../language/basics.md#settings), with no option to remember:
+
+```csharp
+settings
+{
+    stats = true;
+}
+```
+
+| Line | What it is |
+|---|---|
+| `60 fps` | Frames a second, over the last second |
+| `cpu 2.1 ms` | What a frame's work takes on its thread: the ticks it runs, the views and the drawing, without the wait for the display |
+| `ping`, `delay` | The round trip to the machine running the match, and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
+| `up`, `down` | What goes over the network each second |
+| `tick`, `entities` | The match's tick, and how many entities it has |
+| `threads` | The threads ticks run on |
+| `memory 48 MB` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
+| `WebGPU`, `12 draw calls` | What draws (WebGPU, WebGL 2 or OpenGL), and how many draw calls the frame took: a run of shapes, of text or of one mesh's instances is one |
+| `Move 0.31 ms` | The three systems that took longest in the last tick |
+
+The numbers that are rates or averages change once a second. A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game.
 
 ### Threads on the web
 

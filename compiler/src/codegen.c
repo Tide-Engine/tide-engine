@@ -724,6 +724,7 @@ static const char *world_where(const bool local)
 // changes.
 static bool is_pointer_param(const param *p)
 {
+    if (p->mode == PARAM_SENDER) return true;
     if (p->task_ref) return true;
     if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD;
     const type_kind k = p->type.kind;
@@ -2569,7 +2570,8 @@ static void gen_send(gen *g, const expr *e)
     const decl *event = e->type_decl;
     const expr *arg = e->args.items[0];
     indent(g, o);
-    sb_printf(o, "tide_cmd_send_%s(%s, ", type_cname(event), e->local_world ? "tide_l" : "tide_w");
+    sb_printf(o, "%s_%s(%s, ", event->is_command ? "tide_local_send" : "tide_cmd_send", type_cname(event),
+              e->local_world ? "tide_l" : "tide_w");
     if (e->kind == E_METHOD) gen_expr(g, o, e->object);
     else sb_put(o, "(tide_entity){0}");
     sb_put(o, ", ");
@@ -4614,6 +4616,14 @@ static void gen_header(gen *g)
 
     sb_put(o, "// Events: what Send sends and handlers receive\n\n");
     for (int i = 0; i < prog->events.count; i++) gen_type(g, o, prog->events.items[i]);
+    if (prog->command_types.count) {
+        sb_put(o, "// Incoming command IDs: part of this build's wire schema and game hash.\n");
+        for (int i = 0; i < prog->command_types.count; i++) {
+            const decl *d = prog->command_types.items[i];
+            sb_printf(o, "#define TIDE_COMMAND_ID_%s %du\n", type_cname(d), d->index);
+        }
+        sb_put(o, "\n");
+    }
 
     sb_put(o, "// Components\n\n");
     for (int i = 0; i < prog->components.count; i++) gen_type(g, o, prog->components.items[i]);
@@ -4700,6 +4710,7 @@ static void gen_header(gen *g)
     sb_put(o, "    uint16_t kind;\n    uint16_t id;        // Archetype for spawns, component for add and remove, event for sends.\n");
     sb_put(o, "    uint32_t depth;     // How far down a chain of events: one more than the change whose handlers recorded it\n");
     sb_put(o, "    tide_entity entity; // For sends, the entity it's sent to, or null for the world\n");
+    if (prog->command_types.count) sb_put(o, "    tide_player_id sender; // Commands: authenticated by the session, never supplied by the payload\n");
     sb_put(o, "    union {\n        uint8_t tide_none;\n        tide_player_id player; // Who's added to or removed from a scene\n");
     sb_put(o, "        tide_entity scene;     // A spawn's: the scene the entity joins, or null for none (what every spawn below starts with)\n");
     for (int i = 0; i < prog->events.count; i++) {
@@ -4799,6 +4810,11 @@ static void gen_header(gen *g)
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     sb_put(o, "    char tide_room[8]; // Session.room: the code of the room the match is in, or \"\"\n");
+    if (prog->command_types.count) {
+        sb_put(o, "    uint32_t tide_outgoing_from, tide_outgoing_count;\n"
+                  "    uint32_t tide_outgoing_sizes[TIDE_COMMAND_PENDING];\n"
+                  "    uint8_t tide_outgoing[TIDE_COMMAND_PENDING][TIDE_COMMAND_BYTES];\n");
+    }
     sb_put(o, "} tide_local;\n\n");
 
     if (prog->main->is_local) {
@@ -4900,6 +4916,12 @@ static void gen_header(gen *g)
     sb_put(o, "// How long this frame is, in seconds, which local tasks' Wait.Seconds counts down.\n");
     sb_put(o, "// Call it before tide_frame.\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds);\n\n");
+    if (prog->command_types.count) {
+        sb_put(o, "#define TIDE_HAS_COMMANDS 1\n"
+                  "// Peek the oldest submitted command; remove it only once the session accepted it.\n"
+                  "uint32_t tide_local_command(const tide_local *local, uint8_t *out, uint32_t capacity);\n"
+                  "void tide_local_command_sent(tide_local *local);\n\n");
+    }
     sb_put(o, "// The game, as sessions run it (tide/session.h).\n");
     sb_put(o, "extern const tide_game tide_game_api;\n\n");
     sb_put(o, "uint32_t tide_world_entity_count(const tide_world *w);\n");
@@ -5926,6 +5948,7 @@ static void gen_command_recorders(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    if (prog->command_types.count) sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size);\n\n");
 
     sb_put(o, "enum { TIDE_CMD_SPAWN, TIDE_CMD_ADD, TIDE_CMD_REMOVE, TIDE_CMD_DESTROY, TIDE_CMD_EVENT, TIDE_CMD_UNLOAD,\n"
               "       TIDE_CMD_SCENE_PLAYER, TIDE_CMD_SNAP };\n\n");
@@ -6035,6 +6058,10 @@ static void gen_command_recorders(gen *g)
         const decl *d = prog->events.items[i];
         if (!is_queued(prog, d)) continue;
         const char *name = type_cname(d);
+        if (d->is_command) {
+            sb_printf(o, "TIDE_HELPER void tide_local_send_%s(tide_local *local, tide_entity target, %s value);\n\n", name, name);
+            continue;
+        }
         sb_printf(o, "// Send: " STR_FMT ", to `target` or, with the null entity, to the world\n", STR_ARG(d->qualified));
         sb_printf(o, "TIDE_HELPER void tide_cmd_send_%s(%s *w, tide_entity target, %s value)\n{\n", name,
                   world_type(d->is_local), name);
@@ -6053,6 +6080,11 @@ static const char *dispatch_signature(const decl *event, const bool local)
     sb b = {0};
     sb_printf(&b, "static void %sdispatch_%s(%s *%s, tide_entity tide_target, const %s *tide_event)", world_prefix(local),
               type_cname(event), world_type(local), local ? "tide_l" : "tide_w", type_cname(event));
+    if (event->is_command) {
+        b.len--;
+        b.data[b.len] = '\0';
+        sb_put(&b, ", const tide_player_id *tide_sender)");
+    }
     return b.data;
 }
 
@@ -6352,7 +6384,8 @@ static void gen_apply(gen *g, const bool local)
         const bool handled = has_handlers(d, local);
         if (!is_queued(prog, d) || d->is_local != local || (!handled && !decl_has_text(d))) continue;
         sb_printf(o, "    case %d:", d->index);
-        if (handled) sb_printf(o, " %sdispatch_%s(w, c->entity, &c->data.event_%s);", p, type_cname(d), type_cname(d));
+        if (handled) sb_printf(o, " %sdispatch_%s(w, c->entity, &c->data.event_%s%s);", p, type_cname(d), type_cname(d),
+                              d->is_command ? ", &c->sender" : "");
         if (decl_has_text(d)) sb_printf(o, " tide_release_%s(&c->data.event_%s, %s);", type_cname(d), type_cname(d), world_where(local));
         sb_put(o, " break;\n");
     }
@@ -6465,6 +6498,22 @@ static void find_parallels(const stmt *s, gen *g)
     find_parallels(s->else_stmt, g);
 }
 
+static bool declared_in(const stmt *s, const stmt *local);
+
+static bool declared_in_expr(const expr *e, const stmt *local)
+{
+    if (!e) return false;
+    if (declared_in(e->block, local) || declared_in_expr(e->object, local) || declared_in_expr(e->lhs, local)
+        || declared_in_expr(e->rhs, local) || declared_in_expr(e->cond, local)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (declared_in_expr(e->args.items[i], local)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (declared_in_expr(e->inits.items[i].value, local)) return true;
+    }
+    return false;
+}
+
 static bool declared_in(const stmt *s, const stmt *local)
 {
     if (!s) return false;
@@ -6473,11 +6522,15 @@ static bool declared_in(const stmt *s, const stmt *local)
         if (declared_in(s->stmts.items[i], local)) return true;
     }
     for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (declared_in_expr(s->cases.items[i].labels.items[k], local)) return true;
+        }
         for (int k = 0; k < s->cases.items[i].body.count; k++) {
             if (declared_in(s->cases.items[i].body.items[k], local)) return true;
         }
     }
-    return declared_in(s->init, local) || declared_in(s->step, local) || declared_in(s->then_stmt, local)
+    return declared_in_expr(s->value, local) || declared_in_expr(s->target, local) || declared_in_expr(s->cond, local)
+        || declared_in(s->init, local) || declared_in(s->step, local) || declared_in(s->then_stmt, local)
         || declared_in(s->else_stmt, local);
 }
 
@@ -7243,6 +7296,7 @@ static bool view_copies(const param *p)
 // input or the devices, and archetype `a`'s entities have an Owner.
 static bool reads_owner(const gen *g, const decl *sys, const int a)
 {
+    if (sys->is_view || sys->is_local) return false;
     if (a < 0 || !arch_stores(g, a, g->prog->owner->index)) return false;
     for (int i = 0; i < sys->params.count; i++) {
         if (sys->params.items[i].type.kind == TY_INPUT || sys->params.items[i].type.kind == TY_RECORD) return true;
@@ -7485,6 +7539,9 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         switch (p->type.kind) {
+        case TY_PLAYER:
+            if (p->mode == PARAM_SENDER) sb_put(o, ", tide_sender");
+            break;
         case TY_SINGLETON:
             if (g->blending == sys && view_copies(p)) sb_printf(o, ", &tide_v%d", i);
             else sb_printf(o, ", &%s->%s", p->type.decl->is_local ? "tide_l" : "tide_w", type_cname(p->type.decl));
@@ -7505,8 +7562,11 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
             }
             break;
         case TY_RECORD:
-            // The devices the input sent: the owner's, or the server's.
-            if (reads_owner(g, sys, a)) {
+            // A view's live masked devices, or the devices the input sent:
+            // the owner's, or the server's.
+            if (sys->is_view) {
+                sb_put(o, ", &tide_ui->devices");
+            } else if (reads_owner(g, sys, a)) {
                 sb_put(o, ", &tide_input_of(tide_w, tide_owner.player, false)->tide_dev");
             } else {
                 sb_put(o, ", &tide_w->inputs[TIDE_SERVER_INPUT].tide_dev");
@@ -7536,7 +7596,36 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         if (event->handlers.items[i]->is_local == local) text |= touches_text(event->handlers.items[i]);
     }
     if (prog->uses_text && text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
-    sb_printf(o, "    const tide_location tide_loc = tide_entity_location(&%s->entities, tide_target);\n", world);
+    int candidate = -1;
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        bool admitted = false;
+        for (int i = 0; i < event->handlers.count; i++) {
+            const decl *h = event->handlers.items[i];
+            if (h->is_local == local && h->per_entity && handler_runs_for(prog, h, a)) admitted = true;
+        }
+        if (!admitted) continue;
+        if (candidate >= 0) { candidate = -1; break; }
+        candidate = a;
+    }
+    if (candidate < 0) {
+        sb_printf(o, "    const tide_location tide_loc = tide_entity_location(&%s->entities, tide_target);\n", world);
+    } else {
+        // A table's handles prove membership without reading the entity slots.
+        // Contiguous indices often predict the row; gaps, swaps and reused
+        // generations fall back to the authoritative lookup on any mismatch.
+        sb_put(o, "    tide_location tide_loc = {TIDE_ARCHETYPE_NONE, 0};\n");
+        sb_printf(o, "    const tide_table *const tide_guess = &%s->%s;\n", world, arch_name(g, candidate));
+        sb_put(o, "    if (tide_guess->count) {\n");
+        sb_printf(o, "        const tide_entity tide_first = *(const tide_entity *)tide_table_get(tide_guess, %s, 0, 0);\n",
+                  arch_columns(g, candidate));
+        sb_put(o, "        const uint32_t tide_row = tide_target.index - tide_first.index;\n");
+        sb_put(o, "        if (tide_row < tide_guess->count && tide_entity_equal(\n");
+        sb_printf(o, "                *(const tide_entity *)tide_table_get(tide_guess, %s, tide_row, 0), tide_target)) {\n",
+                  arch_columns(g, candidate));
+        sb_printf(o, "            tide_loc = (tide_location){%du, tide_row};\n        }\n    }\n", candidate);
+        sb_printf(o, "    if (tide_loc.archetype == TIDE_ARCHETYPE_NONE) tide_loc = tide_entity_location(&%s->entities, tide_target);\n",
+                  world);
+    }
     sb_put(o, "    if (!tide_entity_is_null(tide_target) && tide_loc.archetype == TIDE_ARCHETYPE_NONE) return; // Gone by its turn\n");
     for (int i = 0; i < event->handlers.count; i++) {
         const decl *h = event->handlers.items[i];
@@ -8393,11 +8482,12 @@ static void gen_sample(gen *g)
         line(g, o, "tide_self.tide_dev = *tide_dev;");
         line(g, o, "tide_keep_devices(&tide_self.tide_dev);");
     }
-    // Its local singletons
+    // Its sampled devices and local singletons
     for (int i = 0; i < input->params.count; i++) {
         const param *p = &input->params.items[i];
         const char *pname = local_cname(g, p->name);
-        line(g, o, "const %s *restrict %s = &tide_l->%s;", c_type(p->type), pname, type_cname(p->type.decl));
+        if (p->type.kind == TY_RECORD) line(g, o, "const tide_devices *restrict %s = tide_dev;", pname);
+        else line(g, o, "const %s *restrict %s = &tide_l->%s;", c_type(p->type), pname, type_cname(p->type.decl));
         line(g, o, "(void)%s;", pname);
     }
     g->in_input = true;
@@ -8649,8 +8739,9 @@ static uint64_t expr_cost(const expr *e)
 // How many times a loop's body runs, as far as it can be told: a `for` from
 // one number to another by a constant step counts them, and any other loop
 // counts as 8. Capped, as a system's cost per row is.
-static uint64_t loop_trips(const stmt *s)
+static uint64_t loop_trips(const stmt *s, bool *known)
 {
+    if (known) *known = false;
     if (s->kind != S_FOR || !s->init || !s->cond || !s->step) return 8u;
     const expr *from = s->init->kind == S_VAR ? s->init->value : NULL;
     const expr *c = s->cond;
@@ -8664,8 +8755,14 @@ static uint64_t loop_trips(const stmt *s)
     if (by <= 0) return 8u;
     const int64_t lo = (int32_t)(uint32_t)from->int_value;
     const int64_t hi = (int32_t)(uint32_t)c->rhs->int_value + (c->op == T_LE ? 1 : 0);
-    if (hi <= lo) return 1u;
-    const int64_t trips = (hi - lo + by - 1) / by;
+    const int64_t trips = hi > lo ? (hi - lo + by - 1) / by : 0;
+    // The old heuristic can guess for other forms; only this induction
+    // variable and a step that cannot wrap make its trip count known.
+    if (known && s->init->type.kind == TY_INT && !s->init->is_mut
+        && c->lhs->kind == E_NAME && c->lhs->bind == BIND_LOCAL && c->lhs->local == s->init
+        && step->target->kind == E_NAME && step->target->bind == BIND_LOCAL && step->target->local == s->init
+        && (!trips || lo + trips * by <= INT32_MAX)) *known = true;
+    if (!trips) return 1u;
     return trips > 1000000 ? 1000000u : (uint64_t)trips;
 }
 
@@ -8678,9 +8775,54 @@ static uint64_t stmt_cost(const stmt *s)
         for (int k = 0; k < s->cases.items[i].body.count; k++) cost += stmt_cost(s->cases.items[i].body.items[k]);
     }
     const bool loop = s->kind == S_WHILE || s->kind == S_FOR || s->kind == S_FOREACH || s->kind == S_PARALLEL;
-    const uint64_t times = loop ? loop_trips(s) : 1u;
+    const uint64_t times = loop ? loop_trips(s, NULL) : 1u;
     cost += stmt_cost(s->init) + stmt_cost(s->else_stmt) + times * (stmt_cost(s->then_stmt) + stmt_cost(s->step));
     return cost > 1000000u ? 1000000u : cost;
+}
+
+// Eight iterations is a guess for an unknown loop, not an upper bound. A
+// parallel step with one can cost much more (all pairs, for example), so its
+// system must use the unknown-work fallback rather than stay on one thread.
+static bool loop_work_known(const stmt *s);
+
+static bool expr_loop_work_known(const expr *e)
+{
+    if (!e) return true;
+    if (!loop_work_known(e->block) || !expr_loop_work_known(e->object) || !expr_loop_work_known(e->lhs)
+        || !expr_loop_work_known(e->rhs) || !expr_loop_work_known(e->cond)) return false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (!expr_loop_work_known(e->args.items[i])) return false;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (!expr_loop_work_known(e->inits.items[i].value)) return false;
+    }
+    return true;
+}
+
+static bool loop_work_known(const stmt *s)
+{
+    if (!s) return true;
+    if (s->kind == S_FOR) {
+        bool known;
+        loop_trips(s, &known);
+        if (!known) return false;
+    } else if (s->kind == S_WHILE || s->kind == S_FOREACH || s->kind == S_PARALLEL) {
+        return false;
+    }
+    for (int i = 0; i < s->stmts.count; i++) {
+        if (!loop_work_known(s->stmts.items[i])) return false;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) {
+            if (!expr_loop_work_known(s->cases.items[i].labels.items[k])) return false;
+        }
+        for (int k = 0; k < s->cases.items[i].body.count; k++) {
+            if (!loop_work_known(s->cases.items[i].body.items[k])) return false;
+        }
+    }
+    return expr_loop_work_known(s->value) && expr_loop_work_known(s->target) && expr_loop_work_known(s->cond)
+        && loop_work_known(s->init) && loop_work_known(s->step) && loop_work_known(s->then_stmt)
+        && loop_work_known(s->else_stmt);
 }
 
 // The parallel loops in `s`, in order.
@@ -8721,6 +8863,7 @@ static bool gen_singleton_path(sb *o, const expr *e)
 // singleton's grid or list, which the world has: false for a component's.
 static bool gen_parallel_work(sb *o, const stmt *s)
 {
+    if (!loop_work_known(s->then_stmt)) return false;
     sb path = {0};
     if (!gen_singleton_path(&path, s->value)) return false;
     const uint64_t cost = 4u * stmt_cost(s->then_stmt);
@@ -9294,18 +9437,24 @@ static void gen_api(gen *g)
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
     sb_printf(o, "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n%s", use_match);
+    // A host that shows where ticks' time goes gave its jobs a profile
+    // (tide/profile.h): the systems' part of the tick, and what follows them
+    sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
+              "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (prog->systems.count) {
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
-        sb_put(o, "    (void)jobs;\n    (void)tide_prepare;\n");
+        sb_put(o, "    (void)tide_prepare;\n");
     }
+    sb_put(o, "    const uint64_t tide_ran = tide_profile_now(tide_p);\n");
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
-    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n}\n\n");
+    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");
+    sb_put(o, "    if (tide_p) tide_profile_tick(tide_p, tide_began, tide_ran);\n}\n\n");
 
     // A match that's out of scenes ends when Main is local. A match Main comes
     // back instead (see tide_apply_commands), and a match that can't hold a
@@ -9353,8 +9502,17 @@ static void gen_api(gen *g)
     // The local fields of entities that are gone go first: with no verified
     // world given, the one views draw is all there is
     if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
+    // A host that shows where frames' time goes gave the GUI a profile
+    // (tide/profile.h): each view says how long it took
+    if (prog->views.count) {
+        sb_put(o, "    tide_profile *tide_p = gui->profile;\n    uint64_t tide_at = tide_profile_now(tide_p);\n");
+    }
     for (int i = 0; i < prog->views.count; i++) {
-        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(prog->views.items[i]));
+        const decl *view = prog->views.items[i];
+        sb_printf(o, "    tide_run_view_%s(w, previous, alpha, local, draw, gui);\n", decl_cname(view));
+        sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
+        gen_c_literal(o, view->qualified, false);
+        sb_put(o, ", tide_at);\n");
     }
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
     sb_put(o, "    tide_local_apply_commands(local);\n");
@@ -9515,7 +9673,22 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     // Bits it can take, with whether it changed and, for a float, which way it went
     const uint32_t most = (varint ? (width == 64 ? 80u : 40u) : (uint32_t)width) + (delta ? 1u : 0u)
                         + (delta && t.kind == TY_FLOAT ? 1u : 0u);
-    if (t.kind == TY_BOOL) {
+    if (t.kind == TY_STRING) {
+        if (mode == BITS_WRITE) {
+            line(g, o, "{ const tide_str text = tide_text_view(in->%s);", at);
+            line(g, o, "  if (text.bytes < 0 || (uint32_t)text.bytes > TIDE_COMMAND_BYTES) return 0;");
+            line(g, o, "  tide_bits_put(&b, (uint32_t)text.bytes, 16);");
+            line(g, o, "  for (int32_t i = 0; i < text.bytes; i++) tide_bits_put(&b, (uint8_t)text.ptr[i], 8); }");
+        } else {
+            line(g, o, "{ const uint32_t bytes = tide_bits_get(&b, 16);");
+            line(g, o, "  if (b.overflow || bytes > TIDE_COMMAND_BYTES || bytes > (b.capacity * 8u - b.bit) / 8u) return false;");
+            line(g, o, "  char text[TIDE_COMMAND_BYTES + 1u];");
+            line(g, o, "  for (uint32_t i = 0; i < bytes; i++) text[i] = (char)tide_bits_get(&b, 8);");
+            line(g, o, "  text[bytes] = 0;");
+            line(g, o, "  if (!tide_command_utf8((const uint8_t *)text, bytes)) return false;");
+            line(g, o, "  in->%s = tide_text_temp((tide_str){text, (int32_t)bytes, tide_utf8_chars(text, (int32_t)bytes)}); }", at);
+        }
+    } else if (t.kind == TY_BOOL) {
         if (mode == BITS_WRITE) line(g, o, "tide_bits_put_bool(&b, in->%s);", at);
         else if (mode == BITS_READ) line(g, o, "in->%s = tide_bits_get_bool(&b);", at);
         else if (mode == BITS_WRITE_DELTA) line(g, o, "tide_bits_put_bool(&b, in->%s != base->%s);", at, at);
@@ -9738,6 +9911,13 @@ static void gen_world_bytes(gen *g, const bool local)
     if (world_heap(prog, local)) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
     sb_put(o, "    tide_reader bytes = {data, size, sizeof *w, false};\n");
     sb_put(o, "    bool ok = tide_entities_unpack(&w->entities, &bytes);\n");
+    if (local && prog->command_types.count) {
+        sb_put(o, "    ok = ok && w->tide_outgoing_from < TIDE_COMMAND_PENDING && w->tide_outgoing_count <= TIDE_COMMAND_PENDING;\n"
+                  "    for (uint32_t i = 0; ok && i < w->tide_outgoing_count; i++) {\n"
+                  "        const uint32_t at = (w->tide_outgoing_from + i) % TIDE_COMMAND_PENDING;\n"
+                  "        ok = tide_game_check_command(w->tide_outgoing[at], w->tide_outgoing_sizes[at]);\n"
+                  "    }\n");
+    }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    ok = ok && tide_table_unpack(&w->%s, %s, &bytes);\n", arch_name(g, a), arch_columns(g, a));
     }
@@ -9924,6 +10104,128 @@ static void gen_world_copy(gen *g)
 // then a machine joining one can start it too, as sessions do to be sent only
 // what it lacks. Starting runs its scene's handlers and what they send, no
 // systems, and defaults are constants.
+// Commands keep their wire bytes outside the match, and decode them only at
+// the authenticated session boundary. Handlers use the ordinary event queue.
+static void gen_commands_api(gen *g)
+{
+    const program *prog = g->prog;
+    if (!prog->command_types.count) return;
+    sb *o = &g->c;
+    const bool text = prog->uses_heap || prog->uses_text;
+    sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size);\n\n");
+    sb_put(o, "// Command strings must be bounded, well-formed UTF-8, without embedded NULs.\n"
+              "TIDE_HELPER bool tide_command_utf8(const uint8_t *s, uint32_t size)\n{\n"
+              "    for (uint32_t i = 0; i < size;) {\n"
+              "        const uint32_t first = s[i++];\n"
+              "        if (first == 0) return false;\n"
+              "        if (first < 128u) continue;\n"
+              "        uint32_t count, value, least;\n"
+              "        if (first >= 0xC2u && first <= 0xDFu) { count = 1; value = first & 31u; least = 128u; }\n"
+              "        else if (first >= 0xE0u && first <= 0xEFu) { count = 2; value = first & 15u; least = 2048u; }\n"
+              "        else if (first >= 0xF0u && first <= 0xF4u) { count = 3; value = first & 7u; least = 65536u; }\n"
+              "        else return false;\n"
+              "        if (count > size - i) return false;\n"
+              "        while (count--) { const uint32_t next = s[i++]; if ((next & 192u) != 128u) return false; value = (value << 6u) | (next & 63u); }\n"
+              "        if (value < least || value > 0x10FFFFu || (value >= 0xD800u && value <= 0xDFFFu)) return false;\n"
+              "    }\n    return true;\n}\n\n");
+    for (int k = 0; k < prog->command_types.count; k++) {
+        const decl *d = prog->command_types.items[k];
+        const char *name = type_cname(d);
+        uint32_t ignored = 0;
+        sb_printf(o, "static uint32_t tide_write_command_%s(tide_entity target, %s value, uint8_t *out, uint32_t capacity)\n{\n"
+                     "    const %s *in = &value;\n    (void)in;\n    tide_bits b = {out, capacity, 0, false};\n"
+                     "    tide_bits_put(&b, %du, 16);\n    tide_bits_put(&b, target.index, 32);\n"
+                     "    tide_bits_put(&b, target.generation, 32);\n", name, name, name, d->index);
+        g->indent = 1;
+        for (int i = 0; i < d->fields.count; i++) gen_bits(g, field_cname(&d->fields.items[i]), d->fields.items[i].type, BITS_WRITE, &ignored);
+        sb_put(o, "    return tide_bits_end(&b);\n}\n\n");
+        sb_printf(o, "static bool tide_read_command_%s(const uint8_t *data, uint32_t size, tide_entity *target, %s *in)\n{\n"
+                     "    if (!data || size < 10u || size > TIDE_COMMAND_BYTES) return false;\n"
+                     "    *in = (%s){0};\n    (void)in;\n    tide_bits b = {(uint8_t *)data, size, 0, false};\n"
+                     "    if (tide_bits_get(&b, 16) != %du) return false;\n"
+                     "    target->index = tide_bits_get(&b, 32);\n    target->generation = tide_bits_get(&b, 32);\n",
+                  name, name, name, d->index);
+        for (int i = 0; i < d->fields.count; i++) gen_bits(g, field_cname(&d->fields.items[i]), d->fields.items[i].type, BITS_READ, &ignored);
+        sb_put(o, "    return !b.overflow && (b.bit + 7u) / 8u == size\n"
+                  "        && (!(b.bit & 7u) || (data[size - 1u] >> (b.bit & 7u)) == 0);\n}\n\n");
+        sb_printf(o, "TIDE_HELPER void tide_local_send_%s(tide_local *local, tide_entity target, %s value)\n{\n", name, name);
+        const decl *session = prog->session;
+        sb_printf(o, "    if (local->%s.%s != TIDE_SESSION_CONNECTED) return;\n",
+                  type_cname(session), field_cname(&session->fields.items[0]));
+        sb_printf(o, "    if (local->tide_outgoing_count >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
+        sb_put(o, "    const uint32_t at = (local->tide_outgoing_from + local->tide_outgoing_count) % TIDE_COMMAND_PENDING;\n");
+        sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, local->tide_outgoing[at], TIDE_COMMAND_BYTES);\n", name);
+        sb_printf(o, "    if (!size || !tide_game_check_command(local->tide_outgoing[at], size)) { fputs(\"tide: command " STR_FMT " exceeds TIDE_COMMAND_BYTES or contains invalid text\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
+        sb_put(o, "    local->tide_outgoing_sizes[at] = size;\n    local->tide_outgoing_count++;\n}\n\n");
+    }
+    g->indent = 0;
+    sb_put(o, "uint32_t tide_local_command(const tide_local *local, uint8_t *out, uint32_t capacity)\n{\n"
+              "    if (!local->tide_outgoing_count) return 0;\n"
+              "    const uint32_t size = local->tide_outgoing_sizes[local->tide_outgoing_from];\n"
+              "    if (!out || capacity < size) return 0;\n"
+              "    memcpy(out, local->tide_outgoing[local->tide_outgoing_from], size);\n"
+              "    return size;\n}\n\n"
+              "void tide_local_command_sent(tide_local *local)\n{\n"
+              "    if (!local->tide_outgoing_count) return;\n"
+              "    local->tide_outgoing_sizes[local->tide_outgoing_from] = 0;\n"
+              "    memset(local->tide_outgoing[local->tide_outgoing_from], 0, TIDE_COMMAND_BYTES);\n"
+              "    local->tide_outgoing_from = (local->tide_outgoing_from + 1u) % TIDE_COMMAND_PENDING;\n"
+              "    if (--local->tide_outgoing_count == 0) local->tide_outgoing_from = 0;\n}\n\n");
+    sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size)\n{\n"
+              "    if (!data || size < 10u || size > TIDE_COMMAND_BYTES) return false;\n");
+    if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+    sb_put(o, "    bool ok = false;\n    tide_entity target;\n    switch ((uint32_t)data[0] | ((uint32_t)data[1] << 8u)) {\n");
+    for (int k = 0; k < prog->command_types.count; k++) {
+        const decl *d = prog->command_types.items[k];
+        sb_printf(o, "    case %d: { %s value; ok = tide_read_command_%s(data, size, &target, &value); break; }\n", d->index, type_cname(d), type_cname(d));
+    }
+    sb_put(o, "    default: break;\n    }\n");
+    if (text) sb_put(o, "    tide_scratch_reset(mark);\n");
+    sb_put(o, "    return ok;\n}\n\n"
+              "static uint32_t tide_game_command_sequence(const void *world, tide_player_id player)\n{\n"
+              "    const tide_world *w = world;\n    switch (tide_player_index(player)) {\n");
+    const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
+    for (uint32_t i = 0; i < players; i++) sb_printf(o, "    case %u: return (uint32_t)w->tide_command_state.seq%u;\n", i, i);
+    sb_put(o, "    default: return 0;\n    }\n}\n\n"
+              "static bool tide_game_command(void *world, tide_player_id sender, uint32_t sequence, const uint8_t *data, uint32_t size)\n{\n"
+              "    tide_world *w = world;\n"
+              "    if (tide_player_index(sender) < 0 || (uint32_t)tide_player_index(sender) >= TIDE_GAME_PLAYERS) return false;\n"
+              "    const uint32_t was = tide_game_command_sequence(w, sender);\n"
+              "    if (was == UINT32_MAX || sequence != was + 1u || !tide_game_check_command(data, size)) return false;\n");
+    if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
+    if (prog->uses_heap) sb_put(o, "    tide_text_use(&w->heap, NULL);\n");
+    sb_put(o, "    tide_entity target;\n    bool ok = false;\n"
+              "    switch ((uint32_t)data[0] | ((uint32_t)data[1] << 8u)) {\n");
+    for (int k = 0; k < prog->command_types.count; k++) {
+        const decl *d = prog->command_types.items[k];
+        const char *name = type_cname(d);
+        sb_printf(o, "    case %d: {\n        %s value;\n        if (!tide_read_command_%s(data, size, &target, &value)) break;\n"
+                     "        const %s defaults = ", d->index, name, name, name);
+        gen_value(g, o, d, NULL, 0);
+        sb_put(o, ";\n        (void)defaults;\n");
+        g->indent = 2;
+        for (int i = 0; i < d->fields.count; i++) {
+            const field *f = &d->fields.items[i];
+            char in[256], def[256];
+            snprintf(in, sizeof in, "value.%s", field_cname(f));
+            snprintf(def, sizeof def, "defaults.%s", field_cname(f));
+            gen_repair_value(g, in, def, f->type);
+        }
+        gen_bounds(g, d, "value.");
+        sb_printf(o, "        tide_command *c = tide_cmd_push(w, TIDE_CMD_EVENT, %d, target, TIDE_COMMAND_SIZE(event_%s));\n"
+                     "        c->sender = sender;\n        c->data.event_%s = value;\n", d->index, name, name);
+        if (decl_has_text(d)) sb_printf(o, "        tide_own_%s(&c->data.event_%s, TIDE_IN_MATCH);\n", name, name);
+        sb_put(o, "        ok = true;\n        break;\n    }\n");
+    }
+    g->indent = 0;
+    sb_put(o, "    default: break;\n    }\n    if (ok) {\n        switch (tide_player_index(sender)) {\n");
+    for (uint32_t i = 0; i < players; i++) sb_printf(o, "        case %u: memcpy(&w->tide_command_state.seq%u, &sequence, sizeof sequence); break;\n", i, i);
+    sb_put(o, "        default: break;\n        }\n    }\n");
+    if (prog->uses_heap) sb_put(o, "    tide_heap_flush(&w->heap);\n");
+    if (text) sb_put(o, "    tide_scratch_reset(mark);\n");
+    sb_put(o, "    return ok;\n}\n\n");
+}
+
 static bool start_is_pure(const program *prog)
 {
     for (int i = 0; i < prog->start_scenes.count; i++) {
@@ -10087,6 +10389,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "#ifdef __wasm__\n__attribute__((export_name(\"tide_uses_io\")))\n#endif\nbool tide_uses_io(void)\n{\n");
     sb_printf(o, "    return %s;\n}\n\n", program_uses_io(prog) ? "true" : "false");
     gen_world_copy(g);
+    gen_commands_api(g);
 
     sb_put(o, "bool tide_local_take_request(tide_local *local, tide_session_request *request, tide_start *start)\n{\n");
     sb_put(o, "    if (local->tide_request.kind != TIDE_REQUEST_NONE) {\n");
@@ -10122,6 +10425,9 @@ static void gen_game_api(gen *g)
     sb_printf(o, "void tide_local_connected(tide_local *local)\n{\n    tide_cmd_send_%s(local, (tide_entity){0}, (%s){0});\n}\n\n",
               connected, connected);
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message)\n{\n");
+    if (prog->command_types.count) sb_put(o, "    local->tide_outgoing_from = local->tide_outgoing_count = 0;\n"
+                                           "    memset(local->tide_outgoing_sizes, 0, sizeof local->tide_outgoing_sizes);\n"
+                                           "    memset(local->tide_outgoing, 0, sizeof local->tide_outgoing);\n");
     sb_put(o, "    size_t n = message ? strlen(message) : 0u;\n");
     sb_put(o, "    if (n >= sizeof local->tide_message) n = sizeof local->tide_message - 1u;\n");
     sb_put(o, "    memcpy(local->tide_message, message ? message : \"\", n);\n");
@@ -10222,10 +10528,15 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .ended = tide_game_ended,\n");
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");
     sb_put(o, "    .max_players = TIDE_GAME_PLAYERS,\n"); // In the header too: the world's inputs are as many
+    if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"
+                                           "    .command_sequence = tide_game_command_sequence,\n"
+                                           "    .command = tide_game_command,\n");
     // Its settings: here rather than in the header, so they don't change the game's hash
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
+    if (prog->stats) sb_put(o, "    .stats = true,\n");
+    if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
         gen_c_literal(o, prog->title->text, false);
@@ -10777,6 +11088,28 @@ bool codegen(program *prog, const codegen_options *opts)
     }
 
     bind_views(prog);
+    if (prog->command_types.count) {
+        // Internal singleton, outside name lookup: normal snapshot and layout
+        // machinery preserves delivery IDs through rollback and hot reload.
+        decl *state = NEW(decl);
+        state->kind = DECL_SINGLETON;
+        state->name = str_from("tide_command_state");
+        state->qualified = state->name;
+        state->gen_name = "tide_command_state";
+        state->builtin = true;
+        state->index = prog->singletons.count;
+        const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
+        for (uint32_t i = 0; i < players; i++) {
+            field f = {0};
+            sb name = {0};
+            sb_printf(&name, "seq%u", i);
+            f.name = str_from(name.data);
+            f.type = (type){TY_INT, NULL};
+            f.hidden = true;
+            vec_push(state->fields, f);
+        }
+        vec_push(prog->singletons, state);
+    }
     name_program(&g);
     collect_tasks(&g);
     gen_header(&g);
