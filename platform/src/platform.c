@@ -388,6 +388,7 @@ static mesh_vertex *mesh_vertices;
 static uint32_t mesh_vertex_count, mesh_vertex_capacity;
 static draw_step *steps;
 static uint32_t step_count, step_capacity;
+static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
 
 // What's being drawn into: the window, or tide_platform_read_pixels' own
 // pixels, as many as the window's logical ones.
@@ -1166,7 +1167,10 @@ static void clip(const draw_step *s)
 // the frame's camera, textures and meshes as they are.
 static void draw_list(const tide_draw_list *list, const tide_gpu_id target, const bool over)
 {
-    if (!gpu_ready()) return; // Between a device that was lost and the next
+    if (!gpu_ready()) { // Between a device that was lost and the next
+        if (!over) draw_calls = 0;
+        return;
+    }
     offscreen = target != 0;
     tide_font_frame();
     shape_count = 0;
@@ -1276,6 +1280,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     }
 
     gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
+    uint32_t calls = 0; // The steps that draw, a draw call each
     for (uint32_t i = 0; i < step_count; i++) {
         const draw_step *s = &steps[i];
         switch (s->kind) {
@@ -1285,6 +1290,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             gpu->vertices(0, gpu_state.corners, 0);
             gpu->vertices(1, gpu_state.shape_instances, (size_t)s->first * sizeof(shape));
             gpu->draw(0, 6, s->count);
+            calls++;
             break;
         case STEP_CLEAR: {
             // A triangle over the target, which the clip cuts, and which sets depth back too
@@ -1293,6 +1299,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             gpu->use(gpu_state.clear);
             gpu->uniforms(color, sizeof color);
             gpu->draw(0, 3, 1);
+            calls++;
             break;
         }
         case STEP_MESH:
@@ -1302,12 +1309,15 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             sample_step_texture(list, s);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
+            calls++;
             break;
         case STEP_MESH_3D:
             draw_mesh_3d(list, s);
+            calls++;
             break;
         case STEP_SHADED:
             draw_shaded(list, s);
+            calls++;
             break;
         case STEP_CLIP:
         case STEP_NO_CLIP:
@@ -1320,12 +1330,14 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             gpu->sample(0, gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
+            calls++;
             break;
         }
     }
     gpu->end();
     offscreen = false;
     if (!over) {
+        draw_calls = calls;
         // The first frame through shaders after the list forgot (a hot reload): what's left of the last build's goes
         if (shaded && list->epoch != shader_epoch) {
             forget_pipelines();
@@ -1367,6 +1379,11 @@ float tide_platform_measure_text(const char *text, const float size)
 const char *tide_platform_renderer(void)
 {
     return gpu ? gpu->name : "";
+}
+
+uint32_t tide_platform_draw_calls(void)
+{
+    return draw_calls;
 }
 
 void tide_platform_draw_overlay(const char *text)

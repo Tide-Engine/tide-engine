@@ -19,7 +19,7 @@ They're off until the game, or whoever starts it, asks for them:
 
 With either, **F7** shows the profiler, and F7 again hides it. Nothing is measured while it's hidden, so having debug views on costs a game nothing until the key is pressed. The game sees the key too.
 
-Under `tide run`, changing the setting takes effect at the next reload.
+Under `tide run`, changing the setting takes effect at the next reload. A setting is part of the build, so `tide build` keeps it: take `debugViews` out before players get the game, unless they may see the profiler too.
 
 ## The profiler
 
@@ -68,6 +68,6 @@ Frame  60 fps, longest 21.4 ms   16.67 ms     Tick  180 a second          0.93 m
 - A view that didn't run, like one that reads the match while there's none, has no row.
 - When `Ticks` is most of a frame and many of them run again, clients are paying for prediction: see [Input delay](../multiplayer/matches.md#input-delay).
 
-`tide run --stats` is separate, and always on once asked for: a few numbers in a corner, with the three systems that took longest in the last tick (see [The tide command](cli.md#run-and-build)).
+The [stats](cli.md#stats) are separate, and always shown once asked for: a few numbers in a corner, with the three systems that took longest in the last tick.
 
 A C host shows the profiler itself with `tide/profiler.h` (see [C hosts](../c/hosts.md#the-standard-host)).

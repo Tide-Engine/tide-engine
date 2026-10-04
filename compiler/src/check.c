@@ -6779,6 +6779,14 @@ static const expr *text_literal(const expr *e)
     return k && k->index == 2 && k->return_type.kind == TY_STRING ? text_literal(k->value) : NULL;
 }
 
+// The true or false a constant expression is, through the constants it names:
+// the true in hostMigration = MIGRATES. NULL for one made some other way.
+static const expr *bool_literal(const expr *e)
+{
+    while (e->bind == BIND_CONST && e->constant->index == 2) e = e->constant->value;
+    return e->kind == E_BOOL ? e : NULL;
+}
+
 // An app ID both Android (a Java package) and iOS (a bundle ID) take: two
 // parts or more, of ASCII letters and digits, each starting with a letter.
 static bool valid_app_id(const str id)
@@ -6895,14 +6903,16 @@ static void check_settings(checker *c)
                     prog->max_players = (uint32_t)players;
                 }
             } else if (str_eq_c(f->name, "hostMigration")) {
-                const expr *known = value;
-                while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
-                if (known->kind != E_BOOL) diag_error(value->at, "hostMigration is true or false, or a constant that is");
+                const expr *known = bool_literal(value);
+                if (!known) diag_error(value->at, "hostMigration is true or false, or a constant that is");
                 else prog->host_migration = known->bool_value;
+            } else if (str_eq_c(f->name, "stats")) {
+                const expr *known = bool_literal(value);
+                if (!known) diag_error(value->at, "stats is true or false, or a constant that is");
+                else prog->stats = known->bool_value;
             } else if (str_eq_c(f->name, "debugViews")) {
-                const expr *known = value;
-                while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
-                if (known->kind != E_BOOL) diag_error(value->at, "debugViews is true or false, or a constant that is");
+                const expr *known = bool_literal(value);
+                if (!known) diag_error(value->at, "debugViews is true or false, or a constant that is");
                 else prog->debug_views = known->bool_value;
             } else if (str_eq_c(f->name, "prediction")) {
                 int64_t member;
