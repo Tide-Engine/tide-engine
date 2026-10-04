@@ -26,6 +26,8 @@ tide_e2e_test(maps)
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")
+tide_e2e_test(unused_locals WARNINGS "local 'fwd' is never used" "local 'spark' is never used"
+    "local 'bumped' is never used" "local 'total' is never used") # Locals nothing reads: warned about, and run as written
 tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
@@ -108,6 +110,20 @@ foreach(source IN LISTS TIDE_ERROR_TESTS)
             "-DSOURCE=${source}"
             "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/errors"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_error.cmake")
+endforeach()
+
+# Warning tests: each warnings/<name>.tide must compile, with as many warnings
+# as its first line says, `// warnings: <count>`, and each text on its
+# `// expect: <text>` lines somewhere in what tidec says: warnings and notes.
+file(GLOB TIDE_WARNING_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/warnings/*.tide")
+foreach(source IN LISTS TIDE_WARNING_TESTS)
+    get_filename_component(name "${source}" NAME_WE)
+    add_test(NAME tidec_warning_${name}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTIDEC=${TIDEC_PATH}"
+            "-DSOURCE=${source}"
+            "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/warnings"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_warnings.cmake")
 endforeach()
 
 # Scale test: a big game of many namespaces, made up at test time, which tidec

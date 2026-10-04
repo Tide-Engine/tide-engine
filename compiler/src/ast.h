@@ -661,6 +661,10 @@ struct stmt {
     // S_VAR
     bool is_mut;
     bool loop_var; // Declared by a for: only its step changes it, unless it's mut
+    bool read;     // Something reads it: its name is somewhere other than where an assignment writes
+    bool assigned; // An assignment writes it, after its declaration
+    bool unused;   // Nothing reads it (a local a statement declares): the checker warns
+    int errors_before; // The errors reported before it was declared: more by its scope's end hide uses
     str type_name; // Empty for `var`. With its namespace if it's qualified.
     str name;
     type type;
@@ -801,13 +805,16 @@ typedef enum fix_kind {
     FIX_CREATE_COMPONENT, // An unknown type where a component fits: declare one
     FIX_USE_THIS,   // An Entity or LocalEntity parameter: remove it, and name the entity `this`
     FIX_UNWRAP,     // A failable call's or a T?'s value that nothing handles: `!` after it, or `try` before it
+    FIX_UNUSED_LOCAL, // A local that's never read, with nothing to offer: it's assigned later, or a for declares it
+    FIX_REMOVE_LOCAL, // ...whose value does nothing: remove its declaration
+    FIX_KEEP_CALL,    // ...whose value is a call that does something: keep the call, as a statement of its own
 } fix_kind;
 
 typedef struct fix {
     fix_kind kind;
     loc at; // Where the diagnostic points
     const param *param;
-    const stmt *local;   // FIX_MUT_LOCAL
+    const stmt *local;   // FIX_MUT_LOCAL, and the unused local's
     const decl *method;  // FIX_MUT_METHOD; FIX_UNWRAP: the function `try` would pass the error on from, if it fits
     const expr *call;    // FIX_CREATE_FUNCTION; FIX_UNWRAP: the value to unwrap
     str name;            // FIX_CREATE_STRUCT and FIX_CREATE_COMPONENT

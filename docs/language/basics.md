@@ -58,6 +58,18 @@ mut float scale = 1;             // mutable, explicit type
 
 A local needs a value when it's declared, and can't reuse the name of another local or parameter in scope.
 
+A local that's never read is a warning. It's usually a value worked out and then forgotten:
+
+```csharp
+var move = Math.Normalize(float3(input.horizontal, 0, input.vertical));
+var fwd = Math.Mul(player.rotation, move);   // Warning: local 'fwd' is never used
+player.position += move * 5 * time.dt;       // ...this meant fwd
+```
+
+A local that's only ever assigned counts as never read. The warning says what to do: use the local or remove it, and when its value is a call that does something, like `var enemy = Spawn(Enemy);`, keep the call as a statement, `Spawn(Enemy);`. The editors offer both as quick fixes.
+
+The names a loop needs don't count: `foreach (var touch in touches) count += 1;` is fine without reading `touch`.
+
 ## Constants
 
 `const` declares a value that code reads by name. Constants go at the top level of a file:

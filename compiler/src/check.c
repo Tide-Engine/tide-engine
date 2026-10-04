@@ -28,6 +28,8 @@ typedef struct checker {
     int branch_depth;         // Inside a side of ?:, which may not run.
     VEC(stmt *) locals;       // S_VAR statements currently in scope.
     VEC(int) scope_marks;
+    const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
+    VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
@@ -366,9 +368,21 @@ static void push_scope(checker *c)
     vec_push(c->scope_marks, c->locals.count);
 }
 
+// A local that a statement declared and nothing read by the end of its scope
+// is noted, for a warning once every body is checked (warn_unused_locals). A
+// foreach's or a parallel loop's variable, a name after `is` and a Sort's two
+// elements aren't: their code needs a name there, used or not.
 static void pop_scope(checker *c)
 {
-    c->locals.count = c->scope_marks.items[--c->scope_marks.count];
+    const int kept = c->scope_marks.items[--c->scope_marks.count];
+    for (int i = kept; i < c->locals.count; i++) {
+        stmt *s = c->locals.items[i];
+        if (s->kind != S_VAR || !s->value || s->read || s->unused) continue;
+        if (s->type.kind == TY_ERROR || diag_error_count() != s->errors_before) continue; // Errors hide uses
+        s->unused = true;
+        vec_push(c->unused, s);
+    }
+    c->locals.count = kept;
 }
 
 static stmt *find_local(const checker *c, const str name)
@@ -3487,6 +3501,8 @@ static type check_name(checker *c, expr *e)
     if (local) {
         e->bind = BIND_LOCAL;
         e->local = local;
+        if (e == c->write_root) local->assigned = true; // `count += 1` alone never uses count
+        else local->read = true;
         return local->type;
     }
     param *p = find_param(c, e->name);
@@ -5163,7 +5179,13 @@ static void check_parallel(checker *c, stmt *s)
 
 static void check_assign(checker *c, const stmt *s)
 {
+    // What an assignment writes through isn't read by it: the x of `x = 1`, `x.y += 2` and `x[i]++`
+    const expr *written = s->target;
+    while (written->kind == E_MEMBER || written->kind == E_INDEX) written = written->object;
+    const expr *outer_root = c->write_root;
+    c->write_root = written->kind == E_NAME ? written : NULL;
     const type target = check_expr_any(c, s->target); // A T? local, or one that holds a failable call's result
+    c->write_root = outer_root;
     const type value = check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
     // world.Get<Health>(e).value = 5: a copy of the entity's component
@@ -5529,6 +5551,7 @@ static bool always_returns(const stmt *s)
 
 static void check_var(checker *c, stmt *s)
 {
+    s->errors_before = diag_error_count();
     // A typed local's value is checked once its type is known: `default`, a
     // list and `null` take it, and a T? takes a value or nothing.
     type value = T_ERR;
@@ -5658,6 +5681,26 @@ static type local_type(checker *c, stmt *s)
     }
     decl *d = find_type(c, s->type_name, s->type_at);
     return d ? decl_type(d) : T_ERR;
+}
+
+// Whether a checked expression can be a statement of its own: a call that's
+// there for what it does, with `!` after or `try` before the ones that fail.
+static bool stands_alone(const expr *e)
+{
+    const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
+    const builtin_call call = called->call;
+    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_DRAW))
+        || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
+        || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
+        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
+        || call == CALL_SNAP
+        || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
+        || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
+        || call == CALL_GRID
+        || (call == CALL_WORLD && str_eq_c(called->name, "Set"))
+        || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
+        || e->kind == E_TRY // Passes an error on, even from a variable
+        || called->kind == E_AWAIT;
 }
 
 static void check_stmt(checker *c, stmt *s)
@@ -5816,19 +5859,7 @@ static void check_stmt(checker *c, stmt *s)
         // `Open()!` and `try Open()` are statements when what they unwrap is a call.
         const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
         const builtin_call call = called->call;
-        const bool effect = (called->kind == E_METHOD
-                             && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_DRAW))
-                         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
-                         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
-                         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
-                         || call == CALL_SNAP
-                         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
-                         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
-                         || call == CALL_GRID
-                         || (call == CALL_WORLD && str_eq_c(called->name, "Set"))
-                         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
-                         || e->kind == E_TRY // Passes an error on, even from a variable
-                         || called->kind == E_AWAIT;
+        const bool effect = stands_alone(e);
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
         // A call that can fail, whose error nothing looks at.
         if (e->type.kind == TY_FAILABLE && effect) {
@@ -7417,6 +7448,108 @@ static void warn_unused_params(checker *c, const decl *sys)
     }
 }
 
+// Whether a call does something besides giving its value: it spawns, sends,
+// draws, waits, changes what it's called on or passed, or calls C. The calls
+// that draw or call C through others are known once every body is checked.
+static bool call_acts(const expr *e)
+{
+    if (e->kind == E_AWAIT || e->kind == E_TRY) return true; // `try` passes an error on
+    if (e->kind != E_CALL && e->kind != E_METHOD) return false;
+    switch (e->call) {
+    case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
+    case CALL_REMOVE: case CALL_DESTROY: case CALL_DRAW: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
+    case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID:
+        return true;
+    case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
+    case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
+    case CALL_WORLD: return str_eq_c(e->name, "Set");
+    case CALL_FUNCTION:
+    case CALL_METHOD: {
+        const decl *m = e->method;
+        if (!m) return false;
+        if (m->is_extern || m->calls_c || m->draws || m->is_async || m->is_mut_method || m->takes_action) return true;
+        for (int i = 0; i < m->params.count; i++) {
+            if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+// The first call in a checked expression that does something, or NULL.
+static const expr *acting_call(const expr *e)
+{
+    if (!e) return NULL;
+    if (e->kind == E_AWAIT || e->kind == E_TRY) return e; // With the call it waits for, or whose error it passes on
+    const expr *found = acting_call(e->object);
+    if (!found) found = acting_call(e->cond);
+    if (!found) found = acting_call(e->lhs);
+    if (!found) found = acting_call(e->rhs);
+    for (int i = 0; !found && i < e->args.count; i++) found = acting_call(e->args.items[i]);
+    for (int i = 0; !found && i < e->inits.count; i++) found = acting_call(e->inits.items[i].value);
+    return found ? found : call_acts(e) ? e : NULL;
+}
+
+// A call as a note names it: Spawn(...), GUI.Button(...), await Load(...).
+static void put_call(sb *out, const expr *e)
+{
+    if (e->kind == E_AWAIT || e->kind == E_TRY) {
+        sb_put(out, e->kind == E_AWAIT ? "await " : "try ");
+        e = e->lhs;
+    }
+    if (e->kind == E_NAME) {
+        sb_printf(out, STR_FMT, STR_ARG(e->name)); // try result
+    } else if (e->kind == E_METHOD && e->object->kind == E_NAME) {
+        sb_printf(out, STR_FMT "." STR_FMT "(...)", STR_ARG(e->object->name), STR_ARG(e->name));
+    } else if (e->kind == E_CALL || e->kind == E_METHOD) {
+        sb_printf(out, STR_FMT "(...)", STR_ARG(e->name));
+    } else {
+        sb_put(out, "its value");
+    }
+}
+
+static int unused_order(const void *a, const void *b)
+{
+    const stmt *x = *(stmt *const *)a;
+    const stmt *y = *(stmt *const *)b;
+    if (x->name_at.file != y->name_at.file) return x->name_at.file - y->name_at.file;
+    if (x->name_at.line != y->name_at.line) return x->name_at.line - y->name_at.line;
+    return x->name_at.col - y->name_at.col;
+}
+
+// A local that's never read is a mistake more often than not: a value worked
+// out and then not used, as `var fwd = Math.Mul(rot, move);` followed by code
+// that moves by `move`. Assigned but never read counts as never read. The
+// note says what to do, and editors offer it: when the value is a call that
+// does something, the call stays, as a statement of its own.
+static void warn_unused_locals(checker *c)
+{
+    if (c->unused.count > 1) qsort(c->unused.items, (size_t)c->unused.count, sizeof(stmt *), unused_order);
+    for (int i = 0; i < c->unused.count; i++) {
+        const stmt *s = c->unused.items[i];
+        diag_warning(s->name_at, "local '" STR_FMT "' is never used", STR_ARG(s->name));
+        const expr *acts = acting_call(s->value);
+        fix f = {.kind = FIX_UNUSED_LOCAL, .at = s->name_at, .local = s};
+        if (s->assigned) {
+            diag_note("it's assigned, but nothing reads its value: remove it and what assigns it, or use it where it "
+                      "was meant");
+        } else if (acts) {
+            sb call = {0};
+            put_call(&call, acts);
+            diag_note("nothing reads its value, but '%s' does something: keep the call as a statement of its own, "
+                      "without the local",
+                      call.data);
+            if (!s->loop_var && stands_alone(s->value)) f.kind = FIX_KEEP_CALL;
+        } else {
+            diag_note("nothing reads its value: remove it, or use it where it was meant");
+            if (!s->loop_var) f.kind = FIX_REMOVE_LOCAL;
+        }
+        vec_push(c->prog->fixes, f);
+    }
+}
+
 static decl *builtin_event(const char *name, const bool world)
 {
     decl *d = NEW(decl);
@@ -8926,6 +9059,7 @@ bool check(program *prog)
     check_this_calls(&c);
     check_drawing_calls(&c);
     mark_c_callers(&c);
+    warn_unused_locals(&c); // Once it's known which calls draw and call C
     collect_device_uses(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     for (int i = 0; i < prog->decls.count; i++) {

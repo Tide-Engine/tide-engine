@@ -992,6 +992,17 @@ static void write_token_range(jbuf *out, const loc at)
     write_range(out, at, t >= 0 ? token_len(&A.files[at.file].toks[t]) : 1);
 }
 
+// Whether a warning is about a local nothing reads. Editors fade it out.
+static bool unused_local(const diagnostic *d)
+{
+    for (int i = 0; d->severity == DIAG_WARNING && i < A.prog->fixes.count; i++) {
+        const fix *f = &A.prog->fixes.items[i];
+        if (f->kind != FIX_UNUSED_LOCAL && f->kind != FIX_REMOVE_LOCAL && f->kind != FIX_KEEP_CALL) continue;
+        if (loc_cmp(d->at, f->at) == 0) return true;
+    }
+    return false;
+}
+
 // Whether a warning is about access a system declares and doesn't use: a
 // parameter never used, or mut and never written. Editors fade it out.
 static bool unused_access(const diagnostic *d)
@@ -1017,7 +1028,7 @@ static void write_diagnostic(jbuf *out, const diagnostic *d)
     write_token_range(out, at);
     jb_printf(out, ",\"severity\":%d,\"source\":\"tidec\",\"message\":", d->severity == DIAG_ERROR ? 1 : 2);
     jb_string(out, d->message.data ? d->message.data : "");
-    if (unused_access(d)) jb_put(out, ",\"tags\":[1]"); // Unnecessary
+    if (unused_access(d) || unused_local(d)) jb_put(out, ",\"tags\":[1]"); // Unnecessary
     if (d->related.count > 0) {
         jb_put(out, ",\"relatedInformation\":[");
         for (int i = 0; i < d->related.count; i++) {
@@ -2195,6 +2206,52 @@ static void unwrap_actions(const fix *f, jbuf *out, int *written)
     quick_fix(out, written, title.data, false, d, start, start, "try ");
 }
 
+// A local nothing reads, as the checker's note says: its declaration goes, or
+// when its value is a call that does something, only the local does and the
+// call stays, a statement of its own.
+static void unused_local_action(const fix *f, jbuf *out, int *written)
+{
+    const stmt *s = f->local;
+    const token *toks = DOC->toks;
+    const int first = token_at(s->at);
+    const int name = token_at(s->name_at);
+    if (first < 0 || name < 0 || name + 2 >= DOC->tok_count || toks[name + 1].kind != T_ASSIGN) return;
+    const diagnostic *d = diagnostic_at(f->at);
+    sb title = {0};
+    if (f->kind == FIX_KEEP_CALL) {
+        sb_printf(&title, "Keep the call, without '" STR_FMT "'", STR_ARG(s->name));
+        quick_fix(out, written, title.data, true, d, s->at, toks[name + 2].at, "");
+        return;
+    }
+    // The ';' that ends it: its value has no other outside brackets
+    int last = name + 2;
+    for (int depth = 0; last < DOC->tok_count; last++) {
+        const tok_kind k = toks[last].kind;
+        if (k == T_EOF || (k == T_SEMI && depth == 0)) break;
+        if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) depth++;
+        else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
+    }
+    if (last >= DOC->tok_count || toks[last].kind != T_SEMI) return;
+    // Only a statement of a block: the body of an `if` without braces has to stay a statement
+    const tok_kind before = first > 0 ? toks[first - 1].kind : T_EOF;
+    if (before != T_LBRACE && before != T_RBRACE && before != T_SEMI && before != T_COLON) return;
+    loc start = s->at;
+    loc end = token_end(&toks[last]);
+    const str first_line = doc_line(start.line);
+    const str last_line = doc_line(end.line);
+    bool alone = true; // On its lines: they go with it
+    for (int i = 0; i < start.col - 1 && i < first_line.len; i++) alone &= isspace((unsigned char)first_line.ptr[i]) != 0;
+    for (int i = end.col - 1; i < last_line.len; i++) alone &= isspace((unsigned char)last_line.ptr[i]) != 0;
+    if (alone && end.line < DOC->lines.count) {
+        start = (loc){start.line, 1, A.doc};
+        end = (loc){end.line + 1, 1, A.doc};
+    } else {
+        while (end.col - 1 < last_line.len && last_line.ptr[end.col - 1] == ' ') end.col++;
+    }
+    sb_printf(&title, "Remove '" STR_FMT "'", STR_ARG(s->name));
+    quick_fix(out, written, title.data, true, d, start, end, "");
+}
+
 // "did you mean" in a diagnostic, as the checker suggested it: the name meant
 // in the place of the one written.
 static void suggestion_actions(const int start_line, const int end_line, jbuf *out, int *written)
@@ -2276,6 +2333,11 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             unwrap_actions(f, out, &written);
             continue;
         }
+        if (f->kind == FIX_REMOVE_LOCAL || f->kind == FIX_KEEP_CALL) {
+            unused_local_action(f, out, &written);
+            continue;
+        }
+        if (f->kind == FIX_UNUSED_LOCAL) continue; // Nothing to offer: the note says what to do
         const param *p = f->param;
         sb title = {0};
         sb text = {0};
@@ -2342,7 +2404,8 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             preferred = false;
             break;
         }
-        case FIX_USE_THIS: case FIX_UNWRAP: continue; // Their own actions, above
+        case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
+            continue; // Their own actions, above
         }
         quick_fix(out, &written, title.data, preferred, NULL, start, end, text.data ? text.data : "");
     }
