@@ -360,104 +360,157 @@ void tide_table_need_pages(const tide_table *base, const tide_columns *c, tide_n
 // ---------------------------------------------------------------------------
 // The queue
 
+// Room in its table of pages for one more: the table has room for as many
+// pages as the next power of two, and grows to twice that when it's full.
+static void queue_room(tide_queue *q)
+{
+    if (q->kept == 0 || (q->kept & (q->kept - 1u)) == 0) {
+        q->page = tide_realloc(q->page, q->kept * sizeof *q->page, (q->kept ? 2u * q->kept : 1u) * sizeof *q->page);
+    }
+}
+
+static uint8_t *queue_items(tide_queue_page *page)
+{
+    return (uint8_t *)(page + 1);
+}
+
 void *tide_queue_push_page(tide_queue *q, const uint32_t size)
 {
-    if (q->count == UINT32_MAX) tide_out_of_memory();
-    if (q->count / TIDE_QUEUE_PAGE == q->pages) {
-        // Its table of pages grows by half again, when it's full: room for
-        // as many pages as the next power of two
-        if (q->pages == 0 || (q->pages & (q->pages - 1u)) == 0) {
-            q->page = tide_realloc(q->page, q->pages * sizeof *q->page, (q->pages ? 2u * q->pages : 1u) * sizeof *q->page);
-        }
-        q->page[q->pages] = tide_alloc_zeroed(TIDE_QUEUE_PAGE, size);
-        q->pages++;
+    if (q->count == UINT32_MAX) tide_out_of_memory(); // More items than it counts
+    tide_queue_page *page = q->pages < q->kept ? q->page[q->pages] : NULL;
+    if (!page || page->room < size) {
+        // A page of its own for an item bigger than a page. It goes before
+        // the empty ones it kept.
+        const uint32_t room = size > TIDE_QUEUE_PAGE ? size : TIDE_QUEUE_PAGE;
+        page = tide_alloc(sizeof *page + room);
+        page->room = room;
+        queue_room(q);
+        memmove(&q->page[q->pages + 1u], &q->page[q->pages], (q->kept - q->pages) * sizeof *q->page);
+        q->page[q->pages] = page;
+        q->kept++;
     }
-    void *item = tide_queue_at(q, q->count++, size);
+    page->used = size;
+    q->pages++;
+    q->count++;
+    void *item = queue_items(page);
     memset(item, 0, size);
+    memcpy(item, &size, sizeof size);
     return item;
 }
 
-// Items in use on page `p`.
-static uint32_t queued_on(const tide_queue *q, const uint32_t p)
-{
-    const uint32_t left = q->count - p * TIDE_QUEUE_PAGE;
-    return left < TIDE_QUEUE_PAGE ? left : TIDE_QUEUE_PAGE;
-}
-
-static uint32_t queue_pages(const tide_queue *q)
-{
-    return (q->count + TIDE_QUEUE_PAGE - 1u) / TIDE_QUEUE_PAGE;
-}
-
-void tide_queue_clear(tide_queue *q, const uint32_t size)
+void tide_queue_clear(tide_queue *q)
 {
     // It keeps the pages this tick used, for the next, and lets go of the
     // rest: what a burst of changes needed goes once it's over.
-    // Pushing zeroes each item, and nothing reads past the count, so what it
-    // had stays until it's written over.
-    (void)size;
-    const uint32_t used = queue_pages(q);
-    const uint32_t keep = used ? used : 1u;
-    for (uint32_t p = keep; p < q->pages; p++) free(q->page[p]);
-    if (q->pages > keep) q->pages = keep;
+    const uint32_t keep = q->pages ? q->pages : 1u;
+    for (uint32_t p = keep; p < q->kept; p++) free(q->page[p]);
+    if (q->kept > keep) q->kept = keep;
+    for (uint32_t p = 0; p < q->pages; p++) q->page[p]->used = 0;
+    q->pages = 0;
     q->count = 0;
 }
 
-void tide_queue_append(tide_queue *to, const tide_queue *from, const uint32_t size)
+// Pages with this little in them are copied onto the end of `to`'s last
+// rather than given to it: a task that recorded a change or two keeps its
+// page, and `to` doesn't fill up with pages that are nearly empty.
+#define QUEUE_COPY_MOST 512u
+
+void tide_queue_append(tide_queue *to, tide_queue *from)
 {
-    uint32_t i = 0;
-    while (i < from->count) {
-        if (to->count % TIDE_QUEUE_PAGE == 0) { // Onto its next page, which pushing makes if it has to
-            memcpy(tide_queue_push(to, size), tide_queue_at(from, i++, size), size);
+    for (uint32_t p = 0; p < from->pages; p++) {
+        tide_queue_page *page = from->page[p];
+        tide_queue_page *last = to->pages ? to->page[to->pages - 1u] : NULL;
+        if (page->used <= QUEUE_COPY_MOST && last && last->room - last->used >= page->used) {
+            memcpy(queue_items(last) + last->used, queue_items(page), page->used); // Whole items, so they stay whole
+            last->used += page->used;
+            page->used = 0;
             continue;
         }
-        // A run as long as what's left of both their pages
-        uint32_t run = TIDE_QUEUE_PAGE - to->count % TIDE_QUEUE_PAGE;
-        const uint32_t here = TIDE_QUEUE_PAGE - i % TIDE_QUEUE_PAGE;
-        if (run > here) run = here;
-        if (run > from->count - i) run = from->count - i;
-        memcpy(tide_queue_at(to, to->count, size), tide_queue_at(from, i, size), (size_t)run * size);
-        to->count += run;
-        i += run;
+        // The page itself, for an empty one of `to`'s if it has one
+        tide_queue_page *spare = NULL;
+        if (to->pages < to->kept) {
+            spare = to->page[to->pages];
+        } else {
+            queue_room(to);
+            to->kept++;
+        }
+        to->page[to->pages++] = page;
+        from->page[p] = spare;
+    }
+    to->count += from->count;
+    // What `from` has left: the pages it kept and the ones it got back, as
+    // many as it used this time (as clearing keeps them)
+    const uint32_t keep = from->pages ? from->pages : 1u;
+    uint32_t kept = 0;
+    for (uint32_t p = 0; p < from->kept; p++) {
+        if (!from->page[p]) continue;
+        if (kept < keep) from->page[kept++] = from->page[p];
+        else free(from->page[p]);
+    }
+    from->kept = kept;
+    from->pages = 0;
+    from->count = 0;
+}
+
+void tide_queue_copy(tide_queue *to, const tide_queue *from)
+{
+    if (to == from) return;
+    tide_queue_clear(to);
+    tide_queue_place at = {0, 0};
+    for (const uint8_t *item; (item = tide_queue_next(from, &at));) {
+        uint32_t size;
+        memcpy(&size, item, sizeof size);
+        memcpy(tide_queue_push(to, size), item, size);
     }
 }
 
-void tide_queue_copy(tide_queue *to, const tide_queue *from, const uint32_t size)
+uint64_t tide_queue_hash(uint64_t h, const tide_queue *q)
 {
-    if (to == from) return;
-    tide_queue_clear(to, size);
-    for (uint32_t i = 0; i < from->count; i++) memcpy(tide_queue_push(to, size), tide_queue_at(from, i, size), size);
-}
-
-uint64_t tide_queue_hash(uint64_t h, const tide_queue *q, const uint32_t size)
-{
+    // Item by item: the same whatever pages they're in, which depends on how
+    // they got there
     h = tide_hash_more(h, &q->count, sizeof q->count);
-    for (uint32_t p = 0; p < queue_pages(q); p++) h = tide_hash_more(h, q->page[p], (size_t)queued_on(q, p) * size);
+    tide_queue_place at = {0, 0};
+    for (const uint8_t *item; (item = tide_queue_next(q, &at));) {
+        uint32_t size;
+        memcpy(&size, item, sizeof size);
+        h = tide_hash_more(h, item, size);
+    }
     return h;
 }
 
 void tide_queue_free(tide_queue *q)
 {
-    for (uint32_t p = 0; p < q->pages; p++) free(q->page[p]);
+    for (uint32_t p = 0; p < q->kept; p++) free(q->page[p]);
     free(q->page);
     memset(q, 0, sizeof *q);
 }
 
-uint32_t tide_queue_packed_size(const tide_queue *q, const uint32_t size)
+uint32_t tide_queue_packed_size(const tide_queue *q)
 {
-    return bytes_of(4u + (uint64_t)q->count * size);
+    uint64_t size = 4u;
+    for (uint32_t p = 0; p < q->pages; p++) size += q->page[p]->used;
+    return bytes_of(size);
 }
 
-void tide_queue_pack(const tide_queue *q, const uint32_t size, tide_writer *w)
+void tide_queue_pack(const tide_queue *q, tide_writer *w)
 {
     tide_write_u32(w, q->count);
-    for (uint32_t p = 0; p < queue_pages(q); p++) tide_write_bytes(w, q->page[p], queued_on(q, p) * size);
+    for (uint32_t p = 0; p < q->pages; p++) tide_write_bytes(w, queue_items(q->page[p]), q->page[p]->used);
 }
 
-bool tide_queue_unpack(tide_queue *q, const uint32_t size, tide_reader *r)
+bool tide_queue_unpack(tide_queue *q, tide_reader *r, bool (*fits)(const void *item))
 {
     const uint32_t count = tide_read_u32(r);
-    if (r->failed || (uint64_t)count * size > r->size - r->at) return false;
-    for (uint32_t i = 0; i < count; i++) memcpy(tide_queue_push(q, size), tide_read_bytes(r, size), size);
+    for (uint32_t i = 0; i < count; i++) {
+        // Each says its size first: a multiple of 8, and no more than what's left
+        const uint8_t *head = tide_read_bytes(r, 4u);
+        if (r->failed) return false;
+        uint32_t size;
+        memcpy(&size, head, sizeof size);
+        if (size < 8u || (size & 7u) || size - 4u > r->size - r->at) return false;
+        uint8_t *item = tide_queue_push(q, size);
+        memcpy(item + 4u, tide_read_bytes(r, size - 4u), size - 4u);
+        if (r->failed || (fits && !fits(item))) return false;
+    }
     return !r->failed;
 }

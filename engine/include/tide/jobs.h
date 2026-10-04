@@ -106,7 +106,6 @@ typedef struct tide_tick_systems {
     uint32_t count;
     void (*prepare)(void *world); // On each thread, before its first task
     tide_queue *queue;            // The world's
-    uint32_t item_size;           // Its items'
     tide_entities *entities;      // The world's
     // A recorded change or event, with the real handles for temporary ones
     void (*settle_item)(void *item, const tide_new_entities *settled);

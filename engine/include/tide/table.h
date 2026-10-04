@@ -148,43 +148,103 @@ void tide_table_need_pages(const tide_table *base, const tide_columns *c, tide_n
 // at its end. Items stay where they are as more are added, so the one being
 // applied can be read while what it does adds more. Snapshots copy it: it's
 // empty between ticks but for the players joining and leaving.
+//
+// An item takes the bytes it's pushed with, so an event of a few bytes costs
+// those, whatever the biggest change a game records is. Each starts with its
+// size, a uint32_t that pushing sets, which is how the queue goes from one to
+// the next: its struct's first member. Sizes are multiples of 8, as items are
+// aligned to 8.
+//
+// Its pages hold whole items, back to back. A task's queue gives the world's
+// its pages rather than copies of its items (tide_queue_append).
 
-#define TIDE_QUEUE_PAGE 64u // Items in each of its pages
+#define TIDE_QUEUE_PAGE 4080u // Bytes of items in each of its pages: with its header, just under 4 KiB
+
+typedef struct tide_queue_page {
+    uint32_t used; // Bytes of items in it
+    uint32_t room; // Bytes of items it holds: TIDE_QUEUE_PAGE, or the size of an item bigger than that
+} tide_queue_page; // ...and then its items
 
 typedef struct tide_queue {
-    uint32_t count;
-    uint32_t pages; // Pages it has: clearing keeps the ones it used
-    void **page;
+    uint32_t count; // Items
+    uint32_t pages; // Pages with items in them, in order: pushing fills the last
+    uint32_t kept;  // Pages it has, those after `pages` empty: clearing keeps the ones it used
+    tide_queue_page **page;
 } tide_queue;
 
-static inline void *tide_queue_at(const tide_queue *q, const uint32_t i, const uint32_t size)
-{
-    return (uint8_t *)q->page[i / TIDE_QUEUE_PAGE] + (size_t)(i % TIDE_QUEUE_PAGE) * size;
-}
-
-// A new item at the end, zeroed, on a new page.
+// A new item at the end, zeroed, on another page: `size` is a multiple of 8.
 void *tide_queue_push_page(tide_queue *q, uint32_t size);
 
-// A new item at the end, zeroed.
-static inline void *tide_queue_push(tide_queue *q, const uint32_t size)
+// A new item of `size` bytes at the end, zeroed but for its size.
+static inline void *tide_queue_push(tide_queue *q, uint32_t size)
 {
-    if (q->count / TIDE_QUEUE_PAGE == q->pages || q->count == UINT32_MAX) return tide_queue_push_page(q, size);
-    void *item = tide_queue_at(q, q->count++, size);
+    size = size < 8u ? 8u : (size + 7u) & ~7u;
+    tide_queue_page *last = q->pages ? q->page[q->pages - 1u] : NULL;
+    if (!last || last->room - last->used < size) return tide_queue_push_page(q, size);
+    void *item = (uint8_t *)(last + 1) + last->used;
+    last->used += size;
+    q->count++;
     memset(item, 0, size);
+    memcpy(item, &size, sizeof size);
     return item;
 }
 
+// A place in a queue: an item's, or the end's.
+typedef struct tide_queue_place {
+    uint32_t page;
+    uint32_t offset;
+} tide_queue_place;
+
+// Where the next item pushed will be found from: tide_queue_next from here
+// gives what's pushed after this.
+static inline tide_queue_place tide_queue_end(const tide_queue *q)
+{
+    tide_queue_place end = {0u, 0u};
+    if (q->pages) {
+        end.page = q->pages - 1u;
+        end.offset = q->page[q->pages - 1u]->used;
+    }
+    return end;
+}
+
+// The item at `at`, which moves on to the one after it, or NULL at the end:
+// `at` stays there, so asking again once more is pushed gives that. Start from
+// a zeroed place for the first item.
+static inline void *tide_queue_next(const tide_queue *q, tide_queue_place *at)
+{
+    while (at->page < q->pages) {
+        tide_queue_page *page = q->page[at->page];
+        if (at->offset < page->used) {
+            void *item = (uint8_t *)(page + 1) + at->offset;
+            uint32_t size;
+            memcpy(&size, item, sizeof size);
+            at->offset += size;
+            return item;
+        }
+        if (at->page + 1u == q->pages) return NULL;
+        at->page++;
+        at->offset = 0;
+    }
+    return NULL;
+}
+
 // Empties it. It keeps the pages it used, for the next tick, and lets go of
-// the rest. Their items stay until they're pushed again, zeroed.
-void tide_queue_clear(tide_queue *q, uint32_t size);
+// the rest.
+void tide_queue_clear(tide_queue *q);
 
-void tide_queue_copy(tide_queue *to, const tide_queue *from, uint32_t size);
+void tide_queue_copy(tide_queue *to, const tide_queue *from);
 
-// Puts `from`'s items at the end of `to`, in order.
-void tide_queue_append(tide_queue *to, const tide_queue *from, uint32_t size);
-uint64_t tide_queue_hash(uint64_t h, const tide_queue *q, uint32_t size);
+// Puts `from`'s items at the end of `to`, in order, and leaves `from` empty.
+// A page with more than a few items goes to `to` as it is, for one of the
+// empty pages `to` kept, so that nothing is copied and, once both have had a
+// tick like this one, nothing is allocated either.
+void tide_queue_append(tide_queue *to, tide_queue *from);
+// Of its items, whatever pages they're in.
+uint64_t tide_queue_hash(uint64_t h, const tide_queue *q);
 void tide_queue_free(tide_queue *q);
 
-uint32_t tide_queue_packed_size(const tide_queue *q, uint32_t size);
-void tide_queue_pack(const tide_queue *q, uint32_t size, tide_writer *w);
-bool tide_queue_unpack(tide_queue *q, uint32_t size, tide_reader *r);
+uint32_t tide_queue_packed_size(const tide_queue *q);
+void tide_queue_pack(const tide_queue *q, tide_writer *w);
+// The bytes may come from another machine: `fits` says whether an item is as
+// big as what it says it is needs, and one that isn't fails the unpacking.
+bool tide_queue_unpack(tide_queue *q, tide_reader *r, bool (*fits)(const void *item));

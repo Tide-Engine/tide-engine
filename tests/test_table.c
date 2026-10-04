@@ -197,42 +197,208 @@ TIDE_TEST(table_packs_and_unpacks)
     tide_entities_free(&entities);
 }
 
+// A queue's items start with their size, which pushing sets, and are as big
+// as they're pushed: a note is 8 bytes, and one with `extra` bytes after it
+// that much more.
+typedef struct note {
+    uint32_t size;
+    int32_t value;
+} note;
+
+static note *push_note(tide_queue *q, const int32_t value, const uint32_t extra)
+{
+    note *n = tide_queue_push(q, (uint32_t)sizeof(note) + extra);
+    n->value = value;
+    return n;
+}
+
+// The notes' values are `first`, `first + 1` and so on, `count` of them, from `at`.
+static bool notes_from(const tide_queue *q, tide_queue_place at, const int32_t first, const int32_t count)
+{
+    for (int32_t i = 0; i < count; i++) {
+        const note *n = tide_queue_next(q, &at);
+        if (!n || n->value != first + i) return false;
+    }
+    return tide_queue_next(q, &at) == NULL;
+}
+
 TIDE_TEST(table_queue_keeps_items_in_place)
 {
     tide_queue q = {0};
-    int32_t *first = tide_queue_push(&q, sizeof(int32_t));
-    *first = 5;
-    for (int32_t i = 1; i < 300; i++) *(int32_t *)tide_queue_push(&q, sizeof(int32_t)) = i;
-    TIDE_CHECK(*first == 5 && first == tide_queue_at(&q, 0, sizeof(int32_t))); // It didn't move as the queue grew
-    TIDE_CHECK(*(int32_t *)tide_queue_at(&q, 299, sizeof(int32_t)) == 299);
+    const tide_queue_place start = tide_queue_end(&q); // Of an empty queue: what's pushed is found from it
+    note *first = push_note(&q, 5, 0);
+    TIDE_CHECK(first->size == 8);
+    for (int32_t i = 1; i < 3000; i++) push_note(&q, 5 + i, (uint32_t)i % 5u * 12u); // Of several sizes, through many pages
+    TIDE_CHECK(q.count == 3000 && q.pages > 4);
+    TIDE_CHECK(first->value == 5 && notes_from(&q, start, 5, 3000)); // The first didn't move as the queue grew
+    tide_queue_place at = {0, 0};
+    TIDE_CHECK(tide_queue_next(&q, &at) == first);
+    const note *second = tide_queue_next(&q, &at);
+    TIDE_CHECK(second->size == 24 && second->value == 6); // 8 and 12 more, in whole eights
+
+    // From the end, the next is what's pushed after: on this page, or the one after
+    const tide_queue_place end = tide_queue_end(&q);
+    at = end;
+    TIDE_CHECK(tide_queue_next(&q, &at) == NULL && tide_queue_next(&q, &at) == NULL);
+    for (int32_t i = 0; i < 700; i++) push_note(&q, 9000 + i, 0);
+    TIDE_CHECK(notes_from(&q, end, 9000, 700));
+    const note *found = tide_queue_next(&q, &at); // The place that had reached the end goes on from it
+    TIDE_CHECK(found && found->value == 9000);
+
     tide_queue copy = {0};
-    tide_queue_copy(&copy, &q, sizeof(int32_t));
-    TIDE_CHECK(tide_queue_hash(1, &copy, sizeof(int32_t)) == tide_queue_hash(1, &q, sizeof(int32_t)));
-    tide_queue_clear(&q, sizeof(int32_t));
-    TIDE_CHECK(q.count == 0);
-    int32_t *again = tide_queue_push(&q, sizeof(int32_t));
-    TIDE_CHECK(again == first && *again == 0); // Its page kept, the item zeroed as it's pushed again
+    tide_queue_copy(&copy, &q);
+    TIDE_CHECK(copy.count == q.count && tide_queue_hash(1, &copy) == tide_queue_hash(1, &q));
+    const uint32_t pages = q.pages;
+    tide_queue_clear(&q);
+    TIDE_CHECK(q.count == 0 && q.pages == 0 && q.kept == pages); // It keeps the pages it used
+    at = (tide_queue_place){0, 0};
+    TIDE_CHECK(tide_queue_next(&q, &at) == NULL);
+    note *again = push_note(&q, 0, 0);
+    TIDE_CHECK(again == first && again->value == 0 && again->size == 8); // Its page kept, the item zeroed as it's pushed again
+    tide_queue_clear(&q);
+    TIDE_CHECK(q.kept == 1); // ...and lets go of the ones this time didn't need
     tide_queue_free(&q);
     tide_queue_free(&copy);
+    TIDE_CHECK(q.page == NULL && q.kept == 0);
+}
+
+TIDE_TEST(table_queue_holds_an_item_bigger_than_a_page)
+{
+    tide_queue q = {0};
+    push_note(&q, 1, 0);
+    note *big = push_note(&q, 2, 3u * TIDE_QUEUE_PAGE);
+    memset(big + 1, 0x5a, 3u * TIDE_QUEUE_PAGE);
+    push_note(&q, 3, 0);
+    TIDE_CHECK(notes_from(&q, (tide_queue_place){0, 0}, 1, 3));
+    TIDE_CHECK(((const uint8_t *)(big + 1))[3u * TIDE_QUEUE_PAGE - 1u] == 0x5a);
+    // Its page is kept, and takes small items too once it's emptied
+    tide_queue_clear(&q);
+    for (int32_t i = 0; i < 2000; i++) push_note(&q, i, 0);
+    TIDE_CHECK(notes_from(&q, (tide_queue_place){0, 0}, 0, 2000));
+    tide_queue_free(&q);
 }
 
 TIDE_TEST(table_queue_appends_in_order)
 {
-    // From starts on and off their pages' edges, through several pages
-    for (int32_t had = 0; had < 140; had += 23) {
-        for (int32_t more = 0; more < 200; more += 37) {
+    // A few items are copied onto the end, and full pages are handed over:
+    // through both, with the page they land on empty, part full and full
+    for (int32_t had = 0; had < 1400; had += 233) {
+        for (int32_t more = 0; more < 2000; more += 371) {
             tide_queue to = {0}, from = {0};
-            for (int32_t i = 0; i < had; i++) *(int32_t *)tide_queue_push(&to, sizeof(int32_t)) = i;
-            for (int32_t i = 0; i < more; i++) *(int32_t *)tide_queue_push(&from, sizeof(int32_t)) = 1000 + i;
-            tide_queue_append(&to, &from, sizeof(int32_t));
-            TIDE_CHECK(to.count == (uint32_t)(had + more));
-            bool same = true;
-            for (int32_t i = 0; i < had + more; i++) {
-                same &= *(int32_t *)tide_queue_at(&to, (uint32_t)i, sizeof(int32_t)) == (i < had ? i : 1000 + i - had);
-            }
-            TIDE_CHECK(same);
+            for (int32_t i = 0; i < had; i++) push_note(&to, i, (uint32_t)i % 3u * 8u);
+            for (int32_t i = 0; i < more; i++) push_note(&from, had + i, (uint32_t)i % 4u * 8u);
+            tide_queue_append(&to, &from);
+            TIDE_CHECK(to.count == (uint32_t)(had + more) && from.count == 0 && from.pages == 0);
+            TIDE_CHECK(notes_from(&to, (tide_queue_place){0, 0}, 0, had + more));
+            // What's pushed next goes after them
+            push_note(&to, had + more, 0);
+            TIDE_CHECK(notes_from(&to, (tide_queue_place){0, 0}, 0, had + more + 1));
             tide_queue_free(&to);
             tide_queue_free(&from);
         }
     }
+}
+
+TIDE_TEST(table_queue_hands_pages_over_and_gets_empty_ones_back)
+{
+    // As a tick's tasks and its world do: the task fills its queue, the world
+    // takes it and is cleared once it's applied. From the second tick on,
+    // nothing is copied and no page is made.
+    tide_queue world = {0}, task = {0};
+    const tide_queue_page *task_page = NULL;
+    const tide_queue_page *world_page = NULL;
+    for (int tick = 0; tick < 4; tick++) {
+        for (int32_t i = 0; i < 1000; i++) push_note(&task, i, 0);
+        TIDE_CHECK(task.pages == 2);
+        if (tick >= 2) TIDE_CHECK(task.page[0] == task_page || task.page[0] == world_page);
+        const tide_queue_page *filled = task.page[0];
+        tide_queue_append(&world, &task);
+        TIDE_CHECK(world.count == 1000 && world.page[0] == filled); // The page itself
+        TIDE_CHECK(task.count == 0 && task.pages == 0);
+        TIDE_CHECK(notes_from(&world, (tide_queue_place){0, 0}, 0, 1000));
+        if (tick == 0) TIDE_CHECK(task.kept == 0); // The world had no page to give back yet
+        if (tick >= 1) TIDE_CHECK(task.kept == 2 && world.kept == 2);
+        if (tick == 1) {
+            task_page = task.page[0];
+            world_page = world.page[0];
+            TIDE_CHECK(task_page != world_page);
+        }
+        tide_queue_clear(&world);
+    }
+    // A burst's pages go once a tick doesn't need them
+    for (int32_t i = 0; i < 20000; i++) push_note(&task, i, 0);
+    tide_queue_append(&world, &task);
+    tide_queue_clear(&world);
+    TIDE_CHECK(world.kept > 30);
+    push_note(&task, 1, 0);
+    tide_queue_append(&world, &task);
+    tide_queue_clear(&world);
+    TIDE_CHECK(world.kept == 1 && task.kept <= 1);
+    tide_queue_free(&world);
+    tide_queue_free(&task);
+}
+
+static bool note_fits(const void *item)
+{
+    const note *n = item;
+    return n->value >= 0; // Stands in for a game's check of each change's size
+}
+
+TIDE_TEST(table_queue_packs_whatever_its_pages)
+{
+    // The same items, pushed straight in and handed over from two others
+    tide_queue straight = {0}, moved = {0}, a = {0}, b = {0};
+    for (int32_t i = 0; i < 900; i++) push_note(&straight, i, (uint32_t)i % 7u * 8u);
+    for (int32_t i = 0; i < 300; i++) push_note(&a, i, (uint32_t)i % 7u * 8u);
+    for (int32_t i = 300; i < 900; i++) push_note(&b, i, (uint32_t)i % 7u * 8u);
+    tide_queue_append(&moved, &a);
+    tide_queue_append(&moved, &b);
+    TIDE_CHECK(moved.page[2]->used != straight.page[2]->used); // Laid out otherwise
+    TIDE_CHECK(tide_queue_hash(7, &moved) == tide_queue_hash(7, &straight));
+    const uint32_t size = tide_queue_packed_size(&moved);
+    TIDE_CHECK(size == tide_queue_packed_size(&straight));
+    uint8_t *bytes = malloc(size);
+    uint8_t *other = malloc(size);
+    tide_writer w = {bytes, size, 0, false, false};
+    tide_writer w2 = {other, size, 0, false, false};
+    tide_queue_pack(&moved, &w);
+    tide_queue_pack(&straight, &w2);
+    TIDE_CHECK(!w.overflow && w.size == size && memcmp(bytes, other, size) == 0);
+
+    tide_queue back = {0};
+    tide_reader r = {bytes, size, 0, false};
+    TIDE_CHECK(tide_queue_unpack(&back, &r, note_fits) && r.at == size);
+    TIDE_CHECK(back.count == 900 && tide_queue_hash(7, &back) == tide_queue_hash(7, &straight));
+    tide_queue_free(&back);
+
+    // Bytes from another machine: cut short, a size that isn't one, an item its check refuses
+    tide_reader cut = {bytes, size - 5u, 0, false};
+    TIDE_CHECK(!tide_queue_unpack(&back, &cut, note_fits));
+    tide_queue_free(&back);
+    const uint32_t sizes[] = {0u, 4u, 12u, 0xfffffff8u};
+    for (int i = 0; i < 4; i++) {
+        memcpy(other, bytes, size);
+        memcpy(other + 4, &sizes[i], 4); // The first item's size
+        tide_reader bad = {other, size, 0, false};
+        TIDE_CHECK(!tide_queue_unpack(&back, &bad, note_fits));
+        tide_queue_free(&back);
+    }
+    memcpy(other, bytes, size);
+    const int32_t refused = -1;
+    memcpy(other + 8, &refused, 4); // The first item's value
+    tide_reader bad = {other, size, 0, false};
+    TIDE_CHECK(!tide_queue_unpack(&back, &bad, note_fits));
+    tide_queue_free(&back);
+    uint32_t many = 0xffffffffu;
+    memcpy(other, &many, 4); // More items than there are bytes for
+    tide_reader few = {other, size, 0, false};
+    TIDE_CHECK(!tide_queue_unpack(&back, &few, NULL));
+    tide_queue_free(&back);
+
+    free(bytes);
+    free(other);
+    tide_queue_free(&straight);
+    tide_queue_free(&moved);
+    tide_queue_free(&a);
+    tide_queue_free(&b);
 }
