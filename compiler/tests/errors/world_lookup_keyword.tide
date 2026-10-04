@@ -1,0 +1,6 @@
+// expect: 'lookup' parameters are gone: code takes the World, and reads any entity's components through it
+component Health { int value; }
+scene Main { }
+view Show(lookup Health health)
+{
+}

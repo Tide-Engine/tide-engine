@@ -1,0 +1,9 @@
+// expect: 'Health' belongs to the match, and local handlers only take local state for now
+local component Spark { Entity follows; }
+local event Tap { }
+component Health { int value; }
+scene Main { }
+local event(Tap) OnTap(Spark spark, World world)
+{
+    if (world.Has<Health>(spark.follows)) return;
+}

@@ -1,0 +1,7 @@
+// expect: Get takes the component in '<>': 'world.Get<Health>(entity)'
+component Health { int value; }
+scene Main { }
+system Read(World world, with Health)
+{
+    var h = world.Get(this);
+}

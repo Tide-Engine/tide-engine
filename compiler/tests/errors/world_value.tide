@@ -1,0 +1,7 @@
+// expect: the World is no value: code calls it, like 'world.Get<Health>(entity)'
+component Health { int value; }
+scene Main { }
+system Keep(World world, with Health)
+{
+    var w = world;
+}

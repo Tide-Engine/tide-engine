@@ -92,6 +92,8 @@ component Weapon
 
 `default` is the null entity, so `weapon.owner == default` tells whether it points anywhere, and `weapon.owner = default;` clears it.
 
+A handle leads to the other entity's components through the `World`: `world.Get<Health>(weapon.owner)` (see [Other entities](./systems.md#other-entities-the-world)).
+
 In a system, view or event handler that runs for an entity, `this` is that entity:
 
 ```csharp

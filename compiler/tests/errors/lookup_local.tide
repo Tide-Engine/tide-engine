@@ -1,7 +1,0 @@
-// expect: a lookup stays a parameter; its values are indexed by an entity's handle
-component Health { int value; }
-scene Main { }
-system Keep(lookup Health health, with Health)
-{
-    var h = health;
-}

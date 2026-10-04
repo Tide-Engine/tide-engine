@@ -74,21 +74,31 @@ int parallel_loops(const stmt *s)
          + parallel_loops(s->else_stmt);
 }
 
+bool world_reads_own_writes(const decl *sys)
+{
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        const world_use *u = &sys->world_uses.items[i];
+        for (int k = 0; k < sys->params.count; k++) {
+            const param *q = &sys->params.items[k];
+            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == u->component) return true;
+        }
+    }
+    return false;
+}
+
 bool system_splits(const decl *sys)
 {
     if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
-        // A mut lookup writes any entity's component; a lookup of a component
-        // the system changes would read rows other threads are changing
-        if (p->type.kind == TY_LOOKUP && p->mode == PARAM_MUT) return false;
-        for (int k = 0; p->type.kind == TY_LOOKUP && k < sys->params.count; k++) {
-            const param *q = &sys->params.items[k];
-            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == p->type.decl) return false;
-        }
     }
-    return true;
+    // World.Set writes any entity's component; reading through the World a
+    // component the system changes would read rows other threads are changing
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        if (sys->world_uses.items[i].writes) return false;
+    }
+    return !world_reads_own_writes(sys);
 }
 
 // The components and singletons two systems both use, where at least one of
@@ -102,12 +112,43 @@ bool system_splits(const decl *sys)
 static const decl *accessed(const param *p)
 {
     if (p->mode != PARAM_READ && p->mode != PARAM_MUT) return NULL;
-    return p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON || p->type.kind == TY_LOOKUP ? p->type.decl : NULL;
+    return p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON ? p->type.decl : NULL;
+}
+
+// What a system reads or writes: a parameter's component or singleton, the
+// entities' it runs for, or a component it reaches through its World
+// (world.Get<Health>(e), Has and Set), which is every entity's.
+typedef struct access {
+    const decl *data;
+    bool writes;
+    bool every;
+} access;
+
+typedef struct access_list {
+    access *items;
+    int count;
+} access_list;
+
+// In the order of its parameters, the World's uses where the World is.
+static access_list accesses_of(const decl *sys)
+{
+    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 1)), 0};
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        for (int k = 0; p->type.kind == TY_WORLD && k < sys->world_uses.count; k++) {
+            const world_use *u = &sys->world_uses.items[k];
+            list.items[list.count++] = (access){u->component, u->writes, true};
+        }
+        const decl *data = accessed(p);
+        if (data) list.items[list.count++] = (access){data, p->mode == PARAM_MUT, false};
+    }
+    return list;
 }
 
 // Whether there are any; with a `w`, it lists them there, and without one it
 // stops at the first.
-static bool find_conflicts(const decl *earlier, const decl *later, const bool same_entities, system_wait *w)
+static bool find_conflicts(const decl *earlier, const decl *later, const access_list *earlier_uses,
+                           const access_list *later_uses, const bool same_entities, system_wait *w)
 {
     bool any = false;
     // Starting a task runs its code until it first waits, which can spawn and
@@ -119,22 +160,18 @@ static bool find_conflicts(const decl *earlier, const decl *later, const bool sa
         if (earlier->spawns && later->spawns && !system_splits(later)) any = add_conflict(w, CONFLICT_SPAWN);
     }
     if (any && !w) return true;
-    for (int i = 0; i < earlier->params.count; i++) {
-        const param *a = &earlier->params.items[i];
-        const decl *data = accessed(a);
-        if (!data) continue;
-        for (int k = 0; k < later->params.count; k++) {
-            const param *b = &later->params.items[k];
-            if (accessed(b) != data) continue;
-            // A component only counts where both can meet the same entity; a lookup reaches every entity
-            if (data->kind == DECL_COMPONENT && !same_entities && !a->lookup && !b->lookup) continue;
-            const bool a_writes = a->mode == PARAM_MUT;
-            const bool b_writes = b->mode == PARAM_MUT;
-            if (!a_writes && !b_writes) continue;
+    for (int i = 0; i < earlier_uses->count; i++) {
+        const access *a = &earlier_uses->items[i];
+        for (int k = 0; k < later_uses->count; k++) {
+            const access *b = &later_uses->items[k];
+            if (b->data != a->data) continue;
+            // A component only counts where both can meet the same entity; the World reaches every entity
+            if (a->data->kind == DECL_COMPONENT && !same_entities && !a->every && !b->every) continue;
+            if (!a->writes && !b->writes) continue;
             if (!w) return true;
-            const conflict c = {(decl *)data, a_writes && b_writes ? CONFLICT_BOTH_WRITE
-                                              : a_writes         ? CONFLICT_EARLIER_WRITES
-                                                                 : CONFLICT_EARLIER_READS};
+            const conflict c = {(decl *)a->data, a->writes && b->writes ? CONFLICT_BOTH_WRITE
+                                                 : a->writes            ? CONFLICT_EARLIER_WRITES
+                                                                        : CONFLICT_EARLIER_READS};
             vec_push(w->conflicts, c);
             any = true;
         }
@@ -172,6 +209,7 @@ void analyze_parallelism(program *prog)
     const size_t words = ((size_t)n + 63u) / 64u;
     const size_t row_size = sizeof(uint64_t) * words;
     arch_set *sets = arena_alloc(sizeof(arch_set) * (size_t)n);
+    access_list *uses = arena_alloc(sizeof(access_list) * (size_t)n);
     // before + j * words: the systems j runs after, directly or through others.
     uint64_t *before = arena_alloc(row_size * (size_t)n);
     uint64_t *waits = arena_alloc(row_size);                // The system's own: those it conflicts with or is ordered after
@@ -181,6 +219,7 @@ void analyze_parallelism(program *prog)
     memset(before, 0, row_size * (size_t)n);
     memset(followers, 0, sizeof(int) * (size_t)n);
     for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, prog->systems.items[i]);
+    for (int i = 0; i < n; i++) uses[i] = accesses_of(prog->systems.items[i]);
 
     // The systems are in tick order, so everything a system waits for comes first.
     for (int j = 0; j < n; j++) {
@@ -194,7 +233,7 @@ void analyze_parallelism(program *prog)
         for (int i = 0; i < j; i++) {
             const decl *earlier = prog->systems.items[i];
             if (!contains((const decl *const *)sys->after.items, sys->after.count, earlier)
-                && !find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), NULL)) {
+                && !find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(prog, earlier, sys, &sets[i], &sets[j]), NULL)) {
                 continue;
             }
             waits[i >> 6] |= (uint64_t)1 << (i & 63);
@@ -232,7 +271,7 @@ void analyze_parallelism(program *prog)
                 decl *earlier = prog->systems.items[i];
                 system_wait wait = {0};
                 wait.on = earlier;
-                find_conflicts(earlier, sys, can_meet(prog, earlier, sys, &sets[i], &sets[j]), &wait);
+                find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(prog, earlier, sys, &sets[i], &sets[j]), &wait);
                 wait.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
                 wait.through = goes_through ? prog->systems.items[through[i]] : NULL;
                 vec_push(sys->waits, wait);
@@ -345,6 +384,29 @@ static void put_access(sb *out, const decl *sys, const bool writes)
     if (count) sb_put(out, "\n");
 }
 
+int world_use_names(const decl *sys, const bool writes, const char *quote, const decl *from, sb *out)
+{
+    int count = 0;
+    for (int i = 0; i < sys->world_uses.count; i++) count += sys->world_uses.items[i].writes == writes;
+    int written = 0;
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        const world_use *u = &sys->world_uses.items[i];
+        if (u->writes != writes) continue;
+        sb_put(out, written == 0 ? "" : written == count - 1 ? " and " : ", ");
+        put_decl_name(out, u->component, quote, from);
+        written++;
+    }
+    return count;
+}
+
+// What a system reads (writes = false) or writes of every entity's, through its World.
+static void put_world_access(sb *out, const decl *sys, const bool writes)
+{
+    sb names = {0};
+    if (!world_use_names(sys, writes, "", NULL, &names)) return;
+    sb_printf(out, "         %s any entity's %s, through World\n", writes ? "writes" : "reads", names.data);
+}
+
 void print_schedule(const program *prog, const char *game, sb *out)
 {
     int stages = 0;
@@ -372,6 +434,8 @@ void print_schedule(const program *prog, const char *game, sb *out)
         sb_put(out, ")\n");
         put_access(out, sys, false);
         put_access(out, sys, true);
+        put_world_access(out, sys, false);
+        put_world_access(out, sys, true);
         for (int k = 0; k < sys->waits.count; k++) {
             const system_wait *w = &sys->waits.items[k];
             sb_put(out, "         after ");

@@ -1,0 +1,7 @@
+// expect: Get<Health> takes an entity's handle, an Entity, not int
+component Health { int value; }
+scene Main { }
+system Read(World world, with Health)
+{
+    var h = world.Get<Health>(3);
+}

@@ -69,6 +69,7 @@ typedef struct occurrence {
     builtin_call call;  // Built-in methods: which kind, CALL_LIST for items.Add(...)
     int order;          // When it was found, which decides between two at one position
     bool write;         // What an assignment changes: `x` in `x = 1`, `radius` in `body.radius += 1`
+    const decl *component; // The World's methods: the component in <>, Health in world.Get<Health>(e)
     bool backing;       // An enum's backing type: byte in `enum Voxel : byte`
 } occurrence;
 
@@ -342,6 +343,10 @@ static void type_ref(const loc qual_at, const loc at, const str text, const type
         type_ref(inner_at, last_at, inner, element);
         return;
     }
+    if (t.kind == TY_WORLD) { // The engine's World, a parameter's type
+        add_occ((occurrence){.at = at, .len = text.len, .kind = OCC_TYPE, .name = text, .type = t});
+        return;
+    }
     qualifier_ref(qual_at, at, text);
     const str name = last_part(text);
     occurrence o = {.at = at, .len = name.len, .kind = OCC_TYPE, .name = name, .type = t};
@@ -357,6 +362,20 @@ static void type_ref(const loc qual_at, const loc at, const str text, const type
         if (!o.decl) return;
     }
     add_occ(o);
+}
+
+// A declaration as the type a name of it is: a component's, an enum's.
+static type type_of_decl(const decl *d)
+{
+    if (!d) return (type){TY_ERROR, NULL};
+    const type_kind kind = d->kind == DECL_COMPONENT ? TY_COMPONENT
+                         : d->kind == DECL_SINGLETON ? TY_SINGLETON
+                         : d->kind == DECL_INPUT     ? TY_INPUT
+                         : d->kind == DECL_STRUCT    ? TY_STRUCT
+                         : d->kind == DECL_EVENT     ? TY_EVENT
+                         : d->kind == DECL_ENUM      ? TY_ENUM
+                                                     : TY_ERROR;
+    return (type){kind, kind == TY_ERROR ? NULL : (decl *)d};
 }
 
 // Whose fields plain names refer to in the code being walked: the input in its
@@ -576,6 +595,8 @@ static void walk_expr(const expr *e)
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
                         .call = e->call};
         if (e->call != CALL_NONE) vec_push(A.calls, e);
+        // world.Get<Health>(e): the component in <>
+        if (e->type_arg.len > 0) type_ref(e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
         if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
             o.kind = OCC_FUNCTION;
             o.owner = e->call == CALL_TEXT ? str_from("string") : e->object->name; // name.Contains(...): text's
@@ -612,6 +633,11 @@ static void walk_expr(const expr *e)
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) { // stats.IsDead(), Combat.Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
             o.decl = e->method;
+            add_occ(o);
+        } else if (e->object->type.kind == TY_WORLD) { // world.Get<Health>(e), even one the checker refused
+            o.kind = OCC_METHOD;
+            o.call = CALL_WORLD;
+            o.component = e->type_decl && e->type_decl->kind == DECL_COMPONENT ? e->type_decl : NULL;
             add_occ(o);
         }
         for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
@@ -968,7 +994,9 @@ static bool unused_access(const diagnostic *d)
         const decl *sys = A.prog->decls.items[i];
         for (int k = 0; sys->kind == DECL_SYSTEM && k < sys->params.count; k++) {
             const param *p = &sys->params.items[k];
-            if (p->name.len == 0 || (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON)) continue;
+            if (p->name.len == 0 || (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && p->type.kind != TY_WORLD)) {
+                continue;
+            }
             if (!p->read && loc_cmp(d->at, p->name_at) == 0) return true;
             if (p->read && p->mode == PARAM_MUT && !p->written && loc_cmp(d->at, p->at) == 0) return true;
         }
@@ -1048,6 +1076,11 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_GRID: return "Cells at positions, kept in chunks only where something's set: `cells[x, y]`, `size`, `Clear()`, "
                          "and `foreach` or `parallel` through its cells. "
                          "Its size is given when it's made, `Grid2(1024, 1024)`; 0 or nothing is open.";
+    case TY_WORLD: return "Any entity's components, by its handle, for a system, view or event handler that takes "
+                          "`World world`: `world.Get<Health>(entity)` is a copy of that entity's `Health` (its zero value "
+                          "when it has none), `world.Has<Health>(entity)` tells, and with `mut World`, "
+                          "`world.Set<Health>(entity, value)` puts one back. What the code reaches this way counts as "
+                          "access to every entity's component: the schedule shows it.";
     default: return NULL;
     }
 }
@@ -1095,7 +1128,6 @@ static void format_param(const param *p, sb *out)
     case PARAM_WITHOUT: sb_put(out, "without "); break;
     case PARAM_READ: case PARAM_EVENT: break;
     }
-    if (p->lookup) sb_put(out, "lookup ");
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
 }
@@ -1349,6 +1381,18 @@ static const method_form entity_calls[] = {
      "It jumped, like a respawn or a portal: views draw it as it is this tick, not blended from where it was."},
 };
 
+// The World's methods, in code that takes `World world`: T is the component in <>.
+static const method_form world_calls[] = {
+    {"Get", "Get<T>(Entity entity) -> T",
+     "A copy of the entity's component as it is right now, or the component's zero value when the entity has none. It "
+     "counts as reading every entity's, so systems that write the component run before or after."},
+    {"Has", "Has<T>(Entity entity) -> bool",
+     "Whether the entity has the component. It counts as reading every entity's."},
+    {"Set", "Set<T>(Entity entity, T value)",
+     "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
+     "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
+};
+
 static const method_form singleton_calls[] = {
     {"Snap", "Snap()", "It jumped, like a camera cut: views draw it as it is this tick, not blended from where it was."},
 };
@@ -1366,15 +1410,39 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
+    case TY_WORLD: forms = world_calls; *count = sizeof world_calls / sizeof world_calls[0]; break;
     default: break;
     }
     return forms;
+}
+
+// "World.Get<Health>(Entity entity) -> Health" for the World's method `form`
+// of `component`, with a LocalEntity for a local one; "World.Get<T>(...)"
+// where the component isn't known.
+static void format_world_method(const method_form *form, const decl *component, sb *out)
+{
+    sb_put(out, "World.");
+    for (const char *p = form->form; *p; p++) {
+        const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
+        if (*p == 'T' && alone && component) {
+            sb_printf(out, STR_FMT, STR_ARG(component->name));
+        } else if (component && component->is_local && strncmp(p, "Entity ", 7) == 0) {
+            sb_put(out, "LocalEntity");
+            p += 5;
+        } else {
+            sb_putn(out, p, 1);
+        }
+    }
 }
 
 // "List<int>.Add(int item)" for the method `form` called on a value of type
 // `t`; "items.Add(T item)" where its type isn't known.
 static void format_method(const method_form *form, const type t, sb *out)
 {
+    if (t.kind == TY_WORLD) {
+        format_world_method(form, NULL, out);
+        return;
+    }
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
@@ -1431,6 +1499,24 @@ static void describe_default(const type t, sb *out)
     default: sb_put(out, "All zeros"); break;
     }
     sb_printf(out, ": the default value of `%s`, the type where it goes.", type_name(t));
+}
+
+static const decl *decl_of_param(const param *p);
+
+// What code reaches through its World, in a sentence: access to every
+// entity's component.
+static void describe_world(const decl *d, sb *out)
+{
+    sb reads = {0};
+    sb writes = {0};
+    const int read_count = world_use_names(d, false, "`", d, &reads);
+    const int write_count = world_use_names(d, true, "`", d, &writes);
+    if (read_count + write_count == 0) return;
+    sb_put(out, "\n\nThrough its `World`, it ");
+    if (read_count) sb_printf(out, "reads any entity's %s", reads.data);
+    if (read_count && write_count) sb_put(out, " and ");
+    if (write_count) sb_printf(out, "writes any entity's %s", writes.data);
+    sb_put(out, ".");
 }
 
 // Markdown for a hover over `o`.
@@ -1490,6 +1576,7 @@ static void describe(const occurrence *o, sb *out)
                                          : o->decl->per_entity ? "\n\nRuns once per tick for every matching entity."
                                          : "\n\nRuns once per tick.");
         }
+        describe_world(o->decl, out);
         describe_order(o->decl, out);
         break;
     case OCC_SETTING: {
@@ -1515,6 +1602,13 @@ static void describe(const occurrence *o, sb *out)
     case OCC_PARAM:
         format_param(o->param, &code);
         code_block(out, code.data);
+        if (o->param->type.kind == TY_WORLD) {
+            sb_printf(out, "\n\nThe World: any entity's components by its handle, with `Get<T>(entity)`, `Has<T>(entity)` "
+                           "and%s `Set<T>(entity, value)`.", o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
+            const decl *code_of = decl_of_param(o->param);
+            if (code_of) describe_world(code_of, out);
+            break;
+        }
         if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
         else if (o->param->mode == PARAM_EVENT) sb_put(out, "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
@@ -1663,7 +1757,8 @@ static void describe(const occurrence *o, sb *out)
             const method_form *forms = methods_of(o->object_type, &count);
             const method_form *form = find_form(forms, count, o->name);
             if (!form) break;
-            format_method(form, o->object_type, &code);
+            if (o->object_type.kind == TY_WORLD) format_world_method(form, o->component, &code);
+            else format_method(form, o->object_type, &code);
             code_block(out, code.data);
             sb_printf(out, "\n\n%s", form->doc);
         }
@@ -1802,6 +1897,16 @@ void analysis_code_lenses(jbuf *out)
         if (d->at.file != A.doc || d->stage == 0) continue;
         sb title = {0};
         sb_printf(&title, "stage %d", d->stage);
+        sb reads = {0};
+        sb writes = {0};
+        const int read_count = world_use_names(d, false, "", d, &reads);
+        const int write_count = world_use_names(d, true, "", d, &writes);
+        if (read_count + write_count > 0) { // Access to every entity's, which its signature doesn't say
+            sb_put(&title, " \u00B7 World: ");
+            if (read_count) sb_printf(&title, "reads %s", reads.data);
+            if (read_count && write_count) sb_put(&title, "; ");
+            if (write_count) sb_printf(&title, "writes %s", writes.data);
+        }
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
             if (w->through) continue; // Shown on the system it goes through
@@ -3039,12 +3144,17 @@ static loc expr_end(const expr *e)
         if (b) return (loc){b->name_at.line, b->name_at.col + b->name.len, e->at.file};
         return (loc){e->pattern_at.line, e->pattern_at.col + last_part(e->pattern).len, e->at.file};
     }
-    case E_CALL: case E_METHOD:
+    case E_CALL: case E_METHOD: {
         if (e->block) return stmt_end(e->block); // Its block, after the call
-        if (t < 0 || t + 1 >= f->tok_count || f->toks[t + 1].kind != T_LPAREN) {
+        int open = t + 1;
+        if (t >= 0 && e->type_arg.len > 0) { // world.Get<Health>(e): its '(' is past the type in <>
+            while (open < f->tok_count && f->toks[open].kind != T_LPAREN) open++;
+        }
+        if (t < 0 || open >= f->tok_count || f->toks[open].kind != T_LPAREN) {
             return e->args.count > 0 ? expr_end(e->args.items[e->args.count - 1]) : e->at; // cells[x, y]'s position
         }
-        return token_end(&f->toks[closing(e->at, t + 1)]);
+        return token_end(&f->toks[closing(e->at, open)]);
+    }
     case E_LITERAL: // Body { ... }: the '{' after its name
         if (t >= 0 && t + 1 < f->tok_count && f->toks[t + 1].kind == T_LBRACE) {
             return token_end(&f->toks[closing(e->at, t + 1)]);
@@ -3756,6 +3866,18 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     for (int i = 0; i < n; i++) {
         static const char *const columns[] = {"c0", "c1", "c2", "c3"};
         item(c, columns[i], CK_PROPERTY, type_name(vector_type(true, n)), "A column.", NULL);
+    }
+    if (t.kind == TY_WORLD) { // world.: its methods, each with the component in <>
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; i < count; i++) {
+            sb detail = {0};
+            format_method(&forms[i], t, &detail);
+            sb snippet = {0};
+            sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+        return;
     }
     // Built-in methods: a list's and a grid's, and an entity's or a singleton's
     // where the code can change it.
@@ -4495,6 +4617,18 @@ void analysis_completion(const int line, const int character, jbuf *out)
         complete_members(&c, last, at, f.kind == CTX_ATTRIBUTE_ARGS);
         goto done;
     }
+    // world.Get<: a component, of the worlds the code reads
+    if (pk == T_LT && last >= 3 && DOC->toks[last - 1].kind == T_IDENT && DOC->toks[last - 2].kind == T_DOT
+        && DOC->toks[last - 3].kind == T_IDENT) {
+        const scope sc = scope_at(at);
+        const param *world;
+        if (name_type(&sc, DOC->toks[last - 3].text, &world).kind == TY_WORLD) {
+            if (!sc.decl->is_local || sc.decl->is_view) complete_components_of(&c, false);
+            if (sc.decl->is_local || sc.decl->is_view) complete_components_of(&c, true);
+            complete_namespaces(&c, false);
+            goto done;
+        }
+    }
     // int Parse(string text) fails ParseError: the error's type, one a function can return
     if (pk == T_IDENT && str_eq_c(prev->text, "fails") && last >= 1 && DOC->toks[last - 1].kind == T_RPAREN
         && (f.kind == CTX_TOP || f.kind == CTX_DATA)) {
@@ -4626,9 +4760,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
-                item(&c, "lookup", CK_KEYWORD, "Any entity's component, by its handle: health[e]", NULL, NULL);
                 item(&c, "Devices", CK_CLASS, "The devices of the entity's owner, or the server's", NULL, NULL);
             }
+            item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
             complete_types(&c, true, true, pk != T_MUT);
             complete_namespaces(&c, false);
         } else if (pk == T_IDENT) {
@@ -5015,6 +5149,11 @@ static const char *check_new_name(const occurrence *target, const str name)
     if (builtin_type_named(name, &ignored)) return "That name is built into the language.";
     if (str_starts_with_c(name, "tide_")) return "Names starting with 'tide_' are reserved for generated code.";
 
+    if (target->kind == OCC_TYPE && str_eq_c(name, "World") && target->decl && target->decl->unit
+        && target->decl->unit->ns.len == 0) {
+        return "'World' is built into the engine: a type of that name goes in a namespace.";
+    }
+
     bool clash = false;
     switch (target->kind) {
     case OCC_TYPE:
@@ -5235,6 +5374,43 @@ static type receiver_type(const int dot, const loc at)
     return t;
 }
 
+// The token that closes the type the '<' at token `i` opens after a method's
+// name, as in world.Get<Health>(e): a name, maybe qualified, then '>' and the
+// call's '('. -1 where the '<' compares.
+static int type_argument_close(const int i)
+{
+    if (i < 2 || DOC->toks[i].kind != T_LT || DOC->toks[i - 1].kind != T_IDENT || DOC->toks[i - 2].kind != T_DOT) return -1;
+    int k = i + 1;
+    if (k >= DOC->tok_count || DOC->toks[k].kind != T_IDENT) return -1;
+    k++;
+    while (k + 1 < DOC->tok_count && DOC->toks[k].kind == T_DOT && DOC->toks[k + 1].kind == T_IDENT) k += 2;
+    if (k + 1 >= DOC->tok_count || DOC->toks[k].kind != T_GT || DOC->toks[k + 1].kind != T_LPAREN) return -1;
+    return k;
+}
+
+// The '<' that the '>' at token `i` closes, if they hold a method's type, or -1.
+static int type_argument_open(const int i)
+{
+    if (i < 0 || DOC->toks[i].kind != T_GT) return -1;
+    int k = i - 1;
+    while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT)) k--;
+    return k > 0 && type_argument_close(k) == i ? k : -1;
+}
+
+// The component written between the '<' at token `open` and the '>' at
+// `close`, as the document names it, or NULL.
+static const decl *component_written(const int open, const int close)
+{
+    sb written = {0};
+    for (int k = open + 1; k < close; k++) sb_printf(&written, STR_FMT, STR_ARG(DOC->toks[k].text));
+    for (int i = 0; written.len > 0 && i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_COMPONENT) continue;
+        if (strcmp(name_for(d), written.data) == 0 || str_eq_c(d->qualified, written.data)) return d;
+    }
+    return NULL;
+}
+
 // A signature's parameters, from its label as add_signature reads them: each
 // a type and a name ("float2 center"), or only a name ("x" in Math.Clamp).
 typedef struct label_params {
@@ -5341,6 +5517,13 @@ static int call_param_names(const expr *call, str *names, const int max)
         if (form) vec_push(list.labels, label.data);
         break;
     }
+    case CALL_WORLD: {
+        const method_form *form = find_form(world_calls, sizeof world_calls / sizeof world_calls[0], call->name);
+        sb label = {0};
+        if (form) format_world_method(form, call->type_decl, &label);
+        if (form) vec_push(list.labels, label.data);
+        break;
+    }
     default:
         break;
     }
@@ -5393,13 +5576,16 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             break;
         }
     }
-    if (open < 1 || DOC->toks[open - 1].kind != T_IDENT) {
+    // world.Get<Health>(: the method's name is before its type in <>
+    const int type_open = type_argument_open(open - 1);
+    const int callee = type_open >= 0 ? type_open - 1 : open - 1;
+    if (callee < 0 || DOC->toks[callee].kind != T_IDENT) {
         jb_put(out, "null");
         return;
     }
-    const str name = DOC->toks[open - 1].text;
-    const bool method = open >= 2 && DOC->toks[open - 2].kind == T_DOT;
-    const str owner = method && open >= 3 && DOC->toks[open - 3].kind == T_IDENT ? DOC->toks[open - 3].text : (str){"", 0};
+    const str name = DOC->toks[callee].text;
+    const bool method = callee >= 1 && DOC->toks[callee - 1].kind == T_DOT;
+    const str owner = method && callee >= 2 && DOC->toks[callee - 2].kind == T_IDENT ? DOC->toks[callee - 2].text : (str){"", 0};
 
     jbuf list = {0};
     signature_list s = {&list, commas, -1, commas, 0};
@@ -5422,15 +5608,19 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     } else if (method) {
         // What it's called on decides: text's, a list's, a grid's, an entity's or a singleton's.
         // The call's own, once it parses; until then, what the names before the dot are.
-        const occurrence *called = occurrence_at(DOC->toks[open - 1].at);
+        const occurrence *called = occurrence_at(DOC->toks[callee].at);
         const type t = called && called->call != CALL_NONE && called->object_type.kind != TY_ERROR
                          ? called->object_type
-                         : receiver_type(open - 2, at);
+                         : receiver_type(callee - 1, at);
         size_t count;
         const method_form *forms = methods_of(t, &count);
         const method_form *form = find_form(forms, count, name);
         if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
+        } else if (form && t.kind == TY_WORLD) {
+            sb label = {0};
+            format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);
+            add_signature(&s, label.data, form->doc);
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);
@@ -5445,7 +5635,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     if (s.shown == 0) {
         // The game's methods and functions: the one the call resolved to, or
         // while it's half written, every one with that name.
-        const occurrence *o = occurrence_at(DOC->toks[open - 1].at);
+        const occurrence *o = occurrence_at(DOC->toks[callee].at);
         for (int i = 0; i < A.prog->decls.count && !(o && is_routine(o->decl) && i > 0); i++) {
             const decl *d = A.prog->decls.items[i];
             for (int k = -1; k < d->methods.count; k++) {
@@ -5597,6 +5787,11 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     if (y == T_NOT && is_postfix_bang(b->tok)) return false;
     if (y == T_QUESTION && is_type_question(b->tok)) return false;
     if (a->unary || (x == T_NOT && !is_postfix_bang(a->tok)) || x == T_TILDE) return false;
+    // world.Get<Health>(e): a method's type, not a comparison
+    if (y == T_LT && type_argument_close(b->tok) >= 0) return false;
+    if (x == T_LT && type_argument_close(a->tok) >= 0) return false;
+    if (y == T_GT && type_argument_open(b->tok) >= 0) return false;
+    if (x == T_GT && y == T_LPAREN && type_argument_open(a->tok) >= 0) return false;
     // List<Item>: a type, not a comparison
     if (x == T_IDENT && y == T_LT && generic_type(DOC->toks[a->tok].text)) return false;
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;

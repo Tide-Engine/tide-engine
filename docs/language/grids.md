@@ -8,7 +8,7 @@ component Canvas
     Grid2<Color> pixels = Grid2(1024, 1024);
 }
 
-singleton World
+singleton Terrain
 {
     Grid3<int> blocks; // No size: open every way
 }

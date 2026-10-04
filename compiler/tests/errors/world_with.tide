@@ -1,0 +1,6 @@
+// expect: 'with' and 'without' filter entities by component, and the World is every entity's
+component Health { int value; }
+scene Main { }
+system Read(with World, with Health)
+{
+}

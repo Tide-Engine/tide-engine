@@ -1,0 +1,7 @@
+// expect: Has takes one entity's handle: 'world.Has<Health>(entity)'
+component Health { int value; }
+scene Main { }
+system Read(World world, with Health)
+{
+    if (world.Has<Health>()) return;
+}

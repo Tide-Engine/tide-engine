@@ -1,0 +1,31 @@
+world: 6 systems each tick, 2 stages deep; 6 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Aim  (per entity)
+         writes Transform
+         alongside Heal, Drain, Rust, Rest
+stage 2  Chase  (per entity)
+         reads Runner
+         writes Transform
+         reads any entity's Transform, through World
+         after Aim: it writes Transform, which this reads
+         alongside Heal, Drain, Rust, Rest
+stage 1  Heal  (per entity)
+         reads Healer
+         reads any entity's Armor, through World
+         writes any entity's Health, through World
+         alongside Aim, Chase, Rest
+stage 2  Drain  (per entity)
+         writes Health
+         after Heal: both write Health
+         alongside Aim, Chase, Rust, Rest
+stage 2  Rust  (per entity)
+         writes Armor
+         after Heal: it reads Armor, which this writes
+         alongside Aim, Chase, Drain, Rest
+stage 1  Rest  (per entity)
+         reads any entity's Idle, through World
+         alongside Aim, Chase, Heal, Drain, Rust
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

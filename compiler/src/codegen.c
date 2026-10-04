@@ -1196,6 +1196,7 @@ static bool takes_where(const param *p)
 // copied as it's taken, so no two variables share a list.
 static bool is_fresh(const expr *e)
 {
+    if (e->kind == E_METHOD && e->call == CALL_WORLD) return false; // world.Get<Health>(e): out of that entity's row
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }
 
@@ -1985,12 +1986,6 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
-        if (e->object->type.kind == TY_LOOKUP) { // health[e]: that entity's, or its zero when it has none
-            sb_printf(o, "tide_get_%s(%s, ", type_cname(e->object->type.decl), e->object->type.decl->is_local ? "tide_l" : "tide_w");
-            gen_expr(g, o, e->lhs);
-            sb_put(o, ")");
-            break;
-        }
         if (e->object->type.kind == TY_GRID && in_window(g, e)) { // A parallel step's cell near its place
             sb_put(o, "tide_win[");
             gen_window_index(g, o, e);
@@ -2276,9 +2271,17 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_grid_clear(&(");
             gen_expr(g, o, e->object);
             sb_printf(o, "), &%s, %s)", grid_shape_name(e->object->type.decl), place_where(g, e->object));
-        } else if (e->call == CALL_HAS) { // health.Has(e): whether that entity has one
-            sb_printf(o, "tide_has_%s(%s, ", type_cname(e->object->type.decl), e->object->type.decl->is_local ? "tide_l" : "tide_w");
+        } else if (e->call == CALL_WORLD) {
+            // world.Get<Health>(e): that entity's, or its zero when it has none; Has: whether it has one;
+            // Set: puts one back, and nothing when it has none
+            const bool set = str_eq_c(e->name, "Set");
+            sb_printf(o, "%stide_%s_%s(%s, ", set ? "(void)" : "", set ? "set" : str_eq_c(e->name, "Has") ? "has" : "get",
+                      type_cname(e->type_decl), e->type_decl->is_local ? "tide_l" : "tide_w");
             gen_expr(g, o, e->args.items[0]);
+            if (set) {
+                sb_put(o, ", ");
+                gen_as(g, o, e->args.items[1], (type){TY_COMPONENT, e->type_decl});
+            }
             sb_put(o, ")");
         } else if (e->call == CALL_TEXT) { // name.Contains("cat"): the text first
             sb_printf(o, "%s(", e->c_callee);
@@ -3856,16 +3859,6 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl), place_where(g, target));
             break;
         }
-        if (target->kind == E_INDEX && target->object->type.kind == TY_LOOKUP) { // health[e] = h: nothing when it has none
-            const decl *d = target->object->type.decl;
-            indent(g, o);
-            sb_printf(o, "(void)tide_set_%s(%s, ", type_cname(d), d->is_local ? "tide_l" : "tide_w");
-            gen_expr(g, o, target->lhs);
-            sb_put(o, ", ");
-            gen_as(g, o, s->value, target->type);
-            sb_put(o, ");\n");
-            break;
-        }
         if (target->kind == E_INDEX && target->object->type.kind == TY_MAP) { // scores[k] = x: added, or the value replaced
             const decl *map = target->object->type.decl;
             indent(g, o);
@@ -3980,9 +3973,34 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_block_run(g);
         } else if (s->value->call == CALL_LIST && s->value->block && str_eq_c(s->value->name, "Sort")) {
             gen_sort_call(g, s->value);
+        } else if (s->value->call == CALL_WORLD && str_eq_c(s->value->name, "Set") && decl_has_text(s->value->type_decl)) {
+            // world.Set<Health>(e, h) of a component with text or lists: they go into the
+            // world's heap as the entity's own, never shared with the value
+            const expr *set = s->value;
+            const decl *d = set->type_decl;
+            const char *name = type_cname(d);
+            const char *world = d->is_local ? "tide_l" : "tide_w";
+            line(g, o, "{");
+            g->indent++;
+            indent(g, o);
+            sb_put(o, "const tide_entity tide_to = ");
+            gen_expr(g, o, set->args.items[0]);
+            sb_put(o, ";\n");
+            indent(g, o);
+            sb_printf(o, "const %s tide_value = ", name);
+            gen_value_of(g, o, set->args.items[1], (type){TY_COMPONENT, (decl *)d});
+            sb_put(o, ";\n");
+            line(g, o, "%s tide_row;", name);
+            line(g, o, "if (tide_load_%s(%s, tide_to, &tide_row)) {", name, world);
+            line(g, o, "    tide_assign_%s(&tide_row, tide_value, %s);", name, world_where(d->is_local));
+            line(g, o, "    tide_store_%s(%s, tide_to, &tide_row);", name, world);
+            line(g, o, "}");
+            g->indent--;
+            line(g, o, "}");
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
-                   || s->value->call == CALL_GRID || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
+                   || s->value->call == CALL_GRID || s->value->call == CALL_WORLD
+                   || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
@@ -5986,12 +6004,16 @@ static const char *trigger_cname(const gen *g, const decl *handler)
     return trigger->name.len > 0 ? local_cname(g, trigger->name) : "tide_event";
 }
 
-// Whether a view reads the match: it then only runs in a match.
+// Whether a view reads the match, through a parameter or its World: it then
+// only runs in a match.
 static bool reads_match(const decl *sys)
 {
     for (int i = 0; i < sys->params.count; i++) {
         const type t = sys->params.items[i].type;
         if ((t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local) return true;
+    }
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        if (!sys->world_uses.items[i].component->is_local) return true;
     }
     return false;
 }
@@ -6116,7 +6138,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
     if (sys->per_entity && has_scenes(g->prog, sys->entity_local)) capture(&out, "tide_entity", "tide_scene");
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT) continue;
+        if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
         capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
     }
@@ -6215,7 +6237,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         if (sys->per_entity && has_scenes(g->prog, sys->entity_local)) capture(&out, "tide_entity", "tide_scene");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
-            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_LOOKUP) continue;
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
             capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
         }
@@ -6693,7 +6715,7 @@ static void gen_system_body(gen *g, const decl *sys)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT) continue;
-        if (p->type.kind == TY_LOOKUP) continue; // Read and changed through the world, by entity
+        if (p->type.kind == TY_WORLD) continue; // The world the code runs in, which it has already
         sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", c_type(p->type), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
@@ -6717,7 +6739,7 @@ static void gen_system_body(gen *g, const decl *sys)
     if (sys->is_handler) line(g, o, "(void)%s;", trigger_cname(g, sys));
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_LOOKUP) line(g, o, "(void)%s;", local_cname(g, p->name));
+        if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_WORLD) line(g, o, "(void)%s;", local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
     }
     gen_grid_caches(g);
@@ -7238,6 +7260,7 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
             line(g, o, "(void)%s;", name);
             continue;
         }
+        if (p->type.kind == TY_WORLD) continue; // The world the task runs in, which it has already
         const char *name = local_cname(g, p->name);
         if (p->type.kind == TY_COMPONENT) {
             line(g, o, "(void)%s;", name);
@@ -8002,20 +8025,6 @@ static bool runs_on(const gen *g, const decl *sys, const int a)
     return arch_local(g, a) == sys->entity_local && filters_admit(g->prog, sys, a);
 }
 
-// Whether a system looks up a component it also changes through a parameter.
-static bool lookup_overlaps_mut(const decl *sys)
-{
-    for (int i = 0; i < sys->params.count; i++) {
-        const param *p = &sys->params.items[i];
-        if (p->type.kind != TY_LOOKUP) continue;
-        for (int k = 0; k < sys->params.count; k++) {
-            const param *q = &sys->params.items[k];
-            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == p->type.decl) return true;
-        }
-    }
-    return false;
-}
-
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
 // piece of them (tide_piece of tide_pieces), as tide_from and tide_to.
 static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
@@ -8038,10 +8047,10 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(&inner, "%s    ", pad);
     sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
     gen_piece_rows(o, pad, pieced);
-    // A system that looks up a component it changes reads rows it changed
-    // earlier in this run: so they're written in place, the same everywhere,
-    // rather than into a copy some pages would have and others not
-    gen_chunk_columns(g, sys, a, pad, read_only, !lookup_overlaps_mut(sys));
+    // A system that reads through its World a component it changes reads rows
+    // it changed earlier in this run: so they're written in place, the same
+    // everywhere, rather than into a copy some pages would have and others not
+    gen_chunk_columns(g, sys, a, pad, read_only, !world_reads_own_writes(sys));
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_copies(g, sys, a, inner.data);
