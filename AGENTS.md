@@ -30,6 +30,8 @@ A networking-first game engine:
 
 ## Rendering and platform
 
+- Render targets are local shared images: `RenderTarget(width, height)`, `target.Resize(width, height)`, `target.color`, and explicit `target.Dispose()`. Copies share the image; color and depth persist across frames until cleared. Resizing discards contents. Target receiver drawing methods select that destination; ordinary `Draw` methods and GUI/stats use `Draw.window`. `Draw.Blit(source, destination, frag)` supplies a read-only `Texture` parameter and overwrites the full destination's color, independently of camera/clip, while preserving depth. The source can also be a CPU `Grid2<Color>`; target color has no CPU readback. Sampling the destination itself is an error.
+
 - Windows, input and rendering are the platform layer's own, with no engine under it:
   - `platform/src/platform.c` is the frame loop, the devices and the renderer. What it needs of the system is `platform/src/window.h`: a window, what draws in it, and what its input devices say. Each build has one: `platform/desktop/glfw.c` (GLFW, for the window, keyboard, mouse, gamepads through its mappings, and clipboard), `platform/web/canvas.c` (the page, through `tide.js`) or `platform/android/activity.c` (NativeActivity and EGL).
   - The renderer is written once, against `platform/src/gpu.h`: buffers, textures, pipelines and passes, whichever API is under them (shared, agreed, rather than a renderer per backend). It's shaped by WebGPU, the strictest: a pipeline is made once with its shaders, the vertices it reads and how it blends and tests depth; its uniforms are one block of bytes; drawing happens in passes that start cleared or as they were left, so a clear inside a list is drawn (a triangle over the target, which the clip cuts, and which sets depth back). Clip space is OpenGL's, and pixels and rows count from the top left; each backend turns those into its own. Compute joins it when Tide code runs on the GPU.
@@ -312,6 +314,7 @@ The language shares the engine's name, Tide. Its syntax and semantics are specif
 - Derive as much as possible from the language.
 - It should be as explicit as our needs require, while staying friendly.
 - Dependency trees are static: known at compile time, not discovered at runtime.
+- Named ordering phases are ordinary enum members. `Stage(Stages.Objects[, offset])` assigns a system, view or event handler to one phase; the optional comma-separated offset is a constant int, defaults to 0 and orders only within that phase. Enum declaration order decides phase order, not numeric values. `Before` and `After` accept whole phases as well as declarations. Systems, views and each event's handlers keep separate schedules; phase ordering also becomes system waits, and empty phases retain their place.
 - Explicit is the default. Systems declare which components they read and write in their signatures.
 - A system's access (which components it reads or writes) is declared separately from its filters (which components an entity must have or lack). Filters don't create data dependencies.
 - The language is built around the ECS. It should use syntax sugar to hide the ECS's pain points.

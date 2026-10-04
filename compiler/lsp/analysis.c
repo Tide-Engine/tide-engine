@@ -43,7 +43,7 @@ typedef enum occ_kind {
     OCC_METHOD,   // e.Add, e.Remove, e.Destroy, e.Send, and methods of structs and components (with `decl`)
     OCC_MEMBER,   // Swizzles, color channels, quaternion.value, matrix columns, input .down/.up
     OCC_NAMESPACE, // Combat in `namespace Combat;` or Combat.Health
-    OCC_ATTRIBUTE, // Before, After, Clamp, Min, Max
+    OCC_ATTRIBUTE, // Stage, Before, After, Clamp, Min, Max
     OCC_ENUM_MEMBER, // Title in Page.Title, and in `enum Page { Title }` (with `decl`, the enum)
     OCC_THIS,     // `this`, with `decl` the system, view, handler or method it's in
     OCC_DEFAULT,  // `default`, with the type it takes
@@ -590,7 +590,7 @@ static void walk_expr(const expr *e)
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
-        if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID) && in_source) { // float3(...), Grid2(64, 64)
+        if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
             o.kind = OCC_TYPE;
             add_occ(o);
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
@@ -623,9 +623,12 @@ static void walk_expr(const expr *e)
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>
         if (e->type_arg.len > 0) type_ref(e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
-        if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
+        if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
+            o.kind = OCC_METHOD;
+            add_occ(o);
+        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
             o.kind = OCC_FUNCTION;
-            o.owner = e->call == CALL_TEXT ? str_from("string") : e->object->name; // name.Contains(...): text's
+            o.owner = e->call == CALL_TEXT ? str_from("string") : e->targeted ? str_from("Draw") : e->object->name;
             o.c_name = e->c_callee;
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
@@ -839,18 +842,30 @@ static void index_program(void)
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->builtin) continue;
-        // [After(Physics.Integrate)]: the attribute, and the systems it names
+        // Scheduling attributes: declarations or an enum and its phase member.
         for (int a = 0; a < d->attributes.count; a++) {
             const attribute *at = &d->attributes.items[a];
             add_occ((occurrence){.at = at->at, .len = at->name.len, .kind = OCC_ATTRIBUTE, .name = at->name});
             for (int k = 0; k < d->attributes.items[a].args.count; k++) {
                 const qname *q = &d->attributes.items[a].args.items[k];
                 if (!q->decl) continue;
-                qualifier_ref(q->at, q->name_at, q->text);
                 const str name = last_part(q->text);
-                add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_SYSTEM, .decl = q->decl,
-                                     .name = name});
+                if (q->enum_member) {
+                    const str enum_name = {q->text.ptr, q->text.len - name.len - 1};
+                    const int member_token = token_at(q->name_at);
+                    if (member_token >= 2) {
+                        const loc enum_at = A.files[q->at.file].toks[member_token - 2].at;
+                        type_ref(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
+                    }
+                    add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_ENUM_MEMBER,
+                                         .decl = q->decl, .name = name});
+                } else {
+                    qualifier_ref(q->at, q->name_at, q->text);
+                    add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_SYSTEM,
+                                         .decl = q->decl, .name = name});
+                }
             }
+            for (int v = 0; v < at->values.count; v++) walk_expr(at->values.items[v]);
         }
         if (d->kind == DECL_SYSTEM || d->kind == DECL_SHADER) {
             add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
@@ -1105,6 +1120,8 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter])`. A Blit supplies its source to a read-only Texture shader parameter.";
+    case TY_RENDER_TARGET: return "A local drawing destination made with `RenderTarget(width, height)`. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1428,6 +1445,19 @@ static const method_form grid_calls[] = {
      "there: the GPU is told both before any pixel runs."},
 };
 
+static const method_form texture_calls[] = {
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
+     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). The filter is fixed for the draw."},
+};
+
+static const method_form target_calls[] = {
+    {"Resize", "Resize(int width, int height)", "Changes the shared image's pixel dimensions and discards its contents, even at the same size."},
+    {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
+};
+
+#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination, frag shader)"
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. It replaces color independently of camera and clip, and preserves depth. Source cannot be destination.color."
+
 // What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
 #define MESH_SHADER_DOC                                                                                                \
@@ -1525,6 +1555,8 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_MAP: forms = map_calls; *count = sizeof map_calls / sizeof map_calls[0]; break;
     case TY_SET: forms = set_calls; *count = sizeof set_calls / sizeof set_calls[0]; break;
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
+    case TY_TEXTURE: forms = texture_calls; *count = sizeof texture_calls / sizeof texture_calls[0]; break;
+    case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
     case TY_WORLD: forms = world_calls; *count = sizeof world_calls / sizeof world_calls[0]; break;
@@ -1605,6 +1637,7 @@ static void describe_default(const type t, sb *out)
     case TY_MAP: sb_put(out, "An empty map"); break;
     case TY_SET: sb_put(out, "An empty set"); break;
     case TY_GRID: sb_put(out, "An empty grid, open every way"); break;
+    case TY_TEXTURE: case TY_RENDER_TARGET: sb_put(out, "An invalid image reference"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -1997,6 +2030,9 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Clipboard")) {
             code_block(out, CLIPBOARD_COPY_FORM);
             sb_put(out, "\n\n" CLIPBOARD_COPY_DOC);
+        } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Draw") && str_eq_c(o->name, "Blit")) {
+            code_block(out, BLIT_FORM);
+            sb_put(out, "\n\n" BLIT_DOC);
         } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Session")) {
             for (size_t i = 0; i < sizeof session_calls / sizeof session_calls[0]; i++) {
                 if (!str_eq_c(o->name, session_calls[i].name)) continue;
@@ -2081,8 +2117,13 @@ static void describe(const occurrence *o, sb *out)
             const char *form;
             const char *doc;
         } attributes[] = {
-            {"Before", "[Before(System, ...)]", "This system runs before the ones named, every tick."},
-            {"After", "[After(System, ...)]", "This system runs after the ones named, every tick."},
+            {"Stage", "[Stage(Stages.Phase, offset = 0)]",
+             "Places this declaration in an enum phase. Phases follow the enum's declaration order; signed integer "
+             "offsets order work within a phase. The enum's numeric values don't affect phase order."},
+            {"Before", "[Before(DeclarationOrPhase, ...)]",
+             "Runs before the named declarations, or before every declaration in the named enum phases."},
+            {"After", "[After(DeclarationOrPhase, ...)]",
+             "Runs after the named declarations, or after every declaration in the named enum phases."},
             {"Clamp", "[Clamp(lo, hi)]", "Keeps this input field between lo and hi. The engine applies it to every "
                                          "input, after repairing NaN and before Sanitize."},
             {"Min", "[Min(x)]", "Keeps this input field at least x, before Sanitize runs."},
@@ -2135,6 +2176,10 @@ static const char *ordinal(const int n)
 // Where a system or view runs, and what it runs after: the schedule, visible.
 static void describe_order(const decl *d, sb *out)
 {
+    if (d->order_enum && d->order_member) {
+        sb_printf(out, "\n\nPhase `" STR_FMT "." STR_FMT "`, offset %d.",
+                  STR_ARG(d->order_enum->qualified), STR_ARG(d->order_member->name), d->order_offset);
+    }
     if (d->is_handler) {
         if (!d->event || d->event->handlers.count < 2) return;
         int index = 0;
@@ -4085,6 +4130,7 @@ static bool is_swizzle(const str member, const int dim)
 // The type of `t.member`, or TY_ERROR.
 static type member_type(const type t, const str member)
 {
+    if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
@@ -4178,14 +4224,33 @@ static void add_builtin_member(void *user, const builtin_member *m)
     item(v->c, m->name, m->is_function ? CK_FUNCTION : CK_CONSTANT, m->detail, m->doc, m->snippet);
 }
 
+static void add_target_member(void *user, const builtin_member *m)
+{
+    if (!m->is_function || strcmp(m->name, "Blit") == 0) return;
+    completion *c = user;
+    item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
+}
+
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
     // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
     const bool gpu = is_shader(sc->decl);
+    if (t.kind == TY_RENDER_TARGET) {
+        item(c, "color", CK_PROPERTY, "Texture", "The target's GPU color image, without CPU readback.", NULL);
+        if (!gpu) {
+            for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
+                item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
+                     i == 0 ? "Resize($1, $2)" : "Dispose()");
+        }
+        if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION))
+            builtin_list_members(str_from("Draw"), add_target_member, c);
+        return;
+    }
     if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
-    if (gpu && t.kind == TY_GRID) {
-        if (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR) return;
-        const method_form *sample = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
+    if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
+        if (t.kind == TY_GRID && (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR)) return;
+        const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
+            : find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
         sb detail = {0};
         format_method(sample, t, &detail);
         item(c, sample->name, CK_METHOD, detail.data, sample->doc, "Sample($1)");
@@ -4320,10 +4385,17 @@ static bool decides_session(const scope *sc)
 }
 
 // After `a.b.`: resolves the chain of names before the dot.
-static bool complete_in_namespace(completion *c, str ns, bool systems);
+typedef enum order_completion {
+    ORDER_NONE,   // Ordinary types and values
+    ORDER_REFS,   // Before/After: declarations and enum phases
+    ORDER_PHASE,  // Stage's first argument: an enum phase
+    ORDER_OFFSET, // Stage's optional offset: an integer constant
+} order_completion;
+
+static bool complete_in_namespace(completion *c, str ns, order_completion order);
 static const char *name_for(const decl *d);
 
-static void complete_members(completion *c, const int dot, const loc at, const bool systems)
+static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
     if (dot >= 1 && DOC->toks[dot - 1].kind == T_THIS) { // this.: the entity's methods
         const scope sc = scope_at(at);
@@ -4340,6 +4412,26 @@ static void complete_members(completion *c, const int dot, const loc at, const b
     }
     if (n == 0) return;
 
+    if (order != ORDER_NONE) {
+        sb written = {0};
+        for (int k = n - 1; k >= 0; k--) {
+            sb_printf(&written, "%s" STR_FMT, k == n - 1 ? "" : ".", STR_ARG(DOC->toks[ids[k]].text));
+        }
+        if (order != ORDER_OFFSET) {
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *d = A.prog->decls.items[i];
+                if (d->kind != DECL_ENUM || (strcmp(name_for(d), written.data) != 0
+                                            && !str_eq_c(d->qualified, written.data))) continue;
+                for (int m = 0; m < d->members.count; m++) {
+                    item(c, str_to_cstr(d->members.items[m].name), CK_ENUM_MEMBER, "scheduling phase", NULL, NULL);
+                }
+                return;
+            }
+        }
+        complete_in_namespace(c, (str){written.data, (int)written.len}, order);
+        return;
+    }
+
     const scope sc = scope_at(at);
     const bool gpu = is_shader(sc.decl); // A frag or vert: it has what it takes, and no devices, scenes or frame
     const str base = DOC->toks[ids[n - 1]].text;
@@ -4347,6 +4439,10 @@ static void complete_members(completion *c, const int dot, const loc at, const b
     type t = name_type(&sc, base, &p);
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, ids[n - 1]);
     if (t.kind == TY_ERROR && str_eq_c(base, "Devices") && !gpu) t = (type){TY_RECORD, A.prog->devices}; // This machine's
+    if (t.kind == TY_ERROR && n == 2 && str_eq_c(base, "Draw") && str_eq_c(DOC->toks[ids[0]].text, "window") && !gpu) {
+        list_members(c, (type){TY_RENDER_TARGET, NULL}, false, &sc);
+        return;
+    }
     if (t.kind == TY_ERROR) {
         // Session.: its calls, where local code runs
         if (n == 1 && str_eq_c(base, "Session") && decides_session(&sc)) {
@@ -4414,14 +4510,18 @@ static void complete_members(completion *c, const int dot, const loc at, const b
             if (cursor && !frame && !(sc.in_input && !sc.in_sanitize)) return;
             builtin_visit v = {c, cursor && !frame};
             builtin_list_members(base, add_builtin_member, &v);
+            if (str_eq_c(base, "Draw")) {
+                item(c, "window", CK_PROPERTY, "RenderTarget", "The window drawing destination.", NULL);
+                item(c, "Blit", CK_FUNCTION, BLIT_FORM, BLIT_DOC, "Blit($1, $2, $3)");
+            }
             return;
         }
-        // Game.Combat.: a namespace. In [After(...)] it holds systems, elsewhere types.
+        // Game.Combat.: a namespace containing types and values.
         sb ns = {0};
         for (int k = n - 1; k >= 0; k--) {
             sb_printf(&ns, "%s" STR_FMT, k == n - 1 ? "" : ".", STR_ARG(DOC->toks[ids[k]].text));
         }
-        complete_in_namespace(c, (str){ns.data, (int)ns.len}, systems);
+        complete_in_namespace(c, (str){ns.data, (int)ns.len}, ORDER_NONE);
         return;
     }
     for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
@@ -4556,6 +4656,15 @@ static void complete_systems(completion *c, const bool views)
     }
 }
 
+// Enums define scheduling phases, in Stage, Before and After.
+static void complete_phases(completion *c)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ENUM) item(c, name_for(d), CK_ENUM, "scheduling phases", NULL, NULL);
+    }
+}
+
 // Namespaces as written from the current document: every one for `using`, or
 // just the outermost names ("Game" for Game.Combat) where code starts.
 static void complete_namespaces(completion *c, const bool full)
@@ -4571,8 +4680,8 @@ static void complete_namespaces(completion *c, const bool full)
     }
 }
 
-// After `Combat.`: what's inside the namespace. `kinds` picks types or systems.
-static bool complete_in_namespace(completion *c, const str ns, const bool systems)
+// After `Combat.`: types and values, or the relevant scheduling arguments.
+static bool complete_in_namespace(completion *c, const str ns, const order_completion order)
 {
     bool any = false;
     for (int i = 0; i < A.prog->units.count; i++) {
@@ -4590,7 +4699,10 @@ static bool complete_in_namespace(completion *c, const str ns, const bool system
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (!d->unit || !str_eq(d->unit->ns, ns)) continue;
-        if (systems != (d->kind == DECL_SYSTEM)) continue;
+        if (order == ORDER_NONE && d->kind == DECL_SYSTEM) continue;
+        if (order == ORDER_REFS && d->kind != DECL_SYSTEM && d->kind != DECL_ENUM) continue;
+        if (order == ORDER_PHASE && d->kind != DECL_ENUM) continue;
+        if (order == ORDER_OFFSET && (d->kind != DECL_CONST || d->return_type.kind != TY_INT)) continue;
         const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? CK_STRUCT : d->kind == DECL_INPUT ? CK_INTERFACE
                        : d->kind == DECL_EVENT ? CK_EVENT : d->kind == DECL_ENUM ? CK_ENUM
                        : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT : CK_CLASS;
@@ -4602,6 +4714,7 @@ static bool complete_in_namespace(completion *c, const str ns, const bool system
 static const char *const value_types[] = {
     "bool", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
+    "Texture", "RenderTarget",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -4627,7 +4740,8 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT)) continue;
+        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET)) continue;
+        if ((t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
@@ -4932,6 +5046,7 @@ static void complete_shader_header(completion *c, const int open, const int last
     for (int k = open + 1; k <= last; k++) writes |= toks[k].kind == T_MUT;
     if (frag && !writes) item(c, "mut", CK_KEYWORD, "mut Color color: the pixel's color, which the frag writes", NULL, NULL);
     complete_types(c, true, true, false);
+    item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
     if (frag && !game_type_named("Pixel")) item(c, "Pixel", CK_CLASS, "built-in", shader_record_doc(A.prog->pixel), NULL);
     if (!game_type_named("Instance")) item(c, "Instance", CK_CLASS, "built-in", shader_record_doc(A.prog->instance), NULL);
     complete_namespaces(c, false);
@@ -5132,9 +5247,13 @@ static int open_call(const int last, int *commas)
 }
 
 // Whether the '(' at token `open` is Draw.Mesh's.
+static type receiver_type(int dot, loc at);
 static bool opens_mesh_draw(const int open)
 {
     const token *toks = DOC->toks;
+    if (open >= 2 && toks[open - 1].kind == T_IDENT && str_eq_c(toks[open - 1].text, "Mesh")
+        && toks[open - 2].kind == T_DOT
+        && receiver_type(open - 2, toks[open].at).kind == TY_RENDER_TARGET) return true;
     return open >= 3 && toks[open - 1].kind == T_IDENT && toks[open - 2].kind == T_DOT && toks[open - 3].kind == T_IDENT
         && is_mesh_draw(toks[open - 3].text, toks[open - 1].text);
 }
@@ -5217,7 +5336,7 @@ static int mesh_argument(const scope *sc, const int first, const int last)
     if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
     if (str_eq_c(toks[first].text, "Filter") && last == first + 2) return MESH_FILTER;
     const type t = names_type(sc, first, last);
-    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID ? MESH_TEXTURE : MESH_PARAMS;
+    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE : MESH_PARAMS;
 }
 
 // The vertex struct of the mesh a Draw.Mesh draws, from its first argument,
@@ -5291,8 +5410,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             stack[++depth] = (frame){CTX_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_ATTRIBUTE) {
             depth--;
-        } else if (kind == T_LPAREN && top == CTX_ATTRIBUTE && depth < 63) {
-            stack[++depth] = (frame){CTX_ATTRIBUTE_ARGS, i, HEADER_NONE};
+        } else if (kind == T_LPAREN && (top == CTX_ATTRIBUTE || top == CTX_ATTRIBUTE_ARGS) && depth < 63) {
+            const int open = top == CTX_ATTRIBUTE_ARGS ? stack[depth].open : i;
+            stack[++depth] = (frame){CTX_ATTRIBUTE_ARGS, open, HEADER_NONE};
         } else if (kind == T_RPAREN && top == CTX_ATTRIBUTE_ARGS) {
             depth--;
         } else if (kind == T_LBRACKET && top == CTX_DATA && depth < 63) {
@@ -5321,9 +5441,20 @@ void analysis_completion(const int line, const int character, jbuf *out)
     const token *prev = last >= 0 ? &DOC->toks[last] : NULL;
     const tok_kind pk = prev ? prev->kind : T_EOF;
     const frame f = stack[depth];
+    order_completion order = ORDER_NONE;
+    if (f.kind == CTX_ATTRIBUTE_ARGS && f.open >= 1) {
+        const str attribute_name = DOC->toks[f.open - 1].text;
+        if (str_eq_c(attribute_name, "Before") || str_eq_c(attribute_name, "After")) order = ORDER_REFS;
+        if (str_eq_c(attribute_name, "Stage")) {
+            order = ORDER_PHASE;
+            for (int i = f.open + 1; i <= last; i++) {
+                if (DOC->toks[i].kind == T_COMMA) order = ORDER_OFFSET;
+            }
+        }
+    }
 
     if (pk == T_DOT) {
-        complete_members(&c, last, at, f.kind == CTX_ATTRIBUTE_ARGS);
+        complete_members(&c, last, at, order);
         goto done;
     }
     // world.Get<: a component, of the worlds the code reads
@@ -5372,8 +5503,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_ATTRIBUTE:
         if (pk == T_LBRACKET || pk == T_COMMA) {
-            item(&c, "Before", CK_FUNCTION, "[Before(System)]", "This system runs before the ones named.", "Before($1)");
-            item(&c, "After", CK_FUNCTION, "[After(System)]", "This system runs after the ones named.", "After($1)");
+            item(&c, "Stage", CK_FUNCTION, "[Stage(Stages.Phase, offset = 0)]",
+                 "Places work in an enum phase, with an optional signed integer offset within that phase.", "Stage($1)");
+            item(&c, "Before", CK_FUNCTION, "[Before(DeclarationOrPhase)]",
+                 "Runs before the named declarations or entire enum phases.", "Before($1)");
+            item(&c, "After", CK_FUNCTION, "[After(DeclarationOrPhase)]",
+                 "Runs after the named declarations or entire enum phases.", "After($1)");
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
                  "The C function the extern function after it calls, when its name isn't the function's own.",
                  "NativeName(\"$1\")");
@@ -5396,9 +5531,15 @@ void analysis_completion(const int line, const int character, jbuf *out)
         break;
 
     case CTX_ATTRIBUTE_ARGS:
-        if (pk == T_LPAREN || pk == T_COMMA) {
-            complete_systems(&c, false);
-            complete_systems(&c, true);
+        if (order == ORDER_OFFSET) {
+            complete_constants(&c, TY_INT);
+            complete_namespaces(&c, false);
+        } else if (pk == T_LPAREN || pk == T_COMMA) {
+            if (order == ORDER_REFS) {
+                complete_systems(&c, false);
+                complete_systems(&c, true);
+            }
+            if (order == ORDER_PHASE || order == ORDER_REFS) complete_phases(&c);
             complete_namespaces(&c, false);
         }
         break;
@@ -6078,6 +6219,7 @@ static const struct {
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
     {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
+    {"RenderTarget", {"RenderTarget(int width, int height)"}, "Creates a local image with positive pixel dimensions. Color and depth persist until cleared; copies share it. Dispose it when finished."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
@@ -6222,8 +6364,7 @@ static const struct {
     [MESH_INDICES] = {"indices", {"A `List<int>`: three for each triangle, places in `vertices`."}},
     [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
     [MESH_TEXTURE] = {"texture",
-                      {"A `Grid2<Color>`, read at each corner's `uv`. With a frag there's none: a frag samples the grids it "
-                       "takes itself."}},
+                      {"A `Grid2<Color>` or `Texture`, read at each corner's `uv`. A frag with a Texture parameter receives the explicit Texture source."}},
     [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
@@ -6240,7 +6381,8 @@ static int call_param_names(const expr *call, str *names, const int max)
         for (; count < m->params.count && count < max; count++) names[count] = m->params.items[count].name;
         return count;
     }
-    if (call->call == CALL_DRAW && call->object && is_mesh_draw(call->object->name, call->name)) {
+    if (call->call == CALL_DRAW && call->object
+        && (is_mesh_draw(call->object->name, call->name) || (call->targeted && str_eq_c(call->name, "Mesh")))) {
         // Each argument's, by what it is: what follows the lists can be left out
         for (; count < call->args.count && count < max; count++) {
             const expr *arg = call->args.items[count];
@@ -6248,7 +6390,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             const int param = count < 2                                  ? count
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
-                            : t.kind == TY_GRID                          ? MESH_TEXTURE
+                            : t.kind == TY_GRID || t.kind == TY_TEXTURE   ? MESH_TEXTURE
                             : t.kind == TY_ENUM                          ? MESH_FILTER
                                                                          : MESH_PARAMS;
             names[count] = param == MESH_PARAMS ? (str){"", 0} : str_from(mesh_params[param].name);
@@ -6258,6 +6400,13 @@ static int call_param_names(const expr *call, str *names, const int max)
     label_list list = {0};
     switch (call->call) {
     case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: {
+        if (call->resource_operation) {
+            if (call->object) {
+                const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
+                if (form) vec_push(list.labels, form->form);
+            } else vec_push(list.labels, "RenderTarget(int width, int height)");
+            break;
+        }
         const str owner = call->call == CALL_TEXT ? str_from("string") : call->object ? call->object->name : (str){"", 0};
         builtin_signatures(owner, call->name, collect_label, &list);
         break;
@@ -6426,8 +6575,19 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
 
     jbuf list = {0};
     signature_list s = {&list, commas, -1, commas, 0};
-    if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw.Circle(, quaternion.Euler(
-        builtin_signatures(owner, name, visit_signature, &s);
+    const occurrence *attribute = occurrence_at(DOC->toks[callee].at);
+    if (attribute && attribute->kind == OCC_ATTRIBUTE) {
+        if (str_eq_c(name, "Stage")) {
+            add_signature(&s, "Stage(Stages.Phase, int offset = 0)",
+                          "Phases follow enum declaration order. The signed constant offset orders work within the phase.");
+        } else if (str_eq_c(name, "Before") || str_eq_c(name, "After")) {
+            sb label = {0};
+            sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
+            add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
+        }
+    } else if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw.Circle(, quaternion.Euler(
+        if (str_eq_c(owner, "Draw") && str_eq_c(name, "Blit")) add_signature(&s, BLIT_FORM, BLIT_DOC);
+        else builtin_signatures(owner, name, visit_signature, &s);
     } else if (str_eq_c(owner, "Scene")) {
         for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {
             if (str_eq_c(name, scene_calls[i].name)) add_signature(&s, scene_calls[i].form, scene_calls[i].doc);
@@ -6454,6 +6614,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         const method_form *form = find_form(forms, count, name);
         if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
+        } else if (t.kind == TY_RENDER_TARGET && !form) {
+            builtin_signatures(str_from("Draw"), name, visit_signature, &s);
         } else if (form && t.kind == TY_WORLD) {
             sb label = {0};
             format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);

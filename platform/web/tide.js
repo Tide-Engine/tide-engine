@@ -1007,6 +1007,8 @@
         glEnableVertexAttribArray: i => gl.enableVertexAttribArray(i),
         glFramebufferRenderbuffer: (target, attachment, rbTarget, r) =>
             gl.framebufferRenderbuffer(target, attachment, rbTarget, get('renderbuffer', r)),
+        glFramebufferTexture2D: (target, attachment, textureTarget, t, level) =>
+            gl.framebufferTexture2D(target, attachment, textureTarget, get('texture', t), level),
         glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
         glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
         glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
@@ -1243,7 +1245,7 @@
         return group;
     }
 
-    // A target: the canvas, or pixels of its own to read back, each with depth.
+    // A target: the canvas, or persistent sampleable pixels of its own, each with depth.
     const depthFor = (width, height) => device.createTexture({ size: [width, height], format: 'depth24plus',
         usage: GPUTextureUsage.RENDER_ATTACHMENT });
     const windowTarget = { context: null, depth: null, width: 0, height: 0 };
@@ -1356,17 +1358,34 @@
         },
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_target(width, height) {
-            const offscreen = new OffscreenCanvas(width, height);
-            const context = offscreen.getContext('webgpu');
-            context.configure({ device, format: gpuFormat, alphaMode: 'opaque' });
-            return gpuAdd('target', { canvas: offscreen, context, depth: depthFor(width, height), width, height });
+            const texture = device.createTexture({ size: [width, height], format: gpuFormat,
+                usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
+            const color = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                groups: new Set() });
+            return gpuAdd('target', { color, depth: depthFor(width, height), width, height, canvas: null, context: null });
         },
+        gpu_target_texture: id => gpuTables.target[id].color,
         gpu_target_free(id) {
-            gpuTables.target[id].depth.destroy();
+            const t = gpuTables.target[id];
+            platform.gpu_texture_free(t.color);
+            t.depth.destroy();
+            if (t.context) t.context.unconfigure();
             gpuRemove('target', id);
         },
         gpu_target_read(id, ptr) {
             const t = gpuTables.target[id];
+            // C's readback is synchronous. Copy into a canvas only when it's
+            // asked for, then use the browser's existing synchronous canvas read.
+            if (!t.context) {
+                t.canvas = new OffscreenCanvas(t.width, t.height);
+                t.context = t.canvas.getContext('webgpu');
+                t.context.configure({ device, format: gpuFormat, alphaMode: 'opaque',
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST });
+            }
+            const copy = device.createCommandEncoder();
+            copy.copyTextureToTexture({ texture: gpuTables.texture[t.color].texture },
+                { texture: t.context.getCurrentTexture() }, [t.width, t.height]);
+            device.queue.submit([copy.finish()]);
             if (!reader) reader = new OffscreenCanvas(t.width, t.height).getContext('2d', { willReadFrequently: true });
             if (reader.canvas.width !== t.width) reader.canvas.width = t.width;
             if (reader.canvas.height !== t.height) reader.canvas.height = t.height;
@@ -1380,7 +1399,8 @@
             uniformsUsed = 0;
             commands = device.createCommandEncoder();
             pass = commands.beginRenderPass({
-                colorAttachments: [{ view: t.context.getCurrentTexture().createView(), loadOp: clear ? 'clear' : 'load',
+                colorAttachments: [{ view: id ? gpuTables.texture[t.color].view : t.context.getCurrentTexture().createView(),
+                    loadOp: clear ? 'clear' : 'load',
                     storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
                 depthStencilAttachment: { view: t.depth.createView(), depthLoadOp: clear ? 'clear' : 'load',
                     depthStoreOp: 'store', depthClearValue: 1 },

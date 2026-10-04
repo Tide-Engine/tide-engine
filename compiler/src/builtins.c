@@ -46,6 +46,7 @@ static const type T_PIXELS = {TY_GRID, &mesh_pixels};
 static const type T_FILTER = {TY_ENUM, &mesh_filter};
 static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
 static const type T_RECT = {TY_RECT, NULL};
+static const type T_TEXTURE = {TY_TEXTURE, NULL};
 
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
                        const decl *filter, const decl *transforms)
@@ -353,6 +354,12 @@ static void build_signatures(void)
     sampled->argc = 4;
     sampled->params[3] = T_FILTER;
     describe(sampled, "vertices, indices, texture, filter", mesh_doc);
+    describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE),
+             "vertices, indices, texture", mesh_doc);
+    signature *texture_sampled = add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE);
+    texture_sampled->argc = 4;
+    texture_sampled->params[3] = T_FILTER;
+    describe(texture_sampled, "vertices, indices, texture, filter", mesh_doc);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
@@ -369,6 +376,15 @@ static void build_signatures(void)
     sampled3->params[3] = T_PIXELS;
     sampled3->params[4] = T_FILTER;
     describe(sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
+    signature *texture3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    texture3->argc = 4;
+    texture3->params[3] = T_TEXTURE;
+    describe(texture3, "vertices, indices, transform, texture", mesh3_doc);
+    signature *texture_sampled3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
+    texture_sampled3->argc = 5;
+    texture_sampled3->params[3] = T_TEXTURE;
+    texture_sampled3->params[4] = T_FILTER;
+    describe(texture_sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
     static const char instanced_doc[] =
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
@@ -386,11 +402,23 @@ static void build_signatures(void)
     instances_sampled->params[3] = T_PIXELS;
     instances_sampled->params[4] = T_FILTER;
     describe(instances_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
+    signature *instances_texture = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
+                                      T_VERTICES3, T_INDICES, T_TRANSFORMS);
+    instances_texture->argc = 4;
+    instances_texture->params[3] = T_TEXTURE;
+    describe(instances_texture, "vertices, indices, instances, texture", instanced_doc);
+    signature *instances_texture_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
+                                              T_VERTICES3, T_INDICES, T_TRANSFORMS);
+    instances_texture_sampled->argc = 5;
+    instances_texture_sampled->params[3] = T_TEXTURE;
+    instances_texture_sampled->params[4] = T_FILTER;
+    describe(instances_texture_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
     static const char clip_doc[] =
         "Only what's inside `rect` draws, for the Draw calls after it: from (x, y) to (x + width, y + height), in "
         "the units they're in. `Draw.Clip()` with no rect draws everywhere again. Each frame starts with none.";
     describe(add("Draw", "Clip", T_NONE, "tide_draw_clip", 1, T_RECT, T_NONE, T_NONE), "rect", clip_doc);
     describe(add("Draw", "Clip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
+    describe(add("Draw", "NoClip", T_NONE, "tide_draw_no_clip", 0, T_NONE, T_NONE, T_NONE), NULL, clip_doc);
     describe(add("Draw", "Screen", T_NONE, "tide_draw_screen", 0, T_NONE, T_NONE, T_NONE), NULL,
              "The Draw calls after it are in the screen's pixels: from the top left, with y down, as the GUI's are. "
              "`Draw.Camera` goes back to the world.");
@@ -526,6 +554,7 @@ static const struct {
     {"Color", "gray", TY_COLOR, "TIDE_COLOR_GRAY"},
     {"Color", "clear", TY_COLOR, "TIDE_COLOR_CLEAR"},
     {"Draw", "list", TY_DRAW_LIST, "tide_draw"},
+    {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).

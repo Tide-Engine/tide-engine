@@ -153,6 +153,12 @@ const cases = {
             ['After', 'entity.name.function.attribute'], ['Before', 'entity.name.function.attribute'],
             ['system', 'storage.type'], ['SameLine', 'entity.name.function'],
         ]],
+        ['[Stage(RenderStages.Objects, -10), Before(RenderStages.UI)] view DrawObjects()', [
+            ['Stage', 'entity.name.function.attribute'], ['RenderStages', 'entity.name.function'],
+            ['Objects', 'entity.name.function'], ['-', 'keyword.operator.arithmetic'], ['10', 'constant.numeric'],
+            ['Before', 'entity.name.function.attribute'], ['UI', 'entity.name.function'],
+            ['view', 'storage.type'], ['DrawObjects', 'entity.name.function'],
+        ]],
         ['[Clamp(float2(0, -5), float2(10, 5))] float2 aim;', [
             ['Clamp', 'entity.name.function.attribute'], ['float2', 'storage.type.primitive'], ['float2', 'storage.type.primitive', 2],
             ['-', 'keyword.operator.arithmetic'], ['float2', 'storage.type.primitive', 3], ['aim', '!entity'],
@@ -174,6 +180,8 @@ const cases = {
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
         ['Draw.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
+        ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
+        ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
         ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],
     ],

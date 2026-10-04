@@ -1,0 +1,5 @@
+// expect: Stage names an enum member
+enum Phases { First }
+scene Main { }
+[Stage(Phases)]
+system Work() { }

@@ -192,6 +192,8 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_MAP:
     case TY_SET: why = "the GPU has no lists, maps or sets: it reads fields of numbers, and samples grids of colors"; break;
     case TY_GRID: why = "a grid on the GPU is a texture, read with 'grid.Sample(uv)' where it's a field of a parameter"; break;
+    case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
+    case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
     case TY_PLAYER: why = "it's a handle into the world, which the GPU doesn't have"; break;
@@ -974,20 +976,22 @@ static void ex_construct(emit *em, const expr *e)
     }
 }
 
-// A grid of colors read as a texture: which of the shader's it is.
+// A texture parameter, or a grid or texture field: which binding reads it.
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
-    const param *p = of->object->param;
+    const bool direct = of->kind == E_NAME;
+    const param *p = direct ? of->param : of->object->param;
     const bool blended = e->args.count < 2 || e->args.items[1]->enum_member->number != 0;
     int slot = 0;
     if (em->checking) {
         if (em->code != em->root) {
-            refuse(em, e->at, "a grid is sampled in the frag or vert that takes it, not in a function it calls");
+            refuse(em, e->at, "a texture is sampled in the frag or vert that takes it, not in a function it calls");
             return;
         }
-        const decl *holds = of->local_field ? p->type.decl->local_part : p->type.decl;
-        const shader_sample sample = {param_index(em->root, p), field_index(holds, of->field), of->local_field, blended};
+        const decl *holds = direct ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
+        const shader_sample sample = {param_index(em->root, p), direct ? -1 : field_index(holds, of->field),
+                                      of->local_field, blended};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
@@ -997,7 +1001,7 @@ static void ex_sample(emit *em, const expr *e)
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
-            if (t->source == p->type.decl && t->field == of->field && t->blended == blended) break;
+            if (t->direct == direct && t->source == p->type.decl && t->field == of->field && t->blended == blended) break;
             slot++;
         }
     }
@@ -1836,10 +1840,13 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
         const field *color = field_called(v, "color");
         const field *uv = field_called(v, "uv");
         if (color) sb_printf(o, "    tide_color = %stide_s%d;\n", in, field_index(v, color));
+        int texture = 0;
+        while (texture < sh->textures.count && (sh->textures.items[texture].source || sh->textures.items[texture].direct)) texture++;
         if (sh->textured && wgsl) {
-            sb_printf(o, "    tide_color = tide_color * textureSampleLevel(pixels0, sampler0, %stide_s%d, 0.0);\n", in, field_index(v, uv));
+            sb_printf(o, "    tide_color = tide_color * textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0);\n",
+                      texture, texture, in, field_index(v, uv));
         } else if (sh->textured) {
-            sb_printf(o, "    tide_color = tide_color * textureLod(pixels0, %stide_s%d, 0.0);\n", in, field_index(v, uv));
+            sb_printf(o, "    tide_color = tide_color * textureLod(pixels%d, %stide_s%d, 0.0);\n", texture, in, field_index(v, uv));
         }
     }
     sb_printf(o, "    %s tide_color;\n", result);
@@ -2009,7 +2016,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_GRID) continue; // Sampled, below
+            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2019,7 +2026,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (!p->local_reads[k] || f->type.kind == TY_GRID) continue;
+            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2029,14 +2036,16 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
     for (int i = 0; i < code->samples.count; i++) {
         const shader_sample *s = &code->samples.items[i];
         const decl *source = code->params.items[s->param].type.decl;
-        const shader_texture t = {source, &(s->local ? source->local_part : source)->fields.items[s->field], s->blended};
+        const shader_texture t = {.source = source,
+                                  .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
+                                  .blended = s->blended, .direct = s->field < 0};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
-            known |= sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
+            known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
                   && sh->textures.items[k].blended == t.blended;
         }
         if (!known) vec_push(sh->textures, t);
-        add_bound(sh, (decl *)source);
+        if (source) add_bound(sh, (decl *)source);
     }
 }
 
@@ -2068,12 +2077,14 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
 // The shader a Draw.Mesh draws through: the one planned already for the same
 // vertex, vert and frag, or a new one, laid out and written. NULL after an
 // error, reported at the call.
-static shader *plan(program *prog, const expr *call, const decl *vertex, const bool textured)
+static shader *plan(program *prog, const expr *call, const decl *vertex, const bool textured, const bool direct_texture)
 {
+    const bool source_grid = call->blit && call->args.items[0]->type.kind == TY_GRID;
     for (int i = 0; i < prog->shaders.count; i++) {
         shader *s = prog->shaders.items[i];
         if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
-            && s->instanced == call->instanced && s->instance_type == call->instance_type) return s;
+            && s->instanced == call->instanced && s->instance_type == call->instance_type
+            && s->blit == call->blit && s->direct_texture == direct_texture && s->source_grid == source_grid) return s;
     }
     shader *sh = NEW(shader);
     sh->index = prog->shaders.count;
@@ -2081,6 +2092,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->vert = call->vert;
     sh->frag = call->frag;
     sh->textured = textured;
+    sh->blit = call->blit;
+    sh->direct_texture = direct_texture;
+    sh->source_grid = source_grid;
     sh->instanced = call->instanced;
     sh->instance_type = call->instance_type;
     const field *position = field_called(vertex, "position");
@@ -2097,7 +2111,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     plan_reads(prog, sh, sh->vert);
     plan_reads(prog, sh, sh->frag);
     if (textured) {
-        const shader_texture t = {NULL, NULL, true}; // How it's read is the draw's to say
+        const shader_texture t = {.blended = true}; // How it's read is the draw's to say
         vec_push(sh->textures, t);
     }
     for (int i = 0; i < sh->values.count; i++) {
@@ -2181,11 +2195,15 @@ void plan_shaders(program *prog)
     for (int i = 0; i < prog->mesh_draws.count; i++) {
         const mesh_draw *draw = &prog->mesh_draws.items[i];
         expr *call = draw->call;
-        const decl *vertex = call->args.items[0]->type.decl->fields.items[0].type.decl;
+        const decl *vertex = call->blit ? prog->vertex : call->args.items[0]->type.decl->fields.items[0].type.decl;
         // A texture is the value argument after the indices, or after a 3D mesh's transform
-        bool textured = false;
-        for (int a = 2; a < call->args.count; a++) textured |= call->args.items[a]->type.kind == TY_GRID;
-        shader *sh = plan(prog, call, vertex, textured);
+        bool textured = false, direct_texture = call->blit;
+        for (int a = 2; !call->blit && a < call->args.count; a++) {
+            const type_kind kind = call->args.items[a]->type.kind;
+            textured |= !call->frag && (kind == TY_GRID || kind == TY_TEXTURE);
+            direct_texture |= kind == TY_TEXTURE;
+        }
+        shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
         call->shader = sh;
         // What the view has to hand over that it doesn't take itself

@@ -1,12 +1,84 @@
 #include "tide/draw.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "tide/net.h"
 #include "tide/page.h"
 
 static void reindex_meshes(tide_draw_list *d);
+
+static tide_render_target_state *render_targets;
+
+tide_render_target tide_render_target_make(const int32_t width, const int32_t height)
+{
+    tide_render_target_state *s = tide_alloc_zeroed(1, sizeof *s);
+    *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .width = width, .height = height,
+                                    .version = 1, .alive = width > 0 && height > 0};
+    render_targets = s;
+    if (!s->alive) fprintf(stderr, "RenderTarget requires positive dimensions\n");
+    return (tide_render_target){.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s, .width = width, .height = height};
+}
+
+void tide_render_target_resize(const tide_render_target target, const int32_t width, const int32_t height)
+{
+    tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!s || !s->alive || width <= 0 || height <= 0) {
+        fprintf(stderr, "RenderTarget.Resize requires a live owned target and positive dimensions\n");
+        return;
+    }
+    s->width = width;
+    s->height = height;
+    s->version++;
+}
+
+void tide_render_target_dispose(const tide_render_target target)
+{
+    tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (s) s->alive = false;
+    else if (target.id) fprintf(stderr, "RenderTarget.Dispose requires an owned target\n");
+}
+
+void tide_render_target_adopt(const tide_render_target target)
+{
+    tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (!s || s->owner == &render_targets) return;
+    tide_render_target_state **at = s->owner;
+    while (*at && *at != s) at = &(*at)->next;
+    if (*at) *at = s->next;
+    s->owner = &render_targets;
+    s->next = render_targets;
+    render_targets = s;
+}
+
+tide_render_target tide_render_target_recreate(const tide_render_target previous)
+{
+    if (!tide_render_target_managed(previous.id) || previous.width <= 0 || previous.height <= 0)
+        return (tide_render_target){0};
+    for (const tide_render_target_state *s = render_targets; s; s = s->next) {
+        if (s->reload_id == previous.id)
+            return (tide_render_target){.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s,
+                                        .width = s->width, .height = s->height};
+    }
+    const tide_render_target next = tide_render_target_make(previous.width, previous.height);
+    tide_render_target_state_of(next.id)->reload_id = previous.id;
+    return next;
+}
+
+void tide_render_targets_recreated(void)
+{
+    for (tide_render_target_state *s = render_targets; s; s = s->next) s->reload_id = 0;
+}
+
+void tide_render_targets_free(void)
+{
+    while (render_targets) {
+        tide_render_target_state *s = render_targets;
+        render_targets = s->next;
+        free(s);
+    }
+}
 
 void tide_draw_reset(tide_draw_list *d)
 {
@@ -19,6 +91,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->instance_used = 0;
     d->uniform_used = 0;
     d->clipped = 0;
+    d->target_count = d->target = d->window_clipped = 0;
     // The textures the frame drew with stay, for the next to find its pixels
     // here already
     uint32_t kept = 0;
@@ -69,6 +142,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->vertices);
     free(d->indices);
     free(d->textures);
+    free(d->targets);
     free(d->matrices);
     free(d->runs);
     free(d->instances);
@@ -80,6 +154,7 @@ void tide_draw_forget(tide_draw_list *d)
 {
     for (uint32_t i = 0; i < d->texture_count; i++) free(d->textures[i].pixels);
     d->texture_count = 0;
+    d->target_count = d->target = d->window_clipped = d->clipped = 0;
     free_meshes(d);
     d->epoch++;
     // Commands recorded already would draw with textures and meshes that are
@@ -88,6 +163,7 @@ void tide_draw_forget(tide_draw_list *d)
         tide_draw_command *c = &d->commands[i];
         if (c->kind == TIDE_DRAW_MESH) c->mesh.texture = 0;
         if (c->kind == TIDE_DRAW_MESH_3D) c->mesh3.mesh = c->mesh3.texture = 0;
+        if (c->kind == TIDE_DRAW_TARGET) c->target = UINT32_MAX;
     }
     for (uint32_t i = 0; i < d->run_count; i++) d->runs[i] = (tide_draw_run){0};
 }
@@ -118,6 +194,61 @@ static tide_draw_command *push(tide_draw_list *d, const tide_draw_kind kind, con
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint32_t)kind, .a = a, .b = b, .color = color};
     return c;
+}
+
+static uint32_t target_slot(tide_draw_list *d, const uint64_t id, const int32_t width, const int32_t height,
+                            const uint64_t version)
+{
+    if (!id) return 0;
+    for (uint32_t i = 0; i < d->target_count; i++) {
+        const tide_draw_target_data *t = &d->targets[i];
+        if (t->id == id && t->width == width && t->height == height && t->version == version) return i + 1u;
+    }
+    d->targets = grow(d->targets, d->target_count, &d->target_capacity, 1, sizeof(tide_draw_target_data), 8u);
+    d->targets[d->target_count] = (tide_draw_target_data){.id = id, .version = version, .width = width, .height = height};
+    return ++d->target_count;
+}
+
+static tide_draw_list *draw_to_version(tide_draw_list *d, const uint64_t id, const int32_t width, const int32_t height,
+                                       const uint64_t version)
+{
+    const uint32_t slot = target_slot(d, id, width, height, version);
+    if (slot == d->target) return d;
+    if (d->target) d->targets[d->target - 1u].clipped = d->clipped;
+    else d->window_clipped = d->clipped;
+    d->target = slot;
+    d->clipped = slot ? d->targets[slot - 1u].clipped : d->window_clipped;
+    push(d, TIDE_DRAW_TARGET, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR)->target = slot;
+    return d;
+}
+
+tide_draw_list *tide_draw_to(tide_draw_list *d, const uint64_t id, const int32_t width, const int32_t height)
+{
+    return draw_to_version(d, id, width, height, tide_render_target_version(id));
+}
+
+static uint32_t target_texture_version(tide_draw_list *d, const uint64_t id, const int32_t width, const int32_t height,
+                                       const uint64_t version)
+{
+    if (!id) return 0;
+    for (uint32_t i = 0; i < d->texture_count; i++) {
+        tide_draw_texture *t = &d->textures[i];
+        if (t->space == TIDE_PIXELS_TARGET && t->id == id && t->width == width && t->height == height
+            && t->version == version) {
+            t->frame = d->frame;
+            return i + 1u;
+        }
+    }
+    d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
+    d->textures[d->texture_count] = (tide_draw_texture){
+        .id = id, .version = version, .space = TIDE_PIXELS_TARGET, .width = width, .height = height,
+        .frame = d->frame, .epoch = d->epoch};
+    return ++d->texture_count;
+}
+
+uint32_t tide_draw_target_texture(tide_draw_list *d, const uint64_t id, const int32_t width, const int32_t height)
+{
+    return target_texture_version(d, id, width, height, tide_render_target_version(id));
 }
 
 void tide_draw_clear(tide_draw_list *d, const tide_color color)
@@ -231,6 +362,14 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
                                                  texture->version, texture->width, texture->height, &pixels);
     if (pixels) memcpy(pixels, texture->pixels, (size_t)texture->width * (size_t)texture->height * 4u);
     return slot;
+}
+
+uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
+{
+    if (!texture.target) return texture_slot(d, &texture.image);
+    const tide_render_target target = tide_render_target_resolve((tide_render_target){
+        .id = texture.target, .width = texture.image.width, .height = texture.image.height});
+    return tide_draw_target_texture(d, target.id, target.width, target.height);
 }
 
 uint32_t tide_draw_vertices(tide_draw_list *d, const tide_vertex *vertices, const uint32_t count)
@@ -450,9 +589,9 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32
     tide_draw_shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, blended);
 }
 
-void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                                 const uint32_t count, const void *uniforms, const uint32_t *textures,
-                                const uint32_t blended)
+                                const uint32_t blended, const tide_draw_kind kind)
 {
     if (count == 0 || !shader || mesh == 0 || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
@@ -471,7 +610,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     d->instance_used += (uint32_t)bytes;
     // More instances of the run before it, when nothing came between them and they draw with the same
     tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
-    if (last && last->kind == TIDE_DRAW_SHADED) {
+    if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
             && r->mesh == mesh && r->blended == blended
@@ -489,7 +628,39 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     d->uniform_used += uniform_size;
     d->runs = grow(d->runs, d->run_count, &d->run_capacity, 1, sizeof(tide_draw_run), 64u);
     d->runs[d->run_count] = run;
-    push(d, TIDE_DRAW_SHADED, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR)->shaded.run = d->run_count++;
+    push(d, kind, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR)->shaded.run = d->run_count++;
+}
+
+void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+                                const uint32_t count, const void *uniforms, const uint32_t *textures,
+                                const uint32_t blended)
+{
+    shaded_instances(d, shader, mesh, instances, count, uniforms, textures, blended, TIDE_DRAW_SHADED);
+}
+
+void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const void *instance,
+                   const void *uniforms, const uint32_t *textures, const uint32_t blended)
+{
+    if (!shader || shader->dims != 2 || shader->vertex_size != sizeof(tide_vertex)) return;
+    for (uint32_t i = 0; textures && i < shader->texture_count && i < TIDE_SHADER_TEXTURES; i++) {
+        const uint32_t slot = textures[i];
+        if (!slot || slot > d->texture_count || !d->target) continue;
+        const tide_draw_texture *t = &d->textures[slot - 1u];
+        if (t->space == TIDE_PIXELS_TARGET && t->id == d->targets[d->target - 1u].id) {
+            fprintf(stderr, "Draw.Blit cannot sample its destination\n");
+            return;
+        }
+    }
+    static const tide_vertex vertices[] = {
+        {{-1, 1}, {0, 0}, {1, 1, 1, 1}}, {{-1, -1}, {0, 1}, {1, 1, 1, 1}},
+        {{1, -1}, {1, 1}, {1, 1, 1, 1}}, {{1, 1}, {1, 0}, {1, 1, 1, 1}},
+    };
+    static const uint32_t indices[] = {0, 1, 2, 0, 2, 3};
+    bool fill;
+    const uint32_t mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, (uint64_t)(uintptr_t)vertices,
+                                              (uint64_t)(uintptr_t)indices, 1, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(d, mesh, vertices, sizeof(tide_vertex), 4, indices, 6);
+    shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, blended, TIDE_DRAW_BLIT);
 }
 
 void tide_draw_instance(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 transform, const uint32_t texture,
@@ -548,6 +719,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
+    if (t->space == TIDE_PIXELS_TARGET) return target_texture_version(d, t->id, t->width, t->height, t->version);
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot(d, t->space, t->id, t->version, t->width, t->height, &pixels);
     if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * 4u);
@@ -556,11 +728,19 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
 {
+    tide_draw_to(d, 0, 0, 0);
     reserve(d, from->count);
     const uint32_t base = tide_draw_vertices(d, from->vertices, from->vertex_count);
     for (uint32_t i = 0; i < from->count; i++) {
         const tide_draw_command *c = &from->commands[i];
-        if (c->kind == TIDE_DRAW_TEXT) {
+        if (c->kind == TIDE_DRAW_TARGET) {
+            if (c->target > from->target_count) {
+                draw_to_version(d, TIDE_RENDER_INVALID, 0, 0, 0);
+                continue;
+            }
+            const tide_draw_target_data *t = c->target ? &from->targets[c->target - 1u] : NULL;
+            draw_to_version(d, t ? t->id : 0, t ? t->width : 0, t ? t->height : 0, t ? t->version : 0);
+        } else if (c->kind == TIDE_DRAW_TEXT) {
             tide_draw_text(d, from->text + c->text, c->a, c->b.x, c->color);
         } else if (c->kind == TIDE_DRAW_MESH) {
             // Its indices are places in `from`'s vertices, which are `d`'s from `base`
@@ -577,7 +757,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const uint32_t texture = append_texture(d, from, c->mesh3.texture);
             tide_draw_instances(d, slot, from->matrices + c->mesh3.first, c->mesh3.count, texture,
                                  (tide_filter)c->mesh3.filter);
-        } else if (c->kind == TIDE_DRAW_SHADED) {
+        } else if (c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT) {
             const tide_draw_run *r = &from->runs[c->shaded.run];
             if (!r->shader || !r->mesh || r->count == 0) continue;
             const tide_draw_mesh_data *m = &from->meshes[r->mesh - 1u];
@@ -587,9 +767,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             uint32_t textures[TIDE_SHADER_TEXTURES];
             for (uint32_t t = 0; t < TIDE_SHADER_TEXTURES; t++) textures[t] = append_texture(d, from, r->textures[t]);
             const uint32_t size = tide_shader_instance_size(r->shader);
-            tide_draw_shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
+            shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
                                        tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL,
-                                       textures, r->blended);
+                                       textures, r->blended, (tide_draw_kind)c->kind);
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
             if (c->kind == TIDE_DRAW_CLIP || c->kind == TIDE_DRAW_NO_CLIP) d->clipped = c->kind == TIDE_DRAW_CLIP;
