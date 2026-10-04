@@ -162,6 +162,26 @@
       "comment": "Declaration words are keywords only where a declaration starts: at the start of a line, after 'local' or 'async' (in either order), or after attributes on the same line",
       "patterns": [
         {
+          "comment": "A system's parameter list, including read-only query (Body body, with Fighter) fighters",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(system)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "end": "\\)",
+          "beginCaptures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.tide" },
+            "3": { "name": "storage.type.tide" },
+            "4": { "name": "entity.name.function.tide" },
+            "5": { "name": "punctuation.parenthesis.open.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.parenthesis.close.tide" }
+          },
+          "patterns": [
+            { "include": "#query-parameter" },
+            { "include": "#parens" },
+            { "include": "$self" }
+          ]
+        },
+        {
           "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, scene Arena, enum Voxel : byte",
           "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(component|singleton|struct|input|event|enum|scene)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
@@ -267,6 +287,21 @@
           "name": "keyword.operator.optional.tide",
           "match": "\\?"
         }
+      ]
+    },
+    "query-parameter": {
+      "comment": "query is a keyword in a system's parameters, and an ordinary name elsewhere",
+      "begin": "\\b(query)\\s*(\\()",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "storage.modifier.query.tide" },
+        "2": { "name": "punctuation.parenthesis.open.tide" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.parenthesis.close.tide" }
+      },
+      "patterns": [
+        { "include": "$self" }
       ]
     },
     "parens": {

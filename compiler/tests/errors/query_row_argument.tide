@@ -1,0 +1,8 @@
+// expect: a query row is only read through its entity and named component fields
+component Body { float x; }
+scene Main { }
+void Print(Body value) { Debug.Log($"{value.x}"); }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies) Print(row);
+}

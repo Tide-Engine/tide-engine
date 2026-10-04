@@ -1,4 +1,4 @@
-// expect: foreach goes through a list, a map, a set or a grid, and this is string
+// expect: foreach goes through a list, a map, a set, a grid or an entity query, and this is string
 scene Main { }
 component T { int n; }
 system S(mut T t) { foreach (var c in "text") t.n += 1; }

@@ -191,3 +191,23 @@ view Boxes(with Box, Models models)
     Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
     Draw3D.Cube(float3(0, 0, 5), float3(1), Color.red);
 }
+
+// A query is a second entity set in a system header, and a normal name elsewhere.
+system BulletHits(Body shot, query (Body body, with Fighter, without Ghost) fighters, Time time)
+{
+    foreach (var fighter in fighters) { var target = fighter.entity; }
+}
+system QueriesAcrossLines(
+    Body shot,
+    query (
+        Body body,
+        with Fighter,
+        without Ghost
+    ) fighters,
+    Time time)
+{
+    foreach (var fighter in fighters) { var target = fighter.body; }
+}
+int query(int value) { return value; }
+int QueryName(int query) { return query; }
+void CallQuery() { var answer = query(1); }

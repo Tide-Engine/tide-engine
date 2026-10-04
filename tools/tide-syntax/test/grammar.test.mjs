@@ -205,6 +205,19 @@ const cases = {
         ['parallel (var at in field.cells by 2 offset o)', [['parallel', 'keyword.control'], ['in', 'keyword.control'], ['by', 'keyword.control'], ['offset', 'keyword.control']]],
         ['foreach (var tick in Both(Ticks(), Ticks()))', [['in', 'keyword.control'], ['Both', 'entity.name.function.call'], ['in', '!keyword', 2]]],
     ],
+    'query is a modifier in system parameters and a name elsewhere': [
+        ['system BulletHits(', [
+            ['system', 'storage.type'], ['BulletHits', 'entity.name.function'], ['query', 'storage.modifier.query'],
+            ['Body', 'entity.name.type', 2], ['with', 'storage.modifier'], ['without', 'storage.modifier'],
+            ['Fighter', 'entity.name.type'], ['Ghost', 'entity.name.type'], ['Time', 'support.class'],
+        ]],
+        ['query (', [['query', 'storage.modifier.query']]],
+        ['with Fighter,', [['with', 'storage.modifier'], ['Fighter', 'entity.name.type']]],
+        ['without Ghost', [['without', 'storage.modifier'], ['Ghost', 'entity.name.type']]],
+        ['int query(', [['query', 'entity.name.function'], ['query', '!storage.modifier']]],
+        ['int QueryName(', [['query', '!storage.modifier']]],
+        ['void CallQuery(', [['query', 'entity.name.function.call'], ['query', '!storage.modifier']]],
+    ],
     "the World, and a method's type in <>": [
         ['system Track(', [['mut', 'storage.modifier'], ['World', 'support.class'], ['world', '!support']]],
         ['var target = world.Get<Health>(', [

@@ -1,0 +1,5 @@
+// expect: a query is only used directly by foreach
+component Body { float x; }
+scene Main { }
+void Print(int value) { Debug.Log($"{value}"); }
+system Hits(query (Body body) bodies) { Print(bodies); }

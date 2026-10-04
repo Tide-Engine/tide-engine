@@ -1,0 +1,4 @@
+// expect: a query takes only components, and 'Score' isn't a component
+singleton Score { int value; }
+scene Main { }
+system Hits(query (Score score) scores) { }

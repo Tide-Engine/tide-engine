@@ -1,0 +1,7 @@
+// expect: query row 'row' is read-only
+component Body { List<int> values; }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    foreach (var row in bodies) row.body.values[0] = 1;
+}
