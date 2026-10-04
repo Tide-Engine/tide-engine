@@ -7,6 +7,7 @@
 #include "tide/devices.h"
 #include "tide/draw.h"
 #include "tide/math.h"
+#include "tide/profile.h"
 
 typedef struct tide_textref tide_textref;
 
@@ -201,6 +202,9 @@ typedef struct tide_gui {
     uint32_t claim_rect_count, claim_rect_count_next;
     bool keyboard_shown, keyboard_shown_next; // A view asked for the phone's keyboard (GUI.ShowKeyboard)
     bool cursor_lock, cursor_lock_next;       // A view asked for the cursor's lock (Cursor.Lock)
+    // Where the frame's views say how long each took (tide/profile.h), or
+    // NULL: nothing is measured. The host's, set before each tide_frame.
+    tide_profile *profile;
 
     // Kept between frames
     uint32_t frame;
