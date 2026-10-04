@@ -38,3 +38,11 @@ add_test(NAME tidels_tests COMMAND tidels_tests)
 add_test(NAME tidels_stdio
     COMMAND "${CMAKE_COMMAND}" "-DTIDELS=$<TARGET_FILE:tidels>" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/stdio_test.cmake")
+
+# ...and over pipes, a message at a time, where it can tell that nothing more
+# has arrived (see main.c).
+if(TIDE_NODE)
+    add_test(NAME tidels_pipe
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pipe_test.mjs" "$<TARGET_FILE:tidels>")
+    set_tests_properties(tidels_pipe PROPERTIES TIMEOUT 120)
+endif()
