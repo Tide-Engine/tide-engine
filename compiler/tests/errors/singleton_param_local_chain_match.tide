@@ -1,0 +1,6 @@
+// expect: 'ReadThrough' uses the local fields of 'Score', which are this machine's, and the match can't see them
+singleton Score { int value; local int paint; }
+int Read(Score score) { return score.paint; }
+int ReadThrough(Score score) { return Read(score); }
+scene Main { }
+system Change(mut Score score) { score.value = ReadThrough(score); }

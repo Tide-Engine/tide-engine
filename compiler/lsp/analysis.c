@@ -4888,14 +4888,13 @@ static void complete_value_types(completion *c, const unsigned which)
 }
 
 // What a function's or method's parameter can be, as the checker takes it:
-// built-in values, text and lists, structs, enums and components; after `mut`,
-// what can change. A function's last can be its Action, and an async
-// function takes singletons too.
-static void complete_routine_param_types(completion *c, const bool after_mut, const bool function, const bool async)
+// built-in values, text and lists, structs, enums, components and singletons;
+// after `mut`, what can change. A function's last can be its Action.
+static void complete_routine_param_types(completion *c, const bool after_mut, const bool function)
 {
     complete_value_types(c, VT_LOCALS | VT_LOCAL_ENTITY);
     complete_structs(c);
-    complete_types(c, true, async, false);
+    complete_types(c, true, true, false);
     complete_namespaces(c, false);
     if (after_mut) return;
     if (function) item(c, "Action", CK_STRUCT, "Action", builtin_type_doc(TY_ACTION), NULL);
@@ -5694,7 +5693,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // event(Hit hit): the trigger; event(Hit hit) TakeHit(...): a handler's parameters.
         const bool trigger = f.header == HEADER_TRIGGER;
         const bool sample = f.header == HEADER_SAMPLE;
-        // extern float Noise(...): what C takes; async void Load(...): a task's
+        // extern float Noise(...): what C takes; async handlers also get self
         bool is_extern = false;
         bool is_async = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
@@ -5711,7 +5710,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (pk != T_MUT && !operator_) {
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
                 }
-                complete_routine_param_types(&c, pk == T_MUT, !method, is_async);
+                complete_routine_param_types(&c, pk == T_MUT, !method);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
