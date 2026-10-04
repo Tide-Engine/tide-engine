@@ -166,7 +166,7 @@ TIDE_TEST(jobs_thousands_of_systems)
     }
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, 16u, &entities, NULL};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL};
     const tide_jobs *jobs = tide_platform_jobs();
     for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
         const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core

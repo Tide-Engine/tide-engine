@@ -129,10 +129,10 @@ static void run_task(void *world, const tide_system_tasks *system, task_context 
 // A system's spawns get their IDs, in the order one thread would have given
 // them (task by task, spawn by spawn), and its tasks' data and what they
 // recorded get the real handles: `queues` holds each task's, or with NULL,
-// they're in the world's from item `from` on.
+// they're in the world's from `from` on.
 static void settle_system(void *world, const tide_tick_systems *tick, const tide_system_tasks *system,
                           const uint32_t first_task, const uint32_t tasks, const uint32_t pieces, const uint32_t *spawned,
-                          tide_queue *queues, const uint32_t from)
+                          tide_queue *queues, tide_queue_place from)
 {
     uint32_t *start = zeroed(tasks + 1u, sizeof *start);
     for (uint32_t k = 0; k < tasks; k++) start[k + 1u] = start[k] + spawned[k];
@@ -147,11 +147,10 @@ static void settle_system(void *world, const tide_tick_systems *tick, const tide
         if (!spawned[k]) continue;
         if (system->settle) system->settle(world, k, pieces, &settled);
         if (!queues) continue;
-        for (uint32_t i = 0; i < queues[k].count; i++) tick->settle_item(tide_queue_at(&queues[k], i, tick->item_size), &settled);
+        tide_queue_place at = {0, 0};
+        for (void *item; (item = tide_queue_next(&queues[k], &at));) tick->settle_item(item, &settled);
     }
-    for (uint32_t i = from; !queues && i < tick->queue->count; i++) {
-        tick->settle_item(tide_queue_at(tick->queue, i, tick->item_size), &settled);
-    }
+    for (void *item; !queues && (item = tide_queue_next(tick->queue, &from));) tick->settle_item(item, &settled);
     free(entities);
     free(start);
 }
@@ -245,7 +244,7 @@ static bool work_once(tick_run *r)
         if (system->settles && atomic_load(&st->settle_waiting) == 0 && !atomic_exchange(&st->settle_claimed, 1u)) {
             tide_memory_sync(); // What its tasks made on other threads (see tide/page.h)
             settle_system(r->world, tick, system, st->first, st->tasks, st->pieces, &r->spawned[st->first], &r->queues[st->first],
-                          0);
+                          (tide_queue_place){0, 0});
             finish_system(r, s);
             return true;
         }
@@ -346,21 +345,12 @@ void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint
 }
 
 // Each task's queue, kept from tick to tick by the thread that runs ticks, so
-// their pages are made once rather than every tick: queues for items of one
-// size (a game's changes and events).
+// their pages are made once rather than every tick.
 static TIDE_THREAD_LOCAL tide_queue *kept_queues;
 static TIDE_THREAD_LOCAL uint32_t kept_count;
-static TIDE_THREAD_LOCAL uint32_t kept_item_size;
 
-static tide_queue *task_queues(const uint32_t tasks, const uint32_t item_size)
+static tide_queue *task_queues(const uint32_t tasks)
 {
-    if (item_size != kept_item_size) { // Another game's, as a reloaded build can have
-        for (uint32_t t = 0; t < kept_count; t++) tide_queue_free(&kept_queues[t]);
-        free(kept_queues);
-        kept_queues = NULL;
-        kept_count = 0;
-        kept_item_size = item_size;
-    }
     if (tasks > kept_count) {
         kept_queues = tide_realloc(kept_queues, kept_count * sizeof *kept_queues, tasks * sizeof *kept_queues);
         memset(&kept_queues[kept_count], 0, (tasks - kept_count) * sizeof *kept_queues);
@@ -419,7 +409,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         }
     }
     free(filled);
-    r.queues = task_queues(tasks, tick->item_size);
+    r.queues = task_queues(tasks);
     r.spawned = zeroed(tasks, sizeof(uint32_t));
     atomic_init(&r.finished, 0u);
 
@@ -434,8 +424,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 
     // What they recorded, in the order one thread would have
     for (uint32_t t = 0; t < tasks; t++) {
-        tide_queue_append(tick->queue, &r.queues[t], tick->item_size);
-        tide_queue_clear(&r.queues[t], tick->item_size);
+        tide_queue_append(tick->queue, &r.queues[t]); // Its pages go to the world's, for the empty ones the world kept
     }
     free(r.spawned);
     free(r.dependents);
@@ -470,7 +459,7 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         uint64_t work;
         const uint32_t tasks = system->count(world, &work);
         uint32_t *spawned = system->settles ? zeroed(tasks, sizeof(uint32_t)) : NULL;
-        const uint32_t from = tick->queue->count;
+        const tide_queue_place from = tide_queue_end(tick->queue);
         const uint64_t began = profile ? tide_time_now_ns() : 0u;
         for (uint32_t task = 0; task < tasks; task++) {
             task_context context = {NULL, first + task, 0, system->settles};
