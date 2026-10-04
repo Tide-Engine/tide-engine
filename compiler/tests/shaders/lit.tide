@@ -1,0 +1,74 @@
+// What tidec writes for a vert and a frag, in GLSL and in WGSL: a mut
+// parameter is inout in one and a pointer in the other, a swizzle is assigned
+// a component at a time in WGSL, constants a shader compiler would fold go
+// through tide_f, and what the code reads of a component and of singletons
+// comes as float4s and int4s of the instance and of the uniforms.
+
+scene Main { }
+
+struct BoxVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+    int kind;
+    bool lit = true;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<BoxVertex> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+float Lit(float3 normal, float3 toward)
+{
+    return Math.Max(Math.Dot(Math.Normalize(normal), toward), 0.1);
+}
+
+void Brighten(mut float3 rgb, float by)
+{
+    rgb = rgb * by;
+}
+
+vert Wave(mut BoxVertex vertex, Time time, Instance instance)
+{
+    float seconds = time.tick * time.dt;
+    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+    vertex.position.xz = vertex.position.xz * (1 + 1 / 2.0);
+    vertex.normal = Math.Rotate(instance.transform, vertex.normal);
+    Brighten(vertex.normal, 1);
+}
+
+frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)
+{
+    float light = box.lit ? Lit(vertex.normal, -sun.direction) : 1;
+    color = models.wood.Sample(vertex.uv) * box.tint * light;
+    for (int i = 0; i < box.kind; i++)
+    {
+        if (i > 4) break;
+        color.a = color.a * 0.5;
+    }
+    if (pixel.position.x < 10 || pixel.world.y < 0) pixel.Discard();
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+view Boxes(with Box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
+}

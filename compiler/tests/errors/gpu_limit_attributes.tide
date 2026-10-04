@@ -1,0 +1,51 @@
+// expect: this draw reads 17 values for each vertex, and a GPU takes 16
+// A component's fields go to the GPU for each entity drawn, and a GPU takes 16 values a vertex
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint0 = Color.white;
+    Color tint1 = Color.white;
+    Color tint2 = Color.white;
+    Color tint3 = Color.white;
+    Color tint4 = Color.white;
+    Color tint5 = Color.white;
+    Color tint6 = Color.white;
+    Color tint7 = Color.white;
+    Color tint8 = Color.white;
+    Color tint9 = Color.white;
+    Color tint10 = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, mut Color color, Box box)
+{
+    color = box.tint0 * box.tint1 * box.tint2 * box.tint3 * box.tint4 * box.tint5 * box.tint6 * box.tint7 * box.tint8 * box.tint9 * box.tint10;
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

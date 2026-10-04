@@ -5,13 +5,16 @@
 // the order they were recorded whatever the renderer batches together, that
 // a frame can draw far more than a list used to hold, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
-// and that 3D meshes draw through their cameras, nearest in front.
+// that 3D meshes draw through their cameras, nearest in front, and that
+// meshes draw through shaders of the game's, with what those read.
 // `--bench` (or `?bench` on the web) times frames of many shapes instead.
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "tide/net.h" // tide_hash
 #include "tide/platform.h"
 #include "tide/time.h"
 
@@ -466,6 +469,642 @@ static void meshes_3d(void)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shaders of the game's: meshes of any vertices, drawn through GLSL and WGSL
+// as tidec writes them from Tide's (see tide_shader), here written by hand
+
+#ifdef __wasm__
+#define WGSL(source) source
+#else
+#define WGSL(source) NULL // Only the web's
+#endif
+
+// What every shader's uniforms start with, before its own.
+#define GLSL_UNIFORMS(own) "layout(std140) uniform uniforms { mat4 tide_camera; vec4 tide_screen; " own "};\n"
+#define WGSL_UNIFORMS(own)                                                                                             \
+    "struct Uniforms { tide_camera: mat4x4f, tide_screen: vec4f, " own "}\n"                                           \
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+
+// A pixel in the color its corners hand it.
+#define GLSL_TINT_FRAGMENT                                                                                             \
+    "in vec4 tint;\n"                                                                                                  \
+    "out vec4 pixel;\n"                                                                                                \
+    "void main() {\n"                                                                                                  \
+    "    pixel = tint;\n"                                                                                              \
+    "}\n"
+#define WGSL_TINT_CORNER                                                                                               \
+    "struct Corner {\n"                                                                                                \
+    "    @builtin(position) position: vec4f,\n"                                                                        \
+    "    @location(0) tint: vec4f,\n"                                                                                  \
+    "}\n"
+#define WGSL_TINT_FRAGMENT                                                                                             \
+    "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"                                                      \
+    "    return in.tint;\n"                                                                                            \
+    "}\n"
+
+// In 3D: a position and a normal, an instance's transform and color, with
+// depth. Facing the camera, a corner is all of its instance's color.
+typedef struct lit_vertex {
+    float position[3];
+    float normal[3];
+} lit_vertex;
+
+typedef struct lit_instance {
+    tide_float4x4 transform;
+    tide_color color;
+} lit_instance;
+
+static const tide_shader lit_shader = {
+    .name = "lit",
+    .glsl_vertex = "layout(location = 0) in vec3 position;\n"
+                   "layout(location = 1) in vec3 normal;\n"
+                   "layout(location = 2) in vec4 model0;\n"
+                   "layout(location = 3) in vec4 model1;\n"
+                   "layout(location = 4) in vec4 model2;\n"
+                   "layout(location = 5) in vec4 model3;\n"
+                   "layout(location = 6) in vec4 color;\n"
+                   GLSL_UNIFORMS("")
+                   "out vec4 tint;\n"
+                   "void main() {\n"
+                   "    tint = vec4(color.rgb * -normal.z, color.a);\n"
+                   "    gl_Position = tide_camera * (mat4(model0, model1, model2, model3) * vec4(position, 1.0));\n"
+                   "}\n",
+    .glsl_fragment = GLSL_TINT_FRAGMENT,
+    .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
+        "@vertex fn vertex(@location(0) position: vec3f, @location(1) normal: vec3f, @location(2) model0: vec4f,\n"
+        "                  @location(3) model1: vec4f, @location(4) model2: vec4f, @location(5) model3: vec4f,\n"
+        "                  @location(6) color: vec4f) -> Corner {\n"
+        "    let p = u.tide_camera * (mat4x4f(model0, model1, model2, model3) * vec4f(position, 1.0));\n"
+        "    var out: Corner;\n"
+        "    out.tint = vec4f(color.rgb * -normal.z, color.a);\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's
+        "    return out;\n"
+        "}\n"
+        WGSL_TINT_FRAGMENT),
+    .id = 0x7E570001,
+    .dims = 3,
+    .vertex_size = sizeof(lit_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT3, offsetof(lit_vertex, position)},
+                   {TIDE_SHADER_FLOAT3, offsetof(lit_vertex, normal)}},
+    .instance_floats = 5,
+};
+
+// In 2D: a position, in its instance's color.
+static const tide_shader flat_shader = {
+    .name = "flat",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   "layout(location = 1) in vec4 color;\n"
+                   GLSL_UNIFORMS("")
+                   "out vec4 tint;\n"
+                   "void main() {\n"
+                   "    tint = color;\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = GLSL_TINT_FRAGMENT,
+    .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) color: vec4f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.tint = color;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        WGSL_TINT_FRAGMENT),
+    .id = 0x7E570002,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .instance_floats = 1,
+};
+
+// Uniforms of its own: a color, and ints that say what to make of it.
+typedef struct picked_uniforms {
+    tide_color tint;
+    int32_t pick[4]; // x: 1 turns its channels around; w: -3 turns it into what's left of white
+} picked_uniforms;
+
+#define PICKED_GLSL_UNIFORMS GLSL_UNIFORMS("vec4 tint; ivec4 pick; ")
+
+static const tide_shader picked_shader = {
+    .name = "picked",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   PICKED_GLSL_UNIFORMS
+                   "void main() {\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = PICKED_GLSL_UNIFORMS
+                     "out vec4 pixel;\n"
+                     "void main() {\n"
+                     "    vec4 c = tint;\n"
+                     "    if (pick.x == 1) c = c.gbra;\n"
+                     "    if (pick.w == -3) c.rgb = 1.0 - c.rgb;\n"
+                     "    pixel = c;\n"
+                     "}\n",
+    .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
+        "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "}\n"
+        "@fragment fn fragment() -> @location(0) vec4f {\n"
+        "    var c = u.tint;\n"
+        "    if (u.pick.x == 1) { c = c.gbra; }\n"
+        "    if (u.pick.w == -3) { c = vec4f(1.0 - c.rgb, c.a); }\n"
+        "    return c;\n"
+        "}\n"),
+    .id = 0x7E570003,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .uniform_floats = 1,
+    .uniform_ints = 1,
+};
+
+// As many uniforms of its own as a shader takes: colors, and after them the
+// int that says which is the pixel's.
+typedef struct many_uniforms {
+    tide_color colors[249];
+    int32_t pick[4];
+} many_uniforms;
+
+_Static_assert(sizeof(many_uniforms) == TIDE_SHADER_UNIFORM_BYTES, "all the uniforms a shader takes");
+
+#define MANY_GLSL_UNIFORMS GLSL_UNIFORMS("vec4 colors[249]; ivec4 pick; ")
+
+static const tide_shader many_shader = {
+    .name = "many",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   MANY_GLSL_UNIFORMS
+                   "void main() {\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = MANY_GLSL_UNIFORMS
+                     "out vec4 pixel;\n"
+                     "void main() {\n"
+                     "    pixel = colors[pick.x];\n"
+                     "}\n",
+    .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 249>, pick: vec4i ")
+        "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "}\n"
+        "@fragment fn fragment() -> @location(0) vec4f {\n"
+        "    return u.colors[u.pick.x];\n"
+        "}\n"),
+    .id = 0x7E570008,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .uniform_floats = 249,
+    .uniform_ints = 1,
+};
+
+// Ints, in a vertex and in an instance: the vertex's is its color, 8 bits a
+// channel, of which the instance says which count and which to turn around,
+// and how many units to move by.
+typedef struct counted_vertex {
+    float position[2];
+    int32_t bits;
+} counted_vertex;
+
+typedef struct counted_instance {
+    float shift[4];
+    int32_t mask[4]; // x: the bits that count; y, z: units to move by; w: the bits to turn around
+} counted_instance;
+
+static const tide_shader counted_shader = {
+    .name = "counted",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   "layout(location = 1) in int bits;\n"
+                   "layout(location = 2) in vec4 shift;\n"
+                   "layout(location = 3) in ivec4 mask;\n"
+                   GLSL_UNIFORMS("")
+                   "out vec4 tint;\n"
+                   "void main() {\n"
+                   "    int c = (bits & mask.x) ^ mask.w;\n"
+                   "    tint = vec4(float((c >> 16) & 255), float((c >> 8) & 255), float(c & 255), 255.0) / 255.0;\n"
+                   "    gl_Position = tide_camera * vec4(position + shift.xy + vec2(mask.yz), 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = GLSL_TINT_FRAGMENT,
+    .wgsl = WGSL(WGSL_UNIFORMS("") WGSL_TINT_CORNER
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) bits: i32, @location(2) shift: vec4f,\n"
+        "                  @location(3) mask: vec4i) -> Corner {\n"
+        "    let c = (bits & mask.x) ^ mask.w;\n"
+        "    let p = u.tide_camera * vec4f(position + shift.xy + vec2f(mask.yz), 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.tint = vec4f(f32((c >> 16u) & 255), f32((c >> 8u) & 255), f32(c & 255), 255.0) / 255.0;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        WGSL_TINT_FRAGMENT),
+    .id = 0x7E570004,
+    .dims = 2,
+    .vertex_size = sizeof(counted_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(counted_vertex, position)},
+                   {TIDE_SHADER_INT, offsetof(counted_vertex, bits)}},
+    .instance_floats = 1,
+    .instance_ints = 1,
+};
+
+// Two textures: the first across its left half, the second across its right.
+typedef struct uv_vertex {
+    float position[2];
+    float uv[2];
+} uv_vertex;
+
+static const tide_shader halves_shader = {
+    .name = "halves",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   "layout(location = 1) in vec2 uv;\n"
+                   GLSL_UNIFORMS("")
+                   "out vec2 at;\n"
+                   "void main() {\n"
+                   "    at = uv;\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = "in vec2 at;\n"
+                     "uniform sampler2D pixels0;\n"
+                     "uniform sampler2D pixels1;\n"
+                     "out vec4 pixel;\n"
+                     "void main() {\n"
+                     "    vec4 left = texture(pixels0, vec2(at.x * 2.0, at.y));\n"
+                     "    vec4 right = texture(pixels1, vec2(at.x * 2.0 - 1.0, at.y));\n"
+                     "    pixel = at.x < 0.5 ? left : right;\n"
+                     "}\n",
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "@group(0) @binding(3) var pixels1: texture_2d<f32>;\n"
+        "@group(0) @binding(4) var how1: sampler;\n"
+        "struct Corner {\n"
+        "    @builtin(position) position: vec4f,\n"
+        "    @location(0) at: vec2f,\n"
+        "}\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.at = uv;\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
+        "    let left = textureSample(pixels0, how0, vec2f(in.at.x * 2.0, in.at.y));\n"
+        "    let right = textureSample(pixels1, how1, vec2f(in.at.x * 2.0 - 1.0, in.at.y));\n"
+        "    return select(right, left, in.at.x < 0.5);\n"
+        "}\n"),
+    .id = 0x7E570005,
+    .dims = 2,
+    .vertex_size = sizeof(uv_vertex),
+    .attribute_count = 2,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(uv_vertex, position)}, {TIDE_SHADER_FLOAT2, offsetof(uv_vertex, uv)}},
+    .texture_count = 2,
+};
+
+// A texture read for each corner: an instance says where it goes, then where
+// in the texture its color is.
+static const tide_shader sampled_shader = {
+    .name = "sampled",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   "layout(location = 1) in vec4 place;\n"
+                   GLSL_UNIFORMS("")
+                   "uniform sampler2D pixels0;\n"
+                   "out vec4 tint;\n"
+                   "void main() {\n"
+                   "    tint = textureLod(pixels0, place.zw, 0.0);\n"
+                   "    gl_Position = tide_camera * vec4(position + place.xy, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = GLSL_TINT_FRAGMENT,
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        WGSL_TINT_CORNER
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) place: vec4f) -> Corner {\n"
+        "    let p = u.tide_camera * vec4f(position + place.xy, 0.0, 1.0);\n"
+        "    var out: Corner;\n"
+        "    out.tint = textureSampleLevel(pixels0, how0, place.zw, 0.0);\n"
+        "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "    return out;\n"
+        "}\n"
+        WGSL_TINT_FRAGMENT),
+    .id = 0x7E570006,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .instance_floats = 1,
+    .texture_count = 1,
+};
+
+// A pixel colored by where it is, in logical pixels from the target's top
+// left, which `tide_screen` gets it from the GPU's own count: red left of 32,
+// green above 256. OpenGL counts rows from the bottom.
+static const tide_shader placed_shader = {
+    .name = "placed",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   GLSL_UNIFORMS("")
+                   "void main() {\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = GLSL_UNIFORMS("")
+                     "out vec4 pixel;\n"
+                     "void main() {\n"
+                     "    vec2 p = vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy;\n"
+                     "    pixel = vec4(p.x < 32.0 ? 1.0 : 0.0, p.y < 256.0 ? 1.0 : 0.0, 0.0, 1.0);\n"
+                     "}\n",
+    .wgsl = WGSL(WGSL_UNIFORMS("")
+        "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "}\n"
+        "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
+        "    let p = at.xy / u.tide_screen.xy;\n"
+        "    return vec4f(select(0.0, 1.0, p.x < 32.0), select(0.0, 1.0, p.y < 256.0), 0.0, 1.0);\n"
+        "}\n"),
+    .id = 0x7E570007,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+};
+
+static const uint32_t quad_indices[6] = {0, 1, 2, 0, 2, 3};
+
+// A quad of a shader's vertices, as the list keeps a mesh of Tide's: by an id
+// of its own, at a version, here a hash of its bytes.
+static uint32_t quad_mesh(const uint64_t id, const void *vertices, const uint32_t vertex_size)
+{
+    bool fill;
+    const uint64_t version = tide_hash(vertices, 4u * vertex_size);
+    const uint32_t mesh = tide_draw_mesh_slot(&list, TIDE_MESH_BYTES, id, 0, version, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(&list, mesh, vertices, vertex_size, 4, quad_indices, 6);
+    return mesh;
+}
+
+// ...of positions alone, from `top_left` to `bottom_right` as the list's units have them.
+static uint32_t quad_2d(const uint64_t id, const tide_float2 top_left, const tide_float2 bottom_right)
+{
+    const float corners[4][2] = {{top_left.x, top_left.y}, {bottom_right.x, top_left.y},
+                                 {bottom_right.x, bottom_right.y}, {top_left.x, bottom_right.y}};
+    return quad_mesh(id, corners, sizeof corners[0]);
+}
+
+// ...and with the texture's first pixel at its top left.
+static uint32_t quad_uv(const uint64_t id, const tide_float2 top_left, const tide_float2 bottom_right)
+{
+    const uv_vertex corners[4] = {{{top_left.x, top_left.y}, {0, 0}}, {{bottom_right.x, top_left.y}, {1, 0}},
+                                  {{bottom_right.x, bottom_right.y}, {1, 1}}, {{top_left.x, bottom_right.y}, {0, 1}}};
+    return quad_mesh(id, corners, sizeof corners[0]);
+}
+
+// A texture as the list keeps it, for a shaded mesh: 1 + its place.
+static uint32_t texture_slot(const tide_texture *texture)
+{
+    uint8_t *pixels;
+    const uint32_t slot = tide_draw_texture_slot(&list, TIDE_PIXELS_MEMORY, (uint64_t)(uintptr_t)texture->pixels,
+                                                 texture->version, texture->width, texture->height, &pixels);
+    if (pixels) memcpy(pixels, texture->pixels, (size_t)texture->width * (size_t)texture->height * 4u);
+    return slot;
+}
+
+// ...through the flat shader, in a color.
+static void flat_quad(const uint64_t id, const tide_float2 top_left, const tide_float2 bottom_right,
+                      const tide_color color)
+{
+    tide_draw_shaded(&list, &flat_shader, quad_2d(id, top_left, bottom_right), &color, NULL, NULL, 0);
+}
+
+// Yellow beside red
+static const uint8_t pair[2 * 1 * 4] = {255, 255, 0, 255, 255, 0, 0, 255};
+static const tide_texture pair_texture = {pair, 2, 1, 1};
+
+// The commands that runs of instances came to, which shaded_scene counts.
+static uint32_t picked_commands, counted_commands, sampled_commands;
+
+// The window pixel (x, y) through shaded_scene's second camera: 2 pixels a unit.
+static tide_float2 at_second(const float x, const float y)
+{
+    return tide_f2(1000.0f + (x - screen.x * 0.5f) * 0.5f, 1000.0f - (y - screen.y * 0.5f) * 0.5f);
+}
+
+static void shaded_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+
+    // Uniforms of the game's: each draw with its own is a command
+    uint32_t before = list.count;
+    static const int32_t picks[3][4] = {{0, 0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, -3}};
+    for (int i = 0; i < 3; i++) {
+        const float left = 16.0f + 48.0f * (float)i;
+        picked_uniforms uniforms = {.tint = orange};
+        memcpy(uniforms.pick, picks[i], sizeof uniforms.pick);
+        const uint32_t mesh = quad_2d(1 + (uint64_t)i, at(left, 16), at(left + 32, 48));
+        tide_draw_shaded(&list, &picked_shader, mesh, NULL, &uniforms, NULL, 0);
+    }
+    picked_commands = list.count - before;
+
+    // As many uniforms as a shader takes, the last of them too, and each draw's its own
+    static many_uniforms many = {.pick = {248}};
+    many.colors[248] = cyan;
+    tide_draw_shaded(&list, &many_shader, quad_2d(15, at(160, 16), at(192, 48)), NULL, &many, NULL, 0);
+    many.colors[248] = magenta;
+    tide_draw_shaded(&list, &many_shader, quad_2d(16, at(208, 16), at(240, 48)), NULL, &many, NULL, 0);
+
+    // Ints in the vertices and the instances, which are one command
+    const tide_float2 corner = at(16, 64), far_corner = at(48, 96);
+    const counted_vertex counted[4] = {{{corner.x, corner.y}, 0xFF8000}, {{far_corner.x, corner.y}, 0xFF8000},
+                                       {{far_corner.x, far_corner.y}, 0xFF8000}, {{corner.x, far_corner.y}, 0xFF8000}};
+    const uint32_t counted_quad = quad_mesh(4, counted, sizeof counted[0]);
+    static const counted_instance instances[3] = {
+        {{0, 0, 0, 0}, {0xFFFFFF, 0, 0, 0}},     // As it is
+        {{0, 0, 0, 0}, {0x00FF00, 48, 0, 0}},    // Its green alone, 48 units to the right
+        {{48, 0, 0, 0}, {0xFFFFFF, 48, -8, -1}}, // Turned around, 96 to the right and 8 down
+    };
+    before = list.count;
+    for (int i = 0; i < 3; i++) tide_draw_shaded(&list, &counted_shader, counted_quad, &instances[i], NULL, NULL, 0);
+    counted_commands = list.count - before;
+
+    // Two textures: the same one, the nearest pixel on the left and blended
+    // on the right; another on the right; and none on the left, which is white
+    const uint32_t quarters_slot = texture_slot(&quarters_texture), pair_slot = texture_slot(&pair_texture);
+    tide_draw_shaded(&list, &halves_shader, quad_uv(5, at(16, 112), at(80, 144)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, quarters_slot}, 2);
+    tide_draw_shaded(&list, &halves_shader, quad_uv(6, at(96, 112), at(160, 144)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot, pair_slot}, 2);
+    tide_draw_shaded(&list, &halves_shader, quad_uv(7, at(176, 112), at(240, 144)), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){0, quarters_slot}, 0);
+
+    // A texture read in the vertex shader: each instance its pixel
+    const uint32_t sampled_quad = quad_2d(8, at(16, 160), at(32, 176));
+    static const float places[3][4] = {{0, 0, 0.25f, 0.25f}, {32, 0, 0.75f, 0.25f}, {64, 0, 0.25f, 0.75f}};
+    before = list.count;
+    for (int i = 0; i < 3; i++) {
+        tide_draw_shaded(&list, &sampled_shader, sampled_quad, places[i], NULL,
+                         (const uint32_t[TIDE_SHADER_TEXTURES]){quarters_slot}, 0);
+    }
+    sampled_commands = list.count - before;
+
+    // In the order they were recorded, among shapes
+    tide_draw_rect(&list, at(48, 208), tide_f2(64, 32), yellow);
+    flat_quad(9, at(16, 192), at(48, 224), blue);
+    tide_draw_rect(&list, at(24, 208), tide_f2(16, 32), red);
+
+    // A pixel that knows where it is
+    tide_draw_shaded(&list, &placed_shader, quad_2d(10, at(16, 240), at(48, 272)), NULL, NULL, NULL, 0);
+
+    // Where a mesh with the same corners lands, which it covers: through the
+    // first camera, through another, and on the screen
+    quad(at(96, 192), at(128, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
+    flat_quad(11, at(96, 192), at(128, 224), cyan);
+    tide_draw_camera(&list, tide_f2(1000, 1000), screen.y / 4.0f);
+    quad(at_second(144, 192), at_second(176, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
+    flat_quad(12, at_second(144, 192), at_second(176, 224), cyan);
+    tide_draw_screen(&list);
+    quad(tide_f2(192, 192), tide_f2(224, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
+    flat_quad(13, tide_f2(192, 192), tide_f2(224, 224), cyan);
+}
+
+static void shaded_checks(void)
+{
+    const tide_color dark_green = {0.0f, 0.5f, 0.0f, 1.0f}, turned = {0.0f, 0.5f, 1.0f, 1.0f};
+    const tide_color black = {0.0f, 0.0f, 0.0f, 1.0f};
+    // A pixel's middle is half a pixel past the middle of a texture 32 pixels
+    // across: 17 parts in 32 of the pixels after it
+    const tide_color blend = {0.502f, 0.531f, 0.531f, 1.0f}, between = {1.0f, 0.469f, 0.0f, 1.0f};
+    shaded_scene();
+    expect(picked_commands == 3, "draws through a shader with uniforms of their own are a command each");
+    expect(counted_commands == 1, "instances through a shader, one after another, are one command");
+    expect(sampled_commands == 1, "and so are instances with a texture");
+    const check checks[] = {
+        {32, 32, orange, "a shader's uniform: a color"},
+        {80, 32, purple, "an int beside it, which turns its channels around"},
+        {128, 32, turned, "and a negative one"},
+        {176, 32, cyan, "the last of as many uniforms as a shader takes"},
+        {224, 32, magenta, "and the next draw's, which are its own"},
+        {32, 80, orange, "a vertex's int, read as bits"},
+        {80, 80, dark_green, "an instance's ints: bits, and units to move by"},
+        {128, 88, turned, "a negative one, and a float before them"},
+        {128, 68, background, "and nothing where that one moved from"},
+        {24, 120, red, "a shader's first texture, the nearest pixel: its first"},
+        {40, 120, green, "the one beside it"},
+        {24, 136, blue, "the one below it"},
+        {40, 136, white, "and its last"},
+        {64, 128, blend, "the same texture as its second, blended"},
+        {49, 113, red, "and not with the far edge's, at its edge"},
+        {104, 120, red, "a shader's first texture, with another as its second"},
+        {129, 128, yellow, "the second's first pixel"},
+        {144, 128, between, "blended with its last, between them"},
+        {159, 128, red, "and its last"},
+        {192, 128, white, "a shader's texture that's none: white"},
+        {216, 120, red, "and the second beside it, the nearest pixel"},
+        {232, 120, green, "and the one beside that"},
+        {24, 168, red, "a texture read in the vertex shader"},
+        {56, 168, green, "another pixel of it, for another instance"},
+        {88, 168, blue, "and another"},
+        {24, 208, red, "a rect over a shaded mesh"},
+        {40, 208, blue, "a shaded mesh over a rect"},
+        {64, 208, yellow, "and the rect under it"},
+        {24, 248, yellow, "a pixel by where it is: left of 32 and above 256"},
+        {40, 248, green, "right of 32"},
+        {24, 264, red, "below 256"},
+        {40, 264, black, "and both"},
+        {31, 255, yellow, "the last pixel before both"},
+        {32, 256, black, "and the first past them"},
+        {96, 192, cyan, "a shaded mesh covers a mesh with the same corners: its first pixel"},
+        {127, 223, cyan, "and its last"},
+        {95, 208, background, "and nothing to its left"},
+        {128, 208, background, "or its right"},
+        {112, 191, background, "above it"},
+        {112, 224, background, "or below it"},
+        {144, 192, cyan, "through another camera: its first pixel"},
+        {175, 223, cyan, "and its last"},
+        {143, 208, background, "and nothing to its left"},
+        {176, 208, background, "or its right"},
+        {160, 191, background, "above it"},
+        {160, 224, background, "or below it"},
+        {192, 192, cyan, "on the screen: its first pixel"},
+        {223, 223, cyan, "and its last"},
+        {191, 208, background, "and nothing to its left"},
+        {224, 208, background, "or its right"},
+        {208, 191, background, "above it"},
+        {208, 224, background, "or below it"},
+    };
+    check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+}
+
+// How many commands shaded_3d_scene's instances came to.
+static uint32_t lit_commands;
+
+static void shaded_3d_scene(void)
+{
+    static const lit_vertex corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0, 0, -1}}, {{0.5f, 0.5f, 0.0f}, {0, 0, -1}},
+                                          {{0.5f, -0.5f, 0.0f}, {0, 0, -1}}, {{-0.5f, -0.5f, 0.0f}, {0, 0, -1}}};
+    const tide_quaternion ahead = tide_identity_q();
+    const tide_color colors[3] = {red, green, blue};
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_camera_3d(&list, tide_f3(0, 0, -10), ahead, field_of_view_3d());
+    // An ordinary mesh in front of where the last instance goes, drawn before it
+    square_3d(tide_f3(3.2f, 1.6f, -2), ahead, 0.8f, white, NULL);
+    const uint32_t mesh = quad_mesh(14, corners, sizeof corners[0]);
+    const uint32_t before = list.count;
+    for (int i = 0; i < 3; i++) {
+        const lit_instance instance = {tide_trs_f4x4(tide_f3(4.0f * (float)(i - 1), 2, 0), ahead, tide_f3_splat(2.0f)),
+                                       colors[i]};
+        tide_draw_shaded(&list, &lit_shader, mesh, &instance, NULL, NULL, 0);
+    }
+    lit_commands = list.count - before;
+    // ...and one behind the first, drawn after it
+    square_3d(tide_f3(-6, 3, 5), ahead, 6.0f, yellow, NULL);
+}
+
+static void shaded_3d_checks(void)
+{
+    const tide_float2 first = seen(-4, 2, 0), middle = seen(0, 2, 0), last = seen(4, 2, 0);
+    const float edge = unit_3d() * 0.75f; // Past the near mesh's edge, inside an instance's
+    shaded_3d_scene();
+    expect(lit_commands == 1, "instances of a mesh through a 3D shader, one after another, are one command");
+    const check checks[] = {
+        {first.x, first.y, red, "a shaded 3D mesh's first instance, in front of a far mesh drawn after it"},
+        {first.x + unit_3d() * 1.5f, first.y, yellow, "and the far mesh around it"},
+        {middle.x, middle.y, green, "its second, in its own color"},
+        {middle.x - unit_3d() * 1.5f, middle.y, background, "and nothing beside it"},
+        {last.x + edge, last.y, blue, "its last"},
+        {last.x, last.y, white, "behind a near mesh drawn before it"},
+    };
+    check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+}
+
+static void shaded(void)
+{
+    // Twice: the second frame draws with what the first uploaded
+    for (int frame = 0; frame < 2; frame++) {
+        shaded_checks();
+        shaded_3d_checks();
+    }
+
+    // A host whose game was swapped for another build has the list forget
+    // what it drew with, its shaders too, which went with the build: the
+    // commands it has draw without them
+    shaded_scene();
+    tide_draw_forget(&list);
+    const check forgotten[] = {
+        {32, 32, background, "nothing where a shaded mesh was, after the list forgot it"},
+        {24, 208, red, "a rect over it"},
+        {40, 208, yellow, "and the one under it"},
+        {112, 208, magenta, "and the mesh another covered"},
+    };
+    check_pixels(forgotten, (int)(sizeof forgotten / sizeof forgotten[0]));
+    // ...and the next ones draw through them again: the first frame keeps
+    // the pipelines of the shaders it draws through, and lets the others go
+    shaded_3d_checks();
+    shaded_checks();
+}
+
 // Rects side by side, a cell each as a grid's view draws them, leave no gap
 // between them at any scale: not even where their shared edge falls exactly
 // on a row or column of pixel centers, as it does every 8 cells at 3.125
@@ -595,12 +1234,14 @@ static int frame(void *user, const float seconds)
     }
     if (lost == 2) {
         meshes_3d();
+        shaded();
         tiles_leave_no_gaps();
         return run_checks();
     }
 #endif
     meshes();
     meshes_3d();
+    shaded();
     tiles_leave_no_gaps();
     const int code = run_checks();
 #ifdef __wasm__

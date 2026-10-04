@@ -16,6 +16,7 @@ typedef struct codegen_options {
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
     game_info *info;         // If set, gets what tide needs of the game's settings.
+    bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

@@ -1,0 +1,574 @@
+// frag and vert, through the whole path: Tide to GLSL and WGSL, the draw
+// list, the renderer and the GPU, read back as pixels by shaders.c. The
+// screen is a grid of 32 pixel cells, each with a 24 pixel square drawn one
+// way: Cell(column, row) is a cell's middle in the 3D world, which the camera
+// shows a unit to a pixel, and Spot(column, row) the same for 2D.
+
+scene Main { }
+
+struct Dot
+{
+    float3 position;
+}
+
+struct Corner3
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    Color color = Color.white;
+    int kind;
+}
+
+struct Dot2
+{
+    float2 position;
+}
+
+struct Corner2
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+enum Mode { Plain, Bright }
+
+struct Finish
+{
+    float shine = 1;
+    int layers = 1;
+}
+
+component Box
+{
+    float3 pos;
+    Color tint = Color.white;
+}
+
+component Lamp
+{
+    float3 pos;
+    float2 at;
+    Color glow = Color.white;
+    int kind;
+    bool on;
+    Mode mode;
+    Finish finish;
+}
+
+singleton Sun
+{
+    Color light = Color(1, 1, 0.5);
+    float shift = 64;
+}
+
+// Where the checks' lines are, which the frags compare with
+singleton Marks
+{
+    float split = 16;  // A window pixel's x
+    float world = -48; // A world x: Cell(2, 2)'s
+    float placed = 48; // Cell(5, 2)'s
+    float line = 144;  // A window pixel's y
+    Mode mode = Mode.Bright;
+}
+
+local singleton Art
+{
+    List<Dot> dots;
+    List<Corner3> quad;
+    List<Dot2> dots2;
+    List<Corner2> flat;
+    List<Corner2> onScreen;
+    List<int> faces;
+    Grid2<Color> four = Grid2(2, 2);
+    Color paint = Color(1, 0.5, 0);
+    int frames;
+}
+
+float3 Cell(int column, int row)
+{
+    return float3(32 * column - 112, 112 - 32 * row, 5);
+}
+
+float2 Spot(int column, int row)
+{
+    return float2(32 * column - 112, 112 - 32 * row);
+}
+
+// ---------------------------------------------------------------------------
+// What a frag reads: the entity's components, singletons, and nothing
+
+frag Tinted(Corner3 vertex, mut Color color, Box box, Sun sun)
+{
+    color = box.tint * sun.light;
+}
+
+// Leaves its pixel as it starts
+frag Blank(Corner3 vertex, mut Color color)
+{
+}
+
+vert Shift(mut Corner3 vertex, Sun sun)
+{
+    vertex.position.x += sun.shift;
+}
+
+frag Wood(Corner3 vertex, mut Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point);
+}
+
+frag Smooth(Corner3 vertex, mut Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv);
+}
+
+// ---------------------------------------------------------------------------
+// Where the pixel is, and how the mesh was drawn
+
+frag Split(Corner3 vertex, mut Color color, Pixel pixel, Marks marks)
+{
+    color = pixel.position.x < marks.split ? Color.red : Color.blue;
+}
+
+frag Hole(Corner3 vertex, mut Color color, Pixel pixel)
+{
+    float2 from = vertex.uv - float2(0.5, 0.5);
+    if (Math.Abs(from.x) < 0.2 && Math.Abs(from.y) < 0.2) pixel.Discard();
+    color = Color.magenta;
+}
+
+frag World(Corner3 vertex, mut Color color, Pixel pixel, Marks marks)
+{
+    color = pixel.world.x > marks.world ? Color.green : Color.red;
+}
+
+frag Depth(Corner3 vertex, mut Color color, Pixel pixel)
+{
+    color = Color(pixel.depth * 10, 0, 0);
+}
+
+vert Turn(mut Corner3 vertex, Instance instance)
+{
+    vertex.normal = Math.Rotate(instance.transform, vertex.normal);
+}
+
+frag Normal(Corner3 vertex, mut Color color)
+{
+    color = Color(vertex.normal.x * 0.5 + 0.5, vertex.normal.y * 0.5 + 0.5, vertex.normal.z * 0.5 + 0.5);
+}
+
+frag Placed(Corner3 vertex, mut Color color, Instance instance, Marks marks)
+{
+    color = instance.transform.c3.x == marks.placed ? Color.cyan : Color.red;
+}
+
+// Ints, bools, enums and structs of a component, for each instance
+frag Lit(Corner3 vertex, mut Color color, Lamp lamp)
+{
+    if (lamp.kind == 1)
+    {
+        color = Color.green;
+        return;
+    }
+    if (lamp.mode == Mode.Bright && lamp.on)
+    {
+        color = Color(lamp.finish.shine, 0, lamp.finish.layers / 4.0);
+        return;
+    }
+    color = Color.blue;
+}
+
+// ---------------------------------------------------------------------------
+// 2D
+
+frag Paint(Corner2 vertex, mut Color color, Art art)
+{
+    color = art.paint;
+}
+
+vert Slide(mut Corner2 vertex, Sun sun)
+{
+    vertex.position.x += sun.shift;
+}
+
+vert Place(mut Corner2 vertex, Lamp lamp)
+{
+    vertex.position += lamp.at;
+}
+
+frag Glow(Corner2 vertex, mut Color color, Lamp lamp)
+{
+    color = lamp.glow;
+}
+
+frag Stripe(Corner2 vertex, mut Color color, Pixel pixel, Marks marks)
+{
+    color = pixel.position.y < marks.line ? Color.yellow : Color.cyan;
+}
+
+// ---------------------------------------------------------------------------
+// The language, on the GPU: green where every check holds
+
+struct Pair
+{
+    float a = 1;
+    float b = 2;
+
+    float Sum()
+    {
+        return a + b;
+    }
+
+    mut void Scale(float by)
+    {
+        a *= by;
+        b *= by;
+    }
+
+    Pair operator +(Pair x, Pair y)
+    {
+        return Pair { a = x.a + y.a, b = x.b + y.b };
+    }
+}
+
+const float HALF = 0.5;
+const int THREE = 3;
+
+float Twice(float x)
+{
+    return x * 2;
+}
+
+void Bump(mut float x, float by)
+{
+    x += by;
+}
+
+int Count(int to)
+{
+    mut int n = 0;
+    for (int i = 0; i < to; i++)
+    {
+        if (i == 1) continue;
+        if (i > 5) break;
+        n++;
+    }
+    return n;
+}
+
+bool Near(float a, float b)
+{
+    return Math.Abs(a - b) < 0.001;
+}
+
+frag Sink(Corner3 vertex, mut Color color, Marks marks)
+{
+    mut bool ok = true;
+
+    // Numbers
+    int i = 7;
+    float f = i;
+    if (!Near(f / 2, 3.5)) ok = false;
+    if (i / 2 != 3 || i % 4 != 3) ok = false;
+    if ((i << 2) != 28 || (i >> 1) != 3 || (i & 5) != 5 || (i | 8) != 15 || (i ^ 2) != 5) ok = false;
+    if (-i != -7 || ~i != -8) ok = false;
+
+    // Vectors
+    float3 v = float3(1, 2, 3);
+    mut float3 w = v * 2 + float3(1);
+    w.xy = w.yx;
+    if (!Near(w.x, 5) || !Near(w.y, 3) || !Near(w.z, 7)) ok = false;
+    if (!Near(Math.Dot(v, v), 14) || !Near(Math.Length(float2(3, 4)), 5)) ok = false;
+    float3 across = Math.Cross(float3(1, 0, 0), float3(0, 1, 0));
+    if (!Near(across.z, 1)) ok = false;
+    int2 cell = int2(3, 4) * 2;
+    if (cell.x != 6 || cell.y != 8) ok = false;
+    float2 mixed = float2(cell) * HALF;
+    if (!Near(mixed.y, 4)) ok = false;
+
+    // Math
+    if (!Near(Math.Clamp(5.0, 0, 1), 1) || !Near(Math.Lerp(2.0, 4.0, 0.5), 3) || !Near(Math.Saturate(-1.0), 0)) ok = false;
+    if (!Near(Math.Max(v, 2).x, 2) || !Near(Math.Min(1, 2.5), 1) || Math.Max(i, 9) != 9) ok = false;
+    if (!Near(Math.Floor(1.7), 1) || !Near(Math.Frac(1.75), 0.75) || !Near(Math.Sqrt(16.0), 4) || !Near(Math.Pow(2.0, 3.0), 8)) ok = false;
+    if (!Near(Math.Sin(0.0), 0) || !Near(Math.Cos(0.0), 1) || !Near(Math.Atan2(1.0, 1.0), Math.PI / 4)) ok = false;
+    if (!Near(Math.Step(0.5, 0.7), 1) || !Near(Math.SmoothStep(0.0, 1.0, 0.5), 0.5) || !Near(Math.Unlerp(2.0, 4.0, 3.0), 0.5)) ok = false;
+    if (!Near(Math.LengthSq(float2(3, 4)), 25) || !Near(Math.DistanceSq(float2(1, 1), float2(4, 5)), 25)) ok = false;
+    if (!Near(Math.Csum(v), 6) || !Near(Math.Cmax(v), 3) || !Near(Math.Cmin(v), 1)) ok = false;
+    if (!Near(Math.Normalize(float3(0)).x, 0) || !Near(Math.Normalize(float3(0, 3, 0)).y, 1)) ok = false;
+    if (!Near(Math.Log10(100.0), 2) || !Near(Math.Exp(0.0), 1) || !Near(Math.Degrees(Math.PI), 180)) ok = false;
+
+    // Matrices
+    float2x2 m = float2x2(1, 2, 3, 4);
+    float2 through = Math.Mul(m, float2(1, 1));
+    if (!Near(through.x, 3) || !Near(through.y, 7) || !Near(m.c1.x, 2) || !Near(Math.Determinant(m), -2)) ok = false;
+    float2x2 doubled = m * 2;
+    if (!Near(doubled.c0.y, 6)) ok = false;
+    float3 moved = Math.Transform(float4x4.identity, v);
+    if (!Near(moved.z, 3)) ok = false;
+
+    // Structs, methods and operators
+    mut Pair p = Pair { a = 2 };
+    p.Scale(2);
+    Pair q = p + Pair { };
+    if (!Near(q.Sum(), 11)) ok = false;
+
+    // Functions, and what they change
+    mut float bumped = Twice(HALF);
+    Bump(bumped, 2);
+    Bump(w.z, 1);
+    if (!Near(bumped, 3) || !Near(w.z, 8) || Count(THREE + 5) != 5) ok = false;
+
+    // Enums, ?: and default
+    Mode mode = marks.mode;
+    float pick = mode == Mode.Bright ? 1 : 0;
+    Pair usual = default;
+    if (!Near(pick, 1) || !Near(usual.b, 2)) ok = false;
+
+    // Colors
+    Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;
+    if (!Near(tint.g, 0.5) || !Near(tint.a, 1)) ok = false;
+
+    color = ok ? Color.green : Color.red;
+}
+
+struct Inner
+{
+    float v = 2;
+}
+
+struct Outer
+{
+    Inner inner;
+    int n = 3;
+
+    float Total()
+    {
+        return inner.v * n;
+    }
+
+    float Double()
+    {
+        return Total() * 2;
+    }
+
+    mut void Grow(float by)
+    {
+        inner.v += by;
+        n++;
+    }
+}
+
+struct Holder
+{
+    Pair pair;
+}
+
+Outer Made(float v)
+{
+    return Outer { inner = Inner { v = v }, n = 2 };
+}
+
+float First(float3 v, float least)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        if (v.x + i > least) return i;
+    }
+    return -1;
+}
+
+frag More(Corner3 vertex, mut Color color)
+{
+    mut bool ok = true;
+
+    // Matrices
+    float3x3 turn = float3x3(float3(0, 1, 0), float3(-1, 0, 0), float3(0, 0, 1));
+    float3 turned = Math.Mul(turn, float3(1, 0, 0));
+    if (!Near(turned.y, 1) || !Near(turned.x, 0)) ok = false;
+    float3x3 back = Math.Transpose(turn);
+    if (!Near(Math.Mul(back, turned).x, 1)) ok = false;
+    float3x3 less = -turn;
+    float3x3 half = turn / 2;
+    float3x3 sum = turn + turn - half;
+    if (!Near(less.c0.y, -1) || !Near(half.c0.y, 0.5) || !Near(sum.c1.x, -1.5)) ok = false;
+    float3 spun = Math.Rotate(float4x4.identity, float3(1, 2, 3));
+    if (!Near(spun.y, 2)) ok = false;
+
+    // Int vectors, and vectors from others
+    mut int3 steps = int3(1, 2, 3) + int3(1);
+    steps = steps * 3 % 4;
+    if (steps.x != 2 || steps.y != 1 || steps.z != 0) ok = false;
+    int3 whole = int3(float3(1.7, 2.2, -0.5));
+    float4 packed = float4(float2(1, 2), 3, 4);
+    if (whole.x != 1 || whole.y != 2 || !Near(packed.z, 3) || !Near(packed.zyx.z, 1)) ok = false;
+
+    // Assignments
+    mut int n = 10;
+    n -= 3;
+    n *= 2;
+    n /= 4;
+    n %= 3;
+    n <<= 2;
+    n |= 1;
+    n &= 7;
+    n ^= 2;
+    n++;
+    n--;
+    n >>= 1;
+    mut float x = 8;
+    x -= 2;
+    x *= 3;
+    x /= 4;
+    if (n != 1 || !Near(x, 4.5)) ok = false;
+
+    // Loops
+    mut int total = 0;
+    for (int i = 5; i > 0; i--) total += i;
+    for (int i = 0; i <= 6; i += 2) total += 1;
+    if (total != 19 || !Near(First(float3(0.5, 0, 0), 2), 2)) ok = false;
+
+    // Structs in structs, their methods, and structs from functions
+    mut Outer outer = Made(1.5);
+    outer.Grow(0.5);
+    outer.inner.v *= 2;
+    if (!Near(outer.Total(), 12) || !Near(outer.Double(), 24)) ok = false;
+    mut Holder holder = Holder { };
+    holder.pair.Scale(3);
+    if (!Near(holder.pair.Sum(), 9)) ok = false;
+
+    // Numbers of both kinds
+    int count = 3;
+    bool small = count < 3.5 && !(count > 4);
+    float ratio = count / 2;
+    int cut = int(2.9);
+    float wide = float(count) / 2;
+    float either = small ? (count > 2 ? 7 : 8) : 9;
+    if (!small || !Near(ratio, 1) || cut != 2 || !Near(wide, 1.5) || !Near(either, 7) || !Near(Twice(default), 0)) ok = false;
+
+    // More of Math
+    if (!Near(Math.Round(2.5), 2) || !Near(Math.Sign(-3.0), -1) || !Near(Math.Trunc(-1.7), -1) || !Near(Math.Ceil(1.2), 2)) ok = false;
+    if (!Near(Math.Rsqrt(4.0), 0.5) || !Near(Math.Radians(180.0), Math.PI) || !Near(Math.Tan(0.0), 0)) ok = false;
+    if (!Near(Math.Asin(1.0), Math.PI / 2) || !Near(Math.Acos(1.0), 0) || !Near(Math.Atan(1.0), Math.PI / 4)) ok = false;
+    if (!Near(Math.Exp2(3.0), 8) || !Near(Math.Log(1.0), 0) || !Near(Math.Log2(8.0), 3)) ok = false;
+    float3 bounced = Math.Reflect(float3(1, -1, 0), float3(0, 1, 0));
+    if (!Near(bounced.y, 1) || !Near(Math.Distance(float2(0, 0), float2(3, 4)), 5)) ok = false;
+    float3 sizes = Math.Abs(float3(-1, 2, -3));
+    if (!Near(sizes.z, 3) || Math.Min(count, 2) != 2 || Math.Clamp(count, 0, 2) != 2) ok = false;
+    if (Math.Abs(-count) != 3 || Math.Sign(-count) != -1) ok = false;
+
+    color = ok ? Color(0, 1, 0, 1) : Color.red;
+}
+
+// A vert reads its vertex's ints, and samples too
+vert Checks(mut Corner3 vertex, Art art)
+{
+    Color sampled = art.four.Sample(float2(0.75, 0.75), Filter.Point);
+    if (vertex.kind == 3 && sampled.b > 0.5) vertex.color = Color.green * sampled;
+    else vertex.color = Color.red;
+}
+
+// ---------------------------------------------------------------------------
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box { pos = Cell(0, 0), tint = Color.red });
+    Spawn(Box { pos = Cell(1, 0), tint = Color.green });
+    Spawn(Box { pos = Cell(2, 0), tint = Color.blue });
+    Spawn(Lamp { pos = Cell(0, 3), at = Spot(0, 6), glow = Color.red, kind = 1 });
+    Spawn(Lamp { pos = Cell(1, 3), at = Spot(1, 6), glow = Color.green, on = true, mode = Mode.Bright,
+                 finish = Finish { shine = 0.5, layers = 2 } });
+    Spawn(Lamp { pos = Cell(2, 3), at = Spot(2, 6), glow = Color.blue });
+}
+
+view Start(mut Art art)
+{
+    art.frames += 1;
+    if (art.frames == 1)
+    {
+        // A square around the origin, its uv (0, 0) at its top left corner
+        art.quad = [Corner3 { position = float3(-12, 12, 0), normal = float3(1, 0, 0), color = Color.yellow, kind = 3 },
+                    Corner3 { position = float3(12, 12, 0), normal = float3(1, 0, 0), uv = float2(1, 0), color = Color.yellow, kind = 3 },
+                    Corner3 { position = float3(12, -12, 0), normal = float3(1, 0, 0), uv = float2(1, 1), color = Color.yellow, kind = 3 },
+                    Corner3 { position = float3(-12, -12, 0), normal = float3(1, 0, 0), uv = float2(0, 1), color = Color.yellow, kind = 3 }];
+        art.dots = [Dot { position = float3(-12, 12, 0) }, Dot { position = float3(12, 12, 0) },
+                    Dot { position = float3(12, -12, 0) }, Dot { position = float3(-12, -12, 0) }];
+        art.dots2 = [Dot2 { position = float2(-12, 12) }, Dot2 { position = float2(12, 12) },
+                     Dot2 { position = float2(12, -12) }, Dot2 { position = float2(-12, -12) }];
+        art.flat = [Corner2 { position = float2(-12, 12) }, Corner2 { position = float2(12, 12), uv = float2(1, 0) },
+                    Corner2 { position = float2(12, -12), uv = float2(1, 1) }, Corner2 { position = float2(-12, -12), uv = float2(0, 1) }];
+        // In the screen's pixels, from the top left: Cell(4, 4)'s square
+        art.onScreen = [Corner2 { position = float2(132, 132) }, Corner2 { position = float2(156, 132) },
+                        Corner2 { position = float2(156, 156) }, Corner2 { position = float2(132, 156) }];
+        art.faces = [0, 1, 2, 0, 2, 3];
+        art.four[0, 0] = Color.red;
+        art.four[1, 0] = Color.green;
+        art.four[0, 1] = Color.blue;
+        art.four[1, 1] = Color.white;
+    }
+    Draw.Clear(Color(0.1, 0.1, 0.1));
+    // A unit a pixel, the origin at the screen's middle, looking along +z
+    Draw.Camera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
+}
+
+// Three entities, three tints, one draw
+view Boxes(Box box, Art art)
+{
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(box.pos), Tinted);
+}
+
+view Singles(Art art)
+{
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 0)), Blank);
+    Draw.Mesh(art.dots, art.faces, float4x4.Translate(Cell(5, 0)));
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 0)));
+
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 1)), Shift);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 1)), Wood);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 1)), Smooth);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 1)), art.four, Filter.Point);
+
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 2)), Split);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 2)), Hole);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 2)), World);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 2)), Depth);
+    var turned = float4x4.TRS(Cell(4, 2), quaternion.AxisAngle(float3(0, 0, 1), Math.Radians(90)), float3(1));
+    Draw.Mesh(art.quad, art.faces, turned, Turn, Normal);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 2)), Placed);
+
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 5)), Sink);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 5)), Checks);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 5)), More);
+}
+
+view Lamps(Lamp lamp, Art art)
+{
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(lamp.pos), Lit);
+}
+
+// 2D meshes go through the 2D camera, in order with the other 2D calls
+view Flat(Art art)
+{
+    Draw.Camera(-Spot(0, 4), Screen.height / 2);
+    Draw.Rect(float2(0, 0), float2(32, 32), Color.blue);
+    Draw.Mesh(art.flat, art.faces, Paint);
+    Draw.Rect(float2(0, 0), float2(8, 8), Color.green);
+
+    Draw.Camera(-Spot(2, 4), Screen.height / 2);
+    Draw.Mesh(art.dots2, art.faces);
+    Draw.Camera(-Spot(3, 4), Screen.height / 2);
+    Draw.Mesh(art.flat, art.faces, art.four, Filter.Point);
+    Draw.Camera(-Spot(5, 4), Screen.height / 2);
+    Draw.Mesh(art.flat, art.faces, Slide);
+
+    Draw.Screen();
+    Draw.Mesh(art.onScreen, art.faces, Stripe);
+    Draw.Camera(float2(0, 0), Screen.height / 2);
+}
+
+// Three entities in one 2D draw: the vert puts each where its component says
+view FlatLamps(with Lamp, Art art)
+{
+    Draw.Mesh(art.flat, art.faces, Place, Glow);
+}

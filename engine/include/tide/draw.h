@@ -40,6 +40,7 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_NO_CLIP,
     TIDE_DRAW_CAMERA_3D, // camera: the 3D camera, for the 3D meshes after it
     TIDE_DRAW_MESH_3D,   // mesh3: a run of instances of a 3D mesh
+    TIDE_DRAW_SHADED,    // shaded: a run of instances of a mesh, through a shader of the game's
 } tide_draw_kind;
 
 typedef struct tide_draw_command {
@@ -67,6 +68,9 @@ typedef struct tide_draw_command {
             uint32_t texture; // As a mesh's
             uint32_t filter;
         } mesh3;
+        struct {          // TIDE_DRAW_SHADED
+            uint32_t run; // Its place in tide_draw_list.runs
+        } shaded;
     };
     tide_color color;
 } tide_draw_command;
@@ -150,15 +154,107 @@ typedef struct tide_draw_mesh_data {
     uint32_t frame;     // The frame that last drew it
     uint32_t epoch;     // The list's when it was copied (see tide_draw_forget)
     uint32_t next_free; // A free place's: 1 + the next free one, or 0
-    tide_vertex3 *vertices;
+    union {
+        tide_vertex3 *vertices; // Its corners, or for a TIDE_MESH_BYTES mesh...
+        void *bytes;            // ...its vertices as its shader reads them
+    };
+    uint32_t vertex_size; // Bytes each
     uint32_t vertex_count;
-    uint32_t vertex_capacity;
+    uint32_t vertex_capacity; // Bytes `vertices` has room for
     uint32_t *indices; // Three a triangle, each a place in `vertices`: what's past them is left out
     uint32_t index_count;
     uint32_t index_capacity;
 } tide_draw_mesh_data;
 
-enum { TIDE_MESH_NONE, TIDE_MESH_MEMORY, TIDE_MESH_LISTS };
+// TIDE_MESH_BYTES: Tide's lists, their vertices as their struct has them (see
+// tide_shader), where the others' are tide_vertex3s.
+enum { TIDE_MESH_NONE, TIDE_MESH_MEMORY, TIDE_MESH_LISTS, TIDE_MESH_BYTES };
+
+// ---------------------------------------------------------------------------
+// Shaders: code of the game's that runs on the GPU, for each vertex of a mesh
+// and each pixel it covers. tidec writes them from Tide's `vert` and `frag`
+// declarations, one for each combination a Draw.Mesh uses, in the generated
+// C: nothing else makes one.
+
+// What a vertex's field is in its list: 1 to 4 floats, or 1 to 4 ints.
+typedef enum tide_shader_format {
+    TIDE_SHADER_FLOAT,
+    TIDE_SHADER_FLOAT2,
+    TIDE_SHADER_FLOAT3,
+    TIDE_SHADER_FLOAT4,
+    TIDE_SHADER_INT,
+    TIDE_SHADER_INT2,
+    TIDE_SHADER_INT3,
+    TIDE_SHADER_INT4,
+} tide_shader_format;
+
+// The most a shader takes: vertex attributes (its vertex's fields, and a
+// float4 or int4 of its instance's each), and textures.
+enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 8 };
+
+// The most bytes of the game's a shader's uniforms hold, after the engine's own.
+#define TIDE_SHADER_UNIFORM_BYTES 4000u
+
+// A vertex shader and a fragment shader, in each language a renderer takes,
+// and what they read:
+//
+// - A mesh's vertices, `vertex_size` bytes each, whose fields are the
+//   attributes at locations 0 on.
+// - An instance for each time the mesh is drawn: `instance_floats` float4s,
+//   then `instance_ints` int4s, the attributes at the locations after the
+//   vertex's. A 3D shader's first four float4s are the instance's transform,
+//   column by column.
+// - Uniforms for each draw, one block. The engine's own come first:
+//   `tide_camera`, a matrix from the mesh's space to clip space as OpenGL has
+//   it (the world through the 3D camera for a 3D shader; for a 2D one, the
+//   units the draw is in, through the 2D camera or the screen), then
+//   `tide_screen`, a float4: the target's pixels in a logical one across and
+//   down, and the target's height in its own pixels. After them,
+//   `uniform_floats` float4s and `uniform_ints` int4s of the game's.
+// - `texture_count` textures: `pixels0`, `pixels1`...
+//
+// GLSL is without its version line, its uniforms a std140 block named
+// `uniforms`. WGSL has both stages, `vertex` and `fragment`, its uniforms at
+// binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
+// 2 + 2i; it's NULL off the web.
+typedef struct tide_shader {
+    const char *name; // For messages: "Wave and Shade on BoxVertex"
+    const char *glsl_vertex, *glsl_fragment;
+    const char *wgsl;
+    uint64_t id;   // A hash of all of the above and below: another shader, another id
+    uint32_t dims; // 2: drawn in order, through the 2D camera or the screen; 3: through the 3D camera, with depth
+    uint32_t vertex_size;
+    uint32_t attribute_count; // The vertex's fields
+    struct {
+        uint32_t format; // tide_shader_format
+        uint32_t offset; // In the vertex
+    } attributes[TIDE_SHADER_ATTRIBUTES];
+    uint32_t instance_floats, instance_ints;
+    uint32_t uniform_floats, uniform_ints;
+    uint32_t texture_count;
+} tide_shader;
+
+static inline uint32_t tide_shader_instance_size(const tide_shader *s)
+{
+    return (s->instance_floats + s->instance_ints) * 16u;
+}
+
+static inline uint32_t tide_shader_uniform_size(const tide_shader *s)
+{
+    return (s->uniform_floats + s->uniform_ints) * 16u;
+}
+
+// A run of instances of one mesh through one shader, which renderers draw at
+// once: a TIDE_DRAW_SHADED command's.
+typedef struct tide_draw_run {
+    const tide_shader *shader; // NULL once forgotten (see tide_draw_forget)
+    uint32_t mesh;     // 1 + its place in tide_draw_list.meshes: a TIDE_MESH_BYTES one
+    uint32_t first;    // Its instances: where they start in tide_draw_list.instances, in bytes...
+    uint32_t count;    // ...and how many, tide_shader_instance_size each
+    uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
+    uint32_t blended;  // A bit for each texture: sampled blended with its neighbors, or the nearest
+    uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
+} tide_draw_run;
 
 // One frame's commands. Not simulation state: it lives outside the world. A
 // zeroed list is ready to use, and it grows as it needs, with no limit but
@@ -188,6 +284,15 @@ typedef struct tide_draw_list {
     uint32_t mesh_free;           // 1 + the first free place, or 0
     uint32_t *mesh_index;         // The meshes by whose they are: 1 + a place, or 0 for none
     uint32_t mesh_index_capacity; // A power of two, or 0
+    tide_draw_run *runs;          // The TIDE_DRAW_SHADED commands' runs
+    uint32_t run_count;
+    uint32_t run_capacity;
+    uint8_t *instances;     // ...their instances, one after the other
+    uint32_t instance_used; // Bytes
+    uint32_t instance_capacity;
+    uint8_t *uniforms; // ...and their uniforms
+    uint32_t uniform_used;
+    uint32_t uniform_capacity;
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t clipped; // Whether a clip is on for the commands to come
     uint32_t epoch;   // Counts tide_draw_forget
@@ -318,3 +423,20 @@ void tide_draw_mesh_fill(tide_draw_list *d, uint32_t mesh, const tide_vertex3 *v
 // An instance of what tide_draw_mesh_slot gave, with what
 // tide_draw_texture_slot gave as the texture.
 void tide_draw_instance(tide_draw_list *d, uint32_t mesh, tide_float4x4 transform, uint32_t texture, tide_filter filter);
+
+// tide_draw_mesh_fill for a TIDE_MESH_BYTES mesh: vertices of `vertex_size`
+// bytes each, as a shader reads them.
+void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *vertices, uint32_t vertex_size,
+                               uint32_t vertex_count, const uint32_t *indices, uint32_t index_count);
+
+// An instance of the TIDE_MESH_BYTES mesh tide_draw_mesh_slot gave, through
+// `shader`: its instance's bytes (tide_shader_instance_size of them), the
+// draw's uniforms of the game's (tide_shader_uniform_size), and what
+// tide_draw_texture_slot gave for each of its textures, bit i of `blended`
+// set for one sampled blended. The bytes are copied; a pointer can be NULL
+// when the shader has none of its kind, and with none where it has some,
+// nothing is drawn. Instances of one mesh drawn one after
+// another through one shader, with the same uniforms and textures, are one
+// command, which renderers draw at once.
+void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instance,
+                      const void *uniforms, const uint32_t *textures, uint32_t blended);

@@ -11,6 +11,7 @@ tide <command> [folder] [options]
 | `tide run [folder]` | Builds the game and plays it |
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
+| `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder, from git or a folder |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |

@@ -9,6 +9,7 @@ static void usage(void)
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--layout]\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
+            "       tidec <file.tide>... --shaders\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -18,7 +19,9 @@ static void usage(void)
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
-            "                 wait, instead of generating code\n");
+            "                 wait, instead of generating code\n"
+            "  --shaders      print the shaders the game's Draw.Mesh calls draw through, as\n"
+            "                 GLSL and WGSL, instead of generating code\n");
 }
 
 // The files a list names, one per line, added to `inputs`: a game of thousands
@@ -63,7 +66,7 @@ int main(const int argc, char **argv)
     int input_room = argc;
     const char **inputs = calloc((size_t)argc, sizeof(char *));
     int input_count = 0;
-    codegen_options opts = {NULL, NULL, true, false, NULL, NULL};
+    codegen_options opts = {NULL, NULL, true, false, NULL, NULL, false};
     bool schedule = false;
 
     for (int i = 1; i < argc; i++) {
@@ -77,6 +80,9 @@ int main(const int argc, char **argv)
             opts.layout = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
             schedule = true;
+        } else if (strcmp(argv[i], "--shaders") == 0) {
+            schedule = true;
+            opts.shaders = true;
         } else if (argv[i][0] == '-') {
             usage();
             return 2;

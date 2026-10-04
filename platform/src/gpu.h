@@ -26,13 +26,18 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_g
 // A texture's pixels: 4 bytes each (red, green, blue, alpha), or 1 (red).
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8 } tide_gpu_format;
 
-// What a vertex attribute is in its buffer: floats, or 4 bytes read as 0 to 1.
+// What a vertex attribute is in its buffer: floats, 4 bytes read as 0 to 1, or
+// ints of 32 bits, which a shader reads as ints.
 typedef enum tide_gpu_attribute_format {
     TIDE_GPU_FLOAT,
     TIDE_GPU_FLOAT2,
     TIDE_GPU_FLOAT3,
     TIDE_GPU_FLOAT4,
     TIDE_GPU_BYTES4,
+    TIDE_GPU_INT,
+    TIDE_GPU_INT2,
+    TIDE_GPU_INT3,
+    TIDE_GPU_INT4,
 } tide_gpu_attribute_format;
 
 typedef enum tide_gpu_blend {
@@ -46,19 +51,19 @@ typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
 } tide_gpu_depth;
 
-enum { TIDE_GPU_MAX_SLOTS = 2, TIDE_GPU_MAX_ATTRIBUTES = 8 };
+enum { TIDE_GPU_MAX_SLOTS = 2, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 8 };
 
 // The most a pipeline's uniform block takes, in bytes.
-#define TIDE_GPU_MAX_UNIFORMS 256u
+#define TIDE_GPU_MAX_UNIFORMS 4096u
 
 typedef struct tide_gpu_pipeline_desc {
     const char *name; // For what the backend says when its shaders are wrong
     // Its shaders, of which a backend takes its own. OpenGL's: a vertex and a
     // fragment shader without their version line, their attributes at the
     // locations below, their uniforms in a std140 block named `uniforms`, and
-    // their texture `pixels`. WebGPU's: both in one, `vertex` and `fragment`,
-    // their uniforms at binding 0 of group 0, and their texture and its
-    // sampler at bindings 1 and 2.
+    // their textures `pixels0`, `pixels1`... WebGPU's: both in one, `vertex`
+    // and `fragment`, their uniforms at binding 0 of group 0, and texture i
+    // and its sampler at bindings 1 + 2i and 2 + 2i. Either stage may sample.
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
     // The vertex buffers it reads, by slot: how far apart their elements are,
@@ -75,8 +80,8 @@ typedef struct tide_gpu_pipeline_desc {
         uint32_t offset;
     } attributes[TIDE_GPU_MAX_ATTRIBUTES];
     uint32_t attribute_count;
-    uint32_t uniform_size; // Its uniform block's, in bytes: every pipeline has one
-    bool texture;          // Whether it samples one
+    uint32_t uniform_size;  // Its uniform block's, in bytes: every pipeline has one
+    uint32_t texture_count; // The textures it samples
     tide_gpu_blend blend;
     tide_gpu_depth depth;
 } tide_gpu_pipeline_desc;
@@ -102,6 +107,7 @@ typedef struct tide_gpu {
     void (*texture_free)(tide_gpu_id texture);
 
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
+    void (*pipeline_free)(tide_gpu_id pipeline);
 
     // Pixels of its own to draw into, with depth, and to read back: 4 bytes
     // each, rows from the top.
@@ -119,7 +125,9 @@ typedef struct tide_gpu {
     // The pipeline the draws after it use, then what it draws with.
     void (*use)(tide_gpu_id pipeline);
     void (*uniforms)(const void *data, size_t size);
-    void (*sample)(tide_gpu_id texture, bool blended); // Between pixels: blended with its neighbors, or the nearest
+    // Its texture `slot`, and how it's sampled between pixels: blended with
+    // its neighbors, or the nearest. Each of a pipeline's is set before it draws.
+    void (*sample)(uint32_t slot, tide_gpu_id texture, bool blended);
     void (*vertices)(uint32_t slot, tide_gpu_id buffer, size_t offset);
     void (*indices)(tide_gpu_id buffer, bool wide); // 32 bits each, or 16
     // Triangles, three vertices (or indices) each, `instances` times over.

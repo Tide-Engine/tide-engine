@@ -172,7 +172,7 @@ const cases = {
         ['Draw.Rect(', [['Draw', 'support.class'], ['Rect', '!storage.type'], ['Rect', 'entity.name.function.call'], ['Color', 'storage.type.primitive']]],
         ['Vertex corner', [['Vertex', 'support.class']]],
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
-        ['Draw.Mesh(', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
         ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],
@@ -239,6 +239,24 @@ const cases = {
         ['int local;', [['local', '!storage.modifier']]],
         ['view Bake(', [['local', '!storage.modifier'], ['local', '!storage.modifier', 2]]],
     ],
+    'frag and vert are keywords only where a declaration starts': [
+        ['frag Shade(', [
+            ['frag', 'storage.type'], ['Shade', 'entity.name.function'], ['Shade', '!entity.name.function.call'],
+            ['BoxVertex', 'entity.name.type'], ['mut', 'storage.modifier'], ['Color', 'storage.type.primitive'],
+            ['Box', 'entity.name.type'], ['Pixel', 'entity.name.type'], ['pixel', '!entity'],
+        ]],
+        ['vert Wave(', [
+            ['vert', 'storage.type'], ['Wave', 'entity.name.function'], ['Wave', '!entity.name.function.call'],
+            ['mut', 'storage.modifier'], ['Time', 'support.class'], ['Instance', 'entity.name.type'],
+        ]],
+        ['float Blend(', [['Blend', 'entity.name.function'], ['frag', '!storage'], ['vert', '!storage']]],
+        ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],
+        ['frag = both;', [['frag', '!storage'], ['frag', '!entity'], ['both', '!entity']]],
+        ['return vert * both;', [['return', 'keyword.control'], ['vert', '!storage']]],
+        ['color = box.wood.Sample(', [['Sample', 'entity.name.function.call'], ['Sample', '!keyword']]],
+        ['if (pixel.position.x < 10) pixel.Discard();', [['Discard', 'entity.name.function.call']]],
+        ['Draw.Mesh(models.crate', [['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {
@@ -276,9 +294,9 @@ test('indenting ignores braces in text and comments', () => {
 });
 
 // Every program in compiler/tests/e2e, with its declarations found without the
-// grammar: data declarations, systems, views, handlers, functions, constants
-// and externs at the start of a line, and methods in a type's body, which the
-// formatter indents by four spaces.
+// grammar: data declarations, systems, views, frags, verts, handlers,
+// functions, constants and externs at the start of a line, and methods in a
+// type's body, which the formatter indents by four spaces.
 const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true }).filter(f => f.endsWith('.tide')).sort();
 
@@ -287,7 +305,7 @@ const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
     [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|enum|scene)\s+(\w+)`), 'entity.name.type'],
-    [new RegExp(String.raw`^${modifiers}(?:system|view)\s+(\w+)`), 'entity.name.function'],
+    [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+(\w+)`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}event\s*\([^)]*\)\s*(\w+)`), 'entity.name.function'],
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
     [new RegExp(String.raw`^extern\s+${type}\s+(\w+)\s*\(`), 'entity.name.function'],

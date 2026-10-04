@@ -74,6 +74,7 @@ Then, in that folder:
 | `tide build` | Builds the game into `build/` |
 | `tide build --release --web` | An optimized, self-contained `.html` (WebGPU, or WebGL 2 where the browser has none) |
 | `tide schedule` | Shows which systems can run at the same time, and why the others wait |
+| `tide shaders` | Shows the shaders the game's frags and verts compile to |
 | `tide add github.com/owner/repo` | Adds a package, at its newest commit, to `tide.packages` |
 | `tide update` | Moves the packages to the newest commits of what they follow |
 
