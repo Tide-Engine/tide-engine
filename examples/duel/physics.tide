@@ -1,0 +1,101 @@
+// Fractions are along the supplied delta; 2 means the segment missed.
+struct Sweep
+{
+    float fraction = 2;
+    float2 normal;
+}
+
+// Sweep a point against a box. Expand half by the moving body's half-size
+// first when sweeping a box against another box.
+Sweep SweepBox(float2 start, float2 delta, float2 center, float2 half)
+{
+    if (half.x <= 0 || half.y <= 0) return Sweep { };
+    if (delta.x == 0 && delta.y == 0) return Sweep { };
+    var offset = start - center;
+
+    // An overlap can escape through its closest face; ties choose x.
+    // This also lets a body jump out of a tiny overlap with the floor.
+    if (Math.Abs(offset.x) < half.x && Math.Abs(offset.y) < half.y)
+    {
+        var gap = half - Math.Abs(offset);
+        var normal = gap.x <= gap.y
+            ? float2(offset.x < 0 ? -1 : 1, 0)
+            : float2(0, offset.y < 0 ? -1 : 1);
+        if (Math.Dot(delta, normal) >= 0) return Sweep { };
+        return Sweep { fraction = 0, normal = normal };
+    }
+
+    mut var entry = -1.0;
+    mut var exit = 1.0;
+    mut var normal = float2(0);
+
+    if (delta.x == 0)
+    {
+        // A parallel segment on the boundary merely touches it.
+        if (offset.x <= -half.x || offset.x >= half.x) return Sweep { };
+    }
+    else
+    {
+        var a = (-half.x - offset.x) / delta.x;
+        var b = (half.x - offset.x) / delta.x;
+        var near = Math.Min(a, b);
+        exit = Math.Min(exit, Math.Max(a, b));
+        if (near > entry)
+        {
+            entry = near;
+            normal = float2(delta.x > 0 ? -1 : 1, 0);
+        }
+    }
+
+    if (delta.y == 0)
+    {
+        if (offset.y <= -half.y || offset.y >= half.y) return Sweep { };
+    }
+    else
+    {
+        var a = (-half.y - offset.y) / delta.y;
+        var b = (half.y - offset.y) / delta.y;
+        var near = Math.Min(a, b);
+        exit = Math.Min(exit, Math.Max(a, b));
+        if (near > entry)
+        {
+            entry = near;
+            normal = float2(0, delta.y > 0 ? -1 : 1);
+        }
+    }
+
+    // Exiting at zero is initial contact moving away, including corners.
+    if (entry < 0 || entry > 1 || exit <= 0 || entry > exit) return Sweep { };
+    return Sweep { fraction = entry, normal = normal };
+}
+
+// Expand radius by the moving circle's radius before sweeping two circles.
+Sweep SweepCircle(float2 start, float2 delta, float2 center, float radius)
+{
+    if (radius <= 0) return Sweep { };
+    var a = Math.LengthSq(delta);
+    if (a <= 0) return Sweep { };
+    var offset = start - center;
+    var distanceSq = Math.LengthSq(offset);
+    var c = distanceSq - radius * radius;
+
+    if (c <= 0)
+    {
+        // At the exact center there is no radial normal: oppose the motion.
+        var normal = distanceSq > 0 ? Math.Normalize(offset) : -Math.Normalize(delta);
+        if (Math.Dot(delta, normal) >= 0) return Sweep { };
+        return Sweep { fraction = 0, normal = normal };
+    }
+
+    var b = Math.Dot(offset, delta);
+    if (b >= 0) return Sweep { };
+    var discriminant = b * b - a * c;
+    if (discriminant < 0) return Sweep { };
+
+    // The equivalent c / (-b + sqrt(...)) avoids subtracting two nearly
+    // equal values when a segment starts just outside the circle.
+    var fraction = c / (-b + Math.Sqrt(discriminant));
+    if (fraction < 0 || fraction > 1) return Sweep { };
+    var normal = Math.Normalize(offset + delta * fraction);
+    return Sweep { fraction = fraction, normal = normal };
+}
