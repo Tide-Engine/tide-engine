@@ -6,5 +6,5 @@ scene Main { }
 event(Spawned) Setup(with Main) { Spawn(Body, Owner); }
 view Aim(PlayerInput input, Body body)
 {
-    Draw.Line(body.position, body.position + input.aim, Color.white);
+    Draw2D.Line(body.position, body.position + input.aim, Color.white);
 }

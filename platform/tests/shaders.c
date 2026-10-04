@@ -88,6 +88,17 @@ static const check checks[] = {
     {1, 6, 0, 0, 0, 1, 0, "the second"},
     {2, 6, 0, 0, 0, 0, 1, "and the third"},
     {3, 6, 0, 0, back, back, back, "and nothing where there's none"},
+    // Manual instances, without entities
+    {0, 7, 0, 0, 1, 0, 0, "a list item's transform and tint reach its vert and frag"},
+    {1, 7, 0, 0, 0, 1, 0, "the next ordinary struct supplies its own float and int fields"},
+    {2, 7, 0, 0, 0, 0, 1, "and the third, through a mut helper in the vert"},
+    {3, 7, -6, -6, 1, 0, 0, "a transform list instances the built-in 3D mesh with a point texture"},
+    {3, 7, 6, 6, 1, 1, 1, "at each of its texture's cells"},
+    {4, 7, 0, 0, YELLOW, "a 2D instance struct's transform field is ordinary shader data, with an identity Instance transform"},
+    {5, 7, 0, 0, 0, 1, 1, "the second 2D item has its own placement and color"},
+    {6, 7, -6, -6, 1, 0, 0, "manual 2D instancing takes a texture with a vert and no frag"},
+    {6, 7, 6, 6, 1, 1, 1, "with the filter the draw specified"},
+    {7, 7, 0, 0, back, back, back, "an empty instance list adds nothing"},
 };
 
 #define CHECKS ((int)(sizeof checks / sizeof checks[0]))
@@ -128,6 +139,10 @@ static void run_checks(const char *when)
     uint32_t instances = 0;
     expect(runs_through("Tinted on Corner3", &instances) == 1 && instances == 3, "three entities through one frag are one draw");
     expect(runs_through("Place and Glow on Corner2", &instances) == 1 && instances == 3, "and so are three through a 2D vert");
+    expect(runs_through("BatchPlace3 and BatchPaint3 on Corner3", &instances) == 1 && instances == 3,
+           "three ordinary list items through a vert and frag are one draw");
+    expect(runs_through("BatchPlace2 and BatchPaint2 on Corner2", &instances) == 1 && instances == 2,
+           "two ordinary 2D items are one draw");
 
     static tide_float2 points[CHECKS];
     static uint32_t got[CHECKS];

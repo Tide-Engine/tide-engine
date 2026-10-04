@@ -2,29 +2,32 @@
 
 #include "ast.h"
 
-// Built-in functions and constants reached through a type, `Math`, `Draw`,
+// Built-in functions and constants reached through a type, `Math`, `Draw2D`, `Draw3D`,
 // `GUI`, `GUILayout`, `Screen` or `Cursor`: Math.Dot(a, b),
-// quaternion.AxisAngle(axis, angle), Draw.Circle(...), GUILayout.Button(text),
+// quaternion.AxisAngle(axis, angle), Draw2D.Circle(...), GUILayout.Button(text),
 // Color.red, Screen.width, Cursor.Lock().
 
-// Is `name` something that can own static members: Math, Draw, GUI, GUILayout,
+// Is `name` something that can own static members: Math, Draw2D, Draw3D, GUI, GUILayout,
 // Screen, Cursor or a built-in type?
 bool builtin_owner(str name);
+
+// The two frame drawing APIs: Draw2D and Draw3D.
+bool builtin_draw_owner(str name);
 
 // The program's Anchor enum, which GUILayout.Area takes. Call before resolving
 // calls.
 void builtins_use(const decl *anchor);
 
-// The types Draw.Mesh takes, as the program has them: List<Vertex>,
+// The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such
-// grid, so nothing is one) and the Filter enum. Call before resolving a call
-// of it.
+// grid, so nothing is one), Filter, and List<float4x4> for Draw3D.Instanced.
+// Call before resolving a draw call.
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
-                       const decl *filter);
+                       const decl *filter, const decl *transforms);
 
 // The list type owner.name takes as its argument `index`, when every version
 // of it that has one takes the same: what `[a, b, c]` written there is. When
-// versions take different lists, like Draw.Mesh's of Vertex and of Vertex3,
+// drawing APIs take different lists, like Draw2D.Mesh's Vertex and Draw3D.Mesh's Vertex3,
 // it's the one whose elements `list`'s first one names, as in
 // `[Vertex3 { ... }, ...]`.
 bool builtin_list_param(str owner, str name, int index, const expr *list, type *out);
@@ -46,7 +49,7 @@ const char *builtin_function_owner(str name);
 typedef struct builtin_member {
     const char *name;
     bool is_function;
-    const char *detail;  // "Draw.Circle(float2 center, float radius, Color color)", or "Math.PI: float"
+    const char *detail;  // "Draw2D.Circle(float2 center, float radius, Color color)", or "Math.PI: float"
     const char *doc;     // One line, or NULL
     const char *snippet; // "Circle(${1:center}, ...)" for functions, NULL for constants
 } builtin_member;
@@ -58,7 +61,7 @@ void builtin_list_members(str owner, void (*visit)(void *user, const builtin_mem
 bool builtin_describe(str owner, str name, sb *out);
 
 // Calls `visit` with each signature of owner.name, like
-// "Draw.Circle(float2 center, float radius, Color color)", and its doc (or NULL).
+// "Draw2D.Circle(float2 center, float radius, Color color)", and its doc (or NULL).
 void builtin_signatures(str owner, str name, void (*visit)(void *user, const char *label, const char *doc), void *user);
 
 // ---------------------------------------------------------------------------

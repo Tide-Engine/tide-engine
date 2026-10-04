@@ -66,7 +66,9 @@ tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
-tide_e2e_test(shaders) # frag and vert: what a Draw.Mesh through them records
+tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
+tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
+tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)
@@ -157,7 +159,7 @@ foreach(source IN LISTS TIDE_SCHEDULE_TESTS)
 endforeach()
 
 # Shader tests: `tidec --shaders` on shaders/<name>.tide must print
-# shaders/<name>.txt exactly: the GLSL and WGSL of each shader its Draw.Mesh
+# shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
 # calls draw through.
 file(GLOB TIDE_SHADER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.tide")
 foreach(source IN LISTS TIDE_SHADER_TESTS)

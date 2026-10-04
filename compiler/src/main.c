@@ -20,7 +20,7 @@ static void usage(void)
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
-            "  --shaders      print the shaders the game's Draw.Mesh calls draw through, as\n"
+            "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
             "                 GLSL and WGSL, instead of generating code\n");
 }
 

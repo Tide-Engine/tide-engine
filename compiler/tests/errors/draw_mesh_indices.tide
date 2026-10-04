@@ -8,5 +8,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw.Mesh(art.corners, [0, 1.5, 2]);
+    Draw2D.Mesh(art.corners, [0, 1.5, 2]);
 }

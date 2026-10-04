@@ -75,7 +75,9 @@ void tide_platform_poll(tide_devices *devices);
 // tide_platform_poll says whether the window holds it (`mouse.locked`).
 //
 // - A desktop window holds the cursor while it has the focus. Alt+Tab lets it
-//   go, and coming back takes it again while this is still asked.
+//   go, and coming back takes it again while this is still asked. Escape lets
+//   it go too, as in a browser: the player's next click on the window or press
+//   of another key takes it again, or the game asking again once it stopped.
 // - A browser gives it only when asked from a click or a key press, so the
 //   page asks at the next one on the canvas while it's wanted (and at once,
 //   which works shortly after one). The browser lets the cursor go itself when

@@ -122,7 +122,7 @@ Touches come from the web, on phones and desktops alike, and from touchscreens o
 
 ### Locking the cursor
 
-A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./views.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: a browser lets the cursor go when the player presses Escape, and a desktop window when it loses the focus.
+A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./views.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: the cursor goes back to the player when they press Escape, and a window that loses the focus lets it go.
 
 `Sample` reads `Cursor.locked`, so the mouse only turns the camera while the cursor is locked, and moving it over a menu doesn't:
 
