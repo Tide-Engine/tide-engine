@@ -1,0 +1,9 @@
+// expect: 'Save' accesses the filesystem, so it can't run in a parallel loop
+local singleton Field { Grid2<int> cells = Grid2(8, 8); }
+void Write() { File.Delete("save")!; }
+void Save() { Write(); }
+view Step(mut Field field)
+{
+    parallel (var at in field.cells) { Save(); field.cells[at] = 0; }
+}
+local scene Main { }

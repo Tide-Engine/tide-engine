@@ -61,6 +61,8 @@ typedef struct call_site {
     decl *from;
     decl *to;
     const expr *call;
+    bool parallel;
+    bool comparing;
 } call_site;
 
 static const type T_ERR = {TY_ERROR, NULL};
@@ -113,10 +115,10 @@ static const char *example_name(const decl *d)
     return name;
 }
 
-// int or float, not a vector.
+// byte, int or float, not a vector.
 static bool is_scalar_number(const type t)
 {
-    return t.kind == TY_INT || t.kind == TY_FLOAT;
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_FLOAT;
 }
 
 // After a type mismatch between a long and another number: how to convert,
@@ -521,7 +523,7 @@ static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
     if (!op || !from) return;
-    const call_site site = {from, op, e};
+    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL};
     vec_push(c->calls, site);
 }
 
@@ -746,7 +748,7 @@ static bool map_key_ok(const type t, const loc at, const bool set)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
+    case TY_BYTE: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
         return true;
     default:
         diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
@@ -1003,7 +1005,7 @@ static bool list_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
         return true;
@@ -1091,7 +1093,7 @@ static bool grid_cell_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM:
         return true;
@@ -1165,7 +1167,7 @@ static bool through_element(const expr *e)
 static bool equatable(const type t)
 {
     switch (t.kind) {
-    case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
+    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
     case TY_STRING:
         return true;
     default:
@@ -1212,6 +1214,8 @@ static void null_error(const expr *e, const type want)
     }
 }
 
+static bool fold_int(const expr *e, int64_t *out);
+
 // An expression where a value of `want` goes, which may be a T? or a failable
 // call's value: [a, b], `default` and `null` take their type from it.
 static type check_expr_want_any(checker *c, expr *e, const type want)
@@ -1231,7 +1235,14 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         null_error(e, want);
         return e->type = T_ERR;
     }
-    return check_expr_any(c, e);
+    const type t = check_expr_any(c, e);
+    // As in C#, int constants fit a byte where the expected type supplies it.
+    int64_t value;
+    if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
+        e->type = inner;
+        return inner;
+    }
+    return t;
 }
 
 // An expression where a value of `want` goes: [a, b] and `default` take their
@@ -1444,7 +1455,7 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_note("leave the field at default and create its target in a view or local handler");
             return T_ERR;
         }
-        if (argc != 2 || first.kind != TY_INT || e->args.items[1]->type.kind != TY_INT) {
+        if (argc != 2 || !type_assignable(T_INT_, first) || !type_assignable(T_INT_, e->args.items[1]->type)) {
             diag_error(e->at, "RenderTarget takes its width and height in pixels, two ints: 'RenderTarget(width, height)'");
             return T_ERR;
         }
@@ -1463,7 +1474,7 @@ static type check_construct(checker *c, expr *e, const type target)
 
     // PlayerID(0): a player by index, for local play and tests.
     if (target.kind == TY_PLAYER) {
-        if (argc == 1 && first.kind == TY_INT) {
+        if (argc == 1 && type_assignable(T_INT_, first)) {
             e->ctor = CTOR_PLAYER;
             return target;
         }
@@ -1712,6 +1723,25 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
     return false;
 }
 
+// Storage belongs to one machine. Ordinary functions carry the local provider
+// through their callers; async functions also become local tasks.
+static bool check_io_use(checker *c, const loc at, const char *what)
+{
+    if (gpu_refuses(c, at, "access the filesystem", "read files in local code, and pass what the shader needs in its components")) return false;
+    decl *code = c->method ? c->method : c->system;
+    if (c->in_input || !code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)
+        || (code->kind == DECL_SYSTEM && !is_local_code(code))) {
+        diag_error(at, "%s can only be used in local code, and in functions it calls", what);
+        diag_note("files belong to this machine; the match runs the same on every machine");
+        return false;
+    }
+    if (!code->uses_io) code->io_at = at;
+    code->uses_io = true;
+    code->calls_c = true; // Ordered side effects, including reads beside writes
+    if (code->is_async && code->kind == DECL_FUNCTION) note_side(code, TASK_LOCAL, at);
+    return true;
+}
+
 // `devices.keyboard.text`: what was typed since the last frame. It's a
 // frame's, as this frame's Devices are, so views read it, and the functions
 // they call. The input never sends it: Sample runs once per tick, not once per
@@ -1921,7 +1951,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
     e->method = m;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL};
         vec_push(c->calls, site);
     }
     for (int i = 0; i < e->args.count; i++) {
@@ -2313,13 +2343,13 @@ static type check_session_call(checker *c, expr *e)
         }
         if (connect && e->args.count == 2) {
             const type port = check_expr(c, e->args.items[1]);
-            if (port.kind != TY_ERROR && port.kind != TY_INT) diag_error(e->args.items[1]->at, "a port is an int, like 7777");
+            if (!type_assignable(T_INT_, port)) diag_error(e->args.items[1]->at, "a port is an int, like 7777");
         }
         return T_VOID_;
     }
     if (open && e->args.count == 1) {
         const type t = check_expr(c, e->args.items[0]);
-        if (t.kind != TY_ERROR && t.kind != TY_INT) diag_error(e->args.items[0]->at, "a port is an int, like 7777");
+        if (!type_assignable(T_INT_, t)) diag_error(e->args.items[0]->at, "a port is an int, like 7777");
     }
     if (kick) {
         const type t = check_expr(c, e->args.items[0]);
@@ -2666,7 +2696,7 @@ static int vertex_dims(const decl *s, const loc at, const bool report)
     int dims = 0;
     for (int i = 0; i < s->fields.count; i++) {
         const field *f = &s->fields.items[i];
-        const bool number = type_is_numeric(f->type) || f->type.kind == TY_COLOR;
+        const bool number = (type_is_numeric(f->type) && f->type.kind != TY_BYTE) || f->type.kind == TY_COLOR;
         if (!number && f->type.kind != TY_ERROR) {
             if (report) {
                 diag_error(at, "'" STR_FMT "' can't be a mesh's vertex: its '" STR_FMT "' is %s", STR_ARG(s->name), STR_ARG(f->name),
@@ -3325,6 +3355,21 @@ static type check_method(checker *c, expr *e)
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
+        const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
+        const bool flush = str_eq_c(owner, "Storage");
+        if (io || flush) {
+            if (!check_io_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+            if (flush && c->awaiting != e) {
+                diag_error(e->at, "Storage.Flush is awaited: 'await Storage.Flush()'");
+                return T_ERR;
+            }
+            if (io) {
+                type bytes, paths;
+                resolve_list_type(c, str_from("List<byte>"), e->at, &bytes);
+                resolve_list_type(c, str_from("List<string>"), e->at, &paths);
+                builtins_use_io(bytes.decl, paths.decl);
+            }
+        }
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         if (str_eq_c(owner, "Draw")) {
             diag_error(e->object->at, "unknown name 'Draw'");
@@ -3354,6 +3399,19 @@ static type check_method(checker *c, expr *e)
         if (result.kind == TY_ERROR) return result;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
+        if (io || flush) {
+            e->io_operation = io;
+            e->storage_flush = flush;
+            c->prog->uses_text = true;
+            if (str_eq_c(e->name, "Exists")) return result;
+            if (io) vec_push(c->prog->io_calls, e);
+            return result_of(c->prog, result, (type){TY_ENUM, c->prog->io_error}, false);
+        }
+        if (str_eq_c(owner, "Path")) {
+            if (gpu_refuses(c, e->at, "work with paths", "work with paths in CPU code")) return T_ERR;
+            e->path_operation = true;
+            c->prog->uses_text = true;
+        }
         if (builtin_draw_owner(owner)) {
             e->call = CALL_DRAW;
             e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
@@ -3421,7 +3479,7 @@ static type check_method(checker *c, expr *e)
             }
             for (int i = 0; i < e->args.count; i++) {
                 const type t = e->args.items[i]->type;
-                if (t.kind != TY_ERROR && t.kind != TY_INT) {
+                if (!type_assignable(T_INT_, t)) {
                     diag_error(e->args.items[i]->at, "a render target's size is in pixels, an int, not %s", type_name(t));
                 }
                 vec_push(e->arg_want, T_INT_);
@@ -3674,7 +3732,7 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
-    case TY_STRING: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
+    case TY_STRING: case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
     case TY_PLAYER: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: case TY_ERROR:
         return true;
@@ -3792,6 +3850,10 @@ static type binary_result(const tok_kind op, const type l, const type r, const l
     if (l.kind == TY_STRUCT || r.kind == TY_STRUCT) {
         *overload = find_operator(op, l, r, false, at);
         if (*overload) return (*overload)->return_type;
+    }
+    // Byte operands promote before built-in arithmetic, comparison and bitwise work.
+    if (l.kind == TY_BYTE || r.kind == TY_BYTE) {
+        return binary_result(op, l.kind == TY_BYTE ? T_INT_ : l, r.kind == TY_BYTE ? T_INT_ : r, at, overload);
     }
 
     // Longs: with ints and longs, which widen to long. Never with floats by
@@ -4080,6 +4142,7 @@ static type check_member(checker *c, expr *e)
 {
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
+        if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->object->at, "unknown name 'Draw'");
             diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
@@ -4551,7 +4614,7 @@ static type check_index(checker *c, expr *e)
     }
     const type index = check_expr(c, e->lhs);
     if (obj.kind == TY_ERROR) return T_ERR;
-    if (index.kind != TY_ERROR && index.kind != TY_INT) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
+    if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
     if (obj.kind != TY_LIST) {
         diag_error(e->at, "only lists and maps have elements to index, and this is %s", type_name(obj));
@@ -4578,7 +4641,7 @@ static type check_list_literal(checker *c, expr *e, const type want)
     const type element = set ? map_key(want) : list_element(want);
     for (int i = 0; i < e->args.count; i++) {
         expr *item = e->args.items[i];
-        const type t = item->kind == E_DEFAULT ? check_default_value(c, item, element) : check_expr(c, item);
+        const type t = check_expr_want(c, item, element);
         if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the %s", set ? "set" : "list");
         else if (!type_assignable(element, t)) diag_error(item->at, "this %s holds %s, not %s", set ? "set" : "list", type_name(element), type_name(t));
     }
@@ -4684,7 +4747,7 @@ static const char *gui_call_what(const expr *e)
 static void check_compare_expr(checker *c, const expr *e)
 {
     if (!e) return;
-    const char *what = NULL;
+    const char *what = e->io_operation ? "access the filesystem" : NULL;
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_SEND: what = "send events"; break;
@@ -4893,7 +4956,7 @@ static type check_new_grid(checker *c, expr *e, const type want)
     const int dims = e->name.ptr[4] - '0';
     for (int i = 0; i < e->args.count; i++) {
         const type t = check_expr_want(c, e->args.items[i], T_INT_);
-        if (t.kind != TY_ERROR && t.kind != TY_INT) {
+        if (!type_assignable(T_INT_, t)) {
             diag_error(e->args.items[i]->at, "a grid's size is in cells, an int, not %s", type_name(t));
         }
     }
@@ -5243,6 +5306,7 @@ static type check_await(checker *c, expr *e)
     }
     if (t.kind == TY_ERROR) return T_ERR;
     if (call->call == CALL_WAIT) return T_VOID_;
+    if (call->storage_flush) return t;
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && call->method->is_async) return t;
     diag_error(e->at, "'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
@@ -5373,8 +5437,8 @@ static type check_expr_any(checker *c, expr *e)
                 note_missing_operator(e->op, operand, T_ERR, true);
             }
         } else if (e->op == T_NOT && operand.kind == TY_BOOL) t = T_BOOL_;
-        else if (e->op == T_TILDE && type_is_integer(operand)) t = operand;
-        else if (e->op == T_MINUS && (type_is_numeric(operand) || operand.kind == TY_LONG || matrix_dim(operand))) t = operand;
+        else if (e->op == T_TILDE && type_is_integer(operand)) t = operand.kind == TY_BYTE ? T_INT_ : operand;
+        else if (e->op == T_MINUS && (type_is_numeric(operand) || operand.kind == TY_LONG || matrix_dim(operand))) t = operand.kind == TY_BYTE ? T_INT_ : operand;
         else diag_error(e->at, "operator %s can't be used with %s", op_str(e->op), type_name(operand));
         break;
     }
@@ -5837,6 +5901,7 @@ static bool step_own(const expr *e, const stmt *loop)
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
+    if (e->io_operation || e->storage_flush) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
@@ -5960,7 +6025,7 @@ static void check_step_stmt(checker *c, const stmt *s, int depth);
 static void check_step_expr(checker *c, const expr *e)
 {
     if (!e) return;
-    const char *what = NULL;
+    const char *what = e->io_operation ? "access the filesystem" : NULL;
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "add, remove or destroy"; break;
@@ -6074,7 +6139,7 @@ static void check_parallel(checker *c, stmt *s)
         const type t = check_expr(c, s->by);
         int64_t size[3] = {0, 0, 0};
         bool known = false;
-        if (t.kind == TY_INT) {
+        if (t.kind == TY_INT || t.kind == TY_BYTE) {
             int64_t v;
             known = fold_int(s->by, &v);
             for (int i = 0; i < dims; i++) size[i] = v;
@@ -6098,7 +6163,7 @@ static void check_parallel(checker *c, stmt *s)
     }
     if (s->offset) {
         const type t = check_expr(c, s->offset);
-        if (t.kind != TY_ERROR && t.kind != TY_INT && t.kind != position.kind) {
+        if (!type_assignable(T_INT_, t) && t.kind != position.kind) {
             if (list) diag_error(s->offset->at, "a parallel loop's offset is where its blocks start: an int, not %s", type_name(t));
             else diag_error(s->offset->at, "a parallel loop's offset is where its blocks start: an int, or %s, not %s",
                             dims == 2 ? "an int2" : "an int3", type_name(t));
@@ -6223,7 +6288,8 @@ static void check_assign(checker *c, const stmt *s)
         note_operator_call(c, s->operator_decl, s->value);
         if (result.kind == TY_ERROR) return;
     }
-    if (!type_assignable(target, result)) {
+    // Compound byte assignments explicitly narrow the promoted integer result.
+    if (!type_assignable(target, result) && !(target.kind == TY_BYTE && s->op != T_ASSIGN && type_is_integer(result))) {
         diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
         note_long_conversion(target, result);
     }
@@ -6269,7 +6335,7 @@ static bool fold_int(const expr *e, int64_t *out)
     case E_CALL:
         if (e->call != CALL_CONSTRUCT || e->ctor != CTOR_SCALAR || !type_is_integer(e->type)
             || e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
-        *out = e->type.kind == TY_LONG ? l : tide_i_from_l(l);
+        *out = e->type.kind == TY_LONG ? l : e->type.kind == TY_BYTE ? (uint8_t)l : tide_i_from_l(l);
         return true;
     case E_METHOD: {
         if (e->call != CALL_BUILTIN || !type_is_integer(e->type) || e->args.count < 1 || e->args.count > 3) return false;
@@ -6476,7 +6542,9 @@ static void check_switch(checker *c, stmt *s)
                 continue;
             }
             label->int_value = number; // What codegen writes, unless it's a literal or a member
-            if (!same_type(value, t) && !(value.kind == TY_LONG && t.kind == TY_INT)) { // An int case fits a long switch
+            if (!same_type(value, t) && !(value.kind == TY_LONG && (t.kind == TY_INT || t.kind == TY_BYTE))
+                && !(value.kind == TY_INT && t.kind == TY_BYTE)
+                && !(value.kind == TY_BYTE && t.kind == TY_INT && number >= 0 && number <= 255)) {
                 diag_error(label->at, "the switch is on %s, so its cases are too, not %s", type_name(value), type_name(t));
                 continue;
             }
@@ -6768,6 +6836,7 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
         || call == CALL_SNAP || call == CALL_DISCARD
+        || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
@@ -7384,7 +7453,7 @@ static void check_bound(checker *c, const field *f, expr *value)
         suggest_constant(c, value);
         return;
     }
-    const type t = check_constant_expr(c, value, false, T_ERR);
+    const type t = check_constant_expr(c, value, f->type.kind == TY_BYTE, f->type.kind == TY_BYTE ? f->type : T_ERR);
     if (t.kind == TY_ERROR || f->type.kind == TY_ERROR) return;
     const bool splat = type_dim(t) == 1 && type_is_numeric(t) && type_dim(f->type) > 1
                     && (type_is_float_based(f->type) || type_is_int_based(t));
@@ -7557,7 +7626,7 @@ static void check_enum(checker *c, decl *d)
             const type t = is_constant(c, m->value) ? check_constant_expr(c, m->value, false, T_ERR) : T_INT_;
             if (t.kind == TY_ERROR) {
                 // Reported
-            } else if (t.kind != TY_INT || !fold_int(m->value, &number)) {
+            } else if (!type_assignable(T_INT_, t) || !fold_int(m->value, &number)) {
                 diag_error(m->value->at, "a member's value is an int, like '" STR_FMT " = 3'", STR_ARG(m->name));
                 diag_note("constants work too, and operators on them, like '" STR_FMT " = BASE + 1'", STR_ARG(m->name));
             } else {
@@ -9030,6 +9099,18 @@ static void add_builtins(program *prog)
     vec_push(prediction->members, delay_member);
     prog->prediction = prediction;
 
+    static const char *const io_errors[] = {"None", "NotFound", "AlreadyExists", "AccessDenied", "InvalidPath", "NotDirectory",
+                                            "DirectoryNotEmpty", "OutOfSpace", "StorageUnavailable", "InvalidData", "Failed"};
+    decl *io_error = NEW(decl);
+    io_error->kind = DECL_ENUM;
+    io_error->name = str_from("IOError");
+    io_error->builtin = true;
+    for (int i = 0; i < (int)(sizeof io_errors / sizeof io_errors[0]); i++) {
+        const enum_member m = {str_from(io_errors[i]), {0, 0, 0}, NULL, i};
+        vec_push(io_error->members, m);
+    }
+    prog->io_error = io_error;
+
     // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, as
     // Unity's TextAnchor. tide/gui.h's tide_anchor has the same values.
     static const char *const anchors[] = {"UpperLeft", "UpperCenter", "UpperRight", "MiddleLeft", "MiddleCenter",
@@ -9144,6 +9225,7 @@ static void add_builtins(program *prog)
     vec_push(decls, owner);
     vec_push(decls, visibility);
     vec_push(decls, prediction);
+    vec_push(decls, io_error);
     vec_push(decls, anchor);
     vec_push(decls, vertex);
     vec_push(decls, vertex3);
@@ -9354,6 +9436,8 @@ static bool is_builtin_name(const str name)
     return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
+        || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
@@ -10086,7 +10170,7 @@ static void check_stage_attribute(checker *c, decl *d, attribute *attr)
         }
         const type t = check_constant_expr(c, value, true, T_INT_);
         if (t.kind == TY_ERROR) return;
-        if (t.kind != TY_INT) {
+        if (!type_assignable(T_INT_, t)) {
             diag_error(value->at, "a Stage offset must be a constant int");
             return;
         }
@@ -10591,6 +10675,42 @@ static void check_render_resource_calls(const checker *c)
     }
 }
 
+static void mark_io_callers(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->uses_io || site->from->uses_io) continue;
+            site->from->uses_io = true;
+            site->from->io_at = site->call->at;
+            site->from->calls_c = true;
+            changed = true;
+        }
+    }
+}
+
+static void check_io_calls(const checker *c)
+{
+    mark_io_callers(c);
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->uses_io) continue;
+        if (site->parallel || site->comparing) {
+            diag_error(site->call->at, "'" STR_FMT "' accesses the filesystem, so it can't run in %s", STR_ARG(site->to->name),
+                       site->parallel ? "a parallel loop" : "a sort comparison");
+            continue;
+        }
+        if (site->from->kind == DECL_FUNCTION || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' accesses the filesystem, which only local code can use", STR_ARG(site->to->name));
+        diag_note_at(site->to->io_at, "it accesses this machine's files on line %d", site->to->io_at.line);
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && d->is_async && d->uses_io) note_side(d, TASK_LOCAL, d->io_at);
+    }
+}
+
 // A function that uses a component's local fields through a parameter is
 // given them with it, and so is one that passes the parameter on to it. So
 // only code that has them calls it: views, local handlers of Forgotten and
@@ -10946,6 +11066,10 @@ bool check(program *prog)
         check_sanitize(&c, prog->input);
     }
 
+    // Every helper body is known before systems and views are checked. Their
+    // filesystem effects must already exclude automatic foreach threading.
+    mark_io_callers(&c);
+
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM) continue;
@@ -10959,6 +11083,7 @@ bool check(program *prog)
     diag_phase("checking code");
     check_sends(&c);
     check_render_resource_calls(&c);
+    check_io_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);

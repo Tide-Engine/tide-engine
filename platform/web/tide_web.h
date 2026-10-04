@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "tide/io.h"
+
 #define TIDE_WEB_IMPORT(name) __attribute__((import_module("tide"), import_name(#name)))
 
 // Sizes the canvas, `width` x `height` CSS pixels, or the whole page when
@@ -75,6 +77,24 @@ TIDE_WEB_IMPORT(typing) void tide_web_typing(bool typing);
 
 // Puts text on the clipboard (see tide_platform_copy).
 TIDE_WEB_IMPORT(copy) void tide_web_copy(const char *text);
+
+// The page's local virtual files. Reads and lists first report their size;
+// lists are full paths packed as consecutive UTF-8 NUL-terminated strings.
+TIDE_WEB_IMPORT(io_init) void tide_web_io_init(const char *app_id);
+TIDE_WEB_IMPORT(io_path) int32_t tide_web_io_path(int kind, char *out, uint32_t capacity);
+TIDE_WEB_IMPORT(io_exists) bool tide_web_io_exists(const char *path, bool directory);
+TIDE_WEB_IMPORT(io_create) int32_t tide_web_io_create(const char *path, bool directory);
+TIDE_WEB_IMPORT(io_read_size) int32_t tide_web_io_read_size(const char *path, uint32_t *size);
+TIDE_WEB_IMPORT(io_read) int32_t tide_web_io_read(const char *path, void *out, uint32_t capacity);
+TIDE_WEB_IMPORT(io_write) int32_t tide_web_io_write(const char *path, const void *data, uint32_t size, bool append);
+TIDE_WEB_IMPORT(io_copy) int32_t tide_web_io_copy(const char *source, const char *destination, bool overwrite);
+TIDE_WEB_IMPORT(io_move) int32_t tide_web_io_move(const char *source, const char *destination, bool overwrite, bool directory);
+TIDE_WEB_IMPORT(io_delete) int32_t tide_web_io_delete(const char *path, bool directory, bool recursive);
+TIDE_WEB_IMPORT(io_list_size) int32_t tide_web_io_list_size(const char *path, bool directories, bool recursive, uint32_t *size);
+TIDE_WEB_IMPORT(io_list) int32_t tide_web_io_list(const char *path, bool directories, bool recursive, void *out, uint32_t capacity);
+TIDE_WEB_IMPORT(io_flush_begin) uint32_t tide_web_io_flush_begin(void);
+TIDE_WEB_IMPORT(io_flush_poll) bool tide_web_io_flush_poll(uint32_t ticket, tide_io_error *error);
+TIDE_WEB_IMPORT(io_flush_forget) void tide_web_io_flush_forget(uint32_t ticket);
 
 // Gamepads in the browser's standard mapping: axes -1 to 1 (y down), buttons
 // 0 to 1 (triggers are analog buttons 6 and 7).

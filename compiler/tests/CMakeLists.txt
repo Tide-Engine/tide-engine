@@ -22,6 +22,8 @@ tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
+tide_e2e_test(io)
+tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
