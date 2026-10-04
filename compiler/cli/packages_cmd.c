@@ -247,7 +247,7 @@ int tide_add(const char *folder, const char *what)
         if (!commit) return 1;
         line.commit = dup(commit);
         char *repo_dir = packages_repo_dir(&line);
-        const bool here = sys_is_dir(repo_dir) || fetch_package(NULL, &line, repo_dir);
+        const bool here = packages_fetched(repo_dir) || fetch_package(NULL, &line, repo_dir);
         free(repo_dir);
         if (!here) return 1;
     }
@@ -345,7 +345,7 @@ int tide_update(const char *folder, const char *const *names, const int count)
         package_line now = *line;
         now.commit = (char *)commit;
         char *repo_dir = commit ? packages_repo_dir(&now) : NULL;
-        if (repo_dir && !sys_is_dir(repo_dir) && !fetch_package(NULL, &now, repo_dir)) commit = NULL;
+        if (repo_dir && !packages_fetched(repo_dir) && !fetch_package(NULL, &now, repo_dir)) commit = NULL;
         free(repo_dir);
         char *name = package_name(commit ? &now : line, game.folder);
         if (!commit) {
