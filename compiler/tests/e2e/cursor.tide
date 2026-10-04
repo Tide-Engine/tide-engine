@@ -1,0 +1,78 @@
+// A camera that looks around: its view asks for the cursor's lock each frame
+// the game isn't paused, and looks only while the window holds it, which the
+// system decides. The input's Sample reads whether it does, too.
+
+input PlayerInput
+{
+    float2 look;
+    bool fire;
+    bool locked; // The window held the cursor when this was sampled
+
+    Sample()
+    {
+        locked = Cursor.locked;
+        if (Cursor.locked) look = Devices.mouse.delta;
+        fire = Devices.mouse.left.pressed;
+    }
+}
+
+singleton Aim
+{
+    float2 angles;
+    int shots;
+}
+
+scene Main { }
+
+system Turn(PlayerInput input, mut Aim aim)
+{
+    if (input.locked) aim.angles += input.look;
+    if (input.fire.down) aim.shots += 1;
+}
+
+local singleton Menu
+{
+    bool paused;
+    bool modal;    // The pause menu's modal is up
+    bool held;     // The window held the cursor last frame
+    int looked;    // Frames the camera looked: the lock held
+    float2 turned; // ...and what the mouse moved in them
+    int dropped;   // Times the lock went away while the game asked for it
+    int presses;   // The pause button's
+}
+
+// A function asks for the view that calls it, and reads whether the lock holds.
+bool Hold()
+{
+    Cursor.Lock();
+    return Cursor.locked;
+}
+
+view Look(mut Menu menu)
+{
+    if (!menu.paused)
+    {
+        var held = Hold();
+        if (held)
+        {
+            menu.looked += 1;
+            menu.turned += Devices.mouse.delta;
+        }
+        // The lock went away on its own, as a browser's does at Escape: the pause menu
+        if (menu.held && !held)
+        {
+            menu.dropped += 1;
+            menu.paused = true;
+        }
+        menu.held = held;
+    }
+}
+
+view Hud(mut Menu menu)
+{
+    if (GUI.Button(Rect(0, 0, 200, 100), "Pause")) menu.presses += 1;
+    GUILayout.Modal(Anchor.MiddleCenter, menu.modal)
+    {
+        GUILayout.Label("Paused");
+    }
+}

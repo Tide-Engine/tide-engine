@@ -267,6 +267,16 @@ else()
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
 
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # The cursor's lock on desktop: only a window with the focus holds it, and
+    # a test's window, hidden, never has it. It needs a desktop session, as
+    # tide_platform_draw does.
+    add_executable(tide_platform_cursor tests/cursor.c)
+    target_link_libraries(tide_platform_cursor PRIVATE tide_platform)
+    add_test(NAME tide_platform_cursor COMMAND tide_platform_cursor)
+    set_tests_properties(tide_platform_cursor PROPERTIES LABELS gpu)
+endif()
+
 if(TIDE_WEB)
     # Keys by physical position on the web, where the typed character would be wrong.
     add_executable(tide_platform_web_keys tests/web_keys.c)
@@ -279,6 +289,14 @@ if(TIDE_WEB)
     target_link_libraries(tide_platform_web_touch PRIVATE tide_platform)
     tide_web_page(tide_platform_web_touch SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_touch TARGET tide_platform_web_touch)
+
+    # The cursor's lock: the browser's to give at a click or a key press, and
+    # to take back. The page stands in for the browser, which gives a script's
+    # events no lock.
+    add_executable(tide_platform_web_cursor tests/web_cursor.c)
+    target_link_libraries(tide_platform_web_cursor PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_cursor SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_cursor TARGET tide_platform_web_cursor)
 
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.

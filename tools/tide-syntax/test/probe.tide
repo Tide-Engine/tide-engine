@@ -105,6 +105,7 @@ view Show(Devices devices)
     Vertex3 corner3 = default;
     DrawUI(Draw.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
+    if (!Cursor.locked) Cursor.Lock();
 }
 
 // Operators that aren't what they look like.

@@ -356,6 +356,7 @@ typedef struct decl {
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
     loc draws_at;        // ...where it first does
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
+    bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
     bool calls_c;        // Code that calls an extern function, itself or through others: its calls run in order
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time

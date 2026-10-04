@@ -917,7 +917,7 @@ Implemented, awaiting approval:
 - **Input is an attack point,** so the engine is forgiving with it. Before `Sanitize` runs, NaN and infinite floats become the field's default. Nothing a client sends can put NaN in the simulation, and `Sanitize` only deals with values that are merely out of range.
 - `Devices` has a keyboard, a mouse, a gamepad, a touchscreen and the pointer; pen, joysticks and sensors come later. Every button has `.pressed` (held), `.down` (went down since the last sample) and `.up` (went up), named as in Unity: the Input System's `isPressed`, and the old `GetKeyDown` and `GetKeyUp`.
   - **Keyboard:** every key by physical position, named after the US layout (`keys.w`, `keys.space`, `keys.leftShift`, `keys.digit1`, `keys.upArrow`, `keys.f1`). WASD works on AZERTY. `text` is what was typed since the last frame, a `string`, which follows the keyboard's layout as keys don't. It's a frame's: views read it, and the functions they call. `Sample` and the match can't, and the input never sends it.
-  - **Mouse:** `position`, `delta` and `scroll` (`float2`), and buttons `left`, `right` and `middle`.
+  - **Mouse:** `position`, `delta` and `scroll` (`float2`), and buttons `left`, `right` and `middle`. While its cursor is locked (see Views and drawing), `position` stays and `delta` is the mouse's own movement.
   - **Gamepad:** `connected`; `leftStick` and `rightStick` (`float2`); `leftTrigger` and `rightTrigger` (`float`, 0 to 1); face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`); `dpad.up` and the other directions; `leftShoulder`, `rightShoulder`, `start` and `select`.
   - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers, as Unity's. A `Touch` has `press` (a button: `.down` when the finger touched, Unity's Began, and `.up` when it lifted, Ended), `id` (Unity's `touchId`: the same while the finger touches, a new one for each touch), and `position`, `delta` and `startPosition` (`float2`). A finger keeps its slot while it touches. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts. A finger that touches and lifts between two samples reads as held for one, so no tap is lost. A finger is never the mouse, as in Unity's Input System.
   - **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last, as Unity's `Pointer.current`. Code that reads it works with a mouse and a finger alike.
@@ -1018,6 +1018,43 @@ component Body
 - Filtering is how a draw reads the pixels, not part of them: `Draw.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.
 - `Draw.Clip(rect)` keeps the Draw calls after it inside a rectangle, and `Draw.Clip()` ends it.
 - `Draw.Screen()` puts the Draw calls after it in the screen's pixels, from the top left with `y` down, as the GUI's are. What views draw there is under the GUI's widgets.
+- **The mouse's cursor is locked by asking, frame by frame.** `Cursor.Lock()` asks for the cursor's lock, for a camera that looks around. A view, or a function it calls, calls it every frame it wants the mouse, as with `GUI.ShowKeyboard()`: the lock is held while some view asked in the frame that just ended. When no view asks (a pause menu is up, the match ended), the cursor comes back on its own. There's no `Unlock`.
+- `Cursor.locked` is whether the lock holds right now, a `bool`. It's what the platform says, not what was asked, since a platform may refuse the lock or drop it.
+- While the cursor is locked, it's hidden, `Devices.mouse.position` and the pointer's stay where they were, `Devices.mouse.delta` keeps coming with no screen's edge to stop at (the mouse's own movement, without acceleration, where the system gives it), and the GUI sees no pointer: nothing hovers, and a click presses no widget.
+- The match never calls `Cursor.Lock()` or reads `Cursor.locked`: the cursor is this machine's.
+- Platforms differ, and games read `Cursor.locked` rather than assume. The usual pattern shows the pause menu when the lock goes away:
+  - **The web** only gives the lock when it's asked for from a click or a key press, so the page asks at the next one while the game wants it, and at once when the game starts wanting it, which works shortly after one (a Resume button's click). The browser lets the cursor go itself when the player presses Escape, which a page can't prevent and may never see the key of, and when the page loses the focus or is hidden. For a moment after Escape it refuses the lock. Nothing asks again on its own: the player's next click or key press does.
+  - **Desktop** windows hold the cursor while they have the focus. Alt+Tab lets it go, `Cursor.locked` is false meanwhile, and the lock returns with the focus if the game still asks.
+  - **Android** never locks it, for now: `Cursor.locked` stays false.
+
+```csharp
+input PlayerInput
+{
+    float2 look;
+
+    Sample()
+    {
+        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+    }
+}
+
+local singleton Menu
+{
+    bool paused;
+    bool looking; // The window held the cursor last frame
+}
+
+view Look(Viewer viewer, mut Menu menu)
+{
+    Draw.Camera(viewer.position, viewer.rotation, 75);
+    if (Devices.keyboard.escape.down) menu.paused = true;
+    if (!menu.paused) Cursor.Lock();
+    // The lock went away on its own, as a browser's does at Escape: the pause menu
+    if (menu.looking && !Cursor.locked) menu.paused = true;
+    menu.looking = Cursor.locked;
+}
+```
+
 - A struct or component can say how it blends with an `Interpolate` override: `T Interpolate(T from, T to, float t)`, declared in it like an operator, with no value of its own. It replaces the default blend for that type wherever views see it:
 
 ```csharp
@@ -1088,6 +1125,17 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - `entity.Snap()` is recorded and applied at the end of the tick, like `Destroy`, so it never makes systems wait. Each entity counts its snaps, and views only blend it between two ticks with the same count. `singleton.Snap()` needs the singleton as a `mut` parameter. Local state is never blended, so snapping it is an error, and so is `component.Snap()`, which says to snap the entity.
 - `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has an `Interpolate`. A `[Snap]` field of such a type is still drawn as it is.
 - Hosts pass the two ticks and how far between them this moment is to `tide_frame`; sessions work that out (`tide_session_view`).
+- The cursor's lock:
+  - **`Cursor.locked` is read in the input's `Sample` too** (proposed, not yet agreed), so a game looks only while the lock holds without a frame's delay: `if (Cursor.locked) look = Devices.mouse.delta * 0.003;`. `Sample` reads it of the devices it samples, so it can't call `Cursor.Lock()`, and `Sanitize` can't read it, as it can't read `Devices`. A function `Sample` calls can't either: it's passed what it needs.
+  - Where neither goes, the error says where it does: the match is told that a view calls `Cursor.Lock()` and that `Sample` reads `Cursor.locked`; a task, a method and a local handler, that views ask every frame. `Cursor.Unlock()` is told that the cursor comes back once no view asks.
+  - A function that uses `Cursor` needs the frame, like one that draws: views and the functions they call can call it.
+  - While a modal is up (`GUILayout.Modal`), the lock isn't asked for, whatever views ask: its widgets need the pointer. It's asked for again once the modal closes.
+  - A finger isn't the mouse: it presses the widgets it touches while the mouse's cursor is locked.
+  - A mouse button still held as the cursor comes back (the browser took the lock at Escape while the player fired) was pressed for the game: it presses no widget, and letting it go on one is no click.
+  - `Cursor` is built into the language, as `Screen` and `GUI` are: a game can't declare the name, in a namespace or outside one.
+  - On the web, Escape never asks for the lock again, nor does a held key repeating. The page asks for the mouse's own movement (`unadjustedMovement`) and, where the system has none, for the usual kind. A lock the browser gives after the game stopped wanting it is let go at once. On desktop, the mouse's own movement is GLFW's raw motion, where the system supports it.
+  - While it's locked, the position that stays is where the cursor was when it was locked, and the cursor comes back there.
+  - Hosts pass the frame's ask on with `tide_platform_cursor_lock(tide_gui_cursor_lock(gui))`, after `tide_gui_end`, and `tide_platform_poll` says whether the window holds the cursor: `tide_devices.mouse.locked`, which `Cursor.locked` reads, in views of the frame's devices and in `Sample` of the ones it samples.
 
 ```csharp
 view DrawBalls(Body body, Ball ball)
@@ -1106,7 +1154,8 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- 3D: code of the game's own that runs on the GPU for each pixel and each corner, in Tide, which takes what it reads of the view around it implicitly (as a parallel loop's step does), with more of a corner (normals) once it can read them; drawing into a texture that later meshes sample, for shadows, reflections and effects; meshes in the grid's chunks, for voxels; capturing the mouse, for cameras that look around.
+- 3D: code of the game's own that runs on the GPU for each pixel and each corner, in Tide, which takes what it reads of the view around it implicitly (as a parallel loop's step does), with more of a corner (normals) once it can read them; drawing into a texture that later meshes sample, for shadows, reflections and effects; meshes in the grid's chunks, for voxels.
+- The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
 - Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
 

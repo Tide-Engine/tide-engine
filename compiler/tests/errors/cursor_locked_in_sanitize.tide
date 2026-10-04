@@ -1,0 +1,8 @@
+// expect: Sanitize runs on every machine for every player's input, so it can't read Cursor.locked
+input PlayerInput
+{
+    float2 look;
+    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }
+    Sanitize() { if (!Cursor.locked) look = float2(0, 0); }
+}
+scene Main { }

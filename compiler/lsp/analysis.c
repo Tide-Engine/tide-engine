@@ -1568,6 +1568,11 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
                       : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "Cursor")    ? "\n\nThe mouse's cursor. `Cursor.Lock()` hides it and keeps it in "
+                                                         "place, for a camera that looks around: a view calls it every "
+                                                         "frame the game wants the mouse. `Cursor.locked` is whether the "
+                                                         "window holds it, which the system decides: views read it, and "
+                                                         "the input's Sample."
                       : str_eq_c(o->name, "Devices")   ? "\n\nThis machine's keyboard, mouse, gamepad, touchscreen and "
                                                          "pointer. Views read them once per frame, less what the GUI is "
                                                          "using and what other views claimed, and the input's Sample once "
@@ -2278,7 +2283,7 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
         if (str_eq_c(o->owner, "Devices")) return cdefs_find("tide_devices", out);
         return cdefs_find_header(str_eq_c(o->owner, "Draw")                                         ? "draw.h"
                                  : str_eq_c(o->owner, "GUI") || str_eq_c(o->owner, "GUILayout")
-                                       || str_eq_c(o->owner, "Screen")                              ? "gui.h"
+                                       || str_eq_c(o->owner, "Screen") || str_eq_c(o->owner, "Cursor") ? "gui.h"
                                                                                                     : "math.h",
                                  out);
     case OCC_FIELD:
@@ -3680,12 +3685,14 @@ static void complete_routine(completion *c, const decl *m, const char *name)
 
 typedef struct builtin_visit {
     completion *c;
+    bool values_only; // Not its functions: where the code can only read
 } builtin_visit;
 
 static void add_builtin_member(void *user, const builtin_member *m)
 {
-    completion *c = ((builtin_visit *)user)->c;
-    item(c, m->name, m->is_function ? CK_FUNCTION : CK_CONSTANT, m->detail, m->doc, m->snippet);
+    const builtin_visit *v = user;
+    if (m->is_function && v->values_only) return;
+    item(v->c, m->name, m->is_function ? CK_FUNCTION : CK_CONSTANT, m->detail, m->doc, m->snippet);
 }
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
@@ -3742,7 +3749,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
     if (t.kind == TY_STRING) {
         item(c, "length", CK_PROPERTY, "int", TEXT_LENGTH_DOC, NULL);
-        builtin_visit v = {c};
+        builtin_visit v = {c, false};
         builtin_list_members(str_from("string"), add_builtin_member, &v);
     }
     if (t.kind == TY_RECT) {
@@ -3872,8 +3879,12 @@ static void complete_members(completion *c, const int dot, const loc at, const b
         if (n == 1 && builtin_owner(base)) {
             const bool frame_owner = str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
-            if (frame_owner && !(sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION))) return;
-            builtin_visit v = {c};
+            const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
+            if (frame_owner && !frame) return;
+            // Cursor.: views lock it and read whether it holds; the input's Sample only reads
+            const bool cursor = str_eq_c(base, "Cursor");
+            if (cursor && !frame && !(sc.in_input && !sc.in_sanitize)) return;
+            builtin_visit v = {c, cursor && !frame};
             builtin_list_members(base, add_builtin_member, &v);
             return;
         }
@@ -4219,6 +4230,10 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
         item(c, "Screen", CK_MODULE, "The window's size, in GUI units", NULL, NULL);
+    }
+    // The mouse's cursor: views lock it, and they and the input's Sample read whether it's locked
+    if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
+        item(c, "Cursor", CK_MODULE, "The mouse's cursor: its lock, for a camera that looks around", NULL, NULL);
     }
     // This machine's devices
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
@@ -4990,7 +5005,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     enum { DECL_WORDS = 11 };
     static const char *const reserved[] = {"Math", "Draw", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
-                                           "GUI", "GUILayout", "Screen", "Anchor", "Action", "Session", "SessionState", "Clipboard",
+                                           "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};

@@ -349,6 +349,53 @@ TIDE_TEST(gui_where_the_mouse_is_now_says_whose_click_it_is)
     TIDE_CHECK(sampled_frame() == 4);
 }
 
+TIDE_TEST(gui_a_locked_cursor_is_on_no_widget)
+{
+    start();
+    // In the host's order: the sample, then the frame. The mouse is on Quit.
+    TIDE_CHECK(!mouse_sample(20.0f, 47.0f, false));
+    TIDE_CHECK(sampled_frame() == 0);
+    TIDE_CHECK(gui.hot == 20);
+
+    // The window holds the cursor, which stays where it was: on Quit. It's
+    // hidden, so it hovers nothing, and a click is the game's and the views'.
+    devices.mouse.locked = true;
+    TIDE_CHECK(mouse_sample(20.0f, 47.0f, true));
+    TIDE_CHECK(sampled_frame() == 4);
+    TIDE_CHECK(gui.hot == 0 && gui.active == 0);
+    TIDE_CHECK(gui.devices.mouse.locked); // Views read that it's locked
+    TIDE_CHECK(mouse_sample(20.0f, 47.0f, false)); // Let go: the game's too
+    TIDE_CHECK(sampled_frame() == 4); // ...and the views', and no button's click
+
+    // The cursor comes back with the button held, as when a browser takes the
+    // lock back: it was pressed for the game, so it presses no widget, and
+    // letting it go on Quit is no click.
+    TIDE_CHECK(mouse_sample(20.0f, 47.0f, true));
+    TIDE_CHECK(sampled_frame() == 4);
+    devices.mouse.locked = false;
+    mouse_sample(20.0f, 47.0f, true);
+    TIDE_CHECK(sampled_frame() == 0);
+    TIDE_CHECK(gui.active == 0);
+    TIDE_CHECK(!mouse_sample(20.0f, 47.0f, false));
+    TIDE_CHECK(sampled_frame() == 0);
+
+    // From then on it's a pointer like any other.
+    TIDE_CHECK(!mouse_sample(20.0f, 47.0f, true));
+    TIDE_CHECK(sampled_frame() == 0);
+    TIDE_CHECK(gui.active == 20);
+    TIDE_CHECK(!mouse_sample(20.0f, 47.0f, false));
+    TIDE_CHECK(sampled_frame() == 2);
+
+    // A finger isn't the mouse: it presses what it touches while the mouse's
+    // cursor is locked.
+    devices.mouse.locked = true;
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 20.0f, 20.0f));
+    TIDE_CHECK(sampled_frame() == 0);
+    TIDE_CHECK(gui.active == 10);
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_ENDED, NONE, 20.0f, 20.0f));
+    TIDE_CHECK(sampled_frame() == 1);
+}
+
 // A frame with a button in an anchored area, if it's `up`, and a disabled
 // button at a rect. Returns whether views read a press.
 static bool area_frame(const bool up)
@@ -1017,4 +1064,32 @@ TIDE_TEST(gui_claims_past_the_limit_still_hide)
     tide_devices sampled = devices;
     tide_gui_hide(&gui, &sampled);
     TIDE_CHECK(!sampled.mouse.left.pressed);
+}
+
+TIDE_TEST(gui_views_ask_for_the_cursors_lock)
+{
+    start();
+    begin();
+    end();
+    TIDE_CHECK(!tide_gui_cursor_lock(&gui));
+    begin();
+    tide_gui_lock_cursor(&gui);
+    end();
+    TIDE_CHECK(tide_gui_cursor_lock(&gui)); // While a view asks, each frame
+    begin();
+    end();
+    TIDE_CHECK(!tide_gui_cursor_lock(&gui));
+
+    // A modal's widgets need the pointer: while one is up, the lock isn't
+    // asked for, whatever views ask.
+    bool open = true;
+    for (int frame = 0; frame < 2; frame++) {
+        begin();
+        tide_gui_lock_cursor(&gui);
+        const int depth = tide_gui_begin_modal(&gui, 30, TIDE_ANCHOR_MIDDLE_CENTER, &open);
+        if (depth >= 0) tide_gui_close(&gui, depth);
+        end();
+        TIDE_CHECK(tide_gui_cursor_lock(&gui) == !open);
+        open = false; // Closed, the views' ask counts again
+    }
 }

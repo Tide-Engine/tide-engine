@@ -178,9 +178,13 @@ static bool poll_mouse(tide_mouse *m)
     static bool polled;
     tide_window_mouse mouse;
     tide_window_mouse_state(&mouse);
-    const float dx = polled ? mouse.x - last_x : 0.0f, dy = polled ? mouse.y - last_y : 0.0f;
+    // How it moved: where the cursor went or, while the window holds the
+    // cursor (Cursor.Lock), what the mouse says it moved, as the cursor stays.
+    const float dx = mouse.locked ? mouse.moved_x : polled ? mouse.x - last_x : 0.0f;
+    const float dy = mouse.locked ? mouse.moved_y : polled ? mouse.y - last_y : 0.0f;
     last_x = mouse.x, last_y = mouse.y;
     polled = true;
+    m->locked = mouse.locked;
     // The window counts from the top left, y down; Devices follows Unity: from
     // the bottom left, y up.
     m->position = tide_f2(mouse.x, (float)screen_height - mouse.y);
@@ -265,6 +269,11 @@ void tide_platform_typing(const bool typing)
     if (typing == was) return;
     was = typing;
     tide_window_typing(typing);
+}
+
+void tide_platform_cursor_lock(const bool lock)
+{
+    tide_window_cursor_lock(lock); // Every frame: what holds the cursor changes under it (the focus, the browser)
 }
 
 void tide_platform_copy(const char *text)

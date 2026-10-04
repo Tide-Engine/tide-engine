@@ -1,0 +1,8 @@
+// expect: Cursor.Lock can only be called in views, and in functions they call
+local event Resume { }
+local scene Main { }
+view Menu() { if (GUILayout.Button("Resume")) Send(Resume); }
+local event(Resume) Look()
+{
+    Cursor.Lock();
+}
