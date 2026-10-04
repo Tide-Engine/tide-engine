@@ -43,6 +43,7 @@ enum {
     GL_TEXTURE_2D = 0x0DE1,
     GL_UNSIGNED_BYTE = 0x1401,
     GL_UNSIGNED_SHORT = 0x1403,
+    GL_INT = 0x1404,
     GL_UNSIGNED_INT = 0x1405,
     GL_FLOAT = 0x1406,
     GL_RED = 0x1903,
@@ -85,6 +86,7 @@ enum {
     V(BindBufferBase, (GLenum target, GLuint index, GLuint buffer), (target, index, buffer))                           \
     V(BindFramebuffer, (GLenum target, GLuint framebuffer), (target, framebuffer))                                     \
     V(BindRenderbuffer, (GLenum target, GLuint renderbuffer), (target, renderbuffer))                                  \
+    V(BindSampler, (GLuint unit, GLuint sampler), (unit, sampler))                                                     \
     V(BindTexture, (GLenum target, GLuint texture), (target, texture))                                                 \
     V(BindVertexArray, (GLuint array), (array))                                                                        \
     V(BlendFunc, (GLenum source, GLenum destination), (source, destination))                                           \
@@ -98,9 +100,11 @@ enum {
     R(GLuint, CreateShader, (GLenum type), (type))                                                                     \
     V(DeleteBuffers, (GLsizei count, const GLuint *buffers), (count, buffers))                                         \
     V(DeleteFramebuffers, (GLsizei count, const GLuint *framebuffers), (count, framebuffers))                          \
+    V(DeleteProgram, (GLuint program), (program))                                                                      \
     V(DeleteRenderbuffers, (GLsizei count, const GLuint *renderbuffers), (count, renderbuffers))                       \
     V(DeleteShader, (GLuint shader), (shader))                                                                         \
     V(DeleteTextures, (GLsizei count, const GLuint *textures), (count, textures))                                      \
+    V(DeleteVertexArrays, (GLsizei count, const GLuint *arrays), (count, arrays))                                      \
     V(DepthFunc, (GLenum function), (function))                                                                        \
     V(Disable, (GLenum capability), (capability))                                                                      \
     V(DrawArrays, (GLenum mode, GLint first, GLsizei count), (mode, first, count))                                     \
@@ -115,6 +119,7 @@ enum {
     V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                  \
     V(GenFramebuffers, (GLsizei count, GLuint *framebuffers), (count, framebuffers))                                   \
     V(GenRenderbuffers, (GLsizei count, GLuint *renderbuffers), (count, renderbuffers))                                \
+    V(GenSamplers, (GLsizei count, GLuint *samplers), (count, samplers))                                               \
     V(GenTextures, (GLsizei count, GLuint *textures), (count, textures))                                               \
     V(GenVertexArrays, (GLsizei count, GLuint *arrays), (count, arrays))                                               \
     V(GetProgramInfoLog, (GLuint program, GLsizei capacity, GLsizei *length, GLchar *log),                             \
@@ -131,6 +136,7 @@ enum {
       (x, y, width, height, format, type, pixels))                                                                     \
     V(RenderbufferStorage, (GLenum target, GLenum format, GLsizei width, GLsizei height),                              \
       (target, format, width, height))                                                                                 \
+    V(SamplerParameteri, (GLuint sampler, GLenum name, GLint value), (sampler, name, value))                           \
     V(Scissor, (GLint x, GLint y, GLsizei width, GLsizei height), (x, y, width, height))                               \
     V(ShaderSource, (GLuint shader, GLsizei count, const GLchar *const *strings, const GLint *lengths),                \
       (shader, count, strings, lengths))                                                                               \
@@ -147,6 +153,8 @@ enum {
     V(UniformBlockBinding, (GLuint program, GLuint block, GLuint binding), (program, block, binding))                  \
     V(UseProgram, (GLuint program), (program))                                                                         \
     V(VertexAttribDivisor, (GLuint index, GLuint divisor), (index, divisor))                                           \
+    V(VertexAttribIPointer, (GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer),              \
+      (index, size, type, stride, pointer))                                                                            \
     V(VertexAttribPointer,                                                                                             \
       (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer),              \
       (index, size, type, normalized, stride, pointer))                                                                \

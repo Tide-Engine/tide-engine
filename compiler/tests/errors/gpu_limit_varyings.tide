@@ -1,0 +1,46 @@
+// expect: this draw's pixels read 16 values from the mesh's corners, and a GPU carries 15 between them
+scene Main { }
+
+struct Wide
+{
+    float2 position;
+    float f0;
+    float f1;
+    float f2;
+    float f3;
+    float f4;
+    float f5;
+    float f6;
+    float f7;
+    float f8;
+    float f9;
+    float f10;
+}
+
+component Box
+{
+    Color tint0 = Color.white;
+    Color tint1 = Color.white;
+    Color tint2 = Color.white;
+    Color tint3 = Color.white;
+}
+
+local singleton Shapes
+{
+    List<Wide> corners;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(Wide vertex, mut Color color, Box box)
+{
+    color = Color.white * (vertex.f0 + vertex.f1 + vertex.f2 + vertex.f3 + vertex.f4 + vertex.f5 + vertex.f6 + vertex.f7 + vertex.f8 + vertex.f9 + vertex.f10 + vertex.position.x) * box.tint0 * box.tint1 * box.tint2 * box.tint3;
+}
+
+view Show(with Box, Shapes shapes)
+{
+    Draw.Mesh(shapes.corners, [0, 1, 2], Shade);
+}

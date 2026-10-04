@@ -131,17 +131,17 @@ static const char mesh_glsl_vertex[] =
 static const char mesh_glsl_fragment[] =
     "in vec2 at;\n"
     "in vec4 tint;\n"
-    "uniform sampler2D pixels;\n"
+    "uniform sampler2D pixels0;\n"
     "out vec4 pixel;\n"
     "void main() {\n"
-    "    pixel = texture(pixels, at) * tint;\n"
+    "    pixel = texture(pixels0, at) * tint;\n"
     "}\n";
 
 #define MESH_WGSL_VERTEX                                                                                               \
     "struct Uniforms { screen: mat4x4f, texel: vec2f }\n"                                                              \
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"                                                                \
-    "@group(0) @binding(1) var pixels: texture_2d<f32>;\n"                                                             \
-    "@group(0) @binding(2) var how: sampler;\n"                                                                        \
+    "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"                                                            \
+    "@group(0) @binding(2) var how0: sampler;\n"                                                                       \
     "struct Corner {\n"                                                                                                \
     "    @builtin(position) position: vec4f,\n"                                                                        \
     "    @location(0) at: vec2f,\n"                                                                                    \
@@ -157,7 +157,7 @@ static const char mesh_glsl_fragment[] =
 
 static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return textureSample(pixels, how, in.at) * in.tint;\n"
+    "    return textureSample(pixels0, how0, in.at) * in.tint;\n"
     "}\n");
 
 // Text: its pixels are its color, as much as the font atlas says its glyph
@@ -174,11 +174,11 @@ static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
 static const char text_glsl_fragment[] =
     "in vec2 at;\n"
     "in vec4 tint;\n"
-    "uniform sampler2D pixels;\n"
+    "uniform sampler2D pixels0;\n"
     "layout(std140) uniform uniforms { mat4 screen; vec2 texel; };\n"
     "out vec4 pixel;\n"
     "void main() {\n"
-    "    float cover = texture(pixels, at * texel).r;\n"
+    "    float cover = texture(pixels0, at * texel).r;\n"
     "    float light = dot(tint.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) cover = pow(cover, 1.0 - 0.45 * light);\n"
     "    pixel = vec4(tint.rgb, tint.a * cover);\n"
@@ -186,7 +186,7 @@ static const char text_glsl_fragment[] =
 
 static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    var cover = textureSample(pixels, how, in.at * u.texel).r;\n"
+    "    var cover = textureSample(pixels0, how0, in.at * u.texel).r;\n"
     "    let light = dot(in.tint.rgb, vec3f(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) { cover = pow(cover, 1.0 - 0.45 * light); }\n"
     "    return vec4f(in.tint.rgb, in.tint.a * cover);\n"
@@ -215,8 +215,8 @@ static const char mesh_3d_glsl_vertex[] =
 static const char *const mesh_3d_wgsl = WGSL(
     "struct Uniforms { camera: mat4x4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
-    "@group(0) @binding(1) var pixels: texture_2d<f32>;\n"
-    "@group(0) @binding(2) var how: sampler;\n"
+    "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+    "@group(0) @binding(2) var how0: sampler;\n"
     "struct Corner {\n"
     "    @builtin(position) position: vec4f,\n"
     "    @location(0) at: vec2f,\n"
@@ -233,7 +233,7 @@ static const char *const mesh_3d_wgsl = WGSL(
     "    return out;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return textureSample(pixels, how, in.at) * in.tint;\n"
+    "    return textureSample(pixels0, how0, in.at) * in.tint;\n"
     "}\n");
 
 // A clear: one triangle over the whole target, as far as depth goes, in one

@@ -62,13 +62,18 @@
     }
 
     let stopped = false;
+    let failed = false;             // It stopped for a mistake (fail), which no exit code stands for
+    const shaderChecks = new Set(); // A test page's: what WebGPU has yet to say about its shaders (checkShader)
     function finish(code) {
         stopped = true;
         endCursorLock();
         endThreads();
         flush(1);
         flush(2);
-        if (config.onExit) config.onExit(code);
+        // A shader's warning that comes after the program ended still fails a test page
+        const end = () => { if (!failed && config.onExit) config.onExit(code); };
+        if (shaderChecks.size) Promise.all([...shaderChecks]).then(end);
+        else end();
     }
 
     // -----------------------------------------------------------------------
@@ -482,7 +487,7 @@
                 windowTarget.context = windowTarget.context || canvas.getContext('webgpu');
                 if (windowTarget.context) {
                     windowTarget.context.configure({ device, format: gpuFormat, alphaMode: 'opaque' });
-                    if (!plainGroup) gpuStart();
+                    if (!groupLayouts) gpuStart();
                     devices = devices || 1;
                     return 2;
                 }
@@ -886,7 +891,7 @@
     // object.
 
     const tables = { buffer: [null], texture: [null], framebuffer: [null], renderbuffer: [null], vertexArray: [null],
-        program: [null], shader: [null], uniform: [null] };
+        program: [null], shader: [null], uniform: [null], sampler: [null] };
     function add(kind, object) {
         tables[kind].push(object);
         return tables[kind].length - 1;
@@ -937,6 +942,15 @@
     // A shader's or program's parameter: a number, or whether, as 1 or 0.
     const writeParameter = (value, ptr) => { i32()[ptr >> 2] = Number(value) || 0; };
 
+    // What the browser has to say about a shader that compiled, or shaders
+    // that linked: a warning. Test pages stop at one, as at a GL error, with
+    // the shader it's about; the others print it.
+    function shaderWarning(what, log, source) {
+        if (!log || !log.trim()) return;
+        if (config.checkGL) throw new Error(`${what}:\n${log}${source ? '\n' + source : ''}`);
+        printErr(`tide: ${what}:\n${log}`);
+    }
+
     const glFunctions = {
         glActiveTexture: t => gl.activeTexture(t),
         glAttachShader: (p, s) => gl.attachShader(get('program', p), get('shader', s)),
@@ -944,6 +958,7 @@
         glBindBufferBase: (target, index, b) => gl.bindBufferBase(target, index, get('buffer', b)),
         glBindFramebuffer: (target, f) => gl.bindFramebuffer(target, get('framebuffer', f)),
         glBindRenderbuffer: (target, r) => gl.bindRenderbuffer(target, get('renderbuffer', r)),
+        glBindSampler: (unit, s) => gl.bindSampler(unit, get('sampler', s)),
         glBindTexture: (target, t) => gl.bindTexture(target, get('texture', t)),
         glBindVertexArray: v => gl.bindVertexArray(get('vertexArray', v)),
         glBlendFunc: (s, d) => gl.blendFunc(s, d),
@@ -955,17 +970,33 @@
         glCheckFramebufferStatus: target => gl.checkFramebufferStatus(target),
         glClear: mask => gl.clear(mask),
         glClearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
-        glCompileShader: s => gl.compileShader(get('shader', s)),
+        glCompileShader(s) {
+            const shader = get('shader', s);
+            gl.compileShader(shader);
+            if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { // The program asks about one that didn't
+                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
+            }
+        },
         glCreateProgram: () => add('program', gl.createProgram()),
         glCreateShader: type => add('shader', gl.createShader(type)),
         glDeleteBuffers: (n, ptr) => remove('buffer', o => gl.deleteBuffer(o), n, ptr),
         glDeleteFramebuffers: (n, ptr) => remove('framebuffer', o => gl.deleteFramebuffer(o), n, ptr),
+        glDeleteProgram(p) {
+            gl.deleteProgram(get('program', p));
+            tables.program[p] = null;
+            for (const [key, id] of uniformIds) { // Its uniforms' locations go with it
+                if (!key.startsWith(p + ':')) continue;
+                if (id > 0) tables.uniform[id] = null;
+                uniformIds.delete(key);
+            }
+        },
         glDeleteRenderbuffers: (n, ptr) => remove('renderbuffer', o => gl.deleteRenderbuffer(o), n, ptr),
         glDeleteShader(s) {
             gl.deleteShader(get('shader', s));
             tables.shader[s] = null;
         },
         glDeleteTextures: (n, ptr) => remove('texture', o => gl.deleteTexture(o), n, ptr),
+        glDeleteVertexArrays: (n, ptr) => remove('vertexArray', o => gl.deleteVertexArray(o), n, ptr),
         glDepthFunc: f => gl.depthFunc(f),
         glDisable: cap => gl.disable(cap),
         glDrawArrays: (mode, first, count) => gl.drawArrays(mode, first, count),
@@ -979,6 +1010,7 @@
         glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
         glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
         glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
+        glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
@@ -987,13 +1019,20 @@
         glGetShaderiv: (s, pname, ptr) => writeParameter(gl.getShaderParameter(get('shader', s), pname), ptr),
         glGetUniformBlockIndex: (p, name) => gl.getUniformBlockIndex(get('program', p), string(name)),
         glGetUniformLocation: (p, name) => uniformId(p, string(name)),
-        glLinkProgram: p => gl.linkProgram(get('program', p)),
+        glLinkProgram(p) {
+            const program = get('program', p);
+            gl.linkProgram(program);
+            if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
+            }
+        },
         glPixelStorei: (pname, param) => gl.pixelStorei(pname, param),
         glReadPixels(x, y, w, h, format, type, ptr) {
             const [array, offset] = pixels(type, ptr);
             gl.readPixels(x, y, w, h, format, type, array, offset);
         },
         glRenderbufferStorage: (target, format, w, h) => gl.renderbufferStorage(target, format, w, h),
+        glSamplerParameteri: (s, pname, param) => gl.samplerParameteri(get('sampler', s), pname, param),
         glScissor: (x, y, w, h) => gl.scissor(x, y, w, h),
         glShaderSource(s, count, stringsPtr, lengthsPtr) {
             let source = '';
@@ -1021,6 +1060,7 @@
         glUniformBlockBinding: (p, block, binding) => gl.uniformBlockBinding(get('program', p), block, binding),
         glUseProgram: p => gl.useProgram(get('program', p)),
         glVertexAttribDivisor: (i, divisor) => gl.vertexAttribDivisor(i, divisor),
+        glVertexAttribIPointer: (i, size, type, stride, offset) => gl.vertexAttribIPointer(i, size, type, stride, offset),
         glVertexAttribPointer: (i, size, type, normalized, stride, offset) =>
             gl.vertexAttribPointer(i, size, type, !!normalized, stride, offset),
         glViewport: (x, y, w, h) => gl.viewport(x, y, w, h),
@@ -1107,7 +1147,7 @@
         }
         bindGroups.clear();
         retired.length = 0;
-        uniformBuffer = plainGroup = pass = commands = null;
+        uniformBuffer = groupLayouts = pass = commands = null;
         uniformSlots = 0;
         windowTarget.depth = null;
         windowTarget.width = windowTarget.height = 0;
@@ -1146,46 +1186,58 @@
         return [all, ptr];
     }
 
-    // What every pipeline is bound with: its uniforms, a slot of the uniform
-    // buffer, and for those that sample one, a texture and how it's sampled.
-    const UNIFORM_SLOT = 256; // The most a pipeline's uniforms take, and how far apart slots have to be
-    let plainGroup = null, texturedGroup = null, plainLayout = null, texturedLayout = null, samplers = null;
+    // What every pipeline is bound with: its uniforms, a place in the uniform
+    // buffer, and for each texture it samples, in either stage, the texture
+    // and how it's sampled. The layouts are by how many textures that is.
+    const UNIFORM_SLOT = 256;   // How far apart a pass's uniforms are in the uniform buffer: what WebGPU's offsets go by
+    const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
+    const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
+    let groupLayouts = null, pipelineLayouts = null, samplers = null;
     function gpuStart() {
-        const uniforms = { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-            buffer: { type: 'uniform', hasDynamicOffset: true } };
-        plainGroup = device.createBindGroupLayout({ entries: [uniforms] });
-        texturedGroup = device.createBindGroupLayout({ entries: [uniforms,
-            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } }] });
-        plainLayout = device.createPipelineLayout({ bindGroupLayouts: [plainGroup] });
-        texturedLayout = device.createPipelineLayout({ bindGroupLayouts: [texturedGroup] });
+        const stages = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+        const entries = [{ binding: 0, visibility: stages, buffer: { type: 'uniform', hasDynamicOffset: true } }];
+        groupLayouts = [];
+        pipelineLayouts = [];
+        for (let count = 0; count <= MAX_TEXTURES; count++) {
+            if (count) {
+                entries.push({ binding: 2 * count - 1, visibility: stages, texture: { sampleType: 'float' } });
+                entries.push({ binding: 2 * count, visibility: stages, sampler: { type: 'filtering' } });
+            }
+            groupLayouts.push(device.createBindGroupLayout({ entries }));
+            pipelineLayouts.push(device.createPipelineLayout({ bindGroupLayouts: [groupLayouts[count]] }));
+        }
         samplers = ['nearest', 'linear'].map(filter => device.createSampler({ magFilter: filter, minFilter: filter }));
     }
 
-    // A pass's uniforms go into the uniform buffer one slot after the other,
-    // each written before the pass is handed over. A pass with more of them
-    // than it holds gets a bigger one, for its draws from there on.
+    // A pass's uniforms go into the uniform buffer one after the other, each
+    // taking the slots it needs, written before the pass is handed over. A
+    // pass with more of them than it holds gets a bigger one, for its draws
+    // from there on. The buffer is longer than its slots by what a pipeline is
+    // bound, so that's inside it wherever the uniforms start.
     let uniformBuffer = null, uniformSlots = 0, uniformsUsed = 0, uniformsAt = 0;
     const retired = [];           // Uniform buffers a pass outgrew, which it still draws from
-    const bindGroups = new Map(); // By texture and how it's sampled, or 'plain': for the uniform buffer as it is
+    const bindGroups = new Map(); // By each texture and how it's sampled, or 'plain': for the uniform buffer as it is
     function growUniforms() {
         if (uniformBuffer) retired.push(uniformBuffer);
         uniformSlots = uniformSlots ? uniformSlots * 2 : 64;
-        uniformBuffer = device.createBuffer({ size: uniformSlots * UNIFORM_SLOT,
+        uniformBuffer = device.createBuffer({ size: uniformSlots * UNIFORM_SLOT + UNIFORM_BYTES,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         uniformsUsed = 0;
         bindGroups.clear();
     }
-    function bindGroup(textured, texture, blended) {
-        const key = textured ? texture + ':' + blended : 'plain';
+    function bindGroup(count, textures, blended) {
+        let key = 'plain';
+        for (let i = 0; i < count; i++) key = (i ? key + ',' : '') + textures[i] + ':' + blended[i];
         let group = bindGroups.get(key);
         if (!group) {
-            const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_SLOT } }];
-            if (textured) {
-                entries.push({ binding: 1, resource: gpuTables.texture[texture].view });
-                entries.push({ binding: 2, resource: samplers[blended] });
+            const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_BYTES } }];
+            for (let i = 0; i < count; i++) {
+                const t = gpuTables.texture[textures[i]];
+                entries.push({ binding: 1 + 2 * i, resource: t.view });
+                entries.push({ binding: 2 + 2 * i, resource: samplers[blended[i]] });
+                t.groups.add(key); // Which go when it does
             }
-            group = device.createBindGroup({ layout: textured ? texturedGroup : plainGroup, entries });
+            group = device.createBindGroup({ layout: groupLayouts[count], entries });
             bindGroups.set(key, group);
         }
         return group;
@@ -1207,21 +1259,41 @@
     let reader = null; // A 2D canvas, which a target is drawn into to read it back without waiting
 
     const alphaBlend = { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' };
-    const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4'];
+    const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
+        'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
     let pass = null, commands = null;
-    const drawing = { pipeline: null, texture: 0, blended: 0, bound: false }; // What the next draw draws with
+    // What the next draw draws with: its pipeline, and each texture it samples, by its slot
+    const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), blended: new Array(MAX_TEXTURES).fill(0),
+        bound: false };
 
     function beforeDraw() {
         if (drawing.bound) return;
-        const p = drawing.pipeline;
-        pass.setBindGroup(0, bindGroup(p.textured, drawing.texture, drawing.blended), [uniformsAt]);
+        pass.setBindGroup(0, bindGroup(drawing.pipeline.textures, drawing.textures, drawing.blended), [uniformsAt]);
         drawing.bound = true;
+    }
+
+    // What the browser has to say about a shader comes after it's made: a
+    // warning or an error stops a test page, as GL's do (shaderWarning), and
+    // the others print it. A test page waits for it before it says the
+    // program ended (finish).
+    function checkShader(module, name) {
+        const check = module.getCompilationInfo().then(info => {
+            const said = info.messages.filter(m => m.type !== 'info').map(m => `${m.type}, line ${m.lineNum}: ${m.message}`);
+            if (!said.length) return;
+            const text = `WebGPU: the shaders of ${name}:\n${said.join('\n')}`;
+            if (config.checkGL) fail(new Error(text));
+            else printErr('tide: ' + text);
+        }, () => {}); // The device went away first: the shaders are made again on the next
+        if (config.checkGL) {
+            shaderChecks.add(check);
+            check.then(() => shaderChecks.delete(check));
+        }
     }
 
     Object.assign(platform, {
         // Which device the program draws with, counted from 1: another once one was lost, and 0 while there's none
-        gpu_epoch: () => device && plainGroup ? devices : 0,
+        gpu_epoch: () => device && groupLayouts ? devices : 0,
         gpu_buffer(kind, size, ptr) {
             const buffer = device.createBuffer({ size,
                 usage: (kind === 0 ? GPUBufferUsage.VERTEX : GPUBufferUsage.INDEX) | GPUBufferUsage.COPY_DST });
@@ -1236,7 +1308,8 @@
         gpu_texture(format, width, height, ptr) {
             const texture = device.createTexture({ size: [width, height], format: format === 0 ? 'rgba8unorm' : 'r8unorm',
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * (format === 0 ? 4 : 1) });
+            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * (format === 0 ? 4 : 1),
+                groups: new Set() }); // The bind groups it's in, by their keys
             if (ptr) platform.gpu_texture_write(id, ptr);
             return id;
         },
@@ -1247,13 +1320,13 @@
                 [t.width, t.height]);
         },
         gpu_texture_free(id) {
-            gpuTables.texture[id].texture.destroy();
+            const t = gpuTables.texture[id];
+            t.texture.destroy();
             gpuRemove('texture', id);
-            bindGroups.delete(id + ':0');
-            bindGroups.delete(id + ':1');
+            for (const key of t.groups) bindGroups.delete(key);
         },
-        gpu_pipeline_begin(namePtr, codePtr, uniformSize, texture, blend, depth) {
-            building = { name: string(namePtr), code: string(codePtr), texture: !!texture, blend, depth, slots: [], attributes: [] };
+        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, blend, depth) {
+            building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, slots: [], attributes: [] };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -1261,6 +1334,7 @@
             const b = building;
             building = null;
             const module = device.createShaderModule({ label: b.name, code: b.code });
+            checkShader(module, b.name);
             const buffers = b.slots.map((slot, index) => ({
                 arrayStride: slot.stride,
                 stepMode: slot.perInstance ? 'instance' : 'vertex',
@@ -1270,7 +1344,7 @@
             }));
             const pipeline = device.createRenderPipeline({
                 label: b.name,
-                layout: b.texture ? texturedLayout : plainLayout,
+                layout: pipelineLayouts[b.textures],
                 vertex: { module, entryPoint: 'vertex', buffers },
                 fragment: { module, entryPoint: 'fragment', targets: [{ format: gpuFormat,
                     blend: b.blend === 0 ? { color: alphaBlend, alpha: alphaBlend } : undefined }] },
@@ -1278,8 +1352,9 @@
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: b.depth !== 0,
                     depthCompare: b.depth === 1 ? 'less-equal' : 'always' },
             });
-            return gpuAdd('pipeline', { pipeline, textured: b.texture });
+            return gpuAdd('pipeline', { pipeline, textures: b.textures });
         },
+        gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_target(width, height) {
             const offscreen = new OffscreenCanvas(width, height);
             const context = offscreen.getContext('webgpu');
@@ -1326,15 +1401,16 @@
             pass.setPipeline(drawing.pipeline.pipeline);
         },
         gpu_uniforms(ptr, size) {
-            if (uniformsUsed === uniformSlots) growUniforms();
+            const slots = Math.ceil(size / UNIFORM_SLOT);
+            if (uniformsUsed + slots > uniformSlots) growUniforms();
             uniformsAt = uniformsUsed * UNIFORM_SLOT;
             device.queue.writeBuffer(uniformBuffer, uniformsAt, ...memoryBytes(ptr, size), size);
-            uniformsUsed++;
+            uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(id, blended) {
-            drawing.texture = id;
-            drawing.blended = blended ? 1 : 0;
+        gpu_sample(slot, id, blended) {
+            drawing.textures[slot] = id;
+            drawing.blended[slot] = blended ? 1 : 0;
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),
@@ -1359,6 +1435,7 @@
 
     function fail(error) {
         stopped = true;
+        failed = true;
         endCursorLock();
         endThreads();
         printErr('tide: ' + (error && error.stack || error));
@@ -1588,7 +1665,7 @@
             buffer: o => gl.deleteBuffer(o), texture: o => gl.deleteTexture(o),
             framebuffer: o => gl.deleteFramebuffer(o), renderbuffer: o => gl.deleteRenderbuffer(o),
             vertexArray: o => gl.deleteVertexArray(o), program: o => gl.deleteProgram(o),
-            shader: o => gl.deleteShader(o), uniform: () => {},
+            shader: o => gl.deleteShader(o), uniform: () => {}, sampler: o => gl.deleteSampler(o),
         };
         for (const kind in tables) {
             for (const object of tables[kind]) if (object) destroy[kind](object);
@@ -1625,7 +1702,7 @@
         if (gl) forgetGL();
         if (device) forgetGPU();
         closeRoom(); // The new build plays on alone, like any web game for now
-        stopped = false;
+        stopped = failed = false;
         begin(program);
         resumeWith = null;
     }

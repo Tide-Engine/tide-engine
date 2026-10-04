@@ -34,6 +34,7 @@ static void usage(void)
            "  run [folder]       build the game in folder (default: here) and play it\n"
            "  build [folder]     build the game into <folder>/build\n"
            "  schedule [folder]  show which systems can run at the same time, and why the others wait\n"
+           "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
            "  add <source>       add a package to the game here, from git or a folder (see below)\n"
            "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
@@ -162,10 +163,11 @@ int main(const int argc, char **argv)
 
     const bool run = strcmp(command, "run") == 0;
     const bool build = strcmp(command, "build") == 0;
-    const bool schedule = strcmp(command, "schedule") == 0;
+    const bool shaders = strcmp(command, "shaders") == 0;
+    const bool schedule = strcmp(command, "schedule") == 0 || shaders;
     if (!run && !build && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
-        fprintf(stderr, "  = note: the commands are run, build, schedule, add, update, editors, upgrade and version; see "
+        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, editors, upgrade and version; see "
                         "`tide help`\n");
         return 2;
     }
@@ -201,7 +203,7 @@ int main(const int argc, char **argv)
     }
     int code = 0;
     if (schedule) {
-        code = tide_schedule(opts.folder) ? 0 : 1;
+        code = tide_schedule(opts.folder, shaders) ? 0 : 1;
     } else if (run && opts.android) {
         code = tide_run_android(root, &opts, session);
     } else if (run && !opts.web) {

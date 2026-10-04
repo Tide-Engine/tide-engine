@@ -267,6 +267,21 @@ else()
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
 
+# frag and vert, written in Tide: every shader tidec writes for
+# tests/shaders.tide has to compile on the backend that draws, without a
+# warning, and give the pixels tests/shaders.c expects.
+if(NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_shaders SOURCES tests/shaders.tide NAME game HOST tests/shaders.c)
+    target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
+        set_tests_properties(tide_platform_shaders PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # The cursor's lock on desktop: only a window with the focus holds it, and
     # a test's window, hidden, never has it. It needs a desktop session, as
