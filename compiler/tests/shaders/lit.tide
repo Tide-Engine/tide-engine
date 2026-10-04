@@ -44,8 +44,8 @@ void Brighten(mut float3 rgb, float by)
 
 vert Wave(mut BoxVertex vertex, Time time, Instance instance)
 {
-    float seconds = time.tick * time.dt;
-    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+    float height = time.tick / time.tickRate % 2 == 0 ? 0.1 : 0.2; // Every other second, twice as high
+    vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * height;
     vertex.position.xz = vertex.position.xz * (1 + 1 / 2.0);
     vertex.normal = Math.Rotate(instance.transform, vertex.normal);
     Brighten(vertex.normal, 1);

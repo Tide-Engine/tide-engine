@@ -1461,9 +1461,18 @@ static const char *shader_record_doc(const decl *d)
     return NULL;
 }
 
-// What Pixel's and Instance's fields are.
-static const char *shader_field_doc(const decl *d, const str name)
+// What the fields of the engine's own types are: Time's, Pixel's and Instance's.
+static const char *builtin_field_doc(const decl *d, const str name)
 {
+    if (d && d == A.prog->time) {
+        if (str_eq_c(name, "dt")) return "The length of a tick in seconds: the same every tick.";
+        if (str_eq_c(name, "tick")) return "The tick the match is at, counting from 0.";
+        if (str_eq_c(name, "t")) {
+            return "The seconds since the match started: `tick * dt`. Views see it blended between ticks, so it moves "
+                   "every frame. A float gets coarser as it grows: what has to be exact counts in `tick`.";
+        }
+        if (str_eq_c(name, "tickRate")) return "The ticks in a second: 1 / `dt` to the nearest whole number.";
+    }
     if (d && d == A.prog->pixel) {
         if (str_eq_c(name, "position")) return "Where the pixel is on the screen: its pixels, from the top left.";
         if (str_eq_c(name, "depth")) {
@@ -1873,7 +1882,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nField of %s `" STR_FMT "`.", decl_keyword(o->decl), STR_ARG(o->decl->name));
         }
         if (button_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", button_field_doc(o->decl, o->field->name));
-        if (shader_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", shader_field_doc(o->decl, o->field->name));
+        if (builtin_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", builtin_field_doc(o->decl, o->field->name));
         break;
     case OCC_PARAM: {
         format_param(o->param, &code);
@@ -4193,7 +4202,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 continue;
             }
             const char *doc = button_field_doc(t.decl, f->name);
-            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : shader_field_doc(t.decl, f->name), NULL);
+            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : builtin_field_doc(t.decl, f->name), NULL);
         }
         // Its local fields, where code has them: views, local handlers and the
         // functions they call, and the frags and verts a view draws through.

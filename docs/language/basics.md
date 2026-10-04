@@ -112,7 +112,7 @@ settings
 | Setting | What it is | Without it |
 |---|---|---|
 | `title` | The window's title | The game's folder's name |
-| `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate` | 60 |
+| `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate`, and code reads the rate as `Time.tickRate` | 60 |
 | `maxPlayers` | How many players a match takes, from 1 to 256. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
 | `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |

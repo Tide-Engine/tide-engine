@@ -60,11 +60,19 @@ TIDE_TEST(blend_views_see_the_match_between_ticks)
     const tide_draw_command *shot = nth(TIDE_DRAW_RECT, 0);
     TIDE_REQUIRE(shot != NULL);
     TIDE_CHECK(shot->a.y == 500.0f);
+    // Time.t is a float like any other: a quarter of the way from one tick's to the next's
+    const tide_draw_command *clock = nth(TIDE_DRAW_RECT, 1);
+    TIDE_REQUIRE(clock != NULL);
+    TIDE_CHECK(before.Time.t == 1.0f / 20.0f && now.Time.t == 2.0f * (1.0f / 20.0f));
+    TIDE_CHECK(clock->a.x == tide_lerp_f(before.Time.t, now.Time.t, 0.25f));
+    TIDE_CHECK(clock->a.x > before.Time.t && clock->a.x < now.Time.t && clock->a.y == 20.0f);
 
     frame(NULL, 0.25f); // No previous tick: as it is
     TIDE_CHECK(nth(TIDE_DRAW_CIRCLE, 0)->a.x == 8.0f);
+    TIDE_CHECK(nth(TIDE_DRAW_RECT, 1)->a.x == now.Time.t);
     frame(&before, 1.0f);
     TIDE_CHECK(nth(TIDE_DRAW_CIRCLE, 0)->a.x == 8.0f);
+    TIDE_CHECK(nth(TIDE_DRAW_RECT, 1)->a.x == now.Time.t);
 }
 
 // A snapshot shares the pages of what it's a snapshot of, and lets go of what

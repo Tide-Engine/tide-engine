@@ -177,7 +177,7 @@ A desktop build's first configure downloads GLFW, pinned (see `cmake/GLFW.cmake`
 The generated header is the API between the game and the host. Namespaced declarations have their namespace in their C name: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
 
 - `tide_world`: the whole simulation state. Its data is in pages it shares with its snapshots (see ECS and simulation state), so a world starts zeroed (`{0}`, static or `calloc`), copying the struct isn't a snapshot (`tide_world_copy` is), and `tide_world_free(w)` lets it go. When fields hold text or lists, it has a `heap` they're kept in; hosts read a text field with `tide_text_read(&w->heap, field)`.
-- `tide_world_init(w, dt)`: clears the world, sets `Time.dt` and singleton defaults, and loads the `Main` scene if it's the match's.
+- `tide_world_init(w, dt)`: clears the world, sets `Time.dt` and singleton defaults, and loads the `Main` scene if it's the match's. `Time` is a singleton like the game's, in the world: `t` (`tick * dt`, which the tick sets from the tick, never by adding) and `tickRate` (1 / `dt` to the nearest, set here; 0 for a `dt` no rate fits) are stored fields, so views blend `t` and shaders get it as any float they read.
 - `TIDE_MAIN_IS_LOCAL` is defined when `Main` is a local scene: the program starts outside any match.
 - `tide_world_tick(w)`: runs every system once, then applies structural changes. With no scene left, it loads `Main` again if it's the match's; `tide_frame` does the same for a local `Main`.
 - `tide_world_ended(w)`: whether the match is over: its last scene unloaded and `Main` is local, so it can't come back. The server stops ticking there and tells every player, who go offline with `TIDE_DISCONNECT_ENDED` (`Ended` in Tide).

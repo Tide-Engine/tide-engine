@@ -4670,9 +4670,9 @@ static void gen_header(gen *g)
         for (int i = 0; i < prog->grids.count; i++) sb_printf(o, "extern const tide_grid_shape %s;\n", grid_shape_name(prog->grids.items[i]));
         sb_put(o, "\n");
     }
-    sb_put(o, "// Clears the world (zeroed, or a world: what it had goes) and sets Time.dt and\n");
-    sb_put(o, "// singleton defaults. If Main is the match's scene, loads it, with everything its\n");
-    sb_put(o, "// Spawned handlers create.\n");
+    sb_put(o, "// Clears the world (zeroed, or a world: what it had goes) and sets Time.dt, with\n");
+    sb_put(o, "// Time.tickRate (1 / dt to the nearest), and singleton defaults. If Main is the\n");
+    sb_put(o, "// match's scene, loads it, with everything its Spawned handlers create.\n");
     sb_put(o, "void tide_world_init(tide_world *w, float dt);\n\n");
     sb_put(o, "// The same, starting the match in `start`'s scene instead (NULL: Main).\n");
     sb_put(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start);\n\n");
@@ -8999,8 +8999,10 @@ static void gen_api(gen *g)
 
     const char *use_match = prog->uses_heap ? "    tide_text_use(&w->heap, NULL);\n" : "";
     sb_put(o, "void tide_world_init(tide_world *w, float dt)\n{\n    tide_world_start(w, dt, NULL);\n}\n\n");
+    // Time.tickRate is 1 / dt to the nearest, and 0 for a dt no rate fits
     sb_printf(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start)\n{\n    tide_world_free(w);\n%s"
-                 "    w->Time.dt = dt;\n",
+                 "    w->Time.dt = dt;\n"
+                 "    w->Time.tickRate = dt >= 1e-9f ? (int32_t)(1.0f / dt + 0.5f) : 0;\n",
               use_match);
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
@@ -9103,7 +9105,8 @@ static void gen_api(gen *g)
     }
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
-    sb_put(o, "    w->Time.tick++;\n}\n\n");
+    // Time.t is worked out from the tick each time, never added to, so it doesn't drift
+    sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n}\n\n");
 
     // A match that's out of scenes ends when Main is local. A match Main comes
     // back instead (see tide_apply_commands), and a match that can't hold a
