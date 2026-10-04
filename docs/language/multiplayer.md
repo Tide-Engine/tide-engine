@@ -176,8 +176,22 @@ settings
 
 Then clients never predict. Their inputs are delayed so that every player's reach the server before its tick, and ticks run once each, as the server confirms them: nothing is ever rolled back, at the cost of input delay of about a round trip and a half. A game whose ticks are expensive, or whose views can't show a rollback well, picks it; the server runs the match the same either way.
 
+## How many players
+
+A match takes 16 players unless the game says otherwise:
+
+```csharp
+settings
+{
+    maxPlayers = 64;
+}
+```
+
+`maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
+
+Pick what the game is built for. Every player's input goes to every other player each tick, so what a match sends grows with the square of its players, and each client runs the whole simulation: 64 players cost sixteen times what 16 do, before the game does anything with them.
+
 ## Limits for now
 
-- Up to 16 players.
 - Under `tide run --web`, a reload plays on alone: the room closes, and the other players drop out.
 - A match can't start in a scene that holds text or lists yet.

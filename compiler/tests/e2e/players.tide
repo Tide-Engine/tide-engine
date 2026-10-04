@@ -1,0 +1,64 @@
+// Many players: a match that takes more than a 32-bit set of players holds,
+// with host migration, so its handover record goes in parts.
+
+settings
+{
+    maxPlayers = 200;
+    hostMigration = true;
+}
+
+component Mover
+{
+    int sum; // Its player's inputs, added up
+}
+
+input Controls
+{
+    int push;
+}
+
+singleton Match
+{
+    int ticks;
+    int joined;
+    int left;
+    long pushes; // Every player's inputs, added up
+    Entity table;
+}
+
+scene Main { }
+
+// A private scene every player is added to as they join
+scene Table
+{
+    int seats;
+}
+
+event(Spawned) Setup(with Main, mut Match match)
+{
+    match.table = Scene.Load(Table { }, SceneVisibility.Private);
+}
+
+event(PlayerJoined joined) Join(mut Match match)
+{
+    match.joined += 1;
+    Spawn(Mover { }, Owner { player = joined.player });
+    Scene.AddPlayer(match.table, joined.player);
+}
+
+event(PlayerLeft left) Leave(mut Match match)
+{
+    match.left += 1;
+    Scene.RemovePlayer(match.table, left.player);
+}
+
+system Count(mut Match match)
+{
+    match.ticks += 1;
+}
+
+system Push(Controls input, mut Mover mover, mut Match match, with Owner)
+{
+    mover.sum += input.push;
+    match.pushes += input.push;
+}

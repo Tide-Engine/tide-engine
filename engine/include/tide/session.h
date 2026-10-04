@@ -112,7 +112,8 @@ typedef struct tide_game {
     uint32_t (*write_input_delta)(const void *input, const void *previous, uint8_t *out, uint32_t capacity);
     bool (*read_input_delta)(const uint8_t *data, uint32_t size, const void *previous, void *input);
     // A slot's input as the world keeps it: players' by index, then the
-    // server's (TIDE_MAX_PLAYERS). What ticks' inputs go as deltas from.
+    // server's (the slot after the last player's: tide_game_players). What
+    // ticks' inputs go as deltas from.
     void (*world_input)(const void *world, uint32_t slot, void *input);
     // Whether the match is over: its last scene unloaded, and Main is local,
     // so it can't come back. The server ends it then. NULL: it never is.
@@ -126,7 +127,18 @@ typedef struct tide_game {
     const char *title;   // title: the window's, unless the host says
     bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
+    // maxPlayers: how many players its matches take, up to TIDE_PLAYERS_MOST;
+    // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
+    // server's after them, so it's part of the game's layout: its hash differs.
+    uint32_t max_players;
 } tide_game;
+
+// How many players a game's matches take. The server's input is the slot after
+// the last player's.
+static inline uint32_t tide_game_players(const tide_game *g)
+{
+    return g->max_players ? g->max_players : TIDE_PLAYERS_DEFAULT;
+}
 
 typedef enum tide_session_state {
     TIDE_SESSION_OFFLINE,    // In no match
@@ -168,15 +180,15 @@ typedef struct tide_server_desc {
     bool wait_for_first;         // Tick once the first player has joined, before anything happens without them
     // Hot reloading and host migration: the match goes on from this world (the
     // game's tide_world) instead of starting from `start`, with `players` in it
-    // already, a bit per player. A player joining into one of their slots gets
+    // already (a tide_player_set). A player joining into one of their slots gets
     // no PlayerJoined; those who haven't come back in 20 seconds get
     // PlayerLeft. `leaving` went with the last server: PlayerLeft at the first
     // tick.
     const void *world;
-    uint32_t players;
-    uint32_t leaving;
-    // Host migration: the digests of the players' cookies (TIDE_MAX_PLAYERS of
-    // them, 0 for none), which they come back with. NULL: none.
+    tide_player_set players;
+    tide_player_set leaving;
+    // Host migration: the digests of the players' cookies (as many as the game
+    // takes players, 0 for none), which they come back with. NULL: none.
     const uint64_t *digests;
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
@@ -310,10 +322,9 @@ void tide_session_destroy(tide_session *s);
 // Leaves the one it's in first.
 void tide_session_start(tide_session *s, const void *start, double now);
 // The same, going on from `world` (the game's tide_world), for hot reloading
-// where a new build is a new program, as on the web. `players`, a bit per
-// player, are in it already: this machine's player is the first of them, with
-// no PlayerJoined.
-void tide_session_start_from(tide_session *s, const void *world, uint32_t players, double now);
+// where a new build is a new program, as on the web. `players` are in it
+// already: this machine's player is the first of them, with no PlayerJoined.
+void tide_session_start_from(tide_session *s, const void *world, tide_player_set players, double now);
 // Lets other machines join the match this machine runs, through `network`
 // (the session closes it as the match ends). A match opened before opens
 // again on the network it had, so pass a zeroed transport first: false if it

@@ -743,6 +743,7 @@ typedef struct program {
     // The engine's settings for the game (builtins.h), from `settings { ... }`
     VEC(decl *) settings;      // Each block written, though a game has one
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
+    uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
     const expr *app_id;        // appId, likewise
     const expr *version;       // version, likewise

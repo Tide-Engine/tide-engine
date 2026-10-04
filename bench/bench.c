@@ -510,7 +510,8 @@ static void usage(const bench_desc *d)
 {
     printf("usage: %s [--quick] [options]\n\n", d->name);
     printf("  --quick             a short, small run, as tests make\n");
-    printf("  --players <n>       bots that join, up to %u (%u)\n", TIDE_MAX_PLAYERS, d->full.players);
+    printf("  --players <n>       bots that join, up to %u, the game's maxPlayers (%u)\n", tide_game_players(d->game),
+           d->full.players);
     printf("  --join-every <s>    seconds between joins (%g)\n", d->full.join_every);
     printf("  --seconds <s>       how long to run once everyone's in (%g)\n", d->full.seconds);
     printf("  --threads <n>       threads to tick on, 0 for every core (%u)\n", d->full.threads);
@@ -582,8 +583,8 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
             return false;
         }
     }
-    if (o->players < 1 || o->players > TIDE_MAX_PLAYERS) {
-        fprintf(stderr, "%s: --players goes from 1 to %u\n", d->name, TIDE_MAX_PLAYERS);
+    if (o->players < 1 || o->players > tide_game_players(d->game)) {
+        fprintf(stderr, "%s: --players goes from 1 to %u, the game's maxPlayers\n", d->name, tide_game_players(d->game));
         return false;
     }
     return true;
@@ -644,16 +645,17 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = o.latency, .jitter = o.jitter, .loss = o.loss});
 
     // The server is machine 0, and bot n machine n + 1.
-    static machine machines[TIDE_MAX_PLAYERS + 1u];
-    memset(machines, 0, sizeof machines);
-    machine *server_machine = &machines[0];
-    current = server_machine;
+    machine *machines = calloc(tide_game_players(d->game) + 1u, sizeof *machines);
     void *first = calloc(1, real->world_size);
-    if (!first) {
+    if (!first || !machines) {
+        free(first);
+        free(machines);
         fprintf(stderr, "%s: out of memory\n", d->name);
         tide_loopback_destroy(net);
         return 1;
     }
+    machine *server_machine = &machines[0];
+    current = server_machine;
     d->make_world(d->flags, first, (float)FRAME);
     const tide_server_desc server_desc = {
         .game = &timed,
@@ -761,6 +763,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     tide_server_destroy(server);
     free(server_machine->steady.ms);
     free(server_machine->joining.ms);
+    free(machines);
     tide_loopback_destroy(net);
     return r.ok ? 0 : 1;
 }

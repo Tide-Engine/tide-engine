@@ -23,7 +23,7 @@ typedef struct world {
     uint32_t tick;
     uint32_t joined;
     uint32_t left;
-    int32_t inputs[TIDE_MAX_PLAYERS + 1];
+    int32_t inputs[TIDE_PLAYERS_DEFAULT + 1];
 } world;
 
 static void start(void *w, const float dt, const void *s)
@@ -69,7 +69,7 @@ static void set_input(void *w, const tide_player_id player, const void *input)
 
 static void set_server_input(void *w, const void *input)
 {
-    memcpy(&((world *)w)->inputs[TIDE_MAX_PLAYERS], input, 4);
+    memcpy(&((world *)w)->inputs[TIDE_PLAYERS_DEFAULT], input, 4);
 }
 
 static uint32_t write_input(const void *input, uint8_t *out, const uint32_t capacity)
@@ -339,7 +339,7 @@ static int frame(void *user, const float seconds)
     const world *w = tide_session_world(session);
     const int32_t other = me == 1 ? 2 : 1;
     bool seen = false;
-    for (int i = 0; w && i < (int)TIDE_MAX_PLAYERS; i++) seen |= w->inputs[i] == other;
+    for (int i = 0; w && i < (int)TIDE_PLAYERS_DEFAULT; i++) seen |= w->inputs[i] == other;
     const tide_session_status status = tide_session_status_of(session);
     if (met_at < 0.0 && seen && w->joined == 2 && status.client.state == TIDE_SESSION_CONNECTED && code[0]) {
         printf("met: tick %u, verified %u, room %s\n", (unsigned)w->tick, (unsigned)status.client.verified_tick, code);

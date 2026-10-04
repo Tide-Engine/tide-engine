@@ -464,11 +464,16 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     if (tw->input >= 0) {
         const uint32_t input = to_layout->types[tw->input].size;
         const uint32_t old_input = fw->input >= 0 ? from_layout->types[fw->input].size : 0u;
+        // The players' by index, and the server's, the slot after theirs in
+        // each: a build that takes another number of players has it elsewhere
+        const uint32_t server = tw->input_count ? tw->input_count - 1u : 0u;
+        const uint32_t old_server = fw->input >= 0 && fw->input_count ? fw->input_count - 1u : 0u;
         for (uint32_t i = 0; i < tw->input_count; i++) {
-            const bool had = fw->input >= 0 && i < fw->input_count;
-            carry_value(&c, tw->input, fw->input, to + tw->inputs + i * input, had ? from + fw->inputs + i * old_input : NULL);
+            const uint32_t at = i == server ? old_server : i;
+            const bool had = fw->input >= 0 && fw->input_count && (i == server || i < old_server);
+            carry_value(&c, tw->input, fw->input, to + tw->inputs + i * input, had ? from + fw->inputs + at * old_input : NULL);
             carry_value(&c, tw->input, fw->input, to + tw->previous + i * input,
-                        had ? from + fw->previous + i * old_input : NULL);
+                        had ? from + fw->previous + at * old_input : NULL);
         }
     }
 

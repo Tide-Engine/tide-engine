@@ -1110,7 +1110,9 @@ TIDE_TEST(net_a_session_goes_on_from_a_world)
 
     tide_session *next = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = session_sample});
     t = 0.0;
-    tide_session_start_from(next, left, 1u << player, t);
+    tide_player_set in_it = {{0}};
+    tide_players_add(&in_it, (uint32_t)player);
+    tide_session_start_from(next, left, in_it, t);
     for (int frame = 0; frame < 60; frame++) {
         t += 1.0 / 60.0;
         tide_session_update(next, t);

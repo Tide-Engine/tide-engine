@@ -92,7 +92,7 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
 #include "rtc/rtc.h"
 
 #define RELAY "wss://relay.tide-engine.dev"
-#define PEERS 16
+#define PEERS 256 // The most players a game takes (TIDE_PLAYERS_MOST): a host has a peer for each
 
 typedef struct room_peer {
     rtc_peer *peer;

@@ -70,7 +70,7 @@ typedef struct saved {
     uint32_t size; // Of it all, first, for the page
     uint32_t magic;
     uint64_t hash;    // Its game's: the same one has the same layout
-    uint32_t players; // In the match, a bit per player
+    tide_player_set players; // In the match
     uint32_t layout, layout_size;
     uint32_t world, world_size; // 0 bytes outside a match
     uint32_t local, local_size;
@@ -98,7 +98,7 @@ __attribute__((export_name("tide_reload_save"))) uint32_t tide_reload_save(void)
     saved h = {0};
     h.magic = SAVED_MAGIC;
     h.hash = game->game->hash;
-    h.players = world && player >= 0 ? 1u << player : 0u;
+    if (world && player >= 0) tide_players_add(&h.players, (uint32_t)player);
     h.layout = align8(sizeof h);
     h.layout_size = layout_size;
     h.world = align8(h.layout + layout_size);
@@ -367,6 +367,10 @@ static bool carry_over(const tide_host_game *next)
     const tide_host_game *old = tide_run_game;
     if (!old->layout || !next->layout) {
         printf("tide: reloaded, and started over: a build doesn't describe its data layout\n");
+        return false;
+    }
+    if (tide_game_players(old->game) != tide_game_players(next->game)) {
+        printf("tide: reloaded, and started over: maxPlayers changed, and a match keeps an input for each player it takes\n");
         return false;
     }
     void *local = calloc(1, next->local_size);
