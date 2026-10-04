@@ -610,6 +610,8 @@ struct expr {
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
     struct decl *vert;    // Draw.Mesh: the vert and the frag it names, or NULL
+    bool instanced;      // Draw.Instanced: its third argument supplies the instances
+    struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
@@ -770,6 +772,9 @@ typedef struct shader {
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
+    bool instanced;      // Its draw supplies a list of instances
+    struct decl *instance_type; // Explicit instance data, or NULL for transforms only
+    const field *instance_transform; // The instance struct's optional float4x4 transform
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them

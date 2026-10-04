@@ -2561,7 +2561,7 @@ static void use_mesh_types(checker *c)
     }
     builtins_use_mesh(list_of(c->prog, decl_type(c->prog->vertex)).decl,
                       list_of(c->prog, decl_type(c->prog->vertex3)).decl, list_of(c->prog, (type){TY_INT, NULL}).decl,
-                      pixels, c->prog->filter);
+                      pixels, c->prog->filter, list_of(c->prog, (type){TY_FLOAT4X4, NULL}).decl);
 }
 
 // The frag or vert an argument of Draw.Mesh names, or NULL: `Shade`, or
@@ -2652,6 +2652,17 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
     decl *view = c->system;
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) {
+            if (!e->instanced) {
+                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "': draw it with Draw.Instanced and a List<" STR_FMT ">",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(p->type.decl->name));
+            } else if (p->type.decl != e->instance_type) {
+                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "', which this draw's instances don't supply",
+                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name));
+                diag_note("its read-only struct parameter has to be the element type of the draw's instance list");
+            }
+            continue;
+        }
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         const decl *d = p->type.decl;
         for (int k = 0; k < view->params.count; k++) { // What a frag reads of it is a use of it
@@ -2682,6 +2693,8 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
 static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
+    const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
+    const char *draw_name = instanced ? "Draw.Instanced" : "Draw.Mesh";
     // The vert and the frag it names come last, the vert first
     int count = e->args.count;
     bool order_said = false;
@@ -2691,7 +2704,7 @@ static type check_mesh_draw(checker *c, expr *e)
         if (!shader) break;
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
-            diag_error(name->at, "Draw.Mesh takes one %s, and this names two", shader_word(shader));
+            diag_error(name->at, "%s takes one %s, and this names two", draw_name, shader_word(shader));
         } else if (!shader->is_frag && e->frag && !order_said) {
             // Peeled from the end: a vert found after a frag was written before it, as it should be
         } else if (shader->is_frag && e->vert && !order_said) {
@@ -2709,9 +2722,10 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         return T_ERR;
     }
-    if (count < 2) {
+    if (count < (instanced ? 3 : 2)) {
         for (int i = 0; i < count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Draw.Mesh takes a mesh's vertices and its indices first");
+        diag_error(e->at, instanced ? "Draw.Instanced takes a mesh's vertices, its indices, and a list of instances first"
+                                  : "Draw.Mesh takes a mesh's vertices and its indices first");
         note_mesh_forms();
         return T_ERR;
     }
@@ -2745,11 +2759,34 @@ static type check_mesh_draw(checker *c, expr *e)
     const type index_type = indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
     for (int i = 2; i < count; i++) {
         expr *arg = e->args.items[i];
-        if (arg->kind != E_DEFAULT) check_expr(c, arg);
+        if (instanced && i == 2 && arg->kind == E_LIST) {
+            type element = {TY_FLOAT4X4, NULL};
+            const decl *stages[] = {e->vert, e->frag};
+            bool supplied = false;
+            for (int stage = 0; stage < 2 && !supplied; stage++) {
+                const decl *code = stages[stage];
+                for (int p = 1; code && p < code->params.count; p++) {
+                    const param *data = &code->params.items[p];
+                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT) {
+                        element = data->type;
+                        supplied = true;
+                        break;
+                    }
+                }
+            }
+            if (!supplied && arg->args.count && arg->args.items[0]->kind == E_LITERAL) {
+                const expr *first = arg->args.items[0];
+                decl *named = find_type(c, first->name, first->at);
+                if (named && named->kind == DECL_STRUCT) element = decl_type(named);
+            }
+            check_expr_want(c, arg, list_of(prog, element));
+        } else if (arg->kind != E_DEFAULT) {
+            check_expr(c, arg);
+        }
     }
     if (!vertex) return T_ERR;
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded) {
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(e->object->name, e);
         if (result.kind == TY_ERROR) return result;
@@ -2772,10 +2809,34 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR;
     }
-    // A 3D mesh's transform
+    // A 3D mesh's transform, or an explicit draw's list of instances
     int at = 2;
     const type f4x4 = {TY_FLOAT4X4, NULL};
-    if (dims == 3) {
+    bool transforms = false;
+    if (instanced) {
+        const expr *instances = e->args.items[at++];
+        const type list = instances->type;
+        const type element = list.kind == TY_LIST ? list.decl->fields.items[0].type : T_ERR;
+        if (list.kind != TY_LIST || (element.kind != TY_STRUCT && element.kind != TY_FLOAT4X4)) {
+            diag_error(instances->at, "Draw.Instanced takes a List<float4x4> of transforms or a List<T> of instance structs, and this is %s",
+                       type_name(list));
+            return T_ERR;
+        }
+        transforms = element.kind == TY_FLOAT4X4;
+        if (transforms && dims != 3) {
+            diag_error(instances->at, "a List<float4x4> places 3D instances: a 2D draw takes instance structs and a vert that places them");
+            return T_ERR;
+        }
+        e->instance_type = transforms ? NULL : element.decl;
+        if (e->instance_type && dims == 3) {
+            const field *transform = field_called(e->instance_type, "transform");
+            if (transform && transform->type.kind != TY_FLOAT4X4) {
+                diag_error(instances->at, "a 3D instance struct's 'transform' is a float4x4, and '" STR_FMT "'s is %s",
+                           STR_ARG(e->instance_type->name), type_name(transform->type));
+                return T_ERR;
+            }
+        }
+    } else if (dims == 3) {
         if (at >= count || e->args.items[at]->type.kind != TY_FLOAT4X4) {
             diag_error(at < count ? e->args.items[at]->at : e->at, "a 3D mesh takes the transform that places it in the world, "
                        "a float4x4, after its indices");
@@ -2801,7 +2862,7 @@ static type check_mesh_draw(checker *c, expr *e)
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) at++;
     }
     if (at < count) {
-        diag_error(e->args.items[at]->at, "Draw.Mesh doesn't take %s here", type_name(e->args.items[at]->type));
+        diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(e->args.items[at]->type));
         note_mesh_forms();
         return T_ERR;
     }
@@ -2842,7 +2903,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     if (shaded && (c->method || c->in_input || !in_view(c))) {
-        diag_error(e->at, "a Draw.Mesh that names a vert or a frag goes in a view");
+        diag_error(e->at, "a %s that names a vert or a frag goes in a view", draw_name);
         diag_note("the components they read are those of the entity the view runs for; a function can draw the mesh "
                   "without them");
         ok = false;
@@ -2853,12 +2914,21 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     if (!ok) return T_ERR;
 
+    if (instanced && transforms && vertex == prog->vertex3 && !shaded) {
+        use_mesh_types(c);
+        const type result = resolve_builtin_call(e->object->name, e);
+        if (result.kind == TY_ERROR) return result;
+        check_default_args(c, e);
+        e->call = CALL_DRAW;
+        return result;
+    }
+
     e->call = CALL_DRAW;
     e->c_callee = NULL;
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
     vec_push(e->arg_want, index_list);
-    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 ? f4x4 : e->args.items[i]->type);
+    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : e->args.items[i]->type);
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
     return T_VOID_;
@@ -3053,7 +3123,7 @@ static type check_method(checker *c, expr *e)
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
-        if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Mesh")) return check_mesh_draw(c, e);
+        if (str_eq_c(owner, "Draw") && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
         for (int i = 0; i < e->args.count; i++) {
@@ -4592,6 +4662,10 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         || of->object->param->function_param) {
         diag_error(of->at, "a %s samples a grid that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'",
                    shader_word(shader));
+        return T_ERR;
+    }
+    if (of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled grid in a component or singleton");
         return T_ERR;
     }
     const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
@@ -7735,6 +7809,7 @@ static void check_shader_decl(const checker *c, decl *d)
     d->result = T_VOID_;
     d->fails = T_VOID_;
     const param *color = NULL;
+    const param *instance_data = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
@@ -7788,6 +7863,13 @@ static void check_shader_decl(const checker *c, decl *d)
             p->function_param = true;
             if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
                 color = p; // The pixel it writes
+            } else if (t && t->kind == DECL_STRUCT && p->mode != PARAM_MUT) {
+                if (instance_data) {
+                    diag_error(p->at, "a %s takes one instance struct, supplied by Draw.Instanced, and this names two", word);
+                } else {
+                    instance_data = p;
+                }
+                p->function_param = false; // Supplied by each element of the explicit instance list
             } else if (d->is_frag && p->mode == PARAM_MUT) {
                 diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
                                                          : "a frag writes its pixel's color, a 'mut Color', for now");

@@ -2419,10 +2419,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW
-                   && (strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0)) {
+                   && (strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0
+                       || strcmp(e->c_callee, "tide_draw_mesh3_instances_grid") == 0)) {
             // Draw.Mesh(vertices, indices, [transform,] texture, filter): the grid with its shape, and the filter
             // it has when left out
-            const int texture = strcmp(e->c_callee, "tide_draw_mesh3_grid") == 0 ? 3 : 2;
+            const int texture = strcmp(e->c_callee, "tide_draw_mesh_grid") == 0 ? 2 : 3;
             sb_printf(o, "%s(tide_draw", e->c_callee);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
@@ -10249,7 +10250,8 @@ static void gen_shaders(gen *g)
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw, tide_list tide_vertices, tide_list tide_indices", s);
-        if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
+        if (sh->instanced) sb_put(o, ", tide_list tide_items");
+        else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->textured) sb_put(o, ", tide_grid tide_texture, const tide_grid_shape *tide_shape, int32_t tide_filter");
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *d = sh->bound.items[b];
@@ -10258,12 +10260,20 @@ static void gen_shaders(gen *g)
             if (shader_reads_local(sh, d)) sb_printf(o, ", const %s *tide_lb%d", type_cname(d->local_part), b);
         }
         sb_put(o, ")\n{\n");
+        if (sh->instanced) {
+            sb_put(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"
+                      "    if (tide_count <= 0 || tide_list_count(tide_vertices) <= 0 || tide_list_count(tide_indices) < 3) return;\n");
+            if (sh->dims == 3 && sh->instance_type && !sh->instance_transform)
+                sb_put(o, "    const tide_float4x4 tide_transform = tide_identity_f4x4();\n");
+        }
         for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
         const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
         const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
         unsigned blended = 0;
         for (int v = 0; v < sh->values.count; v++) {
             const shader_value *value = &sh->values.items[v];
+            if (sh->instanced && (value->source == sh->instance_type
+                || (!value->source && (!sh->instance_type || sh->instance_transform)))) continue;
             int f = value->float_at, i = value->int_at;
             const char *to = value->per_instance ? "tide_instance" : "tide_uniforms";
             if (!value->source) {
@@ -10275,6 +10285,34 @@ static void gen_shaders(gen *g)
             sb access = {0};
             sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
+        }
+        if (sh->instanced && instance) {
+            sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
+                      "    if (tide_bytes > UINT32_MAX) tide_out_of_memory();\n"
+                      "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                      "    void *tide_instances = tide_scratch_memory((size_t)tide_bytes);\n");
+            bool reads_item = sh->dims == 3 && (!sh->instance_type || sh->instance_transform);
+            for (int v = 0; v < sh->values.count; v++)
+                reads_item |= sh->instance_type && sh->values.items[v].source == sh->instance_type;
+            if (reads_item) sb_put(o, "    tide_list_cache tide_cache = {0};\n");
+            sb_put(o, "    for (int32_t tide_n = 0; tide_n < tide_count; tide_n++) {\n");
+            if (reads_item) {
+                const char *item = sh->instance_type ? type_cname(sh->instance_type) : "tide_float4x4";
+                sb_printf(o, "        const %s *tide_item = tide_list_cached_at(&tide_cache, tide_items, tide_n, sizeof(%s));\n", item, item);
+            }
+            for (int v = 0; v < sh->values.count; v++) {
+                const shader_value *value = &sh->values.items[v];
+                const bool transform = !value->source && (!sh->instance_type || sh->instance_transform);
+                if (!transform && (!sh->instance_type || value->source != sh->instance_type)) continue;
+                int f = value->float_at, i = value->int_at;
+                sb access = {0};
+                if (transform && !sh->instance_type) sb_put(&access, "*tide_item");
+                else sb_printf(&access, "tide_item->%s", field_cname(transform ? sh->instance_transform : value->field));
+                gen_shader_value(o, "tide_instance", transform ? (type){TY_FLOAT4X4, NULL} : value->field->type,
+                                 access.data, &f, &i);
+            }
+            sb_put(o, "        memcpy((uint8_t *)tide_instances + (size_t)tide_n * sizeof tide_instance,\n"
+                      "               &tide_instance, sizeof tide_instance);\n    }\n");
         }
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
         for (int t = 0; t < sh->textures.count; t++) {
@@ -10292,8 +10330,14 @@ static void gen_shaders(gen *g)
         char mask[64];
         if (sh->textured) snprintf(mask, sizeof mask, "tide_filter != TIDE_FILTER_POINT ? 1u : 0u"); // As the draw said
         else snprintf(mask, sizeof mask, "0x%xu", blended);
-        sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n}\n\n",
-                  s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
+        if (sh->instanced)
+            sb_printf(o, "    tide_draw_mesh_shaded_instances(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, "
+                         "(uint32_t)tide_count, %s, tide_textures, %s);\n%s}\n\n",
+                      s, instance ? "tide_instances" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask,
+                      instance ? "    tide_scratch_reset(tide_mark);\n" : "");
+        else
+            sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n}\n\n",
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
     }
 }
 

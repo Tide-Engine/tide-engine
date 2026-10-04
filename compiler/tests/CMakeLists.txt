@@ -67,6 +67,7 @@ tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(shaders) # frag and vert: what a Draw.Mesh through them records
+tide_e2e_test(instancing) # Draw.Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)
