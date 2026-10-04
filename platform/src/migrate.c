@@ -307,7 +307,7 @@ typedef struct old_world {
     uint32_t *counts;
     const uint8_t **task_rows; // Each table of tasks'
     uint32_t *task_counts;
-    const uint8_t **attached_rows; // Each table of local fields': its entities, then their values
+    const uint8_t **attached_rows; // Each table of local fields': its entities, their values, then what each was born as
     uint32_t *attached_counts;
     const uint8_t *heap;  // Its heap's bytes, the rest of them
     uint32_t heap_size;
@@ -379,7 +379,8 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
     }
     for (uint32_t t = 0; ok && t < fw->attached_count; t++) {
         w->attached_counts[t] = tide_read_u32(&r);
-        const uint64_t bytes = (uint64_t)w->attached_counts[t] * (sizeof(tide_entity) + l->types[fw->attached[t].type].size);
+        const uint64_t bytes = (uint64_t)w->attached_counts[t]
+                             * (sizeof(tide_entity) + l->types[fw->attached[t].type].size + sizeof(uint32_t));
         ok = !r.failed && bytes <= r.size - r.at;
         if (ok) w->attached_rows[t] = tide_read_bytes(&r, (uint32_t)bytes);
     }
@@ -458,7 +459,8 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
     }
     for (uint32_t k = 0; ok && k < tw->attached_count; k++) {
         const int32_t t = old_attached(&c, fw, &tw->attached[k]);
-        size += 4u + (t >= 0 ? (uint64_t)old.attached_counts[t] * (sizeof(tide_entity) + to_layout->types[tw->attached[k].type].size) : 0u);
+        const uint64_t row = sizeof(tide_entity) + to_layout->types[tw->attached[k].type].size + sizeof(uint32_t);
+        size += 4u + (t >= 0 ? old.attached_counts[t] * row : 0u);
     }
     if (tw->heap) size += fw->heap ? old.heap_size : empty_heap;
     uint8_t *to = ok && size <= UINT32_MAX ? calloc(1, (size_t)size) : NULL;
@@ -551,7 +553,8 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         if (tw->frames && fw->frames) memcpy(to + tw->frames, from + fw->frames, sizeof(int32_t));
     }
     // The local fields kept for the match's entities carry over like any value,
-    // by their component's name: the entities as they are, then each one's value
+    // by their component's name: the entities as they are, each one's value,
+    // then what each was born as
     for (uint32_t k = 0; k < tw->attached_count; k++) {
         const int32_t t = old_attached(&c, fw, &tw->attached[k]);
         const uint32_t count = t >= 0 ? old.attached_counts[t] : 0u;
@@ -565,6 +568,7 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         for (uint32_t row = 0; row < count; row++) {
             carry_value(&c, new_type, old_type, take(&w, to_layout->types[new_type].size), values + (size_t)row * old_size);
         }
+        tide_write_bytes(&w, values + (size_t)count * old_size, count * (uint32_t)sizeof(uint32_t));
     }
     if (tw->heap && fw->heap) tide_write_bytes(&w, old.heap, old.heap_size);
     else if (tw->heap) take(&w, empty_heap); // Zeros: an empty heap

@@ -272,6 +272,82 @@ TIDE_TEST(local_fields_outlast_a_wrong_prediction)
     tide_world_free(&verified);
 }
 
+// A replay can put another entity on a handle: a spawn the client predicted,
+// where the server had another in that tick. A row remembers what its entity
+// was born as, so the other one starts from the defaults, and the same spawn
+// again keeps what it had.
+TIDE_TEST(local_fields_tell_entities_on_one_handle_apart)
+{
+    start();
+    frame();
+    tide_world_copy(&verified, &world);
+
+    // The client predicts a box of 7 sides
+    world.Rules.spawn = 7;
+    tide_world_tick(&world);
+    const tide_entity handle = {4, 1};
+    TIDE_REQUIRE(tide_get_Box(&world, handle).sides == 7);
+    const uint32_t seven = tide_entity_born(&world.entities, handle);
+    TIDE_CHECK(seven != 0u && tide_entity_born(&verified.entities, handle) == 0u);
+    frame_on(&local, &world, &verified);
+    frame_on(&local, &world, &verified);
+    TIDE_CHECK(tide_list_count(tide_get_Box_local(&local, handle).verts) == 7 && tide_get_Box_local(&local, handle).age == 2.5f);
+
+    // The server had one of 9 there: the same handle, and another entity
+    verified.Rules.spawn = 9;
+    tide_world_tick(&verified);
+    tide_world_copy(&world, &verified);
+    TIDE_REQUIRE(tide_get_Box(&world, handle).sides == 9);
+    TIDE_CHECK(tide_entity_born(&world.entities, handle) != seven);
+    frame_on(&local, &world, &verified);
+    const Box_local nine = tide_get_Box_local(&local, handle);
+    TIDE_CHECK(local.Stats.forgotten == 1 && local.Stats.lastBakes == 107); // The 7's went, and Forgotten heard
+    TIDE_CHECK(tide_entity_equal(local.Stats.last, handle));
+    TIDE_CHECK(nine.bakes == 1 && tide_list_count(nine.verts) == 9 && nine.age == 1.5f); // From the defaults
+    TIDE_CHECK(tide_get_Box_local(&local, BOX4).bakes == 1 && tide_get_Box_local(&local, BOX4).age == 4.5f); // The others' stay
+
+    // A spawn the server has as the client predicted it is the same entity
+    world.Rules.spawn = 6;
+    tide_world_tick(&world);
+    const tide_entity next = {5, 1};
+    TIDE_REQUIRE(tide_get_Box(&world, next).sides == 6);
+    const uint32_t six = tide_entity_born(&world.entities, next);
+    frame_on(&local, &world, &verified);
+    verified.Rules.spawn = 6;
+    tide_world_tick(&verified);
+    tide_world_copy(&world, &verified);
+    TIDE_CHECK(tide_entity_born(&world.entities, next) == six && six != 0u);
+    frame_on(&local, &world, &verified);
+    TIDE_CHECK(tide_get_Box_local(&local, next).bakes == 1 && tide_get_Box_local(&local, next).age == 2.5f);
+    TIDE_CHECK(local.Stats.forgotten == 1);
+
+    // The same values a tick later are another spawn
+    tide_world_copy(&base, &world);
+    world.Rules.spawn = 8;
+    tide_world_tick(&world);
+    const uint32_t eight = tide_entity_born(&world.entities, (tide_entity){6, 1});
+    tide_world_tick(&base);
+    base.Rules.spawn = 8;
+    tide_world_tick(&base);
+    TIDE_REQUIRE(tide_get_Box(&base, (tide_entity){6, 1}).sides == 8);
+    TIDE_CHECK(eight != 0u && tide_entity_born(&base.entities, (tide_entity){6, 1}) != eight);
+
+    // A world that came as bytes says nothing of what its entities were born
+    // as: there they're known by their handles, and what's kept stays
+    const uint32_t size = tide_world_pack(&verified, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    tide_world_pack(&verified, bytes, size);
+    TIDE_REQUIRE(tide_world_unpack(&base, bytes, size));
+    free(bytes);
+    TIDE_CHECK(tide_world_hash(&base) == tide_world_hash(&verified));
+    TIDE_CHECK(tide_entity_born(&base.entities, next) == 0u && tide_entity_born(&base.entities, handle) == 0u);
+    tide_world_tick(&base);
+    frame_on(&local, &base, &base);
+    TIDE_CHECK(local.Stats.forgotten == 1 && local.tide_fields_Box.rows.count == 5);
+    TIDE_CHECK(tide_get_Box_local(&local, next).bakes == 1 && tide_get_Box_local(&local, handle).bakes == 1);
+    tide_world_free(&verified);
+}
+
 // Every machine has them, whenever it learned of the entity, each from the
 // defaults: nothing of one machine's reaches another.
 TIDE_TEST(local_fields_start_at_their_defaults_on_every_machine)

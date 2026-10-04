@@ -803,6 +803,20 @@ TIDE_TEST(migrate_carries_local_fields_by_name)
     tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
     TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 1 && local_text_is(copy, tide_get_Unit_local(copy, first).seen, "1 times"));
 
+    // What each row's entity was born as carries over with it: the entity it
+    // was kept for still has it, and another on its handle gets none of it
+    const uint32_t born = tide_entity_born(&w->entities, first);
+    TIDE_REQUIRE(born != 0u);
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    tide_world_tick(w);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 4);
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    tide_entity_set_born(&w->entities, first, born == 7u ? 8u : 7u); // As a replay that spawned something else there would
+    tide_world_tick(w);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 1);
+
     free(unit_fields);
     free(types);
     tide_world_free(w);

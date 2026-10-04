@@ -758,6 +758,18 @@ static bool has_fields_ptr(const param *p)
     return p->local_use && local_part_of(p->type) != NULL;
 }
 
+// Whether the match's entities remember what they were spawned as
+// (tide_entity_set_born): some component has local fields, which are kept by
+// the entity's handle, and a rollback can give a handle to another entity.
+// Other games' spawns pay nothing for it.
+static bool entities_born(const program *prog)
+{
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        if (prog->local_parts.items[i]->kind == DECL_COMPONENT) return true;
+    }
+    return false;
+}
+
 // "tide_fields_Box": the local world's table of a component's local fields.
 static const char *fields_table(const decl *part)
 {
@@ -5560,7 +5572,7 @@ static void gen_local_fields(gen *g)
     for (int i = 0; i < prog->local_parts.count; i++) {
         const decl *part = prog->local_parts.items[i];
         if (part->kind != DECL_COMPONENT) continue;
-        if (!any) sb_put(o, "// The local fields of the match's components, a table each (tide/attached.h): the entity, then its value\n\n");
+        if (!any) sb_put(o, "// The local fields of the match's components, a table each (tide/attached.h): the entity, its value, and what it was born as\n\n");
         any = true;
         const char *type = type_cname(part);
         const char *table = fields_table(part);
@@ -5570,8 +5582,9 @@ static void gen_local_fields(gen *g)
         const int size = decl_layout(part).size;
         int shift = 4;
         while ((16384 >> (shift + 1)) >= (size > 8 ? size : 8)) shift++;
-        sb_printf(o, "static const uint32_t tide_sizes_fields_%s[] = {sizeof(tide_entity), sizeof(%s)};\n", part->part_of->gen_name, type);
-        sb_printf(o, "static const tide_columns tide_columns_fields_%s = {2, %d, tide_sizes_fields_%s};\n\n", part->part_of->gen_name, shift,
+        sb_printf(o, "static const uint32_t tide_sizes_fields_%s[] = {sizeof(tide_entity), sizeof(%s), sizeof(uint32_t)};\n",
+                  part->part_of->gen_name, type);
+        sb_printf(o, "static const tide_columns tide_columns_fields_%s = {3, %d, tide_sizes_fields_%s};\n\n", part->part_of->gen_name, shift,
                   part->part_of->gen_name);
 
         // For hosts: the defaults, with nothing borrowed
@@ -5586,9 +5599,9 @@ static void gen_local_fields(gen *g)
         if (paths.count) sb_put(o, "    tide_scratch_reset(mark);\n");
         sb_put(o, "}\n\n");
 
-        sb_printf(o, "// A row for an entity that has none, with the defaults, its own\n");
-        sb_printf(o, "TIDE_HELPER uint32_t tide_attach_%s(tide_local *l, const tide_entity e)\n{\n", type);
-        sb_printf(o, "    const uint32_t row = tide_attached_add(&l->%s, %s, e);\n", table, columns);
+        sb_printf(o, "// A row for an entity that has none, born as `born`, with the defaults, its own\n");
+        sb_printf(o, "TIDE_HELPER uint32_t tide_attach_%s(tide_local *l, const tide_entity e, const uint32_t born)\n{\n", type);
+        sb_printf(o, "    const uint32_t row = tide_attached_add(&l->%s, %s, e, born);\n", table, columns);
         if (has_defaults(part)) {
             sb_printf(o, "    %s *v = tide_attached_cell(&l->%s, %s, row);\n", type, table, columns);
             if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
@@ -5607,7 +5620,8 @@ static void gen_local_fields(gen *g)
         sb_printf(o, "    else tide_fresh_%s(&v);\n    return v;\n}\n\n", type);
         sb_printf(o, "void tide_set_%s(tide_local *local, tide_entity e, %s value)\n{\n", type, type);
         sb_printf(o, "    uint32_t row = tide_attached_find(&local->%s, %s, e);\n", table, columns);
-        sb_printf(o, "    if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(&local->%s, %s, e);\n", table, columns);
+        // C has no world to ask what the entity was born as: not known, so it stays the handle's
+        sb_printf(o, "    if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(&local->%s, %s, e, 0u);\n", table, columns);
         sb_printf(o, "    memcpy(tide_attached_cell(&local->%s, %s, row), &value, sizeof value);\n}\n\n", table, columns);
     }
 }
@@ -5902,6 +5916,17 @@ static void gen_apply(gen *g, const bool local)
     const char *spawned = type_cname(prog->spawned);
     const char *destroyed = type_cname(prog->destroyed);
 
+    // What a spawn's entity is born as: a number of the tick and what it's
+    // spawned with (its archetype, its scene and each component's value, which
+    // has no padding; the spawn's struct can). The same spawn in a replay gives
+    // the same; another one, in the same slot, another.
+    const bool born = !local && entities_born(prog);
+    if (born) {
+        sb_put(o, "// What a spawn's entity is born as (tide/entity.h), from the hash of when it's spawned and what with\n");
+        sb_put(o, "TIDE_HELPER uint32_t tide_born(const uint64_t h)\n{\n");
+        sb_put(o, "    const uint32_t born = (uint32_t)tide_hash_end(h);\n    return born ? born : 1u; // 0 is for not known\n}\n\n");
+    }
+
     // Spawn
     // A program may have no spawns at all, leaving `w` unused.
     sb_printf(o, "TIDE_HELPER void %sapply_spawn(%s *w, tide_command *c)\n{\n    (void)w;\n    switch (c->id) {\n", p, world);
@@ -5932,6 +5957,19 @@ static void gen_apply(gen *g, const bool local)
         }
         (void)mask;
         sb_printf(o, "        tide_entity_set_location(&w->entities, c->entity, (tide_location){%d, row});\n", a);
+        if (born) {
+            sb_put(o, "        uint64_t tide_h = tide_hash_more(TIDE_HASH_START, &w->Time.tick, sizeof w->Time.tick);\n");
+            sb_put(o, "        tide_h = tide_hash_more(tide_h, &c->id, sizeof c->id);\n");
+            sb_put(o, "        tide_h = tide_hash_more(tide_h, &c->data.scene, sizeof c->data.scene);\n");
+            for (int i = 0; i < prog->components.count; i++) {
+                if (!arch_stores(g, a, i)) continue;
+                const char *comp = type_cname(prog->components.items[i]);
+                sb_put(o, "        ");
+                if (comp_sparse(g, i)) sb_printf(o, "if (c->data.spawn%d.values.tide_has_%s) ", a, comp);
+                sb_printf(o, "tide_h = tide_hash_more(tide_h, &c->data.spawn%d.values.%s, sizeof(%s));\n", a, comp, comp);
+            }
+            sb_put(o, "        tide_entity_set_born(&w->entities, c->entity, tide_born(tide_h));\n");
+        }
         if (handled_for(prog, prog->spawned, a)) sb_printf(o, "        %sdispatch_%s(w, c->entity, &(%s){0});\n", p, spawned, spawned);
         sb_put(o, "        break;\n    }\n");
     }
@@ -7186,7 +7224,8 @@ static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
     const char *columns = fields_columns(part);
     if (attaches_first(p)) {
         sb_printf(o, "%suint32_t tide_lr%d = tide_attached_find(&tide_l->%s, %s, tide_ent[tide_i]);\n", pad, i, table, columns);
-        sb_printf(o, "%sif (tide_lr%d == TIDE_ATTACHED_NONE) tide_lr%d = tide_attach_%s(tide_l, tide_ent[tide_i]);\n", pad, i, i, type);
+        sb_printf(o, "%sif (tide_lr%d == TIDE_ATTACHED_NONE) tide_lr%d = tide_attach_%s(tide_l, tide_ent[tide_i], "
+                     "tide_entity_born(&tide_w->entities, tide_ent[tide_i]));\n", pad, i, i, type);
         sb_printf(o, "%s%s *tide_lf%d = tide_attached_cell(&tide_l->%s, %s, tide_lr%d);\n", pad, type, i, table, columns, i);
         return;
     }
@@ -7233,9 +7272,9 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
         const decl *part = local_part_of(p->type);
         sb_printf(&g->c, "%sif (tide_lr%d == TIDE_ATTACHED_NONE && memcmp(&tide_ln%d, &tide_fresh%d, sizeof tide_ln%d) != 0) {\n", pad, i,
                   i, i, i);
-        sb_printf(&g->c, "%s    *(%s *)tide_attached_cell(&tide_l->%s, %s, tide_attached_add(&tide_l->%s, %s, tide_ent[tide_i])) = "
-                         "tide_ln%d;\n%s}\n", pad, type_cname(part), fields_table(part), fields_columns(part), fields_table(part),
-                  fields_columns(part), i, pad);
+        sb_printf(&g->c, "%s    *(%s *)tide_attached_cell(&tide_l->%s, %s, tide_attached_add(&tide_l->%s, %s, tide_ent[tide_i], "
+                         "tide_entity_born(&tide_w->entities, tide_ent[tide_i]))) = tide_ln%d;\n%s}\n", pad, type_cname(part),
+                  fields_table(part), fields_columns(part), fields_table(part), fields_columns(part), i, pad);
     }
     for (int i = 0; i < sys->params.count && !read_only; i++) {
         const param *p = &sys->params.items[i];
@@ -7434,12 +7473,14 @@ static void gen_forgotten_calls(gen *g, const decl *part, const char *pad, const
 // What the local state keeps for the match goes with it: the local fields of
 // an entity that's in neither the world views draw nor the last one the server
 // confirmed (so a destroy the client predicted wrong takes nothing with it),
-// or that lost its component in both; and a singleton's, back to their
-// defaults, once there's no match. A match that ended takes all of it
-// (tide_local_disconnected), whatever match this frame sees. Handlers of
-// Forgotten run first, with the fields still there. Entities only come and go
-// with ticks, so a frame that sees the ticks the last one saw has nothing to
-// look for.
+// or that lost its component in both, or whose handle is another entity's in
+// both: a row remembers what its entity was born as (tide_entity_born), and a
+// replay that spawned something else in its slot is no world that has it. And
+// a singleton's, back to their defaults, once there's no match. A match that
+// ended takes all of it (tide_local_disconnected), whatever match this frame
+// sees. Handlers of Forgotten run first, with the fields still there. Entities
+// only come and go with ticks, so a frame that sees the ticks the last one saw
+// has nothing to look for.
 static void gen_forget(gen *g)
 {
     const program *prog = g->prog;
@@ -7466,7 +7507,11 @@ static void gen_forget(gen *g)
         sb_printf(o, "    { // " STR_FMT "\n        tide_attached *a = &l->%s;\n", STR_ARG(part->qualified), fields_table(part));
         sb_put(o, "        for (uint32_t row = a->rows.count; row-- > 0;) {\n");
         sb_printf(o, "            const tide_entity e = tide_attached_entity(a, %s, row);\n", columns);
-        sb_printf(o, "            if (!all && ((w && tide_has_%s(w, e)) || (verified && tide_has_%s(verified, e)))) continue;\n", of, of);
+        sb_printf(o, "            const uint32_t born = tide_attached_born(a, %s, row);\n", columns);
+        sb_printf(o, "            if (!all && ((w && tide_has_%s(w, e) && tide_born_same(born, tide_entity_born(&w->entities, e)))\n", of);
+        sb_printf(o, "                         || (verified && tide_has_%s(verified, e)\n"
+                     "                             && tide_born_same(born, tide_entity_born(&verified->entities, e))))) {\n"
+                     "                continue;\n            }\n", of);
         sb_printf(o, "            %s *v = tide_attached_cell(a, %s, row);\n            (void)v;\n", type, columns);
         gen_forgotten_calls(g, part, "            ", "e", "v");
         if (decl_has_text(part)) sb_printf(o, "            tide_release_%s(v, TIDE_IN_LOCAL);\n", type);

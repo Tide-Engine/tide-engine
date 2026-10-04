@@ -1,7 +1,8 @@
 // Local fields in a match on a network, where clients predict: what a wrong
 // prediction does to them. A shield one player raises decides whether a target
-// is destroyed and whether another comes, so a client that hasn't heard of the
-// shield yet predicts both wrong, until the server says how the ticks went.
+// is destroyed, whether another comes, and which one comes later, so a client
+// that hasn't heard of the shield yet predicts all three wrong, until the
+// server says how the ticks went.
 
 component Target
 {
@@ -25,6 +26,7 @@ singleton Plan
 {
     int arrivesAt = 150; // A target comes then, unless a shield is up
     int arrived;
+    int swapsAt = 240;   // One comes then either way: which, the shield says
 }
 
 input Controls
@@ -63,9 +65,15 @@ system Expire(Target target, Guard guard, Time time)
 
 system Arrive(mut Plan plan, Guard guard, Time time)
 {
-    if (time.tick != plan.arrivesAt || guard.up) return;
-    Spawn(Target { id = 3 });
-    plan.arrived += 1;
+    if (time.tick == plan.arrivesAt && !guard.up)
+    {
+        Spawn(Target { id = 3 });
+        plan.arrived += 1;
+    }
+    // The same handle either way, and another entity
+    if (time.tick != plan.swapsAt) return;
+    if (guard.up) Spawn(Target { id = 5 });
+    else Spawn(Target { id = 4 });
 }
 
 local singleton Seen

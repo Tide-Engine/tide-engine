@@ -20,6 +20,15 @@
 // other threads: like the heap's (see tide/heap.h), the table of pages is read
 // as a whole, and when it grows, the old one stays until
 // tide_entities_settle, once only one thread runs.
+//
+// Beside its slots, a table can remember what each entity was spawned as
+// (tide_entity_set_born): a number of what it was spawned with and when, for
+// this machine to tell apart two entities a rollback gave the same handle (a
+// spawn the client predicted, which the server ordered otherwise). It's beside
+// the world, not in it: snapshots share it as they share the slots, but it's
+// never hashed, packed or sent, so the world is the same with it or without.
+// Only what's spawned on this machine has one, and a table nothing set one in
+// keeps none.
 
 // Slots in each page: 1 << this.
 #define TIDE_ENTITY_PAGE_SHIFT 10u
@@ -50,7 +59,10 @@ typedef struct tide_entities {
     uint32_t free_head;   // The last slot freed plus one, or 0: free slots are reused last freed first, so in a deterministic order
     uint32_t pages;       // Pages of slots it has
     uint32_t room;        // Pages `page` has room for
-    tide_page **page;     // Before the first, page[-1] holds the table this one replaced, until it's settled
+    // Before the first, page[-1] holds the table this one replaced, until it's
+    // settled. After its `room` pages of slots come as many of what their
+    // entities were born as: page[room + p] for page p, or NULL for none.
+    tide_page **page;
 } tide_entities;
 
 tide_entity tide_entity_create(tide_entities *t);
@@ -81,6 +93,27 @@ void tide_entity_snap(tide_entities *t, tide_entity e);
 // Its snap count, or 0 if it isn't alive.
 uint32_t tide_entity_snaps(const tide_entities *t, tide_entity e);
 
+// What an entity was spawned as: a number of what it was spawned with and
+// when, which generated code sets as it applies the spawn, on the thread that
+// applies a tick's changes. Never 0.
+void tide_entity_set_born(tide_entities *t, tide_entity e, uint32_t born);
+
+// What it was spawned as, or 0 when that isn't known: it isn't alive, or it
+// came with a world another machine sent rather than a spawn this one ran.
+// Read where nothing changes the table: between ticks.
+static inline uint32_t tide_entity_born(const tide_entities *t, const tide_entity e)
+{
+    if (!tide_entity_alive(t, e)) return 0u;
+    const tide_page *page = t->page[t->room + (e.index >> TIDE_ENTITY_PAGE_SHIFT)];
+    return page ? ((const uint32_t *)tide_page_data(page))[e.index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)] : 0u;
+}
+
+// Whether two of those can be one entity's: the same, or one isn't known.
+static inline bool tide_born_same(const uint32_t a, const uint32_t b)
+{
+    return a == b || a == 0u || b == 0u;
+}
+
 // Archetype is TIDE_ARCHETYPE_NONE for dead entities and for pending spawns.
 static inline tide_location tide_entity_location(const tide_entities *t, const tide_entity e)
 {
@@ -93,9 +126,9 @@ static inline tide_location tide_entity_location(const tide_entities *t, const t
 // slot is free.
 tide_entity tide_entity_in_slot(const tide_entities *t, uint32_t index);
 
-// For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h).
-// The hash covers what's in use, the same for the same entities however the
-// table got there.
+// For snapshots: `to` becomes `from`, sharing its pages (see tide/page.h),
+// those of what its entities were born as too. The hash covers what's in use
+// of the slots, the same for the same entities however the table got there.
 void tide_entities_copy(tide_entities *to, const tide_entities *from);
 uint64_t tide_entities_hash(uint64_t h, const tide_entities *t);
 
@@ -108,7 +141,8 @@ void tide_entities_settle(tide_entities *t);
 
 // The table as bytes, for sending a world and carrying it over: what
 // tide_entities_pack writes, and reading it back into an empty table (false
-// when the bytes aren't a table).
+// when the bytes aren't a table). What its entities were born as isn't in
+// them: a table read back knows none.
 uint32_t tide_entities_packed_size(const tide_entities *t);
 void tide_entities_pack(const tide_entities *t, tide_writer *w);
 bool tide_entities_unpack(tide_entities *t, tide_reader *r);

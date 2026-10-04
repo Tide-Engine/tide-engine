@@ -7,6 +7,7 @@
 
 #define SLOTS (1u << TIDE_ENTITY_PAGE_SHIFT)
 #define PAGE_BYTES (SLOTS * (uint32_t)sizeof(tide_entity_slot))
+#define BORN_BYTES (SLOTS * (uint32_t)sizeof(uint32_t))
 
 // Read as one, since the system making entities may be growing the table or
 // copying a page meanwhile.
@@ -42,9 +43,15 @@ static void make_room(tide_entities *t, const uint32_t pages)
     if (pages <= t->room) return;
     uint32_t room = t->room ? t->room : 4u;
     while (room < pages) room *= 2u;
-    tide_page **base = tide_alloc((room + 1u) * sizeof *base);
+    // The slots' pages, then as many places for the pages of what their
+    // entities were born as (tide_entity_set_born), none until one is set
+    tide_page **base = tide_alloc((2u * (size_t)room + 1u) * sizeof *base);
     tide_page **grown = base + 1;
-    if (t->pages) memcpy(grown, t->page, t->pages * sizeof *grown);
+    memset(grown + room, 0, room * sizeof *grown);
+    if (t->pages) {
+        memcpy(grown, t->page, t->pages * sizeof *grown);
+        memcpy(grown + room, t->page + t->room, t->pages * sizeof *grown);
+    }
     base[0] = t->page ? (tide_page *)(void *)(t->page - 1) : NULL;
     __atomic_store_n(&t->page, grown, __ATOMIC_RELEASE);
     t->room = room;
@@ -125,15 +132,33 @@ uint32_t tide_entity_snaps(const tide_entities *t, const tide_entity e)
     return tide_entity_alive(t, e) ? slot_of(t, e.index)->snaps : 0u;
 }
 
+void tide_entity_set_born(tide_entities *t, const tide_entity e, const uint32_t born)
+{
+    if (!tide_entity_alive(t, e)) return;
+    tide_page **page = &t->page[t->room + (e.index >> TIDE_ENTITY_PAGE_SHIFT)];
+    *page = *page ? tide_page_own(*page, 1, BORN_BYTES) : tide_page_new(BORN_BYTES); // Its snapshots keep theirs
+    ((uint32_t *)tide_page_data(*page))[e.index & (SLOTS - 1u)] = born;
+}
+
 void tide_entities_copy(tide_entities *to, const tide_entities *from)
 {
     if (to == from) return;
     // Its pages first, then letting go of to's: they can be the same ones.
-    for (uint32_t i = 0; i < from->pages; i++) tide_page_retain(from->page[i]);
-    for (uint32_t i = 0; i < to->pages; i++) tide_page_release(to->page[i], 1);
+    for (uint32_t i = 0; i < from->pages; i++) {
+        tide_page_retain(from->page[i]);
+        if (from->page[from->room + i]) tide_page_retain(from->page[from->room + i]);
+    }
+    for (uint32_t i = 0; i < to->pages; i++) {
+        tide_page_release(to->page[i], 1);
+        tide_page_release(to->page[to->room + i], 1);
+    }
     make_room(to, from->pages);
     tide_entities_settle(to); // Snapshots are taken while nothing else runs on it
-    if (from->pages) memcpy(to->page, from->page, from->pages * sizeof *to->page);
+    if (to->room) memset(to->page + to->room, 0, to->room * sizeof *to->page);
+    if (from->pages) {
+        memcpy(to->page, from->page, from->pages * sizeof *to->page);
+        memcpy(to->page + to->room, from->page + from->room, from->pages * sizeof *to->page);
+    }
     to->pages = from->pages;
     to->next_unused = from->next_unused;
     to->free_head = from->free_head;
@@ -152,7 +177,10 @@ uint64_t tide_entities_hash(uint64_t h, const tide_entities *t)
 
 void tide_entities_free(tide_entities *t)
 {
-    for (uint32_t i = 0; i < t->pages; i++) tide_page_release(t->page[i], 1);
+    for (uint32_t i = 0; i < t->pages; i++) {
+        tide_page_release(t->page[i], 1);
+        tide_page_release(t->page[t->room + i], 1);
+    }
     tide_entities_settle(t);
     if (t->page) free(t->page - 1);
     memset(t, 0, sizeof *t);
