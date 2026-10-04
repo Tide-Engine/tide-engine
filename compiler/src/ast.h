@@ -97,6 +97,7 @@ typedef enum type_kind {
     TY_VOID,
     TY_BOOL,
     TY_INT,
+    TY_LONG,       // long: a 64-bit int. An int converts to it implicitly; floats convert both ways only explicitly
     TY_INT2,
     TY_INT3,
     TY_INT4,
@@ -500,6 +501,7 @@ struct expr {
     // E_INT, E_FLOAT. int_value is a case label's value too, worked out by the checker.
     str text;
     int64_t int_value;
+    bool is_long; // E_INT: a long literal (an L suffix, or a value past int's range)
 
     // E_BOOL
     bool bool_value;

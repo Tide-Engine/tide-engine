@@ -124,8 +124,9 @@ static const tide_layout old_layout = {
 
 // ---------------------------------------------------------------------------
 // The new build: enum Kind : byte { C, A }, without B. Ball's fields moved, hits
-// is a float, gone an int2, and extra is new; Tag is gone. Rules has a new field
-// and speed is a float. The input has jump. Its archetypes: Arena; Ball.
+// is a float, gone an int2, and extra is new; Tag is gone. Rules has a new field,
+// lives is a long and speed is a float. The input has jump. Its archetypes:
+// Arena; Ball.
 
 enum { NEW_C, NEW_A };
 
@@ -144,7 +145,7 @@ typedef struct new_arena {
 
 typedef struct new_rules {
     int32_t added;
-    int32_t lives;
+    int64_t lives; // A long now: the int converts
     float speed;
 } new_rules;
 
@@ -190,7 +191,7 @@ static const tide_layout_field new_ball_fields[] = {
 static const tide_layout_field new_arena_fields[] = {FIELD(new_arena, size, "int", TIDE_LAYOUT_INT, 1, -1)};
 static const tide_layout_field new_rules_fields[] = {
     FIELD(new_rules, added, "int", TIDE_LAYOUT_INT, 1, -1),
-    FIELD(new_rules, lives, "int", TIDE_LAYOUT_INT, 1, -1),
+    FIELD(new_rules, lives, "long", TIDE_LAYOUT_LONG, 1, -1),
     FIELD(new_rules, speed, "float", TIDE_LAYOUT_FLOAT, 1, -1),
 };
 static const tide_layout_field new_in_fields[] = {

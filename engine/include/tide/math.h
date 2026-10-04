@@ -179,8 +179,29 @@ static inline int32_t tide_max_i(const int32_t a, const int32_t b) { return a > 
 static inline int32_t tide_clamp_i(const int32_t x, const int32_t lo, const int32_t hi) { return tide_max_i(lo, tide_min_i(hi, x)); }
 
 // ---------------------------------------------------------------------------
+// Scalars: long (int64_t), the same way; shift counts use their low 6 bits.
+
+static inline int64_t tide_add_l(const int64_t a, const int64_t b) { return (int64_t)((uint64_t)a + (uint64_t)b); }
+static inline int64_t tide_sub_l(const int64_t a, const int64_t b) { return (int64_t)((uint64_t)a - (uint64_t)b); }
+static inline int64_t tide_mul_l(const int64_t a, const int64_t b) { return (int64_t)((uint64_t)a * (uint64_t)b); }
+static inline int64_t tide_neg_l(const int64_t a) { return (int64_t)(0ull - (uint64_t)a); }
+static inline int64_t tide_div_l(const int64_t a, const int64_t b) { return b == 0 ? 0 : b == -1 ? tide_neg_l(a) : a / b; }
+static inline int64_t tide_mod_l(const int64_t a, const int64_t b) { return b == 0 || b == -1 ? 0 : a % b; }
+static inline int64_t tide_shl_l(const int64_t a, const int32_t n) { return (int64_t)((uint64_t)a << (n & 63)); }
+static inline int64_t tide_shr_l(const int64_t a, const int32_t n) { return a < 0 ? ~(~a >> (n & 63)) : a >> (n & 63); }
+
+static inline int64_t tide_abs_l(const int64_t x) { return x < 0 ? tide_neg_l(x) : x; }
+static inline int64_t tide_sign_l(const int64_t x) { return (x > 0) - (x < 0); }
+static inline int64_t tide_min_l(const int64_t a, const int64_t b) { return a < b ? a : b; }
+static inline int64_t tide_max_l(const int64_t a, const int64_t b) { return a > b ? a : b; }
+static inline int64_t tide_clamp_l(const int64_t x, const int64_t lo, const int64_t hi) { return tide_max_l(lo, tide_min_l(hi, x)); }
+
+// ---------------------------------------------------------------------------
 // Conversions. float -> int truncates toward zero, saturates at the int range
-// and maps NaN to 0, so no input is undefined behavior.
+// and maps NaN to 0, so no input is undefined behavior; float -> long the
+// same. int -> long is exact, long -> int keeps the low 32 bits (as C#'s
+// unchecked cast does), and long -> float rounds to the nearest, which IEEE
+// 754 defines, so it's the same bits everywhere.
 
 static inline float tide_f_from_i(const int32_t x) { return (float)x; }
 
@@ -191,6 +212,18 @@ static inline int32_t tide_i_from_f(const float x)
     if (x <= -2147483648.0f) return INT32_MIN;
     return (int32_t)x;
 }
+
+static inline float tide_f_from_l(const int64_t x) { return (float)x; }
+
+static inline int64_t tide_l_from_f(const float x)
+{
+    if (x != x) return 0;
+    if (x >= 9223372036854775808.0f) return INT64_MAX;
+    if (x <= -9223372036854775808.0f) return INT64_MIN;
+    return (int64_t)x;
+}
+
+static inline int32_t tide_i_from_l(const int64_t x) { return (int32_t)(uint32_t)(uint64_t)x; }
 
 // ---------------------------------------------------------------------------
 // Vectors: construction and component-wise operations
@@ -356,6 +389,14 @@ static inline int32_t tide_xxh_end(uint32_t h)
 }
 
 static inline int32_t tide_hash_i(const int32_t x) { return tide_xxh_end(tide_xxh_word(TIDE_XXH_P5 + 4u, x)); }
+
+// A long's 8 bytes, low word first: what xxHash32 gives for them as bytes.
+static inline int32_t tide_hash_l(const int64_t x)
+{
+    const int32_t lo = (int32_t)(uint32_t)((uint64_t)x & 0xFFFFFFFFu);
+    const int32_t hi = (int32_t)(uint32_t)((uint64_t)x >> 32);
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(TIDE_XXH_P5 + 8u, lo), hi));
+}
 
 static inline int32_t tide_hash_i2(const tide_int2 v)
 {

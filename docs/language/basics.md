@@ -18,6 +18,7 @@ The editors' formatter lays code out this way (see [Editors](../guide/editors.md
 |---|---|
 | `bool` | `true` or `false` |
 | `int` | A 32-bit integer |
+| `long` | A 64-bit integer, for what outgrows an `int`: scores, money, tick counts over months |
 | `float` | A 32-bit float. There's no `double`. |
 | `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
 | `quaternion`, `float2x2`, `float3x3`, `float4x4` | Rotations and matrices (see [Math](./math.md)) |
@@ -38,9 +39,10 @@ Everything is a value: assigning copies it, and nothing is shared, text and list
 ### Numbers
 
 - `1.5` is a `float`, and the `f` suffix is optional. An `int` converts to `float` by itself, never the other way: `int(x)` truncates toward zero.
+- An `int` converts to `long` by itself too, and the two mix: `total + 1` is a `long` when `total` is. A `long` and a `float` don't: write `float(x)` or `long(x)` to say which way the value goes, and `int(x)` to cut a `long` down to its low 32 bits. `5L` is a `long` literal, and so is any integer literal past the `int` range.
 - Integers can be written in decimal (`255`), hex (`0xFF`) or binary (`0b1010`), and `_` separates digits: `1_000_000`.
 - Integer arithmetic wraps on overflow, and dividing by zero gives 0. No input can crash the simulation.
-- Bitwise operators `& | ^ ~ << >>` work on `int`, as in C#.
+- Bitwise operators `& | ^ ~ << >>` work on `int` and `long`, as in C#.
 
 ## Variables
 
@@ -201,7 +203,7 @@ system Advance(mut Match match)
 - Members are always written with their enum: `Phase.Playing`.
 - `==` and `!=` compare two values of the same enum, and `int(phase)` gives a member's value. There's no way from an int to an enum yet.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
-- `switch` works on ints and enums. A case is an int, an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
+- `switch` works on ints, longs and enums. A case is an int (or a long, for a long), an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
 
 ## Comments and attributes
 

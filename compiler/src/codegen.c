@@ -788,6 +788,7 @@ static const char *routine_cname(const decl *m)
 }
 
 static void gen_as(gen *g, sb *o, expr *e, type want);
+static void gen_long_literal(sb *o, int64_t v);
 static void gen_value_of(gen *g, sb *o, expr *e, type want);
 
 // A struct's operator applied to `l` and `r` (NULL for one operand).
@@ -886,6 +887,18 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
             sb_printf(o, "-%lld.0f", (long long)e->lhs->int_value);
         } else {
             sb_put(o, "(float)(");
+            gen_expr(g, o, e);
+            sb_put(o, ")");
+        }
+        return;
+    }
+    if (want.kind == TY_LONG && have.kind == TY_INT) { // An int widens to a long
+        if (e->kind == E_INT) {
+            gen_long_literal(o, e->int_value);
+        } else if (e->kind == E_UNARY && e->op == T_MINUS && e->lhs->kind == E_INT && e->lhs->int_value >= 0) {
+            gen_long_literal(o, -e->lhs->int_value);
+        } else {
+            sb_put(o, "(int64_t)(");
             gen_expr(g, o, e);
             sb_put(o, ")");
         }
@@ -993,6 +1006,7 @@ static void gen_default(gen *g, sb *o, const type t)
     switch (t.kind) {
     case TY_BOOL: sb_put(o, "false"); return;
     case TY_INT: sb_put(o, "0"); return;
+    case TY_LONG: sb_put(o, "0LL"); return;
     case TY_FLOAT: sb_put(o, "0.0f"); return;
     case TY_ENUM: sb_printf(o, "((%s)0)", c_type(t)); return;
     case TY_STRING: sb_put(o, "TIDE_STR_EMPTY"); return;
@@ -1061,6 +1075,29 @@ static const char *int_op_helper(const tok_kind op)
     case T_SHR: return "tide_shr_i";
     default: return NULL; // & | ^ are well defined in C as they are.
     }
+}
+
+// The same for longs: tide_add_l and the rest.
+static const char *long_op_helper(const tok_kind op)
+{
+    switch (op) {
+    case T_PLUS: return "tide_add_l";
+    case T_MINUS: return "tide_sub_l";
+    case T_STAR: return "tide_mul_l";
+    case T_SLASH: return "tide_div_l";
+    case T_PERCENT: return "tide_mod_l";
+    case T_SHL: return "tide_shl_l";
+    case T_SHR: return "tide_shr_l";
+    default: return NULL;
+    }
+}
+
+// A long as a C literal: with the suffix, and the lowest one as C can write it.
+static void gen_long_literal(sb *o, const int64_t v)
+{
+    if (v == INT64_MIN) sb_put(o, "(-9223372036854775807LL - 1)");
+    else if (v < 0) sb_printf(o, "(%lldLL)", (long long)v);
+    else sb_printf(o, "%lldLL", (long long)v);
 }
 
 static const char *c_op(const tok_kind op)
@@ -1194,7 +1231,7 @@ static bool in_window(const gen *g, const expr *index);
 
 static bool scalar_kind(const type t)
 {
-    return t.kind == TY_BOOL || t.kind == TY_INT || t.kind == TY_FLOAT || t.kind == TY_ENUM;
+    return t.kind == TY_BOOL || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT || t.kind == TY_ENUM;
 }
 
 // Whether working `e` out costs little and can do nothing but give its value:
@@ -1310,6 +1347,25 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         sb_put(o, ")");
         return;
     }
+    // Longs: ints among the operands widen, but a shift's count stays an int.
+    if (result.kind == TY_LONG && long_op_helper(op)) {
+        sb_printf(o, "%s(", long_op_helper(op));
+        gen_as(g, o, l, result);
+        sb_put(o, ", ");
+        if (op == T_SHL || op == T_SHR) gen_expr(g, o, r);
+        else gen_as(g, o, r, result);
+        sb_put(o, ")");
+        return;
+    }
+    if (lt.kind == TY_LONG || rt.kind == TY_LONG) { // & | ^ and comparisons: C widens the int side
+        const type long_t = {TY_LONG, NULL};
+        sb_put(o, "(");
+        gen_as(g, o, l, long_t);
+        sb_printf(o, " %s ", c_op(op));
+        gen_as(g, o, r, long_t);
+        sb_put(o, ")");
+        return;
+    }
 
     // && and || whose right side is cheap and does nothing but give a value:
     // both sides, with no branch, which the CPU can't guess wrong and a loop
@@ -1342,10 +1398,22 @@ static void gen_construct(gen *g, sb *o, const expr *e)
 
     switch (e->ctor) {
     case CTOR_SCALAR:
-        if (t.kind == TY_FLOAT) {
+        if (t.kind == TY_FLOAT && first->type.kind == TY_LONG) {
+            sb_put(o, "tide_f_from_l(");
+            gen_expr(g, o, first);
+            sb_put(o, ")");
+        } else if (t.kind == TY_FLOAT) {
             gen_as(g, o, first, t);
-        } else if (first->type.kind == TY_FLOAT) {
-            sb_put(o, "tide_i_from_f(");
+        } else if (first->type.kind == TY_FLOAT) { // int(x) truncates and saturates, and so does long(x)
+            sb_printf(o, "tide_%s_from_f(", type_suffix(t));
+            gen_expr(g, o, first);
+            sb_put(o, ")");
+        } else if (t.kind == TY_INT && first->type.kind == TY_LONG) {
+            sb_put(o, "tide_i_from_l(");
+            gen_expr(g, o, first);
+            sb_put(o, ")");
+        } else if (t.kind == TY_LONG && first->type.kind != TY_LONG) { // An int, or an enum's member
+            sb_put(o, "(int64_t)(");
             gen_expr(g, o, first);
             sb_put(o, ")");
         } else {
@@ -1615,6 +1683,7 @@ static void gen_text_add_c(gen *g, sb *o, const char *so_far, const type t, cons
     case TY_LIST: sb_printf(o, "tide_text_list%d(%s, %s)", t.decl->index, so_far, v); return;
     case TY_STRING: sb_printf(o, "tide_str_add(%s, %s)", so_far, v); return;
     case TY_INT: sb_printf(o, "tide_str_add_int(%s, %s, %s)", so_far, v, f); return;
+    case TY_LONG: sb_printf(o, "tide_str_add_long(%s, %s, %s)", so_far, v, f); return;
     case TY_FLOAT: sb_printf(o, "tide_str_add_float(%s, %s, %s)", so_far, v, f); return;
     case TY_BOOL: sb_printf(o, "tide_str_add_bool(%s, %s)", so_far, v); return;
     case TY_ENUM: sb_printf(o, "tide_text_%s(%s, %s)", type_cname(t.decl), so_far, v); return;
@@ -1874,7 +1943,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     switch (e->kind) {
     case E_INT:
         // Hex and binary literals can be negative (0xFFFFFFFF is -1).
-        if (e->int_value == INT32_MIN) sb_put(o, "(-2147483647 - 1)");
+        if (e->is_long) gen_long_literal(o, e->int_value);
+        else if (e->int_value == INT32_MIN) sb_put(o, "(-2147483647 - 1)");
         else if (e->int_value < 0) sb_printf(o, "(%lld)", (long long)e->int_value);
         else sb_printf(o, "%lld", (long long)e->int_value);
         break;
@@ -2101,8 +2171,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "(-");
             gen_expr(g, o, e->lhs);
             sb_put(o, ")");
-        } else if (e->type.kind == TY_INT) {
-            sb_put(o, "tide_neg_i(");
+        } else if (e->type.kind == TY_INT || e->type.kind == TY_LONG) {
+            sb_printf(o, "tide_neg_%s(", type_suffix(e->type));
             gen_expr(g, o, e->lhs);
             sb_put(o, ")");
         } else {
@@ -3387,6 +3457,7 @@ static void gen_stmt(gen *g, const stmt *s)
                 sb_put(o, "case ");
                 if (member) sb_put(o, enum_member_cname(label->type.decl, member));
                 else if (label->kind == E_INT) gen_expr(g, o, label);
+                else if (s->cond->type.kind == TY_LONG) gen_long_literal(o, label->int_value);
                 else if (label->int_value == INT32_MIN) sb_put(o, "(-2147483647 - 1)");
                 else sb_printf(o, "%lld", (long long)label->int_value);
                 sb_put(o, ":\n");
@@ -3954,6 +4025,7 @@ static layout type_layout(const type t)
     if (t.kind == TY_BOOL) return (layout){1, 1};
     if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) return decl_layout(t.decl);
     if (t.kind == TY_RECORD) return (layout){(int)sizeof(tide_devices), 4}; // The input's devices
+    if (t.kind == TY_LONG) return (layout){8, 8};
     if (type_dim(t) > 0) return (layout){4 * type_dim(t), 4};
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
     switch (t.kind) {
@@ -4438,7 +4510,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const char *vc = elem_vtype(e);
         const bool text = type_has_text(e);
         const char *owner = e.kind == TY_STRUCT && text ? type_cname(e.decl) : NULL;
-        const bool compares = e.kind == TY_INT || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
+        const bool compares = e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
                            || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
@@ -7657,6 +7729,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
     case TY_LIST: sb_printf(o, "        printf(\"List(%%d)\", (int)tide_list_count(%s));\n", access); return;
     case TY_BOOL: sb_printf(o, "        printf(\"%%s\", %s ? \"true\" : \"false\");\n", access); return;
     case TY_INT: sb_printf(o, "        printf(\"%%d\", (int)%s);\n", access); return;
+    case TY_LONG: sb_printf(o, "        printf(\"%%lld\", (long long)%s);\n", access); return;
     case TY_FLOAT: sb_printf(o, "        printf(\"%%g\", (double)%s);\n", access); return;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
@@ -8041,6 +8114,11 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         varint = true;
         put = "tide_zigzag(%s)";
         get = "tide_unzigzag(tide_bits_get_varint(&b))";
+    } else if (t.kind == TY_LONG) { // The same, in 64 bits: up to 10 groups of 7
+        varint = true;
+        width = 64;
+        put = "tide_zigzag64(%s)";
+        get = "tide_unzigzag64(tide_bits_get_varint64(&b))";
     } else if (t.kind == TY_PLAYER || t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY) {
         varint = true;
         put = "%s"; // Their uint32_t parts, below
@@ -8048,28 +8126,32 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     }
     const bool delta = mode == BITS_WRITE_DELTA || mode == BITS_READ_DELTA;
     // Bits it can take, with whether it changed and, for a float, which way it went
-    const uint32_t most = (varint ? 40u : (uint32_t)width) + (delta ? 1u : 0u) + (delta && t.kind == TY_FLOAT ? 1u : 0u);
+    const uint32_t most = (varint ? (width == 64 ? 80u : 40u) : (uint32_t)width) + (delta ? 1u : 0u)
+                        + (delta && t.kind == TY_FLOAT ? 1u : 0u);
     if (t.kind == TY_BOOL) {
         if (mode == BITS_WRITE) line(g, o, "tide_bits_put_bool(&b, in->%s);", at);
         else if (mode == BITS_READ) line(g, o, "in->%s = tide_bits_get_bool(&b);", at);
         else if (mode == BITS_WRITE_DELTA) line(g, o, "tide_bits_put_bool(&b, in->%s != base->%s);", at, at);
         else line(g, o, "in->%s = base->%s != tide_bits_get_bool(&b);", at, at);
         *bits += 1;
-    } else if (t.kind == TY_FLOAT || t.kind == TY_INT || t.kind == TY_ENUM) {
+    } else if (t.kind == TY_FLOAT || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM) {
         char now[600];
         char was[600];
+        const bool wide = t.kind == TY_LONG;
         snprintf(inner, sizeof inner, "in->%s", at);
         snprintf(now, sizeof now, put, inner);
         snprintf(inner, sizeof inner, "base->%s", at);
         snprintf(was, sizeof was, put, inner);
         if (mode == BITS_WRITE && varint) {
-            line(g, o, "tide_bits_put_varint(&b, %s);", now);
+            line(g, o, "tide_bits_put_varint%s(&b, %s);", wide ? "64" : "", now);
         } else if (mode == BITS_WRITE) {
             line(g, o, "tide_bits_put(&b, %s, %d);", now, width);
         } else if (mode == BITS_READ) {
             line(g, o, "in->%s = %s;", at, get);
         } else if (mode == BITS_WRITE_DELTA && t.kind == TY_FLOAT) {
             line(g, o, "tide_bits_put_changed_xor(&b, %s, %s);", now, was);
+        } else if (mode == BITS_WRITE_DELTA && wide) {
+            line(g, o, "tide_bits_put_changed_difference64(&b, (uint64_t)in->%s, (uint64_t)base->%s);", at, at);
         } else if (mode == BITS_WRITE_DELTA && varint) {
             line(g, o, "tide_bits_put_changed_difference(&b, (uint32_t)in->%s, (uint32_t)base->%s);", at, at);
         } else if (mode == BITS_WRITE_DELTA) { // Whether it changed, then its narrower value if it did
@@ -8077,6 +8159,9 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
             line(g, o, "if (%s != %s) tide_bits_put(&b, %s, %d);", now, was, now, width);
         } else if (t.kind == TY_FLOAT) {
             line(g, o, "in->%s = tide_bits_get_bool(&b) ? tide_f32_from_bits(tide_bits_get_xor(&b, %s)) : base->%s;", at, was, at);
+        } else if (wide) {
+            line(g, o, "in->%s = tide_bits_get_bool(&b) ? (int64_t)tide_bits_get_difference64(&b, (uint64_t)base->%s) : base->%s;",
+                 at, at, at);
         } else if (varint) {
             line(g, o, "in->%s = tide_bits_get_bool(&b) ? (int32_t)tide_bits_get_difference(&b, (uint32_t)base->%s) : base->%s;",
                  at, at, at);
@@ -8625,6 +8710,7 @@ static const char *layout_kind(const type t)
 {
     if (t.kind == TY_STRUCT) return "TIDE_LAYOUT_STRUCT";
     if (t.kind == TY_ENUM) return "TIDE_LAYOUT_ENUM";
+    if (t.kind == TY_LONG) return "TIDE_LAYOUT_LONG";
     if (type_dim(t) > 0) return type_is_float_based(t) ? "TIDE_LAYOUT_FLOAT" : "TIDE_LAYOUT_INT";
     return "TIDE_LAYOUT_PLAIN";
 }
@@ -8759,7 +8845,7 @@ static void gen_layout(gen *g)
             const int ref = t.kind == TY_STRUCT ? layout_index(&types, t.decl)
                           : t.kind == TY_ENUM   ? layout_index(&enums, t.decl)
                                                 : -1;
-            const int dim = type_dim(t) > 0 ? type_dim(t) : 0;
+            const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
             sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s)},\n",
                       STR_ARG(f->name), layout_name(t), layout_kind(t), dim, ref, name, field_cname(f), name,
                       field_cname(f));

@@ -65,6 +65,7 @@ void tide_scratch_free(void);
 tide_str tide_str_add(tide_str a, tide_str b);
 tide_str tide_str_add_cstr(tide_str a, const char *s);
 tide_str tide_str_add_int(tide_str a, int32_t v, int32_t format);
+tide_str tide_str_add_long(tide_str a, int64_t v, int32_t format);
 tide_str tide_str_add_float(tide_str a, float v, int32_t format);
 tide_str tide_str_add_bool(tide_str a, bool v);
 tide_str tide_str_add_entity(tide_str a, tide_entity e, bool local);

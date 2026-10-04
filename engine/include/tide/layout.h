@@ -14,8 +14,9 @@
 // How a field carries over to a field of the same name.
 typedef enum tide_layout_kind {
     TIDE_LAYOUT_PLAIN,  // As it is, to a field of the same type
-    TIDE_LAYOUT_INT,    // int and int vectors (`dim` numbers): also to floats, as ints convert
+    TIDE_LAYOUT_INT,    // int and int vectors (`dim` numbers): also to floats and longs, as ints convert
     TIDE_LAYOUT_FLOAT,  // float and float vectors
+    TIDE_LAYOUT_LONG,   // long (`dim` 1): also to floats
     TIDE_LAYOUT_ENUM,   // An enum's member (`decl`), by its name
     TIDE_LAYOUT_STRUCT, // Another type (`decl`), field by field
 } tide_layout_kind;
@@ -24,7 +25,7 @@ typedef struct tide_layout_field {
     const char *name;
     const char *type; // Its type's name
     uint32_t kind;    // tide_layout_kind
-    uint32_t dim;     // TIDE_LAYOUT_INT and TIDE_LAYOUT_FLOAT: how many numbers
+    uint32_t dim;     // TIDE_LAYOUT_INT, TIDE_LAYOUT_FLOAT and TIDE_LAYOUT_LONG: how many numbers
     int32_t decl;     // TIDE_LAYOUT_STRUCT: a type; TIDE_LAYOUT_ENUM: an enum
     uint32_t offset;
     uint32_t size;

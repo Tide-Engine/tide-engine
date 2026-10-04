@@ -1,4 +1,4 @@
-// expect: switch works on ints and enums, not bool
+// expect: switch works on ints, longs and enums, not bool
 singleton Match { bool on; int n; }
 scene Main { }
 system S(mut Match match)

@@ -244,6 +244,9 @@ static void build_signatures(void)
                  "from cells, indices and seeds, like `Math.Hash(int3(x, y, seed)) % 6`. It's xxHash32 of the "
                  "value's bytes, without the top bit.");
     }
+    describe(add("Math", "Hash", (type){TY_INT, NULL}, "tide_hash_l", 1, (type){TY_LONG, NULL}, T_NONE, T_NONE), "value",
+             "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: xxHash32 of the "
+             "long's 8 bytes, without the top bit.");
 
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
@@ -529,6 +532,21 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
     return true;
 }
 
+// Whether the arguments are ints and longs, with a long among them: then the
+// call is the long version, and the ints widen.
+static bool unify_long(const expr *e, type *out)
+{
+    bool any_long = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->kind == E_DEFAULT) continue;
+        const type t = e->args.items[i]->type;
+        if (!type_is_integer(t)) return false;
+        any_long |= t.kind == TY_LONG;
+    }
+    *out = (type){TY_LONG, NULL};
+    return any_long;
+}
+
 static void arg_list(const expr *e, char *buf, const size_t size)
 {
     size_t len = 0;
@@ -655,6 +673,11 @@ type resolve_builtin_call(const str owner, expr *e)
                 return (type){TY_ERROR, NULL};
             }
             type target;
+            if (componentwise[i].ints && unify_long(e, &target)) { // Longs, with ints: the long version
+                for (int a = 0; a < e->args.count; a++) vec_push(e->arg_want, target);
+                e->c_callee = c_function(componentwise[i].name, target);
+                return target;
+            }
             if (!unify(e, componentwise[i].ints, &target)) {
                 char args[256];
                 arg_list(e, args, sizeof args);

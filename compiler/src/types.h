@@ -17,8 +17,11 @@ int type_dim(type t);
 bool type_is_float_based(type t);
 bool type_is_int_based(type t);
 
-// int or float (dim 1) and their vectors (dim 2-4).
+// int or float (dim 1) and their vectors (dim 2-4). Not long, which has no vectors.
 bool type_is_numeric(type t);
+
+// int or long.
+bool type_is_integer(type t);
 
 // 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
 int matrix_dim(type t);

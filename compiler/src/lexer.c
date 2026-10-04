@@ -141,6 +141,7 @@ static tok_kind lex_number(lexer *lx)
         if (hex || binary) {
             lx->p += 2;
             lex_digits(lx, hex ? 16 : 2, true);
+            if (lx->p < lx->end && (*lx->p == 'L' || *lx->p == 'l')) lx->p++; // A long
             return T_INT;
         }
     }
@@ -166,6 +167,8 @@ static tok_kind lex_number(lexer *lx)
     if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
         is_float = true;
         lx->p++;
+    } else if (!is_float && lx->p < lx->end && (*lx->p == 'L' || *lx->p == 'l')) {
+        lx->p++; // A long: 5L
     }
     return is_float ? T_FLOAT : T_INT;
 }
