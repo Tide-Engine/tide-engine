@@ -124,6 +124,7 @@ typedef struct tide_game {
     const char *title;   // title: the window's, unless the host says
     bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
+    bool stats;          // stats: the host shows its stats overlay, though nothing else asked it to
     // maxPlayers: how many players its matches take, up to TIDE_PLAYERS_MOST;
     // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
     // server's after them, so it's part of the game's layout: its hash differs.
