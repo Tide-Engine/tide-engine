@@ -8,6 +8,11 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 
+void WindowMark(tide_draw_list *commands)
+{
+    tide_draw_clear(commands, TIDE_COLOR_GREEN);
+}
+
 TIDE_TEST(render_targets_phase_order_and_explicit_sources)
 {
     tide_world_init(&world, 1.0f);
@@ -16,9 +21,15 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
     local.Buffers.scratch = (tide_render_target){.id = 12, .width = 8, .height = 6};
     static const uint8_t pixels[4] = {255, 127, 0, 255};
     local.Buffers.image = (tide_texture_ref){.image = {.pixels = pixels, .width = 1, .height = 1, .version = 1}};
+    tide_devices devices = {0};
+    tide_gui_begin(&gui, &devices, tide_f2(200, 100), NULL);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    TIDE_CHECK(local.Buffers.targetThenWindow.x == 200 && local.Buffers.targetThenWindow.y == -25);
+    TIDE_CHECK(local.Buffers.windowThenTarget.x == 158 && local.Buffers.windowThenTarget.y == -69);
+    TIDE_CHECK(local.Buffers.projected3.x == 8 && local.Buffers.projected3.y == 6);
+    TIDE_CHECK(local.Buffers.projected3.z > 0 && local.Buffers.projected3.z < 1);
 
-    uint32_t destination = 0, objects = 0, blits = 0;
+    uint32_t destination = 0, objects = 0, blits = 0, cubes = 0, marked = 0;
     bool prepared = false;
     for (uint32_t i = 0; i < draw.count; i++) {
         const tide_draw_command *c = &draw.commands[i];
@@ -26,6 +37,12 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
             destination = c->target ? (uint32_t)draw.targets[c->target - 1u].id : 0;
         } else if (c->kind == TIDE_DRAW_CLEAR && destination == 11) {
             prepared = true;
+        } else if (c->kind == TIDE_DRAW_CLEAR && c->color.g == 1 && c->color.r == 0) {
+            TIDE_CHECK(destination == 0);
+            marked++;
+        } else if (c->kind == TIDE_DRAW_MESH_3D) {
+            TIDE_CHECK(destination == 11);
+            cubes++;
         } else if (c->kind == TIDE_DRAW_RECT && destination == 11) {
             TIDE_CHECK(prepared && blits == 0);
             objects++;
@@ -42,6 +59,7 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
         }
     }
     TIDE_CHECK(blits == 4 && objects == 2 && destination == 0);
+    TIDE_CHECK(cubes == 1 && marked == 1);
     TIDE_CHECK(draw.commands[draw.count - 1u].kind == TIDE_DRAW_CLEAR);
     tide_local_free(&local);
     tide_draw_free(&draw);

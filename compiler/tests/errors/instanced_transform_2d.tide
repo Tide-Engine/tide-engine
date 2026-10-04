@@ -8,5 +8,5 @@ local singleton Mesh
 }
 view DrawBatch(Mesh mesh)
 {
-    Draw.Instanced(mesh.vertices, mesh.indices, mesh.transforms);
+    Draw2D.Instanced(mesh.vertices, mesh.indices, mesh.transforms);
 }

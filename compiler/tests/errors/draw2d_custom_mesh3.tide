@@ -1,0 +1,5 @@
+// expect: Draw2D.Mesh draws 2D vertices, and 'Corner' has a float3 position
+struct Corner { float3 position; }
+frag Shade(Corner vertex, mut Color color) { color = Color(vertex.position.x, 0, 0); }
+scene Main { }
+view Show() { Draw2D.Mesh([Corner { }], [0, 0, 0], float4x4.identity, Shade); }

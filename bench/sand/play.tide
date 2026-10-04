@@ -22,7 +22,7 @@ const float TOP = 100; // Pixels along the top for the GUI
 // row of cells goes as runs of one material, a rect each.
 view DrawField(Field field, mut Canvas canvas)
 {
-    Draw.Clear(Shade(Material.Empty));
+    Draw2D.Clear(Shade(Material.Empty));
     if (!field.ready) return;
     var size = field.size;
     var screen = float2(float(Screen.width), float(Screen.height));
@@ -31,9 +31,9 @@ view DrawField(Field field, mut Canvas canvas)
     canvas.scale = scale;
     canvas.size = size;
     // The camera's middle is the window's, so the field's lands on canvas.middle
-    Draw.Camera(float2(size, size) * 0.5 + (screen * 0.5 - canvas.middle) / scale, screen.y * 0.5 / scale);
+    Draw2D.Camera(float2(size, size) * 0.5 + (screen * 0.5 - canvas.middle) / scale, screen.y * 0.5 / scale);
 
-    Draw.Rect(float2(size, size) * 0.5, float2(size, size), Color(0.1, 0.1, 0.14));
+    Draw2D.Rect(float2(size, size) * 0.5, float2(size, size), Color(0.1, 0.1, 0.14));
     for (var y = 0; y < size; y++)
     {
         mut var x = 0;
@@ -42,7 +42,7 @@ view DrawField(Field field, mut Canvas canvas)
             var material = field.cells[x, y];
             mut var end = x + 1;
             while (end < size && field.cells[end, y] == material) end++;
-            if (material != Material.Empty) Draw.Rect(float2((x + end) * 0.5, y + 0.5), float2(end - x, 1), Shade(material));
+            if (material != Material.Empty) Draw2D.Rect(float2((x + end) * 0.5, y + 0.5), float2(end - x, 1), Shade(material));
             x = end;
         }
     }
@@ -55,7 +55,7 @@ view DrawBrush(Canvas canvas)
     var cell = (Devices.pointer.position - canvas.middle) / canvas.scale + float2(canvas.size, canvas.size) * 0.5;
     if (cell.x < 0 || cell.y < 0 || cell.x >= canvas.size || cell.y >= canvas.size) return;
     var at = float2(Math.Floor(cell.x), Math.Floor(cell.y)) + 0.5;
-    Draw.WireCircle(at, BRUSH + 0.5, canvas.material == Material.Empty ? Color.white : Shade(canvas.material));
+    Draw2D.WireCircle(at, BRUSH + 0.5, canvas.material == Material.Empty ? Color.white : Shade(canvas.material));
 }
 
 // A button for a material, which shows whether it's the one picked.

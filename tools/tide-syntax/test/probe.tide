@@ -102,11 +102,11 @@ view Show(Devices devices)
     float4x4 world = default;
     float2x3 wrong = default;
     int2x2 alsoWrong = default;
-    Draw.Rect(0, 0, 1, 1, Color.white);
+    Draw2D.Rect(0, 0, 1, 1, Color.white);
     Vertex corner = default;
-    Draw.Mesh([corner], [0, 0, 0], cells, Filter.Point);
+    Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
     Vertex3 corner3 = default;
-    DrawUI(Draw.list);
+    DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     if (!Cursor.locked) Cursor.Lock();
 }
@@ -191,5 +191,6 @@ float Blend(float frag, float vert)
 }
 view Boxes(with Box, Models models)
 {
-    Draw.Mesh(models.crate, models.faces, Wave, Shade);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
+    Draw3D.Cube(float3(0, 0, 5), float3(1), Color.red);
 }

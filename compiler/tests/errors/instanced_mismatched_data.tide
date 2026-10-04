@@ -14,5 +14,5 @@ frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
 }
 view DrawBatch(Mesh mesh)
 {
-    Draw.Instanced(mesh.vertices, mesh.indices, mesh.instances, Tint);
+    Draw3D.Instanced(mesh.vertices, mesh.indices, mesh.instances, Tint);
 }

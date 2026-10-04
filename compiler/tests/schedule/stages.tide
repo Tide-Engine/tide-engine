@@ -22,10 +22,10 @@ system Early(mut A a) { a.n += 1; }
 system Alongside(mut E e) { e.n += 1; }
 
 [Stage(Phases.Last)]
-view FinalView() { Draw.Clear(Color.white); }
+view FinalView() { Draw2D.Clear(Color.white); }
 
 [Stage(Phases.First)]
-view FirstView() { Draw.Clear(Color.black); }
+view FirstView() { Draw2D.Clear(Color.black); }
 
 [After(Phases.First), Before(Phases.Last)]
 event(Spawned) MiddleHandler(with Main) { }

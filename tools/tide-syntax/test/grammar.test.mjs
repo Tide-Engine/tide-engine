@@ -175,10 +175,10 @@ const cases = {
         ['float4x4 world', [['float4x4', 'storage.type.primitive']]],
         ['float2x3 wrong', [['float2x3', '!storage.type.primitive']]],
         ['int2x2 alsoWrong', [['int2x2', '!storage.type.primitive']]],
-        ['Draw.Rect(', [['Draw', 'support.class'], ['Rect', '!storage.type'], ['Rect', 'entity.name.function.call'], ['Color', 'storage.type.primitive']]],
+        ['Draw2D.Rect(', [['Draw2D', 'support.class'], ['Rect', '!storage.type'], ['Rect', 'entity.name.function.call'], ['Color', 'storage.type.primitive']]],
         ['Vertex corner', [['Vertex', 'support.class']]],
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
-        ['Draw.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
@@ -263,7 +263,8 @@ const cases = {
         ['return vert * both;', [['return', 'keyword.control'], ['vert', '!storage']]],
         ['color = box.wood.Sample(', [['Sample', 'entity.name.function.call'], ['Sample', '!keyword']]],
         ['if (pixel.position.x < 10) pixel.Discard();', [['Discard', 'entity.name.function.call']]],
-        ['Draw.Mesh(models.crate', [['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
+        ['Draw3D.Mesh(models.crate', [['Draw3D', 'support.class'], ['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
+        ['Draw3D.Cube(', [['Draw3D', 'support.class'], ['Cube', 'entity.name.function.call']]],
     ],
 };
 

@@ -3,4 +3,4 @@ component Body { float2 position; }
 scene Main { }
 
 event(Spawned) Setup(with Main) { Spawn(Body, Owner { player = PlayerID(0) }); }
-view Show(Body body, with Ownership) { Draw.Circle(body.position, 1, Color.white); }
+view Show(Body body, with Ownership) { Draw2D.Circle(body.position, 1, Color.white); }

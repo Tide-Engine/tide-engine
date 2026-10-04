@@ -1,0 +1,52 @@
+local singleton Probe
+{
+    bool sameList;
+    float2 screen2;
+    float2 world2;
+    float2 overlay;
+    float3 screen3;
+    float3 world3;
+    float3 rayOrigin;
+    float3 rayDirection;
+}
+
+struct Corner2 { float2 position; }
+struct Corner3 { float3 position; }
+
+frag Shade2(Corner2 vertex, mut Color color) { color = Color(vertex.position.x, 0, 0); }
+frag Shade3(Corner3 vertex, mut Color color) { color = Color(vertex.position.x, 0, 0); }
+
+scene Main { }
+
+extern bool SameList(DrawList a, DrawList b);
+float2 Project2(float2 position) { return Draw2D.WorldToScreen(position); }
+float3 Project3(float3 position) { return Draw3D.WorldToScreen(position); }
+
+view Show(mut Probe probe)
+{
+    probe.sameList = SameList(Draw2D.list, Draw3D.list);
+    Draw2D.Clear(Color.black);
+    Draw2D.Camera(float2(2, 3), 5);
+    probe.screen2 = Project2(float2(2, 3));
+    probe.world2 = Draw2D.ScreenToWorld(probe.screen2);
+    Draw2D.Mesh([], []);
+    Draw2D.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
+    Draw2D.Screen();
+    probe.overlay = Draw2D.WorldToScreen(float2(12, 34));
+
+    Draw3D.Clear(Color.black);
+    Draw3D.Camera(float3(0, 0, -5), quaternion.identity, 60);
+    probe.screen3 = Project3(float3(0, 0, 5));
+    probe.world3 = Draw3D.ScreenToWorld(probe.screen3);
+    probe.rayOrigin = Draw3D.ScreenRayOrigin(probe.screen3.xy);
+    probe.rayDirection = Draw3D.ScreenRayDirection(probe.screen3.xy);
+    Draw3D.Mesh([], [], float4x4.identity);
+    Draw3D.Mesh([Corner3 { position = float3(1, 0, 5) }], [0, 0, 0], float4x4.identity, Shade3);
+    Draw3D.Cube(float3(0, 0, 5), float3(2), Color.red);
+    Draw3D.Cube(float3(2, 0, 5), float3(2), quaternion.identity, Color.green);
+    Draw3D.Sphere(float3(4, 0, 5), 1, Color.blue);
+    Draw3D.Cylinder(float3(6, 0, 5), 1, 2, Color.yellow);
+    Draw3D.Cylinder(float3(8, 0, 5), 1, 2, quaternion.identity, Color.yellow);
+    Draw3D.Plane(float3(10, 0, 5), float2(2), Color.white);
+    Draw3D.Plane(float3(12, 0, 5), float2(2), quaternion.identity, Color.white);
+}
