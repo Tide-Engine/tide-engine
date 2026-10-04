@@ -42,6 +42,7 @@ tide_e2e_test(structs)
 tide_e2e_test(methods)
 tide_e2e_test(operators)
 tide_e2e_test(events)
+tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
 tide_e2e_test(local)
 # `local` fields of the match's components and singletons: this machine's, outside the match
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
@@ -64,6 +65,18 @@ tide_e2e_test(lists)
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
+tide_e2e_test(parallel_work) # Unknown nested loop work must still select the worker pool
+# These share the same behavioral check, with a different nested-loop form.
+foreach(variant IN ITEMS condition step block constant)
+    set(target tidec_e2e_parallel_work_${variant})
+    tide_add_game(${target} SOURCES e2e/parallel_work_${variant}.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/parallel_work_test.c")
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    if(variant STREQUAL "constant")
+        target_compile_definitions(${target} PRIVATE EXPECTED_ROUNDS=0u EXPECTED_TOTAL=45)
+    endif()
+    add_test(NAME ${target} COMMAND ${target})
+endforeach()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates

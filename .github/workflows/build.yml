@@ -227,6 +227,8 @@ jobs:
       # when it can't.
       - name: Try the package (C++)
         run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
+      - name: Try the package (incremental builds)
+        run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
       # Its app and bundle made to ship, checked with Google's tools: apksigner,
       # Java's JAR signatures, and bundletool (pinned), which Play runs on what
       # it's given. Then the APKs bundletool makes of the bundle, signed with

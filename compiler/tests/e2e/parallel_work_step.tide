@@ -1,0 +1,28 @@
+scene Main { }
+singleton Pairs { List<int2> values; int count; bool ready; }
+
+system Setup(mut Pairs pairs)
+{
+    if (pairs.ready) return;
+    pairs.ready = true;
+    for (var i = 0; i < pairs.count; i++) pairs.values.Add(int2(i, 0));
+}
+
+system Accumulate(mut Pairs pairs)
+{
+    var n = pairs.values.count;
+    parallel (var i in pairs.values)
+    {
+        var item = pairs.values[i];
+        mut var total = 0;
+        mut var at = 0;
+        // The step belongs to another variable; the body leaves once that
+        // variable has visited every item.
+        for (var done = 0; done < 10; at++)
+        {
+            total += pairs.values[at].x;
+            if (at + 1 == n) break;
+        }
+        pairs.values[i] = int2(item.x, total);
+    }
+}
