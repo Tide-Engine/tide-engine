@@ -216,6 +216,9 @@ typedef struct param {
     bool written; // The body assigns through it
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
+    bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
+    bool whole;          // ...or reads it as a value, all its fields at once
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
     // A match component or singleton with local fields (its type's local_part):
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
@@ -290,7 +293,16 @@ typedef enum decl_kind {
     DECL_RESULT,   // T? or `T fails E`, one per combination: field 0 is the value, field 1 the error; in program.results
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
+    DECL_SHADER,   // frag Shade(...) { ... } and vert Wave(...) { ... }: code the GPU runs for a mesh's pixels or vertices
 } decl_kind;
+
+// A grid a frag or vert samples: a field of one of its parameters, and how.
+typedef struct shader_sample {
+    int param;
+    int field;
+    bool local;   // The field is one of its type's local fields (its local_part's)
+    bool blended; // Filter.Bilinear, or the nearest cell
+} shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
 typedef struct enum_member {
@@ -425,6 +437,12 @@ typedef struct decl {
     VEC(struct decl *) alongside; // Systems it can run at the same time as: the first few
     int alongside_count;          // ...and how many there are
     int stage;                    // 1 + the deepest stage it waits for; 0 before the analysis
+
+    // Frags and verts (DECL_SHADER), and the functions they call
+    bool is_frag;                 // A frag; else a vert
+    VEC(shader_sample) samples;   // The grids it samples, once each
+    int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
+    VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its Draw.Mesh calls read, which it doesn't take itself
 } decl;
 
 // ---------------------------------------------------------------------------
@@ -490,6 +508,7 @@ typedef enum builtin_call {
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
+    CALL_DISCARD,   // pixel.Discard(), in a frag: the pixel isn't drawn
 } builtin_call;
 
 // What a GUI call needs besides its arguments (expr.gui).
@@ -525,6 +544,7 @@ typedef enum binding_kind {
     BIND_NAMESPACE, // `Combat` in Combat.Health
     BIND_DEVICES,   // `Devices`: this machine's devices, in views and the input's Sample
     BIND_CONST,     // A constant, MAX_HEALTH or Combat.MAX_HEALTH: `constant` is it
+    BIND_SHADER,    // A frag or vert named at Draw.Mesh: `type_decl` is it
 } binding_kind;
 
 typedef enum input_edge {
@@ -589,6 +609,9 @@ struct expr {
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
+    struct decl *vert;    // Draw.Mesh: the vert and the frag it names, or NULL
+    struct decl *frag;
+    struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
     loc type_arg_at;      // ...its last part, if it's qualified
     loc type_arg_qual_at; // ...and where it starts
@@ -718,6 +741,54 @@ struct stmt {
 // ---------------------------------------------------------------------------
 // Program
 
+// Something a shader reads that a draw supplies: a field of a component, one
+// for each instance, or of a singleton, one for each draw. Its floats and ints
+// are words of the instance's or the uniforms' float4s and int4s.
+typedef struct shader_value {
+    const struct decl *source; // The component or singleton; NULL for the transform Draw.Mesh was given
+    const field *field;
+    bool per_instance;
+    int floats, ints;       // Words it takes of each
+    int float_at, int_at;   // ...and where they start
+    bool vert_reads, frag_reads;
+    int frag_float_at, frag_int_at; // An instance's that the frag reads: where it is among what the vertex stage passes on
+} shader_value;
+
+typedef struct shader_texture {
+    const struct decl *source;
+    const field *field;
+    bool blended;
+} shader_texture;
+
+// What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
+// for each combination a Draw.Mesh uses (see shader.c). Codegen writes each
+// as a tide_shader (tide/draw.h).
+typedef struct shader {
+    int index;
+    struct decl *vertex; // The mesh's vertex: a struct
+    struct decl *vert;   // NULL: the vertices as they are
+    struct decl *frag;   // NULL: the vertex's color times the texture
+    int dims;            // 2 or 3: its position's
+    bool textured;       // No frag, and a texture given at the draw
+    VEC(shader_value) values;
+    VEC(shader_texture) textures;
+    VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
+    int instance_floats, instance_ints; // Words
+    int uniform_floats, uniform_ints;
+    int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels
+    bool *frag_fields;          // By the vertex's field: whether its pixels read it
+    bool frag_world;            // ...and whether they read where they are in the world
+    const char *name;           // For messages: "Wave and Shade on BoxVertex"
+    const char *glsl_vertex, *glsl_fragment, *wgsl;
+} shader;
+
+// A Draw.Mesh with a vertex struct of the game's, a vert or a frag, and the
+// view (or function) it's in.
+typedef struct mesh_draw {
+    struct expr *call;
+    struct decl *in;
+} mesh_draw;
+
 typedef VEC(comp_mask) mask_list;
 
 // An Add or Remove, and whose entity it changes: the system (or handler, or
@@ -767,6 +838,11 @@ typedef struct program {
     decl *vertex;        // The built-in struct Vertex, a corner of what Draw.Mesh draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *filter;        // The built-in enum Filter, how Draw.Mesh samples its texture
+    decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
+    decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
+    decl *time;          // The built-in singleton Time
+    VEC(mesh_draw) mesh_draws; // Every Draw.Mesh that draws through a shader
+    VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match
     decl *connected;     // Built-in local events: this machine joined a match, and left it
     decl *disconnected;
@@ -899,3 +975,15 @@ bool parse_file(program *prog, const source *src, token *toks, bool recover);
 // declaration. For recovery, which takes a '[' at column 1 as a declaration.
 bool attributes_before_field(const token *toks, int i);
 bool check(program *prog);
+
+// Checks every frag and vert, and the functions they call, for what the GPU
+// runs, and plans the shader each Draw.Mesh draws through (program.shaders):
+// what it reads, how that's laid out, and its GLSL and WGSL (shader.c).
+void plan_shaders(program *prog);
+
+// Whether a shader reads a local field of the match's component or singleton
+// `d`: its draws are handed d's local part too.
+bool shader_reads_local(const shader *sh, const decl *d);
+
+// Every shader's sources as text, for `tidec --shaders`.
+void print_shaders(const program *prog, sb *out);

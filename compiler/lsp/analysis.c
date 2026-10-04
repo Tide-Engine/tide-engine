@@ -419,6 +419,12 @@ static bool is_operator_decl(const decl *d)
     return is_routine(d) && d->is_operator;
 }
 
+// A frag or vert: code the GPU runs, which a Draw.Mesh names.
+static bool is_shader(const decl *d)
+{
+    return d && d->kind == DECL_SHADER;
+}
+
 // How many characters an operator token has: 1 for +, 2 for == and +=, 3 for <<=.
 static int operator_len(const tok_kind kind)
 {
@@ -523,6 +529,10 @@ static void walk_expr(const expr *e)
             o.kind = OCC_CONST;
             o.decl = e->constant;
             break;
+        case BIND_SHADER: // The vert or frag a Draw.Mesh names
+            o.kind = OCC_SYSTEM;
+            o.decl = e->type_decl;
+            break;
         case BIND_NONE:
             // The owner in Math.Dot(...) or quaternion.identity, which the checker doesn't bind.
             if (!builtin_owner(e->name)) return;
@@ -544,6 +554,9 @@ static void walk_expr(const expr *e)
                         .object_type = e->object->type, .write = e == walk_written};
         if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
+            o.decl = e->type_decl;
+        } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw.Mesh(..., Effects.Shade)
+            o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
         } else if (e->enum_member) { // Title in Page.Title
             o.kind = OCC_ENUM_MEMBER;
@@ -616,8 +629,8 @@ static void walk_expr(const expr *e)
             o.c_name = e->c_callee;
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
-                   || e->call == CALL_LIST || e->call == CALL_GRID || e->call == CALL_SNAP) {
-            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), cells.Clear(), this.Snap()
+                   || e->call == CALL_LIST || e->call == CALL_GRID || e->call == CALL_SNAP || e->call == CALL_DISCARD) {
+            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), cells.Clear(), this.Snap(), pixel.Discard()
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -839,7 +852,7 @@ static void index_program(void)
                                      .name = name});
             }
         }
-        if (d->kind == DECL_SYSTEM) {
+        if (d->kind == DECL_SYSTEM || d->kind == DECL_SHADER) {
             add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_SYSTEM, .declaration = true, .decl = d,
                                  .name = d->name});
             walk_params(d);
@@ -1017,13 +1030,14 @@ static bool unused_local(const diagnostic *d)
     return false;
 }
 
-// Whether a warning is about access a system declares and doesn't use: a
-// parameter never used, or mut and never written. Editors fade it out.
+// Whether a warning is about access a system, frag or vert declares and
+// doesn't use: a parameter never used, or mut and never written. Editors fade
+// it out.
 static bool unused_access(const diagnostic *d)
 {
     for (int i = 0; d->severity == DIAG_WARNING && i < A.prog->decls.count; i++) {
         const decl *sys = A.prog->decls.items[i];
-        for (int k = 0; sys->kind == DECL_SYSTEM && k < sys->params.count; k++) {
+        for (int k = 0; (sys->kind == DECL_SYSTEM || is_shader(sys)) && k < sys->params.count; k++) {
             const param *p = &sys->params.items[k];
             if (p->name.len == 0 || (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && p->type.kind != TY_WORLD)) {
                 continue;
@@ -1134,6 +1148,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
     case DECL_SETTINGS: return "settings";
+    case DECL_SHADER: return d->is_frag ? "frag" : "vert";
     case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? "event" : "system";
     }
     return "";
@@ -1265,6 +1280,7 @@ static void format_data_decl(const decl *d, sb *out)
         format_routine(d->methods.items[i], out);
         sb_put(out, ";\n");
     }
+    if (d == A.prog->pixel) sb_put(out, "\n    void Discard();\n"); // Its one method (pixel_calls)
     sb_put(out, "}");
 }
 
@@ -1405,7 +1421,61 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
+    {"Sample", "Sample(float2 uv, Filter filter) -> Color",
+     "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
+     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). The "
+     "grid is a `Grid2<Color>` field of a component or singleton the frag or vert takes, and the filter is written "
+     "there: the GPU is told both before any pixel runs."},
 };
+
+// What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
+// Vertex3 (builtins.c): the checker takes those itself.
+#define MESH_SHADER_DOC                                                                                                \
+    "`vertices` can be a list of a struct of the game's too, one with a `position`: a float2 for a 2D mesh, a float3 " \
+    "for a 3D one. A vert and a frag, named last, run on the GPU for each of the mesh's vertices and pixels: "         \
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`."
+
+static bool is_mesh_draw(const str owner, const str name)
+{
+    return str_eq_c(owner, "Draw") && str_eq_c(name, "Mesh");
+}
+
+// A Pixel's one method, in a frag.
+static const method_form pixel_calls[] = {
+    {"Discard", "Discard()",
+     "Leaves the pixel undrawn, and ends the frag there: what's behind it stays. A statement of its own, in the frag "
+     "itself."},
+};
+
+// What a frag and a vert take beside the game's state: Pixel and Instance.
+static const char *shader_record_doc(const decl *d)
+{
+    if (d && d == A.prog->pixel) {
+        return "A frag's parameter: where its pixel is, on the screen and in the world, and `Discard()`, which leaves "
+               "it undrawn. The GPU says it, so nothing is sent for it.";
+    }
+    if (d && d == A.prog->instance) {
+        return "A frag's or vert's parameter: how the mesh was drawn. Its `transform` is sent to the GPU for each "
+               "instance.";
+    }
+    return NULL;
+}
+
+// What Pixel's and Instance's fields are.
+static const char *shader_field_doc(const decl *d, const str name)
+{
+    if (d && d == A.prog->pixel) {
+        if (str_eq_c(name, "position")) return "Where the pixel is on the screen: its pixels, from the top left.";
+        if (str_eq_c(name, "depth")) {
+            return "How deep the pixel is, as the depth test has it: from 0, the nearest the camera draws, to 1, the farthest.";
+        }
+        if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
+    }
+    if (d && d == A.prog->instance && str_eq_c(name, "transform")) {
+        return "The transform `Draw.Mesh` was given, which places the mesh in the world.";
+    }
+    return NULL;
+}
 
 // An entity's methods, in match code for an Entity and in local code for a LocalEntity.
 static const method_form entity_calls[] = {
@@ -1435,7 +1505,8 @@ static const method_form singleton_calls[] = {
 };
 
 // The built-in methods of what has the type `t`, or NULL: a list's, a grid's,
-// an entity's or a singleton's. Text's are in builtins.c, with Math's.
+// an entity's, a singleton's or a frag's Pixel's. Text's are in builtins.c,
+// with Math's.
 static const method_form *methods_of(const type t, size_t *count)
 {
     const method_form *forms = NULL;
@@ -1448,6 +1519,11 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
     case TY_WORLD: forms = world_calls; *count = sizeof world_calls / sizeof world_calls[0]; break;
+    case TY_RECORD:
+        if (t.decl != A.prog->pixel) break;
+        forms = pixel_calls;
+        *count = sizeof pixel_calls / sizeof pixel_calls[0];
+        break;
     default: break;
     }
     return forms;
@@ -1483,7 +1559,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic ? type_name(t)
+    sb_put(out, generic || t.kind == TY_RECORD ? type_name(t) // Pixel.Discard()
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -1540,6 +1616,147 @@ static void describe_default(const type t, sb *out)
 
 static const decl *decl_of_param(const param *p);
 
+// Whether the checker worked out what a frag or vert reads, which it does
+// once the game has no errors: a game with one plans no shaders.
+static bool shader_planned(const decl *d)
+{
+    return d->gpu_state == 2;
+}
+
+// The fields of its parameter `p` a frag or vert reads, each in backquotes
+// with `prefix` before it, onto the list `out`: the match's, then the local
+// ones of a match component or singleton, which this machine keeps beside
+// them. Grids aren't read: they're sampled (put_samples). Of a frag's vertex,
+// `blended`, ints aren't either: they don't blend across a triangle, so its
+// corners pass none on.
+static void put_reads(const param *p, const char *prefix, const bool blended, sb *out)
+{
+    const decl *t = p->type.decl;
+    for (int k = 0; t && k < t->fields.count; k++) {
+        const field *f = &t->fields.items[k];
+        if (f->hidden || f->type.kind == TY_GRID || !(p->whole || (p->reads && p->reads[k]))) continue;
+        if (blended && type_is_int_based(f->type)) continue;
+        sb_printf(out, "%s`%s" STR_FMT "`", out->len ? ", " : "", prefix, STR_ARG(f->name));
+    }
+    const decl *part = t && p->local_reads ? t->local_part : NULL;
+    for (int k = 0; part && k < part->fields.count; k++) {
+        const field *f = &part->fields.items[k];
+        if (f->type.kind == TY_GRID || !p->local_reads[k]) continue;
+        sb_printf(out, "%s`%s" STR_FMT "`", out->len ? ", " : "", prefix, STR_ARG(f->name));
+    }
+}
+
+// The grids of its parameter `index` a frag or vert samples, likewise.
+static void put_samples(const decl *d, const int index, const char *prefix, sb *out)
+{
+    const decl *t = d->params.items[index].type.decl;
+    for (int i = 0; i < d->samples.count; i++) {
+        const shader_sample *s = &d->samples.items[i];
+        if (s->param != index) continue;
+        const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
+        sb_printf(out, "%s`%s" STR_FMT "`%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
+                  s->blended ? "" : " (`Filter.Point`)");
+    }
+}
+
+// "Box." for a parameter of type Box: what its fields are listed with.
+static const char *type_prefix(const param *p)
+{
+    sb prefix = {0};
+    sb_printf(&prefix, STR_FMT ".", STR_ARG(p->type.decl->name));
+    return prefix.data;
+}
+
+// A frag or vert: when it runs, and what it reads, grouped as the engine
+// sends it to the GPU: components' fields for each instance drawn,
+// singletons' for each draw, grids as textures, and of a frag's vertex, the
+// fields the mesh's corners pass on to its pixels.
+static void describe_shader(const decl *d, sb *out)
+{
+    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw.Mesh(..., "
+                                STR_FMT ")`. What its `mut Color` holds when it ends is the pixel."
+                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.Mesh(..., "
+                                STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
+              STR_ARG(d->name));
+    if (!shader_planned(d)) {
+        sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
+        return;
+    }
+    sb instance = {0};
+    sb draw = {0};
+    sb textures = {0};
+    sb vertex = {0};
+    for (int i = 0; i < d->params.count; i++) {
+        const param *p = &d->params.items[i];
+        if (i == 0) { // A vert has its whole vertex
+            if (d->is_frag) put_reads(p, "", true, &vertex);
+            continue;
+        }
+        const bool component = p->type.kind == TY_COMPONENT;
+        const bool transform = p->type.kind == TY_RECORD && p->type.decl == A.prog->instance;
+        if (!component && !transform && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
+        put_reads(p, type_prefix(p), false, component || transform ? &instance : &draw);
+        put_samples(d, i, type_prefix(p), &textures);
+    }
+    if (!instance.len && !draw.len && !textures.len && !vertex.len) {
+        sb_put(out, "\n\nIt reads nothing the engine sends.");
+        return;
+    }
+    sb_put(out, "\n\nOnly what it reads is sent to the GPU:");
+    if (instance.len) sb_printf(out, "\n- for each instance: %s", instance.data);
+    if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
+    if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
+    if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
+}
+
+// A frag's or vert's parameter: what it is to the GPU, and for a component
+// or singleton, how often it's sent and which of its fields this code reads.
+static void describe_shader_param(const decl *d, const param *p, sb *out)
+{
+    const decl *t = p->type.decl;
+    const int index = (int)(p - d->params.items);
+    const bool planned = shader_planned(d);
+    sb fields = {0};
+    sb grids = {0};
+    if (index == 0 && d->is_frag) {
+        sb_put(out, "\n\nThe vertex, blended across the triangle from its three corners. A frag reads it.");
+        if (planned) put_reads(p, "", true, &fields);
+        if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
+        return;
+    }
+    if (index == 0) {
+        sb_put(out, "\n\nThe vertex the vert runs for, which it changes in place: what it leaves in it is what the "
+                    "triangle is drawn with, and what a frag reads of it, blended.");
+        return;
+    }
+    if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
+        sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts as `Color.white`: it isn't what's on the "
+                    "screen already, which a GPU doesn't let a frag read. When the frag ends, what it holds is blended "
+                    "over what's behind it by its alpha.");
+        return;
+    }
+    if (shader_record_doc(t)) {
+        sb_printf(out, "\n\n%s", shader_record_doc(t));
+        return;
+    }
+    if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) {
+        sb_put(out, "\n\nParameter, read-only.");
+        return;
+    }
+    sb_put(out, p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
+                                               "to the GPU for each instance drawn."
+                                             : "\n\nA singleton, sent to the GPU once for each draw.");
+    if (!planned) {
+        sb_put(out, " Which of its fields this code reads is worked out once the game has no errors.");
+        return;
+    }
+    put_reads(p, "", false, &fields);
+    put_samples(d, index, "", &grids);
+    if (fields.len) sb_printf(out, " Fields this code reads, the only ones sent: %s.", fields.data);
+    if (grids.len) sb_printf(out, " Grids it samples, sent as textures: %s.", grids.data);
+    if (!fields.len && !grids.len) sb_put(out, " This code reads none of its fields, so nothing of it is sent.");
+}
+
 // What code reaches through its World, in a sentence: access to every
 // entity's component.
 static void describe_world(const decl *d, sb *out)
@@ -1578,6 +1795,7 @@ static void describe(const occurrence *o, sb *out)
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
             if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
+            else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
             else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
             else if (o->decl->is_scene) {
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
@@ -1599,6 +1817,10 @@ static void describe(const occurrence *o, sb *out)
     case OCC_SYSTEM:
         format_header(o->decl, &code);
         code_block(out, code.data);
+        if (is_shader(o->decl)) { // Where it's declared, and where a Draw.Mesh names it
+            describe_shader(o->decl, out);
+            break;
+        }
         if (o->decl->is_handler && o->decl->event) {
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
@@ -1651,10 +1873,16 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nField of %s `" STR_FMT "`.", decl_keyword(o->decl), STR_ARG(o->decl->name));
         }
         if (button_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", button_field_doc(o->decl, o->field->name));
+        if (shader_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", shader_field_doc(o->decl, o->field->name));
         break;
-    case OCC_PARAM:
+    case OCC_PARAM: {
         format_param(o->param, &code);
         code_block(out, code.data);
+        const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
+        if (is_shader(of)) {
+            describe_shader_param(of, o->param, out);
+            break;
+        }
         if (o->param->type.kind == TY_WORLD) {
             sb_printf(out, "\n\nThe World: any entity's components by its handle, with `Get<T>(entity)`, `Has<T>(entity)` "
                            "and%s `Set<T>(entity, value)`.", o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
@@ -1668,6 +1896,7 @@ static void describe(const occurrence *o, sb *out)
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
         else sb_put(out, "\n\nParameter, read-only.");
         break;
+    }
     case OCC_LOCAL:
         sb_printf(&code, "%s%s " STR_FMT, o->local->is_mut ? "mut " : "", type_name(o->local->type),
                   STR_ARG(o->local->name));
@@ -1785,6 +2014,7 @@ static void describe(const occurrence *o, sb *out)
             if (doc) *doc = '\0';
             code_block(out, code.data);
             if (doc) sb_printf(out, "\n\n%s", doc + 2);
+            if (is_mesh_draw(o->owner, o->name)) sb_put(out, "\n" MESH_SHADER_DOC);
         }
         break;
     case OCC_METHOD:
@@ -2049,10 +2279,10 @@ void analysis_set_can_create_files(const bool can)
     can_create_files = can;
 }
 
-// Refactoring: moves a type or function into a file of its own, named after
-// it, next to this one. A game is every .tide file in its folder, so the
-// program stays the same. Systems and views stay put: moving one would change
-// the order they run in, which follows the files.
+// Refactoring: moves a type, function, frag or vert into a file of its own,
+// named after it, next to this one. A game is every .tide file in its folder,
+// so the program stays the same. Systems and views stay put: moving one would
+// change the order they run in, which follows the files.
 static void move_to_file_action(const int line, jbuf *out, int *written)
 {
     for (int i = 0; can_create_files && i < A.prog->decls.count; i++) {
@@ -2484,8 +2714,8 @@ void analysis_hover(const int line, const int character, jbuf *out)
 static bool write_c_definition(const occurrence *o, jbuf *out)
 {
     switch (o->kind) {
-    case OCC_TYPE:
-        if (o->decl) return o->decl->kind == DECL_RECORD && cdefs_find(o->decl->c_name, out);
+    case OCC_TYPE: // A device record's; Pixel and Instance are the GPU's, with no C struct
+        if (o->decl) return o->decl->kind == DECL_RECORD && o->decl->c_name && cdefs_find(o->decl->c_name, out);
         return strncmp(type_c_name(o->type), "tide_", 5) == 0
             && cdefs_find(type_c_name(o->type), out);
     case OCC_FUNCTION:
@@ -2505,7 +2735,8 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
                                                                                                     : "math.h",
                                  out);
     case OCC_FIELD:
-        return o->decl && o->decl->kind == DECL_RECORD && cdefs_find_member(o->decl->c_name, str_to_cstr(o->name), out);
+        return o->decl && o->decl->kind == DECL_RECORD && o->decl->c_name
+            && cdefs_find_member(o->decl->c_name, str_to_cstr(o->name), out);
     case OCC_MEMBER: {
         // Real struct members only: x, r, value, c0; not swizzles like xz.
         const type t = o->object_type;
@@ -2747,7 +2978,7 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
                      : NULL;
     if (o && o->kind == OCC_TYPE && o->decl) d = o->decl; // A type: its own declaration
     if (d && !d->builtin) write_location(out, d->at, d->name.len);
-    else if (!(d && d->kind == DECL_RECORD && cdefs_find(d->c_name, out))) jb_put(out, "null"); // Devices, in C
+    else if (!(d && d->kind == DECL_RECORD && d->c_name && cdefs_find(d->c_name, out))) jb_put(out, "null"); // Devices, in C
 }
 
 // An event's handlers, and the input's Sample and Sanitize: the code that
@@ -2784,12 +3015,14 @@ void analysis_implementation(const int line, const int character, jbuf *out)
 }
 
 // ---------------------------------------------------------------------------
-// Call hierarchy: who calls the game's functions and methods, and what they call
+// Call hierarchy: who calls the game's functions and methods, and what they
+// call. A view that names a frag or vert at Draw.Mesh calls it, as far as the
+// hierarchy goes: the GPU runs it for what the view draws.
 
 static bool block_contains(const stmt *block, loc at);
 
-// Code that calls: a system, view or handler, a function or method, or the
-// input's Sample or Sanitize, whose `body` holds the calls.
+// Code that calls: a system, view or handler, a function or method, a frag or
+// vert, or the input's Sample or Sanitize, whose `body` holds the calls.
 typedef struct caller {
     const decl *decl;
     const stmt *body;
@@ -2811,7 +3044,7 @@ static caller caller_at(const loc at)
         if (d->kind == DECL_INPUT && block_contains(d->sanitize, at)) {
             return (caller){d, d->sanitize, str_from("Sanitize"), d->sanitize_at};
         }
-        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION) && block_contains(d->body, at)) {
+        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || is_shader(d)) && block_contains(d->body, at)) {
             return (caller){d, d->body, d->name, d->at};
         }
     }
@@ -2824,7 +3057,7 @@ static void write_call_item(jbuf *out, const caller *c)
     const decl *d = c->decl;
     sb detail = {0};
     if (is_routine(d)) format_routine(d, &detail);
-    else if (d->kind == DECL_SYSTEM) format_header(d, &detail);
+    else if (d->kind == DECL_SYSTEM || is_shader(d)) format_header(d, &detail);
     else sb_printf(&detail, "input " STR_FMT, STR_ARG(d->name));
     const int kind = d->kind == DECL_METHOD || d->kind == DECL_INPUT ? SYMBOL_METHOD : SYMBOL_FUNCTION;
     const loc end = c->body ? c->body->end : d->end;
@@ -2842,7 +3075,8 @@ static void write_call_item(jbuf *out, const caller *c)
 }
 
 // The code named at the cursor, which the call hierarchy is about: a function
-// or method where it's declared or called, or a system where it's declared.
+// or method where it's declared or called, a system where it's declared, or a
+// frag or vert where it's declared or a Draw.Mesh names it.
 static caller hierarchy_target(const int line, const int character)
 {
     const occurrence *o = occurrence_at(from_lsp(line, character));
@@ -2871,9 +3105,11 @@ void analysis_prepare_call_hierarchy(const int line, const int character, jbuf *
     jb_put(out, "]");
 }
 
-// A call of a game's function or method, by name or by operator.
+// A call of a game's function or method, by name or by operator, or a frag's
+// or vert's name at a Draw.Mesh.
 static bool is_call(const occurrence *o)
 {
+    if (o->kind == OCC_SYSTEM) return !o->declaration && is_shader(o->decl);
     return (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && !o->declaration && is_routine(o->decl);
 }
 
@@ -3024,7 +3260,7 @@ static void selection_spans(const loc at, span_list *spans)
         const decl *d = A.prog->decls.items[i];
         if (d->builtin || d->at.file != at.file) continue;
         const int before = spans->count;
-        select_decl(d, d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION ? d->body : NULL, at, spans);
+        select_decl(d, d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || is_shader(d) ? d->body : NULL, at, spans);
         if (spans->count == before) continue;
         for (int k = 0; k < d->methods.count; k++) {
             select_decl(d->methods.items[k], d->methods.items[k]->body, at, spans);
@@ -3608,6 +3844,15 @@ void analysis_semantic_tokens(jbuf *out)
         classify(o, &t.type, &t.mods);
         vec_push(toks, t);
     }
+    // `frag` and `vert` are words only where a declaration starts, before its name
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        const int name = is_shader(d) && d->at.file == A.doc ? token_at(d->at) : -1;
+        if (name < 1) continue;
+        const token *word = &DOC->toks[name - 1];
+        const semantic_token t = {word->at.line - 1, utf16_col(word->at), word->text.len, ST_KEYWORD, 0};
+        vec_push(toks, t);
+    }
     for (int line = 1; line <= DOC->lines.count; line++) {
         if (DOC->inactive[line]) inactive_tokens(line, &toks);
     }
@@ -3926,6 +4171,17 @@ static void add_builtin_member(void *user, const builtin_member *m)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
+    const bool gpu = is_shader(sc->decl);
+    if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && t.kind == TY_GRID) {
+        if (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR) return;
+        const method_form *sample = find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
+        sb detail = {0};
+        format_method(sample, t, &detail);
+        item(c, sample->name, CK_METHOD, detail.data, sample->doc, "Sample($1)");
+        return;
+    }
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count; i++) {
@@ -3936,19 +4192,23 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), KEYBOARD_TEXT_DOC, NULL);
                 continue;
             }
-            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), button_field_doc(t.decl, f->name), NULL);
+            const char *doc = button_field_doc(t.decl, f->name);
+            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : shader_field_doc(t.decl, f->name), NULL);
         }
         // Its local fields, where code has them: views, local handlers and the
-        // functions they call. The match can't see them.
+        // functions they call, and the frags and verts a view draws through.
+        // The match can't see them.
         const bool local_code = sc->decl && !sc->decl->is_async && !sc->in_input
-                             && (sc->decl->kind == DECL_FUNCTION
+                             && (sc->decl->kind == DECL_FUNCTION || gpu
                                  || (sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local)));
         for (int i = 0; local_code && i < local_field_count(t.decl); i++) {
             const field *f = field_of(t.decl, t.decl->fields.count + i);
             sb detail = {0};
             sb_printf(&detail, "local %s", type_name(f->type));
             item(c, str_to_cstr(f->name), CK_FIELD, detail.data,
-                 "A local field: this machine's, outside the match. Views read and write it in place.", NULL);
+                 gpu ? "A local field: this machine's, outside the match. A frag or vert reads it like any other field."
+                     : "A local field: this machine's, outside the match. Views read and write it in place.",
+                 NULL);
         }
         if (t.kind == TY_SINGLETON && t.decl->builtin && str_eq_c(t.decl->name, "Session")) {
             item(c, "room", CK_FIELD, "string",
@@ -4017,17 +4277,19 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    // Built-in methods: a list's and a grid's, and an entity's or a singleton's
-    // where the code can change it.
+    // Built-in methods: a list's and a grid's, an entity's or a singleton's
+    // where the code can change it, and a frag's Pixel's.
     const bool local = sc->decl && sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local);
     const bool match = sc->decl && sc->decl->kind == DECL_SYSTEM && !local;
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
                       || (t.kind == TY_SINGLETON && match && !t.decl->is_local);
-    if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes) {
+    const bool pixel = t.kind == TY_RECORD && t.decl == A.prog->pixel;
+    if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
         const method_form *forms = methods_of(t, &count);
         for (size_t i = 0; i < count; i++) {
             if (t.kind == TY_LOCAL_ENTITY && strcmp(forms[i].name, "Snap") == 0) continue; // Local state isn't blended
+            if (t.kind == TY_GRID && strcmp(forms[i].name, "Sample") == 0) continue; // A frag's or vert's, above
             sb detail = {0};
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
@@ -4070,11 +4332,12 @@ static void complete_members(completion *c, const int dot, const loc at, const b
     if (n == 0) return;
 
     const scope sc = scope_at(at);
+    const bool gpu = is_shader(sc.decl); // A frag or vert: it has what it takes, and no devices, scenes or frame
     const str base = DOC->toks[ids[n - 1]].text;
     const param *p;
     type t = name_type(&sc, base, &p);
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, ids[n - 1]);
-    if (t.kind == TY_ERROR && str_eq_c(base, "Devices")) t = (type){TY_RECORD, A.prog->devices}; // This machine's
+    if (t.kind == TY_ERROR && str_eq_c(base, "Devices") && !gpu) t = (type){TY_RECORD, A.prog->devices}; // This machine's
     if (t.kind == TY_ERROR) {
         // Session.: its calls, where local code runs
         if (n == 1 && str_eq_c(base, "Session") && decides_session(&sc)) {
@@ -4099,7 +4362,7 @@ static void complete_members(completion *c, const int dot, const loc at, const b
             }
             return;
         }
-        if (n == 1 && str_eq_c(base, "Scene") && sc.decl && !sc.in_input) {
+        if (n == 1 && str_eq_c(base, "Scene") && sc.decl && !sc.in_input && !gpu) {
             for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {
                 sb snippet = {0};
                 sb_printf(&snippet, "%s($1)", scene_calls[i].name);
@@ -4134,6 +4397,9 @@ static void complete_members(completion *c, const int dot, const loc at, const b
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
             if (frame_owner && !frame) return;
+            // On the GPU: Math, and what the built-in types have, like Color.white
+            type owner;
+            if (gpu && !str_eq_c(base, "Math") && !builtin_type_named(base, &owner)) return;
             // Cursor.: views lock it and read whether it holds; the input's Sample only reads
             const bool cursor = str_eq_c(base, "Cursor");
             if (cursor && !frame && !(sc.in_input && !sc.in_sanitize)) return;
@@ -4318,7 +4584,7 @@ static bool complete_in_namespace(completion *c, const str ns, const bool system
         if (systems != (d->kind == DECL_SYSTEM)) continue;
         const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? CK_STRUCT : d->kind == DECL_INPUT ? CK_INTERFACE
                        : d->kind == DECL_EVENT ? CK_EVENT : d->kind == DECL_ENUM ? CK_ENUM
-                       : d->kind == DECL_SYSTEM ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT : CK_CLASS;
+                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT : CK_CLASS;
         item(c, str_to_cstr(d->name), kind, decl_keyword(d), NULL, NULL);
     }
     return any;
@@ -4338,6 +4604,7 @@ enum {
     VT_TEXT = 16,        // string
     VT_LIST = 32,
     VT_GRID = 64,        // Fields of components, singletons and scenes only
+    VT_GPU = 128,        // In a frag or vert: of those, only what the GPU has values of
     VT_LOCALS = VT_VALUES | VT_BOOL | VT_ENTITY | VT_TEXT | VT_LIST, // What a local can be, but a LocalEntity
 };
 
@@ -4350,6 +4617,8 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_ENTITY         ? VT_ENTITY
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
+        // Its ints are 32 bits, and it has no handles into the world, nor rects
+        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT)) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
@@ -4381,10 +4650,56 @@ static void complete_routine_param_types(completion *c, const bool after_mut, co
     }
 }
 
+// Whether a function can run on the GPU, as far as its declaration says: C
+// can't, nor a task, nor what draws or takes a block.
+static bool gpu_callable(const decl *d)
+{
+    return d->kind == DECL_FUNCTION && !d->is_extern && !d->is_async && !d->takes_action && !d->draws;
+}
+
+// Names and keywords in a frag or vert, which the GPU runs: what it takes, its
+// locals, the game's functions and constants, Math, and the types the GPU has
+// values of. No loop but a for, which counts; nothing of the world or the
+// frame, like Spawn, Draw or Devices.
+static void complete_shader_code(completion *c, const scope *sc, const bool statement)
+{
+    if (statement) {
+        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "break", "continue"};
+        for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
+    }
+    item(c, "true", CK_KEYWORD, NULL, NULL, NULL);
+    item(c, "false", CK_KEYWORD, NULL, NULL, NULL);
+    if (!statement) item(c, "default", CK_KEYWORD, NULL, NULL, NULL);
+    for (int i = sc->locals.count - 1; i >= 0; i--) {
+        const stmt *s = sc->locals.items[i];
+        item(c, str_to_cstr(s->name), CK_VARIABLE, type_name(s->type), NULL, NULL);
+    }
+    for (int i = 0; i < sc->decl->params.count; i++) {
+        const param *p = &sc->decl->params.items[i];
+        if (p->name.len == 0) continue;
+        sb detail = {0};
+        format_param(p, &detail);
+        item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
+    }
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (gpu_callable(d)) complete_routine(c, d, name_for(d));
+    }
+    complete_constants(c, TY_ERROR);
+    complete_value_types(c, VT_VALUES | VT_GPU | (statement ? VT_BOOL : 0));
+    complete_structs(c);
+    item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
+    complete_namespaces(c, false);
+}
+
 // Names and keywords that can start an expression or statement.
 static void complete_expression(completion *c, const loc at, const bool statement)
 {
     const scope sc = scope_at(at);
+    if (is_shader(sc.decl)) {
+        complete_shader_code(c, &sc, statement);
+        return;
+    }
     const bool view = sc.decl && sc.decl->is_view;
 
     if (statement) {
@@ -4510,6 +4825,12 @@ static void complete_declarations(completion *c)
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
     item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
          "view ${1:Name}($2)\n{\n    $0\n}");
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }",
+         "Runs on the GPU for each pixel of a mesh a view draws through it, and writes the pixel's color.",
+         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+    item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }",
+         "Runs on the GPU for each vertex of a mesh a view draws through it, and changes it in place.",
+         "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
     item(c, "input", CK_SNIPPET, "input Name { fields; Sample }", "What a player sends each tick.",
          "input ${1:Name}\n{\n    $0\n\n    Sample()\n    {\n    }\n}");
     item(c, "event", CK_SNIPPET, "event Name { fields }", "Something that happened, sent with Send.",
@@ -4555,6 +4876,76 @@ static void complete_param_name(completion *c, const str type_name_)
     item(c, name, CK_VARIABLE, NULL, NULL, NULL);
 }
 
+// Whether the game declares a type named `name`: Pixel and Instance are only
+// built in where it doesn't.
+static bool game_type_named(const char *name)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        const bool type = d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && !is_shader(d);
+        if (type && !d->builtin && str_eq_c(d->name, name)) return true;
+    }
+    return false;
+}
+
+// A frag's or vert's parameters, in the parentheses opened at token `open`,
+// after token `last`. The vertex comes first, a struct with a position, which
+// a vert takes mut; a frag's pixel is its `mut Color`; the rest is what the
+// engine supplies: components, singletons, Pixel (a frag's) and Instance.
+static void complete_shader_header(completion *c, const int open, const int last)
+{
+    const token *toks = DOC->toks;
+    const bool frag = str_eq_c(toks[open - 2].text, "frag");
+    const bool after_mut = toks[last].kind == T_MUT;
+    const tok_kind before = toks[after_mut ? last - 1 : last].kind; // What the parameter starts after
+    if (before != T_LPAREN && before != T_COMMA) {
+        if (toks[last].kind == T_IDENT) complete_param_name(c, toks[last].text);
+        return;
+    }
+    if (before == T_LPAREN) {
+        if (frag && after_mut) return; // A frag reads its vertex
+        if (!frag && !after_mut) item(c, "mut", CK_KEYWORD, "A vert changes its vertex in place", NULL, NULL);
+        for (int i = 0; i < A.prog->decls.count; i++) { // What a mesh's list can hold: a struct with a position
+            const decl *d = A.prog->decls.items[i];
+            for (int k = 0; d->kind == DECL_STRUCT && k < d->fields.count; k++) {
+                if (!str_eq_c(d->fields.items[k].name, "position")) continue;
+                item(c, name_for(d), CK_STRUCT, "struct", "A mesh's vertex: it has a `position`.", NULL);
+            }
+        }
+        complete_namespaces(c, false);
+        return;
+    }
+    if (after_mut) {
+        if (frag) item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+        return;
+    }
+    bool writes = false; // It has its `mut Color` already
+    for (int k = open + 1; k <= last; k++) writes |= toks[k].kind == T_MUT;
+    if (frag && !writes) item(c, "mut", CK_KEYWORD, "mut Color color: the pixel's color, which the frag writes", NULL, NULL);
+    complete_types(c, true, true, false);
+    if (frag && !game_type_named("Pixel")) item(c, "Pixel", CK_CLASS, "built-in", shader_record_doc(A.prog->pixel), NULL);
+    if (!game_type_named("Instance")) item(c, "Instance", CK_CLASS, "built-in", shader_record_doc(A.prog->instance), NULL);
+    complete_namespaces(c, false);
+}
+
+// The frags and verts a Draw.Mesh can name after its other arguments: those
+// that run on its mesh's vertex, `vertex`, or all of them where it isn't known.
+static void complete_shaders(completion *c, const decl *vertex)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (!is_shader(d)) continue;
+        const type on = d->params.count > 0 ? d->params.items[0].type : (type){TY_ERROR, NULL};
+        if (vertex && on.kind == TY_STRUCT && on.decl != vertex) continue;
+        sb detail = {0};
+        format_header(d, &detail);
+        item(c, name_for(d), CK_FUNCTION, detail.data,
+             d->is_frag ? "Runs on the GPU for each pixel of the mesh, and writes its color. It comes last, after a vert."
+                        : "Runs on the GPU for each vertex of the mesh, and changes it in place. A frag comes after it.",
+             NULL);
+    }
+}
+
 // Contexts the cursor can be in, found by scanning tokens.
 typedef enum context_kind {
     CTX_TOP, CTX_DATA, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
@@ -4568,6 +4959,7 @@ typedef enum header_kind {
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample and Sanitize: local singletons
+    HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, mut Color color, Sun sun)
 } header_kind;
 
 typedef struct frame {
@@ -4587,6 +4979,7 @@ static header_kind top_header(const int i)
     if (i < 2) return HEADER_ROUTINE;
     const token *keyword = &DOC->toks[i - 2];
     if (keyword->kind == T_RPAREN || keyword->kind == T_SYSTEM) return HEADER_SYSTEM; // event(Hit hit) TakeHit(
+    if (keyword->kind == T_IDENT && (str_eq_c(keyword->text, "frag") || str_eq_c(keyword->text, "vert"))) return HEADER_SHADER;
     return keyword->kind == T_IDENT && str_eq_c(keyword->text, "view") ? HEADER_SYSTEM : HEADER_ROUTINE;
 }
 
@@ -4637,7 +5030,8 @@ static bool starts_declaration(const int i)
         && (str_eq_c(t->text, "input") || str_eq_c(t->text, "view") || str_eq_c(t->text, "struct")
             || str_eq_c(t->text, "event") || str_eq_c(t->text, "enum") || str_eq_c(t->text, "scene")
             || str_eq_c(t->text, "local") || str_eq_c(t->text, "namespace")
-            || str_eq_c(t->text, "using") || str_eq_c(t->text, "extern"))) {
+            || str_eq_c(t->text, "using") || str_eq_c(t->text, "extern") || str_eq_c(t->text, "frag")
+            || str_eq_c(t->text, "vert"))) {
         return true;
     }
     if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
@@ -4688,6 +5082,166 @@ static int parallel_header(const int last)
         else if (kind == T_SEMI || kind == T_LBRACE || kind == T_RBRACE) return -1;
     }
     return -1;
+}
+
+// The innermost call still open after token `last`: the token of its '(', or
+// -1 where there's none, and how many of its commas come before.
+static int open_call(const int last, int *commas)
+{
+    int parens = 0;
+    int braces = 0;
+    int brackets = 0;
+    *commas = 0;
+    for (int i = last; i >= 0; i--) {
+        switch (DOC->toks[i].kind) {
+        case T_RPAREN: parens++; break;
+        case T_RBRACE: braces++; break;
+        case T_RBRACKET: brackets++; break;
+        case T_LPAREN:
+            if (parens == 0) return i;
+            parens--;
+            break;
+        case T_LBRACE:
+            if (braces == 0) return -1; // A block: not inside a call
+            braces--;
+            break;
+        case T_LBRACKET: // A list still open, [0, 1: its commas weren't the call's
+            if (brackets == 0) *commas = 0;
+            else brackets--;
+            break;
+        case T_SEMI:
+            if (parens == 0 && braces == 0) return -1;
+            break;
+        case T_COMMA:
+            if (parens == 0 && braces == 0 && brackets == 0) (*commas)++;
+            break;
+        default:
+            break;
+        }
+    }
+    return -1;
+}
+
+// Whether the '(' at token `open` is Draw.Mesh's.
+static bool opens_mesh_draw(const int open)
+{
+    const token *toks = DOC->toks;
+    return open >= 3 && toks[open - 1].kind == T_IDENT && toks[open - 2].kind == T_DOT && toks[open - 3].kind == T_IDENT
+        && is_mesh_draw(toks[open - 3].text, toks[open - 1].text);
+}
+
+// The arguments written in the parentheses opened at token `open`: tokens
+// `first[i]` to `last[i]` each, an empty one's last before its first. A call
+// cut short has those written so far.
+typedef struct call_args {
+    int first[8];
+    int last[8];
+    int count;
+} call_args;
+
+static void call_arguments(const int open, call_args *args)
+{
+    args->count = 0;
+    int depth = 0;
+    int start = open + 1;
+    for (int i = open + 1; i <= DOC->tok_count; i++) {
+        const tok_kind k = i < DOC->tok_count ? DOC->toks[i].kind : T_EOF;
+        const bool closes = k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE;
+        const bool ends = k == T_EOF || k == T_SEMI || (closes && depth == 0);
+        if (ends || (k == T_COMMA && depth == 0)) {
+            if (args->count < 8) {
+                args->first[args->count] = start;
+                args->last[args->count] = i - 1;
+                args->count++;
+            }
+            if (ends) return;
+            start = i + 1;
+        } else if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) {
+            depth++;
+        } else if (closes) {
+            depth--;
+        }
+    }
+}
+
+// The type of the names with dots between them at tokens `first` to `last`,
+// like models.crate: what the checker found there, or where the code around
+// them doesn't parse yet, what the names say. TY_ERROR for anything else.
+static type names_type(const scope *sc, const int first, const int last)
+{
+    const token *toks = DOC->toks;
+    if (first > last || (last - first) % 2 != 0) return (type){TY_ERROR, NULL};
+    for (int i = first; i <= last; i++) {
+        if (toks[i].kind != ((i - first) % 2 ? T_DOT : T_IDENT)) return (type){TY_ERROR, NULL};
+    }
+    const occurrence *o = occurrence_at(toks[last].at);
+    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->type.kind != TY_ERROR && o->type.kind != TY_VOID) return o->type;
+    const param *ignored;
+    type t = name_type(sc, toks[first].text, &ignored);
+    for (int k = first + 2; k <= last && t.kind != TY_ERROR; k += 2) t = member_type(t, toks[k].text);
+    return t;
+}
+
+// Draw.Mesh's parameters, in the order they're written:
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// A 3D mesh has its transform, and a 2D one none.
+enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_PARAMS };
+
+// What an argument of Draw.Mesh after its indices is, from what's written at
+// tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
+// that doesn't say.
+static int mesh_argument(const scope *sc, const int first, const int last)
+{
+    const token *toks = DOC->toks;
+    if (first > last || toks[first].kind != T_IDENT) return MESH_PARAMS;
+    // A vert or a frag, by name: what the checker bound it to, or the game's one of that name
+    const occurrence *o = occurrence_at(toks[last].at);
+    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->kind == OCC_SYSTEM && is_shader(o->decl)) {
+        return o->decl->is_frag ? MESH_FRAG : MESH_VERT;
+    }
+    const str written = {toks[first].text.ptr, (int)(toks[last].text.ptr + toks[last].text.len - toks[first].text.ptr)};
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->is_frag ? MESH_FRAG : MESH_VERT;
+    }
+    // float4x4.Translate(...), Filter.Point
+    if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
+    if (str_eq_c(toks[first].text, "Filter") && last == first + 2) return MESH_FILTER;
+    const type t = names_type(sc, first, last);
+    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID ? MESH_TEXTURE : MESH_PARAMS;
+}
+
+// The vertex struct of the mesh a Draw.Mesh draws, from its first argument,
+// at tokens `first` to `last`: the element of the list that names say, like
+// models.crate, or the struct a list written there starts with, like
+// [Vertex3 { ... }]. NULL where that doesn't say.
+static const decl *mesh_vertex(const scope *sc, const int first, const int last)
+{
+    const token *toks = DOC->toks;
+    if (first > last) return NULL;
+    if (toks[first].kind == T_LBRACKET && first + 1 <= last && toks[first + 1].kind == T_IDENT) {
+        int name = first + 1; // Its last part, if it's qualified
+        while (name + 2 <= last && toks[name + 1].kind == T_DOT && toks[name + 2].kind == T_IDENT) name += 2;
+        const str written = {toks[first + 1].text.ptr, (int)(toks[name].text.ptr + toks[name].text.len - toks[first + 1].text.ptr)};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_STRUCT && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d;
+        }
+        return NULL;
+    }
+    const type t = names_type(sc, first, last);
+    if (t.kind != TY_LIST || !t.decl || t.decl->fields.items[0].type.kind != TY_STRUCT) return NULL;
+    return t.decl->fields.items[0].type.decl;
+}
+
+// Whether a vertex struct is a 3D mesh's: its position is a float3.
+static bool vertex_is_3d(const decl *vertex)
+{
+    for (int i = 0; vertex && i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        if (str_eq_c(f->name, "position")) return f->type.kind == TY_FLOAT3;
+    }
+    return false;
 }
 
 void analysis_completion(const int line, const int character, jbuf *out)
@@ -4841,6 +5395,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
         break;
 
     case CTX_HEADER: {
+        if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+            complete_shader_header(&c, f.open, last);
+            break;
+        }
         // event(Hit hit): the trigger; event(Hit hit) TakeHit(...): a handler's parameters.
         const bool trigger = f.header == HEADER_TRIGGER;
         const bool sample = f.header == HEADER_SAMPLE;
@@ -5026,7 +5584,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const scope sc = scope_at(at);
             const bool local = sc.decl && (sc.decl->is_view || sc.decl->is_local);
             item(&c, "var", CK_KEYWORD, NULL, NULL, NULL);
-            complete_value_types(&c, local ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
+            complete_value_types(&c, is_shader(sc.decl) ? VT_VALUES | VT_BOOL | VT_GPU
+                                     : local            ? VT_LOCALS | VT_LOCAL_ENTITY
+                                                        : VT_LOCALS);
             complete_structs(&c);
             complete_namespaces(&c, false);
             break;
@@ -5064,6 +5624,15 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool statement_start = before == T_LBRACE || before == T_RBRACE || before == T_SEMI || before == T_MUT;
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
+        // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
+        int commas;
+        const int call = open_call(last, &commas);
+        if (call >= 0 && opens_mesh_draw(call) && commas >= 2) {
+            const scope sc = scope_at(at);
+            call_args args;
+            call_arguments(call, &args);
+            if (sc.decl && sc.decl->is_view) complete_shaders(&c, mesh_vertex(&sc, args.first[0], args.last[0]));
+        }
         const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE;
         complete_expression(&c, at, at_statement);
         break;
@@ -5273,9 +5842,9 @@ static const char *check_new_name(const occurrence *target, const str name)
     // goes, though the lexer reads them as names. The first ones only start
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "enum", "scene", "local", "namespace",
-                                             "using", "extern", "const", "async", "settings", "operator", "fails", "in",
-                                             "by", "offset", "void"};
-    enum { DECL_WORDS = 11 };
+                                             "using", "extern", "const", "frag", "vert", "async", "settings", "operator",
+                                             "fails", "in", "by", "offset", "void"};
+    enum { DECL_WORDS = 13 };
     static const char *const reserved[] = {"Math", "Draw", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
@@ -5312,11 +5881,12 @@ static const char *check_new_name(const occurrence *target, const str name)
     switch (target->kind) {
     case OCC_TYPE:
     case OCC_SYSTEM:
-        // Types share one namespace, and systems and views another; a function
-        // shares its name with nothing.
+        // Types share one namespace, and systems and views another; a
+        // function, a frag or a vert shares its name with nothing.
         for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
-            const bool same_namespace = d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM) == (target->kind == OCC_SYSTEM);
+            const bool same_namespace = d->kind == DECL_FUNCTION || is_shader(d) || is_shader(target->decl)
+                                     || (d->kind == DECL_SYSTEM) == (target->kind == OCC_SYSTEM);
             if (d != target->decl && same_namespace && str_eq(d->name, name)) clash = true;
         }
         break;
@@ -5622,6 +6192,34 @@ static void collect_label(void *user, const char *label, const char *doc)
     vec_push(((label_list *)user)->labels, label);
 }
 
+// Draw.Mesh's two forms, a 2D mesh's and a 3D one's, with what may follow
+// their lists in brackets. The built-in signatures (builtins.c) are those of
+// a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
+// takes the rest itself (check_mesh_draw).
+static const char *const mesh_labels[2] = {
+    "Draw.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
+};
+
+// Each of its parameters: what it's called in those, and what it takes, in a
+// 2D mesh and, where that differs, in a 3D one.
+static const struct {
+    const char *name;
+    const char *doc[2];
+} mesh_params[MESH_PARAMS] = {
+    [MESH_VERTICES] = {"vertices",
+                       {"The mesh's corners: a `List<Vertex>`, or a list of a struct of the game's with a `float2 position`.",
+                        "The mesh's corners: a `List<Vertex3>`, or a list of a struct of the game's with a `float3 position`."}},
+    [MESH_INDICES] = {"indices", {"A `List<int>`: three for each triangle, places in `vertices`."}},
+    [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
+    [MESH_TEXTURE] = {"texture",
+                      {"A `Grid2<Color>`, read at each corner's `uv`. With a frag there's none: a frag samples the grids it "
+                       "takes itself."}},
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
+    [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
+    [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
+};
+
 // The names of the parameters a checked call's arguments go to, in order:
 // the game's function's, or the built-in signature the call took. Returns
 // how many; 0 for calls with none to show, like Spawn(...).
@@ -5631,6 +6229,21 @@ static int call_param_names(const expr *call, str *names, const int max)
     if (call->call == CALL_METHOD || call->call == CALL_FUNCTION) {
         const decl *m = call->method;
         for (; count < m->params.count && count < max; count++) names[count] = m->params.items[count].name;
+        return count;
+    }
+    if (call->call == CALL_DRAW && call->object && is_mesh_draw(call->object->name, call->name)) {
+        // Each argument's, by what it is: what follows the lists can be left out
+        for (; count < call->args.count && count < max; count++) {
+            const expr *arg = call->args.items[count];
+            const type t = call->arg_want.count > count ? call->arg_want.items[count] : arg->type;
+            const int param = count < 2                                  ? count
+                            : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
+                            : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
+                            : t.kind == TY_GRID                          ? MESH_TEXTURE
+                            : t.kind == TY_ENUM                          ? MESH_FILTER
+                                                                         : MESH_PARAMS;
+            names[count] = param == MESH_PARAMS ? (str){"", 0} : str_from(mesh_params[param].name);
+        }
         return count;
     }
     label_list list = {0};
@@ -5697,6 +6310,87 @@ static int call_param_names(const expr *call, str *names, const int max)
     return 0;
 }
 
+// Where the word `name` is in a signature's label: "vert" isn't in "vertices".
+static int label_word(const char *label, const char *name)
+{
+    const size_t n = strlen(name);
+    for (const char *p = strstr(label, name); p; p = strstr(p + 1, name)) {
+        if (p > label && !isalnum((unsigned char)p[-1]) && !isalnum((unsigned char)p[n])) return (int)(p - label);
+    }
+    return 0;
+}
+
+// The built-in signatures' docs for Draw.Mesh: a 2D mesh's, and a 3D one's.
+typedef struct mesh_docs {
+    const char *doc[2];
+} mesh_docs;
+
+static void collect_mesh_doc(void *user, const char *label, const char *doc)
+{
+    mesh_docs *docs = user;
+    const int form = strstr(label, "transform") ? 1 : 0;
+    if (!docs->doc[form]) docs->doc[form] = doc;
+}
+
+// Signature help in Draw.Mesh's parentheses, opened at token `open`, with
+// `commas` before the cursor: its two forms, the one the mesh's vertices or a
+// transform say first, and the parameter the argument at the cursor is. What
+// follows the lists can be left out, so that goes by what each argument is.
+static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
+{
+    static const int forms[2][MESH_PARAMS] = {
+        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
+    };
+    const scope sc = scope_at(at);
+    call_args args;
+    call_arguments(open, &args);
+    const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
+    bool three_d = vertex_is_3d(vertex);
+    if (!vertex && args.count > 2) three_d = mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM;
+    const int *order = forms[three_d];
+    const int count = three_d ? MESH_PARAMS : MESH_PARAMS - 1;
+    const int fixed = three_d ? 3 : 2; // Its lists, and a 3D mesh's transform: always there, in this order
+
+    int active = 0;
+    int next = 0; // The first parameter the next argument can be
+    for (int a = 0; a <= commas && a < args.count; a++) {
+        active = next < count ? next : count - 1;
+        const int kind = a < fixed ? order[active] : mesh_argument(&sc, args.first[a], args.last[a]);
+        for (int k = next; k < count; k++) {
+            if (order[k] != kind) continue;
+            active = k;
+            break;
+        }
+        next = active + 1;
+    }
+
+    mesh_docs docs = {{NULL, NULL}};
+    builtin_signatures(str_from("Draw"), str_from("Mesh"), collect_mesh_doc, &docs);
+    jb_put(out, "{\"signatures\":[");
+    for (int form = 0; form < 2; form++) {
+        const char *label = mesh_labels[form];
+        sb doc = {0};
+        sb_printf(&doc, "%s%s%s", docs.doc[form] ? docs.doc[form] : "", docs.doc[form] ? "\n\n" : "", MESH_SHADER_DOC);
+        jb_put(out, form ? ",{\"label\":" : "{\"label\":");
+        jb_string(out, label);
+        jb_put(out, ",\"documentation\":{\"kind\":\"markdown\",\"value\":");
+        jb_string(out, doc.data);
+        jb_put(out, "},\"parameters\":[");
+        for (int i = 0; i < (form ? MESH_PARAMS : MESH_PARAMS - 1); i++) {
+            const int param = forms[form][i];
+            const int start = label_word(label, mesh_params[param].name);
+            const char *what = mesh_params[param].doc[form] ? mesh_params[param].doc[form] : mesh_params[param].doc[0];
+            jb_printf(out, "%s{\"label\":[%d,%d],\"documentation\":{\"kind\":\"markdown\",\"value\":", i ? "," : "", start,
+                      start + (int)strlen(mesh_params[param].name));
+            jb_string(out, what);
+            jb_put(out, "}}");
+        }
+        jb_put(out, "]}");
+    }
+    jb_printf(out, "],\"activeSignature\":%d,\"activeParameter\":%d}", three_d ? 1 : 0, active);
+}
+
 void analysis_signature_help(const int line, const int character, jbuf *out)
 {
     const loc at = from_lsp(line, character);
@@ -5704,37 +6398,17 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     for (int i = 0; i < DOC->tok_count && loc_cmp(DOC->toks[i].at, at) < 0; i++) last = i;
 
     // The innermost '(' still open at the cursor, counting the commas after it.
-    int parens = 0;
-    int braces = 0;
-    int commas = 0;
-    int open = -1;
-    for (int i = last; i >= 0 && open < 0; i--) {
-        switch (DOC->toks[i].kind) {
-        case T_RPAREN: parens++; break;
-        case T_RBRACE: braces++; break;
-        case T_LPAREN:
-            if (parens == 0) open = i;
-            else parens--;
-            break;
-        case T_LBRACE:
-            if (braces == 0) i = -1; // A block: not inside a call
-            else braces--;
-            break;
-        case T_SEMI:
-            if (parens == 0 && braces == 0) i = -1;
-            break;
-        case T_COMMA:
-            if (parens == 0 && braces == 0) commas++;
-            break;
-        default:
-            break;
-        }
-    }
+    int commas;
+    const int open = open_call(last, &commas);
     // world.Get<Health>(: the method's name is before its type in <>
     const int type_open = type_argument_open(open - 1);
     const int callee = type_open >= 0 ? type_open - 1 : open - 1;
     if (callee < 0 || DOC->toks[callee].kind != T_IDENT) {
         jb_put(out, "null");
+        return;
+    }
+    if (opens_mesh_draw(open)) {
+        mesh_signature_help(open, commas, at, out);
         return;
     }
     const str name = DOC->toks[callee].text;

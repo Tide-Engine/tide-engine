@@ -78,6 +78,10 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
+    if (schedule && opts->shaders) {
+        print_shaders(prog, schedule);
+        return true;
+    }
     if (schedule) {
         print_schedule(prog, named.name, schedule);
         return true;

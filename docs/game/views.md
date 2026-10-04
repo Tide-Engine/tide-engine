@@ -72,6 +72,8 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 `Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. `Color(r, g, b)` has alpha 1, and `Color(r, g, b, a)` sets it. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
 
+Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`.
+
 ## Meshes
 
 `Draw.Mesh(vertices, indices)` draws triangles, the shape every other one can be made of. `vertices` is a `List<Vertex>`, the corners, and `indices` a `List<int>`: every three are a triangle, each a corner's place in `vertices`, so triangles share corners.
@@ -100,6 +102,8 @@ view Arrows(Body body)
 Each pixel of a triangle is its corners' colors, blended across it, over what's behind it by its alpha. Triangles draw whichever way round their corners go, in the order they're given, among everything else a view draws. An index past the end of `vertices` leaves its triangle out.
 
 A mesh is one call however many triangles it has, and meshes drawn one after another go to the GPU together, so thousands of triangles a frame are cheap.
+
+A mesh's corners can be a struct of your own instead, with whatever fields the mesh needs, and a `vert` and a `frag` can run for its vertices and its pixels on the GPU: see [Frags and verts](./shaders.md).
 
 ## Textures
 
@@ -215,7 +219,7 @@ view Crates(Crate crate, Scenery scenery)
 - 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw.Clear` clears what's in front too.
 - A see-through mesh blends with what's behind it, and still hides what's drawn behind it later: draw see-through meshes last, the farthest first.
 - Triangles draw whichever way round their corners go. Textures and filters work as a mesh's do: `Draw.Mesh(vertices, indices, transform, texture, filter)`.
-- There's no lighting: a pixel is its corners' colors times its texture's, so shading goes in the corners' colors.
+- There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.
 
 ### Big scenes

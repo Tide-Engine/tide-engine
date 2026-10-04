@@ -593,7 +593,8 @@ static bool is_decl_word(const str text)
 {
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
-        || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const");
+        || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
+        || str_eq_c(text, "vert");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -1515,6 +1516,18 @@ static decl *parse_system(parser *p, const bool is_view)
     return d;
 }
 
+// frag Shade(BoxVertex vertex, mut Color color, Sun sun) { ... } and
+// vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
+static decl *parse_shader(parser *p, const bool is_frag)
+{
+    const token *name = expect_ident(p, is_frag ? "frag name" : "vert name");
+    decl *d = new_decl(DECL_SHADER, name);
+    d->is_frag = is_frag;
+    d->return_type_name = str_from("void");
+    parse_query_rest(p, d);
+    return d;
+}
+
 // event(Hit hit) TakeHit(mut Health health) { ... }: runs when a Hit is sent.
 // The trigger is the first parameter; an event without fields needs no name.
 static decl *parse_handler(parser *p)
@@ -1667,6 +1680,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
@@ -1681,7 +1696,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             diag_error(t->at, "did you mean 'extern'? It declares a function written in C: 'extern float Noise(float x);'");
             longjmp(p.fail, 1);
         }
-        else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'extern', 'const' or a function"); // Consumed, so recovery skips it
+        else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const' or a function"); // Consumed, so recovery skips it
         d->unit = p.unit;
         if (local) {
             d->is_local = true;
