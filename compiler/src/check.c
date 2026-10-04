@@ -6877,6 +6877,40 @@ static bool check_param_side(const decl *sys, const param *p, const decl *d)
     return true;
 }
 
+// `with ownership` and `without ownership`: whether this machine's player owns
+// the entity, by its Owner. Only local code has a machine to ask about, and of
+// it only views run for the match's entities. `with` needs an Owner, as `with
+// Owner` does; `without` takes entities with one and with none, and which
+// rows pass is the loop's to check, like a sparse component (gen_row_filter).
+static void check_ownership(const checker *c, decl *sys, param *p)
+{
+    const bool with = p->mode == PARAM_WITH;
+    const char *word = with ? "with" : "without";
+    p->type = (type){TY_VOID, NULL};
+    if (!is_local_code(sys)) {
+        diag_error(p->type_at, "the match runs the same on every machine, so %s can't filter by '%s ownership'",
+                   sys->is_handler ? "an event handler" : "a system", word);
+        diag_note("ownership is whether this machine's player owns the entity, which views ask; for entities that have "
+                  "%s owner, write '%s Owner'", with ? "any" : "no", word);
+        suggest_replacement(p->type_name, "Owner");
+        return;
+    }
+    if (!sys->is_view) {
+        diag_error(p->type_at, "'%s ownership' filters the match's entities, and local handlers only take local state for now",
+                   word);
+        return;
+    }
+    const int ownership = with ? OWNERSHIP_WITH : OWNERSHIP_WITHOUT;
+    if (sys->ownership) {
+        if (sys->ownership == ownership) diag_error(p->at, "'%s ownership' appears twice", word);
+        else diag_error(p->at, "view '" STR_FMT "' takes entities both 'with ownership' and 'without ownership', and none is both",
+                        STR_ARG(sys->name));
+        return;
+    }
+    sys->ownership = ownership;
+    if (with) sys->need_mask = mask_or(sys->need_mask, bit(c->prog->owner));
+}
+
 static void check_params(const checker *c, decl *sys)
 {
     const program *prog = c->prog;
@@ -6888,6 +6922,10 @@ static void check_params(const checker *c, decl *sys)
 
     for (int i = 0; i < sys->params.count; i++) {
         param *p = &sys->params.items[i];
+        if (p->ownership) {
+            check_ownership(c, sys, p);
+            continue;
+        }
         decl *d = find_type(c, p->type_name, p->type_at);
         const bool is_entity = str_eq_c(p->type_name, "Entity");
         const bool is_local_entity = str_eq_c(p->type_name, "LocalEntity");
@@ -6953,6 +6991,7 @@ static void check_params(const checker *c, decl *sys)
                        STR_ARG(p->type_name));
             suggestion s = suggest_start(p->type_name);
             suggest_decls(&s, prog, true, p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT, true);
+            if (sys->is_view && (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT)) suggest_consider_c(&s, "ownership");
             suggest_note(&s);
             const fix create = {.kind = FIX_CREATE_COMPONENT, .at = p->type_at.line ? p->type_at : p->at, .name = p->type_name};
             vec_push(c->prog->fixes, create);
@@ -7066,8 +7105,20 @@ static void check_params(const checker *c, decl *sys)
             side_of = d;
         }
     }
+    // Owners are the match's: local entities have none to filter by.
+    for (int i = 0; sys->ownership && side_of && side_of->is_local && i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (!p->ownership) continue;
+        diag_error(p->type_at, "'%s ownership' filters the match's entities, and '" STR_FMT "' is local",
+                   p->mode == PARAM_WITH ? "with" : "without", STR_ARG(side_of->name));
+        diag_note("local entities live on this machine, and no player owns them");
+        break;
+    }
 
-    if (mask_intersects(sys->need_mask, sys->without_mask)) {
+    if (sys->ownership == OWNERSHIP_WITH && mask_has(sys->without_mask, prog->owner->index)) {
+        diag_error(sys->at, "view '" STR_FMT "' takes entities 'with ownership' and 'without Owner', and an entity "
+                   "without an Owner is nobody's", STR_ARG(sys->name));
+    } else if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }
     // A mut lookup changes any entity's component, this one's included, which
@@ -7084,7 +7135,7 @@ static void check_params(const checker *c, decl *sys)
                       "or send them an event", STR_ARG(q->name));
         }
     }
-    sys->per_entity = entity || mask_any(seen);
+    sys->per_entity = entity || mask_any(seen) || sys->ownership;
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
 
     // A handler that takes components reads the entity its event is sent to,

@@ -132,6 +132,8 @@ view DrawPlayers(Body body, Owner owner, Session session)
 }
 ```
 
+A view that's only for your own player, like a camera that follows them, picks them with a filter instead: `with ownership` (see [Your own entities](../game/views.md#your-own-entities)).
+
 Save, then type `r` and press Enter in `tide`'s terminal, and steer with `WASD`. The game carried over to the new code when you saved, but your player had joined before `AddPlayer` existed, so they had no body yet. Starting over makes them join again.
 
 ## Play together

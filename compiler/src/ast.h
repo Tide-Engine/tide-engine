@@ -213,6 +213,7 @@ typedef struct param {
     bool read;    // The body names it
     bool written; // The body assigns through it
     bool lookup;  // `lookup Health health`: any entity's Health by its handle, health[e], read or (mut) changed; no filter
+    bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
 } param;
@@ -231,6 +232,15 @@ typedef struct conflict {
     struct decl *data; // A component or singleton
     conflict_kind kind;
 } conflict;
+
+// A view's filter by whether this machine's player owns the entity (decl.ownership).
+// `with ownership`: it has an Owner, whose player is Session.player. `without
+// ownership`: every other entity, with an Owner or without.
+enum {
+    OWNERSHIP_NONE,
+    OWNERSHIP_WITH,
+    OWNERSHIP_WITHOUT,
+};
 
 // An async function's world (decl.task_side): what it does decides where it can run.
 enum {
@@ -379,6 +389,7 @@ typedef struct decl {
     const char *position_what; // ...whose: "the mouse's position"
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
+    int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's `with ownership` or `without ownership`, which its rows are checked for
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
 
     // Systems in the tick, from analyze_parallelism
