@@ -32,6 +32,23 @@ struct Corner2
     Color color = Color.white;
 }
 
+// Ordinary list elements, without an entity for each one
+struct Batch3
+{
+    float4x4 transform = float4x4.identity;
+    Color tint;
+    int kind;
+    float unread;
+}
+
+struct Batch2
+{
+    float2 at;
+    Color tint;
+    int kind;
+    float4x4 transform = float4x4.identity; // Ordinary data in 2D, not applied by the engine
+}
+
 enum Mode { Plain, Bright }
 
 struct Finish
@@ -81,6 +98,12 @@ local singleton Art
     List<Corner2> flat;
     List<Corner2> onScreen;
     List<int> faces;
+    List<Vertex3> manualMesh;
+    List<float4x4> manualTransforms;
+    List<Batch3> manual3;
+    List<Batch2> manual2;
+    List<Batch2> manualTextured;
+    List<Batch3> empty;
     Grid2<Color> four = Grid2(2, 2);
     Color paint = Color(1, 0.5, 0);
     int frames;
@@ -206,6 +229,27 @@ frag Glow(Corner2 vertex, mut Color color, Lamp lamp)
 frag Stripe(Corner2 vertex, mut Color color, Pixel pixel, Marks marks)
 {
     color = pixel.position.y < marks.line ? Color.yellow : Color.cyan;
+}
+
+// Manual instances: the vert and frag both read the list's current item
+vert BatchPlace3(mut Corner3 vertex, Batch3 item)
+{
+    Bump(vertex.position.x, item.kind);
+}
+
+frag BatchPaint3(Corner3 vertex, mut Color color, Batch3 item, Instance instance)
+{
+    color = instance.transform.c3.z == 5 && item.kind < 3 ? item.tint : Color.magenta;
+}
+
+vert BatchPlace2(mut Corner2 vertex, Batch2 item)
+{
+    vertex.position += item.at;
+}
+
+frag BatchPaint2(Corner2 vertex, mut Color color, Batch2 item, Instance instance)
+{
+    color = item.kind == 3 && instance.transform.c0.x == 1 && item.transform.c3.x == 10000 ? item.tint : Color.magenta;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +546,19 @@ view Start(mut Art art)
         art.onScreen = [Corner2 { position = float2(132, 132) }, Corner2 { position = float2(156, 132) },
                         Corner2 { position = float2(156, 156) }, Corner2 { position = float2(132, 156) }];
         art.faces = [0, 1, 2, 0, 2, 3];
+        art.manualMesh = [Vertex3 { position = float3(-12, 12, 0) },
+                          Vertex3 { position = float3(12, 12, 0), uv = float2(1, 0) },
+                          Vertex3 { position = float3(12, -12, 0), uv = float2(1, 1) },
+                          Vertex3 { position = float3(-12, -12, 0), uv = float2(0, 1) }];
+        art.manualTransforms = [float4x4.Translate(Cell(3, 7))];
+        art.manual3 = [Batch3 { transform = float4x4.Translate(Cell(0, 7)), tint = Color.red, kind = 0 },
+                       Batch3 { transform = float4x4.Translate(Cell(1, 7)), tint = Color.green, kind = 1 },
+                       Batch3 { transform = float4x4.Translate(Cell(2, 7)), tint = Color.blue, kind = 2 }];
+        art.manual2 = [Batch2 { at = Spot(4, 7), tint = Color.yellow, kind = 3,
+                               transform = float4x4.Translate(float3(10000)) },
+                       Batch2 { at = Spot(5, 7), tint = Color.cyan, kind = 3,
+                               transform = float4x4.Translate(float3(10000)) }];
+        art.manualTextured = [Batch2 { at = Spot(6, 7) }];
         art.four[0, 0] = Color.red;
         art.four[1, 0] = Color.green;
         art.four[0, 1] = Color.blue;
@@ -571,4 +628,13 @@ view Flat(Art art)
 view FlatLamps(with Lamp, Art art)
 {
     Draw2D.Mesh(art.flat, art.faces, Place, Glow);
+}
+
+view Manual(Art art)
+{
+    Draw3D.Instanced(art.quad, art.faces, art.empty, BatchPlace3, BatchPaint3);
+    Draw3D.Instanced(art.quad, art.faces, art.manual3, BatchPlace3, BatchPaint3);
+    Draw3D.Instanced(art.manualMesh, art.faces, art.manualTransforms, art.four, Filter.Point);
+    Draw2D.Instanced(art.flat, art.faces, art.manual2, BatchPlace2, BatchPaint2);
+    Draw2D.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
 }

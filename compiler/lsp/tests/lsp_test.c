@@ -357,12 +357,12 @@ TIDE_TEST(lsp_complete_builtin_owners)
     const char *draw = complete(GAME_TYPES "view V(Body body)\n{\n    Draw2D.$\n}\n");
     TIDE_CHECK(offers(draw, "Circle"));
     TIDE_CHECK(has(draw, "Circle(${1:center}, ${2:radius}, ${3:color})"));
-    TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && !offers(draw, "Cube"));
+    TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && offers(draw, "Instanced") && !offers(draw, "Cube"));
 
     const char *draw3 = complete(GAME_TYPES "view V(Body body)\n{\n    Draw3D.$\n}\n");
     TIDE_CHECK(offers(draw3, "Cube") && offers(draw3, "Sphere") && offers(draw3, "Cylinder") && offers(draw3, "Plane"));
     TIDE_CHECK(offers(draw3, "WorldToScreen") && offers(draw3, "ScreenToWorld") && offers(draw3, "ScreenRayOrigin")
-               && offers(draw3, "ScreenRayDirection") && offers(draw3, "list"));
+               && offers(draw3, "ScreenRayDirection") && offers(draw3, "Instanced") && offers(draw3, "list"));
     TIDE_CHECK(!offers(draw3, "Circle") && !offers(draw3, "Rect") && !offers(draw3, "Screen"));
 
     const char *color = complete(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(body.position, 1, Color.$);\n}\n");
@@ -597,6 +597,14 @@ TIDE_TEST(lsp_hover)
     TIDE_CHECK(has(normalize, "Math.Normalize(float2 vector)"));
     TIDE_CHECK(has(normalize, "gives zero, never NaN"));
     TIDE_CHECK(has(normalize, "gives the identity, never NaN")); // A quaternion's
+
+    // Time's fields say what they are, where they're read and where they're offered
+    open_document(GAME_TYPES "system Move(mut Body body, Time time)\n{\n    body.radius = time.t$ * time.tickRate;\n}\n");
+    const char *seconds = request("textDocument/hover");
+    TIDE_CHECK(has(seconds, "float t") && has(seconds, "The seconds since the match started: `tick * dt`"));
+    const char *time = complete(GAME_TYPES "system Move(mut Body body, Time time)\n{\n    body.radius = time.$\n}\n");
+    TIDE_CHECK(offers(time, "dt") && offers(time, "tick") && offers(time, "t") && offers(time, "tickRate"));
+    TIDE_CHECK(has(time, "The ticks in a second") && has(time, "The length of a tick in seconds"));
 }
 
 TIDE_TEST(lsp_definition)
@@ -704,6 +712,40 @@ TIDE_TEST(lsp_meshes)
 #undef MESH_TYPES
 }
 
+static const char *hover_at(const int line, const int character)
+{
+    return request_at("file:///test.tide", "textDocument/hover", line, character, "");
+}
+
+TIDE_TEST(lsp_instanced_drawing)
+{
+    start();
+#define INSTANCE_TYPES \
+    "scene Main { }\nstruct Corner2 { float2 position; }\nstruct Corner3 { float3 position; }\n" \
+    "struct Item2 { float2 offset; }\nstruct Item3 { Color tint; }\n" \
+    "local singleton Art { List<Corner2> flat; List<Corner3> space; List<int> faces; List<Item2> items2; List<Item3> items3; }\n" \
+    "vert Place2(mut Corner2 vertex, Item2 item) { vertex.position += item.offset; }\n" \
+    "frag Shade3(Corner3 vertex, mut Color color, Item3 item) { color = item.tint * vertex.position.x; }\n"
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, art.items2, Place2); "
+                                 "Draw3D.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, $\n}\n");
+    const char *flat = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(flat, "Draw2D.Instanced(vertices, indices, instances["));
+    TIDE_CHECK(has(flat, "\"activeParameter\":2") && has(flat, "A List<T> of instance structs"));
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw3D.Instanced(art.space, art.faces, $\n}\n");
+    const char *space = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(space, "Draw3D.Instanced(vertices, indices, instances["));
+    TIDE_CHECK(has(space, "\"activeParameter\":2") && has(space, "A List<float4x4> of transforms"));
+    TIDE_CHECK(!has(space, "indices, transform["));
+    const char *shaders = complete(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, art.items2, $); }\n");
+    TIDE_CHECK(offers(shaders, "Place2") && !offers(shaders, "Shade3"));
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw3D.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
+    TIDE_CHECK(has(hover_at(7, 6), "Draw3D.Instanced"));
+    TIDE_CHECK(has(hover_at(7, 52), "An element of the draw's instance list"));
+#undef INSTANCE_TYPES
+}
+
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
 // view names last at Draw2D.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
 // is on line 31, the frag on line 35 and the view's Draw2D.Mesh on line 43.
@@ -730,11 +772,6 @@ TIDE_TEST(lsp_meshes)
     SHADER_CODE                                                                                                       \
     "view DrawBox(with Box, Models models)\n{\n"                                                                      \
     "    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);\n}\n"
-
-static const char *hover_at(const int line, const int character)
-{
-    return request_at("file:///test.tide", "textDocument/hover", line, character, "");
-}
 
 static const char *rename_at(const int line, const int character, const char *name)
 {

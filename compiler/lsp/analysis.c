@@ -1437,7 +1437,7 @@ static const method_form grid_calls[] = {
 
 static bool is_mesh_draw(const str owner, const str name)
 {
-    return builtin_draw_owner(owner) && str_eq_c(name, "Mesh");
+    return builtin_draw_owner(owner) && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced"));
 }
 
 // A Pixel's one method, in a frag.
@@ -1461,9 +1461,18 @@ static const char *shader_record_doc(const decl *d)
     return NULL;
 }
 
-// What Pixel's and Instance's fields are.
-static const char *shader_field_doc(const decl *d, const str name)
+// What the fields of the engine's own types are: Time's, Pixel's and Instance's.
+static const char *builtin_field_doc(const decl *d, const str name)
 {
+    if (d && d == A.prog->time) {
+        if (str_eq_c(name, "dt")) return "The length of a tick in seconds: the same every tick.";
+        if (str_eq_c(name, "tick")) return "The tick the match is at, counting from 0.";
+        if (str_eq_c(name, "t")) {
+            return "The seconds since the match started: `tick * dt`. Views see it blended between ticks, so it moves "
+                   "every frame. A float gets coarser as it grows: what has to be exact counts in `tick`.";
+        }
+        if (str_eq_c(name, "tickRate")) return "The ticks in a second: 1 / `dt` to the nearest whole number.";
+    }
     if (d && d == A.prog->pixel) {
         if (str_eq_c(name, "position")) return "Where the pixel is on the screen: its pixels, from the top left.";
         if (str_eq_c(name, "depth")) {
@@ -1684,11 +1693,13 @@ static bool vertex_is_3d(const decl *vertex)
 static void describe_shader(const decl *d, sb *out)
 {
     const bool three_d = d->params.count && vertex_is_3d(d->params.items[0].type.decl);
-    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.Mesh(..., "
+    bool instanced = false;
+    for (int i = 1; i < d->params.count; i++) instanced |= d->params.items[i].type.kind == TY_STRUCT;
+    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.%s(..., "
                                 STR_FMT ")`. What its `mut Color` holds when it ends is the pixel."
-                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.Mesh(..., "
+                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.%s(..., "
                                 STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
-              three_d ? 3 : 2, STR_ARG(d->name));
+              three_d ? 3 : 2, instanced ? "Instanced" : "Mesh", STR_ARG(d->name));
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
         return;
@@ -1705,8 +1716,9 @@ static void describe_shader(const decl *d, sb *out)
         }
         const bool component = p->type.kind == TY_COMPONENT;
         const bool transform = p->type.kind == TY_RECORD && p->type.decl == A.prog->instance;
-        if (!component && !transform && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
-        put_reads(p, type_prefix(p), false, component || transform ? &instance : &draw);
+        const bool data = p->type.kind == TY_STRUCT;
+        if (!component && !transform && !data && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
+        put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
     if (!instance.len && !draw.len && !textures.len && !vertex.len) {
@@ -1750,11 +1762,12 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_printf(out, "\n\n%s", shader_record_doc(t));
         return;
     }
-    if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) {
+    if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && p->type.kind != TY_STRUCT) {
         sb_put(out, "\n\nParameter, read-only.");
         return;
     }
-    sb_put(out, p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
+    sb_put(out, p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
+              : p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
                                                "to the GPU for each instance drawn."
                                              : "\n\nA singleton, sent to the GPU once for each draw.");
     if (!planned) {
@@ -1884,7 +1897,7 @@ static void describe(const occurrence *o, sb *out)
             sb_printf(out, "\n\nField of %s `" STR_FMT "`.", decl_keyword(o->decl), STR_ARG(o->decl->name));
         }
         if (button_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", button_field_doc(o->decl, o->field->name));
-        if (shader_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", shader_field_doc(o->decl, o->field->name));
+        if (builtin_field_doc(o->decl, o->field->name)) sb_printf(out, " %s", builtin_field_doc(o->decl, o->field->name));
         break;
     case OCC_PARAM: {
         format_param(o->param, &code);
@@ -4204,7 +4217,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                 continue;
             }
             const char *doc = button_field_doc(t.decl, f->name);
-            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : shader_field_doc(t.decl, f->name), NULL);
+            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : builtin_field_doc(t.decl, f->name), NULL);
         }
         // Its local fields, where code has them: views, local handlers and the
         // functions they call, and the frags and verts a view draws through.
@@ -5197,7 +5210,7 @@ static type names_type(const scope *sc, const int first, const int last)
 // Draw2D.Mesh's parameters, in the order they're written:
 // Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
-enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_PARAMS };
+enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_INSTANCES, MESH_PARAMS };
 
 // What an argument of Draw2D.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
@@ -5630,7 +5643,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // Draw2D.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
         int commas;
         const int call = open_call(last, &commas);
-        if (call >= 0 && opens_mesh_draw(call) && commas >= 2) {
+        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
             call_args args;
             call_arguments(call, &args);
@@ -6206,6 +6219,11 @@ static const char *const mesh_labels[2] = {
     "Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
 };
 
+static const char *const instanced_labels[2] = {
+    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
+    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
+};
+
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
 static const struct {
@@ -6223,6 +6241,10 @@ static const struct {
     [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
+    [MESH_INSTANCES] = {"instances",
+                        {"A List<T> of instance structs, one for each mesh. A vert or frag reads each through a read-only T parameter.",
+                         "A List<float4x4> of transforms, or a List<T> of instance structs. A struct's float4x4 transform places "
+                         "the mesh; without one, it uses the identity."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -6242,6 +6264,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             const expr *arg = call->args.items[count];
             const type t = call->arg_want.count > count ? call->arg_want.items[count] : arg->type;
             const int param = count < 2                                  ? count
+                            : count == 2 && call->instanced               ? MESH_INSTANCES
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
                             : t.kind == TY_GRID                          ? MESH_TEXTURE
@@ -6343,18 +6366,20 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
 // follows the lists can be left out, so that goes by what each argument is.
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
-    static const int forms[2][MESH_PARAMS] = {
+    static const int forms[3][MESH_PARAMS] = {
         {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
         {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
     };
     const scope sc = scope_at(at);
     call_args args;
     call_arguments(open, &args);
     const str owner = DOC->toks[open - 3].text;
     const bool three_d = str_eq_c(owner, "Draw3D");
-    const int *order = forms[three_d];
-    const int count = three_d ? MESH_PARAMS : MESH_PARAMS - 1;
-    const int fixed = three_d ? 3 : 2; // Its lists, and a 3D mesh's transform: always there, in this order
+    const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
+    const int *order = forms[instanced ? 2 : three_d ? 1 : 0];
+    const int count = instanced || three_d ? 7 : 6;
+    const int fixed = instanced || three_d ? 3 : 2; // Lists, and an ordinary 3D mesh's transform
 
     int active = 0;
     int next = 0; // The first parameter the next argument can be
@@ -6370,20 +6395,21 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     }
 
     mesh_docs docs = {{NULL, NULL}};
-    builtin_signatures(owner, str_from("Mesh"), collect_mesh_doc, &docs);
+    builtin_signatures(owner, DOC->toks[open - 1].text, collect_mesh_doc, &docs);
     jb_put(out, "{\"signatures\":[");
     const int form = three_d ? 1 : 0;
     {
-        const char *label = mesh_labels[form];
+        const char *label = instanced ? instanced_labels[form] : mesh_labels[form];
         sb doc = {0};
-        sb_printf(&doc, "%s%s%s", docs.doc[form] ? docs.doc[form] : "", docs.doc[form] ? "\n\n" : "", MESH_SHADER_DOC);
+        const char *description = docs.doc[instanced ? 0 : form];
+        sb_printf(&doc, "%s%s%s", description ? description : "", description ? "\n\n" : "", MESH_SHADER_DOC);
         jb_put(out, "{\"label\":");
         jb_string(out, label);
         jb_put(out, ",\"documentation\":{\"kind\":\"markdown\",\"value\":");
         jb_string(out, doc.data);
         jb_put(out, "},\"parameters\":[");
-        for (int i = 0; i < (form ? MESH_PARAMS : MESH_PARAMS - 1); i++) {
-            const int param = forms[form][i];
+        for (int i = 0; i < count; i++) {
+            const int param = order[i];
             const int start = label_word(label, mesh_params[param].name);
             const char *what = mesh_params[param].doc[form] ? mesh_params[param].doc[form] : mesh_params[param].doc[0];
             jb_printf(out, "%s{\"label\":[%d,%d],\"documentation\":{\"kind\":\"markdown\",\"value\":", i ? "," : "", start,

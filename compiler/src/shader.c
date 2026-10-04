@@ -2004,15 +2004,16 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             if (code->is_frag) v->frag_reads = true;
         }
         if (p->type.decl == prog->pixel && p->reads && p->reads[2]) sh->frag_world = true;
-        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
+        const bool explicit_instance = p->type.kind == TY_STRUCT && p->type.decl == sh->instance_type;
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance) continue;
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
             if (f->type.kind == TY_GRID) continue; // Sampled, below
-            shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
+            shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
-            add_bound(sh, p->type.decl);
+            if (!explicit_instance) add_bound(sh, p->type.decl);
         }
         // Its local fields, which this machine keeps beside the match's
         const decl *part = p->type.decl->local_part;
@@ -2053,6 +2054,10 @@ bool shader_reads_local(const shader *sh, const decl *d)
 static void list_bound(const shader *sh, sb *out, const bool per_instance)
 {
     int n = 0;
+    if (per_instance && sh->instance_type) {
+        sb_printf(out, STR_FMT, STR_ARG(sh->instance_type->name));
+        n++;
+    }
     for (int i = 0; i < sh->bound.count; i++) {
         const decl *d = sh->bound.items[i];
         if ((d->kind == DECL_COMPONENT) != per_instance) continue;
@@ -2067,7 +2072,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
 {
     for (int i = 0; i < prog->shaders.count; i++) {
         shader *s = prog->shaders.items[i];
-        if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured) return s;
+        if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
+            && s->instanced == call->instanced && s->instance_type == call->instance_type) return s;
     }
     shader *sh = NEW(shader);
     sh->index = prog->shaders.count;
@@ -2075,8 +2081,11 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->vert = call->vert;
     sh->frag = call->frag;
     sh->textured = textured;
+    sh->instanced = call->instanced;
+    sh->instance_type = call->instance_type;
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
+    if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
     sb name = {0};
     if (sh->vert) sb_printf(&name, STR_FMT "%s", STR_ARG(sh->vert->name), sh->frag ? " and " : " ");
     if (sh->frag) sb_printf(&name, STR_FMT " ", STR_ARG(sh->frag->name));

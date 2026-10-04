@@ -426,6 +426,11 @@ void tide_draw_mesh_fill(tide_draw_list *d, uint32_t mesh, const tide_vertex3 *v
 // tide_draw_texture_slot gave as the texture.
 void tide_draw_instance(tide_draw_list *d, uint32_t mesh, tide_float4x4 transform, uint32_t texture, tide_filter filter);
 
+// The same for `count` transforms, copied in their order into one run.
+// With no transforms, nothing is recorded.
+void tide_draw_instances(tide_draw_list *d, uint32_t mesh, const tide_float4x4 *transforms, uint32_t count,
+                         uint32_t texture, tide_filter filter);
+
 // tide_draw_mesh_fill for a TIDE_MESH_BYTES mesh: vertices of `vertex_size`
 // bytes each, as a shader reads them.
 void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *vertices, uint32_t vertex_size,
@@ -442,6 +447,12 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *ver
 // command, which renderers draw at once.
 void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instance,
                       const void *uniforms, const uint32_t *textures, uint32_t blended);
+
+// The same for `count` instances, tide_shader_instance_size bytes each,
+// copied in their order into one run. A shader with no instance bytes may
+// take NULL with a positive count. A count of zero records nothing.
+void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instances,
+                                uint32_t count, const void *uniforms, const uint32_t *textures, uint32_t blended);
 
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
