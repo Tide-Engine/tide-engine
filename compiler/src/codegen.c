@@ -9888,6 +9888,7 @@ static void gen_game_api(gen *g)
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
     if (prog->delay_prediction) sb_put(o, "    .prediction = TIDE_PREDICTION_DELAY,\n");
+    if (prog->stats) sb_put(o, "    .stats = true,\n");
     if (prog->debug_views) sb_put(o, "    .debug_views = true,\n");
     if (prog->title) {
         sb_put(o, "    .title = ");
