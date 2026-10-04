@@ -1135,6 +1135,43 @@ TIDE_TEST(lsp_gui)
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
 
+    // The cursor's lock: views ask for it and read whether it holds, and so
+    // do the functions they call; the input's Sample only reads; the match
+    // has neither.
+    static const char look[] = "input In\n{\n    float2 look;\n    Sample()\n    {\n        $\n    }\n"
+                               "    Sanitize()\n    {\n        look = float2(0, 0);\n    }\n}\nscene Main { }\n";
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Cursor"));
+    TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Cursor"));
+    TIDE_CHECK(offers(complete(look), "Cursor"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "Cursor"));
+    const char *cursor = complete("scene Main { }\nview V()\n{\n    Cursor.$\n}\n");
+    TIDE_CHECK(offers(cursor, "Lock") && offers(cursor, "locked"));
+    const char *sampled = complete("input In\n{\n    float2 look;\n    Sample()\n    {\n        if (Cursor.$) look = Devices.mouse.delta;\n"
+                                   "    }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(sampled, "locked") && !offers(sampled, "Lock"));
+    const char *in_match = complete("scene Main { }\nsystem S()\n{\n    Cursor.$\n}\n");
+    TIDE_CHECK(!offers(in_match, "locked") && !offers(in_match, "Lock"));
+    static const char camera[] = "input In\n{\n    float2 look;\n    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }\n}\n"
+                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    var held = Cursor.locked;\n}\n";
+    open_document(camera);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *lock = request("textDocument/hover");
+    TIDE_CHECK(has(lock, "Cursor.Lock()"));
+    TIDE_CHECK(has(lock, "Call it every frame the game wants the mouse"));
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    var held = Cursor.loc$ked;\n}\n");
+    const char *locked = request("textDocument/hover");
+    TIDE_CHECK(has(locked, "Cursor.locked: bool"));
+    TIDE_CHECK(has(locked, "what the system says"));
+    open_document("scene Main { }\nview Look()\n{\n    Cur$sor.Lock();\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "The mouse's cursor"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
+    // In the match, the error says where it goes instead
+    open_document("scene Main { }\nsystem S()\n{\n    Cursor.Lock();\n}\n");
+    TIDE_CHECK(has(last_sent(), "so it can't call Cursor.Lock"));
+    // ...and a signature, as the GUI's calls have
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cursor.Lock()"));
+
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"
                   "view V(mut M m)\n{\n    Twice()\n    {\n        m.o$n = true;\n    }\n}\n");
@@ -1981,6 +2018,65 @@ TIDE_TEST(lsp_quick_fixes_from_suggestions)
     TIDE_CHECK(has(math, "{\"range\":{\"start\":{\"line\":24,\"character\":23},\"end\":{\"line\":24,\"character\":27}},"
                          "\"newText\":\"Clamp\"}"));
     TIDE_CHECK(!has(actions_at(23), "Change to")); // Only on its line
+}
+
+// `with ownership` and `without ownership`: a view's filter by this machine's
+// player. `ownership` is a keyword right after them, and a name anywhere else.
+TIDE_TEST(lsp_ownership)
+{
+    start();
+    // Offered after `with` and `without` in a view, beside the components
+    const char *with = complete(GAME_TYPES "view Mine(Body body, with $)\n{\n}\n");
+    TIDE_CHECK(offers(with, "ownership"));
+    TIDE_CHECK(offers(with, "Body"));
+    TIDE_CHECK(has(with, "Entities this machine's player owns"));
+    const char *without = complete(GAME_TYPES "view Rest(Body body, without $)\n{\n}\n");
+    TIDE_CHECK(offers(without, "ownership"));
+    TIDE_CHECK(has(without, "Entities this machine's player doesn't own"));
+    // ...and nowhere else: the match has no machine of its own
+    TIDE_CHECK(!offers(complete(GAME_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event(Spawned) Grow(mut Body body, without $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "view Mine($)\n{\n}\n"), "ownership"));
+
+    open_document(GAME_TYPES "view Mine(Body body, with owner$ship)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "with ownership"));
+    TIDE_CHECK(has(hover, "the entities this machine's player owns"));
+    // A keyword (11), 11 columns after the parameter `body`
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,11,9,11,0,"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "'ownership' is a keyword after 'with' and 'without'"));
+    // The view's own hover shows its filter
+    open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "view Rest(Body body, with Owner, without ownership)"));
+
+    // In the match it's an error that says what to write, which a quick fix does
+    open_document(GAME_TYPES "system Move(mut Body body, with ownership)\n{\n    body.radius = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "the match runs the same on every machine, so a system can't filter by 'with ownership'"));
+    TIDE_CHECK(has(last_sent(), "for entities that have any owner, write 'with Owner'"));
+    const char *fix = actions_at(22);
+    TIDE_CHECK(has(fix, "\"title\":\"Change to 'Owner'\",\"kind\":\"quickfix\""));
+    TIDE_CHECK(has(fix, "{\"range\":{\"start\":{\"line\":22,\"character\":32},\"end\":{\"line\":22,\"character\":41}},"
+                        "\"newText\":\"Owner\"}"));
+
+    // The formatter keeps the filter as it is
+    static const char messy[] = "component Body { float x; }\nscene Main { }\n"
+                                "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
+                                "view Mine( Body body,with   ownership ){ Draw.Circle(float2(body.x, 0), 1, Color.red); }\n"
+                                "view Rest(Body body ,without ownership) { Draw.Circle(float2(body.x, 0), 1, Color.red); }\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(has(formatted, "view Mine(Body body, with ownership) { "));
+    TIDE_CHECK(has(formatted, "view Rest(Body body, without ownership) { "));
+
+    // Anywhere else `ownership` is a name: a singleton's, a field's, a parameter's
+    open_document("local singleton ownership { int ownership = 3; }\nscene Main { }\n"
+                  "int Twice(int ownership) { return ownership * 2; }\n"
+                  "view Share(owner$ship ownership)\n{\n    if (Twice(ownership.ownership) > 1) Draw.Clear(Color.black);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "local singleton ownership"));
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, ",1,5,5,9,1,0,6,9,3,0,0,10,9,5,3,")); // Share, then a class (3) and a parameter (5)
 }
 
 // An error nothing handles: carry on with the default, or pass it on.

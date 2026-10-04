@@ -734,9 +734,21 @@ bool tide_window_key_held(const tide_key key)
 
 void tide_window_mouse_state(tide_window_mouse *out)
 {
-    *out = (tide_window_mouse){app.mouse_x, app.mouse_y, app.wheel_x, app.wheel_y, app.mouse_held | app.mouse_tapped};
+    *out = (tide_window_mouse){.x = app.mouse_x,
+                               .y = app.mouse_y,
+                               .wheel_x = app.wheel_x,
+                               .wheel_y = app.wheel_y,
+                               .buttons = app.mouse_held | app.mouse_tapped}; // Never locked (below)
     app.wheel_x = app.wheel_y = 0.0f;
     app.mouse_tapped = 0;
+}
+
+// A mouse's cursor is never locked here, yet: Android's pointer capture is a
+// view's (View.requestPointerCapture), which NativeActivity's window has none
+// of to ask with. Cursor.locked stays false.
+void tide_window_cursor_lock(const bool lock)
+{
+    (void)lock;
 }
 
 void tide_window_gamepad_state(tide_window_gamepad *out)

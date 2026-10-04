@@ -55,6 +55,14 @@ typedef struct tide_textref tide_textref;
 // the views get nothing from the devices, and back (Escape, or the east
 // button) closes it.
 //
+// A view that wants the mouse for itself, like a camera that looks around,
+// asks for the cursor's lock (Cursor.Lock) each frame it does. The host passes
+// the frame's ask on to the platform (tide_gui_cursor_lock), and the devices
+// say whether the window holds the cursor (tide_mouse.locked, Cursor.locked),
+// which the system decides. While it does, the cursor is hidden and points at
+// nothing: the mouse hovers and presses no widget, and all of it is the
+// game's. A finger still presses what it touches.
+//
 // Widgets in a Disabled block (GUI.Disabled) are drawn faded and don't work,
 // as with Unity's GUI.enabled: a menu stays up, grayed out, while it waits.
 //
@@ -168,6 +176,7 @@ typedef struct tide_gui {
     tide_float2 mouse;
     bool mouse_held, mouse_pressed, mouse_released;
     bool mouse_was_held;
+    bool press_was_held;   // The pointer's press last frame, whether the GUI saw it or the cursor was locked
     uint32_t keys;         // Navigation keys held (see gui.c)
     uint32_t keys_pressed; // ...that went down this frame
     tide_typed text;
@@ -192,6 +201,7 @@ typedef struct tide_gui {
     tide_gui_claim_rect claim_rects_next[TIDE_GUI_MAX_CLAIM_RECTS];
     uint32_t claim_rect_count, claim_rect_count_next;
     bool keyboard_shown, keyboard_shown_next; // A view asked for the phone's keyboard (GUI.ShowKeyboard)
+    bool cursor_lock, cursor_lock_next;       // A view asked for the cursor's lock (Cursor.Lock)
 
     // Kept between frames
     uint32_t frame;
@@ -242,11 +252,19 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw);
 // ended. Phones show their keyboard meanwhile (tide_platform_typing).
 bool tide_gui_typing(const tide_gui *g);
 
+// Whether the game wants the cursor locked: a view asked (Cursor.Lock) in the
+// frame that just ended, and no modal is up, whose widgets need the pointer.
+// The host passes it on once a frame (tide_platform_cursor_lock). Whether the
+// window then holds the cursor is the system's to say, and the devices have
+// it (tide_mouse.locked).
+bool tide_gui_cursor_lock(const tide_gui *g);
+
 // Hides what the GUI is using from `devices`, a copy about to be sampled as
 // the game's input: the keyboard and gamepad while a widget has the focus,
 // the mouse's buttons and the primary touch while the pointer is over the GUI
 // or pressing a widget, and everything while a modal is up. What views claimed
 // in the last frame is hidden too, and what's typed always: it's a frame's.
+// A mouse whose cursor is locked is on no widget, so its buttons are the game's.
 //
 // The pointer is over the GUI where `devices` has it on a widget or an area as
 // the last frame drew them, so a press there is the GUI's from the sample it
@@ -282,6 +300,11 @@ void tide_gui_claim_pointer_at(tide_gui *g, tide_rect rect);
 // GUI.ShowKeyboard: the player is typing into something of the view's, so
 // phones show their keyboard. Called every frame they are.
 void tide_gui_show_keyboard(tide_gui *g);
+
+// Cursor.Lock: a view wants the mouse for itself, so the window holds the
+// cursor, hidden (see tide_gui_cursor_lock). Called every frame it does: the
+// cursor comes back once a frame goes by without it.
+void tide_gui_lock_cursor(tide_gui *g);
 
 // Mixes two numbers into an ID. Never 0, which means no widget.
 uint32_t tide_gui_seed(uint32_t a, uint32_t b);

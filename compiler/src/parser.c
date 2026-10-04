@@ -1427,11 +1427,24 @@ static void parse_query_rest(parser *p, decl *d)
                     longjmp(p->fail, 1);
                 }
             }
+            // `with ownership`, `without ownership`: a word of its own right after
+            // them, and a name like any other everywhere else, a namespace's too
+            // (`with ownership.Flag`)
+            const bool filter = prm.mode == PARAM_WITH || prm.mode == PARAM_WITHOUT;
+            if (filter && at(p, T_IDENT) && str_eq_c(peek(p)->text, "ownership") && peek_at(p, 1)->kind != T_DOT) {
+                const token *word = advance(p);
+                prm.ownership = true;
+                prm.type_name = word->text;
+                prm.type_qual_at = word->at;
+                prm.type_at = word->at;
+                vec_push(d->params, prm);
+                continue;
+            }
             const qname type = parse_decl_type(p, what);
             prm.type_name = type.text;
             prm.type_qual_at = type.at;
             prm.type_at = type.name_at;
-            if (prm.mode != PARAM_WITH && prm.mode != PARAM_WITHOUT) {
+            if (!filter) {
                 prm.name_at = peek(p)->at;
                 prm.name = expect_ident(p, "parameter name")->text;
             }

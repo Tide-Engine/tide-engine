@@ -58,13 +58,34 @@ bool tide_window_key_held(tide_key key);
 // The mouse. Buttons are bits in tide_mouse's order: left, right, middle,
 // back, forward, each held or pressed since the last call. The wheel is what
 // it turned since the last call, positive y away from the user.
+//
+// While the window holds the cursor (`locked`, see tide_window_cursor_lock),
+// `x` and `y` stay where the cursor was when it was locked, and `moved_x` and
+// `moved_y` are what the mouse moved since the last call, y down: its own
+// movement where the system gives it (no acceleration), with no screen's edge
+// to stop at. They're 0 while it isn't locked: the position says how it moved.
 typedef struct tide_window_mouse {
     float x, y;
     float wheel_x, wheel_y;
     uint32_t buttons;
+    bool locked;
+    float moved_x, moved_y;
 } tide_window_mouse;
 
 void tide_window_mouse_state(tide_window_mouse *out);
+
+// Whether the game wants the cursor locked (Cursor.Lock), every frame: hidden,
+// and kept in the window, for a camera that looks around. The window holds it
+// when the system lets it, and tide_window_mouse_state says whether it does:
+//
+// - A desktop window holds it while it has the focus: Alt+Tab lets the cursor
+//   go, and coming back takes it again while the game still asks.
+// - A browser only gives it when asked from a click or a key press, so the page
+//   asks at the next one while the game wants it. It takes the cursor back
+//   itself when the player presses Escape, or the page loses the focus or is
+//   hidden; nothing asks again until the player clicks or presses a key.
+// - Android never does, yet.
+void tide_window_cursor_lock(bool lock);
 
 // The first gamepad's buttons, in tide_gamepad's order, the d-pad's after.
 #define TIDE_WINDOW_PAD(name) TIDE_PAD_##name,

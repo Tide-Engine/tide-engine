@@ -175,6 +175,7 @@ const cases = {
         ['Draw.Mesh(', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
+        ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],
     ],
     "operators that aren't what they look like": [
         ['int value = Parse(text)!;', [['!', 'keyword.operator.or-default'], ['!', '!keyword.operator.logical']]],
@@ -217,6 +218,18 @@ const cases = {
         ]],
         ['world.Set<Health>(', [['Set', 'support.function'], ['Health', 'entity.name.type']]],
         ['var lookup =', [['lookup', '!storage'], ['<', 'keyword.operator.comparison']]],
+    ],
+    'ownership is a keyword only right after with and without': [
+        ['view Mine(', [['with', 'storage.modifier'], ['ownership', 'keyword.other.ownership']]],
+        ['view Rest(', [
+            ['with', 'storage.modifier'], ['Owner', 'support.class'], ['without', 'storage.modifier'],
+            ['ownership', 'keyword.other.ownership'],
+        ]],
+        ['view Flagged(', [
+            ['with', 'storage.modifier'], ['ownership', '!keyword'], ['Flag', 'entity.name.type'],
+            ['with', 'storage.modifier', 2], ['ownership', '!keyword', 2],
+        ]],
+        ['int Owned(', [['ownership', '!keyword'], ['ownership', '!keyword', 2]]],
     ],
 };
 

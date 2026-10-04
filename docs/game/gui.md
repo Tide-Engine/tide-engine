@@ -90,7 +90,7 @@ Positions and sizes are in pixels, as on a web page, so widgets keep their size 
 
 ## Modals
 
-While a modal is up, it has the focus, the widgets outside it don't work, and the game and views get nothing from the devices. Back (Escape or the gamepad's east button) closes it. The modal drawn last is on top.
+While a modal is up, it has the focus, the widgets outside it don't work, and the game and views get nothing from the devices. Back (Escape or the gamepad's east button) closes it. The modal drawn last is on top. A [locked cursor](./views.md#looking-around) comes back while one is up, since its widgets need the pointer.
 
 ## Disabled widgets
 

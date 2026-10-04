@@ -21,6 +21,30 @@ A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are al
 
 A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
 
+## Your own entities
+
+"My camera, my HUD, my health bar" is in every multiplayer game, so views have a filter for it. `with ownership` picks the entities this machine's player owns, and `without ownership` every other one:
+
+```csharp
+view RenderGame(Player player, with ownership)
+{
+    Draw.Camera(player.pos, player.rot, 75);
+}
+
+// Everyone else's body: a first-person camera doesn't draw its own
+view Bodies(Player player, Scenery scenery, without ownership)
+{
+    Draw.Mesh(scenery.crate, scenery.faces, float4x4.TRS(player.pos, player.rot, float3(1)), scenery.wood);
+}
+```
+
+- `with ownership`: the entity has an [`Owner`](./input.md#who-gets-which-input), and its `player` is `Session.player`, this machine's player.
+- `without ownership`: every other entity the view's parameters admit, which is another player's and those with no `Owner`. With `with Owner` beside it, only those whose owner is someone else.
+
+They're filters, beside `with` and `without`: the view takes neither `Owner` nor `Session` for them, and `if (owner.player != session.player) return;` goes. A view that wants both kinds at once, like one that draws your player yellow and the others gray, still takes `Owner` and `Session` and compares.
+
+Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+
 ## Draw functions
 
 Positions and sizes are in world units, with `y` up. The camera maps them to the screen.
@@ -215,6 +239,71 @@ view Isometric(Viewer viewer)
 
 A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](../c/functions.md#drawing-from-c).
 
+### Looking around
+
+A camera that turns with the mouse wants the mouse for itself: the cursor out of sight, and no screen's edge for it to stop at. `Cursor.Lock()` asks for that. Call it every frame the game wants the mouse, as with `GUI.ShowKeyboard()`: the cursor comes back by itself once a frame goes by without it, so there's nothing to unlock. `Cursor.locked` says whether the lock holds.
+
+```csharp
+input PlayerInput
+{
+    float2 look;
+
+    Sample()
+    {
+        if (Cursor.locked) look = Devices.mouse.delta * 0.003;
+    }
+}
+
+system Turn(PlayerInput input, mut Viewer viewer)
+{
+    viewer.yaw += input.look.x;
+    viewer.pitch = Math.Clamp(viewer.pitch - input.look.y, -1.5, 1.5);
+    viewer.rotation = quaternion.Euler(float3(viewer.pitch, viewer.yaw, 0));
+}
+
+local singleton Menu
+{
+    bool paused;
+    bool looking; // The window held the cursor last frame
+}
+
+view Look(Viewer viewer, mut Menu menu)
+{
+    Draw.Camera(viewer.position, viewer.rotation, 75);
+    if (Devices.keyboard.escape.down) menu.paused = true;
+    if (!menu.paused) Cursor.Lock();
+    // The lock went away on its own: show the pause menu
+    if (menu.looking && !Cursor.locked) menu.paused = true;
+    menu.looking = Cursor.locked;
+}
+
+view PauseMenu(mut Menu menu)
+{
+    GUILayout.Modal(Anchor.MiddleCenter, menu.paused)
+    {
+        if (GUILayout.Button("Resume")) menu.paused = false;
+    }
+}
+```
+
+While the cursor is locked:
+
+- It's hidden, and `Devices.mouse.position` stays where it was, as does the pointer's.
+- `Devices.mouse.delta` keeps coming, however far the mouse goes. Where the system gives it, it's the mouse's own movement, without the acceleration a cursor has, so the camera turns evenly.
+- The GUI sees no pointer: nothing hovers, and a click presses no widget, so it's all the game's. A finger on a touchscreen still presses what it touches.
+
+::: warning Read `Cursor.locked`, don't assume
+Asking isn't having. The system decides whether the window holds the cursor, and it differs:
+
+- **In a browser,** the lock is only given at a click or a key press, so it takes hold at the player's next one, or at once when the game asks right after one, like a Resume button's click. The browser lets the cursor go when the player presses Escape, which a page can't prevent and often never sees the key of, and when the page loses the focus. For a moment after Escape it won't lock again, and then it takes another click or key press.
+- **On desktop,** a window holds the cursor while it has the focus: Alt+Tab lets it go, and the lock returns with the focus if the game still asks.
+- **On Android,** it never locks, for now.
+
+So look only while `Cursor.locked`, and show the pause menu when it goes false while the game was looking, as above: in a browser that's what Escape does.
+:::
+
+Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor.locked`, and so does the input's `Sample`. The match can do neither: the cursor is this machine's, so what the match needs of it goes in the input. While a [modal](./gui.md#modals) is up the lock isn't asked for, whatever views ask, since its widgets need the pointer.
+
 ## Smooth at any tick rate
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
@@ -275,4 +364,4 @@ component Body
 
 ## Reading this machine's devices
 
-Views can read `Devices`, this machine's input devices, for the frame: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. What the GUI is using is hidden from them, and so is what another view [claimed](./gui.md#widgets-of-your-own) for widgets of its own. They read [what's typed](./input.md#typed-text) too, as `Devices.keyboard.text`. A function that reads `Devices` needs the frame, like one that draws, so only views and the functions they call can call it.
+Views can read `Devices`, this machine's input devices, for the frame: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. A view that wants the mouse for itself [locks the cursor](#looking-around). What the GUI is using is hidden from them, and so is what another view [claimed](./gui.md#widgets-of-your-own) for widgets of its own. They read [what's typed](./input.md#typed-text) too, as `Devices.keyboard.text`. A function that reads `Devices` needs the frame, like one that draws, so only views and the functions they call can call it.

@@ -33,6 +33,18 @@ TIDE_WEB_IMPORT(mouse_buttons) int tide_web_mouse_buttons(void);
 TIDE_WEB_IMPORT(take_wheel_x) float tide_web_take_wheel_x(void);
 TIDE_WEB_IMPORT(take_wheel_y) float tide_web_take_wheel_y(void);
 
+// The cursor's lock (see tide_window_cursor_lock): whether the program wants
+// it, every frame, and whether the canvas has it, which is the browser's to
+// say. The page asks the browser when the player clicks or presses a key, the
+// only times it gives it, and never again on its own after it's refused or
+// taken back (Escape, the page hidden or without the focus). While the canvas
+// has it, the mouse's position stays, and take_mouse_moved is what the mouse
+// moved since the last call, y down.
+TIDE_WEB_IMPORT(cursor_lock) void tide_web_cursor_lock(bool lock);
+TIDE_WEB_IMPORT(cursor_locked) bool tide_web_cursor_locked(void);
+TIDE_WEB_IMPORT(take_mouse_moved_x) float tide_web_take_mouse_moved_x(void);
+TIDE_WEB_IMPORT(take_mouse_moved_y) float tide_web_take_mouse_moved_y(void);
+
 // Fingers on the canvas, from its pointer events, in the order they happened:
 // take_touch moves to the next one since the last call (false once there are
 // none), and the others read it. Phases are tide_touch_phase's; positions are

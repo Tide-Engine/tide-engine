@@ -33,6 +33,7 @@ tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order)
 tide_e2e_test(views)
+tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
@@ -63,6 +64,7 @@ tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)
 tide_e2e_test(claims) # Widgets a view draws itself: what's typed, and claiming the pointer and the keyboard
+tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which the window says
 tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)

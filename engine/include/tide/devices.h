@@ -95,11 +95,18 @@ typedef struct tide_keyboard {
 typedef struct tide_mouse {
     // Position in window pixels from the bottom left, y up, as in Unity. Delta
     // and scroll add up since the last sample; scroll y is positive away from
-    // the user.
+    // the user. While the cursor is locked, the position stays where it was
+    // and the delta is the mouse's own movement, with no screen to stop at.
     TIDE_MOUSE_AXES(TIDE_DEVICES_MEMBER_FLOAT2)
     TIDE_MOUSE_BUTTONS(TIDE_DEVICES_MEMBER_BUTTON)
     tide_float2 poll_delta;  // Platform state: this poll's movement and scroll alone, for what views read
     tide_float2 poll_scroll;
+    // ...and whether the window holds the cursor (Cursor.locked): hidden, and
+    // kept from leaving. It's what the system says, not what the game asked
+    // (Cursor.Lock): a browser lets the cursor go when the player presses
+    // Escape, and a window that loses the focus doesn't hold it.
+    bool locked;
+    uint8_t tide_pad[3]; // Written out: no padding the compiler adds (see below)
 } tide_mouse;
 
 typedef struct tide_dpad {

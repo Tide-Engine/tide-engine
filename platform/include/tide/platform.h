@@ -66,7 +66,30 @@ void tide_platform_next_frame(double seconds);
 // Keys are read by physical position on every platform. Axes follow Unity: y
 // is positive up for sticks and the mouse, and mouse position is in window
 // pixels from the bottom left.
+//
+// `mouse.locked` is whether the window holds the cursor (see
+// tide_platform_cursor_lock). While it does, the mouse's position stays where
+// it was, and its delta is the mouse's own movement.
 void tide_platform_poll(tide_devices *devices);
+
+// Whether the game wants the cursor locked (tide_gui_cursor_lock), once a
+// frame: hidden and kept in the window, so the mouse turns a camera without
+// reaching the screen's edge. Asking isn't having: the system decides, and
+// tide_platform_poll says whether the window holds it (`mouse.locked`).
+//
+// - A desktop window holds the cursor while it has the focus. Alt+Tab lets it
+//   go, and coming back takes it again while this is still asked.
+// - A browser gives it only when asked from a click or a key press, so the
+//   page asks at the next one on the canvas while it's wanted (and at once,
+//   which works shortly after one). The browser lets the cursor go itself when
+//   the player presses Escape, which the page can't prevent, and when the page
+//   loses the focus or is hidden. For a moment after Escape it refuses, and
+//   nothing asks again on its own: the next click or key press does.
+// - Android never holds it, yet.
+//
+// So a game reads whether it's locked rather than assuming, and usually shows
+// its pause menu when the lock goes away.
+void tide_platform_cursor_lock(bool lock);
 
 // Renders a frame's draw list (see tide/draw.h), such as the one
 // tide_frame fills. Call from the frame function.
