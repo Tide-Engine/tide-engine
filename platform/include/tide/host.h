@@ -50,6 +50,10 @@ typedef struct tide_host_game {
     // How long this frame is, before `frame`: local tasks' Wait.Seconds counts it down
     void (*frame_time)(void *local, float seconds);
     bool (*take_request)(void *local, tide_session_request *request, void *start);
+    // The oldest packed command, without removing it; 0 when none. Remove it
+    // only once the session has copied it into its pending queue.
+    uint32_t (*command)(const void *local, uint8_t *out, uint32_t capacity);
+    void (*command_sent)(void *local);
     // `room`: the code of the room the match is in, "" if none
     void (*set_session)(void *local, uint32_t state, tide_player_id player, uint32_t ping, bool server, bool open,
                         const char *room);
@@ -125,6 +129,16 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     tide_devices_consume(&tide_run_devices);
 }
 
+// Local commands waiting for transport capacity belong to the match whose
+// views sent them. Explicit match changes discard them; migration keeps them.
+static inline void tide_run_discard_commands(void)
+{
+    const tide_host_game *game = tide_run_game;
+    if (!game->command || !game->command_sent) return;
+    uint8_t bytes[TIDE_COMMAND_BYTES];
+    while (game->command(tide_run_local, bytes, sizeof bytes)) game->command_sent(tide_run_local);
+}
+
 // Starts, joins or leaves a match, as local code or the command line asked,
 // and copies what it asked to.
 // `start` is a tide_start, or NULL for Main.
@@ -137,6 +151,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
     const uint16_t port = port_ok ? (uint16_t)request->port : 0u;
     switch (request->kind) {
     case TIDE_REQUEST_START:
+        tide_run_discard_commands();
         tide_session_start(s, start, tide_run_now);
         break;
     case TIDE_REQUEST_OPEN:
@@ -159,6 +174,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
         tide_session_kick_all(s, request->text);
         break;
     case TIDE_REQUEST_JOIN:
+        tide_run_discard_commands();
         if (!tide_platform_room_join(request->text, &network, &server)) {
             fprintf(stderr, "tide: can't join room '%s'\n", request->text);
             tide_session_leave(s);
@@ -168,6 +184,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
         tide_session_join(s, network, server, tide_run_now);
         break;
     case TIDE_REQUEST_CONNECT:
+        tide_run_discard_commands();
         if (!port || !tide_platform_resolve(request->text, port, &server) || !tide_platform_udp_open(0, &network)) {
             fprintf(stderr, "tide: can't reach '%s'\n", request->text);
             tide_session_leave(s);
@@ -177,9 +194,11 @@ static inline void tide_run_request(const tide_session_request *request, const v
         tide_session_join(s, network, server, tide_run_now);
         break;
     case TIDE_REQUEST_LEAVE:
+        tide_run_discard_commands();
         tide_session_leave(s);
         break;
     case TIDE_REQUEST_END:
+        if (tide_session_status_of(s).server) tide_run_discard_commands();
         tide_session_end(s);
         break;
     case TIDE_REQUEST_COPY:
@@ -406,6 +425,14 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_platform_draw_overlay(stats);
     }
 
+    if (game->command && game->command_sent) {
+        uint8_t bytes[TIDE_COMMAND_BYTES];
+        uint32_t size;
+        while ((size = game->command(tide_run_local, bytes, sizeof bytes)) != 0) {
+            if (!tide_session_send_command(s, bytes, size)) break;
+            game->command_sent(tide_run_local);
+        }
+    }
     tide_session_request request;
     while (game->take_request(tide_run_local, &request, tide_run_start)) tide_run_request(&request, tide_run_start);
     // While nobody sees the window, the next frame is the match's next tick

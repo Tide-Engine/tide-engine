@@ -1,0 +1,4 @@
+// expect: command handlers run in the match, so they can't be local
+command Rename { string name; }
+local command(Rename rename, PlayerID sender) Handle() { }
+scene Main { }

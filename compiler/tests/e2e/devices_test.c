@@ -82,6 +82,29 @@ TIDE_TEST(devices_are_the_owners)
     TIDE_CHECK(s.throttle == 0.5f && s.jumps == 0);
 }
 
+TIDE_TEST(devices_views_receive_this_machines_frame)
+{
+    tide_world_init(&world, 1.0f);
+    tide_world_tick(&world);
+    // Every owner's networked input remains empty. The view sees the local
+    // frame for all three entities, including the server's unowned one.
+    tide_local local = {0};
+    tide_local_init(&local);
+    tide_draw_list draw = {0};
+    tide_gui gui = {0};
+    tide_devices frame = {0};
+    tide_button_set(&frame.keyboard.space, true);
+    frame.pointer.position = tide_f2(23.0f, 41.0f);
+    tide_gui_begin(&gui, &frame, tide_f2(800.0f, 600.0f), NULL);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+    TIDE_CHECK(local.Seen.entities == 3);
+    TIDE_CHECK(local.Seen.held);
+    TIDE_CHECK(local.Seen.pointer.x == 23.0f && local.Seen.pointer.y == 41.0f);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
 TIDE_TEST(devices_touches_send_what_systems_read)
 {
     tide_devices d = {0};

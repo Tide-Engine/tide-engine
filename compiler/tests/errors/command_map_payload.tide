@@ -1,0 +1,3 @@
+// expect: a command can't hold a list, map, set or grid
+command Submit { Map<int, int> values; }
+scene Main { }

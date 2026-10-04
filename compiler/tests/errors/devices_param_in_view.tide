@@ -1,3 +1,3 @@
-// expect: views read this machine's devices as 'Devices', not as a parameter
+// expect: a view can only have one Devices parameter
 scene Main { }
-view Pause(Devices devices) { }
+view Pause(Devices devices, Devices other) { }

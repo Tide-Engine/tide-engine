@@ -65,9 +65,9 @@ input PlayerInput
     float2 move;
     bool fire;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
         if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
         if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
@@ -248,9 +248,9 @@ view DrawPlayers(Body body, Aim aim, with Owner, Look look)
     if (look.aim) Draw2D.Line(body.position, body.position + aim.direction * (body.radius + 12), look.player);
 }
 
-view Options(mut Look look, Arena arena)
+view Options(Devices devices, mut Look look, Arena arena)
 {
-    if (Devices.keyboard.escape.down) look.open = true;
+    if (devices.keyboard.escape.down) look.open = true;
     GUILayout.Area(Anchor.UpperLeft)
     {
         if (GUILayout.Button(\"Options\")) look.open = true;
