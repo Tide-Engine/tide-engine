@@ -231,3 +231,30 @@ TIDE_TEST(bits_float_deltas_refuse_a_window_past_the_end)
     TIDE_CHECK(tide_bits_get_xor(&r, 0x3F800000u) == 0x3F800000u);
     TIDE_CHECK(r.overflow);
 }
+
+// The byte writer's 64-bit varint, which acknowledgements of ticks go as: every
+// value back as it was, a byte for small ones, and bad input refused.
+TIDE_TEST(bits_byte_varints_of_64_bits_come_back_as_they_were)
+{
+    static const uint64_t values[] = {0, 1, 127, 128, 16383, 16384, 0xFFFFFFFFull, 0x100000000ull,
+                                      0x7FFFFFFFFFFFFFFFull, 0x8000000000000000ull, UINT64_MAX};
+    uint8_t data[128];
+    tide_writer w = {data, sizeof data, 0, false, false};
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) tide_write_varint64(&w, values[i]);
+    TIDE_REQUIRE(!w.overflow);
+    tide_reader r = {data, w.size, 0, false};
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) TIDE_CHECK(tide_read_varint64(&r) == values[i]);
+    TIDE_CHECK(!r.failed && r.at == w.size);
+
+    tide_writer small = {data, sizeof data, 0, false, false};
+    tide_write_varint64(&small, 5);
+    TIDE_CHECK(small.size == 1);
+    tide_write_varint64(&small, UINT64_MAX);
+    TIDE_CHECK(small.size == 11);
+
+    uint8_t ones[16];
+    memset(ones, 0xFF, sizeof ones); // Every byte says more follow, past 64 bits
+    tide_reader bad = {ones, sizeof ones, 0, false};
+    (void)tide_read_varint64(&bad);
+    TIDE_CHECK(bad.failed);
+}
