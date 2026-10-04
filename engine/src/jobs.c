@@ -61,25 +61,8 @@ static uint32_t pieces_for(const uint32_t chunks, const uint64_t work, const uin
 static TIDE_THREAD_LOCAL task_context *running;
 TIDE_THREAD_LOCAL tide_queue *tide_task_queue;
 
-// Profiling (tide_profile): the pool's, when the host gave it one; the
+// Profiling (tide/profile.h): the jobs', when the host gave them one; the
 // systems' first start and last end while a tick runs on threads.
-static void profile_begin(tide_profile *p, const uint32_t systems)
-{
-    if (systems > p->room) {
-        p->times = tide_realloc(p->times, p->room * sizeof *p->times, systems * sizeof *p->times);
-        p->room = systems;
-    }
-    p->count = systems;
-}
-
-static void profile_set(tide_profile *p, const uint32_t s, const char *name, const uint64_t from_ns, const uint64_t to_ns)
-{
-    tide_system_time *t = &p->times[s];
-    size_t n = 0;
-    for (; name && name[n] && n + 1u < sizeof t->name; n++) t->name[n] = name[n];
-    t->name[n] = '\0';
-    t->ms = to_ns > from_ns ? (double)(to_ns - from_ns) * 1e-6 : 0.0;
-}
 
 // The least and the most of an atomic clock reading.
 static void note_least(_Atomic uint64_t *least, const uint64_t t)
@@ -416,9 +399,10 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     jobs->run(jobs->self, work, &r);
     tide_memory_sync(); // What the other threads made (see tide/page.h)
     if (r.profile) {
-        profile_begin(r.profile, count);
+        tide_profile_count(&r.profile->systems, count);
         for (uint32_t s = 0; s < count; s++) {
-            profile_set(r.profile, s, tick->systems[s].name, atomic_load(&r.state[s].began), atomic_load(&r.state[s].ended));
+            tide_profile_add(&r.profile->systems, s, tick->systems[s].name, atomic_load(&r.state[s].began),
+                             atomic_load(&r.state[s].ended));
         }
     }
 
@@ -452,7 +436,7 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
     // the same tasks, temporary handles and settling as on threads
     if (tick->prepare) tick->prepare(world);
     tide_profile *profile = jobs ? jobs->profile : NULL;
-    if (profile) profile_begin(profile, tick->count);
+    if (profile) tide_profile_count(&profile->systems, tick->count);
     uint32_t first = 0;
     for (uint32_t s = 0; s < tick->count; s++) {
         const tide_system_tasks *system = &tick->systems[s];
@@ -467,7 +451,7 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
             if (spawned) spawned[task] = context.spawned;
         }
         if (spawned) settle_system(world, tick, system, first, tasks, 1u, spawned, NULL, from);
-        if (profile) profile_set(profile, s, system->name, began, tide_time_now_ns());
+        if (profile) tide_profile_add(&profile->systems, s, system->name, began, tide_time_now_ns());
         free(spawned);
         first += tasks;
     }

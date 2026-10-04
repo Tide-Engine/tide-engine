@@ -15,6 +15,16 @@
 // saying what went wrong.
 bool fetch_package(void *user, const package_line *line, const char *dir);
 
+// Puts a commit's files, unpacked in the folder `files`, into `dir`, and says
+// it's fetched (packages_fetched) once the last one is in. They move one by
+// one, never as a folder: Windows renames no folder while a program has
+// anything in it open, as antivirus has a file that was just written, and a
+// file such a program has open still moves. A file that's in `dir` already is
+// the same commit's, so a download goes on from one that stopped, and two
+// tides can get the same commit at once. False with the path that couldn't be
+// written in `failed`.
+bool fetch_place(const char *files, const char *dir, char *failed, size_t failed_size);
+
 typedef struct git_ref {
     char *name;      // refs/heads/main, refs/tags/v1.2.0
     char commit[65]; // For a tag, the commit it's on

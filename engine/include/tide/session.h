@@ -124,6 +124,8 @@ typedef struct tide_game {
     const char *title;   // title: the window's, unless the host says
     bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
+    bool stats;          // stats: the host shows its stats overlay, though nothing else asked it to
+    bool debug_views;    // debugViews: the host shows its debug views over the game when asked (tide/host.h)
     // maxPlayers: how many players its matches take, up to TIDE_PLAYERS_MOST;
     // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
     // server's after them, so it's part of the game's layout: its hash differs.
@@ -243,6 +245,7 @@ typedef struct tide_client_status {
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
+    uint32_t again_ticks;          // Predicted ticks it ran again so far, after one went otherwise than it guessed
     uint32_t resyncs;              // Times its world diverged and the server sent it again
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection

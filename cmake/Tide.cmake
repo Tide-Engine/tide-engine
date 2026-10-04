@@ -10,10 +10,11 @@
 #
 # Without HOST, the game is the whole program: it opens a window titled TITLE,
 # or the game's title setting, or <target>, and runs (see
-# platform/include/tide/run.h). STATS shows the frame rate, ping, bandwidth
-# (what goes over the network each second, up and down), tick, entity count
-# and the threads ticks run on in a corner. On the web it's <target>.html, and
-# on Android an app (see tide_android_app).
+# platform/include/tide/run.h). STATS shows the stats in a corner, as the
+# game's stats setting does: the frame rate, what a frame's work takes, ping,
+# bandwidth, tick, entity count, the threads ticks run on, memory, draw calls
+# and the slowest systems. On the web it's <target>.html, and on Android an app
+# (see tide_android_app).
 #
 # With HOST, those C files are the program instead, for tests and custom hosts.
 # WINDOW says they open a window, so that on Android they're an app too, rather
