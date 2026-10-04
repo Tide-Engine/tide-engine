@@ -6899,6 +6899,11 @@ static void check_settings(checker *c)
                 while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
                 if (known->kind != E_BOOL) diag_error(value->at, "hostMigration is true or false, or a constant that is");
                 else prog->host_migration = known->bool_value;
+            } else if (str_eq_c(f->name, "debugViews")) {
+                const expr *known = value;
+                while (known->bind == BIND_CONST && known->constant->index == 2) known = known->constant->value;
+                if (known->kind != E_BOOL) diag_error(value->at, "debugViews is true or false, or a constant that is");
+                else prog->debug_views = known->bool_value;
             } else if (str_eq_c(f->name, "prediction")) {
                 int64_t member;
                 if (!fold_int(value, &member)) {

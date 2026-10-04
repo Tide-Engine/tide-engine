@@ -1534,6 +1534,7 @@ struct tide_client {
     uint32_t delay_cap;     // The most delay it takes, so its inputs fit their ring
     bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
     double tick_cost;       // Seconds one of its ticks takes, as last measured (tide_client_desc.now_ns)
+    uint32_t again;         // Predicted ticks it ran again so far
     double slack_since;     // Since when it's had room to spare, to take delay back after a while
     double delay_hold_until; // No change of delay until then: the last one takes a round trip to show
 
@@ -2037,6 +2038,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
 static void predict_again(tide_client *c)
 {
     for (uint32_t t = c->verified; t < c->ahead; t++) run_predicted(c, t);
+    c->again += c->ahead - c->verified;
 }
 
 // The tick its clock says it should have an input for by now.
@@ -2418,6 +2420,7 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .verified_tick = c->verified,
         .predicted_tick = c->ahead,
         .delay_ticks = c->delay,
+        .again_ticks = c->again,
         .resyncs = c->resyncs,
         .world_bytes = c->world_bytes,
         .cookie = c->cookie,
