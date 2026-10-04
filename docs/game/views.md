@@ -71,6 +71,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
 | `Draw3D.Cylinder(center, radius, height, color)` | A capped cylinder along its local `y` axis, with full `height` |
 | `Draw3D.Plane(center, size, color)` | A rectangle in the local `xz` plane, with full widths `size.x` and `size.y` |
+| `Draw2D.Instanced(vertices, indices, instances)` / `Draw3D.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
 
 Each frame starts black, with the camera at the origin and one world unit per pixel.
 
@@ -243,6 +244,8 @@ Nonpositive dimensions draw nothing. Geometry is cached by shape and color; cons
 
 ### Big scenes
 
+`Draw3D.Instanced(vertices, indices, transforms)` draws the mesh at every `float4x4` in a list, without an entity for each placement. It can also take a list of your own instance struct, with per-item fields read by a vert or frag: see [Instances from a list](./shaders.md#instances-from-a-list).
+
 The lists a 3D mesh is drawn from are kept on the GPU while frames draw them. A list that didn't change costs next to nothing to draw again, however big it is, so keep meshes in fields rather than making them each frame. A list that changed is sent again the next frame.
 
 A mesh baked for an entity of the match goes in [local fields](./local-state.md#local-fields) of its component: this machine's, which the view bakes once and draws from, and which the match never carries. A list in an ordinary field is part of the match, so every player who joins downloads it, though no system reads it.
@@ -388,7 +391,7 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-Every float, vector, quaternion and color a view reads of the match is blended. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

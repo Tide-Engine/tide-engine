@@ -364,7 +364,10 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Built-ins
 
-- `Time` is a built-in singleton with `float dt` (the fixed tick length) and `int tick` (starts at 0). Systems can read it but not write it.
+- `Time` is a built-in singleton with `float dt` (the fixed tick length), `int tick` (starts at 0), `float t` (the seconds since the match started) and `int tickRate` (the ticks in a second). Systems can read it but not write it.
+  - `t` is `tick * dt`, worked out from the tick each time and never added to, so it doesn't drift. Views see it blended between ticks like any float of the match, so it moves every frame, in the frags and verts they draw through too.
+  - A float holds about 7 digits, so `t` gets coarser as the match goes on: after a day its steps are about 8 milliseconds. What has to be exact counts in `tick`.
+  - `tickRate` is 1 / `dt` to the nearest whole number: the `tickRate` setting, or the rate the machine that runs the match gave it.
 - `Debug.Log(text)` prints a line for whoever runs the game: the terminal under `tide run`, the browser's console on the web, the system's log on Android. `Debug.Assert(condition)` and `Debug.Assert(condition, text)` stop the program when the condition is false, naming the file, the line and the source line, and the text. Both go anywhere, and neither changes the match, so it stays the same on every machine with or without them. A tick a client runs again after a rollback logs again: a log of match state is best prefixed with `Time.tick`.
 
 ### Syntax
@@ -1053,7 +1056,7 @@ input PlayerInput
 - Drawing is immediate mode: code calls `Draw2D` and `Draw3D` functions every frame, and nothing is kept between frames.
 - Views never change the match. They can change local state (see Local state).
 - Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
@@ -1099,8 +1102,7 @@ struct BoxVertex
 // Once per vertex: changes it in place, as a system changes a component
 vert Wave(mut BoxVertex vertex, Time time)
 {
-    float seconds = time.tick * time.dt;
-    vertex.position.y += Math.Sin(seconds * 2 + vertex.position.x) * 0.1;
+    vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 
 // Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write
@@ -1119,7 +1121,7 @@ view DrawBox(Box box, Models models)
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
   - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. The screen is the only target for now, so a frag takes exactly one `mut` parameter, a `Color`: another type, or a second output, comes with drawing into a texture. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
   - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the mesh draw when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`.
-  - There are no plain value parameters, on purpose: what a frag or vert reads lives in a component or a singleton, local ones included, like everything else.
+  - There are no individual plain value arguments to bind: what a frag or vert reads lives in a component, a singleton (local ones included), or the ordinary instance struct supplied by `Draw2D.Instanced` or `Draw3D.Instanced`.
   - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
   - With no vert, the vertices are used as they are. With no frag, a pixel is its vertex's `color` times the texture's at its `uv`, where the vertex struct has them: white, and untextured, where it doesn't. So a struct with only a `position` draws with no code of the game's, at 12 bytes a vertex.
   - 2D meshes take them too: a vertex struct whose `position` is a `float2` is drawn through the 2D camera or the screen, in order with the other 2D calls.
@@ -1217,6 +1219,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
   - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - Devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
   - `Draw2D` and `Draw3D` replace `Draw`; it is no longer a built-in namespace. Their `list` members both hand the frame's same draw list to an extern function.
+  - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
 - `Vertex` is a built-in struct: `float2 position`, `float2 uv` and `Color color = Color.white`, so a corner that leaves its color out takes the texture's as it is. `Filter` is a built-in enum, `Point` and `Bilinear`, with the values of Unity's `FilterMode`. A game can't declare either name outside a namespace.
 - Triangles draw whichever way round their corners go. A triangle with an index past the vertices is left out, and so are the one or two indices after the last whole triangle. Colors blend over what's behind them by their alpha, which isn't premultiplied.
@@ -1232,6 +1235,8 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - **`color` starts as `Color.white`** (to confirm). It isn't the pixel already on the screen, which a GPU doesn't let a frag read, though `mut` elsewhere means reading what's there and changing it. A frag that never writes it draws white.
   - `frag` and `vert` are keywords only at the start of a declaration, like `view`. They share their names with functions: a frag and a function can't have the same name. Nothing calls one, and its name is no value: only a mesh draw names it. `local` before one is an error, as it's local already.
   - `Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])` draws a 2D mesh, and `Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])` a 3D one. The vertices are a list of a struct with a `position`: a `float2` makes the mesh 2D and a `float3` 3D. Its other fields are floats, ints, their vectors and colors, 12 fields at most, and the GPU reads them from the list as they are. A 3D mesh takes its transform, and a 2D one takes none. The texture and its filter are for a draw with no frag, whose vertex then needs a `float2 uv`; a frag samples the grids it takes, so a texture beside a frag is an error. With no frag, a field named `color` has to be a `Color`. A `List<Vertex>` or a `List<Vertex3>` with neither a vert nor a frag is drawn as it was before.
+  - `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` replaces `Draw3D.Mesh`'s single 3D transform with a list. A `List<float4x4>` supplies transforms for a 3D mesh. A `List<T>` of an ordinary struct supplies each item to the vert or frag's read-only `T` parameter after its vertex (and a frag's color); either stage can take it, or both. Each shader can take one such instance parameter, and it must match the list's element type. `Mesh` supplies no ordinary instance parameter. Other component and singleton parameters bind as before.
+  - A 3D instance struct's field named `transform`, when present, is a `float4x4`, applied by the engine and available as `Instance.transform`; without one, the transform is identity. A 2D instance list holds ordinary structs, whose fields a vert can use to place the vertices. Their `transform` field is ordinary data, not applied by the engine, and `Instance.transform` is identity. Only fields the shaders read go to the GPU, plus a 3D transform; unread fields can have types the GPU cannot use. Reading a field or passing the instance whole follows the same rules as component reads. An empty instance list records nothing. Items draw in list order, in one instanced run, which adjacent compatible mesh draws can join.
   - A draw that names a vert or a frag is in the view itself, not in a function the view calls: the components they read are the view's entity's. A function draws a mesh of any vertex struct without them.
   - The view needn't take what its frags and verts read: `with Box` is enough for a frag that reads `Box`, and a singleton needs no mention. The engine hands them over as it does the view's own parameters, blended between ticks the same way, and a view whose frag reads the match doesn't run outside a match. What the view does take is sent as the view has it when it draws.
   - Only the fields the code reads are sent: a component's with each instance, and a singleton's once for the draw. Reading a parameter whole, as a value passed on, sends all of its fields.
@@ -1248,7 +1253,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - Never there: lists, maps and sets, text, entities and players, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it.
   - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
-  - What a GPU takes, on every backend, is checked at the mesh draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components); 4000 bytes of singletons' fields for a draw; and 8 grids sampled, one sampled with both filters counting twice.
+  - What a GPU takes, on every backend, is checked at the mesh draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 4000 bytes of singletons' fields for a draw; and 8 grids sampled, one sampled with both filters counting twice.
   - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
   - A function both the CPU and the GPU run compiles for both.
   - `tide shaders` (`tidec --shaders`) prints each shader, as GLSL and as WGSL. No game sees a shader compiler's error: what tidec writes always compiles.

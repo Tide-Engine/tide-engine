@@ -1,0 +1,13 @@
+// expect: a 3D instance struct's 'transform' is a float4x4, and 'BatchItem's is float3
+scene Main { }
+struct BatchItem { float3 transform; }
+local singleton Mesh
+{
+    List<Vertex3> vertices;
+    List<int> indices;
+    List<BatchItem> instances;
+}
+view DrawBatch(Mesh mesh)
+{
+    Draw3D.Instanced(mesh.vertices, mesh.indices, mesh.instances);
+}

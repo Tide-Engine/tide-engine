@@ -68,6 +68,7 @@ tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textur
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
+tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)

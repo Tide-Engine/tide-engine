@@ -27,40 +27,44 @@ static const type T_BOOL = {TY_BOOL, NULL};
 static const type T_ANCHOR = {TY_ENUM, NULL};
 static const decl *anchor_decl;
 
-static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl;
+static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *transforms_decl;
 
 void builtins_use(const decl *anchor)
 {
     anchor_decl = anchor;
-    // Another program's: this one's come with its first Draw2D.Mesh
-    vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = NULL;
+    // Another program's: this one's come with its first mesh draw
+    vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
 }
 
 // What Draw2D.Mesh and Draw3D.Mesh take, the same way: these stand for the program's own
 // List<Vertex>, List<Vertex3>, List<int>, Grid2<Color> and Filter.
-static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter;
+static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter, mesh_transforms, mesh_instances;
 static const type T_VERTICES = {TY_LIST, &mesh_vertices};
 static const type T_VERTICES3 = {TY_LIST, &mesh_vertices3};
 static const type T_INDICES = {TY_LIST, &mesh_indices};
 static const type T_PIXELS = {TY_GRID, &mesh_pixels};
 static const type T_FILTER = {TY_ENUM, &mesh_filter};
+static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
+// Editor signatures for ordinary instance structs: the checker resolves these itself.
+static const type T_INSTANCES = {TY_LIST, &mesh_instances};
 static const type T_RECT = {TY_RECT, NULL};
 
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
-                       const decl *filter)
+                       const decl *filter, const decl *transforms)
 {
     vertices_decl = vertices;
     vertices3_decl = vertices3;
     indices_decl = indices;
     pixels_decl = pixels;
     filter_decl = filter;
+    transforms_decl = transforms;
 }
 
 // Whether `t` stands for one of the program's types Draw2D.Mesh and Draw3D.Mesh take.
 static bool mesh_type(const type t)
 {
     return t.decl == &mesh_vertices || t.decl == &mesh_vertices3 || t.decl == &mesh_indices || t.decl == &mesh_pixels
-        || t.decl == &mesh_filter;
+        || t.decl == &mesh_filter || t.decl == &mesh_transforms || t.decl == &mesh_instances;
 }
 
 // A signature's type as a program sees it.
@@ -72,6 +76,7 @@ static type real_type(const type t)
     if (t.decl == &mesh_indices && indices_decl) return (type){TY_LIST, (decl *)indices_decl};
     if (t.decl == &mesh_pixels && pixels_decl) return (type){TY_GRID, (decl *)pixels_decl};
     if (t.decl == &mesh_filter && filter_decl) return (type){TY_ENUM, (decl *)filter_decl};
+    if (t.decl == &mesh_transforms && transforms_decl) return (type){TY_LIST, (decl *)transforms_decl};
     return t;
 }
 
@@ -82,6 +87,8 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_indices) return "List<int>";
     if (t.decl == &mesh_pixels) return "Grid2<Color>";
     if (t.decl == &mesh_filter) return "Filter";
+    if (t.decl == &mesh_transforms) return "List<float4x4>";
+    if (t.decl == &mesh_instances) return "List<T>";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
 }
 
@@ -367,6 +374,27 @@ static void build_signatures(void)
     sampled3->params[3] = T_PIXELS;
     sampled3->params[4] = T_FILTER;
     describe(sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
+    static const char instanced_doc[] =
+        "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
+        "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
+        "transform places it; without one it uses the identity. A vert places 2D instances.";
+    describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
+             "vertices, indices, instances", instanced_doc);
+    signature *instances_textured = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
+                                        T_VERTICES3, T_INDICES, T_TRANSFORMS);
+    instances_textured->argc = 4;
+    instances_textured->params[3] = T_PIXELS;
+    describe(instances_textured, "vertices, indices, instances, texture", instanced_doc);
+    signature *instances_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
+                                       T_VERTICES3, T_INDICES, T_TRANSFORMS);
+    instances_sampled->argc = 5;
+    instances_sampled->params[3] = T_PIXELS;
+    instances_sampled->params[4] = T_FILTER;
+    describe(instances_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
+    describe(add("Draw2D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES, T_INDICES, T_INSTANCES),
+             "vertices, indices, instances", instanced_doc);
+    describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
+             "vertices, indices, instances", instanced_doc);
     static const char clip_doc[] =
         "Only what's inside `rect` draws, for the Draw2D calls after it: from (x, y) to (x + width, y + height), in "
         "the units they're in. `Draw2D.Clip()` with no rect draws everywhere again. Each frame starts with none.";
@@ -1014,7 +1042,8 @@ static const setting settings[] = {
      "The window's title. Without it, it's the game's name: its folder's under tide, its target's under CMake. "
      "`--title` and CMake's `TITLE` take precedence."},
     {"tickRate", TY_INT, "60",
-     "How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / tickRate. The machine that runs "
+     "How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / tickRate, and code reads the rate "
+     "as `Time.tickRate`. The machine that runs "
      "the match decides, and every player ticks at its rate. A new rate takes effect when a match starts."},
     {"maxPlayers", TY_INT, "16",
      "How many players a match takes, from 1 to 256. The world keeps an input for each, and every player's "
