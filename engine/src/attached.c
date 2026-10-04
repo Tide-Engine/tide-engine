@@ -42,10 +42,11 @@ static void index_row(tide_attached *a, const tide_entity e, const uint32_t row)
     a->others[a->other_count++] = row;
 }
 
-uint32_t tide_attached_add(tide_attached *a, const tide_columns *c, const tide_entity e)
+uint32_t tide_attached_add(tide_attached *a, const tide_columns *c, const tide_entity e, const uint32_t born)
 {
     const uint32_t row = tide_table_add(&a->rows, c);
     *(tide_entity *)tide_table_cell(&a->rows, c, row, 0) = e;
+    *(uint32_t *)tide_table_cell(&a->rows, c, row, 2) = born;
     index_row(a, e, row);
     return row;
 }

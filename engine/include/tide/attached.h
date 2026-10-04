@@ -14,18 +14,20 @@
 // Temporary implementation written by Claude; the project owner takes it over
 // later.
 //
-// It's a table with two columns, the entity each row is of and its value,
-// which is one column: code reads and writes a value where it is. A row is
+// It's a table with three columns: the entity each row is of, its value,
+// which is one column, so code reads and writes a value where it is, and what
+// the entity was born as when the row was made (tide_entity_born). A row is
 // found from its entity's handle. Only entities something was kept for have a
 // row, so what's kept costs nothing for the others.
 //
 // The entities are another world's, so nothing here says whether they're
-// alive: whoever keeps the rows takes out the ones whose entities are gone.
+// alive: whoever keeps the rows takes out the ones whose entities are gone,
+// and those whose handle is another entity's now, born as something else.
 // Two generations of one index can both have a row, as the world views draw
 // and the last one the server confirmed can each have another entity there.
 
 typedef struct tide_attached {
-    tide_table rows;     // Column 0: the entity each row is of. Column 1: its value
+    tide_table rows;     // Column 0: the entity each row is of. Column 1: its value. Column 2: what it was born as
     uint32_t *by_index;  // By an entity's index: a row of one with that index, plus one, or 0
     uint32_t indexed;    // Entries `by_index` has
     uint32_t *others;    // Rows of entities whose index's place in `by_index` another generation has
@@ -65,8 +67,15 @@ static inline void *tide_attached_cell(tide_attached *a, const tide_columns *c, 
     return tide_table_cell(&a->rows, c, row, 1);
 }
 
-// A new row for `e`, which has none, its value zeroed: its number.
-uint32_t tide_attached_add(tide_attached *a, const tide_columns *c, tide_entity e);
+// What a row's entity was born as when the row was made, or 0 if it wasn't known.
+static inline uint32_t tide_attached_born(const tide_attached *a, const tide_columns *c, const uint32_t row)
+{
+    return *(const uint32_t *)tide_table_get(&a->rows, c, row, 2);
+}
+
+// A new row for `e`, which has none, born as `born` (0: not known), its value
+// zeroed: its number.
+uint32_t tide_attached_add(tide_attached *a, const tide_columns *c, tide_entity e, uint32_t born);
 
 // Takes a row out, moving the last row into its place. Release what its value
 // holds first.

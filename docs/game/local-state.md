@@ -92,23 +92,17 @@ singleton Arena
 
 A local field holds what a local component's field can: text, lists, maps, sets, grids and a `LocalEntity` among them. `local` on a field of a struct, the input, an event, or a declaration that's local already is an error that says why.
 
-::: warning After a rollback
-Local fields are kept by the entity's handle. When this machine predicted a spawn and the server's order turned out otherwise, the same handle can be another entity after the replay, with the first one's local fields. Until the engine tells those apart, treat local fields as a cache: keep what a mesh was baked from beside it, and bake again when that changed.
+### After a rollback
 
-```csharp
-component Box
-{
-    int sides = 4;
-    local List<Vertex3> verts;
-    local int bakedSides;
-}
+A client predicts, and the server can turn out to have had a tick otherwise. This machine spawned a rocket, and in the server's order the entity with that handle is another player's bullet: one handle, two entities. Local fields don't pass from one to the other. Each entity remembers what it was spawned as, the tick and the values it was spawned with, and local fields are kept for the entity they were written for:
 
-view DrawBox(mut Box box)
-{
-    if (box.bakedSides != box.sides) Bake(box);
-    ...
-}
-```
+- A replay that spawns **the same** under the handle (the server had the tick as this machine predicted it) is the same entity, and its local fields stay.
+- A replay that spawns **something else** there is another entity. What was kept for the first goes, with [`Forgotten`](#letting-go) where a handler asked for it, and the new one starts from the defaults: a view that bakes a mesh bakes it again, once.
+
+A spawn that comes out with other values, like a position a wrong guess had moved, counts as something else.
+
+::: info
+What an entity was spawned as is this machine's own knowledge, from the spawns it ran: it's never sent, and costs the match nothing. Entities that came with the world from the server, to a player who joins, are known by their handles alone.
 :::
 
 ### Letting go
