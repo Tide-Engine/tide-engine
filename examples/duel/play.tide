@@ -1,0 +1,446 @@
+// Presentation and menus stay on this machine. The match is in game.tide.
+local singleton Canvas
+{
+    float2 screenHalf;
+    float scale = 1;
+    bool gamepadAim;
+    bool touchAim;
+}
+
+local singleton DuelMenu
+{
+    string code;
+    string message;
+    int pickMatch = -1;
+    int pickRound = -1;
+    int rematch = -1;
+}
+
+enum PaintStages { Arena, Platforms, Fighters, Bullets, Hud, Menu }
+
+const Color UI_BACKGROUND = Color(0.035, 0.055, 0.095);
+const Color UI_PANEL = Color(0.075, 0.105, 0.165);
+const Color UI_INK = Color(0.92, 0.96, 1);
+const Color UI_MUTED = Color(0.5, 0.61, 0.74);
+const Color UI_BLUE = Color(0.29, 0.72, 1);
+const Color UI_ORANGE = Color(1, 0.58, 0.31);
+
+Color FighterColor(int side)
+{
+    return side == 0 ? UI_BLUE : UI_ORANGE;
+}
+
+string CardName(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "VITALITY";
+        case Card.RapidFire: return "RAPID FIRE";
+        case Card.Scatter: return "SCATTER";
+        case Card.Ricochet: return "RICOCHET";
+        case Card.HeavyShot: return "HEAVY SHOT";
+        case Card.SwiftFeet: return "SWIFT FEET";
+    }
+    return "UPGRADE";
+}
+
+string CardEffect(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "+35 max health";
+        case Card.RapidFire: return "22% shorter reload";
+        case Card.Scatter: return "+1 pellet, less damage";
+        case Card.Ricochet: return "+1 wall bounce";
+        case Card.HeavyShot: return "30% stronger hits";
+        case Card.SwiftFeet: return "15% faster movement";
+    }
+    return "";
+}
+
+string CardFlavor(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "Stay in the fight.";
+        case Card.RapidFire: return "Keep the pressure on.";
+        case Card.Scatter: return "-15% damage per pellet.";
+        case Card.Ricochet: return "Find another angle.";
+        case Card.HeavyShot: return "12% longer reload.";
+        case Card.SwiftFeet: return "Be a moving target.";
+    }
+    return "";
+}
+
+[Stage(PaintStages.Arena)]
+view PaintArena(mut Canvas canvas)
+{
+    var screen = float2(float(Screen.width), float(Screen.height));
+    canvas.screenHalf = screen * 0.5;
+    canvas.scale = Math.Max(0.1, Math.Min((screen.x - 32) / ARENA_WIDTH,
+                                       (screen.y - 156) / ARENA_HEIGHT));
+    Draw2D.Clear(UI_BACKGROUND);
+    Draw2D.Camera(float2(0), screen.y * 0.5 / canvas.scale);
+    Draw2D.Rect(float2(0), float2(ARENA_WIDTH, ARENA_HEIGHT), Color(0.05, 0.08, 0.135));
+    Draw2D.Clip(Rect(-ARENA_WIDTH * 0.5, -ARENA_HEIGHT * 0.5, ARENA_WIDTH, ARENA_HEIGHT));
+    for (var x = -480; x <= 480; x += 60)
+        Draw2D.Line(float2(x, -270), float2(x, 270), Color(0.07, 0.105, 0.165));
+    for (var y = -270; y <= 270; y += 60)
+        Draw2D.Line(float2(-480, y), float2(480, y), Color(0.07, 0.105, 0.165));
+    Draw2D.Clip();
+    Draw2D.WireRect(float2(0), float2(ARENA_WIDTH, ARENA_HEIGHT), Color(0.17, 0.24, 0.34));
+}
+
+[Stage(PaintStages.Arena, 10)]
+view RememberAimDevice(Devices devices, mut Canvas canvas)
+{
+    var pad = devices.gamepad;
+    var keys = devices.keyboard;
+    var padUsed = Math.Abs(pad.leftStick.x) > 0.15 || Math.LengthSq(pad.rightStick) > 0.04
+               || pad.buttonSouth.pressed || pad.rightTrigger > 0.4
+               || pad.leftTrigger > 0.4 || pad.leftShoulder.pressed;
+    var mouseUsed = Math.LengthSq(devices.mouse.delta) > 0
+                 || devices.mouse.left.down || devices.mouse.right.down;
+    var keyboardUsed = keys.a.down || keys.d.down || keys.leftArrow.down || keys.rightArrow.down
+                    || keys.space.down || keys.w.down || keys.upArrow.down
+                    || keys.leftShift.down || keys.rightShift.down;
+    if (padUsed)
+    {
+        canvas.gamepadAim = true;
+        canvas.touchAim = false;
+    }
+    if (mouseUsed || keyboardUsed)
+    {
+        canvas.gamepadAim = false;
+        canvas.touchAim = false;
+    }
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        canvas.gamepadAim = false;
+        canvas.touchAim = true;
+    }
+}
+
+[Stage(PaintStages.Platforms)]
+view PaintPlatforms(Platform platform)
+{
+    Draw2D.Rect(platform.center, platform.half * 2, Color(0.14, 0.2, 0.29));
+    Draw2D.WireRect(platform.center, platform.half * 2, Color(0.27, 0.38, 0.49));
+    var top = platform.center.y + platform.half.y;
+    Draw2D.Line(float2(platform.center.x - platform.half.x, top),
+                float2(platform.center.x + platform.half.x, top), Color(0.46, 0.57, 0.68));
+}
+
+[Stage(PaintStages.Fighters)]
+view PaintFighters(Body body, Fighter fighter)
+{
+    if (fighter.health <= 0) return;
+    var color = FighterColor(fighter.side);
+    var perpendicular = float2(-fighter.aim.y, fighter.aim.x);
+    Draw2D.Circle(body.position + float2(0, -3), body.radius + 3, Color(0.015, 0.025, 0.05));
+    Draw2D.Circle(body.position, body.radius, color);
+    Draw2D.Circle(body.position + float2(-5, 6), 5, Color(1, 1, 1, 0.2));
+    var eyes = body.position + fighter.aim * 7;
+    Draw2D.Circle(eyes + perpendicular * 5, 3.5, UI_INK);
+    Draw2D.Circle(eyes - perpendicular * 5, 3.5, UI_INK);
+    Draw2D.Circle(eyes + perpendicular * 5 + fighter.aim * 1.3, 1.9, UI_BACKGROUND);
+    Draw2D.Circle(eyes - perpendicular * 5 + fighter.aim * 1.3, 1.9, UI_BACKGROUND);
+    var muzzle = body.position + fighter.aim * (body.radius + 14);
+    Draw2D.Line(body.position + fighter.aim * 10, muzzle, UI_INK);
+    Draw2D.Circle(muzzle, 3, UI_INK);
+    if (fighter.blockLeft > 0)
+    {
+        Draw2D.Circle(body.position, body.radius + 12, Color(color.r, color.g, color.b, 0.13));
+        Draw2D.WireCircle(body.position, body.radius + 12, UI_INK);
+        Draw2D.WireCircle(body.position, body.radius + 15, color);
+    }
+    var bar = body.position + float2(0, body.radius + 13);
+    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
+    Draw2D.Rect(bar, float2(44, 4), Color(0.02, 0.035, 0.065));
+    Draw2D.Rect(bar + float2((health - 1) * 22, 0), float2(44 * health, 4), color);
+}
+
+[Stage(PaintStages.Bullets)]
+view PaintBullets(Body body, Bullet bullet)
+{
+    var color = FighterColor(bullet.side);
+    Draw2D.Line(body.previous, body.position, Color(color.r, color.g, color.b, 0.55));
+    Draw2D.Circle(body.position, body.radius + 3, Color(color.r, color.g, color.b, 0.17));
+    Draw2D.Circle(body.position, body.radius, color);
+    Draw2D.Circle(body.position, body.radius * 0.45, UI_INK);
+}
+
+[Stage(PaintStages.Hud)]
+view PaintHeader(Duel duel, Session session, Devices devices)
+{
+    Draw2D.Screen();
+    var width = float(Screen.width);
+    var height = float(Screen.height);
+    Draw2D.Text("DUEL", float2(20, 12), 25, UI_INK);
+    Draw2D.Text("FIRST TO FIVE", float2(21, 41), 10, UI_MUTED);
+    Draw2D.Text($"{duel.scoreBlue}", float2(width * 0.5 - 42, 10), 30, UI_BLUE);
+    Draw2D.Text(":", float2(width * 0.5 - 5, 10), 30, UI_MUTED);
+    Draw2D.Text($"{duel.scoreOrange}", float2(width * 0.5 + 22, 10), 30, UI_ORANGE);
+    Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(width * 0.5 - 27, 43), 10, UI_MUTED);
+    if (duel.phase == Phase.Countdown)
+    {
+        var center = float2(width * 0.5, height * 0.5 - 64);
+        Draw2D.Rect(center, float2(124, 77), Color(0.03, 0.05, 0.09, 0.9));
+        Draw2D.Text("GET READY", center + float2(-40, -23), 13, UI_MUTED);
+        Draw2D.Text($"{int(Math.Ceil(duel.timer))}", center + float2(-12, -2), 33, UI_INK);
+    }
+    if (duel.phase == Phase.Draft)
+    {
+        var mine = session.player == (duel.draftSide == 0 ? duel.bluePlayer : duel.orangePlayer);
+        if (!mine)
+        {
+            var text = duel.draftSide == 0 ? "BLUE IS CHOOSING AN UPGRADE" : "ORANGE IS CHOOSING AN UPGRADE";
+            Draw2D.Rect(float2(width * 0.5, height * 0.5), float2(Math.Min(width - 32, 396), 58), UI_PANEL);
+            Draw2D.Text(text, float2(width * 0.5 - 141, height * 0.5 - 9), 15, FighterColor(duel.draftSide));
+        }
+    }
+    if (devices.touchscreen.connected)
+    {
+        Draw2D.WireCircle(float2(65, height - 92), 34, Color(0.5, 0.61, 0.74, 0.45));
+        Draw2D.Text("MOVE", float2(47, height - 101), 12, UI_MUTED);
+        Draw2D.WireCircle(float2(width - 57, height - 66), 35, Color(0.5, 0.61, 0.74, 0.55));
+        Draw2D.Text("BLOCK", float2(width - 80, height - 75), 12, UI_MUTED);
+        Draw2D.Text("Left: drag / swipe up to jump", float2(18, height - 27), 12, UI_MUTED);
+        if (width > 570)
+            Draw2D.Text("Right: touch to aim + fire", float2(width * 0.5 + 10, height - 27), 12, UI_MUTED);
+    }
+    else
+    {
+        if (width > 620)
+        {
+            Draw2D.Text("A / D  move     SPACE  jump     MOUSE  aim     LEFT CLICK  shoot     RIGHT CLICK  block",
+                        float2(20, height - 49), 13, UI_MUTED);
+            Draw2D.Text("Gamepad: left stick move / south jump / right stick aim / right trigger shoot / left trigger block",
+                        float2(20, height - 27), 11, UI_MUTED);
+        }
+        else
+        {
+            Draw2D.Text("A / D move   SPACE jump   MOUSE aim", float2(16, height - 49), 12, UI_MUTED);
+            Draw2D.Text("LEFT CLICK shoot   RIGHT CLICK block", float2(16, height - 27), 12, UI_MUTED);
+        }
+    }
+}
+
+[Stage(PaintStages.Hud)]
+view PaintVitals(Fighter fighter, Owner owner, Session session)
+{
+    Draw2D.Screen();
+    var width = Math.Min(210, float(Screen.width) * 0.3);
+    var x = fighter.side == 0 ? 20 : float(Screen.width) - width - 20;
+    var color = FighterColor(fighter.side);
+    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
+    var name = fighter.side == 0 ? "BLUE" : "ORANGE";
+    Draw2D.Text(owner.player == session.player ? name + " / YOU" : name, float2(x, 58), 11, color);
+    Draw2D.Rect(float2(x + width * 0.5, 76), float2(width, 4), UI_PANEL);
+    Draw2D.Rect(float2(x + width * health * 0.5, 76), float2(width * health, 4), color);
+    if (owner.player == session.player)
+        Draw2D.Text(fighter.blockCooldown <= 0 ? "BLOCK READY" : $"BLOCK  {int(Math.Ceil(fighter.blockCooldown))}s",
+                    float2(float(Screen.width) * 0.5 - 40, float(Screen.height) - 73), 11,
+                    fighter.blockCooldown <= 0 ? color : UI_MUTED);
+}
+
+[Stage(PaintStages.Hud)]
+view PaintPracticeVitals(Fighter fighter, without Owner)
+{
+    Draw2D.Screen();
+    var width = Math.Min(210, float(Screen.width) * 0.3);
+    var x = fighter.side == 0 ? 20 : float(Screen.width) - width - 20;
+    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
+    var name = fighter.side == 0 ? "BLUE" : "ORANGE";
+    var color = FighterColor(fighter.side);
+    Draw2D.Text(name + " / PRACTICE", float2(x, 58), 11, color);
+    Draw2D.Rect(float2(x + width * 0.5, 76), float2(width, 4), UI_PANEL);
+    Draw2D.Rect(float2(x + width * health * 0.5, 76), float2(width * health, 4), color);
+}
+
+[Stage(PaintStages.Menu)]
+view PaintLobby(Duel duel, Session session, mut DuelMenu menu)
+{
+    if (duel.phase == Phase.Draft || duel.phase == Phase.Finished) return;
+    Draw2D.Screen();
+    var compact = Screen.width < 720;
+    var top = compact ? 86 : 10;
+    var right = float(Screen.width) - 16;
+    var start = right - 256;
+    GUI.Disabled(session.state == SessionState.Connecting)
+    {
+        if (session.server && !session.open)
+        {
+            if (GUI.Button(Rect(start, top, 62, 29), "Invite"))
+            {
+                menu.message = "";
+                Session.Open();
+            }
+        }
+        else if (session.room != "")
+        {
+            if (GUI.Button(Rect(start, top, 62, 29), "Copy")) Clipboard.Copy(session.room);
+        }
+        GUI.TextField(Rect(start + 68, top, 124, 29), "", menu.code);
+        if (GUI.Button(Rect(start + 198, top, 58, 29), "Join") && menu.code.Trim() != "")
+        {
+            menu.message = "";
+            Session.Join(menu.code.Trim().ToUpper());
+        }
+    }
+    if (session.state == SessionState.Connecting)
+        Draw2D.Text("Connecting...", float2(start, top + 34), 11, UI_MUTED);
+    else if (menu.message != "")
+        Draw2D.Text(menu.message, float2(start, top + 34), 11, UI_ORANGE);
+    else if (session.room != "")
+        Draw2D.Text("ROOM " + session.room, float2(start, top + 34), 11, UI_BLUE);
+    else if (session.server && session.open)
+        Draw2D.Text("Opening room...", float2(start, top + 34), 11, UI_MUTED);
+}
+
+[Stage(PaintStages.Menu, 10)]
+view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, mut DuelMenu menu, with ownership)
+{
+    if (duel.phase != Phase.Draft || fighter.side != duel.draftSide)
+    {
+        menu.pickMatch = -1;
+        menu.pickRound = -1;
+        return;
+    }
+    Draw2D.Screen();
+    var width = float(Screen.width);
+    var height = float(Screen.height);
+    var compact = width < 650;
+    var short = height < 450;
+    var tiny = height < 260;
+    var reconnecting = session.state == SessionState.Connecting;
+    var panelWidth = Math.Min(width - 24, 780);
+    var panelHeight = Math.Min(height - (reconnecting ? 72 : 24), compact ? 404 : 284);
+    var headingHeight = tiny ? 38 : short ? 57 : 91;
+    var footerHeight = tiny ? 20 : 36;
+    var gap = tiny ? 4 : 8;
+    var left = (width - panelWidth) * 0.5;
+    var top = (height - panelHeight) * 0.5;
+    var pending = menu.pickMatch == duel.match && menu.pickRound == duel.round;
+    Draw2D.Rect(float2(width, height) * 0.5, float2(width, height), Color(0.015, 0.025, 0.05, 0.8));
+    Draw2D.Rect(float2(width * 0.5, height * 0.5), float2(panelWidth, panelHeight), UI_PANEL);
+    Draw2D.Text(compact ? "PICK AN UPGRADE" : "CHOOSE YOUR UPGRADE",
+                float2(left + 16, top + (short ? 10 : 18)), short || compact ? 20 : 24, FighterColor(fighter.side));
+    if (!tiny)
+        Draw2D.Text(compact ? "Lost the round? This upgrade stacks." : "Lost the round? Grow stronger. Your upgrades stack for this match.",
+                    float2(left + 16, top + (short ? 37 : 53)), short || compact ? 11 : 14, UI_MUTED);
+    GUI.ClaimPointer(Rect(0, 0, width, height));
+    for (var slot = 0; slot < 3; slot++)
+    {
+        var card = Offer(duel.round, duel.draftSide, slot);
+        var cardWidth = compact ? panelWidth - 32 : (panelWidth - 48) / 3;
+        var cardHeight = compact ? (panelHeight - headingHeight - footerHeight - gap * 2) / 3
+                                 : panelHeight - headingHeight - footerHeight;
+        var cardLeft = left + 16 + (compact ? 0 : slot * (cardWidth + 8));
+        var cardTop = top + headingHeight + (compact ? slot * (cardHeight + gap) : 0);
+        var smallCard = cardHeight < 56;
+        Draw2D.Rect(float2(cardLeft + cardWidth * 0.5, cardTop + cardHeight * 0.5),
+                    float2(cardWidth, cardHeight), UI_BACKGROUND);
+        Draw2D.Rect(float2(cardLeft + 2, cardTop + cardHeight * 0.5), float2(3, cardHeight), FighterColor(fighter.side));
+        Draw2D.Text(CardName(card), float2(cardLeft + 13, cardTop + (smallCard ? 3 : 10)),
+                    smallCard ? 12 : compact ? 15 : 18, UI_INK);
+        var effectSize = compact ? Math.Min(smallCard ? 10 : 12, Math.Max(9, (cardWidth - 101) / 12)) : 14;
+        Draw2D.Text(CardEffect(card), float2(cardLeft + 13, cardTop + (smallCard ? 18 : compact ? 33 : 46)), effectSize, UI_INK);
+        if (compact ? cardHeight >= 78 : cardHeight >= 125)
+            Draw2D.Text(CardFlavor(card), float2(cardLeft + 13, cardTop + (compact ? 57 : 71)), compact ? 11 : 12, UI_MUTED);
+        var buttonHeight = compact ? Math.Min(34, cardHeight - 6) : 29;
+        var button = compact ? Rect(cardLeft + cardWidth - 75, cardTop + (cardHeight - buttonHeight) * 0.5, 63, buttonHeight)
+                             : Rect(cardLeft + 13, cardTop + cardHeight - 41, cardWidth - 26, buttonHeight);
+        GUI.Disabled(pending || session.state != SessionState.Connected)
+        {
+            var clicked = GUI.Button(button, $"Pick {slot + 1}");
+            var shortcut = slot == 0 ? devices.keyboard.digit1.down
+                         : slot == 1 ? devices.keyboard.digit2.down
+                         : devices.keyboard.digit3.down;
+            if ((clicked || shortcut) && session.state == SessionState.Connected
+                && (menu.pickMatch != duel.match || menu.pickRound != duel.round))
+            {
+                this.Send(ChooseCard { round = duel.round, slot = slot });
+                menu.pickMatch = duel.match;
+                menu.pickRound = duel.round;
+            }
+        }
+    }
+    Draw2D.Text(reconnecting ? "Reconnecting. Your match will resume." : pending ? "Waiting for your choice..."
+                            : tiny ? "Pick: 1 / 2 / 3" : "Click, tap or press 1 / 2 / 3 to pick.",
+                float2(left + 16, top + panelHeight - (tiny ? 17 : 26)), tiny ? 10 : 12, UI_MUTED);
+}
+
+[Stage(PaintStages.Menu, 10)]
+view PaintResult(Duel duel, Session session, mut DuelMenu menu)
+{
+    if (duel.phase != Phase.Finished)
+    {
+        menu.rematch = -1;
+        return;
+    }
+    Draw2D.Screen();
+    var center = float2(float(Screen.width), float(Screen.height)) * 0.5;
+    var panelWidth = Math.Min(float(Screen.width) - 32, 408);
+    var blueWon = duel.scoreBlue >= WINS;
+    var tint = blueWon ? UI_BLUE : UI_ORANGE;
+    Draw2D.Rect(center, center * 2, Color(0.015, 0.025, 0.05, 0.8));
+    Draw2D.Rect(center, float2(panelWidth, 202), UI_PANEL);
+    Draw2D.Text("MATCH COMPLETE", center + float2(-65, -73), 12, UI_MUTED);
+    Draw2D.Text(blueWon ? "BLUE WINS" : "ORANGE WINS", center + float2(blueWon ? -87 : -113, -47), 31, tint);
+    Draw2D.Text($"{duel.scoreBlue} : {duel.scoreOrange}", center + float2(-28, -1), 24, UI_INK);
+    if (session.state == SessionState.Connecting)
+        Draw2D.Text("Reconnecting before the rematch...", center + float2(-110, 27), 12, UI_MUTED);
+    GUI.ClaimPointer(Rect(0, 0, Screen.width, Screen.height));
+    GUI.Disabled(menu.rematch == duel.match || session.state != SessionState.Connected)
+    {
+        if (GUI.Button(Rect(center.x - 91, center.y + 42, 182, 34), "Play again"))
+        {
+            Send(Rematch { match = duel.match });
+            menu.rematch = duel.match;
+        }
+    }
+}
+
+[Stage(PaintStages.Menu, 20)]
+view PaintConnecting(Session session, DuelMenu menu)
+{
+    if (session.state != SessionState.Connecting) return;
+    Draw2D.Screen();
+    var width = float(Screen.width);
+    var height = float(Screen.height);
+    if (session.player == default)
+    {
+        var center = float2(width, height) * 0.5;
+        var panelWidth = Math.Min(width - 24, 408);
+        Draw2D.Rect(center, float2(panelWidth, 150), UI_PANEL);
+        Draw2D.Text("CONNECTING...", center + float2(-71, -55), 20, UI_INK);
+        Draw2D.Text(menu.code == "" ? "Waiting for the match" : "Room " + menu.code.Trim().ToUpper().Substring(0, 12),
+                    center + float2(-71, -21), 13, UI_MUTED);
+        if (GUI.Button(Rect(center.x - 85, center.y + 20, 170, 34), "Back to practice")) Session.Start(Main);
+    }
+    else
+    {
+        Draw2D.Rect(float2(width * 0.5, height - 22), float2(width, 44), UI_BACKGROUND);
+        Draw2D.Text("Reconnecting...", float2(16, height - 30), 13, UI_MUTED);
+        if (GUI.Button(Rect(width - 172, height - 38, 156, 31), "Back to practice")) Session.Start(Main);
+    }
+}
+
+local event(Connected) ResetSubmittedActions(mut DuelMenu menu)
+{
+    menu.pickMatch = -1;
+    menu.pickRound = -1;
+    menu.rematch = -1;
+}
+
+local event(Disconnected gone) ReturnToPractice(mut DuelMenu menu)
+{
+    if (gone.reason == DisconnectReason.Left) return;
+    menu.message = gone.reason == DisconnectReason.Refused ? "Room full or build differs"
+                   : gone.reason == DisconnectReason.TimedOut ? "Room did not answer"
+                   : gone.reason == DisconnectReason.Kicked ? gone.message
+                   : "Could not join. Playing practice.";
+    Session.Start(Main);
+}
