@@ -483,18 +483,22 @@ TIDE_TEST(lsp_complete_routine_params)
     TIDE_CHECK(offers(function, "mut") && offers(function, "int") && offers(function, "bool") && offers(function, "string"));
     TIDE_CHECK(offers(function, "List") && offers(function, "Entity") && offers(function, "Stats") && offers(function, "Body"));
     TIDE_CHECK(offers(function, "Action") && offers(function, "Keyboard"));
-    TIDE_CHECK(!offers(function, "Menu") && !offers(function, "Session") && !offers(function, "Grid2"));
+    TIDE_CHECK(offers(function, "Menu") && offers(function, "Arena") && offers(function, "Session"));
+    TIDE_CHECK(!offers(function, "Grid2"));
     const char *after_mut = complete(TYPES "void Heal(mut $)\n{\n}\n");
     TIDE_CHECK(offers(after_mut, "Stats") && offers(after_mut, "float2") && !offers(after_mut, "mut"));
     TIDE_CHECK(!offers(after_mut, "Action"));
+    TIDE_CHECK(offers(after_mut, "Menu") && offers(after_mut, "Arena") && offers(after_mut, "Session"));
     TIDE_CHECK(offers(complete(TYPES "async void Load(Stats s, $)\n{\n}\n"), "Arena")); // A task's singletons
     TIDE_CHECK(offers(complete(TYPES "void Heal(Stats $)\n{\n}\n"), "stats"));
 #undef TYPES
 
     // A method's, in its type's body: no default values there.
-    const char *method = complete("struct Stats\n{\n    float health;\n    bool Near($) { return true; }\n}\nscene Main { }\n");
+    const char *method = complete("singleton Arena { int size; }\nlocal singleton Menu { bool open; }\n"
+                                  "struct Stats\n{\n    float health;\n    bool Near($) { return true; }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(method, "mut") && offers(method, "bool") && offers(method, "string") && offers(method, "Entity"));
     TIDE_CHECK(!offers(method, "Math") && !offers(method, "Action"));
+    TIDE_CHECK(offers(method, "Arena") && offers(method, "Menu") && offers(method, "Session"));
     TIDE_CHECK(offers(complete("struct Stats\n{\n    float health;\n    mut void Set(mut $) { }\n}\nscene Main { }\n"), "float"));
     // The input's Sample still takes local singletons, and Sanitize nothing.
     TIDE_CHECK(offers(complete("local singleton Menu { bool open; }\ninput I\n{\n    bool fire;\n    Sample($) { }\n}\n"
@@ -3348,6 +3352,28 @@ TIDE_TEST(lsp_signature_help)
 
     open_document(GAME_TYPES "system S()\n{\n    $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"result\":null"));
+}
+
+TIDE_TEST(lsp_singleton_function_parameters)
+{
+    start();
+    open_document("singleton Count { int value; }\n"
+                  "void Add(mut Count count) { count.value += 1; }\n"
+                  "scene Main { }\nsystem Tick(mut Count count) { Add($count); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // Signature help as the singleton argument is being typed.
+    open_document("singleton Count { int value; }\n"
+                  "void Add(mut Count count) { count.value += 1; }\n"
+                  "scene Main { }\nsystem Tick(mut Count count)\n{\n    Add($\n}\n");
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "void Add(mut Count count)"));
+    TIDE_CHECK(has(signature, "\"activeParameter\":0"));
+
+    open_document("singleton Count { int value; }\n"
+                  "void Add(mut Count count) { count.value += 1; }\n"
+                  "scene Main { }\nsystem Tick(Count count) { Add(count); }\n");
+    TIDE_CHECK(has(last_sent(), "'count' is read-only"));
+    TIDE_CHECK(!has(last_sent(), "can't take singletons"));
 }
 
 static const char *format_reply(const char *text)

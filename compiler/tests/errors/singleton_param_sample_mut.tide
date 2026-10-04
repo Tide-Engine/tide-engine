@@ -1,0 +1,9 @@
+// expect: 'Add' changes its 'menu'
+local singleton Menu { int presses; }
+void Add(mut Menu menu) { menu.presses += 1; }
+input Choice
+{
+    int presses;
+    Sample(Menu menu) { Add(menu); presses = menu.presses; }
+}
+scene Main { }

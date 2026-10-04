@@ -37,6 +37,9 @@ float Lit(float3 normal, float3 toward)
     return Math.Max(Math.Dot(Math.Normalize(normal), toward), 0.1);
 }
 
+float3 Direction(Sun sun) { return sun.direction; }
+float3 DirectionThrough(Sun sun) { return Direction(sun); }
+
 void Brighten(mut float3 rgb, float by)
 {
     rgb = rgb * by;
@@ -53,7 +56,7 @@ vert Wave(mut BoxVertex vertex, Time time, Instance instance)
 
 frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)
 {
-    float light = box.lit ? Lit(vertex.normal, -sun.direction) : 1;
+    float light = box.lit ? Lit(vertex.normal, -DirectionThrough(sun)) : 1;
     color = models.wood.Sample(vertex.uv) * box.tint * light;
     for (int i = 0; i < box.kind; i++)
     {

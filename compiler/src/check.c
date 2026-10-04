@@ -901,11 +901,11 @@ static bool optional_name(const str name, str *inner)
     return true;
 }
 
-// Whether a T? or a failable call can give a value of type `t`: what a
-// function returns or takes, but the devices.
+// Whether a T? or a failable call can give a value of type `t`: values a
+// function can return, but the devices or code.
 static bool result_value_ok(const type t, const loc at, const char *what)
 {
-    if (t.kind == TY_RECORD || t.kind == TY_ACTION) {
+    if (t.kind == TY_RECORD || t.kind == TY_ACTION || t.kind == TY_SINGLETON) {
         diag_error(at, "%s can't be %s", what, type_name(t));
         return false;
     }
@@ -3734,6 +3734,17 @@ static bool text_can_hold(const type t)
     return true;
 }
 
+// Session's room is beside its stored value, in the local world. An ordinary
+// helper receives only that value, so showing it must not look the room up.
+static bool check_text_context(const checker *c, const expr *value)
+{
+    if (!in_routine(c) || c->method->kind == DECL_SHADER || value->type.kind != TY_SINGLETON
+        || value->type.decl != c->prog->session) return true;
+    diag_error(value->at, "functions and methods can't show a whole Session value: its room belongs to the local world");
+    diag_note("show its stored fields, or pass the room separately as a string from the view or local handler");
+    return false;
+}
+
 // Text can't show `t`: says what in it is why, and what to show instead.
 static void text_cant_show(const loc at, const type t)
 {
@@ -4262,6 +4273,11 @@ static type check_member(checker *c, expr *e)
     const bool session = has_fields(obj) && obj.decl == c->prog->session;
     const bool disconnected = has_fields(obj) && obj.decl == c->prog->disconnected;
     if ((session && str_eq_c(e->member, "room")) || (disconnected && str_eq_c(e->member, "message"))) {
+        if (session && in_routine(c) && c->method->kind != DECL_SHADER) {
+            diag_error(e->at, "functions and methods can't read Session.room: it belongs to the local world, not the Session value");
+            diag_note("pass the room separately as a string from the view or local handler");
+            return T_ERR;
+        }
         e->c_constant = session ? "tide_str_from_cstr(tide_l->tide_room)" : "tide_str_from_cstr(tide_l->tide_message)";
         return (type){TY_STRING, NULL};
     }
@@ -5349,6 +5365,9 @@ static type check_expr_any(checker *c, expr *e)
         }
         if (dflt == e->lhs && compared) l = check_default_value(c, dflt, r);
         else if (dflt && compared) r = check_default_value(c, dflt, l);
+        if (e->op == T_PLUS && (l.kind == TY_STRING || r.kind == TY_STRING)) {
+            check_text_context(c, l.kind == TY_STRING ? e->rhs : e->lhs);
+        }
         t = binary_result(e->op, l, r, e->at, &e->method);
         note_operator_call(c, e->method, e);
         break;
@@ -5363,6 +5382,8 @@ static type check_expr_any(checker *c, expr *e)
                 diag_error(value->at, "this doesn't produce a value to show in the text");
             } else if (!text_can_hold(vt)) {
                 text_cant_show(value->at, vt);
+            } else {
+                check_text_context(c, value);
             }
             vec_push(e->format_codes, text_format(value, e->formats.items[i]));
         }
@@ -5544,7 +5565,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                           && (root->param->type.kind == TY_COMPONENT || root->param->type.kind == TY_SINGLETON);
     bool in_list = false;
     for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) in_list |= e->kind == E_INDEX;
-    note_text_write(c, world_place && (holds_heap(target->type) || target->type.kind == TY_GRID || in_list));
+    const bool passed_holder = world_place && arg_of && target == root && decl_holds_text(root->param->type.decl);
+    note_text_write(c, world_place && (holds_heap(target->type) || target->type.kind == TY_GRID || in_list || passed_holder));
     if (!root || root->bind == BIND_NONE || root->bind == BIND_TYPE || root->bind == BIND_NAMESPACE) {
         if (arg_of) {
             diag_error(target->at, "'" STR_FMT "' changes its '" STR_FMT "', so pass it a variable or field",
@@ -6251,6 +6273,7 @@ static void check_assign(checker *c, const stmt *s)
     }
     type result = value;
     if (s->op != T_ASSIGN) {
+        if (compound_op(s->op) == T_PLUS && target.kind == TY_STRING) check_text_context(c, s->value);
         result = binary_result(compound_op(s->op), target, value, s->at, &((stmt *)s)->operator_decl);
         note_operator_call(c, s->operator_decl, s->value);
         if (result.kind == TY_ERROR) return;
@@ -7793,8 +7816,8 @@ static void check_local_part(const checker *c, const decl *part)
     }
 }
 
-// A method's parameter or return type: a built-in type, a struct or a
-// component, or `void` for what it returns.
+// A method's or function's parameter or return type: a built-in type, struct,
+// enum or component; singletons only as parameters, and void only as a return.
 static type method_type(const checker *c, const str name, const loc at, const bool is_return)
 {
     type t;
@@ -7825,10 +7848,12 @@ static type method_type(const checker *c, const str name, const loc at, const bo
         if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
     }
     decl *const d = find_type(c, name, at);
-    if (d && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_ENUM)) return decl_type(d);
+    if (d && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_ENUM
+              || (!is_return && d->kind == DECL_SINGLETON))) return decl_type(d);
     if (d) {
-        diag_error(at, "methods take and return built-in types, structs, enums and components, not %s",
-                   d->kind == DECL_SINGLETON ? "singletons" : d->kind == DECL_EVENT ? "events" : "inputs");
+        if (d->kind == DECL_SINGLETON) diag_error(at, "functions and methods can't return singletons");
+        else diag_error(at, "methods take and return built-in types, structs, enums and components, not %s",
+                        d->kind == DECL_EVENT ? "events" : "inputs");
     } else if (str_eq_c(name, "void")) {
         diag_error(at, "'void' only goes before a method that returns nothing");
     } else if (!world_misplaced(name, at)) {
@@ -7894,9 +7919,7 @@ static void check_signature(const checker *c, decl *m)
                 diag_error(p->name_at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
             }
         }
-        decl *const singleton = m->is_async ? find_type(c, p->type_name, p->type_at) : NULL;
-        if (singleton && singleton->kind == DECL_SINGLETON) p->type = decl_type(singleton);
-        else p->type = method_type(c, p->type_name, p->type_qual_at, false);
+        p->type = method_type(c, p->type_name, p->type_qual_at, false);
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -8097,6 +8120,7 @@ static const char *c_refuses(const type t)
     case TY_SET: return "sets";
     case TY_ACTION: return "an Action";
     case TY_RECORD: return "the devices";
+    case TY_SINGLETON: return "singletons";
     case TY_OPTIONAL: return "T? values";
     case TY_STRUCT:
     case TY_COMPONENT: return decl_holds_text(t.decl) ? "text or lists" : NULL;
@@ -10735,25 +10759,26 @@ static void check_render_resource_calls(const checker *c)
     }
 }
 
-// A function that uses a component's local fields through a parameter is
+// A function that uses a component's or singleton's local fields through a parameter is
 // given them with it, and so is one that passes the parameter on to it. So
 // only code that has them calls it: views, local handlers of Forgotten and
 // functions like it, with a parameter of their own, never a copy. And a view
-// can't pass a match component to a function that changes its match fields.
+// can't pass match state to a function or method that changes its match fields.
 static void check_local_field_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
-            if (site->to->kind != DECL_FUNCTION || site->from->kind != DECL_FUNCTION || site->from->is_async) continue;
+            if ((site->to->kind != DECL_FUNCTION && site->to->kind != DECL_METHOD)
+                || (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) || site->from->is_async) continue;
             for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
                 const param *q = &site->to->params.items[k];
                 const expr *arg = site->call->args.items[k];
-                if (q->type.kind != TY_COMPONENT || !q->type.decl->local_part) continue;
+                if ((q->type.kind != TY_COMPONENT && q->type.kind != TY_SINGLETON) || !q->type.decl->local_part) continue;
                 if (arg->kind != E_NAME || arg->bind != BIND_PARAM || !arg->param->function_param) continue;
                 param *p = arg->param;
-                if (p->type.kind != TY_COMPONENT || p->type.decl != q->type.decl) continue;
+                if (p->type.kind != q->type.kind || p->type.decl != q->type.decl) continue;
                 if (q->local_use && !p->local_use) {
                     p->local_use = true;
                     p->local_use_at = arg->at;
@@ -10787,14 +10812,15 @@ static void check_local_field_calls(const checker *c)
         const call_site *site = &c->calls.items[i];
         const decl *from = site->from;
         const decl *to = site->to;
-        if (to->kind != DECL_FUNCTION) continue;
+        if (to->kind != DECL_FUNCTION && to->kind != DECL_METHOD) continue;
         const bool local_code = from->kind == DECL_SYSTEM && is_local_code(from);
         for (int k = 0; k < site->call->args.count && k < to->params.count; k++) {
             const param *q = &to->params.items[k];
             const expr *arg = site->call->args.items[k];
-            if (q->type.kind != TY_COMPONENT || !q->type.decl->local_part || arg->type.kind == TY_ERROR) continue;
+            if ((q->type.kind != TY_COMPONENT && q->type.kind != TY_SINGLETON) || !q->type.decl->local_part
+                || arg->type.kind == TY_ERROR) continue;
             const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && !arg->param->task_ref
-                          && arg->param->type.kind == TY_COMPONENT && arg->param->type.decl == q->type.decl;
+                          && arg->param->type.kind == q->type.kind && arg->param->type.decl == q->type.decl;
             if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
                 diag_error(arg->at, "%s can't change the match, and '" STR_FMT "' changes its '" STR_FMT "''s match fields",
                            local_code_what(from), STR_ARG(to->name), STR_ARG(q->name));
@@ -10818,7 +10844,8 @@ static void check_local_field_calls(const checker *c)
                            "handlers and the functions they call have", STR_ARG(to->name), STR_ARG(d->name));
             } else if (!own) {
                 diag_error(arg->at, "'" STR_FMT "' uses its '" STR_FMT "''s local fields, and this is a copy of the "
-                           "component's value, which has none", STR_ARG(to->name), STR_ARG(q->name));
+                           "%s's value, which has none", STR_ARG(to->name), STR_ARG(q->name),
+                           q->type.kind == TY_SINGLETON ? "singleton" : "component");
                 diag_note("pass the parameter of the view, or of the function, itself");
             } else if (from->kind == DECL_SYSTEM) { // The view's own: its local fields go with it
                 if (!arg->param->local_use) arg->param->local_use_at = arg->at;
