@@ -129,6 +129,14 @@ const cases = {
         ['foreach (var event in events)', [['event', '!storage'], ['event', '!keyword'], ['in', 'keyword.control'], ['in', '!entity.name.type']]],
         ['var scene = 1;', [['scene', '!storage']]],
     ],
+    'commands identify their payload, sender and receiver': [
+        ['command Rename', [['command', 'storage.type'], ['Rename', 'entity.name.type']]],
+        ['command(Rename rename, PlayerID sender) RenamePlayer(', [
+            ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
+            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['RenamePlayer', 'entity.name.function'],
+            ['RenamePlayer', '!entity.name.function.call'],
+        ]],
+    ],
     'local and async, in either order': [
         ['local event Shown', [['local', 'storage.modifier'], ['event', 'storage.type'], ['Shown', 'entity.name.type']]],
         ['local component Toast', [['local', 'storage.modifier'], ['component', 'storage.type'], ['Toast', 'entity.name.type']]],
@@ -326,9 +334,9 @@ const modifiers = String.raw`(?:(?:local|async)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
-    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|enum|scene)\s+(\w+)`), 'entity.name.type'],
+    [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|command|enum|scene)\s+(\w+)`), 'entity.name.type'],
     [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+(\w+)`), 'entity.name.function'],
-    [new RegExp(String.raw`^${modifiers}event\s*\([^)]*\)\s*(\w+)`), 'entity.name.function'],
+    [new RegExp(String.raw`^${modifiers}(?:event|command)\s*\([^)]*\)\s*(\w+)`), 'entity.name.function'],
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
     [new RegExp(String.raw`^extern\s+${type}\s+(\w+)\s*\(`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}(?:mut\s+)?(${type})\s+(\w+)\s*\(`), 'entity.name.function'],

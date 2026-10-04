@@ -1,0 +1,4 @@
+// expect: command handlers don't return values; use 'return;'
+command Rename { string name; }
+command(Rename rename, PlayerID sender) Handle() { return true; }
+scene Main { }

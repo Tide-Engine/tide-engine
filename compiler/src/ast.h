@@ -196,6 +196,7 @@ typedef enum param_mode {
     PARAM_WITH,
     PARAM_WITHOUT,
     PARAM_EVENT, // An event handler's trigger: `event(Hit hit)`, always its first parameter
+    PARAM_SENDER, // A command handler's authenticated PlayerID, following its payload
     PARAM_IN,    // `in Stats stats`, an extern function's: C gets a read-only pointer to the value
     PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a second candidate set
 } param_mode;
@@ -365,6 +366,7 @@ typedef struct decl {
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
+    bool is_command;        // `command`: a local submission whose one match handler receives its sender
     const struct decl *needs_target; // A handler that takes data from the entity the event is sent to, or NULL
     VEC(struct decl *) handlers;     // Its handlers, in the order they run
 
@@ -861,6 +863,7 @@ typedef struct program {
     VEC(decl *) views;
     VEC(decl *) handlers; // Every event handler, in the order they run
     VEC(decl *) events;   // Built-in ones first
+    VEC(decl *) command_types; // Commands are event-shaped values, with a separate incoming wire API
     decl *spawned;        // Built-in events
     decl *destroyed;
     decl *player_joined;

@@ -62,7 +62,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
 - **`mut Color color` is the pixel.** A frag writes its output through `mut`, as a system writes a component, and returns nothing. What `color` holds when the frag ends is the pixel's color, blended over what's behind it by its alpha.
 - `color` starts as `Color.white`. It isn't the pixel already on the screen: a GPU doesn't let a frag read that. A frag that never writes it draws white.
-- A frag has one output for now, a `Color`. More, and other types, come with drawing into a texture.
+- A frag has one output for now, a `Color`. More, and other types, aren't there yet.
 
 ## A vert
 

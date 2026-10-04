@@ -569,7 +569,7 @@ static void build_signatures(void)
     // The mouse's cursor: a frame's ask, as the keyboard's is, which the GUI collects
     add_gui("Cursor", "Lock", T_NONE, "tide_gui_lock_cursor", "", 0,
             "Locks the mouse's cursor for a camera that looks around: it's hidden and stays where it is, and "
-            "`Devices.mouse.delta` keeps coming however far the mouse goes. Call it every frame the game wants the "
+            "`devices.mouse.delta` keeps coming however far the mouse goes. Call it every frame the game wants the "
             "mouse: the cursor comes back once no view asks. The system may refuse, or take the cursor back (when "
             "the player presses Escape, until their next click or key press), so read `Cursor.locked` for whether it "
             "holds.");

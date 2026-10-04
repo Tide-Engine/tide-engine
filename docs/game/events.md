@@ -34,7 +34,7 @@ An event is a value, so a local can hold one, and a handler can send its event o
 
 ## Handling
 
-A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's.
+A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's, except query parameters.
 
 ```csharp
 // Health and this come from the entity the Hit was sent to.

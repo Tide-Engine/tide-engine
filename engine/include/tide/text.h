@@ -25,7 +25,8 @@
 // Everything here is deterministic: numbers become text through exact integer
 // arithmetic, never printf, so the same value gives the same bytes on every
 // platform. Nothing fails: the scratch area grows as it needs, so text of any
-// size can be made; only running out of memory ends the program.
+// size its offsets reach (1 GiB a thread, below) can be made; only running out
+// of memory, or of those offsets, ends the program.
 
 typedef struct tide_str {
     const char *ptr;
