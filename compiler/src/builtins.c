@@ -1066,6 +1066,11 @@ static const setting settings[] = {
      "frame's budget, it delays its input a tick at a time until it fits. `Prediction.Delay`: clients never predict: "
      "inputs are delayed so every player's reach the server before its tick, and ticks run once, as the server "
      "confirms them, at the cost of input delay."},
+    {"stats", TY_BOOL, "false",
+     "Shows the stats in the window's bottom right corner, as `tide run --stats` does: the frame rate and what a "
+     "frame's work takes, the ping, the bandwidth, the tick, the entity count, the threads, the memory, what draws "
+     "and in how many draw calls, and the systems that took longest in the last tick. It's part of the build, so "
+     "what `tide build` makes shows them too: take it out before players get the game."},
 };
 
 #define SETTING_COUNT (sizeof settings / sizeof settings[0])
