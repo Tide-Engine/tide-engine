@@ -27,7 +27,7 @@ tide <command> [folder] [options]
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
-| `--stats` | Shows the frame rate, the ping, the bandwidth (what goes over the network each second, up and down), the tick, the entity count, the threads ticks run on and what draws (WebGPU, WebGL 2 or OpenGL) |
+| `--stats` | Shows the frame rate, the ping, the input delay when there is one, the bandwidth (what goes over the network each second, up and down), the tick, the entity count, the threads ticks run on, what draws (WebGPU, WebGL 2 or OpenGL) and the three systems that took longest in the last tick |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 

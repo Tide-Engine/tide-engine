@@ -1512,6 +1512,8 @@ static void describe(const occurrence *o, sb *out)
                                                          "of the entity's owner."
                       : str_eq_c(o->name, "Clipboard") ? "\n\nThis machine's clipboard: Copy, from views and local handlers. "
                                                          "Ctrl+V pastes into text fields by itself."
+                      : str_eq_c(o->name, "Debug")     ? "\n\nOutput for whoever runs the game: Log prints a line, Assert stops "
+                                                         "the program when its condition fails. Neither changes the match."
                                                        : "\n\nMath functions and constants, deterministic on every platform.");
         }
         break;
@@ -4124,6 +4126,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Session", CK_MODULE, "Starts, joins and leaves matches", NULL, NULL);
         item(c, "Clipboard", CK_MODULE, "This machine's clipboard", NULL, NULL);
     }
+    if (statement) item(c, "Debug", CK_MODULE, "Log prints a line; Assert stops the program when a condition fails", NULL, NULL);
     // Where a statement starts, what a local can be; elsewhere, what makes a value.
     const bool local_code = view || (sc.decl && sc.decl->is_local);
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
@@ -4901,7 +4904,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "by", "offset", "void"};
     enum { DECL_WORDS = 11 };
     static const char *const reserved[] = {"Math", "Draw", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
-                                           "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction",
+                                           "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Grid2", "Grid3",

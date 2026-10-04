@@ -108,6 +108,21 @@ settings
 - Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
 - `--title` goes over the `title` setting (see [The tide command](../guide/cli.md)).
 
+## Logging and asserting
+
+`Debug.Log(text)` prints a line: to the terminal under `tide run`, to the browser's console on the web, to the system's log on Android. `Debug.Assert(condition)`, or `Debug.Assert(condition, text)`, stops the program when the condition is false and says where, with the source line and the text. Both go anywhere: systems, views, handlers, functions.
+
+```csharp
+system Fall(Time time, mut Body body)
+{
+    body.velocity.y -= 9.8 * time.dt;
+    Debug.Assert(body.velocity.y > -1000, $"{body.velocity.y} is too fast to be right");
+    if (time.tick % 60 == 0) Debug.Log($"tick {time.tick}: {body.position}");
+}
+```
+
+Neither changes the match, so the simulation stays the same on every machine with or without them. A client runs a tick again when a guess about another player's input was wrong (see [Networking](../engine/networking.md#prediction-and-rollback)), and a log in it prints again: prefix what you log of the match with `Time.tick` to tell the runs apart. `tide run --stats` shows the three systems that took longest in the last tick, beside the frame rate.
+
 ## Default values
 
 `default` is the default value of the type where it goes, so the type doesn't have to be spelled out:

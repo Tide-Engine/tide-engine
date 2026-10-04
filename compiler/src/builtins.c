@@ -372,6 +372,17 @@ static void build_signatures(void)
     // Text's methods: tide/text.h, with the text first. Positions and lengths
     // count characters, and are clamped to the text, never out of range.
     const type t_int = {TY_INT, NULL};
+    // Debug: output for whoever runs the game, which changes nothing in the match
+    describe(add("Debug", "Log", T_NONE, "tide_debug_log", 1, T_STR, T_NONE, T_NONE), "text",
+             "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "
+             "Android. Anywhere: systems, views, handlers, functions. A tick run again after a rollback logs again, so "
+             "prefix match state with `Time.tick`.");
+    describe(add("Debug", "Assert", T_NONE, "tide_debug_assert", 1, T_BOOL, T_NONE, T_NONE), "condition",
+             "Nothing while the condition holds. When it doesn't, the program stops, naming the file, the line and the "
+             "source line.");
+    describe(add("Debug", "Assert", T_NONE, "tide_debug_assert", 2, T_BOOL, T_STR, T_NONE), "condition, message",
+             "Nothing while the condition holds. When it doesn't, the program stops, naming the file, the line, the "
+             "source line and the message.");
     describe(add("string", "Contains", T_BOOL, "tide_str_contains", 1, T_STR, T_NONE, T_NONE),
              "value", "Whether `value` is in the text.");
     describe(add("string", "StartsWith", T_BOOL, "tide_str_starts_with", 1, T_STR, T_NONE, T_NONE),
@@ -494,7 +505,7 @@ bool builtin_owner(const str name)
 {
     type ignored;
     return str_eq_c(name, "Math") || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
-        || str_eq_c(name, "Screen") || builtin_type_named(name, &ignored);
+        || str_eq_c(name, "Screen") || str_eq_c(name, "Debug") || builtin_type_named(name, &ignored);
 }
 
 // Widest type of a component-wise call's arguments, or false if they don't fit
