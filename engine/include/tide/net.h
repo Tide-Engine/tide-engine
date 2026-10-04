@@ -7,9 +7,8 @@
 // What sessions (tide/session.h) send datagrams with: addresses, transports,
 // an in-process loopback network, and writing and reading bytes and bits.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. Real networks come from the platform layer (tide_platform_udp_open);
-// this file never touches the operating system.
+// Real networks come from the platform layer (tide_platform_udp_open); this
+// file never touches the operating system.
 
 #define TIDE_NET_MTU 1200u // The largest datagram sessions send
 

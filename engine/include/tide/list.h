@@ -10,9 +10,6 @@
 // functions below with each element's size, and handles the text in elements
 // itself (see tide/text.h).
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A tide_list is where its elements are: a block in a world's heap, or in the
 // scratch area. As with text, generated code says where the list is with
 // `where` (see tide/text.h): a list that's part of a world (a component's

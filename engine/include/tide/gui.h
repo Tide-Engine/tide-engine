@@ -15,8 +15,7 @@ typedef struct tide_textref tide_textref;
 // what the player did with them. Nothing is kept between frames but which
 // widget is hovered, pressed, focused or being typed into.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. Generated code calls the tide_gui_* functions below.
+// Generated code calls the tide_gui_* functions below.
 //
 // Positions and sizes are in the window's pixels, from the top left with y
 // down, as in Unity's GUI. Widgets keep their size when the window changes

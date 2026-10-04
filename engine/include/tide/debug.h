@@ -4,9 +4,6 @@
 
 // Debug.Log and Debug.Assert, as generated code calls them.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // Output goes to stderr: the terminal under `tide run`, the browser's console
 // on the web (through WASI's fd_write) and the system's log on Android. A tick
 // the client runs again after a rollback logs again, so a log of match state

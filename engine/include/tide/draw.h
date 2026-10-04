@@ -10,10 +10,8 @@
 // list, and a renderer plays them back (tide_platform_draw, on OpenGL). The list
 // knows nothing about any renderer, so replacing one doesn't touch game code.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. Generated code calls the tide_draw_* functions below (and
-// tide/mesh.h's), and so does a game's C that a view hands its list (a
-// `DrawList` parameter).
+// Generated code calls the tide_draw_* functions below (and tide/mesh.h's),
+// and so does a game's C that a view hands its list (a `DrawList` parameter).
 //
 // Positions and sizes are in world units, with y up. The camera decides where
 // they land on screen. Commands draw in the order they were recorded, on a

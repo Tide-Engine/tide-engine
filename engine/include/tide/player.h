@@ -5,10 +5,9 @@
 
 // Player identity (Tide's PlayerID).
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. The simulation only ever sees player IDs, never connections: the
-// networking layer maps connections to IDs, so a player who reconnects and gets
-// their ID back keeps everything they owned.
+// The simulation only ever sees player IDs, never connections: the networking
+// layer maps connections to IDs, so a player who reconnects and gets their ID
+// back keeps everything they owned.
 //
 // A zeroed ID is "no player". PlayerID(n) in Tide is stored as n + 1.
 

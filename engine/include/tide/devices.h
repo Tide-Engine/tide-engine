@@ -7,9 +7,8 @@
 
 // Input devices, as Tide's `Devices` sees them.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. tidec reads the member lists below (the X-macros), so Tide and C
-// always agree on the names.
+// tidec reads the member lists below (the X-macros), so Tide and C always
+// agree on the names.
 //
 // The platform layer (tide/platform.h) updates the devices every frame with
 // tide_button_set, the mouse fields, tide_touch_event and tide_pointer_poll. Once per tick, the host builds the local

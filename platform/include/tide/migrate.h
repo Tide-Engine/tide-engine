@@ -25,9 +25,6 @@
 //   has no local fields left, takes them with it.
 //
 // A world whose scene is gone can't be carried over.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 typedef struct tide_migration {
     uint32_t entities_dropped;

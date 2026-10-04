@@ -11,9 +11,6 @@
 // Archetype storage and the queue of structural changes, as worlds keep them.
 // Generated code calls these with each archetype's tide_columns.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A table holds the entities with one combination of components, as columns:
 // the entities themselves, the scene each is in (in a world with scenes),
 // then each component. Its rows are in chunks of 1 << shift, and a chunk's

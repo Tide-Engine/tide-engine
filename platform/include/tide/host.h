@@ -7,9 +7,6 @@
 // how games run. Under `tide run` the game is a library instead, and
 // tide_host_run_library swaps in each new build of it that tide makes: hot
 // reloading. The table is what lets one loop do both.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 #include <stdio.h>
 #include <stdlib.h>

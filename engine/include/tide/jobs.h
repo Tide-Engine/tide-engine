@@ -9,9 +9,6 @@
 // Running a tick's systems on several threads, with the same results as on
 // one.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // The threads are the platform layer's (tide_platform_jobs): all this needs
 // is to run a function on each of them. A tick's systems become tasks: a
 // system that splits its entities across threads has a task per chunk of

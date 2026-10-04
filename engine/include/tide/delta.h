@@ -8,9 +8,6 @@
 
 // Deltas: a world as what changed from another world, its base, page by page.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
-//
 // A world's data is in regions: its struct (without its storage), then each
 // page of its entity table, of each archetype's table (each chunk's column) and
 // of its heap, as far as it's in use. A delta (tide_world_pack_delta) has each
