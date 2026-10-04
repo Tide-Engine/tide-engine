@@ -2,7 +2,7 @@
 input PlayerInput
 {
     float2 look;
-    Sample() { if (Cursor.locked) look = Devices.mouse.delta; }
+    Sample(Devices devices) { if (Cursor.locked) look = devices.mouse.delta; }
     Sanitize() { if (!Cursor.locked) look = float2(0, 0); }
 }
 scene Main { }

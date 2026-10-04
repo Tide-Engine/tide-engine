@@ -1,0 +1,4 @@
+// expect: a command handler can't be async
+command Rename { string name; }
+async command(Rename rename, PlayerID sender) Handle() { }
+scene Main { }

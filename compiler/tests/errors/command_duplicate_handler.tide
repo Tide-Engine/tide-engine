@@ -1,0 +1,5 @@
+// expect: command 'Rename' has more than one handler
+command Rename { string name; }
+command(Rename rename, PlayerID sender) First() { }
+command(Rename rename, PlayerID sender) Second() { }
+scene Main { }

@@ -1,0 +1,84 @@
+enum Choice { First = 1, Second = 2 }
+struct Detail { string note; [Clamp(-2, 2)] int count; }
+command Rename
+{
+    string name;
+    [Clamp(0, 10)] float rating = 3;
+    Choice choice = Choice.First;
+    float2 aim;
+    Detail detail;
+    PlayerID claimed;
+    Entity other;
+}
+command Announce { string message; }
+component Name { string value = "before"; }
+singleton Seen
+{
+    int calls;
+    PlayerID sender;
+    float rating;
+    Choice choice;
+    float2 aim;
+    string note;
+    int count;
+    string announcement;
+    PlayerID claimed;
+    Entity other;
+}
+local singleton UI
+{
+    bool send;
+    bool announce;
+    bool handler;
+    string text = "Alice";
+    Entity target;
+}
+local event Submit { }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Name, Owner { player = PlayerID(0) });
+    Spawn(Name, Owner { player = PlayerID(1) });
+}
+command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name, mut Seen seen)
+{
+    if (sender != owner.player) return;
+    if (rename.name.length == 0) return;
+    name.value = rename.name;
+    seen.calls++;
+    seen.sender = sender;
+    seen.rating = rename.rating;
+    seen.choice = rename.choice;
+    seen.aim = rename.aim;
+    seen.note = rename.detail.note;
+    seen.count = rename.detail.count;
+    seen.claimed = rename.claimed;
+    seen.other = rename.other;
+}
+command(Announce announce, PlayerID sender) AnnounceWorld(mut Seen seen)
+{
+    seen.announcement = announce.message;
+    seen.sender = sender;
+}
+local event(Submit) SubmitFromHandler(UI ui)
+{
+    ui.target.Send(Rename { name = ui.text, detail = Detail { note = "handler", count = 7 } });
+}
+view SubmitFromView(mut UI ui)
+{
+    if (ui.send)
+    {
+        ui.target.Send(Rename { name = ui.text, detail = Detail { note = "view", count = -7 }, claimed = PlayerID(7), other = ui.target });
+        ui.send = false;
+    }
+    if (ui.announce)
+    {
+        Send(Announce { message = ui.text });
+        ui.announce = false;
+    }
+    if (ui.handler)
+    {
+        Send(Submit);
+        ui.handler = false;
+    }
+}
