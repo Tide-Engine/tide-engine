@@ -68,6 +68,8 @@ tide upgrade --stable   # back to stable ones
 
 `tide upgrade` only ever moves forward. Switching channels, or `tide upgrade --version <v>`, installs what you ask for, even an older version.
 
+An upgrade replaces tide while your editor and your games keep running. When it can't replace a file, because another program is reading it, it stops and says which one. Until it's finished, `tide` builds no games and says the installation isn't whole: close what had the file open and run `tide upgrade` again, which installs the version again even when it's the newest already.
+
 ## Uninstall
 
 Delete the folder tide is in (`tide version` says where), and the line that puts its `bin` folder on your `PATH`: on Windows, in **Edit environment variables for your account**; elsewhere, the lines after `# tide` in your shell's profiles, or fish's `conf.d/tide.fish`. Remove the Tide extension from your editors as you would any other.
