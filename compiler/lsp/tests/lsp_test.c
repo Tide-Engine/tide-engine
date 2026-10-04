@@ -352,6 +352,7 @@ TIDE_TEST(lsp_complete_builtin_owners)
     TIDE_CHECK(offers(math, "Sin"));
     TIDE_CHECK(offers(math, "PI"));
     TIDE_CHECK(offers(math, "Normalize"));
+    TIDE_CHECK(!offers(math, "NormalizeSafe")); // Gone: Normalize is the safe one
 
     const char *draw = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "Circle"));
@@ -581,6 +582,12 @@ TIDE_TEST(lsp_hover)
     const char *function = request("textDocument/hover");
     TIDE_CHECK(has(function, "Draw.Circle(float2 center, float radius, Color color)"));
     TIDE_CHECK(has(function, "A filled circle."));
+
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.Nor$malize(body.position);\n}\n");
+    const char *normalize = request("textDocument/hover");
+    TIDE_CHECK(has(normalize, "Math.Normalize(float2 vector)"));
+    TIDE_CHECK(has(normalize, "gives zero, never NaN"));
+    TIDE_CHECK(has(normalize, "gives the identity, never NaN")); // A quaternion's
 }
 
 TIDE_TEST(lsp_definition)
@@ -2018,6 +2025,15 @@ TIDE_TEST(lsp_quick_fixes_from_suggestions)
     TIDE_CHECK(has(math, "{\"range\":{\"start\":{\"line\":24,\"character\":23},\"end\":{\"line\":24,\"character\":27}},"
                          "\"newText\":\"Clamp\"}"));
     TIDE_CHECK(!has(actions_at(23), "Change to")); // Only on its line
+
+    // A spelling that's gone: the error says what to write, and the fix writes it
+    open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.NormalizeSafe(body.position);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Math.NormalizeSafe is gone: write Math.Normalize"));
+    TIDE_CHECK(has(last_sent(), "Math.Normalize no longer gives NaN"));
+    const char *gone = actions_at(24);
+    TIDE_CHECK(has(gone, "\"title\":\"Change to 'Normalize'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    TIDE_CHECK(has(gone, "{\"range\":{\"start\":{\"line\":24,\"character\":25},\"end\":{\"line\":24,\"character\":38}},"
+                         "\"newText\":\"Normalize\"}"));
 }
 
 // `with ownership` and `without ownership`: a view's filter by this machine's

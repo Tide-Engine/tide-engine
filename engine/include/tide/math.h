@@ -447,10 +447,9 @@ static inline float tide_cmax_f4(const tide_float4 v) { return tide_max_f(tide_m
     { return tide_lengthsq_f##N(tide_sub_f##N(b, a)); }                                          \
     static inline float tide_distance_f##N(const tide_float##N a, const tide_float##N b)         \
     { return tide_length_f##N(tide_sub_f##N(b, a)); }                                            \
+    /* Zero for a vector too short to normalize (its length squared is no normal float), */      \
+    /* where dividing by its length would give NaN. One with NaN in it gives zero too. */        \
     static inline tide_float##N tide_normalize_f##N(const tide_float##N v)                       \
-    { return tide_mul_f##N(tide_f##N##_splat(tide_rsqrt_f(tide_dot_f##N(v, v))), v); }           \
-    /* Zero instead of NaN for vectors too short to normalize. */                                \
-    static inline tide_float##N tide_normalizesafe_f##N(const tide_float##N v)                   \
     {                                                                                            \
         const float len = tide_dot_f##N(v, v);                                                   \
         return len > TIDE_FLT_MIN_NORMAL_F ? tide_mul_f##N(tide_f##N##_splat(tide_rsqrt_f(len)), v) \
@@ -491,13 +490,10 @@ static inline tide_quaternion tide_inverse_q(const tide_quaternion q)
     return tide_q(-q.value.x * s, -q.value.y * s, -q.value.z * s, q.value.w * s);
 }
 
+// The identity for a quaternion too short to normalize, where dividing by its
+// length would give NaN: a zeroed one is no rotation, and the identity is the
+// one that turns nothing.
 static inline tide_quaternion tide_normalize_q(const tide_quaternion q)
-{
-    return (tide_quaternion){tide_normalize_f4(q.value)};
-}
-
-// Identity instead of NaN for quaternions too short to normalize.
-static inline tide_quaternion tide_normalizesafe_q(const tide_quaternion q)
 {
     const float len = tide_dot_f4(q.value, q.value);
     return len > TIDE_FLT_MIN_NORMAL_F ? (tide_quaternion){tide_mul_f4(tide_f4_splat(tide_rsqrt_f(len)), q.value)}
@@ -543,6 +539,8 @@ static inline tide_quaternion tide_euler_q(const tide_float3 xyz)
     return tide_mul_q(tide_mul_q(y, x), z);
 }
 
+// Between two quaternions that are both zero (fields nothing set), it's the
+// identity, as normalizing gives.
 static inline tide_quaternion tide_nlerp_q(const tide_quaternion a, const tide_quaternion b, const float t)
 {
     const tide_float4 bv = tide_dot_q(a, b) < 0.0f ? tide_neg_f4(b.value) : b.value;
@@ -567,7 +565,8 @@ static inline tide_quaternion tide_slerp_q(const tide_quaternion a, const tide_q
     return tide_nlerp_q(a, (tide_quaternion){bv}, t);
 }
 
-// Angle in radians between two rotations.
+// Angle in radians between two rotations: 0 when either is zero, as the
+// identity normalizing gives is no turn.
 static inline float tide_angle_q(const tide_quaternion a, const tide_quaternion b)
 {
     const tide_float4 d = tide_normalize_q(tide_mul_q(tide_conjugate_q(a), b)).value;
@@ -805,7 +804,9 @@ static inline tide_quaternion tide_q_from_f3x3(const tide_float3x3 m)
     return tide_q((m.c2.x + m.c0.z) / s, (m.c2.y + m.c1.z) / s, 0.25f * s, (m.c0.y - m.c1.x) / s);
 }
 
-// Rotation looking along `forward` (normalized) with `up` as a hint.
+// Rotation looking along `forward` (normalized) with `up` as a hint. A forward
+// along `up` (or a zero one) has no side to turn around: normalizing gives
+// zero for it, so the result has no NaN, though it's no rotation either.
 static inline tide_quaternion tide_lookrotation_q(const tide_float3 forward, const tide_float3 up)
 {
     const tide_float3 t = tide_normalize_f3(tide_cross_f3(up, forward));

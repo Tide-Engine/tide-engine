@@ -74,6 +74,12 @@ TIDE_TEST(math_functions)
     TIDE_CHECK(r.dotted == 6.0f);
     TIDE_CHECK(r.length == 13.0f);
     TIDE_CHECK(eq3(r.normalized, 0, 1, 0));
+    // Normalize gives zero for what has no direction, and the identity for a quaternion
+    TIDE_CHECK(eq3(r.stayed, 1, 2, 3));
+    TIDE_CHECK(r.noDirection.x == 0 && r.noDirection.y == 0);
+    TIDE_CHECK(r.tooShort.x == 0 && r.tooShort.y == 0 && r.tooShort.z == 0 && r.tooShort.w == 0);
+    TIDE_CHECK(r.noRotation.value.x == 0 && r.noRotation.value.y == 0 && r.noRotation.value.z == 0
+               && r.noRotation.value.w == 1);
     TIDE_CHECK(eq3(r.crossed, 0, 0, 1));
     TIDE_CHECK(r.clamped == 1);
     TIDE_CHECK(eq3(r.lerped, 5, 10, 15));

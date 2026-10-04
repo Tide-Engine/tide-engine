@@ -422,7 +422,12 @@ Follows Unity.Mathematics, with Tide's naming. Everything in this section is dec
 - Math functions live on `Math` and follow the PascalCase method convention: `Math.Dot(a, b)`, `Math.Normalize(v)`, `Math.Mul(q, r)`. This overrides Unity.Mathematics' lowercase `math.dot`.
 - Swizzles read any combination of components: `v.xz`, `v.zyx`, `v.xxyy`.
 - Angles are in radians. `Math.Radians(degrees)` and `Math.Degrees(radians)` convert.
-- Math is forgiving with bad values, which can come from other players' input. `Math.Clamp` always returns a value in range: NaN gives the lower bound. `Math.Min` and `Math.Max` with one NaN argument return the other. Everywhere else, results match Unity.Mathematics.
+- Math is forgiving with bad values, which can come from other players' input. `Math.Clamp` always returns a value in range: NaN gives the lower bound. `Math.Min` and `Math.Max` with one NaN argument return the other. `Math.Normalize` never gives NaN for a vector with no direction (next). Everywhere else, results match Unity.Mathematics.
+- `Math.Normalize` gives zero for a vector too short to normalize, and the identity for a quaternion too short, where dividing by the length would give NaN. There's one `Normalize`, and it's the safe one: Unity.Mathematics splits it into `normalize` and `normalizesafe`, and here Tide's own rules win. NaN in the match is a determinism hazard (its bit patterns aren't portable), and normalizing a move that's zero while no key is held is the first thing every game writes.
+  - Too short is a length squared at or under the smallest normal float (about 1.18e-38): a length of about 1e-19 or less, zero included. A vector with NaN in it gives zero too. Any longer vector gives exactly `v * (1 / Sqrt(Dot(v, v)))`, as it always did; that's zero for one so long its length squared overflows (past about 1.8e19), and still NaN in an infinite component (zero times infinity).
+  - So vectors shorter than about 1e-19 give zero, where they gave a unit vector while `Normalize` wasn't safe.
+  - It gives zero wherever it runs: in the match, in views, and in code compiled for the GPU, whose shader languages leave their own `normalize` of a zero vector undefined, so Tide's `Normalize` there is never just theirs.
+  - `Math.NormalizeSafe` is gone: writing it is an error that points to `Math.Normalize`.
 
 ```csharp
 quaternion spin = quaternion.AxisAngle(float3(0, 1, 0), input.turn * time.dt);
@@ -458,8 +463,8 @@ float2 flat = trs.position.xz;
 **Functions**
 
 - Component-wise, on numbers and vectors: `Abs`, `Sign`, `Min`, `Max`, `Clamp` (ints too); `Floor`, `Ceil`, `Round` (ties to even), `Trunc`, `Frac`, `Sqrt`, `Rsqrt`, `Saturate`, `Radians`, `Degrees`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10`, `Pow`, `Step`, `Lerp`, `Unlerp`, `SmoothStep`.
-- Vectors: `Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize`, `NormalizeSafe` (zero instead of NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.
-- Quaternions: `Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize`, `NormalizeSafe`, `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
+- Vectors: `Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize` (zero for a vector too short to normalize, never NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.
+- Quaternions: `Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize` (the identity for a quaternion too short to normalize, like a field nothing set), `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
 - Matrices: `Mul` (two matrices, or a matrix and a vector of its size), `Transpose`, `Inverse`, `Determinant`, and for `float4x4`, `Transform` (a point) and `Rotate` (a direction).
 - Everything is deterministic (see AGENTS.md). The transcendental functions are Tide's own, accurate to about 1 ulp but not correctly rounded.
 - `Math.Hash(value)` on an `int`, `int2`, `int3` or `int4` gives random numbers that keep no state: the same int for the same value on every machine, like `Math.Hash(int3(x, y, seed)) % 6`.
