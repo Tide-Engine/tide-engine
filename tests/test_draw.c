@@ -515,3 +515,174 @@ TIDE_TEST(draw_meshes_3d_forget_and_append)
     tide_draw_free(&world);
     tide_draw_free(&d);
 }
+
+// Explicit instance lists may span heap pages, and join adjacent ordinary
+// mesh draws without losing their order or sharing the caller's values.
+TIDE_TEST(draw_instance_lists_are_copied_and_batched)
+{
+    static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    tide_grid grid = {0};
+    tide_grid_set(&grid, tide_grid_new(2, 1, 1, 0), &colors, TIDE_IN_LOCAL);
+    tide_draw_list d = {0}, appended = {0};
+
+    tide_draw_mesh3_instances_lists(&d, vertices, indices, (tide_list){0});
+    tide_draw_mesh3_instances_grid(&d, vertices, indices, (tide_list){0}, grid, &colors, TIDE_FILTER_POINT);
+    TIDE_CHECK(d.count == 0 && d.mesh_count == 0 && d.texture_count == 0 && d.matrix_count == 0);
+
+    enum { COUNT = 513 };
+    tide_list transforms = {0};
+    for (int i = 0; i < COUNT; i++) {
+        *(tide_float4x4 *)tide_list_add(&transforms, sizeof(tide_float4x4), TIDE_IN_LOCAL) =
+            tide_translate_f4x4(tide_f3((float)i, 2.0f, 3.0f));
+    }
+    TIDE_CHECK(tide_block_at(transforms.at)->b & TIDE_LIST_CHUNKED);
+    tide_draw_mesh3_instances_lists(&d, vertices, indices, transforms);
+    TIDE_REQUIRE(d.count == 1 && d.mesh_count == 1 && d.matrix_count == COUNT);
+    TIDE_CHECK(d.commands[0].mesh3.count == COUNT && d.matrices[0].c3.x == 0.0f);
+    TIDE_CHECK(d.matrices[COUNT / 2].c3.x == (float)(COUNT / 2) && d.matrices[COUNT - 1].c3.x == (float)(COUNT - 1));
+
+    ((tide_float4x4 *)tide_list_at_mut(transforms, 0, sizeof(tide_float4x4)))->c3.x = -1.0f;
+    TIDE_CHECK(d.matrices[0].c3.x == 0.0f);
+    tide_draw_mesh3_lists(&d, vertices, indices, tide_translate_f4x4(tide_f3((float)COUNT, 0.0f, 0.0f)));
+    tide_draw_mesh3_instances_lists(&d, vertices, indices, transforms);
+    TIDE_REQUIRE(d.count == 1 && d.mesh_count == 1 && d.commands[0].mesh3.count == 2 * COUNT + 1);
+    TIDE_CHECK(d.matrices[COUNT].c3.x == (float)COUNT && d.matrices[COUNT + 1].c3.x == -1.0f);
+    TIDE_CHECK(d.matrices[2 * COUNT].c3.x == (float)(COUNT - 1));
+
+    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
+    tide_draw_mesh3_instances_grid(&d, vertices, indices, transforms, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh3_instances_lists(&d, vertices, indices, transforms);
+    TIDE_REQUIRE(d.count == 4 && d.mesh_count == 1 && d.texture_count == 1);
+    TIDE_CHECK(d.commands[2].mesh3.count == COUNT && d.commands[2].mesh3.texture == 1);
+    TIDE_CHECK(d.commands[2].mesh3.filter == TIDE_FILTER_POINT);
+    TIDE_CHECK(d.commands[3].mesh3.count == COUNT && d.commands[3].mesh3.texture == 0);
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.count == d.count && appended.matrix_count == d.matrix_count && appended.mesh_count == 1);
+    TIDE_CHECK(memcmp(appended.matrices, d.matrices, d.matrix_count * sizeof(tide_float4x4)) == 0);
+
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+    tide_list_release(&transforms, TIDE_IN_LOCAL);
+    tide_grid_release(&grid, &colors, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// A packed instance run keeps every value, copies its uniforms once, and
+// merges with ordinary shader draws only while the shared inputs match.
+TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    static const tide_shader shader = {
+        .vertex_size = sizeof(tide_vertex3), .instance_floats = 1, .instance_ints = 1,
+        .uniform_floats = 1, .texture_count = 1,
+    };
+    struct payload { float f[4]; int32_t i[4]; } instances[3] = {
+        {{1.0f, 2.0f, 3.0f, 4.0f}, {5, 6, 7, 8}},
+        {{9.0f, 10.0f, 11.0f, 12.0f}, {13, 14, 15, 16}},
+        {{17.0f, 18.0f, 19.0f, 20.0f}, {21, 22, 23, 24}},
+    };
+    float uniforms[4] = {7.0f, 8.0f, 9.0f, 10.0f};
+    const float original_uniforms[4] = {7.0f, 8.0f, 9.0f, 10.0f};
+    tide_draw_list d = {0}, appended = {0};
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, NULL, 0, NULL, NULL, 0);
+    TIDE_CHECK(d.count == 0 && d.mesh_count == 0 && d.instance_used == 0 && d.uniform_used == 0);
+    uint8_t *pixels;
+    const uint32_t texture = tide_draw_texture_slot(&d, TIDE_PIXELS_MEMORY, 1, 1, 1, 1, &pixels);
+    memset(pixels, 255, 4);
+    const uint32_t textures[TIDE_SHADER_TEXTURES] = {texture};
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, instances, 3, uniforms, textures, 0);
+    TIDE_REQUIRE(d.count == 1 && d.mesh_count == 1 && d.run_count == 1 && d.runs[0].count == 3);
+    TIDE_CHECK(d.instance_used == sizeof instances && d.uniform_used == sizeof uniforms);
+    TIDE_CHECK(memcmp(d.instances, instances, sizeof instances) == 0);
+    instances[1].f[0] = 99.0f;
+    uniforms[0] = 100.0f;
+    TIDE_CHECK(((const struct payload *)(const void *)d.instances)[1].f[0] == 9.0f);
+    TIDE_CHECK(memcmp(d.uniforms, original_uniforms, sizeof uniforms) == 0);
+
+    tide_draw_mesh_shaded(&d, &shader, vertices, indices, &instances[0], original_uniforms, textures, 0);
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, instances + 1, 2, original_uniforms, textures, 0);
+    TIDE_REQUIRE(d.count == 1 && d.mesh_count == 1 && d.runs[0].count == 6);
+    TIDE_CHECK(d.uniform_used == sizeof uniforms && d.instance_used == 2 * sizeof instances);
+    TIDE_CHECK(memcmp(d.instances + 3 * sizeof instances[0], instances, sizeof instances) == 0);
+
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, instances, 3, uniforms, textures, 0);
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, instances, 3, uniforms, textures, 1);
+    tide_draw_clear(&d, TIDE_COLOR_BLACK);
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, instances, 3, uniforms, textures, 1);
+    TIDE_REQUIRE(d.count == 5 && d.run_count == 4 && d.mesh_count == 1);
+    TIDE_CHECK(d.runs[1].count == 3 && d.runs[2].count == 3 && d.runs[3].count == 3);
+    TIDE_CHECK(d.uniform_used == 4 * sizeof uniforms);
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.count == d.count && appended.run_count == d.run_count && appended.mesh_count == 1);
+    TIDE_CHECK(appended.runs[0].count == 6 && appended.instance_used == d.instance_used);
+    TIDE_CHECK(memcmp(appended.instances, d.instances, d.instance_used) == 0);
+    TIDE_CHECK(memcmp(appended.uniforms, d.uniforms, d.uniform_used) == 0);
+
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+    tide_scratch_reset(mark);
+}
+
+// Even when a shader reads no instance data, an explicit count still draws
+// that many copies, while empty or invalid meshes draw none.
+TIDE_TEST(draw_shaded_instances_without_payload)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    static const tide_shader shader = {.vertex_size = sizeof(tide_vertex3)};
+    tide_draw_list d = {0};
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, NULL, 5, NULL, NULL, 0);
+    tide_draw_mesh_shaded(&d, &shader, vertices, indices, NULL, NULL, NULL, 0);
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, indices, NULL, 7, NULL, NULL, 0);
+    TIDE_REQUIRE(d.count == 1 && d.run_count == 1 && d.runs[0].count == 13);
+    TIDE_CHECK(d.instance_used == 0 && d.uniform_used == 0);
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, (tide_list){0}, NULL, 3, NULL, NULL, 0);
+    tide_draw_mesh_shaded_instances(&d, &shader, (tide_list){0}, indices, NULL, 3, NULL, NULL, 0);
+    const tide_list invalid = tide_list_from(cube_indices + 6, 3, sizeof(uint32_t));
+    tide_draw_mesh_shaded_instances(&d, &shader, vertices, invalid, NULL, 3, NULL, NULL, 0);
+    TIDE_CHECK(d.count == 1 && d.runs[0].count == 13);
+    tide_draw_free(&d);
+    tide_scratch_reset(mark);
+}
+
+// Equivalent shader descriptors share their generated id, so automatic and
+// explicit draws can join. C descriptors without an id still use identity.
+TIDE_TEST(draw_shaded_instances_merge_by_shader_id)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    const tide_shader first = {.id = 7, .vertex_size = sizeof(tide_vertex3)};
+    tide_shader same = first, different = first, unnamed = first;
+    different.id = 8;
+    unnamed.id = 0;
+    const tide_shader another_unnamed = unnamed;
+    tide_draw_list d = {0};
+    tide_draw_mesh_shaded_instances(&d, &first, vertices, indices, NULL, 2, NULL, NULL, 0);
+    tide_draw_mesh_shaded_instances(&d, &same, vertices, indices, NULL, 3, NULL, NULL, 0);
+    TIDE_REQUIRE(d.count == 1 && d.run_count == 1 && d.runs[0].count == 5);
+    tide_draw_mesh_shaded_instances(&d, &different, vertices, indices, NULL, 2, NULL, NULL, 0);
+    TIDE_REQUIRE(d.count == 2 && d.runs[1].count == 2);
+    tide_draw_mesh_shaded(&d, &unnamed, vertices, indices, NULL, NULL, NULL, 0);
+    tide_draw_mesh_shaded(&d, &unnamed, vertices, indices, NULL, NULL, NULL, 0);
+    tide_draw_mesh_shaded(&d, &another_unnamed, vertices, indices, NULL, NULL, NULL, 0);
+    TIDE_REQUIRE(d.count == 4 && d.run_count == 4);
+    TIDE_CHECK(d.runs[2].count == 2 && d.runs[3].count == 1);
+
+    // Forgotten runs have no shader descriptor left to compare.
+    tide_draw_forget(&d);
+    tide_draw_mesh_shaded(&d, &first, vertices, indices, NULL, NULL, NULL, 0);
+    TIDE_REQUIRE(d.count == 5 && d.run_count == 5 && d.runs[4].count == 1);
+    tide_draw_free(&d);
+    tide_scratch_reset(mark);
+}

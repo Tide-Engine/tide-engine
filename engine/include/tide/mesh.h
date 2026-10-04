@@ -28,6 +28,13 @@ void tide_draw_mesh3_lists(tide_draw_list *d, tide_list vertices, tide_list indi
 void tide_draw_mesh3_grid(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
                           tide_grid texture, const tide_grid_shape *shape, int32_t filter);
 
+// Draw.Instanced with a list of float4x4 transforms. The mesh and texture
+// are found once, and all transforms copied into one run, in list order.
+// An empty transform list records nothing and copies no resources.
+void tide_draw_mesh3_instances_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms);
+void tide_draw_mesh3_instances_grid(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms,
+                                    tide_grid texture, const tide_grid_shape *shape, int32_t filter);
+
 // The texture a grid of colors is, for a draw: what tide_draw_texture_slot
 // gives, the grid's cells copied into the list if it hasn't got them as they
 // are. 0 for a grid with no size on an axis, which is no texture.
@@ -39,3 +46,10 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, tide_grid texture, const tide
 // tide_draw_shaded's.
 void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                            const void *instance, const void *uniforms, const uint32_t *textures, uint32_t blended);
+
+// Draw.Instanced through a shader: generated code packs the list's values
+// into `count` instances, tide_shader_instance_size bytes each. The mesh
+// is found once, then all instance bytes copied into one run.
+void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
+                                     const void *instances, uint32_t count, const void *uniforms,
+                                     const uint32_t *textures, uint32_t blended);

@@ -1,0 +1,18 @@
+// expect: frag 'Tint' reads instance data of 'BatchItem', which this draw's instances don't supply
+scene Main { }
+struct BatchItem { Color tint; }
+struct WrongItem { Color tint; }
+local singleton Mesh
+{
+    List<Vertex3> vertices;
+    List<int> indices;
+    List<WrongItem> instances;
+}
+frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
+{
+    color = item.tint;
+}
+view DrawBatch(Mesh mesh)
+{
+    Draw.Instanced(mesh.vertices, mesh.indices, mesh.instances, Tint);
+}

@@ -83,6 +83,7 @@ After the vertex (and a frag's color), a frag or vert takes the game's state, as
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
+- With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the `Draw.Mesh` when it doesn't:
 
@@ -95,7 +96,7 @@ view DrawBoxes(with Box, Models models)
 
 What a frag sees of the match is what a view sees: [blended between ticks](./views.md#smooth-at-any-tick-rate), so it's smooth at any tick rate.
 
-There are no plain value parameters, on purpose. A number a frag needs lives in a component or a singleton, like everything else, and a local singleton is the place for what only this machine's drawing cares about:
+There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
 
 ```csharp
 local singleton Look
@@ -195,6 +196,58 @@ vert Place(mut Sprite vertex, Body body)
 }
 ```
 
+### Instances from a list
+
+`Draw.Instanced(vertices, indices, instances)` draws one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
+
+For a 3D mesh, a `List<float4x4>` supplies its transforms:
+
+```csharp
+Draw.Instanced(models.crate, models.faces, scenery.transforms);
+Draw.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point);
+Draw.Instanced(models.crate, models.faces, scenery.transforms, Wave, Shade);
+```
+
+For data of your own, use a `List` of an ordinary struct. A vert or frag takes that struct after its vertex (and the frag's color), and receives the current list item. Either shader can take it, or both can:
+
+```csharp
+struct Blade
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.green;
+    float bend;
+}
+
+local singleton Foliage
+{
+    List<Blade> blades;
+}
+
+vert Bend(mut BoxVertex vertex, Blade blade)
+{
+    vertex.position.x += vertex.position.y * blade.bend;
+}
+
+frag Grass(BoxVertex vertex, mut Color color, Blade blade, Sun sun)
+{
+    color = blade.tint * Math.Max(Math.Dot(vertex.normal, -sun.direction), 0.1);
+}
+
+view GrassField(Foliage foliage, Models models)
+{
+    Draw.Instanced(models.blade, models.faces, foliage.blades, Bend, Grass);
+}
+```
+
+- A 3D instance struct's `float4x4 transform` places the mesh and is available as `Instance.transform`. Without that field, the engine uses identity. Set its default to `float4x4.identity` when it has one: an uninitialized matrix is zero.
+- For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
+- Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
+- Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
+- Textures, filters, verts and frags go after the instance list, in the same order as `Draw.Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A draw with a frag samples its own grids and takes no texture argument.
+- An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
+
+An ordinary instance parameter is supplied only by `Draw.Instanced`: using that shader with `Draw.Mesh`, or with a list of another type, is an error.
+
 ## Looking at what's generated
 
-`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, vert and frag a `Draw.Mesh` uses.
+`tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses.

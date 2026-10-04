@@ -1,4 +1,4 @@
-// expect: a frag takes no plain values: 'other' is V
+// expect: frag 'Shade' reads instance data of 'V': draw it with Draw.Instanced and a List<V>
 scene Main { }
 
 struct V
@@ -32,4 +32,9 @@ event(Spawned) Setup(with Main)
 frag Shade(V vertex, mut Color color, V other)
 {
     color = Color.white;
+}
+
+view Boxes(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
 }

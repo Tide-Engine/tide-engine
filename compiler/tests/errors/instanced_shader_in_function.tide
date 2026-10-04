@@ -1,0 +1,15 @@
+// expect: a Draw.Instanced that names a vert or a frag goes in a view
+scene Main { }
+struct BatchItem { Color tint; }
+frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
+{
+    color = item.tint;
+}
+void DrawBatch(List<Vertex3> vertices, List<int> indices, List<BatchItem> instances)
+{
+    Draw.Instanced(vertices, indices, instances, Tint);
+}
+view Frame()
+{
+    DrawBatch([], [], []);
+}

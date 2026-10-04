@@ -1,0 +1,7 @@
+// expect: a texture is shared by an instanced draw: keep the sampled grid in a component or singleton
+scene Main { }
+struct BatchItem { Grid2<Color> pixels; }
+frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
+{
+    color = item.pixels.Sample(vertex.uv);
+}
