@@ -230,7 +230,7 @@ typedef struct param {
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
     loc local_use_at;    // ...where it first does
     bool local_written;  // ...and writes one
-    bool match_write;    // A function's: it changes the match's fields of it, itself or through a function it passes it to
+    bool match_write;    // A helper's: it changes the match's fields of it, itself or through another helper
     loc match_write_at;  // ...where it first does
     VEC(struct param) query; // PARAM_QUERY's read-only bindings and component filters
     comp_mask query_need_mask;

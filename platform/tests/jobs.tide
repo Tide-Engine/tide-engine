@@ -157,7 +157,15 @@ system Burn(mut Fuse fuse, Body body)
 
 event(Hit hit) Count(mut Stats stats)
 {
-    stats.hits += hit.damage;
+    CountHit(stats, hit.damage);
+}
+
+void CountHit(mut Stats stats, int damage) { stats.hits += damage; }
+int Launched(Stats stats) { return stats.spawned; }
+int LaunchOne(Stats before, mut Stats after)
+{
+    after.spawned += 1;
+    return Launched(before); // Readonly snapshot beside a mut alias, on threaded ticks too.
 }
 
 // Spawns split across threads: their entities get IDs once it's done
@@ -172,8 +180,8 @@ system Launch(Time time, mut Stats stats)
 {
     if (time.tick % 3 == 0)
     {
-        Spawn(Body { id = 100000 + stats.spawned, velocity = float3(0, 1, 0) }, Rock, Label { text = "new" }, Size);
-        stats.spawned += 1;
+        var launched = LaunchOne(stats, stats);
+        Spawn(Body { id = 100000 + launched, velocity = float3(0, 1, 0) }, Rock, Label { text = "new" }, Size);
     }
 }
 

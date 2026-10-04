@@ -49,6 +49,7 @@ tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
 tide_e2e_test(methods)
+tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)
 tide_e2e_test(commands)

@@ -70,6 +70,9 @@ struct tt_BoxVertex {
     vec3 m_normal;
     vec2 m_uv;
 };
+struct tt_Sun {
+    vec3 m_direction;
+};
 float tide_f(float x) { return x; }
 vec3 tide_normalize3(vec3 v) {
     float l = dot(v, v);
@@ -80,8 +83,16 @@ float tf_Lit(vec3 t_normal, vec3 t_toward) {
     return max(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
 }
 
+vec3 tf_Direction(tt_Sun t_sun) {
+    return t_sun.m_direction;
+}
+
+vec3 tf_DirectionThrough(tt_Sun t_sun) {
+    return tf_Direction(t_sun);
+}
+
 void ts_Shade(tt_BoxVertex t_vertex, inout vec4 t_color) {
-    float t_light = ((tide_g0.y != 0) ? tf_Lit(t_vertex.m_normal, (-tide_u0.yzw)) : 1.0);
+    float t_light = ((tide_g0.y != 0) ? tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_u0.yzw)))) : 1.0);
     t_color = ((textureLod(pixels0, t_vertex.m_uv, 0.0) * tide_f0) * t_light);
     for (int t_i = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
         if ((t_i > 4)) {
@@ -133,6 +144,9 @@ struct tt_BoxVertex {
     m_normal: vec3f,
     m_uv: vec2f,
 }
+struct tt_Sun {
+    m_direction: vec3f,
+}
 fn tide_f(x: f32) -> f32 { return x; }
 fn tide_i(x: i32) -> i32 { return x; }
 fn tide_normalize3(v: vec3f) -> vec3f {
@@ -160,8 +174,16 @@ fn tf_Lit(t_normal: vec3f, t_toward: vec3f) -> f32 {
     return max(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
 }
 
+fn tf_Direction(t_sun: tt_Sun) -> vec3f {
+    return t_sun.m_direction;
+}
+
+fn tf_DirectionThrough(t_sun: tt_Sun) -> vec3f {
+    return tf_Direction(t_sun);
+}
+
 fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
-    var t_light: f32 = select(1.0, tf_Lit(t_vertex.m_normal, (-tide_block.tide_u0.yzw)), (tide_g0.y != 0));
+    var t_light: f32 = select(1.0, tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_block.tide_u0.yzw)))), (tide_g0.y != 0));
     (*t_color) = ((textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0) * tide_f0) * t_light);
     for (var t_i: i32 = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
         if ((t_i > 4)) {

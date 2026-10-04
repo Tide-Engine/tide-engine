@@ -3578,7 +3578,9 @@ static void gen_inline(gen *g, const expr *e)
             sb_put(o, ";\n");
         } else {
             sb_printf(o, "%s = ", const_decl(p->type, names[i]));
-            gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            // The Action can change the caller's source, even without a mut
+            // parameter, so a read-only list-bearing value needs its own copy.
+            gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
             sb_put(o, ";\n");
         }
         line(g, o, "(void)%s;", names[i]);

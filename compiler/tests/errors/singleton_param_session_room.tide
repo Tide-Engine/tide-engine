@@ -1,0 +1,4 @@
+// expect: functions and methods can't read Session.room: it belongs to the local world, not the Session value
+string Room(Session session) { return session.room; }
+local scene Main { }
+view Show(Session session) { Draw2D.Text(Room(session), float2(0, 0), 16, Color.white); }

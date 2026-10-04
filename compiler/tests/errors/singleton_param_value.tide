@@ -1,0 +1,5 @@
+// expect: 'Add' changes its 'score', so pass it a variable or field
+singleton Score { int value; }
+void Add(mut Score score) { score.value += 1; }
+scene Main { }
+system Change() { Add(default); }
