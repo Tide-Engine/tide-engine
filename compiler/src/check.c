@@ -354,7 +354,7 @@ static const char *decl_what(const decl *d)
     case DECL_SINGLETON: return "a singleton";
     case DECL_INPUT: return "the input";
     case DECL_STRUCT: return "a struct";
-    case DECL_EVENT: return "an event";
+    case DECL_EVENT: return d->is_command ? "a command" : "an event";
     case DECL_ENUM: return "an enum";
     default: return "not a type";
     }
@@ -1713,7 +1713,7 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
     return false;
 }
 
-// `Devices.keyboard.text`: what was typed since the last frame. It's a
+// `devices.keyboard.text`: what was typed since the last frame. It's a
 // frame's, as this frame's Devices are, so views read it, and the functions
 // they call. The input never sends it: Sample runs once per tick, not once per
 // frame, and the match can't read it.
@@ -1721,13 +1721,13 @@ static bool check_typed_use(checker *c, const loc at)
 {
     if (c->in_input && !c->method) {
         diag_error(at, "%s can't read what's typed: it's a frame's, and %s runs once per tick", input_code(c), input_code(c));
-        diag_note("views read 'Devices.keyboard.text' once per frame, and keep what they need in local state");
+        diag_note("views take 'Devices devices' and read 'devices.keyboard.text' once per frame, keeping what they need in local state");
         return false;
     }
     const decl *code = c->method ? NULL : c->system;
     if (code && code->kind == DECL_SYSTEM && !code->is_view && !code->is_local) {
         diag_error(at, "the match can't read what's typed: it stays on this machine, and the input never sends it");
-        diag_note("views read 'Devices.keyboard.text' once per frame, and keep what they need in local state");
+        diag_note("views take 'Devices devices' and read 'devices.keyboard.text' once per frame, keeping what they need in local state");
         return false;
     }
     return check_frame_use(c, at, "Devices");
@@ -1759,7 +1759,7 @@ static bool check_cursor_use(checker *c, const loc at, const bool lock)
         diag_error(at, "the match runs the same on every machine, so it can't %s", what);
         diag_note(lock ? "the cursor is this machine's: a view calls it, every frame the game wants the mouse"
                        : "the cursor is this machine's: the input's Sample reads it, and puts what the match needs in "
-                         "the input, like 'if (Cursor.locked) look = Devices.mouse.delta;'");
+                         "the input, like 'if (Cursor.locked) look = devices.mouse.delta;'");
         return false;
     }
     if (in_async_function(c)) {
@@ -1861,10 +1861,6 @@ static type check_send(checker *c, expr *e)
     }
     e->call = CALL_SEND;
     e->local_world = local_code(c);
-    if (e->kind == E_METHOD && !check_entity_side(c, e)) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        return T_ERR;
-    }
     if (e->args.count != 1) {
         diag_error(e->at, "Send takes one event, like 'Send(RoundOver)' or 'target.Send(Hit { damage = 5 })'");
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -1872,6 +1868,22 @@ static type check_send(checker *c, expr *e)
     }
     decl *event = check_event_arg(c, e->args.items[0]);
     if (!event) return T_ERR;
+    if (event->is_command) {
+        if (!local_code(c)) {
+            diag_error(e->at, "commands are sent from views and local handlers to the match");
+            diag_note("match systems and handlers send events; a command carries a player's untrusted request");
+            return T_ERR;
+        }
+        if (e->kind == E_METHOD && e->object->type.kind != TY_ENTITY) {
+            diag_error(e->object->at, "a command target must be an Entity of the match");
+            return T_ERR;
+        }
+        e->type_decl = event;
+        e->local_world = true;
+        vec_push(c->sends, e);
+        return T_VOID_;
+    }
+    if (e->kind == E_METHOD && !check_entity_side(c, e)) return T_ERR;
     if (event->builtin) {
         diag_error(e->args.items[0]->at, "the engine sends '" STR_FMT "'; games can't", STR_ARG(event->name));
         if (event == c->prog->spawned) diag_note("it's sent to each entity as it's spawned");
@@ -4215,7 +4227,7 @@ static type check_member(checker *c, expr *e)
             diag_error(e->at, "only input fields have '." STR_FMT "', like 'input.jump." STR_FMT "'",
                        STR_ARG(e->member), STR_ARG(e->member));
             if (c->in_input && !c->in_sanitize) {
-                diag_note("in Sample, read the device instead, like 'Devices.keyboard.space.down'");
+                diag_note("in Sample, take 'Devices devices' and read 'devices.keyboard.space.down'");
             }
             return T_ERR;
         }
@@ -4299,24 +4311,19 @@ static type check_member(checker *c, expr *e)
     return T_ERR;
 }
 
-// `Devices`: this machine's devices. The input's Sample reads them once per
-// tick, and views, and the functions they call, once per frame.
+// Devices are always explicit parameters. Their source depends on the code:
+// this machine's sample or frame, or the owning player's networked sample.
 static bool check_devices_use(checker *c, const loc at)
 {
-    if (c->in_input && !c->in_sanitize && !c->method) return true;
+    if (gpu_refuses(c, at, "read the devices", "the view puts what it needs in a component or a singleton, which it takes")) return false;
     if (c->in_sanitize) {
         diag_error(at, "Sanitize runs on every machine for every player's input, so it can't read this machine's Devices");
         diag_note("Sample reads them, on the machine the input comes from");
         return false;
     }
-    const decl *code = c->method ? NULL : c->system;
-    if (code && code->kind == DECL_SYSTEM && !code->is_view && !code->is_local) {
-        diag_error(at, "'Devices' is this machine's devices, and the match runs the same on every machine");
-        diag_note("take them as a parameter, 'Devices devices': the devices of the player who owns the entity, or "
-                  "the server's");
-        return false;
-    }
-    return check_frame_use(c, at, "Devices");
+    diag_error(at, "'Devices' is a type, not a value: take a 'Devices devices' parameter");
+    diag_note("Sample and views receive this machine's devices; match code receives the entity owner's, or the server's");
+    return false;
 }
 
 static type check_name(checker *c, expr *e)
@@ -5583,7 +5590,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         } else if (root->param->type.kind == TY_INPUT) {
             diag_note("input comes from the players; the simulation can only read it");
         } else if (root->param->type.kind == TY_EVENT) {
-            diag_note("an event can't change once it's sent; copy it into a 'mut var' to send a changed one");
+            diag_note("%s can't change once it's sent; copy it into a 'mut var' to send a changed one",
+                      root->param->type.decl->is_command ? "a command" : "an event");
+        } else if (root->param->mode == PARAM_SENDER) {
+            diag_note("the connection supplies a command's sender; its handler can't change that identity");
         } else if (root->param->type.kind == TY_SINGLETON && root->param->type.decl->builtin) {
             diag_note("'" STR_FMT "' is managed by the engine", STR_ARG(root->param->type_name));
         } else if (in_view(c) && root->param->type.decl && !root->param->type.decl->is_local
@@ -6543,6 +6553,7 @@ static void check_return(checker *c, const stmt *s)
     if (!m) {
         if (s->value) {
             if (c->in_input) diag_error(s->value->at, "%s doesn't return a value; use 'return;'", input_code(c));
+            else if (c->system && c->system->is_command) diag_error(s->value->at, "command handlers don't return values; use 'return;'");
             else diag_error(s->value->at, "systems don't return values; use 'return;'");
         }
         return;
@@ -7473,7 +7484,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_note(&s);
             continue;
         }
-        if (d->kind != DECL_INPUT && d->kind != DECL_STRUCT) {
+        if (d->kind != DECL_INPUT && d->kind != DECL_STRUCT && !d->is_command) {
             diag_error(a->at, "[" STR_FMT "] only works on input and struct fields for now", STR_ARG(a->name));
             diag_note("in an input, it bounds what players send: [Clamp(lo, hi)], [Min(x)] and [Max(x)]");
             continue;
@@ -7688,6 +7699,10 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
+        if (d->is_command && (holds_list(f->type) || f->type.kind == TY_GRID)) {
+            diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
+            diag_note("send numbers, bools, enums, strings or structs containing those");
+        }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
@@ -8354,7 +8369,8 @@ static void check_shader_decl(const checker *c, decl *d)
             } else if (d->is_frag && p->mode == PARAM_MUT) {
                 diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
                                                          : "a frag writes its pixel's color, a 'mut Color', for now");
-                diag_note("%s comes with drawing into a texture", value.kind == TY_COLOR ? "a second output" : "another type");
+                diag_note("%s isn't there yet",
+                          value.kind == TY_COLOR ? "a second output" : "an output of another type than Color");
             } else if (p->mode == PARAM_MUT) {
                 diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
                 diag_note("put what it works out in a field of the vertex, which the frag reads blended");
@@ -8444,6 +8460,16 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
     }
     p->type = (type){TY_EVENT, d};
     handler->event = d;
+    if (handler->is_command != d->is_command) {
+        diag_error(at, "'" STR_FMT "' is %s; receive it with '%s(...)'", STR_ARG(d->name),
+                   d->is_command ? "a command" : "an event", d->is_command ? "command" : "event");
+        return;
+    }
+    if (handler->is_command) {
+        if (handler->is_local) diag_error(handler->local_at, "command handlers run in the match, so they can't be local");
+        if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
+        return;
+    }
     // Spawned and Destroyed come from both worlds; the handler's side picks one.
     if (d == c->prog->spawned || d == c->prog->destroyed) return;
     if (d->is_local && !handler->is_local) {
@@ -8678,6 +8704,13 @@ static void check_params(const checker *c, decl *sys)
             }
         }
 
+        if (p->mode == PARAM_SENDER) {
+            if (!str_eq_c(p->type_name, "PlayerID")) {
+                diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
+                p->type = T_ERR;
+            } else p->type = (type){TY_PLAYER, NULL};
+            continue;
+        }
         if (p->mode == PARAM_EVENT) {
             check_trigger(c, sys, p, d);
             continue;
@@ -8702,17 +8735,14 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
 
-        // The devices of the player who owns the entity, or the server's: the
-        // input sends what match code reads of them.
+        // Views receive this frame's masked devices. Match code receives the
+        // owner's devices, or the server's: the input sends what it reads.
         if (str_eq_c(p->type_name, "Devices")) {
-            if (sys->is_view) {
-                diag_error(p->at, "views read this machine's devices as 'Devices', not as a parameter");
-                diag_note("like 'if (Devices.keyboard.escape.down) ...'");
-            } else if (is_local_code(sys)) {
+            if (!sys->is_view && is_local_code(sys)) {
                 diag_error(p->at, "local handlers can't read the devices yet");
             }
             if (p->mode != PARAM_READ) {
-                diag_error(p->at, "devices can't be 'mut', 'with' or 'without'; the simulation can only read them");
+                diag_error(p->at, "devices can't be 'mut', 'with' or 'without'; code can only read them");
             }
             if (has_devices) diag_error(p->at, "a %s can only have one Devices parameter", system_what(sys));
             has_devices = true;
@@ -9673,6 +9703,10 @@ static void collect_decls(program *prog)
         case DECL_EVENT:
             d->index = prog->events.count;
             vec_push(prog->events, d);
+            if (d->is_command) {
+                if (d->is_local) diag_error(d->local_at, "commands are sent to the match, so they can't be local");
+                vec_push(prog->command_types, d);
+            }
             break;
         case DECL_INPUT:
             if (prog->input) diag_error(d->at, "a game has one input declaration; '" STR_FMT "' is already it",
@@ -9937,7 +9971,7 @@ static void warn_unsent(const checker *c)
 {
     for (int i = 0; i < c->prog->handlers.count; i++) {
         const decl *h = c->prog->handlers.items[i];
-        if (!h->event || h->event->builtin || package_of(h)) continue; // As for systems, above
+        if (!h->event || h->event->builtin || h->is_command || package_of(h)) continue; // Commands may also come from C hosts
         bool sent = false;
         for (int k = 0; k < c->sends.count && !sent; k++) sent = c->sends.items[k]->type_decl == h->event;
         if (sent) continue;
@@ -9948,14 +9982,15 @@ static void warn_unsent(const checker *c)
     }
 }
 
-// input PlayerInput { ...; Sample() { ... } }: Sample runs on the client,
-// outside the simulation. It reads this machine's `Devices`, and the local
+// input PlayerInput { ...; Sample(Devices devices) { ... } }: Sample runs on
+// the client, outside the simulation. It takes this machine's devices and local
 // singletons it takes, and assigns the input's fields, which start at their
 // defaults.
 static void check_sample(checker *c, decl *input)
 {
     if (!input->body) return; // Without Sample, sampling gives the defaults.
 
+    bool has_devices = false;
     for (int i = 0; i < input->params.count; i++) {
         param *p = &input->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
@@ -9967,8 +10002,10 @@ static void check_sample(checker *c, decl *input)
             }
         }
         if (str_eq_c(p->type_name, "Devices")) {
-            diag_error(p->at, "Sample reads this machine's devices as 'Devices', not as a parameter");
-            diag_note("write 'Sample()', and read 'Devices.keyboard.space.down' and the like");
+            if (p->mode != PARAM_READ) diag_error(p->at, "devices can't be 'mut', 'with' or 'without'; code can only read them");
+            if (has_devices) diag_error(p->at, "Sample can only have one Devices parameter");
+            has_devices = true;
+            p->type = (type){TY_RECORD, c->prog->devices};
             continue;
         }
         decl *d = find_type(c, p->type_name, at);
@@ -10650,7 +10687,7 @@ static void check_drawing_calls(checker *c)
         if (cursor && site->from->kind == DECL_INPUT) {
             diag_note("Sample reads 'Cursor.locked' itself: pass the function what it needs, like 'bool locked'");
         } else if (devices && site->from->kind == DECL_INPUT) {
-            diag_note("pass them instead: take 'Devices devices', and call it with 'Devices'");
+            diag_note("typed text is a frame's: Sample passes devices to helpers that only read sampled controls");
         } else if (devices && site->from->kind == DECL_SYSTEM) {
             diag_note("pass it the owner's instead: take 'Devices devices' in both");
         }
@@ -11095,6 +11132,10 @@ bool check(program *prog)
         schedule(prog->handlers.items, prog->handlers.count);
         for (int i = 0; i < prog->handlers.count; i++) {
             decl *h = prog->handlers.items[i];
+            if (h->is_command && h->event->handlers.count) {
+                diag_error(h->at, "command '" STR_FMT "' has more than one handler", STR_ARG(h->event->name));
+                diag_note("validate and handle it in one handler; that handler can send ordinary events");
+            }
             vec_push(h->event->handlers, h);
         }
     }

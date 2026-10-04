@@ -182,8 +182,8 @@
           ]
         },
         {
-          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(component|singleton|struct|input|event|enum|scene)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, command Rename, scene Arena, enum Voxel : byte",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(component|singleton|struct|input|event|command|enum|scene)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -191,6 +191,47 @@
             "4": { "name": "entity.name.type.tide" },
             "5": { "name": "punctuation.separator.colon.tide" },
             "6": { "patterns": [{ "include": "#type-name" }] }
+          }
+        },
+        {
+          "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler",
+          "match": "(?:^|(?<=\\]))\\s*(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.tide"
+            },
+            "2": {
+              "name": "punctuation.parenthesis.open.tide"
+            },
+            "3": {
+              "patterns": [
+                {
+                  "include": "#type-name"
+                }
+              ]
+            },
+            "4": {
+              "name": "variable.parameter.tide"
+            },
+            "5": {
+              "name": "punctuation.separator.comma.tide"
+            },
+            "6": {
+              "patterns": [
+                {
+                  "include": "#type-name"
+                }
+              ]
+            },
+            "7": {
+              "name": "variable.parameter.tide"
+            },
+            "8": {
+              "name": "punctuation.parenthesis.close.tide"
+            },
+            "9": {
+              "name": "entity.name.function.tide"
+            }
           }
         },
         {
@@ -259,7 +300,7 @@
         },
         {
           "comment": "Methods and functions: [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|component|singleton|struct|input|event|enum|scene|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|settings|fail|try|is|null|true|false|this|await|operator)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|component|singleton|struct|input|event|command|enum|scene|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|settings|fail|try|is|null|true|false|this|await|operator)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },

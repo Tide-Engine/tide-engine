@@ -16,15 +16,15 @@ view Hud(mut Pause pause)
     if (GUILayout.Button("Behind")) pause.behind += 1;
 }
 
-// A function that reads this frame's devices, like one that draws.
-bool Opens()
+// A function reads the devices explicitly passed by its caller.
+bool Opens(Devices devices)
 {
-    return Devices.keyboard.escape.down || Devices.gamepad.start.down;
+    return devices.keyboard.escape.down || devices.gamepad.start.down;
 }
 
-view Menu(mut Pause pause)
+view Menu(Devices devices, mut Pause pause)
 {
-    if (Opens())
+    if (Opens(devices))
     {
         pause.open = true;
         pause.opened += 1;

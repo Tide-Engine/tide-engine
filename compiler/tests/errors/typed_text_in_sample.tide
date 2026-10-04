@@ -2,6 +2,6 @@
 input PlayerInput
 {
     int typed;
-    Sample() { typed = Devices.keyboard.text.length; }
+    Sample(Devices devices) { typed = devices.keyboard.text.length; }
 }
 scene Main { }

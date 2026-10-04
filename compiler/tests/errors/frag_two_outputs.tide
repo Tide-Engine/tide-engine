@@ -1,5 +1,5 @@
 // expect: a frag writes one color, its pixel's, for now
-// One output for now: more come with drawing into a texture
+// One output for now: more aren't there yet
 scene Main { }
 
 struct V

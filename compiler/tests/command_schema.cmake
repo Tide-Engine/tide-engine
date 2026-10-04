@@ -1,0 +1,22 @@
+# A same-shaped event becoming a command changes the incoming registry even
+# while another command keeps the command storage in both builds.
+file(MAKE_DIRECTORY "${OUT}/event" "${OUT}/command")
+set(common "command Keep { int value; }\nscene Main { }\n")
+file(WRITE "${OUT}/event.tide" "${common}event Foo { int value; }\n")
+file(WRITE "${OUT}/command.tide" "${common}command Foo { int value; }\n")
+foreach(kind IN ITEMS event command)
+    execute_process(COMMAND "${TIDEC}" "${OUT}/${kind}.tide" -o "${OUT}/${kind}" --name game
+        RESULT_VARIABLE result ERROR_VARIABLE diagnostics)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "${kind} schema failed: ${diagnostics}")
+    endif()
+    file(READ "${OUT}/${kind}/game.c" generated)
+    string(REGEX MATCH "\\.hash = 0x[0-9A-F]+ull" hash "${generated}")
+    if(NOT hash)
+        message(FATAL_ERROR "${kind} schema has no generated game hash")
+    endif()
+    set(${kind}_hash "${hash}")
+endforeach()
+if(event_hash STREQUAL command_hash)
+    message(FATAL_ERROR "changing the command registry must change the game hash")
+endif()

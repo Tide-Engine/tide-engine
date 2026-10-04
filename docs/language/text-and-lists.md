@@ -192,9 +192,9 @@ A value read out of a map is a copy, like a list's element: take it out, change 
 
 ## Where they live
 
-A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, with no limit but memory.
+A world keeps the text, lists and maps in its components in its **heap**, which is part of the world. So a snapshot has them with everything else. The heap grows as it needs, up to 1 GiB, and one text in it is 128 MiB at most.
 
-Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, so what code makes can be of any size; only running out of memory ends the program.
+Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, up to 1 GiB on each thread, and a list stops growing at 1 GiB of elements. A heap or a scratch area that's full ends the program, as running out of memory does.
 
 An input can't hold text or lists: what players send every tick is numbers, bools and enums.
 

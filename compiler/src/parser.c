@@ -591,7 +591,7 @@ static stmt *parse_stmt(parser *p);
 // start, so they can still name parameters and locals.
 static bool is_decl_word(const str text)
 {
-    return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event")
+    return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
         || str_eq_c(text, "vert");
@@ -651,7 +651,8 @@ static bool at_decl_start_or_function(const parser *p, const bool functions)
         const str next = peek_at(p, 1)->text;
         if (peek_at(p, 2)->kind != T_SEMI && (is_decl_word(next) || str_eq_c(next, "async"))) return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LPAREN && str_eq_c(t->text, "event")) return true;
+    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LPAREN
+        && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
@@ -1548,7 +1549,7 @@ static decl *parse_shader(parser *p, const bool is_frag)
 
 // event(Hit hit) TakeHit(mut Health health) { ... }: runs when a Hit is sent.
 // The trigger is the first parameter; an event without fields needs no name.
-static decl *parse_handler(parser *p)
+static decl *parse_handler(parser *p, const bool command)
 {
     expect(p, T_LPAREN, "'(' and the event it handles");
     param trigger = {0};
@@ -1562,11 +1563,26 @@ static decl *parse_handler(parser *p)
         trigger.name_at = peek(p)->at;
         trigger.name = advance(p)->text;
     }
-    expect(p, T_RPAREN, "')' after the event");
+    param sender = {0};
+    if (command) {
+        expect(p, T_COMMA, "',' and the command sender: 'PlayerID sender'");
+        sender.mode = PARAM_SENDER;
+        sender.at = peek(p)->at;
+        const qname sender_type = parse_qname(p, "PlayerID for the command sender");
+        sender.type_name = sender_type.text;
+        sender.type_qual_at = sender_type.at;
+        sender.type_at = sender_type.name_at;
+        const token *sender_name = expect_ident(p, "command sender name");
+        sender.name = sender_name->text;
+        sender.name_at = sender_name->at;
+    }
+    expect(p, T_RPAREN, "')' after the trigger");
     const token *name = expect_ident(p, "handler name, like 'event(Hit hit) TakeHit(...)'");
     decl *d = new_decl(DECL_SYSTEM, name);
     d->is_handler = true;
+    d->is_command = command;
     vec_push(d->params, trigger);
+    if (command) vec_push(d->params, sender);
     parse_query_rest(p, d);
     return d;
 }
@@ -1707,12 +1723,17 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "command")) {
+            d = parse_data_decl(&p, DECL_EVENT);
+            d->is_command = true;
+        }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) {
             d = parse_data_decl(&p, DECL_COMPONENT);
             d->is_scene = true;
         }
-        else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p);
+        else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p, false);
+        else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_handler(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "extern")) d = parse_extern(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "const")) d = parse_const(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "external")) {
