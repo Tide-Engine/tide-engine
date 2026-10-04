@@ -892,6 +892,7 @@ typedef struct program {
     bool host_migration;       // hostMigration
     bool delay_prediction;     // prediction = Prediction.Delay: clients never predict (tide_prediction)
     bool stats;                // stats: the host shows its stats overlay
+    bool debug_views;          // debugViews: hosts show their debug views when asked
     decl *prediction;          // The built-in enum Prediction
 } program;
 

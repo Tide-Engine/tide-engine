@@ -197,6 +197,7 @@ bool tide_platform_host_open(uint16_t port, tide_transport *out);
 // On the web, its threads are workers, which only a cross-origin isolated page
 // has (NULL elsewhere), started the first time a tick has work for them.
 const tide_jobs *tide_platform_jobs(void);
-// Where ticks on the pool say how long each system took (tide_profile), or
-// NULL to stop. Nothing without a pool (one core, or a page without threads).
+// Where ticks on the pool say how long each system took (tide/profile.h), or
+// NULL to stop. Nothing without a pool (one core, or a page without threads):
+// a host gives its own tide_jobs of one thread a profile there.
 void tide_platform_jobs_profile(tide_profile *profile);
