@@ -115,6 +115,7 @@ void tide_write_u64(tide_writer *w, uint64_t v);
 void tide_write_bytes(tide_writer *w, const void *data, uint32_t size);
 // 7 bits a byte, the lowest first: small numbers take one.
 void tide_write_varint(tide_writer *w, uint32_t v);
+void tide_write_varint64(tide_writer *w, uint64_t v);
 // Room for the next `size` bytes, to fill in place, or NULL when there isn't.
 uint8_t *tide_write_space(tide_writer *w, uint32_t size);
 
@@ -123,6 +124,7 @@ uint16_t tide_read_u16(tide_reader *r);
 uint32_t tide_read_u32(tide_reader *r);
 uint64_t tide_read_u64(tide_reader *r);
 uint32_t tide_read_varint(tide_reader *r);
+uint64_t tide_read_varint64(tide_reader *r);
 // Points at the next `size` bytes, or NULL if there aren't that many.
 const uint8_t *tide_read_bytes(tide_reader *r, uint32_t size);
 

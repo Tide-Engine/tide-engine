@@ -335,6 +335,31 @@ uint64_t tide_read_u64(tide_reader *r)
     return v;
 }
 
+void tide_write_varint64(tide_writer *w, uint64_t v)
+{
+    uint8_t bytes[10];
+    uint32_t n = 0;
+    while (v >= 0x80u) {
+        bytes[n++] = (uint8_t)(v | 0x80u);
+        v >>= 7;
+    }
+    bytes[n++] = (uint8_t)v;
+    tide_write_bytes(w, bytes, n);
+}
+
+uint64_t tide_read_varint64(tide_reader *r)
+{
+    uint64_t v = 0;
+    for (uint32_t shift = 0; shift < 70; shift += 7) {
+        const uint8_t byte = tide_read_u8(r);
+        if (shift == 63 && byte > 0x01u) break; // More than 64 bits
+        v |= (uint64_t)(byte & 0x7Fu) << shift;
+        if (!(byte & 0x80u)) return v;
+    }
+    r->failed = true;
+    return 0;
+}
+
 uint32_t tide_read_varint(tide_reader *r)
 {
     uint32_t v = 0;

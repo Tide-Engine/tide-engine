@@ -356,7 +356,7 @@ typedef struct connection {
 
     // Ticks
     uint32_t frame_ack;  // It has every tick before this one
-    uint32_t frame_mask; // ...and these after it
+    uint64_t frame_mask; // ...and these after it: the next 64, a second of ticks at 60 a second
     sent_mark *frame_sent; // history
     // It was sent the world and needs every tick from it on, however long
     // that took: the server keeps them until it catches up (keep_needed)
@@ -827,7 +827,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const uint32_t chunk_ack = !chunk_number ? 0u : have == 0 ? UINT32_MAX : have - 1u;
     const uint64_t chunk_mask = chunk_number && have ? tide_read_u64(r) : 0u;
     const uint32_t frame_ack = tide_read_varint(r);
-    const uint32_t frame_mask = tide_read_varint(r);
+    const uint64_t frame_mask = tide_read_varint64(r);
     uint32_t lacks_number = 0;
     uint32_t lacks_size = 0;
     const uint8_t *lacks = NULL;
@@ -1179,7 +1179,7 @@ static void send_frames(tide_server *s, connection *c)
     uint32_t packets = 0;
     start_server_packet(s, c, &w, &count_at);
     for (uint32_t tick = c->frame_ack; tick < s->tick && packets < PACKETS_PER_UPDATE; tick++) {
-        if (tick > c->frame_ack && tick - c->frame_ack <= 32u && (c->frame_mask >> (tick - c->frame_ack - 1u) & 1u)) continue;
+        if (tick > c->frame_ack && tick - c->frame_ack <= 64u && (c->frame_mask >> (tick - c->frame_ack - 1u) & 1u)) continue;
         sent_mark *mark = &c->frame_sent[tick % s->w.history];
         if (mark->tick == tick && mark->at > 0.0 && s->now - mark->at < again) continue;
         const stored_frame *f = &s->frames[tick % s->w.history];
@@ -2276,13 +2276,13 @@ static void send_client(tide_client *c)
     tide_write_varint(&w, chunk_number);
     if (chunk_number) tide_write_varint(&w, chunk_ack == UINT32_MAX ? 0u : chunk_ack + 1u);
     if (chunk_number && chunk_ack != UINT32_MAX) tide_write_u64(&w, chunk_mask);
-    uint32_t frame_mask = 0;
-    for (uint32_t i = 0; i < 32u; i++) {
+    uint64_t frame_mask = 0;
+    for (uint32_t i = 0; i < 64u && i < c->w.history; i++) {
         const uint32_t tick = c->verified + 1u + i;
-        if (frame_complete(&c->frames[tick % c->w.history], tick)) frame_mask |= 1u << i;
+        if (frame_complete(&c->frames[tick % c->w.history], tick)) frame_mask |= 1ull << i;
     }
     tide_write_varint(&w, c->verified);
-    tide_write_varint(&w, frame_mask);
+    tide_write_varint64(&w, frame_mask);
     if (lacks) { // Until the world comes
         tide_write_varint(&w, c->answered_number);
         tide_write_varint(&w, c->lacks_size);
