@@ -279,6 +279,7 @@ typedef struct decl {
     bool is_local;    // `local`: belongs to this machine, not the match. Views are always local code.
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
+    bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
     const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
@@ -712,7 +713,9 @@ typedef struct program {
     uint64_t device_uses[DEVICE_WORDS]; // The leaves match code reads: all the input sends of them
     VEC(decl *) structs; // In an order where each comes after the structs it contains.
 
-    mask_list archetypes;      // Component masks, in derivation order.
+    mask_list archetypes;      // Component masks (the components that aren't sparse), in derivation order.
+    mask_list possible;        // Per archetype: the sparse components its entities can have (stored with a presence byte each)
+    comp_mask sparse_mask;     // The sparse components (decl.is_sparse)
     VEC(bool) archetype_local; // Per archetype: in the local world rather than the match
     VEC(bool) spawn_target;    // Per archetype: does some Spawn create it directly?
     comp_mask spawned_mask;    // Union of components that appear in spawns.

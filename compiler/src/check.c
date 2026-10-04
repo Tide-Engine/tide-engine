@@ -7065,28 +7065,60 @@ typedef struct pending {
     mask_list removes;
 } pending;
 
-// The archetype with `mask`, made if it's new: its index, or -1 past the limit.
+// The archetype with `mask` (the components that aren't sparse), made if it's
+// new: its index, or -1 past the limit.
 static int archetype_index(program *prog, pending *p, const comp_mask mask, const bool local)
 {
     const int found = find_archetype(prog, mask, local);
     if (found >= 0) return found;
     if (prog->archetypes.count == MAX_ARCHETYPES) return -1;
     vec_push(prog->archetypes, mask);
+    vec_push(prog->possible, mask_none());
     vec_push(prog->archetype_local, local);
     vec_push(p->adds, mask_none());
     vec_push(p->removes, mask_none());
     return prog->archetypes.count - 1;
 }
 
+// `m` without the sparse components, which no archetype is made of.
+static comp_mask solid(const program *prog, const comp_mask m)
+{
+    return mask_andnot(m, prog->sparse_mask);
+}
+
+// Whether a sparse component is one: [Sparse], or a tag (no fields) that any
+// Add or Remove names, which would otherwise double the archetypes it can
+// reach. A tag only set at Spawn stays part of its archetype, so filtering on
+// it costs nothing a row.
+static bool sparse_component(const program *prog, const decl *d)
+{
+    if (d->is_scene) return false;
+    for (int a = 0; a < d->attributes.count; a++) {
+        if (str_eq_c(d->attributes.items[a].name, "Sparse")) return true;
+    }
+    return d->fields.count == 0 && (mask_has(prog->added_mask, d->index) || mask_has(prog->removed_mask, d->index));
+}
+
+// Whether a system's (or handler's, or view's) filters admit archetype `mask`:
+// the components it needs that aren't sparse are there, and none it excludes.
+// Its sparse needs go by `possible`, when given: what those entities can have.
+static bool filters_admit(const program *prog, const decl *sys, const comp_mask mask, const comp_mask *possible)
+{
+    if (!mask_subset(solid(prog, sys->need_mask), mask) || mask_intersects(mask, solid(prog, sys->without_mask))) return false;
+    return !possible || mask_subset(mask_and(sys->need_mask, prog->sparse_mask), *possible);
+}
+
 // The components the sites that reach archetype `mask` add, or remove.
-static comp_mask reaching(const change_sites *sites, const comp_mask mask, const bool local)
+// Sparse components in a site's filters don't tell it apart from the
+// archetype (its entities may or may not have them), so they're not asked.
+static comp_mask reaching(const program *prog, const change_sites *sites, const comp_mask mask, const bool local)
 {
     comp_mask all = mask_none();
     for (int i = 0; i < sites->count; i++) {
         const change_site *s = &sites->items[i];
         if (s->local != local) continue;
-        if (s->spawn && !mask_eq(mask, s->spawn->spawn_mask)) continue;
-        if (s->from && !(mask_subset(s->from->need_mask, mask) && !mask_intersects(mask, s->from->without_mask))) continue;
+        if (s->spawn && !mask_eq(mask, solid(prog, s->spawn->spawn_mask))) continue;
+        if (s->from && !filters_admit(prog, s->from, mask, NULL)) continue;
         all = mask_or(all, s->comps);
     }
     return all;
@@ -7099,6 +7131,16 @@ static comp_mask reaching(const change_sites *sites, const comp_mask mask, const
 // less may be past a site's filters while the change it recorded still
 // applies, the archetypes derived from X inherit what X could still apply
 // (`pending`). Again until nothing changes. False past the limit.
+// Archetype `i`'s entities can have the sparse components `more`: it and
+// every archetype they can move to keep a presence byte for each
+// (`possible`). True if that's new.
+static bool allow_sparse(program *prog, const int i, const comp_mask more)
+{
+    if (mask_subset(more, prog->possible.items[i])) return false;
+    prog->possible.items[i] = mask_or(prog->possible.items[i], more);
+    return true;
+}
+
 static bool expand_archetypes(program *prog, pending *p, const int from)
 {
     bool again = true;
@@ -7107,15 +7149,21 @@ static bool expand_archetypes(program *prog, pending *p, const int from)
         for (int i = from; i < prog->archetypes.count; i++) {
             const comp_mask current = prog->archetypes.items[i];
             const bool local = prog->archetype_local.items[i];
-            const comp_mask adds = mask_or(reaching(&prog->adds, current, local), p->adds.items[i]);
-            const comp_mask removes = mask_or(reaching(&prog->removes, current, local), p->removes.items[i]);
+            const comp_mask adds = mask_or(reaching(prog, &prog->adds, current, local), p->adds.items[i]);
+            const comp_mask removes = mask_or(reaching(prog, &prog->removes, current, local), p->removes.items[i]);
+            // A sparse component added here is one its entities can have, in place
+            allow_sparse(prog, i, mask_and(adds, prog->sparse_mask));
             for (int bit_index = 0; bit_index < prog->components.count; bit_index++) {
-                if (prog->components.items[bit_index]->is_local != local) continue;
+                if (prog->components.items[bit_index]->is_local != local || mask_has(prog->sparse_mask, bit_index)) continue;
                 const comp_mask b = mask_bit(bit_index);
                 for (int pass = 0; pass < 2; pass++) {
                     if (!mask_has(pass ? removes : adds, bit_index)) continue;
                     const int j = archetype_index(prog, p, pass ? mask_andnot(current, b) : mask_or(current, b), local);
                     if (j < 0) return false;
+                    // Entities move both ways between the two: what either can have, both keep room for
+                    const bool grew_j = allow_sparse(prog, j, prog->possible.items[i]);
+                    const bool grew_i = allow_sparse(prog, i, prog->possible.items[j]);
+                    if ((grew_j || grew_i) && j < i) again = true;
                     if (mask_subset(adds, p->adds.items[j]) && mask_subset(removes, p->removes.items[j])) continue;
                     p->adds.items[j] = mask_or(p->adds.items[j], adds);
                     p->removes.items[j] = mask_or(p->removes.items[j], removes);
@@ -7146,8 +7194,17 @@ static void derive_archetypes(const checker *c)
 {
     program *prog = c->prog;
     pending p = {{0}, {0}};
+    // The sparse components: a presence byte in every archetype they can reach, not archetypes of their own
+    for (int i = 0; i < prog->components.count; i++) {
+        decl *d = prog->components.items[i];
+        d->is_sparse = sparse_component(prog, d);
+        if (d->is_sparse) prog->sparse_mask = mask_or(prog->sparse_mask, bit(d));
+    }
     for (int i = 0; i < c->spawns.count; i++) {
-        if (archetype_index(prog, &p, c->spawns.items[i]->spawn_mask, c->spawns.items[i]->local_world) < 0) goto too_many;
+        const expr *spawn = c->spawns.items[i];
+        const int a = archetype_index(prog, &p, solid(prog, spawn->spawn_mask), spawn->local_world);
+        if (a < 0) goto too_many;
+        allow_sparse(prog, a, mask_and(spawn->spawn_mask, prog->sparse_mask));
     }
     if (!expand_archetypes(prog, &p, 0)) goto too_many;
     // The Main scene, which the engine loads, after every other archetype so
@@ -7159,7 +7216,7 @@ static void derive_archetypes(const checker *c)
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
     for (int i = 0; i < c->spawns.count; i++) {
-        const int a = find_archetype(prog, c->spawns.items[i]->spawn_mask, c->spawns.items[i]->local_world);
+        const int a = find_archetype(prog, solid(prog, c->spawns.items[i]->spawn_mask), c->spawns.items[i]->local_world);
         c->spawns.items[i]->spawn_archetype = a;
         prog->spawn_target.items[a] = true;
     }
@@ -7185,9 +7242,8 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
         if (!sys->per_entity || package_of(sys)) continue;
         bool matched = false;
         for (int a = 0; a < prog->archetypes.count; a++) {
-            const comp_mask mask = prog->archetypes.items[a];
             if (prog->archetype_local.items[a] != sys->entity_local) continue;
-            if (mask_subset(sys->need_mask, mask) && !mask_intersects(mask, sys->without_mask)) matched = true;
+            if (filters_admit(prog, sys, prog->archetypes.items[a], &prog->possible.items[a])) matched = true;
         }
         if (!matched) {
             diag_warning(sys->at, "%s '" STR_FMT "' never runs: no entity matches its parameters", system_what(sys),
@@ -7418,6 +7474,17 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
+                if (d->kind != DECL_COMPONENT || d->is_scene) {
+                    diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
+                               STR_ARG(d->name));
+                    diag_note("a sparse component is a presence bit and its value in every archetype it can reach, rather than "
+                              "an archetype of its own: '[Sparse] component Stunned { float left; }'");
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "Sparse takes nothing: '[Sparse]'");
+                }
+                continue;
+            }
             const bool before = str_eq_c(attr->name, "Before");
             if (!before && !str_eq_c(attr->name, "After")) {
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
@@ -7425,9 +7492,11 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Before");
                 suggest_consider_c(&s, "After");
                 suggest_consider_c(&s, "NativeName");
+                suggest_consider_c(&s, "Sparse");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
-                          "and NativeName, which names an extern function's C function");
+                          "NativeName, which names an extern function's C function, and Sparse, for a component that "
+                          "entities gain and lose");
                 continue;
             }
             if (attr->values.count > 0) {

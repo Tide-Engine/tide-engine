@@ -56,10 +56,14 @@ typedef struct tide_layout_enum {
 typedef struct tide_layout_place {
     int32_t type;
     uint32_t offset;
+    // In an archetype: a sparse component, kept as a presence byte at `offset`
+    // (1 while the row has it) and its lanes after it, rather than in an
+    // archetype of its own.
+    bool sparse;
 } tide_layout_place;
 
 // An archetype's columns (tide/table.h): the entity, the scene each is in
-// (`scenes`), then its components' lanes.
+// (`scenes`), then its components' lanes (after a presence byte, for a sparse one).
 typedef struct tide_layout_archetype {
     bool scenes;
     uint32_t component_count;

@@ -18,6 +18,8 @@ component Unit
     Entity target;
 }
 
+// Sparse: a presence byte in the units' rows, which carries over with their values
+[Sparse]
 component Marker { }
 
 singleton Score

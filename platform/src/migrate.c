@@ -153,18 +153,35 @@ static const tide_layout_place *old_component(const carry *c, const tide_layout_
 
 // Where the entities of `from`'s archetype `a` go: the new archetype with the
 // components of theirs the new build has, or -1.
-static int32_t new_archetype(const carry *c, const tide_layout_world *tw, const tide_layout_archetype *a)
+// Whether the new build keeps the component at `p` as part of its archetypes
+// (a sparse one in the new build is a row's own, so it tells no archetype apart).
+static bool solid_kept(const carry *c, const tide_layout_world *tw, const tide_layout_place *p)
 {
-    uint32_t kept = 0;
-    for (uint32_t i = 0; i < a->component_count; i++) {
-        kept += find_type(c->to, c->from->types[a->components[i].type].name) >= 0;
-    }
+    const int32_t to_type = find_type(c->to, c->from->types[p->type].name);
+    if (to_type < 0) return false;
     for (uint32_t k = 0; k < tw->archetype_count; k++) {
         const tide_layout_archetype *b = &tw->archetypes[k];
-        if (b->component_count != kept) continue;
+        for (uint32_t i = 0; i < b->component_count; i++) {
+            if (b->components[i].type == to_type) return !b->components[i].sparse;
+        }
+    }
+    return true;
+}
+
+static int32_t new_archetype(const carry *c, const tide_layout_world *tw, const tide_layout_archetype *a)
+{
+    uint32_t kept = 0; // Its components the new build keeps as parts of archetypes
+    for (uint32_t i = 0; i < a->component_count; i++) kept += solid_kept(c, tw, &a->components[i]);
+    for (uint32_t k = 0; k < tw->archetype_count; k++) {
+        const tide_layout_archetype *b = &tw->archetypes[k];
+        uint32_t solid = 0;
         bool all = true;
-        for (uint32_t i = 0; all && i < b->component_count; i++) all = old_component(c, a, b->components[i].type) != NULL;
-        if (all) return (int32_t)k;
+        for (uint32_t i = 0; all && i < b->component_count; i++) {
+            if (b->components[i].sparse) continue; // A row's own: there whether the old entity had it or not
+            solid++;
+            all = old_component(c, a, b->components[i].type) != NULL;
+        }
+        if (all && solid == kept) return (int32_t)k;
     }
     return -1;
 }
@@ -186,10 +203,17 @@ static const char *lost_scene(const carry *c, const tide_layout_world *tw, const
 // entity, the scene each is in, then its components' lanes (each component
 // `tide_lane_width` bytes at a time, from the column its place says), each
 // column's values one after another.
+// Its columns: a presence byte first, for a sparse one.
 static uint32_t lanes_of(const tide_layout *l, const tide_layout_place *p)
 {
     const uint32_t size = l->types[p->type].size;
-    return size / tide_lane_width(size);
+    return (p->sparse ? 1u : 0u) + size / tide_lane_width(size);
+}
+
+// Whether column `column` of the archetype is `p`'s presence byte.
+static bool is_presence(const tide_layout_place *p, const uint32_t column)
+{
+    return p->sparse && column == p->offset;
 }
 
 static uint32_t column_count(const tide_layout *l, const tide_layout_archetype *a)
@@ -213,7 +237,8 @@ static uint32_t column_size(const tide_layout *l, const tide_layout_archetype *a
 {
     if (column == 0 || (a->scenes && column == 1)) return (uint32_t)sizeof(tide_entity);
     const tide_layout_place *p = component_at(l, a, column);
-    return p ? tide_lane_width(l->types[p->type].size) : 0u;
+    if (!p) return 0u;
+    return is_presence(p, column) ? 1u : tide_lane_width(l->types[p->type].size);
 }
 
 static uint64_t row_size(const tide_layout *l, const tide_layout_archetype *a)
@@ -232,12 +257,23 @@ static const uint8_t *cell(const tide_layout *l, const tide_layout_archetype *a,
     return rows + at + (uint64_t)row * column_size(l, a, column);
 }
 
-// Row `row`'s component at `p`, gathered from its lanes into `value`.
+// Row `row`'s component at `p`, gathered from its lanes (after its presence
+// byte, for a sparse one) into `value`.
 static void gather(const tide_layout *l, const tide_layout_archetype *a, const uint8_t *rows, const uint32_t count,
                    const tide_layout_place *p, const uint32_t row, uint8_t *value)
 {
     const uint32_t width = tide_lane_width(l->types[p->type].size);
-    for (uint32_t k = 0; k < lanes_of(l, p); k++) memcpy(value + k * width, cell(l, a, rows, count, p->offset + k, row), width);
+    const uint32_t first = p->offset + (p->sparse ? 1u : 0u);
+    for (uint32_t k = 0; k < lanes_of(l, p) - (p->sparse ? 1u : 0u); k++) {
+        memcpy(value + k * width, cell(l, a, rows, count, first + k, row), width);
+    }
+}
+
+// Whether row `row` has the component at `p`: a sparse one by its presence byte, any other always.
+static bool present(const tide_layout *l, const tide_layout_archetype *a, const uint8_t *rows, const uint32_t count,
+                    const tide_layout_place *p, const uint32_t row)
+{
+    return !p->sparse || *cell(l, a, rows, count, p->offset, row) != 0;
 }
 
 // The new bytes, `n` more of them.
@@ -435,9 +471,20 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
                     uint8_t *value = take(&w, bytes);
                     if (tc) { // The whole value carried over, for the lane of it this column holds
                         const tide_layout_place *fc = old_component(&c, fa, tc->type);
-                        gather(from_layout, fa, old.rows[a], old.counts[a], fc, row, old_value);
-                        carry_value(&c, tc->type, fc->type, new_value, old_value);
-                        memcpy(value, new_value + (column - tc->offset) * bytes, bytes);
+                        // A sparse component the old entity hadn't got stays absent: zeros, presence 0
+                        const bool had = fc && present(from_layout, fa, old.rows[a], old.counts[a], fc, row);
+                        if (is_presence(tc, column)) {
+                            *value = had ? 1u : 0u;
+                            continue;
+                        }
+                        if (!had) {
+                            if (!tc->sparse) carry_value(&c, tc->type, -1, new_value, NULL); // New here: its defaults
+                            else continue;
+                        } else {
+                            gather(from_layout, fa, old.rows[a], old.counts[a], fc, row, old_value);
+                            carry_value(&c, tc->type, fc->type, new_value, old_value);
+                        }
+                        memcpy(value, new_value + (column - tc->offset - (tc->sparse ? 1u : 0u)) * bytes, bytes);
                     } else if (column == 0 || fa->scenes) { // The entity, and the scene it's in
                         memcpy(value, cell(from_layout, fa, old.rows[a], old.counts[a], column, row), bytes);
                     }
