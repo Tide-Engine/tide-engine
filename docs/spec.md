@@ -226,6 +226,7 @@ A system's parameter list describes its whole query. Each parameter's modifier s
 | `mut`     | Write access                                                            |
 | `with`    | Entity must have this component. No data access, so no data dependency. |
 | `without` | Entity must not have this component.                                    |
+| `lookup`  | Any entity's component, by its handle: `lookup Health health`, read as `health[e]`, or with `mut lookup`, changed as `health[e] = h`. Access to every entity's, and no filter. |
 
 ```csharp
 system ClampPlayer(mut Transform trs, with Player)
@@ -235,6 +236,7 @@ system ClampPlayer(mut Transform trs, with Player)
 }
 ```
 
+- A lookup reads another entity's component in the same tick, where `Send` would wait for the tick's end: `health[target]` is that entity's `Health` as it is, or its zero value when it has none (`health.Has(target)` tells), and `mut lookup` lets `health[target] = h` put one back (nothing happens when it has none). The component is a copy, as a list's element is: change it and put it back. A lookup is read or write access to every entity's component, so the schedule treats it as touching them all; a system with a `mut lookup`, or one that looks up a component it also changes through a parameter, runs on one thread, and the latter reads the rows it changed earlier in the same run. A `mut lookup` of a component the system also takes as a parameter is an error: this entity's goes through the parameter. A view can't `mut lookup` the match.
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.

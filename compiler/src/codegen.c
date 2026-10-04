@@ -1855,6 +1855,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
+        if (e->object->type.kind == TY_LOOKUP) { // health[e]: that entity's, or its zero when it has none
+            sb_printf(o, "tide_get_%s(%s, ", type_cname(e->object->type.decl), e->object->type.decl->is_local ? "tide_l" : "tide_w");
+            gen_expr(g, o, e->lhs);
+            sb_put(o, ")");
+            break;
+        }
         if (e->object->type.kind == TY_GRID && in_window(g, e)) { // A parallel step's cell near its place
             sb_put(o, "tide_win[");
             gen_window_index(g, o, e);
@@ -2098,6 +2104,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_grid_clear(&(");
             gen_expr(g, o, e->object);
             sb_printf(o, "), &%s, %s)", grid_shape_name(e->object->type.decl), place_where(g, e->object));
+        } else if (e->call == CALL_HAS) { // health.Has(e): whether that entity has one
+            sb_printf(o, "tide_has_%s(%s, ", type_cname(e->object->type.decl), e->object->type.decl->is_local ? "tide_l" : "tide_w");
+            gen_expr(g, o, e->args.items[0]);
+            sb_put(o, ")");
         } else if (e->call == CALL_TEXT) { // name.Contains("cat"): the text first
             sb_printf(o, "%s(", e->c_callee);
             gen_expr(g, o, e->object);
@@ -3641,6 +3651,16 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, "), ");
             gen_expr(g, o, s->value);
             sb_printf(o, ", &%s, %s);\n", grid_shape_name(target->type.decl), place_where(g, target));
+            break;
+        }
+        if (target->kind == E_INDEX && target->object->type.kind == TY_LOOKUP) { // health[e] = h: nothing when it has none
+            const decl *d = target->object->type.decl;
+            indent(g, o);
+            sb_printf(o, "(void)tide_set_%s(%s, ", type_cname(d), d->is_local ? "tide_l" : "tide_w");
+            gen_expr(g, o, target->lhs);
+            sb_put(o, ", ");
+            gen_as(g, o, s->value, target->type);
+            sb_put(o, ");\n");
             break;
         }
         if (target->kind == E_INDEX) { // items[i] = x
@@ -5924,6 +5944,7 @@ static void gen_system_body(gen *g, const decl *sys)
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT) continue;
+        if (p->type.kind == TY_LOOKUP) continue; // Read and changed through the world, by entity
         sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", c_type(p->type), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
@@ -5947,7 +5968,7 @@ static void gen_system_body(gen *g, const decl *sys)
     if (sys->is_handler) line(g, o, "(void)%s;", trigger_cname(g, sys));
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->name.len > 0 && p->mode != PARAM_EVENT) line(g, o, "(void)%s;", local_cname(g, p->name));
+        if (p->name.len > 0 && p->mode != PARAM_EVENT && p->type.kind != TY_LOOKUP) line(g, o, "(void)%s;", local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
     }
     gen_grid_caches(g);
@@ -7228,6 +7249,20 @@ static bool runs_on(const gen *g, const decl *sys, const int a)
     return arch_local(g, a) == sys->entity_local && filters_admit(g->prog, sys, a);
 }
 
+// Whether a system looks up a component it also changes through a parameter.
+static bool lookup_overlaps_mut(const decl *sys)
+{
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_LOOKUP) continue;
+        for (int k = 0; k < sys->params.count; k++) {
+            const param *q = &sys->params.items[k];
+            if (q->type.kind == TY_COMPONENT && q->mode == PARAM_MUT && q->type.decl == p->type.decl) return true;
+        }
+    }
+    return false;
+}
+
 // The rows of a chunk a task runs: all of them, or with `pieced`, the task's
 // piece of them (tide_piece of tide_pieces), as tide_from and tide_to.
 static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
@@ -7250,7 +7285,10 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(&inner, "%s    ", pad);
     sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
     gen_piece_rows(o, pad, pieced);
-    gen_chunk_columns(g, sys, a, pad, read_only, true);
+    // A system that looks up a component it changes reads rows it changed
+    // earlier in this run: so they're written in place, the same everywhere,
+    // rather than into a copy some pages would have and others not
+    gen_chunk_columns(g, sys, a, pad, read_only, !lookup_overlaps_mut(sys));
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_copies(g, sys, a, inner.data);

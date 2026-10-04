@@ -118,6 +118,7 @@ typedef enum type_kind {
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
+    TY_LOOKUP,     // lookup Health: a system parameter that reads (or with mut, changes) any entity's Health by handle; decl is the component
     TY_COMPONENT,
     TY_SINGLETON,
     TY_INPUT,      // The game's input declaration
@@ -208,6 +209,7 @@ typedef struct param {
     loc name_at;
     bool read;    // The body names it
     bool written; // The body assigns through it
+    bool lookup;  // `lookup Health health`: any entity's Health by its handle, health[e], read or (mut) changed; no filter
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
 } param;
@@ -435,6 +437,7 @@ typedef enum builtin_call {
     CALL_GUI,       // GUI.Button(...), GUILayout.Horizontal() { ... }: calls c_callee with the GUI first
     CALL_ACTION,    // content(): runs the Action its function was given
     CALL_TEXT,      // name.Contains(...), text's methods: calls c_callee with the text first
+    CALL_HAS,       // health.Has(e): whether an entity has the component a lookup parameter is of
     CALL_LIST,      // items.Add(...), a list's methods: `name` says which
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
