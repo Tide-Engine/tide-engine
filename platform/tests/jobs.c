@@ -91,6 +91,15 @@ TIDE_TEST(jobs_threads_change_nothing)
     tide_world_free(&snapshot);
 }
 
+// The system says how much memory the program has (tide_platform_memory),
+// which needs no window: checked here, where every platform's tests run.
+TIDE_TEST(platform_counts_its_memory)
+{
+    const uint64_t bytes = tide_platform_memory();
+    printf("    %.1f MB\n", (double)bytes / (1024.0 * 1024.0));
+    TIDE_CHECK(bytes > 1u << 20); // In bytes: no program with a world in it has less than a megabyte
+}
+
 // ---------------------------------------------------------------------------
 // A tick of thousands of systems, made up here rather than generated: each
 // starts only once the systems it waits for are done, and runs once, however

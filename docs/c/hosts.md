@@ -10,7 +10,7 @@ tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>..
 
 - The game is every `.tide` file in the current source folder and its subfolders. `SOURCES` lists the files instead.
 - The game's C, which defines its `extern` functions (see [Calling C](./functions.md)), is every `.c` file there but the `HOST` ones, or the `.c` files listed in `SOURCES`, and its `.cpp` files the same way, built as `tide` builds them (see [C++](./functions.md#c)). Unlike `tide`, CMake doesn't pick up prebuilt libraries: link them to the target yourself.
-- Without `HOST`, the game is the whole program: a generated `main` runs it in a window, titled `TITLE`, or the game's `title` setting, or `<target>`. `STATS` shows the frame rate, ping, bandwidth, tick, entity count and threads in a corner, as `tide run --stats` does. On the web, it's `<target>.html`.
+- Without `HOST`, the game is the whole program: a generated `main` runs it in a window, titled `TITLE`, or the game's `title` setting, or `<target>`. `STATS` shows the [stats](../tools/cli.md#stats) in a corner, as `tide run --stats` and the game's `stats` setting do. On the web, it's `<target>.html`.
 - With `HOST`, those C files are the program. They include `<name>.h`, the generated header, where `NAME` defaults to `<target>`. `LAYOUT` also describes the game's data layout, as `tide run` does for hot reloading (`tide_game_layout`, in `tide/layout.h`).
 - Warnings are errors in the repo's build: a warning from tidec fails it, unless part of its text is listed after `WARNINGS`, and each of those has to be there. Tests use it for programs tidec warns about on purpose.
 - `<target>_schedule` is a build target that prints the game's [schedule](../game/schedule.md).
@@ -29,7 +29,7 @@ int main(int argc, char **argv)
 }
 ```
 
-It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default) and `stats`.
+It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default) and `stats`, which shows the stats whether or not the game's `stats` setting does.
 
 Hosts reach the window, input and drawing through `tide/platform.h`, which includes no system header: the generated header names types after the game's components (`Transform`, `Camera`), and the system's headers define many of the same names.
 

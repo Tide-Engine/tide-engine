@@ -1,0 +1,3 @@
+// expect: stats is true or false, or a constant that is
+settings { stats = !false; }
+scene Main { }
