@@ -513,7 +513,9 @@ static inline int tide_run_frame(void *user, const float seconds)
                          tide_run_down / 1024.0, (int)game->tick(match), (unsigned)game->entity_count(match),
                          jobs ? (unsigned)jobs->threads : 1u, memory, tide_platform_renderer(),
                          (unsigned)tide_platform_draw_calls());
-        // The three systems that took longest in the last tick
+        // The three systems that took longest in the last tick. Keep zero-time
+        // rows too: a short system can fall below the clock's resolution, and
+        // dropping its row would move every stat above it.
         const tide_profile_time *times = tide_run_profiler.profile.systems.items;
         const uint32_t count = tide_run_profiler.profile.systems.count;
         bool shown[3] = {false, false, false};
@@ -523,7 +525,7 @@ static inline int tide_run_frame(void *user, const float seconds)
             for (uint32_t s = 0; s < count; s++) {
                 bool taken = false;
                 for (int j = 0; j < k; j++) taken |= shown[j] && slow[j] == s;
-                if (!taken && times[s].ms > 0.0 && (best == UINT32_MAX || times[s].ms > times[best].ms)) best = s;
+                if (!taken && times[s].name[0] && (best == UINT32_MAX || times[s].ms > times[best].ms)) best = s;
             }
             if (best == UINT32_MAX) break;
             shown[k] = true;
