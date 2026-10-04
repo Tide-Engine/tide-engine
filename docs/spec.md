@@ -336,7 +336,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - **A type in `<>`.** Only the `World`'s methods take one. A `<` after a method's name starts a type when a name, `>` and the call's `(` follow, as in C#: `a.b < c.d > (e)` would compare a `bool`, so no comparison reads that way.
 - **`Set` and text.** `Set` of a component that holds text, lists or maps copies them into the world as the entity's own, as assigning the component does. A system that does it changes the match's heap, like any that writes text.
 - **`Set` where code runs at once.** In a parallel loop's step and in a `Sort`'s block, `Get` and `Has` work and `Set` is an error, as writing anything outside the step is.
-- **A game's own `World`.** A type named `World` in a namespace hides the built-in one in that namespace's code.
+- **A game's own `World`.** A type named `World` in a namespace is what a plain `World` means in that namespace's code, and in files that `using` it, as with any name: the built-in one is hidden there. Elsewhere it's written with its namespace, `Game.World`, beside the built-in `World`.
 - `return;` ends the system for the current entity.
 - Locals can't reuse the name of another local or parameter in scope.
 - Names starting with `tide_` are reserved for generated code.
