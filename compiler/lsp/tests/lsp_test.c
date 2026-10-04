@@ -1983,6 +1983,65 @@ TIDE_TEST(lsp_quick_fixes_from_suggestions)
     TIDE_CHECK(!has(actions_at(23), "Change to")); // Only on its line
 }
 
+// `with ownership` and `without ownership`: a view's filter by this machine's
+// player. `ownership` is a keyword right after them, and a name anywhere else.
+TIDE_TEST(lsp_ownership)
+{
+    start();
+    // Offered after `with` and `without` in a view, beside the components
+    const char *with = complete(GAME_TYPES "view Mine(Body body, with $)\n{\n}\n");
+    TIDE_CHECK(offers(with, "ownership"));
+    TIDE_CHECK(offers(with, "Body"));
+    TIDE_CHECK(has(with, "Entities this machine's player owns"));
+    const char *without = complete(GAME_TYPES "view Rest(Body body, without $)\n{\n}\n");
+    TIDE_CHECK(offers(without, "ownership"));
+    TIDE_CHECK(has(without, "Entities this machine's player doesn't own"));
+    // ...and nowhere else: the match has no machine of its own
+    TIDE_CHECK(!offers(complete(GAME_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event(Spawned) Grow(mut Body body, without $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "view Mine($)\n{\n}\n"), "ownership"));
+
+    open_document(GAME_TYPES "view Mine(Body body, with owner$ship)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "with ownership"));
+    TIDE_CHECK(has(hover, "the entities this machine's player owns"));
+    // A keyword (11), 11 columns after the parameter `body`
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,11,9,11,0,"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "'ownership' is a keyword after 'with' and 'without'"));
+    // The view's own hover shows its filter
+    open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "view Rest(Body body, with Owner, without ownership)"));
+
+    // In the match it's an error that says what to write, which a quick fix does
+    open_document(GAME_TYPES "system Move(mut Body body, with ownership)\n{\n    body.radius = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "the match runs the same on every machine, so a system can't filter by 'with ownership'"));
+    TIDE_CHECK(has(last_sent(), "for entities that have any owner, write 'with Owner'"));
+    const char *fix = actions_at(22);
+    TIDE_CHECK(has(fix, "\"title\":\"Change to 'Owner'\",\"kind\":\"quickfix\""));
+    TIDE_CHECK(has(fix, "{\"range\":{\"start\":{\"line\":22,\"character\":32},\"end\":{\"line\":22,\"character\":41}},"
+                        "\"newText\":\"Owner\"}"));
+
+    // The formatter keeps the filter as it is
+    static const char messy[] = "component Body { float x; }\nscene Main { }\n"
+                                "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
+                                "view Mine( Body body,with   ownership ){ Draw.Circle(float2(body.x, 0), 1, Color.red); }\n"
+                                "view Rest(Body body ,without ownership) { Draw.Circle(float2(body.x, 0), 1, Color.red); }\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(has(formatted, "view Mine(Body body, with ownership) { "));
+    TIDE_CHECK(has(formatted, "view Rest(Body body, without ownership) { "));
+
+    // Anywhere else `ownership` is a name: a singleton's, a field's, a parameter's
+    open_document("local singleton ownership { int ownership = 3; }\nscene Main { }\n"
+                  "int Twice(int ownership) { return ownership * 2; }\n"
+                  "view Share(owner$ship ownership)\n{\n    if (Twice(ownership.ownership) > 1) Draw.Clear(Color.black);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "local singleton ownership"));
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, ",1,5,5,9,1,0,6,9,3,0,0,10,9,5,3,")); // Share, then a class (3) and a parameter (5)
+}
+
 // An error nothing handles: carry on with the default, or pass it on.
 TIDE_TEST(lsp_quick_fixes_for_errors)
 {

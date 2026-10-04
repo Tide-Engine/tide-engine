@@ -5993,7 +5993,7 @@ static bool reads_match(const decl *sys)
         const type t = sys->params.items[i].type;
         if ((t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local) return true;
     }
-    return false;
+    return sys->ownership != OWNERSHIP_NONE; // Its entities' owners
 }
 
 // ---------------------------------------------------------------------------
@@ -6776,6 +6776,14 @@ static bool reads_owner(const gen *g, const decl *sys, const int a)
     return false;
 }
 
+// Whether a view filters archetype `a`'s rows by their Owner: it takes
+// entities `with ownership` or `without ownership`, and these have an Owner.
+// Without one they're nobody's, and `without ownership` takes every row.
+static bool filters_owner(const gen *g, const decl *sys, const int a)
+{
+    return sys->ownership != OWNERSHIP_NONE && a >= 0 && arch_stores(g, a, g->prog->owner->index);
+}
+
 // The columns a system, view or handler takes of archetype `a`'s chunk
 // tide_c, in the table tide_t: its entities as tide_ent, their scenes as
 // tide_scn, and each component it takes as tide_col_<Component>, to change
@@ -6817,7 +6825,7 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
     }
     for (int c = 0; c < prog->components.count; c++) {
         if (!arch_stores(g, a, c)) continue;
-        bool used = c == prog->owner->index && reads_owner(g, sys, a);
+        bool used = c == prog->owner->index && (reads_owner(g, sys, a) || filters_owner(g, sys, a));
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (p->type.kind != TY_COMPONENT || p->type.decl->index != c || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
@@ -6847,11 +6855,26 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         sb_printf(o, "%sconst uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n", pad,
                   type_cname(prog->components.items[c]), columns, arch_presence(g, a, c));
     }
+    // This machine's player, which its rows' owners are checked against: Session.player
+    if (filters_owner(g, sys, a)) {
+        sb_printf(o, "%sconst tide_player_id tide_me = tide_l->%s.%s;\n", pad, type_cname(prog->session),
+                  field_cname(&prog->session->fields.items[1]));
+    }
+}
+
+// Row tide_i's Owner, as tide_owner, from its lanes (gen_chunk_columns).
+static void gen_row_owner(gen *g, const char *pad)
+{
+    const char *owner = type_cname(g->prog->owner);
+    sb_printf(&g->c, "%s%s tide_owner;\n%stide_gather_%s(&tide_owner, (const uint8_t *const *)tide_col_%s, tide_i);\n", pad, owner,
+              pad, owner, owner);
 }
 
 // Before a row runs: skip it (`skip`: "continue" in a loop, "break" in a
 // handler's case) unless it has every sparse component the system needs and
 // none it excludes. Rows are the archetype's: its other components are there.
+// A view `with ownership` skips the rows this machine's player doesn't own,
+// and one `without ownership` those it does, by the row's Owner (tide_owner).
 static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad, const char *skip)
 {
     const program *prog = g->prog;
@@ -6861,6 +6884,10 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
         if (mask_has(sys->need_mask, c)) sb_printf(&g->c, "%sif (!tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
         else if (mask_has(sys->without_mask, c)) sb_printf(&g->c, "%sif (tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
     }
+    if (!filters_owner(g, sys, a)) return;
+    gen_row_owner(g, pad);
+    sb_printf(&g->c, "%sif (%stide_player_equal(tide_owner.%s, tide_me)) %s;\n", pad, sys->ownership == OWNERSHIP_WITH ? "!" : "",
+              field_cname(&prog->owner->fields.items[0]), skip);
 }
 
 // After a loop over a chunk's rows: the lanes it changed go back, in the
@@ -6895,11 +6922,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                       pad, c, i, c, i, c, i);
         }
     }
-    if (reads_owner(g, sys, a)) {
-        const char *owner = type_cname(g->prog->owner);
-        sb_printf(o, "%s%s tide_owner;\n%stide_gather_%s(&tide_owner, (const uint8_t *const *)tide_col_%s, tide_i);\n", pad, owner, pad,
-                  owner, owner);
-    }
+    if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, pad); // Its filter got it already
 }
 
 static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool read_only)

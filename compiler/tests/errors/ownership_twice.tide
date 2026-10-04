@@ -1,0 +1,6 @@
+// expect: 'without ownership' appears twice
+component Body { float2 position; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body); }
+view Show(Body body, without ownership, without ownership) { Draw.Circle(body.position, 1, Color.white); }

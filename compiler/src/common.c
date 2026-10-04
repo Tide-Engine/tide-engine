@@ -352,6 +352,11 @@ void suggest_note(const suggestion *s)
     if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, s->best);
 }
 
+void suggest_replacement(const str wrong, const char *instead)
+{
+    if (suggestion_sink) suggestion_sink(suggestion_user, wrong, str_from(instead));
+}
+
 int path_compare(const char *a, const char *b)
 {
     for (;; a++, b++) {

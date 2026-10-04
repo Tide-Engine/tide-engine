@@ -1,0 +1,5 @@
+// expect: 'with ownership' filters the match's entities, and 'Spark' is local
+local component Spark { float life; }
+scene Main { }
+
+view Show(Spark spark, with ownership) { }
