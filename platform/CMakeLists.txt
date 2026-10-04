@@ -251,6 +251,7 @@ endif()
 # `tide_platform_draw --bench` (`?bench` on the web) times frames of many shapes.
 add_executable(tide_platform_draw tests/draw.c)
 target_link_libraries(tide_platform_draw PRIVATE tide_platform)
+target_compile_definitions(tide_platform_draw PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
 if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_draw TARGET tide_platform_draw WEBGPU EXPECT "renderer: WebGPU")
@@ -264,6 +265,7 @@ else()
     # (`adb logcat -s tide`).
     add_library(tide_platform_draw_app SHARED tests/draw.c)
     target_link_libraries(tide_platform_draw_app PRIVATE tide_platform)
+    target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
 

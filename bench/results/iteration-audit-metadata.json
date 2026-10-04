@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-04",
+  "results": "versus.jsonl",
+  "label": "iteration-audit-current",
+  "source_revision": "fce97b124d37bcb081511b89d9f0681c1a022a4a",
+  "runtime_source": "Unchanged from the source revision. The temporary single-entity-lookup experiment was reverted and the release binaries rebuilt before these runs.",
+  "os": "windows",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+  "physical_cores": 12,
+  "logical_processors": 24,
+  "compiler": "Clang 23.1.2",
+  "preset": "release",
+  "build_type": "RelWithDebInfo",
+  "flags": ["-O2", "-DNDEBUG", "-fno-fast-math", "-ffp-contract=off"],
+  "repetitions_per_concept": 3,
+  "concepts": ["versus_particles", "versus_sand", "versus_life", "versus_churn", "versus_events", "versus_nbody"],
+  "options": "Each program's default full-size options, on one thread and on all twelve physical cores. Programs and repeats ran sequentially with no concurrent builds or benchmarks.",
+  "outcome": "All end-state digests agreed. N-body failed to use the worker pool and took about 30 times as long as C with SIMD on twelve cores; events took about 13 times as long as C. These are the measurements before the scheduling fix.",
+  "followup_label": "iteration-parallel-work-fixed",
+  "followup_source": "Same base and unchanged engine runtime; compiler/src/codegen.c distinguishes known constant loop trips from unknown nested loop work. A parallel step with unknown loop work uses the existing conservative scheduling fallback, restoring worker-pool selection. Includes compiler/tests/e2e/parallel_work.tide and parallel_work_test.c regression coverage.",
+  "followup_options": "Same full suite, default counts and timing options, three sequential repetitions per concept, same CPU/compiler/flags, with no concurrent agent builds or benchmarks.",
+  "followup_outcome": "All end-state digests agreed; the new scheduling regression passed. N-body selected the worker pool again and took about 4 times as long as C with SIMD on twelve cores, instead of about 30. Absolute timings varied during these runs (C timings changed too), so they do not establish exact cross-phase percentage improvements. Unknown nested loops can conservatively select the pool even when their actual workload is small."
+}
