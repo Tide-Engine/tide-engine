@@ -16,8 +16,10 @@ Color FighterColor(int side)
 }
 
 [Stage(PaintStages.Arena)]
-view PaintArena()
+view PaintArena(Session session)
 {
+    // The room is the match's: with none, while one is being joined, there's only the backdrop
+    if (session.state != SessionState.Connected && session.player == default) return;
     // Shade where the room meets its walls
     Inset(float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
 }
@@ -208,7 +210,7 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
         if (!canvas.gamepadAim)
         {
             // Devices count pixels from the bottom, and the screen from the top
-            var pointer = Draw2D.ScreenToWorld(float2(devices.pointer.position.x, Screen.height - devices.pointer.position.y));
+            var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
             Draw2D.WireCircle(pointer, 8, 3.4, Fade(UI_OUTLINE, 0.6));
             Draw2D.WireCircle(pointer, 7.6, 1.7, Fade(Color.white, 0.9));
             Draw2D.Circle(pointer, 1.6, Color.white);
