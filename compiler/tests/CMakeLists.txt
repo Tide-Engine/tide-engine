@@ -100,6 +100,7 @@ endforeach()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
+tide_e2e_test(measure_text) # Draw2D.MeasureText: on the screen, under a camera and in a render target
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)

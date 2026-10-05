@@ -251,6 +251,13 @@ static float measure(const char *text, const float size)
     return (float)strlen(text) * 7.0f;
 }
 
+// ...as a renderer says it.
+static tide_float2 font(const char *text, const float size, const bool target)
+{
+    (void)target;
+    return tide_f2(measure(text, size), size);
+}
+
 TIDE_TEST(profiler_draws_its_columns_where_they_fit)
 {
     static tide_profiler p;
@@ -261,7 +268,7 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     // A wide screen: the frame's rows and the tick's side by side
     tide_draw_reset(&list);
     tide_draw_clip(&list, (tide_rect){0, 0, 10, 10}); // A view's, left on
-    tide_profiler_draw(&p, &list, tide_f2(960, 540), measure);
+    tide_profiler_draw(&p, &list, tide_f2(960, 540), font);
     TIDE_REQUIRE(list.count > 4);
     TIDE_CHECK(list.commands[1].kind == TIDE_DRAW_NO_CLIP && list.commands[2].kind == TIDE_DRAW_SCREEN);
     TIDE_CHECK(list.commands[3].kind == TIDE_DRAW_RECT); // The panel, in the corner
@@ -289,7 +296,7 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
 
     // A narrow one: the tick's rows under the frame's, no wider than the screen
     tide_draw_reset(&list);
-    tide_profiler_draw(&p, &list, tide_f2(300, 800), measure);
+    tide_profiler_draw(&p, &list, tide_f2(300, 800), font);
     frame = text_command("Frame");
     tick = text_command("Tick");
     TIDE_REQUIRE(frame && tick);
@@ -298,7 +305,7 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
 
     // No profiler, or nothing measured yet to show: nothing drawn
     tide_draw_reset(&list);
-    tide_profiler_draw(NULL, &list, tide_f2(960, 540), measure);
+    tide_profiler_draw(NULL, &list, tide_f2(960, 540), font);
     static tide_profiler empty;
     tide_profiler_draw(&empty, &list, tide_f2(960, 540), NULL);
     TIDE_CHECK(list.count == 0);
