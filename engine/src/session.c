@@ -114,6 +114,10 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define HELLO_TIMEOUT 2.0 // ...or on one that said hello and never wrote again: it may not be where it said
 #define ROOM_TIMEOUT 15.0 // ...or on a room's host before it first answers: WebRTC can take a while to connect
 #define HELLO_EVERY 0.2 // Seconds between HELLOs until the server answers
+#define EARLY_LOOK 2.0  // Seconds a client watches how early its inputs arrive before it sends them later
+#define EARLY_KEEP 10.0 // ...and after one was nearly late: what made it so may come again
+#define EARLY_START 1.0 // ...but in its first second in a match: a machine starting up stutters, and that doesn't come again
+#define CLOCK_SLOW 0.1  // The share of the time that passes a clock loses, while it has some to lose
 #define MAX_TICKS 8u    // Ticks a server runs in one update at most: after a stall it drops the time instead
 #define PRESENT_SECONDS 20.0  // How long players of a world a server went on from have to come back
 #define HANDOVER_EVERY 1.0    // Seconds between HANDOVERs, once it's been the same that long
@@ -1752,6 +1756,15 @@ struct tide_client {
     int64_t clock_base;
     int32_t margin; // How early its inputs reach the server, in ticks, as the server last said
     bool margin_known;
+    // ...and the least it said since `early_since`, while the client watches
+    // (keep_early): one input that's nearly late is what being early is for
+    bool early_watching;
+    int32_t early_least;
+    double early_since;
+    bool early_raised; // Its clock went ahead for an input that was nearly late, and none has been since for long
+    double early_from; // When it joined the match
+    double clock_slow; // Seconds its clock still has to lose, a little of each update (update_client)
+    uint32_t late; // Ticks the server ran without this machine's input, which came too late
     double hold_until; // No clock changes until then: the last one takes a round trip to show
 
     uint8_t *packet;
@@ -2082,6 +2095,7 @@ static void on_server(tide_client *c, tide_reader *r)
     measure(c, echo, held);
     c->margin = early < -30000 ? -30000 : early > 30000 ? 30000 : early;
     c->margin_known = true;
+    if (c->early_watching && c->margin < c->early_least) c->early_least = c->margin;
     const uint32_t input_ack = server_tick + (uint32_t)early;
     if (input_ack > c->input_ack) c->input_ack = input_ack;
     if (!c->loaded) return;
@@ -2277,6 +2291,23 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
 static void *world_at(const tide_client *c, const uint32_t tick)
 {
     return c->worlds[tick % c->ring];
+}
+
+// Whether the server ran a frame's tick without this machine's input, which
+// came too late for it.
+static bool own_late(const tide_client *c, const pending_frame *f)
+{
+    tide_reader r = {f->data, f->size, 0, false};
+    tide_read_u64(&r);
+    const uint8_t parts = tide_read_u8(&r);
+    if (!(parts & FRAME_LATE)) return false;
+    if (parts & FRAME_EVENTS) {
+        const uint32_t events = tide_read_varint(&r);
+        for (uint32_t i = 0; i < events && !r.failed; i++) tide_read_u16(&r); // Which, and whose
+    }
+    if (parts & FRAME_INPUTS) read_players(&r);
+    const tide_player_set late = read_players(&r);
+    return !r.failed && tide_players_has(&late, (uint32_t)c->player);
 }
 
 // Room for one more snapshot. The ones in use keep their ticks; the others,
@@ -2528,6 +2559,10 @@ static void load_snapshot(tide_client *c)
         const uint32_t server = c->server_tick > tick ? c->server_tick : tick;
         c->clock_start = c->now;
         c->clock_base = (int64_t)server + c->desc.lead + (c->desc.lead ? trip : 0u);
+        c->clock_slow = 0.0;
+        c->early_watching = false;
+        c->early_raised = false;
+        c->early_from = c->now;
         c->hold_until = c->now + (double)c->rtt_ms / 1000.0 + 3.0 / c->tick_rate;
         // Its input delay (tide_prediction): none to start with, when it
         // predicts. When it doesn't, enough that a tick's frame has come by the
@@ -2572,6 +2607,51 @@ static void predict(tide_client *c)
     c->ahead++;
 }
 
+// Keeps its inputs as early as they have to be, and no earlier. Every tick an
+// input waits at the server is a tick later that the other players see what
+// this one did, and a tick further that this machine runs ahead, guessing
+// what they do. The server says how many ticks ahead of the one it runs next
+// the newest input is, with everything it sends. The least of those is what
+// counts: the earliness is there for the input that's nearly late.
+//
+// So the client keeps the least at its lead, watching a while at a time.
+// Under it, an input was nearly late, or late: its clock goes ahead at once
+// by what was missing. Over it for the whole while, its inputs wait at the
+// server for nothing: its clock loses the difference, a little of each
+// update, so no tick stands still. The while is short, but after an input
+// was nearly late, when it's long: what made it so may come again, and has
+// to stay away that long. Not for one in its first second in the match, as a
+// machine starting up stutters. Each change takes a round trip to show, so
+// it watches again from then. A client that sends no inputs (a game without an
+// input) has nothing to keep early: its clock stays as the world's arrival
+// set it.
+static void keep_early(tide_client *c)
+{
+    if (!c->game->set_input || !c->desc.sample || !c->margin_known || c->now < c->hold_until) return;
+    if (!c->early_watching) {
+        c->early_watching = true;
+        c->early_least = c->margin;
+        c->early_since = c->now;
+    }
+    const int32_t lead = (int32_t)c->desc.lead;
+    const double shown = (double)c->rtt_ms / 1000.0 + 3.0 / c->tick_rate; // Until a change shows in what the server says
+    if (c->early_least < lead) {
+        c->clock_base += lead - c->early_least;
+        c->clock_slow = 0.0;
+        c->early_raised = c->now - c->early_from >= EARLY_START;
+        c->hold_until = c->now + shown;
+        c->early_watching = false;
+    } else if (c->now - c->early_since >= (c->early_raised ? EARLY_KEEP : EARLY_LOOK)) {
+        if (c->early_least > lead) {
+            const double lose = (double)(c->early_least - lead) / c->tick_rate;
+            c->clock_slow = lose;
+            c->hold_until = c->now + lose / CLOCK_SLOW + shown;
+        }
+        c->early_raised = false;
+        c->early_watching = false; // From here again: what was the least may be no more
+    }
+}
+
 static void play(tide_client *c)
 {
     // Ticks the server confirmed. One that went as predicted is already in its
@@ -2588,6 +2668,7 @@ static void play(tide_client *c)
         pending_frame *f = &c->frames[tick % c->w.history];
         if (!frame_complete(f, tick)) break;
         if (tick >= c->ahead && (int64_t)tick >= due) break;
+        if (own_late(c, f)) c->late++;
         bool ok;
         if (tick < c->ahead && !stale && tick < c->let_go && as_predicted(c, f)) {
             ok = c->game->hash_world(world_at(c, tick + 1u)) == frame_hash(f);
@@ -2611,17 +2692,7 @@ static void play(tide_client *c)
     if (stale && c->ahead > c->verified) predict_again(c);
     keep_guessing(c);
 
-    // Keep its inputs the right number of ticks early: early enough to arrive
-    // in time, and no earlier, since further ahead is more to predict. A client
-    // that sends none (a game without an input) has no margin to keep: its
-    // clock stays as the world's arrival set it.
-    const int32_t low = (int32_t)c->desc.lead;
-    const int32_t high = low + 2;
-    const bool sends_inputs = c->game->set_input && c->desc.sample;
-    if (sends_inputs && c->margin_known && c->now >= c->hold_until && (c->margin < low || c->margin > high + 2)) {
-        c->clock_base += c->margin < low ? low - c->margin : high - c->margin;
-        c->hold_until = c->now + (double)c->rtt_ms / 1000.0 + 3.0 / c->tick_rate;
-    }
+    keep_early(c);
     // Inputs up to where the clock is, as far as their ring goes; then, if it
     // predicts, the ticks up to its delay short of them
     const int64_t due_in = due_input(c);
@@ -2887,6 +2958,13 @@ void tide_client_destroy(tide_client *c)
 
 static void update_client(tide_client *c, const double now)
 {
+    // A clock with time to lose (keep_early) loses a share of what passed
+    if (c->clock_slow > 0.0 && now > c->now) {
+        const double most = (now - c->now) * CLOCK_SLOW;
+        const double lose = c->clock_slow < most ? c->clock_slow : most;
+        c->clock_start += lose;
+        c->clock_slow -= lose;
+    }
     c->now = now;
     if (c->state == TIDE_SESSION_OFFLINE) return;
     client_receive(c);
@@ -2923,6 +3001,8 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .verified_tick = c->verified,
         .predicted_tick = c->ahead,
         .delay_ticks = c->delay,
+        .early_ticks = c->margin_known ? c->margin : 0,
+        .late_ticks = c->late,
         .again_ticks = c->again,
         .resyncs = c->resyncs,
         .world_bytes = c->world_bytes,
@@ -3184,7 +3264,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
         .server = server,
         .sample = s->desc.sample,
         .user = s->desc.user,
-        .lead = 2,
+        .lead = 1,
         .cookie = s->cookie,
         .knew_kick = s->kicked && !migrating,
         .jobs = s->desc.jobs,

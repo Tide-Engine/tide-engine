@@ -1,6 +1,6 @@
 # Virtual and override
 
-A [package](../tools/packages.md) can replace code of the game it's added to, and a game can replace code of a package it uses: an expansion that changes how units move, a variant of a rule, a mod a developer builds into their game. What can be replaced is marked `virtual`, and what replaces it is marked `override`, as in C#.
+A [package](../tools/packages.md) can replace code of the game it's added to, and a game can replace code of a package it uses: an expansion that changes how units move, a variant of a rule, a mod a developer builds into their game. What can be replaced is marked `virtual`, and what replaces it is marked `override`.
 
 ```csharp
 // The game

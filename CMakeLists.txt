@@ -126,10 +126,15 @@ if(TIDE_PLATFORM)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
     add_subdirectory(examples/duel)
     add_subdirectory(bench)   # Ticks on the platform layer's threads
+endif()
+
+add_subdirectory(packages) # The packages that come with tide, and their tests
+
+# The docs' live examples open a window, so they need the platform layer, and
+# come after the packages: the physics examples are built with one each.
+if(TIDE_PLATFORM)
     option(TIDE_DOC_EXAMPLES "Build the interactive examples in the documentation" OFF)
     if(TIDE_DOC_EXAMPLES)
         add_subdirectory(docs/examples)
     endif()
 endif()
-
-add_subdirectory(packages) # The packages that come with tide, and their tests

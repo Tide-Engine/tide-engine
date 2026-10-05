@@ -172,7 +172,7 @@ A game's web page takes the same from its address, so a link can say which match
 
 A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. Its `Tide.minLag` is the least a lag can make the ping: the ping the game measured while its page added nothing, `undefined` until it has measured a few so. A page that wants it starts with no lag, as these docs do. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
 
-Such a page starts a game that waits by calling the frame's `Tide.start()`. With `?wait` or without, it gives a promise that's kept once the game has drawn its first frame, so the page can keep the frame out of sight until there's something in it. These docs load an example as you scroll near it, and start it when it's in view.
+Such a page starts a game that waits by calling the frame's `Tide.start()`. With `?wait` or without, it gives a promise that's kept once the game has drawn something, so the page can keep the frame out of sight until there's something in it. These docs load an example as you scroll near it, and start it when it's in view.
 
 A page can have the browser download a game before any frame shows it: it loads the game's page once in a frame nobody sees, with `#download` after the address, and removes that frame once it has loaded. Nothing runs in it, and the frame that shows the game later finds its page in the browser's cache. A plain `fetch` of the page doesn't do that: browsers keep a frame's page apart from what a script fetches.
 
