@@ -166,7 +166,7 @@ These names are new, and may still change.
 :::
 
 - Frames draw into pixels of the platform's own, at the size and scale asked for, whatever the display is. `tide_platform_frame_pixels(&width, &height)` gives the last frame drawn, whole, with the overlay: 4 bytes a pixel (red, green, blue, alpha), rows from the top. `tide_platform_capture(path)` writes it as a PNG.
-- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock (`now_ns` left out of its desc), as the standard host's does in such a run.
+- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock and no entropy (`now_ns` and `entropy` left out of its desc, so its matches start with seed 0), as the standard host's does in such a run.
 - The devices are made up too: `tide_platform_poll` takes what the script says for the frame, and what `tide_platform_input` said, each event as a script's line has it without its frame (see [Scripts](../tools/cli.md#scripts)), never the system's:
 
   ```c
