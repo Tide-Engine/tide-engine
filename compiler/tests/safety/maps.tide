@@ -1,0 +1,98 @@
+// expect: missing 0 "" false false 0 false 0
+// expect: filled 10000 49995000 10 45
+// expect: walked 64 14 0
+// expect: keys 3 1 2 true 7
+// expect: sets 3 true false 2 0
+// expect: copies 2 3 1
+
+// Maps and sets with keys that aren't there, thousands that come and go,
+// loops that add and remove as they walk, and keys at the edges of their type.
+
+struct Score
+{
+    int points;
+    string name;
+}
+
+singleton Book
+{
+    Map<int, int> counts;
+    Map<string, Score> scores;
+    Map<long, string> names;
+    Map<Entity, int> owners;
+    Set<int> seen;
+    Set<string> words = ["a", "b", "a", ""];
+    int most = 2147483647;
+    int least = 0x80000000;
+    bool done;
+}
+
+scene Main { }
+
+system Run(mut Book book)
+{
+    if (book.done) return;
+    book.done = true;
+    Entity nobody = default;
+
+    var had = book.counts.TryGet(5, out var count);
+    Debug.Log($"missing {book.counts[5]} \"{book.scores["x"].name}\" {book.counts.Has(book.most)} {book.counts.Remove(book.least)} "
+        + $"{book.owners[nobody]} {had} {count}");
+
+    // Thousands of keys, most of them removed again, so the entries pack and the index grows and shrinks
+    for (var i = 0; i < 10000; i++) book.counts[i] = i;
+    var full = book.counts.count;
+    mut var sum = 0;
+    foreach (var entry in book.counts) sum += entry.value;
+    for (var i = 0; i < 10000; i++)
+    {
+        if (i % 1000 != 0) book.counts.Remove(i);
+    }
+    for (var i = 0; i < 10; i++) book.counts[i * 1000] += 1;
+    mut var left = 0;
+    foreach (var entry in book.counts) left += entry.value - entry.key;
+    Debug.Log($"filled {full} {sum} {book.counts.count} {left + 35}");
+
+    // A loop that adds entries reaches them, and one that removes its own goes on
+    mut var rounds = 0;
+    foreach (var entry in book.counts)
+    {
+        rounds += 1;
+        if (book.counts.count < 64) book.counts[entry.key + 1] = 1;
+    }
+    foreach (var entry in book.counts)
+    {
+        if (entry.key % 1000 != 0) book.counts.Remove(entry.key);
+        book.counts.Remove(entry.key + 1000);
+    }
+    var after = book.counts.count;
+    foreach (var entry in book.counts) book.counts.Clear();
+    Debug.Log($"walked {rounds} {after + 9} {book.counts.count}");
+
+    // Keys at the edges
+    book.names[9223372036854775807] = "most";
+    book.names[-9223372036854775807L - 1L] = "least";
+    book.names[0L] = "";
+    book.counts[book.most] = 1;
+    book.counts[book.least] = 2;
+    book.owners[nobody] = 7;
+    book.scores[""] = Score { points = 1, name = "" };
+    book.scores[""] = Score { points = 2, name = "again" };
+    Debug.Log($"keys {book.names.count} {book.counts[book.most]} {book.counts[book.least]} {book.scores.Has("")} {book.owners[nobody]}");
+
+    var isNew = book.seen.Add(book.least);
+    var again = book.seen.Add(book.least);
+    book.seen.Add(book.most);
+    book.seen.Remove(0);
+    foreach (var key in book.seen) book.seen.Remove(key);
+    Debug.Log($"sets {book.words.count} {isNew} {again} {book.scores[""].points} {book.seen.count}");
+
+    // A map is a value: a copy stays as it was
+    var copy = book.counts;
+    book.counts[7] = 7;
+    book.counts = book.counts;
+    mut var mine = copy;
+    mine.Clear();
+    mine[1] = 1;
+    Debug.Log($"copies {copy.count} {book.counts.count} {mine.count}");
+}

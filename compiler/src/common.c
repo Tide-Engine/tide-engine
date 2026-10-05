@@ -64,7 +64,8 @@ str str_from(const char *cstr)
 
 bool str_eq(const str a, const str b)
 {
-    return a.len == b.len && memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;
+    // An empty str may have no pointer, which memcmp isn't to be given
+    return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
 }
 
 bool str_eq_c(const str a, const char *cstr)

@@ -108,8 +108,9 @@ static int take_message(lsp_message *out)
     long length = -1;
     size_t at = input_at;
     for (;;) {
+        if (at >= input_len) return 0; // Nothing read yet, or all of it taken: no line to look at
         const char *line = input + at;
-        const char *end = at < input_len ? memchr(line, '\n', input_len - at) : NULL;
+        const char *end = memchr(line, '\n', input_len - at);
         if (!end) return 0;
         const size_t n = (size_t)(end - line) + 1;
         at += n;

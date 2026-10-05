@@ -563,9 +563,10 @@ void tide_list_out_end(tide_list_out *out, tide_list *l, const uint32_t where)
 
 // Parallel loops (see tide/list.h)
 
+// `b` is above 0.
 static int32_t floor_div(const int32_t a, const int32_t b)
 {
-    return a / b - (a % b != 0 && (a < 0) != (b < 0) ? 1 : 0);
+    return a / b - (a % b != 0 && a < 0 ? 1 : 0);
 }
 
 // Element `i` of a world's list, to read, and how many elements from it sit
@@ -585,10 +586,14 @@ static const uint8_t *list_run(const tide_list l, const int32_t i, const uint32_
 
 void tide_par_list_begin(tide_par_list *l, tide_list *list, const uint32_t size, const int32_t block, const int32_t offset)
 {
-    *l = (tide_par_list){.list = list, .size = size, .block = block > 0 ? block : 1, .offset = offset};
+    *l = (tide_par_list){.list = list, .size = size, .block = block > 0 ? block : 1};
+    // Blocks start at the offset plus any multiple of their size, so an
+    // offset, which is any int a game says, is as good as what's left of it
+    // by that size: from 0 up to a block, which nothing below overflows with
+    l->offset = (int32_t)((int64_t)offset - (int64_t)floor_div(offset, l->block) * l->block);
     const int32_t count = tide_list_count(*list);
-    l->lo = -floor_div(offset, l->block);                         // The first block from 0 on...
-    l->hi = floor_div(count - offset - l->block, l->block) + 1; // ...and past the last one wholly inside
+    l->lo = 0;                                                       // The first block from 0 on...
+    l->hi = floor_div(count - l->offset - l->block, l->block) + 1; // ...and past the last one wholly inside
     if (!list->at || !tide_heap_of(list->at >> 30) || l->hi <= l->lo) return; // Nothing to go through
     // Tasks of 16 blocks or more, so that steps that each take long share
     // out well and steps that take little aren't swamped by their tasks

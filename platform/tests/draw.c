@@ -391,12 +391,13 @@ static const tide_texture quarters_texture = {quarters, 2, 2, 1};
 static void square_3d(const tide_float3 center, const tide_quaternion rotation, const float size, const tide_color color,
                       const tide_texture *texture)
 {
-    const tide_vertex3 corners[4] = {
-        {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, color},
-        {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, color},
-        {{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, color},
-        {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}, color},
-    };
+    // In one place every call: a mesh is known by where its corners are, and
+    // a local's place is another each call under AddressSanitizer
+    static tide_vertex3 corners[4];
+    corners[0] = (tide_vertex3){{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, color};
+    corners[1] = (tide_vertex3){{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, color};
+    corners[2] = (tide_vertex3){{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, color};
+    corners[3] = (tide_vertex3){{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}, color};
     static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
     tide_mesh mesh = {corners, 4, indices, 6, 0};
     mesh.version = tide_mesh_version(&mesh);

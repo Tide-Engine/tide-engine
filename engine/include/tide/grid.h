@@ -258,17 +258,24 @@ static inline void *tide_grid_cached_poke(tide_grid_cache *c, tide_grid *g, cons
 // grid itself doesn't change while they run. Along a sized axis, its blocks
 // are those wholly inside the size, as the grid ends there.
 //
+// Along an open axis the grid ends where the ints do: its blocks are those
+// wholly inside what an int can say, so no block's cells wrap around.
+//
 // Its tasks are tiles: the blocks that start in a chunk's cells, each tile a
 // chunk's place, whether the grid has that chunk or not.
+//
+// A game's offset is any int, and its cells are anywhere an int can say, so
+// nothing here is worked out in 32 bits that could go past them: places are
+// 64 bits wide until they're known to be a cell's.
 
 typedef struct tide_par_loop {
     tide_grid *grid;
     const tide_grid_shape *shape;
     uint32_t where;
     int32_t block[3];  // Each step's block, in cells: 1 for a cell
-    int32_t offset[3]; // Where the blocks start
-    int32_t lo[3];     // Blocks within its size, by index: from lo up to hi (open axes: any)
-    int32_t hi[3];
+    int32_t offset[3]; // Where the blocks start, from 0 up to a block: any offset's blocks are one of these's
+    int64_t first[3];  // Where the first block within its range starts, along each axis,
+    int64_t last[3];   // ...and the last
     uint32_t tasks;    // Tiles
     int32_t *tiles;    // Each tile's chunk place, 3 each, in order (by z, then y, then x)
     uint32_t chunks;   // The chunks its blocks can write in...
@@ -289,10 +296,12 @@ typedef struct tide_par_cache {
 void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, uint32_t where, const int32_t block[3],
                     const int32_t offset[3]);
 
-// Task `task`'s blocks, by index on each axis: from[i] up to to[i]. True when
-// the grid has no chunk at its tile's place, so a block there runs only if it
-// takes in part of a chunk the grid has (tide_par_live).
-bool tide_par_tile(const tide_par_loop *l, uint32_t task, int32_t from[3], int32_t to[3]);
+// Task `task`'s blocks: `origin` is where its first one starts, and they're
+// numbered from it on each axis, from[i] (0) up to to[i], so block k along
+// axis i starts at origin[i] + k * block[i], which is a cell's place and never
+// past an int. True when the grid has no chunk at its tile's place, so a block
+// there runs only if it takes in part of a chunk the grid has (tide_par_live).
+bool tide_par_tile(const tide_par_loop *l, uint32_t task, int32_t origin[3], int32_t from[3], int32_t to[3]);
 
 // Whether the block at `at` takes in part of a chunk the grid has.
 bool tide_par_live(const tide_par_loop *l, int32_t x, int32_t y, int32_t z);
@@ -315,16 +324,18 @@ static inline void *tide_par_cell(tide_par_loop *l, tide_par_cache *c, const int
 }
 
 // A task's window, which generated code reads and writes as plain memory:
-// the cells from lo to hi on each axis (both included), row by row from lo
-// (x fastest, then y, then z), as the loop found them. Zero where the grid
-// has no chunk and outside its size.
-void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const int32_t hi[3], void *cells);
+// `extent` cells along each axis from `lo`, row by row (x fastest, then y,
+// then z), as the loop found them. Zero where the grid has no chunk and
+// outside its size. The cells around a block at the ints' edge are the ones
+// their places wrap to, as `at + int2(1, 0)` wraps in the step's own code: `lo`
+// is any int, and a cell's place is `lo` plus its number, in 32 bits.
+void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const uint32_t extent[3], void *cells);
 
 // Puts the cells a task's steps wrote in its window into their chunks'
 // buffers: from `from` to `to` (both included), its blocks' cells, wherever
 // `cells` differs from `was`, the window as the loop found it. Rows that
 // didn't change make no buffer, so their chunks stay as they are.
-void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const int32_t hi[3], const int32_t from[3],
+void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const uint32_t extent[3], const int32_t from[3],
                          const int32_t to[3], const void *cells, const void *was);
 
 // Puts what the steps wrote into the grid and lets the buffers go.
@@ -343,16 +354,19 @@ typedef struct tide_grid_rows {
     uint32_t row;         // ...of the current row of chunks (one cy) from here...
     uint32_t row_end;     // ...to here
     uint32_t next;        // ...and the next of them along the current row of cells
-    int32_t y, y_end;     // The current row of cells, and past the last in its chunks
-    int32_t z, z_end;
+    // The current row of cells, and past the last in its chunks: 64 bits wide,
+    // as past the last cell an int can say is one more than an int holds
+    int64_t y, y_end;
+    int64_t z, z_end;
     bool done;
 } tide_grid_rows;
 
 void tide_grid_rows_begin(tide_grid_rows *r, tide_grid g, const tide_grid_shape *s);
 
 // The next run of cells along a row: x from *x0 up to *x1, at (*y, *z). False
-// once there are none.
-bool tide_grid_rows_next(tide_grid_rows *r, int32_t *x0, int32_t *x1, int32_t *y, int32_t *z);
+// once there are none. A run's end is past its last cell, which can be the
+// last an int says, so it and what counts up to it are 64 bits wide.
+bool tide_grid_rows_next(tide_grid_rows *r, int64_t *x0, int64_t *x1, int32_t *y, int32_t *z);
 
 // A grid in the scratch area, as Grid2(...) and Grid3(...) make it: its size
 // (0 where it's open), which a world's field takes when it owns it.
