@@ -291,6 +291,16 @@ static tide_gpu_id gl_target_make(const int width, const int height)
     return place + 1u;
 }
 
+// A target is a texture and a renderbuffer of its size: the smaller of the two limits.
+static int gl_target_limit(void)
+{
+    GLint texture = 0, renderbuffer = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &texture);
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &renderbuffer);
+    const GLint limit = texture < renderbuffer ? texture : renderbuffer;
+    return limit > 0 ? limit : 2048; // What every OpenGL ES 3 has, at least
+}
+
 static void gl_target_free(const tide_gpu_id target)
 {
     gl_target *t = &targets[target - 1u];
@@ -456,6 +466,7 @@ const tide_gpu tide_gpu_gl = {
     .pipeline = gl_pipeline_make,
     .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
+    .target_limit = gl_target_limit,
     .target_texture = gl_target_texture,
     .target_free = gl_target_free,
     .target_read = gl_target_read,

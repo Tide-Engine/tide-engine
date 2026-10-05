@@ -116,7 +116,7 @@ static float clamp_f(const float v, const float lo, const float hi)
 
 static float text_width(const tide_gui *g, const char *text)
 {
-    return g->measure(text, FONT, false).x;
+    return g->measure(text, FONT, NULL).x; // The GUI draws in the window
 }
 
 // ---------------------------------------------------------------------------

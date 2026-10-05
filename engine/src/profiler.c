@@ -222,7 +222,7 @@ static const float COLUMN = 340.0f;
 
 static float width_of(const tide_measure_fn measure, const char *text)
 {
-    return measure ? measure(text, TEXT, false).x : (float)strlen(text) * TEXT * 0.5f;
+    return measure ? measure(text, TEXT, NULL).x : (float)strlen(text) * TEXT * 0.5f;
 }
 
 // `text` in `width` pixels: cut where a character starts, if it's longer.

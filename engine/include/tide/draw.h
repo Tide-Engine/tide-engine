@@ -135,13 +135,40 @@ typedef struct tide_texture {
     uint64_t version; // Any number that's another whenever these pixels are (see tide_texture_version)
 } tide_texture;
 
-// Texture's common sampling reference: either CPU pixels or a rendered image.
-// Copying this value never copies an image. The existing tide_texture remains
-// the CPU pixel descriptor used by C drawing callers.
-typedef struct tide_texture_ref {
-    tide_texture image;
-    uint64_t target; // A rendered image's identity; 0 for CPU pixels
-} tide_texture_ref;
+// How big a rendering destination is. Its size is in logical pixels, as the
+// window's is, and its image has `scale` pixels of its own in each: the
+// display's for 0, so what's drawn into it is as sharp as what's drawn into
+// the window, and exactly that many for any other, whatever the display. The
+// image has the whole number of pixels nearest its size times its scale, 1 at
+// least. One that follows the window (`window` above 0) is always the
+// window's size times that, at the display's scale: its width, height and
+// scale aren't read.
+typedef struct tide_target_size {
+    float width, height;
+    float scale;
+    float window;
+} tide_target_size;
+
+// Whether there's an image of that size: a window to follow, or a width and a
+// height above 0 at a scale that isn't under it. Never for a NaN.
+static inline bool tide_target_size_valid(const tide_target_size size)
+{
+    if (size.window > 0.0f) return size.window <= 3.0e38f;
+    return size.width > 0.0f && size.height > 0.0f && size.width <= 3.0e38f && size.height <= 3.0e38f
+        && size.scale >= 0.0f && size.scale <= 3.0e38f;
+}
+
+// Its size in logical pixels, in a window of `window_size`.
+static inline tide_float2 tide_target_size_logical(const tide_target_size size, const tide_float2 window_size)
+{
+    if (size.window > 0.0f) return tide_f2(window_size.x * size.window, window_size.y * size.window);
+    return tide_f2(size.width, size.height);
+}
+
+static inline bool tide_target_size_same(const tide_target_size a, const tide_target_size b)
+{
+    return a.width == b.width && a.height == b.height && a.scale == b.scale && a.window == b.window;
+}
 
 // Managed images share this state, including through a copied color reference.
 // Disposal keeps a small tombstone until the build unloads, so aliases remain
@@ -149,7 +176,7 @@ typedef struct tide_texture_ref {
 typedef struct tide_render_target_state {
     struct tide_render_target_state *next;
     struct tide_render_target_state **owner;
-    int32_t width, height;
+    tide_target_size size;
     uint64_t version;
     uint64_t reload_id; // Temporary opaque identity while restoring another address space.
     bool alive;
@@ -183,14 +210,34 @@ static inline uint64_t tide_render_target_version(const uint64_t id)
 
 // A local destination reference. The window uses TIDE_RENDER_WINDOW. Borrowed
 // C descriptors use a nonzero id without the managed bit; their owner supplies
-// the dimensions. A zero-initialized reference is invalid.
+// the size. A zero-initialized reference is invalid.
 typedef struct tide_render_target {
     uint64_t id;
-    int32_t width, height;
+    tide_target_size size;
 } tide_render_target;
 
-tide_render_target tide_render_target_make(int32_t width, int32_t height);
-void tide_render_target_resize(tide_render_target target, int32_t width, int32_t height);
+// Texture's common sampling reference: either CPU pixels or a rendered image.
+// Copying this value never copies an image. The existing tide_texture remains
+// the CPU pixel descriptor used by C drawing callers.
+typedef struct tide_texture_ref {
+    tide_texture image;
+    tide_render_target target; // A rendered image; its id is 0 for CPU pixels
+} tide_texture_ref;
+
+// A target of `width` by `height` logical pixels, at the display's scale: its
+// image is made again, empty, when that changes.
+tide_render_target tide_render_target_make(float width, float height);
+// ...or at a scale of its own, above 0: `scale` pixels of its image in each
+// logical one, whatever the display. At 1, the image is `width` by `height`.
+tide_render_target tide_render_target_make_scaled(float width, float height, float scale);
+// A target that's always the window's size times `factor` (above 0), at the
+// display's scale: its image is made again, empty, when either changes.
+tide_render_target tide_render_target_screen(float factor);
+// ...and the window's size itself.
+tide_render_target tide_render_target_window(void);
+// Another size, at the scale it has, and an empty image. Not for a target that
+// follows the window, whose size is the window's to say.
+void tide_render_target_resize(tide_render_target target, float width, float height);
 void tide_render_target_dispose(tide_render_target target);
 void tide_render_target_adopt(tide_render_target target); // Native reload: move a live reference's bookkeeping.
 tide_render_target tide_render_target_recreate(tide_render_target previous); // Web reload: previous.id is opaque.
@@ -200,15 +247,16 @@ void tide_render_targets_free(void); // Build unload: references must no longer 
 static inline tide_render_target tide_render_target_resolve(tide_render_target target)
 {
     const tide_render_target_state *s = tide_render_target_state_of(target.id);
-    if (s) target.width = s->alive ? s->width : 0, target.height = s->alive ? s->height : 0;
+    if (s) target.size = s->alive ? s->size : (tide_target_size){0};
     return target;
 }
 
 static inline tide_texture_ref tide_render_target_color(const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
-    return (tide_texture_ref){.image = {.width = resolved.width, .height = resolved.height},
-                              .target = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? resolved.id : TIDE_RENDER_INVALID};
+    return (tide_texture_ref){
+        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? resolved.id : TIDE_RENDER_INVALID,
+                   .size = resolved.size}};
 }
 
 // A texture the list has, for the commands that draw with it: a copy of the
@@ -223,6 +271,7 @@ typedef struct tide_draw_texture {
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for
     uint8_t *pixels;   // width * height * 4 bytes, rows from the first
+    tide_target_size target; // TIDE_PIXELS_TARGET: the rendered image's size, where the others have a width and a height
 } tide_draw_texture;
 
 enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET };
@@ -231,8 +280,8 @@ enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET };
 // by the resource owner; its size is captured when the command is recorded.
 typedef struct tide_draw_target_data {
     uint64_t id;
-    uint64_t version; // Resize revision, captured with its dimensions.
-    int32_t width, height;
+    uint64_t version; // Resize revision, captured with its size.
+    tide_target_size size;
     uint32_t clipped;
     uint32_t camera_2d, camera_3d; // Command indexes, 1 + their places; 0 for the defaults.
 } tide_draw_target_data;
@@ -439,17 +488,28 @@ void tide_draw_forget(tide_draw_list *d);
 // Selects the destination for commands recorded next. Re-selecting it records
 // nothing, so adjacent compatible draws can still batch. Each destination has
 // its own camera and clip for the frame. An id of 0 selects the window.
-tide_draw_list *tide_draw_to(tide_draw_list *d, uint64_t id, int32_t width, int32_t height);
+tide_draw_list *tide_draw_to_sized(tide_draw_list *d, uint64_t id, tide_target_size size);
+
+// ...one of `width` by `height` logical pixels, at the display's scale.
+static inline tide_draw_list *tide_draw_to(tide_draw_list *d, const uint64_t id, const float width, const float height)
+{
+    return tide_draw_to_sized(d, id, (tide_target_size){.width = width, .height = height});
+}
 
 static inline tide_draw_list *tide_draw_render_target(tide_draw_list *d, const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
-    return tide_draw_to(d, resolved.id == TIDE_RENDER_WINDOW ? 0 : resolved.id ? resolved.id : TIDE_RENDER_INVALID,
-                        resolved.width, resolved.height);
+    return tide_draw_to_sized(d, resolved.id == TIDE_RENDER_WINDOW ? 0 : resolved.id ? resolved.id : TIDE_RENDER_INVALID,
+                              resolved.size);
 }
 
 // A rendered destination's color as a texture slot, without a CPU copy.
-uint32_t tide_draw_target_texture(tide_draw_list *d, uint64_t id, int32_t width, int32_t height);
+uint32_t tide_draw_target_texture_sized(tide_draw_list *d, uint64_t id, tide_target_size size);
+
+static inline uint32_t tide_draw_target_texture(tide_draw_list *d, const uint64_t id, const float width, const float height)
+{
+    return tide_draw_target_texture_sized(d, id, (tide_target_size){.width = width, .height = height});
+}
 
 // A CPU image or target color, copied or referenced as its source requires.
 uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
@@ -729,14 +789,15 @@ tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, tide_float2 
 // its widest line and the height of its lines, in the units `size` is in. One
 // line is `size` high, and each newline adds what's from one line to the
 // next. Text is fitted to the pixels it's drawn on, so where it's drawn is
-// part of the answer: in the window, whose units are its logical pixels, or
-// (`target`) in a render target, whose units are its own pixels. The platform
-// measures with its font (tide_platform_measure_text).
-typedef tide_float2 (*tide_measure_fn)(const char *text, float size, bool target);
+// part of the answer: in the window (NULL), or in a render target of the size
+// `target` says, whose image has pixels of its own. Either way the units are
+// logical pixels. The platform measures with its font
+// (tide_platform_measure_text).
+typedef tide_float2 (*tide_measure_fn)(const char *text, float size, const tide_target_size *target);
 
 // What stands in for a host's tide_measure_fn when it has none (NULL), as
 // tests and servers do: a guess, on the wide side.
-tide_float2 tide_draw_guess_text(const char *text, float size, bool target);
+tide_float2 tide_draw_guess_text(const char *text, float size, const tide_target_size *target);
 
 // The size of `text` as tide_draw_text would draw it now, at `size`, in the
 // units the commands recorded next are in: the screen's pixels after

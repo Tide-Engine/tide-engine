@@ -25,8 +25,9 @@ static tide_float2 target_size(const tide_draw_list *d, const tide_float2 window
     if (!d->target) return window_size;
     if (d->target > d->target_count) return tide_f2(0.0f, 0.0f);
     const tide_draw_target_data *target = &d->targets[d->target - 1u];
-    if (!tide_render_target_live(target->id)) return tide_f2(0.0f, 0.0f);
-    return tide_f2((float)target->width, (float)target->height);
+    if (!tide_render_target_live(target->id) || !tide_target_size_valid(target->size)) return tide_f2(0.0f, 0.0f);
+    // In logical pixels, as the window's: one that follows the window is its size, times its factor
+    return tide_target_size_logical(target->size, window_size);
 }
 
 // The last 2D camera or screen command is what commands recorded now draw
@@ -78,7 +79,7 @@ tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2
     return finite2(result) ? result : zero;
 }
 
-tide_float2 tide_draw_guess_text(const char *text, const float size, const bool target)
+tide_float2 tide_draw_guess_text(const char *text, const float size, const tide_target_size *target)
 {
     (void)target;
     uint32_t bytes = 0, lines = 1;
@@ -98,7 +99,9 @@ tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, co
     float scale;
     bool pixels;
     if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
-    const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(text, size * scale, d->target != 0);
+    // Where it's drawn: the window, or the target the commands recorded next go to, at its own scale
+    const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(
+        text, size * scale, d->target ? &d->targets[d->target - 1u].size : NULL);
     const tide_float2 result = tide_f2(drawn.x / scale, drawn.y / scale);
     return finite2(result) ? result : zero;
 }

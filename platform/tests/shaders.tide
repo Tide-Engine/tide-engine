@@ -114,6 +114,12 @@ local singleton Art
     Texture targetTexture;
     List<Vertex> targetQuad;
     int targetPass;
+    // Targets sized as the window is, or in pixels of their own (pass 6)
+    RenderTarget full;
+    RenderTarget half;
+    RenderTarget exact;
+    bool sized;
+    float2 window;
 }
 
 float3 Cell(int column, int row)
@@ -559,6 +565,13 @@ frag TargetInspect(Vertex vertex, mut Color color, Texture source, Art art)
     color = correct ? Color(sampled.a, sampled.r, sampled.g) : Color.magenta;
 }
 
+// Where a pixel is, over the window's size: in logical pixels, so the same
+// picture on a display of any scale, in a target as in the window.
+frag Where(Vertex vertex, mut Color color, Texture source, Pixel pixel, Art art)
+{
+    color = Color(pixel.position.x / art.window.x, pixel.position.y / art.window.y, 0);
+}
+
 vert TextureChecks(mut Vertex vertex, Texture source)
 {
     Color nearest = source.Sample(float2(0.25, 0.25), Filter.Point);
@@ -698,12 +711,57 @@ view Manual(Art art)
     Draw2D.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
 }
 
+// Targets that take their size from the window, and one with pixels of its
+// own: made once, and never resized, whatever shaders.c makes of the window
+// and its display's scale afterwards.
+[After(Targets)]
+view ScreenTargets(mut Art art)
+{
+    if (art.targetPass != 6) return;
+    if (!art.sized)
+    {
+        art.full = RenderTarget.Screen();
+        art.half = RenderTarget.Screen(0.5);
+        art.exact = RenderTarget(4, 4, 1);
+        art.sized = true;
+    }
+    var w = Screen.width;
+    var h = Screen.height;
+    art.window = float2(w, h);
+    // Where each of its pixels is, then a square in its top right corner: in logical pixels, as in the window
+    Draw.Blit(art.uploaded, art.full, Where);
+    art.full.Screen();
+    art.full.Rect(float2(w - 16, 16), float2(32), Color.blue);
+    // Half the window, so its own left half is a quarter of the window across
+    art.half.Screen();
+    art.half.Clear(Color.black);
+    art.half.Rect(float2(w * 0.125, h * 0.25), float2(w * 0.25, h * 0.5), Color.green);
+    // Four pixels by four on any display, the first one white
+    art.exact.Screen();
+    art.exact.Clear(Color.black);
+    art.exact.Rect(float2(0.5), float2(1), Color.white);
+
+    Draw.Blit(art.full.color, Draw.window, TargetCopy);
+    Draw2D.Screen();
+    Draw2D.Clip();
+    // The half one over the window's bottom right quarter, pixel for pixel
+    Draw2D.Mesh([Vertex { position = float2(w * 0.5, h * 0.5) },
+                 Vertex { position = float2(w, h * 0.5), uv = float2(1, 0) },
+                 Vertex { position = float2(w, h), uv = float2(1, 1) },
+                 Vertex { position = float2(w * 0.5, h), uv = float2(0, 1) }], art.faces, art.half.color, Filter.Point);
+    // ...and the exact one 64 logical pixels square in its bottom left corner, blended between its four pixels
+    Draw2D.Mesh([Vertex { position = float2(0, h - 64) },
+                 Vertex { position = float2(64, h - 64), uv = float2(1, 0) },
+                 Vertex { position = float2(64, h), uv = float2(1, 1) },
+                 Vertex { position = float2(0, h), uv = float2(0, 1) }], art.faces, art.exact.color);
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0) return;
+    if (art.targetPass == 0 || art.targetPass == 6) return; // 6 is ScreenTargets'
     if (art.targetPass >= 4)
     {
         Draw2D.Screen();

@@ -202,6 +202,62 @@ static void run_target_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
+// Targets that take their size from the window, and one with pixels of its
+// own, made once by the game (pass 6): drawn as windows of several sizes would
+// draw them on displays of several scales, they're the same picture in
+// logical pixels, with nothing resized in between.
+static void run_screen_target_checks(const char *when)
+{
+    static const struct {
+        int width, height;
+        float scale;
+    } windows[] = {{SIZE, SIZE, 1.0f}, {SIZE, SIZE, 2.0f}, {SIZE, SIZE, 1.5f}, {320, 200, 1.5f}, {SIZE, SIZE, 1.0f}};
+    for (size_t k = 0; k < sizeof windows / sizeof windows[0]; k++) {
+        const float w = (float)windows[k].width, h = (float)windows[k].height, scale = windows[k].scale;
+        const struct {
+            float x, y; // In logical pixels
+            int low[3], high[3];
+            const char *what;
+        } wanted[] = {
+            {64, 64, {0}, {0}, "a frag's pixel.position is in logical pixels in a screen target"},
+            {w * 0.75f, h * 0.25f, {0}, {0}, "all the way across it"},
+            {w - 16, 16, {0, 0, 250}, {5, 5, 255}, "a screen target's own units are logical pixels, from the window's corner"},
+            {w * 0.7f, h * 0.75f, {0, 250, 0}, {5, 255, 5}, "a target of half the window is half as many logical pixels across"},
+            {w * 0.9f, h * 0.75f, {0, 0, 0}, {5, 5, 5}, "and no more"},
+            {8, h - 56, {225, 225, 225}, {255, 255, 255}, "a target with 1 pixel a unit has its 4 by 4 pixels: the first"},
+            {12, h - 56, {165, 165, 165}, {210, 210, 210}, "blended with the next, a quarter of the target across"},
+            {40, h - 24, {0, 0, 0}, {5, 5, 5}, "and the others"},
+        };
+        enum { COUNT = sizeof wanted / sizeof wanted[0] };
+        local.Art.targetPass = 6;
+        tide_draw_reset(&list);
+        tide_gui_begin(&gui, &devices, tide_f2(w, h), tide_platform_measure_text);
+        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_gui_end(&gui, &list);
+        tide_float2 points[COUNT];
+        uint32_t got[COUNT];
+        for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x * scale, wanted[i].y * scale); // In its display's pixels
+        tide_platform_read_pixels_as(&list, windows[k].width, windows[k].height, scale, points, COUNT, got);
+        for (int i = 0; i < COUNT; i++) {
+            int low[3], high[3];
+            for (int c = 0; c < 3; c++) low[c] = wanted[i].low[c], high[c] = wanted[i].high[c];
+            if (i < 2) { // Where the pixel is, over the window's size
+                const int across = (int)(wanted[i].x / w * 255.0f + 0.5f), down = (int)(wanted[i].y / h * 255.0f + 0.5f);
+                low[0] = across - 3, high[0] = across + 3, low[1] = down - 3, high[1] = down + 3, low[2] = 0, high[2] = 3;
+            }
+            bool ok = true;
+            for (int c = 0; c < 3; c++) {
+                const int channel = (int)(got[i] >> (24 - 8 * c) & 0xFFu);
+                ok = ok && channel >= low[c] && channel <= high[c];
+            }
+            printf("%s: %s, in a window of %d by %d at scale %g%s (0x%08X)\n", ok ? "ok" : "FAIL", wanted[i].what,
+                   windows[k].width, windows[k].height, (double)scale, when, (unsigned)got[i]);
+            if (!ok) failures++;
+        }
+    }
+    local.Art.targetPass = 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -221,6 +277,7 @@ static int frame(void *user, const float seconds)
     if (lost == 2) {
         run_checks(", on another device");
         run_target_checks(", on another device");
+        run_screen_target_checks(", on another device");
         return failures;
     }
 #endif
@@ -229,6 +286,7 @@ static int frame(void *user, const float seconds)
     // A second frame draws the same from what the list and the renderer kept
     run_checks(", again");
     run_target_checks(", again");
+    run_screen_target_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
@@ -244,8 +302,8 @@ int main(void)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world); // The entities are there
     tide_local_init(&local);
-    local.Art.sourceTarget = (tide_render_target){.id = 1001, .width = 32, .height = 32};
-    local.Art.outputTarget = (tide_render_target){.id = 1002, .width = 48, .height = 24};
+    local.Art.sourceTarget = (tide_render_target){.id = 1001, .size = {.width = 32, .height = 32}};
+    local.Art.outputTarget = (tide_render_target){.id = 1002, .size = {.width = 48, .height = 24}};
     static const uint8_t pixels[] = {255, 0, 0, 255, 0, 255, 0, 255,
                                      0, 0, 255, 255, 255, 255, 255, 255};
     local.Art.uploaded = (tide_texture_ref){.image = {.pixels = pixels, .width = 2, .height = 2, .version = 1}};
