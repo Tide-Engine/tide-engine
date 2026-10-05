@@ -97,12 +97,6 @@ float tide_font_baseline(void)
     return baseline;
 }
 
-float tide_font_line(void)
-{
-    start();
-    return line;
-}
-
 int tide_font_pixels(const float size, const float scale, float *stretch)
 {
     const float wanted = size * scale;
@@ -124,22 +118,39 @@ static int advance_pixels(const uint32_t codepoint, const int pixels)
     return (int)((float)units * (float)pixels / em + 0.5f);
 }
 
-float tide_font_measure(const char *text, const float size, const float scale)
+float tide_font_pitch(const int pixels, const float stretch)
 {
     start();
-    if (!(size > 0.0f) || !(scale > 0.0f)) return 0.0f;
+    return floorf(line * (float)pixels * stretch + 0.5f);
+}
+
+void tide_font_size(const char *text, const float size, const float scale_x, const float scale_y, float *width,
+                    float *height)
+{
+    start();
+    *width = *height = 0.0f;
+    if (!(size > 0.0f) || !(scale_x > 0.0f) || !(scale_y > 0.0f)) return;
     float stretch;
-    const int pixels = tide_font_pixels(size, scale, &stretch);
-    int widest = 0, width = 0;
+    const int pixels = tide_font_pixels(size, scale_y, &stretch);
+    int widest = 0, across = 0, lines = 1;
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
-            if (width > widest) widest = width;
-            width = 0;
+            if (across > widest) widest = across;
+            across = 0;
+            lines++;
         } else {
-            width += advance_pixels(c, pixels);
+            across += advance_pixels(c, pixels);
         }
     }
-    return (float)(width > widest ? width : widest) * stretch / scale;
+    *width = (float)(across > widest ? across : widest) * stretch / scale_x;
+    *height = size + (float)(lines - 1) * tide_font_pitch(pixels, stretch) / scale_y;
+}
+
+float tide_font_measure(const char *text, const float size, const float scale)
+{
+    float width, height;
+    tide_font_size(text, size, scale, scale, &width, &height);
+    return width;
 }
 
 // ---------------------------------------------------------------------------

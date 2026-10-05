@@ -362,6 +362,12 @@ static void build_signatures(void)
     text->argc = 4;
     text->params[3] = T_COLOR;
     describe(text, "text, position, size, color", "Text: `position` is its top left corner and `size` its height.");
+    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 2, T_STR, T_F, T_NONE),
+             "text, size",
+             "How big `Draw2D.Text` would draw `text` at `size` now: the width of its widest line in x and the height "
+             "of its lines in y, in the units the Draw2D calls are in. One line is `size` high. Center a line at "
+             "`center` with `Draw2D.Text(text, center - Draw2D.MeasureText(text, size) * 0.5, size, color)` on the "
+             "screen, where y goes down.");
     static const char mesh_doc[] =
         "Triangles: three of `indices` each, places in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
