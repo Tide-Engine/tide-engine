@@ -265,6 +265,9 @@ TIDE_TEST(gui_themes_wrap_a_block)
     TIDE_CHECK(plain->kind == TIDE_DRAW_RECT && same_color(plain->color, usual.control));
     TIDE_REQUIRE(click("Themed", 0));
     TIDE_CHECK(local.Menu.themed == 1);
+    // The control beside them draws nothing, and takes its clicks
+    TIDE_REQUIRE(click_at("Plain", 0, 100.0f)); // Past the button, on the control
+    TIDE_CHECK(local.Menu.themed == 11);
 }
 
 TIDE_TEST(gui_set_themes_hold_for_the_views_after)
