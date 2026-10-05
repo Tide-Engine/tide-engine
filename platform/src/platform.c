@@ -390,14 +390,15 @@ typedef struct camera {
 } camera;
 
 static camera last_camera = {{0.0f, 0.0f}, 1.0f, false};
-static int draw_width, draw_height; // The selected target's logical pixels, during a draw
+static float draw_width, draw_height;           // The selected target's logical pixels, during a draw
+static int draw_pixel_width, draw_pixel_height; // ...and its image's own
 
 static tide_float2 to_screen(const camera *cam, const tide_float2 p)
 {
     if (cam->gui) return tide_f2(p.x * cam->scale, p.y * cam->scale);
-    const int width = draw_width ? draw_width : screen_width, height = draw_height ? draw_height : screen_height;
-    return tide_f2((float)width * 0.5f + (p.x - cam->center.x) * cam->scale,
-                   (float)height * 0.5f - (p.y - cam->center.y) * cam->scale);
+    const float width = draw_width > 0.0f ? draw_width : (float)screen_width;
+    const float height = draw_height > 0.0f ? draw_height : (float)screen_height;
+    return tide_f2(width * 0.5f + (p.x - cam->center.x) * cam->scale, height * 0.5f - (p.y - cam->center.y) * cam->scale);
 }
 
 // A rect's top left corner on screen: y goes up in the world, down in the GUI.
@@ -510,22 +511,37 @@ typedef struct frame_target {
     uint32_t camera_3d, fit;
     draw_step clipping;
     tide_gpu_id gpu;
-    int width, height;
+    float width, height;           // Its logical pixels, as the window's
+    int pixel_width, pixel_height; // ...and its image's own
     uint64_t id;
     uint64_t version;
+    tide_target_size size; // As the list recorded it
     bool valid;
 } frame_target;
 
 static frame_target *frame_targets;
 static uint32_t frame_target_capacity;
 
-// Whether the selected destination uses its own pixels rather than the
-// window's logical pixels: a render target or the readback target does. A
-// headless window's frame doesn't: it's drawn as a window's is, scale and all.
-static bool offscreen;
+// What a list is drawn into, where its commands for the window go: the
+// window, a headless one's frame, or pixels to read back. It has a size in
+// logical pixels and one in its own, and how many of the second are in the
+// first is the display's scale for this draw: the list's render targets that
+// are at the display's scale take it from here, as its text does.
+typedef struct draw_root {
+    tide_gpu_id gpu;
+    float width, height;
+    int pixel_width, pixel_height;
+} draw_root;
 
-// Whether the selected destination's pixels aren't logical ones: a window's on
-// a scaled display. Circles are drawn as smooth shapes there (see add_circle).
+static draw_root root; // The draw's, while a list is drawn
+
+// The most pixels a side a render target's image has on the device there is
+// (tide_gpu.target_limit), or 0 before one drew.
+static int target_most;
+
+// Whether the selected destination's pixels aren't logical ones: a window's
+// on a scaled display, or a render target's at another scale than 1. Circles
+// are drawn as smooth shapes there (see add_circle).
 static bool scaled;
 
 // The window's pixels in a logical one, which its text is fitted to (see font.h).
@@ -534,10 +550,56 @@ static tide_float2 window_scale(void)
     return tide_f2((float)pixel_width / (float)screen_width, (float)pixel_height / (float)screen_height);
 }
 
-// The target's pixels per logical pixel.
+// The selected destination's pixels per logical pixel.
 static tide_float2 pixel_scale(void)
 {
-    return offscreen ? tide_f2(1.0f, 1.0f) : window_scale();
+    if (!(draw_width > 0.0f)) return window_scale(); // Not in a draw
+    return tide_f2((float)draw_pixel_width / draw_width, (float)draw_pixel_height / draw_height);
+}
+
+// A whole number of pixels for `pixels` of them: the nearest, 1 at least.
+static int whole_pixels(const double pixels)
+{
+    return pixels < 1.5 ? 1 : (int)floor(pixels + 0.5);
+}
+
+// A render target's size as it's drawn under `to`: its logical pixels, like
+// the window's, and its image's own. One at the display's scale has as many
+// of those in a logical one as `to` has, and one that follows the window has
+// `to`'s size times its factor, in both. An image the GPU has no room for
+// keeps its shape with fewer pixels (`limited`): what's drawn into it still
+// lands where it would, less sharp. False for a size there's no image of.
+static bool target_extent(const tide_target_size size, const draw_root *to, float *width, float *height,
+                          int *wide_pixels, int *high_pixels, bool *limited)
+{
+    *width = *height = 0.0f;
+    *wide_pixels = *high_pixels = 0;
+    *limited = false;
+    if (!tide_target_size_valid(size) || !(to->width > 0.0f) || !(to->height > 0.0f)) return false;
+    const tide_float2 logical = tide_target_size_logical(size, tide_f2(to->width, to->height));
+    if (!(logical.x > 0.0f) || !(logical.y > 0.0f)) return false;
+    double wide, high;
+    if (size.window > 0.0f) { // The window's own pixels, times the factor: all of them for 1
+        wide = (double)to->pixel_width * (double)size.window;
+        high = (double)to->pixel_height * (double)size.window;
+    } else if (size.scale > 0.0f) {
+        wide = (double)size.width * (double)size.scale;
+        high = (double)size.height * (double)size.scale;
+    } else {
+        wide = (double)size.width * (double)to->pixel_width / (double)to->width;
+        high = (double)size.height * (double)to->pixel_height / (double)to->height;
+    }
+    const double longest = wide > high ? wide : high;
+    if (target_most > 0 && floor(longest + 0.5) > (double)target_most) {
+        wide *= (double)target_most / longest;
+        high *= (double)target_most / longest;
+        *limited = true;
+    }
+    *width = logical.x;
+    *height = logical.y;
+    *wide_pixels = whole_pixels(wide);
+    *high_pixels = whole_pixels(high);
+    return true;
 }
 
 // Room for `count` more extras after the ones there.
@@ -848,11 +910,14 @@ static uint32_t gpu_texture_count, gpu_texture_capacity;
 static uint32_t gpu_frame;
 
 // Render targets retain their attachments across passes and frames. Their
-// owner supplies a stable identity; resizing replaces both attachments.
+// owner supplies a stable identity; resizing replaces both attachments, and
+// so does an image that comes to another number of pixels: the display's
+// scale changed under a target that's at it, or the window's size under one
+// that follows it.
 typedef struct gpu_target {
     uint64_t id;
     uint64_t version;
-    int width, height;
+    int width, height; // Its image's pixels
     tide_gpu_id target;
 } gpu_target;
 
@@ -868,10 +933,15 @@ static gpu_target *find_target(const uint64_t id)
     return NULL;
 }
 
-// Called outside a pass: a newly made image is black, with its depth reset.
-static gpu_target *target_for(const uint64_t id, const int width, const int height, const uint64_t version)
+// The GPU's image of a render target of `size`, under the draw's root. Called
+// outside a pass: a newly made image is black, with its depth reset.
+static gpu_target *target_for(const uint64_t id, const tide_target_size size, const uint64_t version)
 {
-    if (!tide_render_target_live(id) || width <= 0 || height <= 0) return NULL;
+    float logical_width, logical_height;
+    int width, height;
+    bool limited;
+    if (!tide_render_target_live(id)
+        || !target_extent(size, &root, &logical_width, &logical_height, &width, &height, &limited)) return NULL;
     gpu_target *g = find_target(id);
     if (!g) {
         if (gpu_target_count == gpu_target_capacity) {
@@ -890,6 +960,11 @@ static gpu_target *target_for(const uint64_t id, const int width, const int heig
         g->target = gpu->target(width, height);
         gpu->begin(g->target, true);
         gpu->end();
+        if (limited) {
+            fprintf(stderr, "tide: a render target of %g by %g is more pixels than this GPU has a side (%d): its image "
+                            "is %d by %d, less sharp\n", (double)logical_width, (double)logical_height, target_most,
+                    width, height);
+        }
     }
     return g;
 }
@@ -939,6 +1014,7 @@ static bool gpu_ready(void)
     free(gpu_state.target_pixels);
     free(gpu_state.frame_pixels);
     memset(&gpu_state, 0, sizeof gpu_state);
+    target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
     gpu_target_count = 0;
@@ -1434,7 +1510,7 @@ static bool unavailable_texture(const tide_draw_list *list, const uint32_t textu
 {
     if (!texture || texture > list->texture_count) return false;
     const tide_draw_texture *t = &list->textures[texture - 1u];
-    return t->space == TIDE_PIXELS_TARGET && (!tide_render_target_live(t->id) || t->width <= 0 || t->height <= 0);
+    return t->space == TIDE_PIXELS_TARGET && (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target));
 }
 
 static bool samples_unavailable(const tide_draw_list *list, const draw_step *s)
@@ -1453,14 +1529,22 @@ static bool samples_unavailable(const tide_draw_list *list, const draw_step *s)
 // A source recorded after Resize first sees the replacement black image,
 // even when no command draws into it. An older source still aliases the
 // current attachment; it never rolls a target back to an earlier revision.
+// A source at the revision there is, whose image now comes to another number
+// of pixels (the display's scale changed, or the window's size under a target
+// that follows it), sees the image made again, black, as a destination would.
 static bool prepare_source_target(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     if (!texture || texture > list->texture_count) return false;
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (t->space != TIDE_PIXELS_TARGET) return false;
     const gpu_target *g = find_target(t->id);
-    if (g && (!tide_render_target_managed(t->id) || t->version <= g->version)) return false;
-    if (!check) target_for(t->id, t->width, t->height, t->version);
+    if (g && (!tide_render_target_managed(t->id) || t->version < g->version)) return false;
+    float width, height;
+    int wide, high;
+    bool limited;
+    if (!target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) return false;
+    if (g && g->target && t->version == g->version && g->width == wide && g->height == high) return false;
+    if (!check) target_for(t->id, t->target, t->version);
     return true;
 }
 
@@ -1491,7 +1575,7 @@ static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_st
     tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     if (!s->camera || s->fit) {
-        const float across = (float)draw_height / (float)draw_width;
+        const float across = draw_height / draw_width;
         world_to_clip.c0.x *= across, world_to_clip.c1.x *= across;
         world_to_clip.c2.x *= across, world_to_clip.c3.x *= across;
     }
@@ -1502,7 +1586,7 @@ static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_st
 // where to_screen puts a point, on the target.
 static tide_float4x4 camera_to_clip(const camera *cam)
 {
-    const float x = 2.0f * cam->scale / (float)draw_width, y = 2.0f * cam->scale / (float)draw_height;
+    const float x = 2.0f * cam->scale / draw_width, y = 2.0f * cam->scale / draw_height;
     tide_float4x4 m = tide_identity_f4x4();
     m.c0.x = x;
     if (cam->gui) { // From the top left, y down
@@ -1530,7 +1614,7 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     block.engine.camera = s->kind == STEP_BLIT ? tide_identity_f4x4() :
                           shader->dims == 3 ? camera_3d_to_clip(list, s) : camera_to_clip(&s->through);
     block.engine.screen[0] = scale.x, block.engine.screen[1] = scale.y;
-    block.engine.screen[2] = (float)(offscreen ? draw_height : pixel_height);
+    block.engine.screen[2] = (float)draw_pixel_height;
     block.engine.screen[3] = 0.0f;
     if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);
     gpu->use(s->pipeline);
@@ -1570,7 +1654,7 @@ static int clamp_pixel(const int v, const int most)
 // Only what's inside the step's rect draws from here on, or everything again.
 static void clip(const draw_step *s)
 {
-    const int width = offscreen ? draw_width : pixel_width, height = offscreen ? draw_height : pixel_height;
+    const int width = draw_pixel_width, height = draw_pixel_height;
     if (s->kind == STEP_NO_CLIP) {
         gpu->scissor(0, 0, width, height);
         return;
@@ -1584,19 +1668,21 @@ static void clip(const draw_step *s)
     gpu->scissor(left, top, right > left ? right - left : 0, bottom > top ? bottom - top : 0);
 }
 
-static void select_target(const uint32_t at, const tide_gpu_id window)
+static void select_target(const uint32_t at)
 {
+    const frame_target *f = &frame_targets[at];
     draw_target = at;
-    draw_width = frame_targets[at].width;
-    draw_height = frame_targets[at].height;
-    offscreen = at != 0 || window != gpu_state.frame;
-    scaled = !offscreen && (pixel_width != screen_width || pixel_height != screen_height);
+    draw_width = f->width;
+    draw_height = f->height;
+    draw_pixel_width = f->pixel_width;
+    draw_pixel_height = f->pixel_height;
+    scaled = (float)draw_pixel_width != draw_width || (float)draw_pixel_height != draw_height;
 }
 
 static screen_uniforms target_uniforms(void)
 {
     const tide_float2 scale = pixel_scale();
-    screen_uniforms u = {.screen = {[0] = 2.0f / (float)draw_width, [5] = -2.0f / (float)draw_height,
+    screen_uniforms u = {.screen = {[0] = 2.0f / draw_width, [5] = -2.0f / draw_height,
                                     [10] = 1.0f, [12] = -1.0f, [13] = 1.0f, [15] = 1.0f},
                          .scale = {scale.x, scale.y}};
     if (gpu_state.atlas) {
@@ -1606,15 +1692,18 @@ static screen_uniforms target_uniforms(void)
     return u;
 }
 
-// Draws the list into `target`: the window for 0, or tide_platform_read_pixels'
-// own pixels. With `over`, it goes over what's there (the overlay), and leaves
-// the frame's camera, textures and meshes as they are.
-static void draw_list(const tide_draw_list *list, const tide_gpu_id target, const bool over)
+// Draws the list into `to`: the window, a headless one's frame, or
+// tide_platform_read_pixels' own pixels. With `over`, it goes over what's
+// there (the overlay), and leaves the frame's camera, textures and meshes as
+// they are.
+static void draw_list(const tide_draw_list *list, const draw_root to, const bool over)
 {
     if (!gpu_ready()) { // Between a device that was lost and the next
         if (!over) draw_calls = 0;
         return;
     }
+    const tide_gpu_id target = to.gpu;
+    root = to;
     if (!over && target_epoch != list->epoch) {
         for (uint32_t i = 0; i < gpu_target_count; i++) gpu->target_free(gpu_targets[i].target);
         gpu_target_count = 0;
@@ -1627,25 +1716,33 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
                                      (targets + 1u) * sizeof(frame_target));
         frame_target_capacity = targets + 1u;
     }
-    frame_targets[targets] = (frame_target){.id = TIDE_RENDER_INVALID, .width = 1, .height = 1}; // Invalid destination
+    // Invalid destination
+    frame_targets[targets] = (frame_target){.id = TIDE_RENDER_INVALID, .width = 1.0f, .height = 1.0f,
+                                            .pixel_width = 1, .pixel_height = 1};
     for (uint32_t i = 0; i < targets; i++) {
-        frame_targets[i] = (frame_target){.through = {.scale = 1.0f}, .world = {.scale = 1.0f}, .fit = 1,
-                                          .clipping = {.kind = STEP_NO_CLIP}};
+        frame_target *f = &frame_targets[i];
+        *f = (frame_target){.through = {.scale = 1.0f}, .world = {.scale = 1.0f}, .fit = 1,
+                            .clipping = {.kind = STEP_NO_CLIP}};
         if (i) {
             const tide_draw_target_data *t = &list->targets[i - 1u];
-            frame_targets[i].id = t->id;
-            frame_targets[i].version = t->version;
-            frame_targets[i].width = t->width;
-            frame_targets[i].height = t->height;
-            frame_targets[i].valid = tide_render_target_live(t->id) && t->width > 0 && t->height > 0;
+            bool limited;
+            f->id = t->id;
+            f->version = t->version;
+            f->size = t->size;
+            // In logical pixels, like the window: what's drawn into it lands as it would there
+            f->valid = target_extent(t->size, &root, &f->width, &f->height, &f->pixel_width, &f->pixel_height, &limited)
+                    && tide_render_target_live(t->id);
+            if (!f->valid) f->width = f->height = 1.0f, f->pixel_width = f->pixel_height = 1;
         } else {
-            frame_targets[i].gpu = target;
-            frame_targets[i].width = screen_width;
-            frame_targets[i].height = screen_height;
-            frame_targets[i].valid = true;
+            f->gpu = target;
+            f->width = root.width;
+            f->height = root.height;
+            f->pixel_width = root.pixel_width;
+            f->pixel_height = root.pixel_height;
+            f->valid = true;
         }
     }
-    select_target(0, target);
+    select_target(0);
     tide_font_frame();
     shape_count = 0;
     shape_extra_count = 0;
@@ -1659,7 +1756,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         const rgba color = to_rgba(c->color);
         switch ((tide_draw_kind)c->kind) {
         case TIDE_DRAW_TARGET:
-            select_target(c->target < targets ? c->target : targets, target);
+            select_target(c->target < targets ? c->target : targets);
             add_step(STEP_TARGET);
             break;
         case TIDE_DRAW_CLEAR:
@@ -1667,7 +1764,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         case TIDE_DRAW_CAMERA:
             cam->center = c->a;
-            cam->scale = c->b.x > 0.0f ? (float)draw_height / (2.0f * c->b.x) : 1.0f;
+            cam->scale = c->b.x > 0.0f ? draw_height / (2.0f * c->b.x) : 1.0f;
             cam->gui = false;
             f->world = *cam;
             break;
@@ -1757,7 +1854,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     upload_meshes_3d(list);
     const bool shaded = upload_shaded(list);
     upload_atlas();
-    select_target(0, target);
+    select_target(0);
     screen_uniforms uniforms = target_uniforms();
     gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     bool pass_active = true;
@@ -1767,14 +1864,14 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         if (s->target != draw_target) {
             if (pass_active) gpu->end();
             pass_active = false;
-            select_target(s->target, target);
+            select_target(s->target);
             frame_target *f = &frame_targets[draw_target];
             if (!f->valid) {
                 fprintf(stderr, "draw skipped: render target %llu is invalid or disposed\n", (unsigned long long)f->id);
                 continue;
             }
             if (draw_target) {
-                const gpu_target *g = target_for(f->id, f->width, f->height, f->version);
+                const gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
             }
             gpu->begin(f->gpu, false);
@@ -1866,8 +1963,9 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         }
     }
     if (pass_active) gpu->end();
-    offscreen = false;
-    draw_width = draw_height = 0;
+    draw_width = draw_height = 0.0f;
+    draw_pixel_width = draw_pixel_height = 0;
+    scaled = false;
     draw_target = 0;
     if (!over) {
         draw_calls = calls;
@@ -1882,16 +1980,20 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
 }
 
 // What frames draw into: the window (0), or a headless one's own pixels, made
-// the first time and again when the device is another.
-static tide_gpu_id frame_destination(void)
+// the first time and again when the device is another. Either way it's the
+// window's size, at the display's scale.
+static draw_root frame_destination(void)
 {
-    if (!headless || !gpu_ready()) return 0;
+    draw_root to = {.width = (float)screen_width, .height = (float)screen_height,
+                    .pixel_width = pixel_width, .pixel_height = pixel_height};
+    if (!headless || !gpu_ready()) return to;
     if (!gpu_state.frame) {
         gpu_state.frame = gpu->target(pixel_width, pixel_height);
         gpu_state.frame_width = pixel_width;
         gpu_state.frame_height = pixel_height;
     }
-    return gpu_state.frame;
+    to.gpu = gpu_state.frame;
+    return to;
 }
 
 void tide_platform_draw(const tide_draw_list *list)
@@ -1912,10 +2014,21 @@ tide_float2 tide_platform_screen_size(void)
     return tide_f2((float)screen_width, (float)screen_height);
 }
 
-// As add_text draws it: on the window's pixels, or a render target's own.
-tide_float2 tide_platform_measure_text(const char *text, const float size, const bool target)
+// As add_text draws it: on the window's pixels, or on those of a render
+// target's image, as many to a logical one as a frame drawn into the window
+// gives it.
+tide_float2 tide_platform_measure_text(const char *text, const float size, const tide_target_size *target)
 {
-    const tide_float2 scale = target ? tide_f2(1.0f, 1.0f) : window_scale();
+    tide_float2 scale = window_scale();
+    if (target) {
+        const draw_root window = {.width = (float)screen_width, .height = (float)screen_height,
+                                  .pixel_width = pixel_width, .pixel_height = pixel_height};
+        float width, height;
+        int wide, high;
+        bool limited;
+        if (!target_extent(*target, &window, &width, &height, &wide, &high, &limited)) return tide_f2(0.0f, 0.0f);
+        scale = tide_f2((float)wide / width, (float)high / height);
+    }
     tide_float2 measured;
     tide_font_size(text, size, scale.x, scale.y, &measured.x, &measured.y);
     return measured;
@@ -2006,8 +2119,16 @@ bool tide_platform_capture(const char *path)
 
 void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *points, const int count, uint32_t *out)
 {
-    const int width = screen_width, height = screen_height;
-    if (!gpu_ready()) { // Nothing to draw with for now: no pixels
+    tide_platform_read_pixels_as(list, screen_width, screen_height, 1.0f, points, count, out);
+}
+
+void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_width, const int logical_height,
+                                  const float scale, const tide_float2 *points, const int count, uint32_t *out)
+{
+    // As a window of that size has them on a display scaled that much (see follow_window)
+    const int width = whole_pixels((double)logical_width * (double)scale);
+    const int height = whole_pixels((double)logical_height * (double)scale);
+    if (!gpu_ready() || logical_width < 1 || logical_height < 1 || !(scale > 0.0f)) { // Nothing to draw with: no pixels
         memset(out, 0, (size_t)(count > 0 ? count : 0) * sizeof *out);
         return;
     }
@@ -2020,7 +2141,8 @@ void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *po
         gpu_state.target_width = width;
         gpu_state.target_height = height;
     }
-    draw_list(list, gpu_state.target, false);
+    draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
+                                .pixel_width = width, .pixel_height = height}, false);
     gpu->target_read(gpu_state.target, gpu_state.target_pixels);
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;

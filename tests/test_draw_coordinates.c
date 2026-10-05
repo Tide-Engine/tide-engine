@@ -360,3 +360,56 @@ TIDE_TEST(draw_coordinates_targets_forget)
     TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_CIRCLE && d.target == 0);
     tide_draw_free(&d);
 }
+
+// What says how big text is drawn, standing in for a renderer: it notes where
+// it was asked to measure.
+static tide_target_size measured_in;
+static bool measured_in_window;
+
+static tide_float2 note_measure(const char *text, const float size, const tide_target_size *target)
+{
+    (void)text;
+    measured_in_window = target == NULL;
+    if (target) measured_in = *target;
+    return tide_f2(size * 3.0f, size);
+}
+
+// A target is in logical pixels, like the window, whatever its image's scale:
+// conversions don't read the scale, and one that follows the window is the
+// window's size times its factor, as the window is now.
+TIDE_TEST(draw_coordinates_targets_are_in_logical_pixels)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 400.0f), wider = tide_f2(1000.0f, 600.0f);
+    const tide_render_target dense = tide_render_target_make_scaled(200.0f, 100.0f, 3.0f);
+    const tide_render_target half = tide_render_target_screen(0.5f);
+
+    tide_draw_render_target(&d, dense);
+    tide_draw_camera(&d, tide_f2(1.0f, 2.0f), 5.0f);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(4.0f, 3.0f), window), tide_f2(130.0f, 40.0f)));
+    TIDE_CHECK(close2(tide_draw_screen_to_world(&d, tide_f2(130.0f, 40.0f), window), tide_f2(4.0f, 3.0f)));
+    // Its text is measured where it's drawn: in the target, at its scale
+    const tide_float2 text = tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    TIDE_CHECK(close2(text, tide_f2(6.0f, 2.0f)));
+    TIDE_CHECK(!measured_in_window && measured_in.width == 200.0f && measured_in.scale == 3.0f);
+
+    // Half the window: 400 by 200 of an 800 by 400 one, with its middle at (200, 100)
+    tide_draw_render_target(&d, half);
+    tide_draw_camera(&d, tide_f2(0.0f, 0.0f), 50.0f);
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(0.0f, 0.0f), window), tide_f2(200.0f, 100.0f)));
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(50.0f, 50.0f), window), tide_f2(300.0f, 0.0f)));
+    // ...and 500 by 300 of a 1000 by 600 one, with no Resize in between
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(0.0f, 0.0f), wider), tide_f2(250.0f, 150.0f)));
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(50.0f, 50.0f), wider), tide_f2(400.0f, 0.0f)));
+    TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, tide_f3(0.0f, 0.0f, 2.0f), wider), tide_f3(250.0f, 150.0f, 0.85f)));
+    tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    TIDE_CHECK(!measured_in_window && measured_in.window == 0.5f);
+    // With no window to follow, it has no size
+    TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(5.0f, 5.0f), tide_f2(0.0f, 0.0f)), tide_f2(0.0f, 0.0f)));
+
+    tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    TIDE_CHECK(measured_in_window);
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}

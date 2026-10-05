@@ -1181,7 +1181,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter])`. A Blit supplies its source to a read-only Texture shader parameter.";
-    case TY_RENDER_TARGET: return "A local drawing destination made with `RenderTarget(width, height)`. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1539,7 +1539,7 @@ static const method_form texture_calls[] = {
 };
 
 static const method_form target_calls[] = {
-    {"Resize", "Resize(int width, int height)", "Changes the shared image's pixel dimensions and discards its contents, even at the same size."},
+    {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Screen`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
 };
 
@@ -6511,7 +6511,7 @@ static const struct {
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
     {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
-    {"RenderTarget", {"RenderTarget(int width, int height)"}, "Creates a local image with positive pixel dimensions. Color and depth persist until cleared; copies share it. Dispose it when finished."},
+    {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)"}, "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -6708,10 +6708,15 @@ static int call_param_names(const expr *call, str *names, const int max)
     switch (call->call) {
     case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: {
         if (call->resource_operation) {
-            if (call->object) {
+            if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
-            } else vec_push(list.labels, "RenderTarget(int width, int height)");
+            } else if (call->object) { // RenderTarget.Screen(factor)
+                builtin_signatures(call->object->name, call->name, collect_label, &list);
+            } else {
+                vec_push(list.labels, call->args.count == 3 ? "RenderTarget(float width, float height, float pixelsPerUnit)"
+                                                            : "RenderTarget(float width, float height)");
+            }
             break;
         }
         if (call->kind == E_CALL && call->type.kind == TY_STRUCT && call->type.decl == A.prog->random) { // Random(seed)

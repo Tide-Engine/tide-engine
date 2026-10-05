@@ -23,6 +23,7 @@ TIDE_WEB_IMPORT(gpu_pipeline_attribute) void tide_web_gpu_pipeline_attribute(uin
 TIDE_WEB_IMPORT(gpu_pipeline_end) tide_gpu_id tide_web_gpu_pipeline_end(void);
 TIDE_WEB_IMPORT(gpu_pipeline_free) void tide_web_gpu_pipeline_free(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_target) tide_gpu_id tide_web_gpu_target(int width, int height);
+TIDE_WEB_IMPORT(gpu_target_limit) int tide_web_gpu_target_limit(void);
 TIDE_WEB_IMPORT(gpu_target_texture) tide_gpu_id tide_web_gpu_target_texture(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_free) void tide_web_gpu_target_free(tide_gpu_id target);
 TIDE_WEB_IMPORT(gpu_target_read) void tide_web_gpu_target_read(tide_gpu_id target, uint8_t *rgba);
@@ -59,6 +60,7 @@ const tide_gpu tide_gpu_webgpu = {
     .pipeline = tide_web_gpu_pipeline,
     .pipeline_free = tide_web_gpu_pipeline_free,
     .target = tide_web_gpu_target,
+    .target_limit = tide_web_gpu_target_limit,
     .target_texture = tide_web_gpu_target_texture,
     .target_free = tide_web_gpu_target_free,
     .target_read = tide_web_gpu_target_read,

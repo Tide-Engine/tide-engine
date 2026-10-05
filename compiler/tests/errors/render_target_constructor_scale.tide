@@ -1,0 +1,3 @@
+// expect: RenderTarget takes its width and height in logical pixels, and its pixels per unit when it isn't the display's
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, "sharp"); }
