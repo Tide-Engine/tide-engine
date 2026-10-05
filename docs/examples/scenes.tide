@@ -1,0 +1,84 @@
+settings { title = "Scenes"; tickRate = 30; maxPlayers = 1; }
+
+scene Main { }
+
+// A scene's fields are its state. Each loaded Room is an entity with a Room.
+scene Room
+{
+    int slot;
+}
+
+component Ball
+{
+    float2 position;
+    float2 velocity;
+    int slot;
+}
+
+singleton Slots { List<Entity> rooms = [default, default, default]; }
+command Toggle { int slot; }
+
+float2 Center(int slot)
+{
+    return float2((slot - 1) * 1.3, 0);
+}
+
+command(Toggle toggle, PlayerID sender) LoadOrUnload(mut Slots slots)
+{
+    if (toggle.slot < 0 || toggle.slot > 2) return;
+    if (slots.rooms[toggle.slot] == default)
+        slots.rooms[toggle.slot] = Scene.Load(Room { slot = toggle.slot });
+    else
+    {
+        // Unloading destroys the room and every entity spawned into it.
+        Scene.Unload(slots.rooms[toggle.slot]);
+        slots.rooms[toggle.slot] = default;
+    }
+}
+
+// Sets each room up as it loads. These spawns join that room.
+event(Spawned) Furnish(Room room)
+{
+    for (var i = 0; i < 4; i++)
+    {
+        Spawn(Ball { position = Center(room.slot), slot = room.slot,
+                     velocity = float2(Math.Cos(i * 1.9 + room.slot), Math.Sin(i * 1.9 + room.slot)) * 0.9 });
+    }
+}
+
+system Bounce(mut Ball ball, Time time)
+{
+    ball.position += ball.velocity * time.dt;
+    var offset = ball.position - Center(ball.slot);
+    if (Math.Abs(offset.x) > 0.4) ball.velocity.x = -Math.Sign(offset.x) * Math.Abs(ball.velocity.x);
+    if (Math.Abs(offset.y) > 1) ball.velocity.y = -Math.Sign(offset.y) * Math.Abs(ball.velocity.y);
+}
+
+local singleton Count { int balls; }
+
+view Buttons(Slots slots, mut Count count)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.SetCamera(float2(0, 0.2), 2.2);
+    count.balls = 0;
+    for (var slot = 0; slot < 3; slot++)
+    {
+        var loaded = slots.rooms[slot] != default;
+        Draw2D.WireRoundRect(Center(slot), float2(1.1, 2.3), 0.1, 0.03, loaded ? Color(0.3, 0.8, 1) : Color(0.18, 0.24, 0.32));
+        var corner = Draw2D.WorldToScreen(Center(slot) + float2(-0.55, -1.3));
+        var width = Draw2D.WorldToScreen(Center(slot) + float2(0.55, 0)).x - corner.x;
+        if (GUI.Button(Rect(corner.x, corner.y, width, 32), loaded ? "Unload" : "Load")) Send(Toggle { slot = slot });
+    }
+}
+
+view Balls(Ball ball, mut Count count)
+{
+    Draw2D.Circle(ball.position, 0.1, Color(1, 0.65, 0.3));
+    count.balls += 1;
+}
+
+view Total(Count count)
+{
+    Draw2D.SetScreen();
+    Draw2D.Text($"{count.balls} balls, in the rooms that are loaded", float2(16, 14), 16, Color.white);
+}

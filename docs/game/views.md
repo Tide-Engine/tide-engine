@@ -17,6 +17,14 @@ view DrawHud(Arena arena)
 
 Drawing is immediate mode: views record their drawing calls every frame. Views run after the frame's ticks, in the order they're declared, and later ones draw on top. `[Before]` and `[After]` order views among themselves, as they do systems. A frame can draw as much as it needs: shapes go to the GPU together, so tens of thousands of rects or circles a frame are cheap, on the web too.
 
+Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.
+
+::: tide-example views A view draws the world
+
+<<< @/examples/views.tide
+
+:::
+
 Views can share [named phases](./systems.md#named-phases) instead of depending on individual view names:
 
 ```csharp
@@ -93,6 +101,14 @@ view Show(RenderState render)
     Draw.Blit(render.scene.color, Draw.window, Present);
 }
 ```
+
+The view below draws its scene into a target, then blits it to the window through a frag that reads it in blocks. The left of the line is the image as it was drawn. Move the sliders to change the blocks' size and where the line is.
+
+::: tide-example post A scene through a frag
+
+<<< @/examples/post.tide
+
+:::
 
 `Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
 
@@ -437,6 +453,14 @@ view Bar(Health health)
 
 The engine's own shaders draw these, so they take no `frag` or `vert`. For anything they don't draw, there's a [mesh](#meshes) and a [frag](./shaders.md) of your own.
 
+Move the slider to fill the bar and ring and rotate the ellipse. The card uses `Shape` for its gradient, outline and soft shadow.
+
+::: tide-example shapes Smooth shapes
+
+<<< @/examples/shapes.tide
+
+:::
+
 Shapes of every kind drawn one after another go to the GPU together, in one draw call, in the order they're written, so thousands a frame are cheap. Text or a mesh between them starts another.
 
 ### The general shape
@@ -541,6 +565,14 @@ view Board(mut Art art)
     Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], art.checker, Filter.Point);
 }
 ```
+
+Drag over the grid below to set its cells, and the next frame draws them. The toggle switches between `Filter.Point` and `Filter.Bilinear`.
+
+::: tide-example textures A grid, drawn as a texture
+
+<<< @/examples/textures.tide
+
+:::
 
 There's nothing to create, upload or free. The grid is ordinary state: change its cells whenever, with `[x, y]`, a loop or `Clear()`, and the next frame draws what it holds. The engine keeps a copy on the GPU while views draw with it, and sends the cells again only when they changed. Nothing holds a handle, so hot reloading carries a texture as it carries any state.
 
@@ -659,6 +691,14 @@ view Banner(Round round)
 
 That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw2D.MeasureText(text, size, Font.Bold)`.
 
+Below, the cross is the position the text is given, and the frame is the box `MeasureText` says it has. Move the anchor's slider to put another place of the box on the cross, and change the size and the weight to see the box follow.
+
+::: tide-example text Anchors, sizes and weights
+
+<<< @/examples/text.tide
+
+:::
+
 The answer is in the units the Draw calls are in: pixels on the screen, and the world's under a camera.
 
 It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own camera, and pixels of its own to fit text to, so `target.MeasureText(text, size)` measures for it.
@@ -717,6 +757,14 @@ Draw3D.Plane(float3(0, -1, 5), float2(10, 10), quaternion.identity, Color.gray);
 ```
 
 Nonpositive dimensions draw nothing. Geometry is cached by shape and color; consecutive instances of the same shape and color are drawn together. Use a mesh with a frag for textures or lighting.
+
+Everything below is a primitive: a plane, 81 cubes, a sphere and a cylinder, drawn again every frame through a camera that circles them. Drag to turn it yourself, and change its field of view with the slider.
+
+::: tide-example draw3d Primitives through a 3D camera
+
+<<< @/examples/draw3d.tide
+
+:::
 
 ### Big scenes
 
@@ -868,6 +916,14 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
 Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
+
+The match below ticks only five times a second. Both discs are the same position: the green one is an ordinary field, which the view sees blended between ticks, and the orange one a `[Snap]` field, drawn as the last tick left it.
+
+::: tide-example tick-rate Five ticks a second, drawn every frame
+
+<<< @/examples/tick-rate.tide
+
+:::
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

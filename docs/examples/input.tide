@@ -1,0 +1,87 @@
+settings { title = "Input"; tickRate = 30; maxPlayers = 1; }
+
+// A drag of the pointer, which a view turns into a stick for the input.
+local singleton Stick
+{
+    float2 start;
+    float2 drag;
+    bool up;
+}
+
+// What a player does in one tick. It's the only thing a machine sends the others.
+input Pad
+{
+    [Clamp(-1, 1)] float2 move;
+    bool jump;
+
+    Sample(Devices devices, Stick stick)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        move += devices.gamepad.leftStick + stick.drag;
+        jump = keys.space.pressed || keys.w.pressed || keys.upArrow.pressed
+            || devices.gamepad.buttonSouth.pressed || stick.up;
+    }
+}
+
+component Hero
+{
+    float2 position;
+    float2 velocity;
+    float2 move; // What the views show of the input, which only the match reads
+    bool jump;
+    int jumps;
+}
+
+scene Main { }
+
+// The hero is its player's, so it reads that player's input.
+event(PlayerJoined joined) GiveHero()
+{
+    Spawn(Hero, Owner { player = joined.player });
+}
+
+system Walk(Pad pad, mut Hero hero, Time time)
+{
+    hero.velocity.x = pad.move.x * 3;
+    // The input says held. The match works out `down` against the tick before.
+    if (pad.jump.down && hero.position.y <= 0)
+    {
+        hero.velocity.y = 6;
+        hero.jumps += 1;
+    }
+    hero.velocity.y -= 16 * time.dt;
+    hero.position += hero.velocity * time.dt;
+    if (hero.position.y < 0)
+    {
+        hero.position.y = 0;
+        hero.velocity.y = 0;
+    }
+    hero.position.x = Math.Clamp(hero.position.x, -1.7, 1.7);
+    hero.move = pad.move;
+    hero.jump = pad.jump;
+}
+
+view Drag(Devices devices, mut Stick stick)
+{
+    var pointer = devices.pointer;
+    if (pointer.press.down) stick.start = pointer.position;
+    var pull = pointer.press.pressed ? pointer.position - stick.start : float2(0);
+    stick.drag = float2(Math.Clamp(pull.x / 50, -1, 1), 0);
+    stick.up = pull.y > 40; // The devices count y up
+}
+
+view DrawHero(Hero hero)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.SetCamera(float2(0, 1), 2.2);
+    Draw2D.Line(float2(-2.2, -0.3), float2(2.2, -0.3), 0.04, Color(0.18, 0.24, 0.32));
+    Draw2D.RoundRect(hero.position + float2(0, 0.05), float2(0.5, 0.7), 0.16, Color(0.3, 0.8, 1));
+    Draw2D.Line(hero.position + float2(0, 0.6), hero.position + float2(hero.move.x * 0.6, 0.6), 0.06, Color(1, 0.65, 0.3));
+
+    Draw2D.SetScreen();
+    Draw2D.Text($"move.x = {hero.move.x:F1}   jump = {hero.jump}   jumps: {hero.jumps}", float2(16, 14), 16, Color.white);
+    Draw2D.Text("Click here, then A and D or the arrows, and space.\nOn a touchscreen, drag sideways, and up to jump.",
+                float2(16, Screen.height - 46), 13, Color(0.6, 0.68, 0.78));
+}

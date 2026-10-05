@@ -54,6 +54,14 @@ system Collapse(Arena arena)
 }
 ```
 
+Each button below loads a `Room`, or unloads the one that's there. A `Spawned` handler furnishes a room with four balls as it loads. They're spawned for the room, so they join it, and unloading it takes them with it.
+
+::: tide-example scenes Rooms that load and unload
+
+<<< @/examples/scenes.tide
+
+:::
+
 ## Which scene owns what
 
 A spawn joins the scene of the entity the code is running for. In a handler, that's the entity the event was sent to, so the floor above joins the arena it was spawned for. A spawn into a scene that's unloaded by the spawn's turn is never made, like the loot an enemy drops while its arena unloads. Code that isn't running for an entity, like a system that runs once per tick, spawns into no scene, and those entities live until they're destroyed.

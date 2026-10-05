@@ -33,7 +33,7 @@ export default defineConfig(({ command }) => ({
                 handleHttpError: ({ path, message }) => {
                     // The games in static/ are built by CMake and copied in;
                     // a build without them still works.
-                    if (path === '/sand/' || path === '/duel/') return;
+                    if (path === '/sand/' || path === '/duel/' || /^\/examples\/[a-z][a-z0-9-]*\/$/.test(path)) return;
                     throw new Error(message);
                 },
             },

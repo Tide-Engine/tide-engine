@@ -1,0 +1,120 @@
+settings { title = "Rooms"; tickRate = 30; maxPlayers = 4; }
+
+local scene Main { } // The program starts in its menu, in no match
+scene Arena { }
+
+component Body
+{
+    float2 position;
+    Color color;
+}
+singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }
+
+// Where this machine's pointer is in the arena, which its input sends.
+local singleton Aim { float2 world; bool moved; }
+local singleton Menu
+{
+    string code;
+    string message = "Not in a match";
+}
+
+input Steer
+{
+    [Clamp(-3, 3)] float2 target;
+    bool steering;
+
+    Sample(Devices devices, Aim aim)
+    {
+        target = aim.world;
+        steering = aim.moved; // Not before the pointer was ever on this window
+    }
+}
+
+// The match, the same on every machine in it: a body for each player.
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    var hue = roster.arrivals % 4;
+    roster.arrivals += 1;
+    roster.bodies[joined.player] = Spawn(
+        Body { position = float2(hue - 1.5, 0), color = Color(hue == 1 ? 1 : 0.3, hue == 2 ? 0.5 : 0.8, hue == 0 ? 1 : 0.4) },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+system Follow(Steer steer, mut Body body, Time time)
+{
+    if (steer.steering) body.position += (steer.target - body.position) * Math.Min(1, 6 * time.dt);
+}
+
+// This machine's side of it: which match it's in is local code's to say.
+view Lobby(Session session, mut Menu menu)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    GUILayout.Area(Rect(8, 8, Screen.width - 16, session.state == SessionState.Offline ? 118 : 86))
+    {
+        if (session.state == SessionState.Offline)
+        {
+            GUILayout.Label(menu.message);
+            if (GUILayout.Button("Start a match")) Session.Start(Arena);
+            GUILayout.Horizontal()
+            {
+                GUILayout.TextField("Code", menu.code);
+                if (GUILayout.Button("Join") && menu.code != "") Session.Join(menu.code);
+            }
+        }
+        else if (session.state == SessionState.Connecting)
+        {
+            GUILayout.Label($"Joining room {menu.code}...");
+            if (GUILayout.Button("Cancel")) Session.Leave();
+        }
+        else if (session.server)
+        {
+            GUILayout.Label(session.open ? $"Open, in room {session.room}" : "Closed: nobody else can join");
+            GUILayout.Horizontal()
+            {
+                if (session.open)
+                {
+                    if (GUILayout.Button("Close")) Session.Close();
+                    if (GUILayout.Button("Copy code")) Clipboard.Copy(session.room);
+                }
+                else if (GUILayout.Button("Open")) Session.Open();
+                if (GUILayout.Button("Kick all")) Session.KickAll("The host cleared the room");
+                if (GUILayout.Button("End")) Session.End();
+            }
+        }
+        else
+        {
+            GUILayout.Label($"In room {session.room}, {session.ping} ms from its host");
+            if (GUILayout.Button("Leave")) Session.Leave();
+        }
+    }
+}
+
+local event(Disconnected gone) Say(mut Menu menu)
+{
+    menu.message = gone.reason == DisconnectReason.Kicked ? $"Kicked: {gone.message}" : $"Out of the match: {gone.reason}";
+}
+
+view Point(Devices devices, mut Aim aim)
+{
+    Draw2D.SetCamera(float2(0, 0.6), 2.4);
+    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
+}
+
+view Others(Body body, without ownership)
+{
+    Draw2D.Circle(body.position, 0.22, body.color);
+}
+
+view Mine(Body body, with ownership)
+{
+    Draw2D.Circle(body.position, 0.22, body.color);
+    Draw2D.WireCircle(body.position, 0.32, 0.04, Color.white);
+    Draw2D.Text("you", body.position + float2(0, 0.4), 0.22, Color.white, Anchor.LowerCenter);
+}

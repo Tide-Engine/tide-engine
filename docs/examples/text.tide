@@ -1,0 +1,38 @@
+settings { title = "Text"; }
+
+local scene Main { }
+
+local singleton Label
+{
+    string words = "Tide\nfits text to pixels";
+    float size = 26;
+    int anchor = 4; // Anchor.MiddleCenter
+    bool bold;
+}
+
+view Show(mut Label label)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.SetScreen();
+    var at = float2(Screen.width * 0.5, Screen.height * 0.3);
+    var anchor = Anchor(label.anchor);
+    var font = label.bold ? Font.Bold : Font.Regular;
+
+    // The box MeasureText gives is the one an anchor names a place of.
+    var size = Draw2D.MeasureText(label.words, label.size, font);
+    var corner = at - float2(size.x * (label.anchor % 3) * 0.5, size.y * (label.anchor / 3) * 0.5);
+    Draw2D.WireRect(corner + size * 0.5, size, Color(0.25, 0.35, 0.45));
+    Draw2D.Text(label.words, at, label.size, Color.white, anchor, font);
+
+    // The position the text was given.
+    Draw2D.Line(at - float2(10, 0), at + float2(10, 0), 2, Color(1, 0.65, 0.3));
+    Draw2D.Line(at - float2(0, 10), at + float2(0, 10), 2, Color(1, 0.65, 0.3));
+
+    GUILayout.Area(Rect(12, Screen.height - 178, Screen.width - 24, 166))
+    {
+        GUILayout.Label($"Anchor.{anchor}: {size.x:F0} by {size.y:F0} pixels");
+        GUILayout.IntSlider("Anchor", label.anchor, 0, 8);
+        GUILayout.Slider("Size", label.size, 10, 56);
+        GUILayout.Toggle("Font.Bold", label.bold);
+    }
+}

@@ -1,0 +1,58 @@
+settings { title = "Render targets"; }
+
+local scene Main { }
+
+local singleton Post
+{
+    RenderTarget scene; // An image the GPU holds, which views draw into
+    bool made;
+    float blocks = 40;
+    float split = 0.5;
+    float turn;
+}
+
+// Runs for every pixel of the window, with the scene's image as its source.
+frag Pixelate(Vertex vertex, mut Color color, Texture source, Post post)
+{
+    mut var uv = vertex.uv;
+    if (uv.x > post.split) uv = (Math.Floor(uv * post.blocks) + 0.5) / post.blocks;
+    color = source.Sample(uv, Filter.Point);
+    if (Math.Abs(vertex.uv.x - post.split) < 0.004) color = Color.white;
+}
+
+view DrawScene(mut Post post)
+{
+    if (!post.made)
+    {
+        post.scene = RenderTarget(512, 512);
+        post.made = true;
+    }
+    post.turn += Math.Min(Frame.dt, 0.05);
+    if (post.turn > Math.TAU) post.turn -= Math.TAU;
+
+    // A target has the drawing methods Draw2D has, and a camera of its own.
+    post.scene.Clear(Color(0.04, 0.07, 0.12));
+    post.scene.SetCamera(float2(0), 2);
+    for (var i = 0; i < 7; i++)
+    {
+        var angle = post.turn + i * 0.9;
+        var at = float2(Math.Cos(angle), Math.Sin(angle * 2)) * (0.5 + i * 0.18);
+        post.scene.Circle(at, 0.16 + i * 0.03, Color(0.3 + i * 0.1, 0.8 - i * 0.05, 1 - i * 0.1));
+    }
+    post.scene.Line(float2(-1.8, -1.6), float2(1.8, 1.6), 0.05, Color(1, 0.65, 0.3));
+
+    // The window gets the scene through the frag.
+    Draw.Blit(post.scene.color, Draw.window, Pixelate);
+}
+
+view Controls(mut Post post)
+{
+    Draw2D.SetScreen();
+    Draw2D.Text("As drawn", float2(16, 14), 16, Color.white);
+    Draw2D.Text("Through the frag", float2(Screen.width - 16, 14), 16, Color.white, Anchor.UpperRight);
+    GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))
+    {
+        GUILayout.Slider("Blocks", post.blocks, 8, 128);
+        GUILayout.Slider("Split", post.split, 0, 1);
+    }
+}
