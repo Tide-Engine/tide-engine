@@ -41,7 +41,7 @@ event(Spawned) Setup(with Main)
 
 ## Code for other versions of tide
 
-Tide still changes between versions. Code that has to build with several, like a [package](../tools/packages.md)'s, picks what each version reads with `#if`, as C# does:
+Tide still changes between versions. Code that has to build with several, like a [package](../tools/packages.md)'s, picks what each version reads with `#if`:
 
 ```csharp
 #if TIDE_0_4_OR_NEWER
