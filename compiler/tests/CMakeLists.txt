@@ -136,6 +136,7 @@ tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
+tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
 tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
@@ -144,6 +145,9 @@ tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
+# What a game declares itself comes before what a namespace it imports has by that name
+tide_e2e_test(using_own SOURCES e2e/using_own/a_lib.tide e2e/using_own/a_other.tide e2e/using_own/b_game.tide
+    e2e/using_own/c_inner.tide)
 tide_e2e_test(extern SOURCES e2e/extern.tide e2e/extern_noise.tide e2e/extern_c.c) # C functions, from the game's C file
 tide_e2e_test(extern_system SOURCES e2e/extern_system.tide e2e/extern_system_c.c) # Systems written in C, and their rows
 if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some

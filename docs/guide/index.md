@@ -2,7 +2,7 @@
 
 Tide is a game engine built for multiplayer first. Its simulation is deterministic: given the same inputs, it gives the same results on every machine, down to the last bit of every float. So players only send each other their inputs, and players on different machines, the web included, share one world.
 
-Games are written in **Tide**, a C#-like language built around an ECS. It compiles to C, and the C to native code or WebAssembly, together with the engine, so calls between your code and the engine's cost nothing.
+Games are written in **Tide**, a language of its own, built around an ECS. It compiles to C, and the C to native code or WebAssembly, together with the engine, so calls between your code and the engine's cost nothing.
 
 ::: warning Early days
 Tide is young, and its language changes freely until 1.0. The [language spec](../spec.md) says which parts are decided and which are still provisional.

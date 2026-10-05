@@ -199,12 +199,28 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
         response.writeHead(status, {
             'content-type': Buffer.isBuffer(body) ? 'application/octet-stream' : typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json',
             'content-length': bytes.length,
-            ...(status === 413 ? { connection: 'close' } : {}), // The rest of what was sent is never read
+            ...(status === 413 ? { connection: 'close' } : {}), // What's left of a request that long isn't waited for (tooLong)
             ...headers,
         });
         response.end(bytes);
     }
     const refuse = (response, status, error) => reply(response, status, { error });
+
+    // Refuses a request for being too long. What's left of it is read and
+    // dropped first: a connection closed on bytes nobody read is reset, and
+    // the answer is lost with it. Past `most` more bytes, it's closed anyway.
+    async function tooLong(request, response, error, most = 16 * 1024 * 1024) {
+        let more = 0;
+        try {
+            for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+                more += chunk.length;
+                if (more > most) break;
+            }
+        } catch {
+            // Whoever sent it is gone
+        }
+        refuse(response, 413, error);
+    }
 
     // A request's body, when it's `max` bytes at most; null when it's longer.
     async function body(request, max) {
@@ -227,7 +243,8 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
             value = null;
         }
         if (!value || typeof value !== 'object' || Array.isArray(value)) {
-            refuse(response, bytes ? 400 : 413, bytes ? 'the request is a JSON object' : 'the request is too long');
+            if (bytes) refuse(response, 400, 'the request is a JSON object');
+            else await tooLong(request, response, 'the request is too long');
             return null;
         }
         return value;
@@ -266,10 +283,10 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
     async function publish(request, response, game) {
         const room = limit.kept - await keptBy(game.id);
         const length = Number(request.headers['content-length']);
-        if (length > limit.source) return refuse(response, 413, `a version is ${megabytes(limit.source)} at most`);
+        if (length > limit.source) return tooLong(request, response, `a version is ${megabytes(limit.source)} at most`);
         const upload = await store.receive(request, Math.min(limit.source, Math.max(room, 0)));
         if (!upload) {
-            return refuse(response, 413, room < limit.source
+            return tooLong(request, response, room < limit.source
                 ? `${game.id} keeps ${megabytes(limit.kept)} here at most, with its builds: revoke some to make room`
                 : `a version is ${megabytes(limit.source)} at most`);
         }
@@ -370,11 +387,16 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
             await store.put(`pending/${game.id}/${build}`, Buffer.alloc(0));
             try {
                 record.builder = await builders.start({ build, token, url: base() });
-                await putJson(`${at}/build.json`, record);
             } catch (error) {
                 console.error(`builds: no builder for ${build}: ${error.message}`);
                 await fail(record, 'no machine could be made to build it');
                 return reply(response, 503, told(record));
+            }
+            try {
+                await putJson(`${at}/build.json`, record);
+            } catch (error) {
+                await builders.stop(record.builder).catch(() => {}); // A builder nothing keeps track of builds for nobody
+                throw error;
             }
             reply(response, 202, told(record));
         });
@@ -459,7 +481,7 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
         }
         if (request.method === 'PUT' && what === 'log') {
             const bytes = await body(request, limit.log);
-            if (!bytes) return refuse(response, 413, `a log is ${limit.log} bytes at most`);
+            if (!bytes) return tooLong(request, response, `a log is ${limit.log} bytes at most`);
             return alone(build, async () => {
                 if (!await pending()) return refuse(response, 403, 'no build waits for this');
                 await store.put(`${at}/log.txt`, bytes);
@@ -479,7 +501,7 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
         }
         if (request.method === 'PUT' && what === 'page') {
             const upload = await store.receive(request, limit.page);
-            if (!upload) return refuse(response, 413, `a page is ${megabytes(limit.page)} at most`);
+            if (!upload) return tooLong(request, response, `a page is ${megabytes(limit.page)} at most`);
             return alone(build, async () => {
                 const record = await pending();
                 if (!record || upload.size === 0) {
@@ -507,6 +529,7 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
     // -----------------------------------------------------------------------
 
     async function route(request, response) {
+        if (!URL.canParse(request.url, 'http://service')) return refuse(response, 400, 'that isn\'t an address');
         const path = new URL(request.url, 'http://service').pathname;
         const parts = path.split('/').slice(1);
         const method = request.method;
