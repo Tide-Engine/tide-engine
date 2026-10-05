@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: Tide
+  name: Tide Engine
   text: A networking-first game engine
   tagline: One deterministic simulation that every player shares, on desktop or in the browser, written in a language made for it.
   image:
     src: /favicon.svg
-    alt: Tide
+    alt: Tide Engine
   actions:
     - theme: brand
       text: Get started
