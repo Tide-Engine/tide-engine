@@ -226,9 +226,21 @@ static expr *new_expr(const expr_kind kind, const loc at)
 }
 
 static expr *parse_expr(parser *p);
+static expr *parse_out_arg(parser *p);
+
+// `out` before an argument, as in C#: `out health`, `out var health`, `out
+// Health health`, `out mut var health`. No expression has two names in a row,
+// so the word is a name like any other everywhere else.
+static bool at_out_arg(const parser *p)
+{
+    if (!at(p, T_IDENT) || !str_eq_c(peek(p)->text, "out")) return false;
+    const tok_kind next = peek_at(p, 1)->kind;
+    return next == T_IDENT || next == T_VAR || next == T_MUT;
+}
 
 // (a, b), or with names as in C#: (a, crit: true). No expression starts with a
-// name and a ':', so that's an argument's name.
+// name and a ':', so that's an argument's name. An argument for an `out`
+// parameter says so: (key, out var value), (found: out health).
 static void parse_args(parser *p, expr *call)
 {
     expect(p, T_LPAREN, "'('");
@@ -245,7 +257,7 @@ static void parse_args(parser *p, expr *call)
                 vec_push(call->arg_names, name ? name->text : ((str){"", 0}));
                 vec_push(call->arg_name_at, name ? name->at : ((loc){0}));
             }
-            vec_push(call->args, parse_expr(p));
+            vec_push(call->args, at_out_arg(p) ? parse_out_arg(p) : parse_expr(p));
         } while (accept(p, T_COMMA));
     }
     expect(p, T_RPAREN, "')' after arguments");
@@ -641,6 +653,62 @@ static stmt *new_stmt(const stmt_kind kind, const loc at)
 }
 
 static stmt *parse_stmt(parser *p);
+
+// After `out`: `Health health`, `Combat.Health health`, `List<int> found` or
+// `int? best`, a type and the name of the local the argument declares, rather
+// than a variable the code has. What follows the name ends the argument.
+static bool at_out_decl(const parser *p)
+{
+    if (!at(p, T_IDENT)) return false;
+    int i = 1;
+    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    if (peek_at(p, i)->kind == T_LT && generic_name(peek(p)->text)) { // List<Item>, Map<int, Item>
+        i++;
+        while (peek_at(p, i)->kind == T_IDENT || peek_at(p, i)->kind == T_DOT || peek_at(p, i)->kind == T_COMMA) i++;
+        if (peek_at(p, i)->kind != T_GT) return false;
+        i++;
+    }
+    if (peek_at(p, i)->kind == T_QUESTION) i++;
+    if (peek_at(p, i)->kind != T_IDENT) return false;
+    const tok_kind after = peek_at(p, i + 1)->kind;
+    return after == T_COMMA || after == T_RPAREN;
+}
+
+// An argument after `out`. `out var health`, `out Health health` and, for a
+// local the code changes later, `out mut var health` declare the variable
+// where they're written: an E_NAME of it, with the S_VAR it declares, which
+// has no value. Anything else is a variable the code has, or a part of one,
+// which the checker says whether the call can make; `out _` among them, which
+// leaves what the call makes out when nothing is named `_`.
+static expr *parse_out_arg(parser *p)
+{
+    const token *word = advance(p);
+    if (!at(p, T_MUT) && !at(p, T_VAR) && !at_out_decl(p)) {
+        expr *e = parse_postfix(p);
+        e->is_out = true;
+        e->out_at = word->at;
+        return e;
+    }
+    stmt *local = new_stmt(S_VAR, peek(p)->at);
+    local->is_mut = accept(p, T_MUT);
+    local->out_decl = true;
+    if (!accept(p, T_VAR)) {
+        const qname type = parse_decl_type(p, "'var' or the type of the variable 'out' declares, like 'out var health'");
+        local->type_name = type.text;
+        local->type_at = type.name_at;
+        local->type_qual_at = type.at;
+    }
+    const token *name = expect_ident(p, "the name of the variable 'out' declares, like 'out var health'");
+    local->name = name->text;
+    local->name_at = name->at;
+    expr *e = new_expr(E_NAME, name->at);
+    e->name = name->text;
+    e->is_out = true;
+    e->out_at = word->at;
+    e->out_local = local;
+    local->out_arg = e;
+    return e;
+}
 
 // Contextual keywords: special only where a declaration or a file header can
 // start, so they can still name parameters and locals.
@@ -1223,13 +1291,13 @@ static void parse_routine_params(parser *p, decl *m)
                 advance(p);
                 prm.mode = PARAM_IN;
             }
-            // `out List<byte> image`: `out` before a type and a name, an extern function's too. The call changes
-            // the list, so it's a `mut` parameter to everything but C, which makes its elements
+            // `out Health health`: `out` before a type and a name, as in C#. The call makes the caller's variable,
+            // so it's a `mut` parameter to everything but what checks that the code assigns it
             if (prm.mode != PARAM_IN && at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
-                && (after == T_IDENT || after == T_DOT || after == T_LT)) {
+                && (after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION)) {
                 if (mut) {
-                    diag_error(mut->at, "'out' says the call makes the list, which 'mut' would only change: drop 'mut'");
-                    diag_note("like 'extern int Fill(out List<byte> bytes);'");
+                    diag_error(mut->at, "'out' says the call makes the variable, which 'mut' would only change: drop 'mut'");
+                    diag_note("like 'bool TryFind(Entity target, out Health health)'");
                     longjmp(p->fail, 1);
                 }
                 prm.out_at = advance(p)->at;
@@ -1577,11 +1645,12 @@ static void parse_query_params(parser *p, decl *d)
                     }
                     longjmp(p->fail, 1);
                 }
-                // `out Store store`, as C# has it: here `out` is an extern function's, for a list C makes
+                // `out Store store`: an `out` parameter is for the code that calls, and the engine calls these
                 if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
-                    && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
-                    diag_error(peek(p)->at, "only extern functions take 'out' parameters: C makes the list's elements, and "
-                                            "says how many");
+                    && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT
+                        || peek_at(p, 2)->kind == T_QUESTION)) {
+                    diag_error(peek(p)->at, "the engine calls this itself, so nothing would take what an 'out' parameter "
+                                            "makes: functions and methods have them");
                     if (peek_at(p, 2)->kind == T_IDENT) {
                         diag_note("this takes what it changes as 'mut': 'mut " STR_FMT " " STR_FMT "'", STR_ARG(peek_at(p, 1)->text),
                                   STR_ARG(peek_at(p, 2)->text));

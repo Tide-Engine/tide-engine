@@ -1,0 +1,4 @@
+// expect: 'TryGet' makes its 'value', so the argument says 'out'
+scene Main { }
+singleton Board { Map<int, float> scores; float score; bool has; }
+system Run(mut Board board) { board.has = board.scores.TryGet(3, board.score); }

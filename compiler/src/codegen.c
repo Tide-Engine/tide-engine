@@ -2619,6 +2619,22 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the list is
             sb_put(o, ")");
+        } else if (e->call == CALL_MAP && str_eq_c(e->name, "TryGet")) { // scores.TryGet(k, out v): the variable it makes, by address
+            const decl *map = e->type_decl;
+            const expr *value = e->args.items[1];
+            sb_printf(o, "tide_map%d_tryget_out(", map->index);
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->args.items[0], map->fields.items[0].type);
+            sb_put(o, ", ");
+            if (map->fields.items[1].type.kind == TY_STRING) {
+                gen_text_ref(g, o, value);
+            } else {
+                sb_put(o, "&(");
+                gen_expr(g, o, value);
+                sb_printf(o, "), %s", place_where(g, value));
+            }
+            sb_put(o, ")");
         } else if (e->call == CALL_MAP) { // scores.Has(k): the map, by address if the method changes it
             const int k = e->type_decl->index;
             const bool reads = str_eq_c(e->name, "Has") || str_eq_c(e->name, "Get");
@@ -3470,11 +3486,17 @@ static bool writes(const expr *e)
     case CALL_METHOD: return routine_writes(e->method);
     case CALL_GUI: return e->arg_mut != 0;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
-    case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
+    case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: return true; // Clear
     case CALL_RANDOM: return true; // Each of a Random's methods steps it
     default: return false;
     }
+}
+
+// Whether a map's or a set's method changes it: the others read it.
+static bool map_changes(const expr *e)
+{
+    return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "TryGet");
 }
 
 // Whether a call that writes is somewhere in `e`.
@@ -3570,8 +3592,9 @@ static bool settled(const expr *e)
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
         return true;
     case E_NAME:
-        // A local that isn't mut never changes. A query's row reads the world as it is.
-        if (e->bind == BIND_LOCAL) return e->local && !e->local->is_mut && !e->local->query;
+        // A local that isn't mut never changes, but one an `out` argument declares, which its call makes. A
+        // query's row reads the world as it is.
+        if (e->bind == BIND_LOCAL) return e->local && !e->local->is_mut && !e->local->query && !e->local->out_decl;
         // A function's read-only parameter is its own copy, but a list, which may be its caller's
         if (e->bind == BIND_PARAM) {
             const param *p = e->param;
@@ -3681,8 +3704,8 @@ static void call_operands(expr *e, operand_list *ops)
     if (e->kind == E_METHOD) {
         switch (e->call) {
         case CALL_METHOD: operand_push(ops, e->object, m->is_mut_method ? PLACE : use_of(e->object)); break;
+        case CALL_MAP: operand_push(ops, e->object, map_changes(e) ? PLACE : use_of(e->object)); break;
         case CALL_LIST:
-        case CALL_MAP:
         case CALL_GRID:
         case CALL_RANDOM: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
         case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
@@ -3711,6 +3734,8 @@ static void call_operands(expr *e, operand_list *ops)
                 role = USED; // C reads it where it is (gen_extern_call)
             }
         } else if (e->call == CALL_GUI && (e->arg_mut & (1u << i))) {
+            role = PLACE;
+        } else if (arg->is_out) { // scores.TryGet(key, out value)
             role = PLACE;
         }
         if (role == TAKEN) take(ops, arg);
@@ -4232,6 +4257,47 @@ static void declare_bindings(gen *g, const expr *cond)
     declare_bindings(g, cond->rhs);
 }
 
+// Whether an `out` argument in `e` declares a local: F(out var x). Not in a
+// block written after a call, whose statements declare their own.
+static bool has_outs(const expr *e)
+{
+    if (!e) return false;
+    if (e->out_local) return true;
+    if (has_outs(e->object) || has_outs(e->lhs) || has_outs(e->rhs) || has_outs(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (has_outs(e->args.items[i])) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (has_outs(e->inits.items[i].value)) return true;
+    }
+    return false;
+}
+
+// The locals `out` arguments declare in an expression, and the places `out _`
+// makes, declared before its statement with their type's default: the call
+// that makes each gets its address, as it gets a `mut` argument's.
+static void declare_outs(gen *g, const expr *e)
+{
+    if (!e) return;
+    if (e->out_local) {
+        const stmt *l = e->out_local;
+        const char *name = local_cname(g, l->name);
+        indent(g, &g->c);
+        sb_printf(&g->c, "%s %s = ", c_type(l->type), name);
+        gen_default(g, &g->c, l->type);
+        sb_put(&g->c, ";\n");
+        line(g, &g->c, "(void)%s;", name);
+        task_declare(g, name, l->type);
+        return;
+    }
+    declare_outs(g, e->object);
+    declare_outs(g, e->cond);
+    declare_outs(g, e->lhs);
+    declare_outs(g, e->rhs);
+    for (int i = 0; i < e->args.count; i++) declare_outs(g, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) declare_outs(g, e->inits.items[i].value);
+}
+
 static void gen_stmt(gen *g, const stmt *s);
 static void gen_body_stmt(gen *g, const stmt *s);
 static void gen_parallel_call(gen *g, const stmt *s);
@@ -4491,6 +4557,15 @@ static void gen_stmt(gen *g, const stmt *s)
     sb *o = &g->c;
     if (s->kind != S_BLOCK) line_directive(g, s->at);
 
+    // The locals `out` arguments declare in the statement: the enclosing
+    // block's, as in C#, so they're declared here, before it. A loop's
+    // condition's are the loop's own (below).
+    if (g->prog->out_args && s->kind != S_WHILE && s->kind != S_FOR) {
+        declare_outs(g, s->cond);
+        declare_outs(g, s->value);
+        declare_outs(g, s->target);
+    }
+
     // Names `is` gives in an if's condition, in a block of their own.
     const bool bindings = s->kind == S_IF && has_bindings(s->cond);
     const int bindings_mark = task_mark(g);
@@ -4600,10 +4675,13 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_FOR: {
         // A for is its start, then a while that runs its step at the end of each round.
         const int for_mark = task_mark(g);
-        if (s->kind == S_FOR) {
+        // The locals `out` arguments declare in the condition are the loop's: in a block of its own
+        const bool own_block = s->kind == S_FOR || (g->prog->out_args && has_outs(s->cond));
+        if (own_block) {
             line(g, o, "{");
             g->indent++;
             if (s->init) gen_stmt(g, s->init);
+            if (g->prog->out_args) declare_outs(g, s->cond);
         }
         const int round_mark = task_mark(g);
         if (s->cond && needs_hoisting(s->cond)) {
@@ -4631,7 +4709,7 @@ static void gen_stmt(gen *g, const stmt *s)
         g->indent--;
         line(g, o, "}");
         if (done.end_used) line(g, o, "%s:;", done.end);
-        if (s->kind == S_FOR) {
+        if (own_block) {
             g->indent--;
             line(g, o, "}");
         }
@@ -6045,6 +6123,11 @@ static void gen_map_helpers(gen *g, const bool bodies)
             if (set) sb_printf(o, "TIDE_HELPER bool tide_map%d_add(tide_map *m, %s key, uint32_t where);\n", k, kp);
             if (set) sb_printf(o, "TIDE_HELPER tide_map tide_map%d_from(const %s *keys, int32_t count);\n", k, kp);
             if (m->optional) sb_printf(o, "TIDE_HELPER %s tide_map%d_tryget(tide_map m, %s key);\n", result_cname(m->optional), k, kp);
+            if (m->tries && value.kind == TY_STRING) {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(tide_map m, %s key, tide_textref value);\n", k, kp);
+            } else if (m->tries) {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(tide_map m, %s key, %s *value, uint32_t where);\n", k, kp, vv);
+            }
             sb_printf(o, "TIDE_HELPER bool tide_map%d_remove(tide_map *m, %s key, uint32_t where);\n", k, kp);
             sb_printf(o, "TIDE_HELPER void tide_map%d_clear(tide_map *m, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER tide_map tide_map%d_copy(tide_map m);\n", k);
@@ -6118,6 +6201,26 @@ static void gen_map_helpers(gen *g, const bool bodies)
             sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n    if (i < 0) return (%s){0};\n", k, opt);
             sb_printf(o, "    const %s *e = tide_map_entry(m, i, &tide_map%d_kind);\n", entry, k);
             sb_printf(o, "    return (%s){.value = %s, .ok = true};\n}\n\n", opt, value.kind == TY_STRING ? "tide_text_view(e->value)" : "e->value");
+        }
+        if (m->tries) { // TryGet: whether the key is there, and into the caller's variable its value, or the default
+            if (value.kind == TY_STRING) {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, const tide_textref value)\n{\n", k, kp);
+            } else {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, %s *value, const uint32_t where)\n{\n"
+                             "    (void)where;\n", k, kp, vv);
+            }
+            sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n", k);
+            sb_printf(o, "    const %s *e = i < 0 ? NULL : tide_map_entry(m, i, &tide_map%d_kind);\n", entry, k);
+            if (value.kind == TY_STRING) {
+                sb_put(o, "    tide_textref_set(value, e ? tide_text_view(e->value) : TIDE_STR_EMPTY);\n");
+            } else {
+                sb_printf(o, "    const %s found = e ? e->value : ", vv);
+                gen_default(g, o, value);
+                sb_put(o, ";\n");
+                if (value.kind == TY_STRUCT && type_has_text(value)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", type_cname(value.decl));
+                else sb_put(o, "    *value = found;\n");
+            }
+            sb_put(o, "    return e != NULL;\n}\n\n");
         }
         sb_printf(o, "TIDE_HELPER bool tide_map%d_remove(tide_map *m, const %s key, const uint32_t where)\n{\n", k, kp);
         sb_printf(o, "    const int32_t i = tide_map_find(*m, &tide_map%d_kind, &key);\n    if (i < 0) return false;\n", k);
@@ -8066,6 +8169,7 @@ static bool declared_in(const stmt *s, const stmt *local);
 static bool declared_in_expr(const expr *e, const stmt *local)
 {
     if (!e) return false;
+    if (e->out_local == local || e->binding == local) return true; // F(out var x), x is int n
     if (declared_in(e->block, local) || declared_in_expr(e->object, local) || declared_in_expr(e->lhs, local)
         || declared_in_expr(e->rhs, local) || declared_in_expr(e->cond, local)) return true;
     for (int i = 0; i < e->args.count; i++) {
@@ -10251,6 +10355,17 @@ static void gen_routine(gen *g, const decl *m)
         if (has_fields_ptr(&m->params.items[i])) line(g, o, "(void)%s;", fields_name(g, m->params.items[i].name));
     }
     gen_grid_caches(g);
+    // A call that fails owes its `out` variables nothing, so they hold their type's default until the code
+    // assigns them: after a failed call they're what it assigned before it failed, or the default
+    for (int i = 0; m->result.kind == TY_FAILABLE && i < m->params.count; i++) {
+        const param *p = &m->params.items[i];
+        if (!p->is_out) continue;
+        expr target = {.kind = E_NAME, .at = p->name_at, .name = p->name, .bind = BIND_PARAM, .param = (param *)p, .type = p->type,
+                       .spawn_archetype = -1};
+        expr value = {.kind = E_DEFAULT, .at = p->name_at, .type = p->type, .spawn_archetype = -1};
+        const stmt set = {.kind = S_ASSIGN, .at = p->name_at, .target = &target, .op = T_ASSIGN, .value = &value};
+        gen_stmt(g, &set);
+    }
     for (int i = 0; i < m->body->stmts.count; i++) gen_stmt(g, m->body->stmts.items[i]);
     g->list_caches = false;
     // A function that can fail and returns nothing succeeds at its end.

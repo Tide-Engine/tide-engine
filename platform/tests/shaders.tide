@@ -443,6 +443,19 @@ Outer Made(float v)
     return Outer { inner = Inner { v = v }, n = 2 };
 }
 
+// What a call makes through `out`: whether there's something, and it
+bool Halve(float value, out float half)
+{
+    half = value * 0.5;
+    return value > 0;
+}
+
+void Parts(float value, out float whole, out float rest)
+{
+    whole = Math.Floor(value);
+    rest = value - whole;
+}
+
 float First(float3 v, float least)
 {
     for (int i = 0; i < 3; i++)
@@ -530,6 +543,14 @@ frag More(Corner3 vertex, mut Color color)
     float3 sizes = Math.Abs(float3(-1, 2, -3));
     if (!Near(sizes.z, 3) || Math.Min(count, 2) != 2 || Math.Clamp(count, 0, 2) != 2) ok = false;
     if (Math.Abs(-count) != 3 || Math.Sign(-count) != -1) ok = false;
+
+    // `out` parameters: a local declared at the call, a variable the code has, and one left out
+    if (!Halve(3, out var made) || !Near(made, 1.5)) ok = false;
+    mut float kept = 9;
+    if (Halve(-4, out kept) || !Near(kept, -2)) ok = false;
+    Parts(2.25, out float floor, out _);
+    Parts(floor + 0.75, out _, out var past);
+    if (!Near(floor, 2) || !Near(past, 0.75)) ok = false;
 
     color = ok ? Color(0, 1, 0, 1) : Color.red;
 }

@@ -1,0 +1,6 @@
+// expect: 'Heal' changes its 'total', a 'mut' parameter: it takes the variable as it is, without 'out'
+// expect: remove 'out'
+scene Main { }
+singleton Tally { int total; }
+void Heal(mut int total) { total += 2; }
+system Run(mut Tally tally) { Heal(out tally.total); }

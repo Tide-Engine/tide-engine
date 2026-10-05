@@ -1,0 +1,6 @@
+// expect: 'Heal' takes a value for 'amount', which isn't an 'out' parameter
+// expect: declare the variable before the call, with a value, and pass it as it is: 'var amount = ...;'
+scene Main { }
+singleton Tally { int total; }
+int Heal(int amount) { return amount * 2; }
+system Run(mut Tally tally) { tally.total = Heal(out var amount); }

@@ -1,0 +1,10 @@
+// expect: 'TryHalf' makes its 'half', so the argument says 'out'
+// expect: 'out' before a variable assigns it, 'out var half' declares one there, and 'out _' leaves it out
+scene Main { }
+singleton Tally { int half; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally) { TryHalf(8, tally.half); }
