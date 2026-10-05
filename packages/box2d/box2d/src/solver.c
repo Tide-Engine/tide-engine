@@ -979,6 +979,15 @@ static void b2ExecuteStage( b2SolverStage* stage, b2StepContext* context, int pr
 	(void)b2AtomicFetchAddInt( &stage->completionCount, completedCount );
 }
 
+// Tide: for a worker's wait on the web (see b2SolverTask, and ../TIDE.md). The package's bridge has them.
+#if defined( __wasm__ )
+// A worker that's been through this many rounds of the wait, each ending in a yield that does nothing there,
+// sleeps for the rest of it: about as long as waking one takes, so waits between stages go as they did
+#define B2_TIDE_WAIT_ROUNDS 4096
+bool b2t_stage_sleep( const uint32_t* bits, uint32_t seen );
+void b2t_stage_wake( const uint32_t* bits );
+#endif
+
 // Execute a stage on worker 0 (main thread).
 static void b2ExecuteMainStage( b2SolverStage* stage, b2StepContext* context, uint32_t syncBits )
 {
@@ -997,6 +1006,9 @@ static void b2ExecuteMainStage( b2SolverStage* stage, b2StepContext* context, ui
 	else
 	{
 		b2AtomicStoreU32( &context->atomicSyncBits, syncBits );
+#if defined( __wasm__ )
+		b2t_stage_wake( &context->atomicSyncBits.value ); // Tide: the workers that sleep
+#endif
 
 		int syncIndex = ( syncBits >> 16 ) & 0xFFFF;
 		B2_ASSERT( syncIndex > 0 );
@@ -1205,6 +1217,9 @@ static void b2SolverTask( void* taskContext )
 
 		// Signal workers to finish
 		b2AtomicStoreU32( &context->atomicSyncBits, UINT_MAX );
+#if defined( __wasm__ )
+		b2t_stage_wake( &context->atomicSyncBits.value ); // Tide: the workers that sleep
+#endif
 
 		B2_ASSERT( stageIndex + 1 == context->stageCount );
 		return;
@@ -1220,10 +1235,25 @@ static void b2SolverTask( void* taskContext )
 		// todo improve this spinner
 		uint32_t syncBits;
 		int spinCount = 0;
+#if defined( __wasm__ )
+		int waitRounds = 0;
+#endif
 		while ( ( syncBits = b2AtomicLoadU32( &context->atomicSyncBits ) ) == lastSyncBits )
 		{
 			if ( spinCount > 5 )
 			{
+#if defined( __wasm__ )
+				// Tide: WebAssembly has no pause and a page no yield, so this loop holds its core for as long
+				// as it waits, and with a worker on every core the system takes one from a worker with a block
+				// to run whatever else it has, which the stage then waits a time slice for. A worker that has
+				// waited long sleeps until the main thread gives the next stage, where its thread can.
+				if ( ++waitRounds > B2_TIDE_WAIT_ROUNDS && b2t_stage_sleep( &context->atomicSyncBits.value, lastSyncBits ) )
+				{
+					waitRounds = 0;
+					spinCount = 0;
+					continue;
+				}
+#endif
 				b2Yield();
 				spinCount = 0;
 			}

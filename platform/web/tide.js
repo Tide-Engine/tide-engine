@@ -1778,6 +1778,10 @@
             return -1;
         }
     }
+    // As many as the browser says the machine has processors: both threads of a
+    // core that runs two, as it says nothing else. The pool's workers sleep
+    // when they have nothing to do (platform/src/jobs.c), so that's no more
+    // than the machine can run.
     platform.threads = () => shared ? Math.max(1, Math.min(navigator.hardwareConcurrency || 1, 32)) : 1;
 
     // Local files live in the page, including while a new build takes over.
