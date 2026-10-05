@@ -86,7 +86,12 @@ typedef struct b3ContactEdge
 
 typedef struct b3MeshContact
 {
-	b3Array( b3TriangleCache ) triangleCache;
+	// Tide: 16 bytes on every platform, so a world's image is laid out the same on 32-bit ones (see ../TIDE.md)
+	union
+	{
+		b3Array( b3TriangleCache ) triangleCache;
+		uint64_t triangleCacheBits[2];
+	};
 	b3AABB queryBounds;
 } b3MeshContact;
 
@@ -134,7 +139,12 @@ typedef struct b3Contact
 	uint32_t flags;
 
 	// todo embed single manifold with ability to allocate overfloat, use union.
-	b3Manifold* manifolds;
+	// Tide: 8 bytes on every platform, so a world's image is laid out the same on 32-bit ones (see ../TIDE.md)
+	union
+	{
+		b3Manifold* manifolds;
+		uint64_t manifoldsBits;
+	};
 	int manifoldCount;
 
 	// Cache for contact recycling.

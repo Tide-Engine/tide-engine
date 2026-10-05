@@ -84,39 +84,37 @@ static inline b3FloatW4 b3MulAddW4( b3FloatW4 a, b3FloatW4 b, b3FloatW4 c )
 	return (b3FloatW4){ a.x + b.x * c.x, a.y + b.y * c.y, a.z + b.z * c.z, a.w + b.w * c.w };
 }
 
+// Tide: the least and the greatest as SSE2 gives them (minps, maxps): the second of two that are equal, which
+// tells 0 from -0. Upstream gave the first here, so a clamp to no room at all (a contact with no force on it,
+// whose friction can do nothing) left -0 here and 0 on x64: the same simulation, and other bytes in a world's
+// image (see ../TIDE.md).
 static inline b3FloatW4 b3MinW4( b3FloatW4 a, b3FloatW4 b )
 {
 	b3FloatW4 r;
-	r.x = a.x <= b.x ? a.x : b.x;
-	r.y = a.y <= b.y ? a.y : b.y;
-	r.z = a.z <= b.z ? a.z : b.z;
-	r.w = a.w <= b.w ? a.w : b.w;
+	r.x = a.x < b.x ? a.x : b.x;
+	r.y = a.y < b.y ? a.y : b.y;
+	r.z = a.z < b.z ? a.z : b.z;
+	r.w = a.w < b.w ? a.w : b.w;
 	return r;
 }
 
 static inline b3FloatW4 b3MaxW4( b3FloatW4 a, b3FloatW4 b )
 {
 	b3FloatW4 r;
-	r.x = a.x >= b.x ? a.x : b.x;
-	r.y = a.y >= b.y ? a.y : b.y;
-	r.z = a.z >= b.z ? a.z : b.z;
-	r.w = a.w >= b.w ? a.w : b.w;
+	r.x = a.x > b.x ? a.x : b.x;
+	r.y = a.y > b.y ? a.y : b.y;
+	r.z = a.z > b.z ? a.z : b.z;
+	r.w = a.w > b.w ? a.w : b.w;
 	return r;
 }
 
 // clamp a to [-b, b]
+// Tide: in SSE2's order, the greatest of -b and a and then the least of that and b, for the same reason
 static inline b3FloatW4 b3SymClampW4( b3FloatW4 a, b3FloatW4 b )
 {
-	b3FloatW4 r;
-	r.x = a.x <= b.x ? a.x : b.x;
-	r.y = a.y <= b.y ? a.y : b.y;
-	r.z = a.z <= b.z ? a.z : b.z;
-	r.w = a.w <= b.w ? a.w : b.w;
-	r.x = r.x <= -b.x ? -b.x : r.x;
-	r.y = r.y <= -b.y ? -b.y : r.y;
-	r.z = r.z <= -b.z ? -b.z : r.z;
-	r.w = r.w <= -b.w ? -b.w : r.w;
-	return r;
+	b3FloatW4 nb = { -b.x, -b.y, -b.z, -b.w };
+	b3FloatW4 c = b3MaxW4( nb, a );
+	return b3MinW4( c, b );
 }
 
 // Logical operations on the scalar path are 0/1 float values. Not bit-wise like SIMD.

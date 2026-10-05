@@ -41,11 +41,25 @@ typedef struct b3Shape
 
 	int materialCount;
 	b3SurfaceMaterial material;
-	b3SurfaceMaterial* materials;
+	// Tide: each pointer is 8 bytes on every platform, so a world's image is laid out the same on 32-bit
+	// ones (see ../TIDE.md)
+	union
+	{
+		b3SurfaceMaterial* materials;
+		uint64_t materialsBits;
+	};
 
 	b3Filter filter;
-	void* userData;
-	void* userShape;
+	union
+	{
+		void* userData;
+		uint64_t userDataBits;
+	};
+	union
+	{
+		void* userShape;
+		uint64_t userShapeBits;
+	};
 
 	uint32_t nameId;
 	uint16_t generation;
@@ -61,6 +75,9 @@ typedef struct b3Shape
 		b3Mesh mesh;
 		const b3HeightFieldData* heightField;
 		const b3CompoundData* compound;
+		// Tide: 32 bytes on every platform, as the pointers above. An image has the geometry here as it
+		// names it, which is the same everywhere (b3SerShapes in world_snapshot.c)
+		uint64_t geometryBits[4];
 	};
 
 } b3Shape;

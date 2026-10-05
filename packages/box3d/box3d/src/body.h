@@ -77,7 +77,12 @@ enum b3BodyFlags
 // Body organizational details that are not used in the solver.
 typedef struct b3Body
 {
-	void* userData;
+	// Tide: 8 bytes on every platform, so a world's image is laid out the same on 32-bit ones (see ../TIDE.md)
+	union
+	{
+		void* userData;
+		uint64_t userDataBits;
+	};
 
 	// index of solver set stored in b3World
 	// may be B3_NULL_INDEX

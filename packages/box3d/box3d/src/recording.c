@@ -33,6 +33,14 @@ void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size )
 		return;
 	}
 
+	// Tide: the caller's memory doesn't grow. From here on the bytes are only counted
+	if ( buf->fixed && buf->size + size > buf->capacity )
+	{
+		buf->countOnly = true;
+		buf->size += size;
+		return;
+	}
+
 	if ( buf->size + size > buf->capacity )
 	{
 		int newCap = buf->capacity * 2;
