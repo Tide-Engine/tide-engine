@@ -1,0 +1,53 @@
+local singleton Menu
+{
+    bool open;
+    bool blue = true;
+    bool guide = true;
+    int choices;
+}
+
+local scene Main { }
+
+view TryLayout(mut Menu menu)
+{
+    Draw2D.Clear(Color(0.05, 0.07, 0.11));
+    Draw2D.Screen();
+
+    GUILayout.Area(Anchor.UpperLeft)
+    {
+        GUILayout.Label("Horizontal: a row of buttons");
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Blue"))
+            {
+                menu.blue = true;
+                menu.choices += 1;
+            }
+            if (GUILayout.Button("Gold"))
+            {
+                menu.blue = false;
+                menu.choices += 1;
+            }
+        }
+        GUILayout.Vertical()
+        {
+            GUILayout.Label("Vertical: these labels stack");
+            GUILayout.Label($"Choices: {menu.choices}");
+        }
+    }
+
+    var center = float2(Screen.width * 0.5, Screen.height - 136);
+    var color = menu.blue ? Color(0.4, 0.8, 1) : Color(1, 0.77, 0.24);
+    Draw2D.Rect(center, float2(120, 80), color);
+    if (menu.guide) Draw2D.WireRect(center, float2(144, 104), Color.white);
+
+    // GUI places a widget at the exact rect; GUILayout sizes the modal for us.
+    if (GUI.Button(Rect(12, Screen.height - 52, Screen.width - 24, 40), "Open modal")) menu.open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, menu.open)
+    {
+        GUILayout.Label("The modal has the focus");
+        GUILayout.Label("Try the Blue / Gold buttons");
+        GUILayout.Toggle("Show guide", menu.guide);
+        if (GUILayout.Button("Close")) menu.open = false;
+    }
+}

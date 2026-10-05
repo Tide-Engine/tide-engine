@@ -17,6 +17,14 @@ view DrawHud(Arena arena)
 
 Drawing is immediate mode: views record their drawing calls every frame. Views run after the frame's ticks, in the order they're declared, and later ones draw on top. `[Before]` and `[After]` order views among themselves, as they do systems. A frame can draw as much as it needs: shapes go to the GPU together, so tens of thousands of rects or circles a frame are cheap, on the web too.
 
+Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.
+
+::: tide-example views A view draws the world
+
+<<< @/examples/views.tide
+
+:::
+
 Views can share [named phases](./systems.md#named-phases) instead of depending on individual view names:
 
 ```csharp
@@ -182,6 +190,14 @@ view Bar(Health health)
 - A size, radius or width that isn't above 0 draws nothing.
 
 The engine's own shaders draw these, so they take no `frag` or `vert`. For anything they don't draw, there's a [mesh](#meshes) and a [frag](./shaders.md) of your own.
+
+Move the slider to fill the bar and ring and rotate the ellipse. The card uses `Shape` for its gradient, outline and soft shadow.
+
+::: tide-example shapes Smooth shapes
+
+<<< @/examples/shapes.tide
+
+:::
 
 Shapes of every kind drawn one after another go to the GPU together, in one draw call, in the order they're written, so thousands a frame are cheap. Text or a mesh between them starts another.
 

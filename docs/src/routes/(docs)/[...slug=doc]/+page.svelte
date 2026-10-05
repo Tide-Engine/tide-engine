@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { liveExamples } from '#lib/examples.ts';
+
     let { data } = $props();
 
     // The copy buttons on code blocks.
@@ -29,9 +31,11 @@
     <link rel="canonical" href="https://tide-engine.dev{data.path}" />
 </svelte:head>
 
-<article class="prose" {@attach copyButtons}>
-    {@html data.html}
-</article>
+{#key data.path}
+    <article class="prose" {@attach copyButtons} {@attach liveExamples}>
+        {@html data.html}
+    </article>
+{/key}
 
 <footer>
     <a class="edit" href={data.edit} target="_blank" rel="noreferrer">
