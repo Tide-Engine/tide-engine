@@ -1756,12 +1756,12 @@ TIDE_TEST(lsp_scheduling_phases)
     TIDE_CHECK(has(signature, "\"activeParameter\":1"));
 
     // A fully qualified phase indexes its namespace, enum type, and member separately.
-    open_document("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
-                  "[Stage(Frame.Pha$ses.Objects)]\nview V() { }\n");
+    open_document("namespace Paint;\nenum Phases { Objects }\nscene Main { }\n"
+                  "[Stage(Paint.Pha$ses.Objects)]\nview V() { }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
-    completion = complete("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
-                          "[Stage(Frame.$)]\nview V() { }\n");
+    completion = complete("namespace Paint;\nenum Phases { Objects }\nscene Main { }\n"
+                          "[Stage(Paint.$)]\nview V() { }\n");
     TIDE_CHECK(offers(completion, "Phases") && !offers(completion, "Main") && !offers(completion, "V"));
 }
 
@@ -2001,6 +2001,26 @@ TIDE_TEST(lsp_gui)
     // ...and a signature, as the GUI's calls have
     open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cursor.Lock()"));
+
+    // A frame's length: local code reads it, and the functions it calls; the
+    // match has Time's instead.
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal event E { }\nlocal event(E) H()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    var dt = Frame.$;\n}\n"), "dt"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    var dt = Frame.$;\n}\n"), "dt"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Frame.d$t; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *frame = request("textDocument/hover");
+    TIDE_CHECK(has(frame, "Frame.dt: float"));
+    TIDE_CHECK(has(frame, "The seconds since this machine's previous frame started"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Fra$me.dt; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "This machine's frame"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
+    open_document("singleton Clock { float age; }\nscene Main { }\nsystem S(mut Clock clock)\n{\n    clock.age += Frame.dt;\n}\n");
+    TIDE_CHECK(has(last_sent(), "so it can't read Frame.dt"));
+    TIDE_CHECK(has(last_sent(), "time.dt"));
 
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"
