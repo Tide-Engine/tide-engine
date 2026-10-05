@@ -69,7 +69,7 @@ Input carries whether buttons are held, not whether they just went down: when a 
 
 ## Devices
 
-`Devices` has a keyboard, a mouse, a gamepad, a touchscreen and the pointer. Every button has `.pressed` (held), `.down` (went down since the last sample) and `.up` (went up). On a device, `.pressed` means held at any point since the last sample, so a quick tap between ticks is never lost.
+`Devices` has a keyboard, a mouse, a gamepad, a touchscreen and the pointer. Every button has `.pressed` (held), `.down` (went down since the last sample) and `.up` (went up). On a device, `.pressed` means held at any point since the last sample, so a quick tap between ticks is never lost. A match that starts from a menu doesn't read what was pressed there: its first tick gets what's held as it starts.
 
 - **Keyboard:** every key by its position, named after the US layout, so `WASD` is in the same place on AZERTY:
   - `a` to `z`, and `digit0` to `digit9`

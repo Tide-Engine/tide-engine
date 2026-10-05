@@ -1,0 +1,64 @@
+// A system that takes a component to read sets this entity's own through its
+// World: the code goes through every entity and writes the few it has
+// something for, and the parameter stays as the code came to the entity.
+
+component Counter
+{
+    int value;
+    int target;
+    int seen;
+}
+
+component Slow { }
+
+singleton Tally
+{
+    int set;
+    int stale;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 5000; i++)
+    {
+        Spawn(Counter { target = i % 7 });
+    }
+    Spawn(Counter { target = 3 }, Slow);
+}
+
+system Climb(Counter counter, mut Tally tally, mut World world)
+{
+    if (counter.value < counter.target)
+    {
+        mut var next = counter;
+        next.value += 1;
+        world.Set<Counter>(this, next);
+        tally.set += 1;
+        // The parameter is the component as the code came to the entity
+        if (counter.value == next.value) tally.stale += 1;
+        // ...and the World has it as it is now
+        mut var now = world.Get<Counter>(this);
+        now.seen = now.value;
+        world.Set<Counter>(this, now);
+    }
+}
+
+// The same from a handler, which runs for one entity
+event Nudge
+{
+    int by;
+}
+
+system Ask(Counter counter, with Slow)
+{
+    if (counter.value == counter.target) this.Send(Nudge { by = 1 });
+}
+
+event(Nudge nudge) Raise(Counter counter, mut World world)
+{
+    mut var next = counter;
+    next.target += nudge.by;
+    world.Set<Counter>(this, next);
+}

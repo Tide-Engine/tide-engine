@@ -384,6 +384,16 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set_tests_properties(tide_platform_stats PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 
+    # A match started from a menu, in such a run: its first tick reads what's
+    # held as it starts, never what the devices kept from before it.
+    tide_add_game(tide_platform_first_tick SOURCES tests/first_tick.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_first_tick
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/first_tick.mjs" $<TARGET_FILE:tide_platform_first_tick>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_first_tick-run")
+        set_tests_properties(tide_platform_first_tick PROPERTIES LABELS gpu TIMEOUT 120)
+    endif()
+
     # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
     # shell and a build server have it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
@@ -471,6 +481,14 @@ if(TIDE_WEB)
     target_link_libraries(tide_platform_web_stats PRIVATE tide_platform)
     tide_web_page(tide_platform_web_stats SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_stats TARGET tide_platform_web_stats)
+
+    # ...and what its devices keep for a tick's sample: nothing while no tick
+    # can sample, so a match started from a menu doesn't read what was pressed
+    # before it, and everything between two ticks of a match that runs.
+    tide_add_game(tide_platform_web_first_tick SOURCES tests/first_tick.tide NAME game HOST tests/web_first_tick.c)
+    target_link_libraries(tide_platform_web_first_tick PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_first_tick SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_first_tick TARGET tide_platform_web_first_tick)
 
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.

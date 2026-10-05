@@ -43,6 +43,25 @@ One more is for speed, as an image is taken every step:
   it over. An image that doesn't fit is now partly written; its whole size is
   still what's returned.
 
+And one is for what a match keeps of an image from tick to tick:
+
+- **`snapshot.c`, `recording.h`, `box2d.h`: an image in sections that keep
+  their place** (`b2World_GetSnapshotAt`, `b2GetSnapshotBases`,
+  `b2GetSnapshotHead`, `B2_SNAPSHOT_SECTIONS`). Upstream's image is one run of
+  bytes that starts with its parts of changing size (the id pools, then the
+  solver sets, the awake one before the sleeping ones), so a contact that
+  starts or ends moves every byte after it, and the whole image differs from
+  the one before though next to nothing changed. Here an image can have a
+  table after its header of where each of 17 sections starts, which the caller
+  gives: the writer goes to each one's place (`b2SnapSection`), over zeros,
+  and the reader goes where the table says (`b2SnapSeek`). A section that runs
+  into the next one's place is reported, with every section's size, and the
+  caller places them again. The sections are in upstream's order, and an image
+  without the table reads as it always did. `bridge.c` keeps each section where
+  it was while that leaves it between none and a quarter of the one before it
+  to spare, so an image is an eighth bigger and what changes of it is what
+  changed in the world.
+
 ## Updating it
 
 Copy the two folders over, apply the changes again, and run `tide_box2d_stack`

@@ -352,6 +352,23 @@ B2_API bool b2World_Restore( b2WorldId worldId, const uint8_t* image, int size )
 /// @return The new world id, or b2_nullWorldId on failure.
 B2_API b2WorldId b2CreateWorldFromSnapshot( const uint8_t* image, int size, int workerCount );
 
+/// Tide: an image in sections that each keep their place (see src/TIDE.md's note on sections, and snapshot.c).
+/// The image is its header, a table of where each section starts, and the sections there, zeros between them.
+/// Any image restores with b2World_Restore.
+#define B2_SNAPSHOT_SECTIONS 17
+
+/// The bytes before the first section: the least its base can be.
+B2_API int b2GetSnapshotHead( void );
+
+/// Write a snapshot with each section at its base, and each section's size into @p sizes.
+/// @return The image's size, with nothing past @p capacity written, as b2World_GetSnapshot. Or -1 when a
+///         section ran past the next one's base: the sizes are right, the image isn't one, and the caller
+///         places the sections again.
+B2_API int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// Where an image's sections start. False for an image that has none.
+B2_API bool b2GetSnapshotBases( const uint8_t* image, int size, int* bases );
+
 /** @} */
 
 /**

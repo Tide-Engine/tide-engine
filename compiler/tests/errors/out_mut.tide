@@ -1,0 +1,4 @@
+// expect: 'out' says the call makes the list, which 'mut' would only change: drop 'mut'
+// expect: like 'extern int Fill(out List<byte> bytes);'
+scene Main { }
+extern int Fill(mut out List<byte> bytes);

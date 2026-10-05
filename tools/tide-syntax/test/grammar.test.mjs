@@ -115,6 +115,7 @@ const cases = {
         ['extern List<int> Primes(', [['extern', 'storage.modifier'], ['List', 'support.class'], ['Primes', 'entity.name.function'], ['Primes', '!entity.name.function.call']]],
         ['extern float Noise(', [['extern', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Noise', 'entity.name.function']]],
         ['extern void Fill(', [['in', 'storage.modifier'], ['in', '!keyword.control'], ['Stats', 'entity.name.type'], ['mut', 'storage.modifier']]],
+        ['extern int Write(', [['out', 'storage.modifier'], ['List', 'support.class'], ['byte', 'storage.type.primitive'], ['out', '!storage.modifier', 2]]],
         ['const List<int> NONE', [['const', 'storage.modifier'], ['List', 'support.class'], ['NONE', 'variable.other.constant']]],
         ['const int MAX_HEALTH', [['const', 'storage.modifier'], ['MAX_HEALTH', 'variable.other.constant']]],
         ['Grid2<int> cells;', [['Grid2', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end']]],

@@ -1,0 +1,4 @@
+// expect: only a list is an 'out' parameter, and 'total' is int
+// expect: it changes a value through a pointer as 'mut int total', or returns it
+scene Main { }
+extern void Count(out int total);

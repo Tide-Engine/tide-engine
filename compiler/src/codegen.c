@@ -112,6 +112,7 @@ typedef struct gen {
     uint64_t game_hash;    // Of the header: tells builds of different games apart
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
+    bool lanes_in;         // In a loop over a chunk's rows: the lanes it changes are read as tide_in_<Component> (gen_chunk)
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
     const char *row_queries; // Before the view being generated first runs for an entity: its queries' rows, made once (gen_query_fill)
     VEC(const param *) heard_rows; // The rows ticks record for local handlers' queries, one for each shape (collect_heard_rows)
@@ -2080,7 +2081,9 @@ static bool extern_takes_lists(const decl *m)
 // they are, `mut` ones by address, `in` ones by address too (a copy's, for a
 // value that's no variable's), and text as C text. Text C returns is copied,
 // since C may reuse it. One that takes lists is called through a function of
-// its own (gen_extern_lists), which takes the lists, `mut` ones by address.
+// its own (gen_extern_lists), which takes the lists, `mut` ones by address,
+// and an `out` one with where it is, as the list C makes may start empty,
+// and an empty list doesn't say whose it is.
 static void gen_extern_call(gen *g, sb *o, const expr *e)
 {
     const decl *m = e->method;
@@ -2098,6 +2101,7 @@ static void gen_extern_call(gen *g, sb *o, const expr *e)
             sb_put(o, "&("); // The caller's list itself, whose elements C changes
             gen_expr(g, o, arg);
             sb_put(o, ")");
+            if (p->is_out) sb_printf(o, ", %s", place_where(g, arg)); // Where the list is
         } else if (p->type.kind == TY_LIST) {
             gen_as(g, o, arg, p->type);
         } else if (p->mode == PARAM_MUT
@@ -2611,7 +2615,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             const type element = list_elem(e->type_decl);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
-                const bool is_element = i == e->args.count - 1 && !str_eq_c(e->name, "RemoveAt");
+                const bool is_element = i == e->args.count - 1 && !str_eq_c(e->name, "RemoveAt") && !str_eq_c(e->name, "Resize");
                 gen_as(g, o, e->args.items[i], is_element ? element : (type){TY_INT, NULL});
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the list is
@@ -5879,6 +5883,9 @@ static void gen_list_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER void tide_list%d_insert(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_remove_at(tide_list *l, int32_t i, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_clear(tide_list *l, uint32_t where);\n", k);
+            if (prog->lists.items[k]->resized) {
+                sb_printf(o, "TIDE_HELPER void tide_list%d_resize(tide_list *l, int32_t count, uint32_t where);\n", k);
+            }
             sb_printf(o, "TIDE_HELPER tide_list tide_list%d_copy(tide_list l);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_assign(tide_list *to, tide_list value, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_own(tide_list *l, uint32_t where);\n", k);
@@ -5942,6 +5949,15 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const char *takes = take_all.data ? take_all.data : "";
         sb_printf(o, "TIDE_HELPER void tide_list%d_clear(tide_list *l, const uint32_t where)\n{\n    (void)where;\n%s", k, drops);
         sb_printf(o, "    tide_list_clear(l, sizeof(%s));\n}\n\n", sz);
+        // Resize, in the games that call it: the elements it takes out let go of their text first, as Clear's do
+        if (prog->lists.items[k]->resized) {
+            sb_printf(o, "TIDE_HELPER void tide_list%d_resize(tide_list *l, const int32_t count, const uint32_t where)\n{\n", k);
+            if (text) {
+                sb_printf(o, "    for (int32_t i = count < 0 ? 0 : count; i < tide_list_count(*l); i++) "
+                             "tide_list%d_drop(tide_list_at_mut(*l, i, sizeof(%s)), where);\n", k, sz);
+            }
+            sb_printf(o, "    tide_list_resize(l, count, sizeof(%s), where);\n}\n\n", sz);
+        }
         sb_printf(o, "TIDE_HELPER tide_list tide_list%d_copy(const tide_list l)\n{\n    return tide_list_copy(l, sizeof(%s));\n}\n\n", k, sz);
         sb_printf(o, "TIDE_HELPER void tide_list%d_assign(tide_list *l, const tide_list value, const uint32_t where)\n{\n%s", k, drops);
         sb_printf(o, "    tide_list_set(l, value, sizeof(%s), where);\n%s}\n\n", sz, takes);
@@ -9349,12 +9365,39 @@ static bool changes_component(const decl *sys, const int c, const bool read_only
     return false;
 }
 
+// Where a loop reads and writes the lanes it changes, from what the table said
+// (tide_table_lanes_begin): tide_in_<Component> and tide_col_<Component>, for
+// component `only`, or for each one the system changes. They're arrays of the
+// loop's own. The ones the table was handed could be changed by any write
+// through a byte pointer, as far as the C compiler can tell, so a loop that
+// read its lanes' places from them would read them again at every row, and
+// never run as SIMD. In place, both are the one place, and said so, as the
+// compiler has to know it to run the loop as SIMD without checking.
+static void gen_lanes_places(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool apart,
+                             const int only)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    for (int c = 0; c < prog->components.count; c++) {
+        if ((only >= 0 && c != only) || !arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
+        const decl *d = prog->components.items[c];
+        const char *comp = type_cname(d);
+        sb_printf(o, "%sconst uint8_t *const tide_in_%s[%d] = {", pad, comp, comp_lanes(d));
+        for (int k = 0; k < comp_lanes(d); k++) sb_printf(o, "%stide_%s_%s[%d]", k ? ", " : "", apart ? "was" : "own", comp, k);
+        sb_printf(o, "};\n%suint8_t *const tide_col_%s[%d] = {", pad, comp, comp_lanes(d));
+        for (int k = 0; k < comp_lanes(d); k++) sb_printf(o, "%stide_own_%s[%d]", k ? ", " : "", comp, k);
+        sb_put(o, "};\n");
+        sb_printf(o, "%s(void)tide_in_%s;\n", pad, comp);
+    }
+}
+
 // The lanes of the chunk's components a system reads or changes, as
 // tide_col_<Component>. The ones a loop over the chunk's rows changes
 // (`staged`) go through tide_table_lanes_begin, so a page its snapshots share
 // is only copied if a row changed (gen_chunk_lanes_end); a handler, which
 // changes one row, writes its pages as the table's own.
-static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged)
+static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged,
+                              const char *apart)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
@@ -9362,16 +9405,6 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
     sb_printf(o, "%sconst tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n%s(void)tide_ent;\n", pad, columns, pad);
     if (arch_scene_column(g, a)) {
         sb_printf(o, "%sconst tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n%s(void)tide_scn;\n", pad, columns, pad);
-    }
-    if (staged) { // The most the chunk's changed lanes copy, so the copies never move under each other
-        uint32_t bytes = 0;
-        for (int c = 0; c < prog->components.count; c++) {
-            const decl *d = prog->components.items[c];
-            if (arch_stores(g, a, c) && changes_component(sys, c, read_only)) {
-                bytes += (uint32_t)(comp_lanes(d) * comp_width(d)) + 16u * (uint32_t)comp_lanes(d);
-            }
-        }
-        if (bytes) sb_printf(o, "%stide_table_lanes_reserve(tide_n * %uu);\n", pad, bytes);
     }
     for (int c = 0; c < prog->components.count; c++) {
         if (!arch_stores(g, a, c)) continue;
@@ -9388,8 +9421,12 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
         if (change && staged) {
-            sb_printf(o, "%suint8_t *tide_col_%s[%d];\n%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, comp,
-                      comp_lanes(d), pad, columns, arch_column(g, a, c), comp_lanes(d), comp);
+            // The table says where each lane is read and written, and the
+            // caller where the loop takes that from (gen_lanes_places)
+            sb_printf(o, "%sconst uint8_t *tide_was_%s[%d];\n%suint8_t *tide_own_%s[%d];\n", pad, comp, comp_lanes(d), pad, comp,
+                      comp_lanes(d));
+            sb_printf(o, "%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, %s, tide_was_%s, tide_own_%s);\n", pad, columns,
+                      arch_column(g, a, c), comp_lanes(d), apart, comp, comp);
             continue;
         }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, change ? "" : "const ", comp, comp_lanes(d));
@@ -9443,15 +9480,15 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
 
 // After a loop over a chunk's rows: the lanes it changed go back, in the
 // reverse order gen_chunk_columns took them (tide_table_lanes_end).
-static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char *pad, const bool read_only)
+static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
     for (int c = prog->components.count; c-- > 0;) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
         const decl *d = prog->components.items[c];
-        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, arch_columns(g, a),
-                  arch_column(g, a, c), comp_lanes(d), type_cname(d));
+        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_%s_%s);\n", pad, arch_columns(g, a),
+                  arch_column(g, a, c), comp_lanes(d), staged ? "own" : "col", type_cname(d));
     }
 }
 
@@ -9544,8 +9581,8 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
         if (joined(sys, p)) continue; // From the confirmed world's row (gen_row_join)
         const char *c = type_cname(p->type.decl);
-        sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_col_%s, tide_i);\n", pad, c, i, pad, c,
-                  i, c);
+        sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
+                  i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
         // A view of the confirmed world's entities sees them as the last confirmed tick has them
         const bool drawn = sys->is_view && !sys->verified_entities;
         if (drawn && param_blends(p)) {
@@ -9812,7 +9849,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_printf(o, "        tide_table *tide_t = &%s->%s;\n", world, arch_name(g, a));
             sb_printf(o, "        const uint32_t tide_c = tide_loc.row >> %d;\n", shift);
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
-            gen_chunk_columns(g, h, a, "        ", false, false);
+            gen_chunk_columns(g, h, a, "        ", false, false, NULL);
             gen_row_filter(g, h, a, "        ", "break");
             gen_row_copies(g, h, a, "        ");
             sb_printf(o, "        %s", call.data);
@@ -10084,7 +10121,7 @@ static void gen_heard(gen *g)
 // address if it's mut), then the parameters, mut ones by address.
 // An extern function's parameter as C declares it: plain values as they are,
 // `mut` and `in` ones by address, text as C text, and lists as pointers to
-// their elements.
+// their elements, but an `out` one, which C makes through a tide_list_out.
 static const char *extern_param(gen *g, const param *p)
 {
     sb b = {0};
@@ -10093,6 +10130,8 @@ static const char *extern_param(gen *g, const param *p)
         sb_printf(&b, "const char *%s", name);
     } else if (p->type.kind == TY_DRAW_LIST) { // The frame's list, which C draws into
         sb_printf(&b, "tide_draw_list *%s", name);
+    } else if (p->type.kind == TY_LIST && p->is_out) {
+        sb_printf(&b, "tide_list_out *%s", name);
     } else if (p->type.kind == TY_LIST) {
         sb_printf(&b, "%s%s *%s", p->mode == PARAM_MUT ? "" : "const ", c_type(list_elem(p->type.decl)), name);
     } else if (p->mode == PARAM_MUT || p->mode == PARAM_IN) {
@@ -10113,6 +10152,9 @@ static const char *extern_return(const decl *m)
 // The function an extern that takes lists is called through: C gets each
 // list's elements side by side, which a list in chunks (see tide/list.h) only
 // has in a copy, written back into the list after the call when C changes it.
+// An `out` list goes as a tide_list_out, which C makes the elements through:
+// once it returns, they're the caller's list, which is at the `where` that
+// comes with it.
 static void gen_extern_lists(gen *g, sb *o, const decl *m)
 {
     const char *ret = extern_return(m);
@@ -10123,6 +10165,7 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         if (i) sb_put(o, ", ");
         if (p->type.kind != TY_LIST) sb_put(o, extern_param(g, p));
         else sb_printf(o, "%s%s", p->mode == PARAM_MUT ? "tide_list *" : "const tide_list ", local_cname(g, p->name));
+        if (p->type.kind == TY_LIST && p->is_out) sb_printf(o, ", const uint32_t %s", where_name(g, p->name));
     }
     sb_put(o, ")\n{\n");
     for (int i = 0; i < m->params.count; i++) {
@@ -10130,6 +10173,10 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         if (p->type.kind != TY_LIST) continue;
         const bool changes = p->mode == PARAM_MUT;
         const char *element = c_type(list_elem(p->type.decl));
+        if (p->is_out) {
+            sb_printf(o, "    tide_list_out tide_out%d;\n    tide_list_out_begin(&tide_out%d, (uint32_t)sizeof(%s));\n", i, i, element);
+            continue;
+        }
         sb_printf(o, "    bool tide_copied%d;\n", i);
         sb_printf(o, "    %s *tide_flat%d = tide_list_flatten(%s%s, (uint32_t)sizeof(%s), %s, &tide_copied%d);\n", element, i,
                   changes ? "*" : "", local_cname(g, p->name), element, changes ? "true" : "false", i);
@@ -10139,7 +10186,8 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
         if (i) sb_put(o, ", ");
-        if (p->type.kind == TY_LIST) sb_printf(o, "tide_flat%d", i);
+        if (p->type.kind == TY_LIST && p->is_out) sb_printf(o, "&tide_out%d", i);
+        else if (p->type.kind == TY_LIST) sb_printf(o, "tide_flat%d", i);
         else sb_put(o, local_cname(g, p->name));
     }
     sb_put(o, ");\n");
@@ -10147,6 +10195,10 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         const param *p = &m->params.items[i];
         if (p->type.kind != TY_LIST) continue;
         const bool changes = p->mode == PARAM_MUT;
+        if (p->is_out) {
+            sb_printf(o, "    tide_list_out_end(&tide_out%d, %s, %s);\n", i, local_cname(g, p->name), where_name(g, p->name));
+            continue;
+        }
         sb_printf(o, "    tide_list_unflatten(%s%s, tide_flat%d, (uint32_t)sizeof(%s), %s, tide_copied%d);\n", changes ? "*" : "",
                   local_cname(g, p->name), i, c_type(list_elem(p->type.decl)), changes ? "true" : "false", i);
     }
@@ -11172,15 +11224,41 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(&inner, "%s    ", pad);
     sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
     gen_piece_rows(o, pad, pieced);
-    // A system that reads through its World a component it changes reads rows
-    // it changed earlier in this run: so they're written in place, the same
-    // everywhere, rather than into a copy some pages would have and others not
-    gen_chunk_columns(g, sys, a, pad, read_only, !world_reads_own_writes(sys));
     const expr *send = batch_event(sys);
     bool batch = send != NULL;
     for (int c = 0; batch && c < g->prog->components.count; c++) {
         if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) batch = false;
     }
+    // A system that reads through its World a component it changes reads rows
+    // it changed earlier in this run: so they're written in place, the same
+    // everywhere, rather than into a copy some pages would have and others not
+    const bool staged = !world_reads_own_writes(sys);
+    // A loop that writes every row of the chunk reads the lanes it changes
+    // where they are and writes them apart, when a snapshot shares their
+    // pages: nothing is copied first. Every row: no row is left out by what
+    // it has or whose it is, and the task has the whole chunk.
+    bool changes = false;
+    // (The owner's own lanes, read to tell whose a row is, are read where the loop writes them)
+    bool every_row = !filters_owner(g, sys, a) && !sys->verified_join && !reads_owner(g, sys, a);
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (!arch_stores(g, a, c)) continue;
+        if (changes_component(sys, c, read_only)) changes = true;
+        if (comp_sparse(g, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) every_row = false;
+    }
+    const bool can_part = staged && changes && every_row && !batch;
+    if (can_part) {
+        sb_printf(o, "%sconst bool tide_apart = %s(", pad, pieced ? "tide_pieces == 1u && " : "");
+        bool first = true;
+        for (int c = 0; c < g->prog->components.count; c++) {
+            if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
+            sb_printf(o, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
+                      arch_column(g, a, c), comp_lanes(g->prog->components.items[c]));
+            first = false;
+        }
+        sb_put(o, ");\n");
+    }
+    gen_chunk_columns(g, sys, a, pad, read_only, staged, !staged ? NULL : can_part ? "tide_apart" : "false");
+    if (staged && !can_part) gen_lanes_places(g, sys, a, pad, read_only, false, -1);
     if (batch) {
         sb_printf(o, "%stide_queue *restrict const tide_queue_out = tide_recording(&tide_w->commands);\n", pad);
         sb_printf(o, "%sconst uint32_t tide_record_size = (TIDE_COMMAND_SIZE(event_%s) + 7u) & ~7u;\n", pad, type_cname(send->type_decl));
@@ -11199,6 +11277,9 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
         return;
     }
     if (send) sb_printf(o, "%stide_command *const tide_reserved = NULL;\n", pad);
+    const size_t loop_at = o->len;
+    const int loop_line = o->line;
+    g->lanes_in = staged && !read_only;
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_join(g, sys, inner.data);
@@ -11209,7 +11290,25 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(o, ");%s\n", clear);
     gen_row_puts(g, sys, inner.data, read_only);
     sb_printf(o, "%s}\n", pad);
-    gen_chunk_lanes_end(g, sys, a, pad, read_only);
+    g->lanes_in = false;
+    if (can_part) {
+        // The loop twice over, as the C compiler has to know which it is to
+        // run either as SIMD: in place, where each lane is read and written
+        // through one pointer, and apart, where they're two
+        sb loop = {0};
+        sb_put(&loop, o->data + loop_at);
+        o->len = loop_at;
+        o->data[o->len] = '\0';
+        o->line = loop_line;
+        sb_printf(o, "%sif (tide_apart) {\n", pad);
+        gen_lanes_places(g, sys, a, pad, read_only, true, -1);
+        sb_put(o, loop.data);
+        sb_printf(o, "%s} else {\n", pad);
+        gen_lanes_places(g, sys, a, pad, read_only, false, -1);
+        sb_put(o, loop.data);
+        sb_printf(o, "%s}\n", pad);
+    }
+    gen_chunk_lanes_end(g, sys, a, pad, read_only, staged);
 }
 
 // Whether a system's spawns get temporary handles, settled once it's done

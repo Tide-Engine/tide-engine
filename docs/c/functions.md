@@ -157,6 +157,7 @@ C often takes pointers. Tide has none, and no pointer arithmetic: the parameter 
 | `in T x` | `const T *`: the caller's variable, read-only, with no copy (a copy for a value that's no variable's) |
 | `List<T> xs` | `const T *`: the list's elements, NULL when it's empty. Pass `xs.count` too |
 | `mut List<T> xs` | `T *`: the elements, which C can change, but not how many there are |
+| `out List<T> xs` | `tide_list_out *`: a list C makes, its elements and how many there are (see [Lists C makes](#lists-c-makes)) |
 | `string s` | `const char *`: UTF-8, ending in a zero |
 
 A world keeps a list whose elements take more than 16 KB in pieces, so that changing one element doesn't copy the rest. C gets those elements side by side in a copy, made for the call, and with `mut`, written back into the list once C returns. Smaller lists, and lists that aren't a world's, go to C as they are.
@@ -209,6 +210,40 @@ bool RayCast(tide_float3 from, tide_float3 direction, Hit *hit)
 Tide's types have no padding the compiler adds, so a C struct with the same fields lines up with them. Structs that hold text or lists can't go to C, and neither can lists of text or `T?` values.
 
 C functions can't `fail` (see [Errors](../language/errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
+
+### Lists C makes
+
+With `mut List<T>`, C changes the elements a list has. With `out List<T>`, as C#'s `out`, C makes the list: its elements, and how many there are. What the list held isn't passed, so nothing of it is copied for C.
+
+```csharp
+extern int WriteImage(out List<byte> image);
+
+system Save(mut Physics physics)
+{
+    physics.size = WriteImage(physics.image);
+}
+```
+
+```c
+#include "tide/list.h"
+
+int WriteImage(tide_list_out *image)
+{
+    uint8_t *bytes = tide_list_out_room(image, ImageSize());
+    const uint32_t written = WriteBytes(bytes);
+    tide_list_out_count(image, written);
+    return (int)written;
+}
+```
+
+- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (1 GiB of them).
+- `tide_list_out_count(out, count)` says how many of those elements, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
+
+Once C returns, the list is exactly those elements, however many it had: more, fewer or none. The memory is the engine's, kept from one call to the next, so C neither frees it nor keeps it.
+
+A world's list is written piece by piece, and only the pieces whose bytes differ from what the list had. So a big list that comes out mostly the same costs little: the pieces that didn't change aren't hashed again, and stay shared with the snapshots rollback keeps.
+
+The argument is a list the code can change, as for `mut`, with no word at the call: a field of a `mut` component or singleton, or a `mut` local. Only `extern` functions take `out`, and only for lists, of the elements a list goes to C with.
 
 ## Drawing from C
 
@@ -288,7 +323,7 @@ Nothing is created or uploaded, and C holds no handle. A mesh names its pixels, 
 
 C can keep state, so calling it is a side effect, and Tide keeps its order: in `Pick(Roll(), Roll())`, the first `Roll` runs first on every platform, though C itself would let each compiler pick. The same goes for functions, methods and operators that call C, and for calls inside `&&`, `||` and `?:`, whose parts still only run when they would.
 
-A C function that changes what it's given as `mut` keeps its turn among what's read beside it too, like any [function that does](../language/functions.md#order): in `Pack(counter.n, c_next(counter))`, `counter.n` is read first.
+A C function that changes what it's given as `mut`, or makes a list as `out`, keeps its turn among what's read beside it too, like any [function that does](../language/functions.md#order): in `Pack(counter.n, c_next(counter))`, `counter.n` is read first.
 
 ## What C is trusted with
 

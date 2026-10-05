@@ -19,6 +19,7 @@ tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(world) # Other entities' components through the World
+tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
@@ -93,6 +94,8 @@ tide_e2e_test(text_fields)
 tide_e2e_test(lists)
 tide_e2e_test(lists_held) # Lists in structs, and what stands in for lists inside lists
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
+tide_e2e_test(lists_resize) # Resize: a list sized in one call, a few elements or chunks of them
+tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out List<T>`: lists C makes
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
