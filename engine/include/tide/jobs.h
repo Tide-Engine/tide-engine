@@ -43,6 +43,14 @@ typedef struct tide_jobs {
     // first task's start to its last task's end, or NULL: nothing is measured.
     // The host that wants it gives one (tide_platform_jobs_profile).
     tide_profile *profile;
+    // For a pool whose threads can sleep, or NULL. While `run` runs, asks up to
+    // `count` of the threads that aren't in the work to run it: there's
+    // something for that many more to do. With it, the work returns on a
+    // thread other than the caller's once that thread has found nothing to do
+    // for a while, and the pool lets it sleep until it's asked again, so a
+    // thread can run the work several times in one `run`. Without it, a thread
+    // with nothing to do stays in the work, awake, until it's all done.
+    void (*more)(void *self, uint32_t count);
 } tide_jobs;
 
 // The entities a system's spawns got as it settled them: what a temporary
@@ -148,3 +156,21 @@ void tide_job_wait(tide_job job);
 // included: 1 with no pool, and outside a tick. What a library sizes its
 // workers by.
 uint32_t tide_job_threads(void);
+
+// For tasks that wait for each other inside their work, as a solver's workers
+// wait for each stage it gives them. Such a wait is a loop, since it's mostly
+// shorter than a sleep and a wake, with the CPU's pause in it and, after a
+// while, the system's yield, which lets a thread with work have the core. The
+// web has neither: a loop there holds its core for as long as it goes on, and
+// with a thread on every core that keeps a thread with work off one. So a
+// wait that has gone on long sleeps instead, where it has to.
+//
+// tide_job_sleep(word, seen) sleeps until tide_job_wake(word), unless *word
+// isn't `seen` any more as it's called, and returns true. Where the thread
+// can't sleep (a page's own), or needn't, as the pause and the yield are
+// there (everywhere but the web), it returns false at once, and the caller
+// goes on with its loop. Whoever changes the word calls tide_job_wake after:
+// it costs a comparison while nobody sleeps. The word is 4 bytes that stay
+// where they are while anyone may sleep on them.
+bool tide_job_sleep(const uint32_t *word, uint32_t seen);
+void tide_job_wake(const uint32_t *word);

@@ -144,6 +144,7 @@ static inline void tide_run_unload(void)
 {
     tide_render_targets_free();
     tide_scratch_free();
+    tide_pages_free();
 }
 
 static inline void tide_run_local_free(void *local)

@@ -32,11 +32,17 @@ void tide_platform_jobs_profile(tide_profile *profile)
 // On the web, threads are workers that share the program's memory, which a
 // page can only give them when it's cross-origin isolated (platform/web/tide.js
 // says how many it has). The page's main thread can never wait, for a lock or
-// a signal, only spin: so workers wait for a round on its count, and the
+// a signal, only spin: so workers wait for a call on its count, and the
 // caller, which only spins, opens and closes rounds with atomics alone. As on
 // desktop, the caller never waits for a worker to wake (a worker only starts
 // once the page's main thread is back in the browser's hands), only for the
 // ones that joined.
+//
+// A worker with nothing to do sleeps: WebAssembly has no instruction that
+// tells a CPU a loop is only waiting, and a page can't yield its core, so one
+// that spun would hold a core, or half of one, from a thread with work. The
+// work returns on a worker that finds none, and `more` calls as many back as
+// there's work for (tide/jobs.h).
 
 #include <pthread.h>
 
@@ -46,7 +52,8 @@ void tide_platform_jobs_profile(tide_profile *profile)
 
 typedef struct pool {
     tide_jobs jobs;
-    uint32_t round; // Rounds started, which workers wait on
+    uint32_t calls;  // For workers, which they wait on: rounds started, and more asked into one
+    uint32_t asleep; // Workers waiting for one, or about to
     uint32_t gate;
     void (*work)(void *context, uint32_t thread);
     void *context;
@@ -81,11 +88,16 @@ static void *worker(void *thread)
     pool *p = &the_pool;
     uint32_t seen = 0;
     for (;;) {
-        uint32_t round;
-        while ((round = __atomic_load_n(&p->round, __ATOMIC_ACQUIRE)) == seen) {
-            __builtin_wasm_memory_atomic_wait32((int32_t *)&p->round, (int32_t)seen, -1);
+        // Counted asleep before it looks at the calls: whoever calls counts
+        // its call first and then looks for sleepers, so one of the two sees
+        // the other (more)
+        __atomic_fetch_add(&p->asleep, 1u, __ATOMIC_SEQ_CST);
+        uint32_t calls;
+        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen) {
+            __builtin_wasm_memory_atomic_wait32((int32_t *)&p->calls, (int32_t)seen, -1);
         }
-        seen = round;
+        __atomic_fetch_sub(&p->asleep, 1u, __ATOMIC_SEQ_CST);
+        seen = calls;
         uint32_t gate = __atomic_load_n(&p->gate, __ATOMIC_ACQUIRE);
         bool joined = false;
         while ((gate & OPEN) && !joined) {
@@ -105,12 +117,22 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
     p->work = work;
     p->context = context;
     __atomic_store_n(&p->gate, OPEN, __ATOMIC_RELEASE);
-    __atomic_fetch_add(&p->round, 1u, __ATOMIC_RELEASE);
-    __builtin_wasm_memory_atomic_notify((int32_t *)&p->round, UINT32_MAX);
+    __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
+    __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, UINT32_MAX);
     work(context, 0);
     __atomic_fetch_and(&p->gate, ~OPEN, __ATOMIC_ACQ_REL);
     while (__atomic_load_n(&p->gate, __ATOMIC_ACQUIRE) != 0) {
     }
+}
+
+// Up to `count` of the workers that sleep come back into the round. A worker
+// that was on its way to sleep sees the call counted and looks again, so
+// nothing is asked of a pool whose workers are all awake.
+static void more(void *self, const uint32_t count)
+{
+    pool *p = self;
+    __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&p->asleep, __ATOMIC_SEQ_CST)) __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, count);
 }
 
 const tide_jobs *tide_platform_jobs(void)
@@ -119,7 +141,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more}; // A profile given before stays
     return p->jobs.threads > 1 ? &p->jobs : NULL;
 }
 
@@ -278,7 +300,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, NULL}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     InitializeConditionVariable(&p->start);

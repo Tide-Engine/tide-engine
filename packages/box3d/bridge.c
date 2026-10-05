@@ -125,6 +125,7 @@ static uint64_t step_ns;
 static uint64_t image_ns;
 static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
 static uint64_t blocks_in_all;
+static uint64_t counting_ns; // What that counting took, which no match pays
 
 // ---------------------------------------------------------------------------
 // Box3D's tasks are the tick's (tide/jobs.h)
@@ -148,6 +149,20 @@ static void finish(void *task, void *user)
 }
 
 #ifdef __wasm__
+// Box3D's workers wait for each stage of a step in a loop, which on the web
+// holds a core for as long as it goes on. One that has waited long sleeps
+// until the next stage is given (solver.c, where they're called from), on the
+// threads that can (tide/jobs.h).
+bool b3t_stage_sleep(const uint32_t *bits, const uint32_t seen)
+{
+    return tide_job_sleep(bits, seen);
+}
+
+void b3t_stage_wake(const uint32_t *bits)
+{
+    tide_job_wake(bits);
+}
+
 // On the web, memory another thread grew can't be used until this one hears of
 // it, which the engine's allocator sees to (tide/page.h).
 static void *allocate(const size_t size, const int32_t alignment)
@@ -360,9 +375,14 @@ void b3t_measure(uint64_t *step, uint64_t *image)
 
 // Of the images since the last call, how many of their 16 KiB blocks changed
 // from one image to the next, and how many there were: what a match's
-// snapshots can't share, and what's hashed again.
-void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all)
+// snapshots can't share, and what's hashed again. Counting keeps a copy of
+// each image and compares the next with it, inside the tick, which only a
+// measured run does: `took` is the nanoseconds of that, to take off the
+// tick's.
+void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 {
+    *took = counting_ns;
+    counting_ns = 0;
     *changed = blocks_changed;
     *in_all = blocks_in_all;
     blocks_changed = 0;
@@ -557,8 +577,9 @@ int32_t b3t_image(tide_list_out *out)
     }
     tide_list_out_count(out, (uint32_t)size);
     placed->image_size = size;
-    if (measuring) image_ns += tide_time_now_ns() - began;
     if (measuring) {
+        const uint64_t counting = tide_time_now_ns();
+        image_ns += counting - began;
         world *w = active;
         enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {
@@ -569,6 +590,7 @@ int32_t b3t_image(tide_list_out *out)
         w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
         memcpy(w->before, image, (size_t)size);
         w->before_size = size;
+        counting_ns += tide_time_now_ns() - counting;
     }
     return size;
 }

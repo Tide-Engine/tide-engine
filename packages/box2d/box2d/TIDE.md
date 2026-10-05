@@ -11,7 +11,7 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
-Each change is marked `Tide:` where it is. They're all for one thing: a world's
+Each change is marked `Tide:` where it is. Most are for one thing: a world's
 image (`b2World_GetSnapshot`) is kept in the match, where it's hashed and sent
 between players, so it has to be the same bytes on every machine for the same
 state, and one machine's has to load on another.
@@ -61,6 +61,23 @@ And one is for what a match keeps of an image from tick to tick:
   it was while that leaves it between none and a quarter of the one before it
   to spare, so an image is an eighth bigger and what changes of it is what
   changed in the world.
+
+And one is for threads on the web, where upstream only knows Emscripten:
+
+- **`solver.c`: a worker that has waited long for the next stage sleeps**
+  (`b2SolverTask`, `B2_TIDE_WAIT_ROUNDS`), on the web only. A step's workers
+  wait for each stage in a loop, with the CPU's pause in it and, every few
+  rounds, the system's yield. WebAssembly has no pause and a page no yield, so
+  there the loop holds a processor for as long as it waits, and with a worker
+  on every one a page has, the system takes a processor from a worker that has
+  a block to run whatever else the machine has: the stage then waits a time
+  slice for that block. After 4096 rounds of the wait, which is about what
+  waking a worker takes, so that the waits between stages go as they did, a
+  worker sleeps until the main thread gives the next stage (`b2t_stage_sleep`,
+  and `b2t_stage_wake` after each change of `atomicSyncBits`, both the
+  bridge's, which has them from `tide/jobs.h`). On a thread that can't sleep,
+  a page's own, it goes on with the loop. A world steps the same either way,
+  as it does with any number of workers.
 
 ## Updating it
 
