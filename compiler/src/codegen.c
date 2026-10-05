@@ -2601,6 +2601,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                                         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
                 sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
             }
+            if (e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText")) { // As the frame's renderer draws text
+                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height), tide_ui->measure");
+            }
             sb_put(o, ")");
         }
         break;

@@ -7026,7 +7026,9 @@ static bool stands_alone(const expr *e)
 {
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
-    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_DRAW))
+    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY
+                                         // A Draw call that gives a value only measures or converts
+                                         || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
@@ -9269,9 +9271,10 @@ static bool call_acts(const expr *e)
     if (e->kind != E_CALL && e->kind != E_METHOD) return false;
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
-    case CALL_REMOVE: case CALL_DESTROY: case CALL_DRAW: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
+    case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
     case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID:
         return true;
+    case CALL_DRAW: return e->type.kind == TY_VOID; // Draw2D.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set");
