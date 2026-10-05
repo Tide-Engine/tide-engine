@@ -29,7 +29,7 @@ int main(int argc, char **argv)
 }
 ```
 
-It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default, and `--size 1280 720` on the command line goes over them), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
+It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, hands the game's [local handlers](../game/events.md#local-handlers) what the match sent, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default, and `--size 1280 720` on the command line goes over them), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
 
 It also takes `--capture`, `--frames`, `--script` and `--scale`, which run the game [with no window](#without-a-window) (see [the tide command](../tools/cli.md#without-a-window) for what they do). So every game `tide_add_game` builds without `HOST` has them, and so does one `tide build` made.
 
@@ -48,6 +48,7 @@ The generated header is the API between the game and its host. Namespaced declar
 - `tide_world` is the whole match. Its data is in pages it shares with its snapshots, so a world starts zeroed (`{0}`, static or `calloc`), copying the struct isn't a snapshot (`tide_world_copy` is), and `tide_world_free(w)` lets it go.
 - `tide_world_init(w, dt)` clears it (what it had goes), sets `Time.dt` (and `Time.tickRate` from it) and the singletons' defaults, and loads `Main` if it's the match's. `tide_world_start(w, dt, start)` starts in another scene. Both start with the match's seed, `Time.seed`, at 0, so a run repeats. A game that has a seed (it reads `Time.seed`, or has a `Random` in the match) also has `tide_world_start_seeded(w, dt, start, seed)`, which starts with the one given. Sessions pick one for each match they start, from the `entropy` function in their desc (`tide_platform_entropy` in the standard host), and seed 0 without one.
 - `tide_world_tick(w)` runs every system once, then applies structural changes and events, and the tasks whose time has come go on. `tide_world_tick_on(w, jobs)` does the same on threads, with the same results: `tide_platform_jobs()` gives a pool with a thread per physical core (on the web, only in a cross-origin isolated page: NULL elsewhere), and sessions take it as `jobs` in their desc, as the standard host does. If that leaves no scene loaded, it loads `Main` again when it's the match's (`tide_frame` does the same for a local `Main`).
+- `tide_world_tick_events(w, jobs, &events)` is the same tick, on `jobs`' threads or this one with `NULL`, which also records into a `tide_event_log` (`tide/events.h`) what it sent that the game's [local handlers](../game/events.md#local-handlers) hear: each event as its turn left it, with what its handlers read. The log is beside the world and never in it, so the world comes out the same as from `tide_world_tick`, which records nothing. A host that ticks a world itself hands the log to `tide_local_events` before its next frame (see [A frame](#a-frame)); sessions record their own ticks.
 - `tide_world_ended(w)` says whether the match is over: its last scene unloaded and `Main` is local. A server stops there and tells every player, who go offline with `TIDE_DISCONNECT_ENDED`.
 - Components are values: a world keeps each one's fields side by side with the same field of other entities, so there's no pointer to one to give. `tide_has_<Component>(w, entity)` says whether an entity has one, `tide_get_<Component>(w, entity)` gives a copy of it (zeros when it has none), and `tide_set_<Component>(w, entity, value)` puts it back changed (false when the entity has none, and nothing changes):
 
@@ -70,7 +71,8 @@ The generated header is the API between the game and its host. Namespaced declar
 **Local state**
 
 - `tide_local` is this machine's local state, outside every world. `tide_local_init(local)` clears it and sets its defaults, and `tide_local_free(local)` lets it go. `tide_local_pack(local, out, capacity)` and `tide_local_unpack(local, data, size)` are it as bytes, as hot reloading carries it over. `TIDE_MAIN_IS_LOCAL` is defined when `Main` is local.
-- `tide_frame(w, previous, alpha, verified, local, draw, gui)` runs every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two: an entity's [local fields](../game/local-state.md#local-fields) go once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is.
+- `tide_frame(w, previous, alpha, verified, local, draw, gui)` runs the local handlers of what the match sent since the last frame (what `tide_local_events` handed over), then every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two. It's what [`verified`](../game/views.md#confirmed-state) parameters read, and an entity's [local fields](../game/local-state.md#local-fields) go, before the views run, once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is, and it's what `verified` parameters read too.
+- `tide_local_events(local, events)` hands the local state what the match sent since the last frame, for the next `tide_frame` to run the game's local handlers with, and leaves the log empty. Call it before each `tide_frame`. `events` is a session's, `tide_session_events(session)`, where each event comes once however often its tick ran, and again for `verified` handlers once the server confirmed its tick; or the log a host gave `tide_world_tick_events`. `NULL` does nothing.
 - A match component's local fields are a struct of their own, `<Component>_local`, which the local state keeps for the entities something was written for: `tide_has_<Component>_local(local, entity)`, `tide_get_<Component>_local(local, entity)` (their defaults when nothing was, with text, lists and grids empty) and `tide_set_<Component>_local(local, entity, value)`. What C sets for an entity that had none is kept by its handle alone, where a view's is kept for [the entity it ran for](../game/local-state.md#after-a-rollback). `tide_get_<Component>` and the component's own struct are the match's part. A singleton's are `local-><Singleton>_local`.
 - `tide_local_frame_time(local, seconds)` says how long this frame is: it's what [`Frame.dt`](../game/views.md#a-frame-s-length) reads, local tasks' `Wait.Seconds` counts it down, and presentation correction errors decay once. Call it before the session update that may supply fresh corrections, then draw with `tide_frame`. Without it, `Frame.dt` is 0, local tasks wait forever and correction errors do not decay.
 
@@ -110,6 +112,7 @@ A zeroed `tide_draw_list` and `tide_gui` are ready to use. A draw list grows as 
 tide_draw_reset(&draw);
 tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
 tide_local_frame_time(&local, seconds);
+tide_local_events(&local, tide_session_events(session)); // What the match sent, for the game's local handlers
 tide_frame(w, previous, alpha, verified, &local, &draw, &gui);
 tide_gui_end(&gui, &draw);
 tide_platform_typing(tide_gui_typing(&gui)); // Phones show their keyboard while the player types, or a view asks
@@ -124,6 +127,30 @@ The measure function a host gives the GUI takes the weight text is in, as the fi
 ```c
 const unsigned char tide_font_bold_ttf[4] = {0};
 ```
+
+### What local handlers hear
+
+A game's [local handlers](../game/events.md#local-handlers) of the match's events run at the start of `tide_frame`, with what the host handed the local state since the last one. Without `tide_local_events`, they never run.
+
+A host with a session hands over the session's log, as above, and as `tide/run.h` does. `tide_session_events(session)` is the same log for every match the session is in, and empty outside one. The session records its client's ticks into it: each event once, however often its tick ran again, and again for `verified` handlers once the server confirmed the tick. It records nothing until the log is first asked for, so ask before the session's first update, and nothing more for a host that stopped taking what's in it. A host that drives a client directly gives it a log of its own, `tide_client_desc.events`, with its `taken` set.
+
+A host that ticks a world itself gives each tick a log, and hands that over:
+
+```c
+tide_event_log events = {0}; // Starts empty
+
+// Each tick
+tide_world_tick_events(&world, jobs, &events);
+
+// Each frame, before tide_frame
+tide_local_events(&local, &events);
+tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+
+// At the end
+tide_event_log_free(&events);
+```
+
+With one world and no server, what it ticks is all there is, so a tick's events are heard by both kinds of handler at the next frame, those of `verified` events too. A frame after several ticks hears them all, in order.
 
 ## Without a window
 

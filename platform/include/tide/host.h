@@ -58,6 +58,10 @@ typedef struct tide_host_game {
     // local fields of the match's entities are kept by, with `world`
     void (*frame)(const void *world, const void *previous, float alpha, const void *verified, void *local,
                   tide_draw_list *draw, tide_gui *gui);
+    // tide_local_events, before `frame`: what the match sent since the last one
+    // (tide_session_events), which the game's local handlers hear as the frame
+    // starts. It leaves `events` empty. Optional for C hosts.
+    void (*events)(void *local, tide_event_log *events);
     // How long this frame is, before `frame`: local tasks' Wait.Seconds counts it down
     void (*frame_time)(void *local, float seconds);
     bool (*take_request)(void *local, tide_session_request *request, void *start);
@@ -538,6 +542,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
     if (tide_platform_room_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
+    // What the match's ticks send, for the game's local handlers: asked for
+    // before the update, so the session records from its first tick
+    tide_event_log *heard = game->events ? tide_session_events(s) : NULL;
     tide_session_update(s, tide_run_now);
     tide_run_migrate();
     tide_session_event event;
@@ -560,6 +567,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
+    // What the match sent since the last frame: its local handlers run first
+    if (heard) game->events(tide_run_local, heard);
     game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);

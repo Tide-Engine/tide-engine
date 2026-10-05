@@ -1,0 +1,8 @@
+// expect: 'verified' goes on a view's parameter, or on a local handler's event: a function takes the value it's passed
+component Health { int value; }
+scene Main { }
+
+int Left(verified Health health)
+{
+    return health.value;
+}

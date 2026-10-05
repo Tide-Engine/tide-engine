@@ -1,0 +1,11 @@
+// expect: the World of the confirmed match isn't built yet
+component Health { int value; }
+local singleton Fx { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+view Show(Health health, verified World world, mut Fx fx)
+{
+    fx.count = world.Get<Health>(this).value + health.value;
+}

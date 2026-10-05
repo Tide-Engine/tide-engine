@@ -121,6 +121,7 @@ Carrying the game over works like this:
 - A changed default doesn't change existing entities, only new ones.
 - A waiting [task](../game/tasks.md) carries on when its async function's code is the same, and is dropped when it changed: where it was waiting is gone.
 - [Local fields](../game/local-state.md#local-fields) carry over with the rest of the local state, by name: a mesh a view baked stays baked. Change what bakes it and it stays as it was, until the view bakes again or you start the game over.
+- [Local handlers](../game/events.md#local-handlers) of the match's events hear nothing twice across a reload. The ticks a client had predicted and not had confirmed by then tell its `verified` handlers nothing, when the new build confirms them as they were.
 - If the scene the game is in is gone, the game starts over.
 
 `tide` says what happened after each reload, like `reloaded, and carried the game over to its new data layout; 1 field reset; 2 entities dropped`.

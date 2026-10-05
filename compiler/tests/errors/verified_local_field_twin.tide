@@ -1,0 +1,14 @@
+// expect: 'shown' is a local field of 'Health', which is the entity's whatever the server confirmed: read it through 'mine'
+component Health
+{
+    int value;
+    local float shown;
+}
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+view Bar(mut Health mine, verified Health confirmed)
+{
+    mine.shown = float(mine.value - confirmed.value) + confirmed.shown;
+}
