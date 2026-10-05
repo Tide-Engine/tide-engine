@@ -15,6 +15,7 @@
 #include "contact.h"
 #include "container.h"
 #include "core.h"
+#include "ctz.h"
 #include "id_pool.h"
 #include "island.h"
 #include "joint.h"
@@ -172,6 +173,183 @@ static void b3SnapRCheck( b3SnapReader* r, int need )
 	}
 }
 
+// Tide: an image as what changed of the one before it (see ../TIDE.md, and b3World_GetSnapshotParts below).
+// The writer below is the one that writes an image whole, and what it appends comes here: a copy of the
+// bytes in memory of the world's own, or the bytes where they are when they go into an image as they are
+// (b3SnapW_Ref). Each is a part that says where in the image it goes. What the writer leaves out is what the
+// image before has already.
+//
+// The copies are in blocks that don't move, so a part can point into one, and they're kept from one image to
+// the next: they're as big as what changed, not as an image.
+typedef struct b3SnapBlock
+{
+	uint8_t* data;
+	int capacity;
+} b3SnapBlock;
+
+typedef struct b3SnapParts
+{
+	// What the caller gets
+	b3SnapshotPart* parts;
+	int count;
+	int capacity;
+
+	b3SnapBlock* blocks;
+	int blockCount;
+	int blockCapacity;
+	// The block being filled, and how much of it is
+	int block;
+	int used;
+
+	// The bytes appended last: where in the image, how many, and the copy. What's written over some of
+	// them after (b3SnapAt) is written there.
+	int lastOffset;
+	int lastSize;
+	uint8_t* last;
+
+	// The sizes the sections had in the image before
+	const int* sizesBefore;
+} b3SnapParts;
+
+_Static_assert( B3_SNAP_TRACK_SECTIONS == b3_sectionCount, "the sections of an image, as physics_world.h counts them" );
+
+#define B3_SNAP_BLOCK_SIZE ( 64 * 1024 )
+
+static void b3SnapPartsReset( b3SnapParts* p, const int* sizesBefore )
+{
+	// One block for all of them, so that what's written goes side by side the next time, with half as much
+	// again: a world that's waking up has more to write at each image, and would outgrow a block that
+	// just fits every time
+	if ( p->blockCount > 1 )
+	{
+		int total = 0;
+		for ( int i = 0; i < p->blockCount; ++i )
+		{
+			total += p->blocks[i].capacity;
+			b3Free( p->blocks[i].data, (size_t)p->blocks[i].capacity );
+		}
+		total += total / 2;
+		p->blocks[0].data = b3Alloc( (size_t)total );
+		p->blocks[0].capacity = total;
+		p->blockCount = 1;
+	}
+
+	p->count = 0;
+	p->block = 0;
+	p->used = 0;
+	p->lastOffset = 0;
+	p->lastSize = 0;
+	p->last = NULL;
+	p->sizesBefore = sizesBefore;
+}
+
+// Memory for `size` bytes side by side, which stays where it is until the next image
+static uint8_t* b3SnapPartsRoom( b3SnapParts* p, int size )
+{
+	if ( p->block < p->blockCount && p->used + size > p->blocks[p->block].capacity )
+	{
+		p->block += 1;
+		p->used = 0;
+	}
+
+	if ( p->block == p->blockCount )
+	{
+		if ( p->blockCount == p->blockCapacity )
+		{
+			int capacity = p->blockCapacity == 0 ? 8 : 2 * p->blockCapacity;
+			p->blocks =
+				b3GrowAlloc( p->blocks, p->blockCapacity * (int)sizeof( b3SnapBlock ), capacity * (int)sizeof( b3SnapBlock ) );
+			p->blockCapacity = capacity;
+		}
+
+		b3SnapBlock* block = p->blocks + p->blockCount;
+		block->capacity = size > B3_SNAP_BLOCK_SIZE ? size : B3_SNAP_BLOCK_SIZE;
+		block->data = b3Alloc( (size_t)block->capacity );
+		p->blockCount += 1;
+		p->used = 0;
+	}
+	else if ( p->blocks[p->block].capacity < size )
+	{
+		// A block that was kept and is the last, and too small: a bigger one in its place
+		b3SnapBlock* block = p->blocks + p->block;
+		b3Free( block->data, (size_t)block->capacity );
+		block->capacity = size;
+		block->data = b3Alloc( (size_t)size );
+	}
+
+	uint8_t* at = p->blocks[p->block].data + p->used;
+	p->used += size;
+	return at;
+}
+
+// A part of the image: `size` bytes that go at `offset`. One that goes on from the last, in the image and in
+// memory, is the same part.
+static void b3SnapPartsAdd( b3SnapParts* p, int offset, int size, const uint8_t* bytes )
+{
+	if ( p->count > 0 )
+	{
+		b3SnapshotPart* last = p->parts + ( p->count - 1 );
+		if ( last->offset + last->size == offset && last->bytes + last->size == bytes )
+		{
+			last->size += size;
+			return;
+		}
+	}
+
+	if ( p->count == p->capacity )
+	{
+		int capacity = p->capacity == 0 ? 64 : 2 * p->capacity;
+		p->parts =
+			b3GrowAlloc( p->parts, p->capacity * (int)sizeof( b3SnapshotPart ), capacity * (int)sizeof( b3SnapshotPart ) );
+		p->capacity = capacity;
+	}
+
+	p->parts[p->count] = ( b3SnapshotPart ){ offset, size, bytes };
+	p->count += 1;
+}
+
+uint8_t* b3SnapPartsReserve( b3RecBuffer* buf, int size )
+{
+	b3SnapParts* p = buf->parts;
+	uint8_t* at = b3SnapPartsRoom( p, size );
+	b3SnapPartsAdd( p, buf->size, size, at );
+	p->lastOffset = buf->size;
+	p->lastSize = size;
+	p->last = at;
+	buf->size += size;
+	return at;
+}
+
+// Zeros from where the buffer is in the image up to `end`
+static void b3SnapPartsZeros( b3RecBuffer* buf, int end )
+{
+	int size = end - buf->size;
+	if ( size <= 0 )
+	{
+		return;
+	}
+
+	b3SnapParts* p = buf->parts;
+	uint8_t* at = b3SnapPartsRoom( p, size );
+	memset( at, 0, (size_t)size );
+	b3SnapPartsAdd( p, buf->size, size, at );
+	buf->size += size;
+}
+
+// Tide: where the bytes last appended are, to write over some of them: the image itself, or the copy an
+// image in parts has of them. `offset` is where in the image, at or past where they started.
+static uint8_t* b3SnapAt( b3RecBuffer* buf, int offset )
+{
+	if ( buf->parts == NULL )
+	{
+		return buf->data + offset;
+	}
+
+	b3SnapParts* p = buf->parts;
+	B3_ASSERT( p->lastOffset <= offset && offset < p->lastOffset + p->lastSize );
+	return p->last + ( offset - p->lastOffset );
+}
+
 // Tide: the next section starts here. Its size goes to the caller who asked, and with a table of bases the
 // writing goes on from this one's, over zeros. A section that ran past the next one's base says so, and from
 // there on the image is only measured, as one run of bytes: the caller places the sections again.
@@ -189,6 +367,18 @@ static void b3SnapSection( b3RecBuffer* buf, int section )
 		{
 			buf->overran = true;
 			buf->countOnly = true;
+		}
+		else if ( buf->parts != NULL )
+		{
+			// Tide: an image in parts. Between the end of the section before and this one's base the image
+			// before has zeros, but for where that section was bigger then: zeros there now.
+			if ( buf->countOnly == false && buf->section > 0 )
+			{
+				b3SnapParts* p = buf->parts;
+				int endBefore = buf->sectionStart + p->sizesBefore[buf->section - 1];
+				b3SnapPartsZeros( buf, endBefore < base ? endBefore : base );
+			}
+			buf->size = base;
 		}
 		else if ( buf->countOnly || base > buf->capacity )
 		{
@@ -255,6 +445,45 @@ static void b3SnapW_Bytes( b3RecBuffer* buf, const void* src, int n )
 	b3RecBufAppend( buf, src, n );
 }
 
+// Tide: bytes that go into an image as they are in the world, with nothing written over them after. An image
+// in parts has the big ones where they are, with no copy: what reads its parts compares them there, so they
+// stay as they are until its parts were read (see b3World_GetSnapshotParts).
+#define B3_SNAP_REF_SIZE 512
+
+static void b3SnapW_Ref( b3RecBuffer* buf, const void* src, int n )
+{
+	if ( buf->parts == NULL || buf->countOnly || n < B3_SNAP_REF_SIZE )
+	{
+		b3RecBufAppend( buf, src, n );
+		return;
+	}
+
+	b3SnapPartsAdd( buf->parts, buf->size, n, src );
+	buf->size += n;
+}
+
+// Tide: for an image in parts, whose writer leaves out what the image before has: the next bytes go at
+// `offset` in the image.
+static void b3SnapSkipTo( b3RecBuffer* buf, int offset )
+{
+	B3_ASSERT( buf->parts != NULL );
+	buf->size = offset;
+}
+
+// Tide: whether an image in parts leaves the section it's at as the image before has it, which it does when
+// nothing was done to what's in it: the buffer is then past it.
+static bool b3SnapKeepSection( b3RecBuffer* buf, bool touched )
+{
+	if ( buf->parts == NULL || buf->countOnly || touched )
+	{
+		return false;
+	}
+
+	b3SnapParts* p = buf->parts;
+	buf->size += p->sizesBefore[buf->section - 1];
+	return true;
+}
+
 // Tide: zeros over `size` bytes at `offset` in each of the `count` things of `stride` bytes that were written
 // from `start` on: the bytes of a struct that no field owns, and its pointers. Nothing, when they were only
 // counted.
@@ -265,12 +494,47 @@ static void b3SnapZero( b3RecBuffer* buf, int start, int count, int stride, int 
 		return;
 	}
 
-	uint8_t* at = buf->data + start + offset;
+	uint8_t* at = b3SnapAt( buf, start ) + offset;
 	for ( int i = 0; i < count; ++i )
 	{
 		memset( at, 0, (size_t)size );
 		at += stride;
 	}
+}
+
+// Tide: the next run of ids under `count` that are in `set`, from `*cursor` on: its first, and one past its
+// last. False when there's none left.
+static bool b3SnapNextRun( const b3SnapSet* set, int count, int* cursor, int* first, int* end )
+{
+	int limit = set->blockCount * 64 < count ? set->blockCount * 64 : count;
+	int i = *cursor;
+	while ( i < limit )
+	{
+		uint64_t word = set->bits[i >> 6] >> ( i & 63 );
+		if ( word != 0 )
+		{
+			i += (int)b3CTZ64( word );
+			break;
+		}
+		i = ( i | 63 ) + 1;
+	}
+
+	if ( i >= limit )
+	{
+		*cursor = limit;
+		return false;
+	}
+
+	int j = i + 1;
+	while ( j < limit && ( ( set->bits[j >> 6] >> ( j & 63 ) ) & 1 ) != 0 )
+	{
+		j += 1;
+	}
+
+	*first = i;
+	*end = j;
+	*cursor = j;
+	return true;
 }
 
 // Bounds check before allocating from image
@@ -289,13 +553,14 @@ static bool b3SnapCheckCount( const b3SnapReader* r, int count, int memSize, int
 }
 
 // POD array: count + raw bytes
+// Tide: which an image in parts has where they are (b3SnapW_Ref)
 #define b3SerPodArray( buf, arr )                                                                                                \
 	do                                                                                                                           \
 	{                                                                                                                            \
 		b3SnapW_I32( buf, ( arr ).count );                                                                                       \
 		if ( ( arr ).count > 0 )                                                                                                 \
 		{                                                                                                                        \
-			b3SnapW_Bytes( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                    \
+			b3SnapW_Ref( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                      \
 		}                                                                                                                        \
 	}                                                                                                                            \
 	while ( 0 )
@@ -437,14 +702,15 @@ static void b3SerTree( b3RecBuffer* buf, const b3DynamicTree* tree )
 	b3SnapW_I32( buf, tree->proxyCapacity );
 	b3SnapW_I32( buf, tree->proxyFreeList );
 	b3SnapW_I32( buf, tree->dfsOrdered ? 1 : 0 );
+	// Tide: which an image in parts has where they are (b3SnapW_Ref)
 	if ( tree->nodeEnd > 0 )
 	{
-		b3SnapW_Bytes( buf, tree->nodes, tree->nodeEnd * (int)sizeof( b3TreeNode ) );
-		b3SnapW_Bytes( buf, tree->parents, tree->nodeEnd * (int)sizeof( int32_t ) );
+		b3SnapW_Ref( buf, tree->nodes, tree->nodeEnd * (int)sizeof( b3TreeNode ) );
+		b3SnapW_Ref( buf, tree->parents, tree->nodeEnd * (int)sizeof( int32_t ) );
 	}
 	if ( tree->proxyCapacity > 0 )
 	{
-		b3SnapW_Bytes( buf, tree->proxies, tree->proxyCapacity * (int)sizeof( b3TreeProxy ) );
+		b3SnapW_Ref( buf, tree->proxies, tree->proxyCapacity * (int)sizeof( b3TreeProxy ) );
 	}
 }
 
@@ -999,29 +1265,21 @@ _Static_assert( sizeof( b3Capsule ) == 28 && sizeof( b3Sphere ) == 16, "a shape'
 // after it, and they differ in size.
 // Hull/mesh/heightField/compound are interned into the recording registry; sphere/capsule inline.
 // Tide: or, with no recording, into the world's own.
-static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
+// Tide: the shapes from `first` up to `end`, which the buffer is at: `start` is where the first shape of all
+// goes. An image written whole has them all in one run, and an image in parts a run for each stretch of
+// shapes that may have changed (b3SnapNextRun), so both have the same bytes for a shape.
+static void b3SerShapeRun( b3RecBuffer* buf, b3World* world, b3Recording* rec, int start, int first, int end )
 {
-	int count = world->shapes.count;
-	b3SnapW_I32( buf, count );
-
-	int start = buf->size;
 	const int stride = (int)sizeof( b3Shape );
-	if ( count > 0 )
-	{
-		b3SnapW_Bytes( buf, world->shapes.data, count * stride );
-	}
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, filter ) + 20, 4 );
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, userDataBits ), 8 );
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, userShapeBits ), 8 );
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, flags ) + 1, 1 );
+	int count = end - first;
+	int runStart = start + first * stride;
+	b3SnapW_Bytes( buf, world->shapes.data + first, count * stride );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Shape, filter ) + 20, 4 );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Shape, userDataBits ), 8 );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Shape, userShapeBits ), 8 );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Shape, flags ) + 1, 1 );
 
-	if ( world->snapGeometry != NULL )
-	{
-		b3SnapGeometry* geometry = world->snapGeometry;
-		memset( geometry->lastData, 0, sizeof( geometry->lastData ) );
-	}
-
-	for ( int i = 0; i < count; ++i )
+	for ( int i = first; i < end; ++i )
 	{
 		const b3Shape* src = world->shapes.data + i;
 		bool isLive = ( src->id == i );
@@ -1085,10 +1343,48 @@ static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
 
 		if ( buf->countOnly == false )
 		{
-			uint8_t* at = buf->data + start + i * stride;
+			uint8_t* at = b3SnapAt( buf, runStart ) + ( i - first ) * stride;
 			memcpy( at + offsetof( b3Shape, materialsBits ), &owns, 8 );
 			memcpy( at + offsetof( b3Shape, geometryBits ), geo, B3_SNAP_GEOMETRY_SIZE );
 		}
+	}
+}
+
+static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
+{
+	int count = world->shapes.count;
+	b3SnapW_I32( buf, count );
+
+	int start = buf->size;
+	const int stride = (int)sizeof( b3Shape );
+
+	if ( world->snapGeometry != NULL )
+	{
+		b3SnapGeometry* geometry = world->snapGeometry;
+		memset( geometry->lastData, 0, sizeof( geometry->lastData ) );
+	}
+
+	if ( buf->parts != NULL )
+	{
+		// Tide: an image in parts has the shapes that may have changed, each at its place. A shape of new
+		// geometry is one of them, so the world's geometry gets it in the order a whole image gives it.
+		int cursor = 0, first, end;
+		while ( b3SnapNextRun( &world->snapTrack.shapes, count, &cursor, &first, &end ) )
+		{
+			b3SnapSkipTo( buf, start + first * stride );
+			b3SerShapeRun( buf, world, rec, start, first, end );
+		}
+		b3SnapSkipTo( buf, start + count * stride );
+	}
+	else if ( count > 0 )
+	{
+		b3SerShapeRun( buf, world, rec, start, 0, count );
+	}
+
+	// Tide: an image in parts of a world that had no shape with an array of its own looks for none
+	if ( buf->parts != NULL && world->snapTrack.oddShapeCount == 0 )
+	{
+		return;
 	}
 
 	for ( int i = 0; i < count; ++i )
@@ -1334,27 +1630,24 @@ static void b3SerManifolds( b3RecBuffer* buf, const b3Manifold* manifolds, int c
 // manifold for each: its first one, or zeros when it has none, so that a contact that starts or stops
 // touching leaves every other where it was. Then what only mesh contacts have, in the contacts' order: their
 // other manifolds, and their triangle caches. Upstream writes each contact's manifolds right after it.
-static void b3SerContacts( b3RecBuffer* buf, b3World* world )
+// Tide: the contacts from `first` up to `end` as their bytes, which the buffer is at: `start` is where the
+// first contact of all goes. As b3SerShapeRun, for an image written whole and for one in parts alike.
+static void b3SerContactRun( b3RecBuffer* buf, b3World* world, int start, int first, int end )
 {
-	int count = world->contacts.count;
-	b3SnapW_I32( buf, count );
-
-	int start = buf->size;
 	const int stride = (int)sizeof( b3Contact );
-	if ( count > 0 )
-	{
-		b3SnapW_Bytes( buf, world->contacts.data, count * stride );
-	}
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Contact, manifoldsBits ), 8 );
-	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Contact, friction ) + 4, 4 );
+	int count = end - first;
+	int runStart = start + first * stride;
+	b3SnapW_Bytes( buf, world->contacts.data + first, count * stride );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Contact, manifoldsBits ), 8 );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Contact, friction ) + 4, 4 );
 
 	const int cache = (int)offsetof( b3Contact, convexContact );
 	const int cacheEnd = (int)offsetof( b3Contact, restitution );
 	if ( buf->countOnly == false )
 	{
-		for ( int i = 0; i < count; ++i )
+		for ( int i = first; i < end; ++i )
 		{
-			uint8_t* at = buf->data + start + i * stride;
+			uint8_t* at = b3SnapAt( buf, runStart ) + ( i - first ) * stride;
 			if ( world->contacts.data[i].flags & b3_simMeshContact )
 			{
 				// The triangle cache's array
@@ -1367,13 +1660,62 @@ static void b3SerContacts( b3RecBuffer* buf, b3World* world )
 			}
 		}
 	}
+}
 
+// Tide: a manifold for each of the contacts from `first` up to `end`, which the buffer is at: its first one,
+// or zeros when it has none
+static void b3SerContactManifoldRun( b3RecBuffer* buf, b3World* world, int first, int end )
+{
 	static const b3Manifold zeroManifold = { 0 };
-	for ( int i = 0; i < count; ++i )
+	for ( int i = first; i < end; ++i )
 	{
 		const b3Contact* c = world->contacts.data + i;
 		bool has = c->contactId == i && c->manifoldCount > 0 && c->manifolds != NULL;
 		b3SerManifolds( buf, has ? c->manifolds : &zeroManifold, 1 );
+	}
+}
+
+static void b3SerContacts( b3RecBuffer* buf, b3World* world )
+{
+	int count = world->contacts.count;
+	b3SnapW_I32( buf, count );
+
+	int start = buf->size;
+	const int stride = (int)sizeof( b3Contact );
+
+	if ( buf->parts != NULL )
+	{
+		// Tide: an image in parts has the contacts that may have changed, and the manifold of each, each at
+		// its place
+		const int manifoldStart = start + count * stride;
+		int cursor = 0, first, end;
+		while ( b3SnapNextRun( &world->snapTrack.contacts, count, &cursor, &first, &end ) )
+		{
+			b3SnapSkipTo( buf, start + first * stride );
+			b3SerContactRun( buf, world, start, first, end );
+		}
+		cursor = 0;
+		while ( b3SnapNextRun( &world->snapTrack.contacts, count, &cursor, &first, &end ) )
+		{
+			b3SnapSkipTo( buf, manifoldStart + first * (int)sizeof( b3Manifold ) );
+			b3SerContactManifoldRun( buf, world, first, end );
+		}
+		b3SnapSkipTo( buf, manifoldStart + count * (int)sizeof( b3Manifold ) );
+	}
+	else
+	{
+		if ( count > 0 )
+		{
+			b3SerContactRun( buf, world, start, 0, count );
+		}
+		b3SerContactManifoldRun( buf, world, 0, count );
+	}
+
+	// Tide: an image in parts of a world that had no mesh, height field or compound looks for no contact
+	// with one, which are the contacts that have more here
+	if ( buf->parts != NULL && world->snapTrack.oddShapeCount == 0 )
+	{
+		return;
 	}
 
 	for ( int i = 0; i < count; ++i )
@@ -1563,6 +1905,104 @@ static void b3FreeLiveSimElements( b3World* world )
 	}
 }
 
+// Tide: the bodies from `first` up to `end`, which the buffer is at: `start` is where the first body of all
+// goes. As b3SerShapeRun, for an image written whole and for one in parts alike.
+static void b3SerBodyRun( b3RecBuffer* buf, b3World* world, int start, int first, int end )
+{
+	const int stride = (int)sizeof( b3Body );
+	int count = end - first;
+	int runStart = start + first * stride;
+	b3SnapW_Bytes( buf, world->bodies.data + first, count * stride );
+	b3SnapZero( buf, runStart, count, stride, (int)offsetof( b3Body, userDataBits ), 8 );
+	b3SnapZero( buf, runStart, count, stride, 130, 6 );
+}
+
+static void b3SerBodies( b3RecBuffer* buf, b3World* world )
+{
+	int count = world->bodies.count;
+	b3SnapW_I32( buf, count );
+
+	int start = buf->size;
+	const int stride = (int)sizeof( b3Body );
+
+	if ( buf->parts != NULL )
+	{
+		// Tide: an image in parts has the bodies that may have changed, each at its place
+		int cursor = 0, first, end;
+		while ( b3SnapNextRun( &world->snapTrack.bodies, count, &cursor, &first, &end ) )
+		{
+			b3SnapSkipTo( buf, start + first * stride );
+			b3SerBodyRun( buf, world, start, first, end );
+		}
+		b3SnapSkipTo( buf, start + count * stride );
+	}
+	else if ( count > 0 )
+	{
+		b3SerBodyRun( buf, world, start, 0, count );
+	}
+}
+
+static inline uint8_t* b3SnapPutI32( uint8_t* at, int v )
+{
+	int32_t w = (int32_t)v;
+	memcpy( at, &w, 4 );
+	return at + 4;
+}
+
+static inline uint8_t* b3SnapPutBytes( uint8_t* at, const void* src, int n )
+{
+	if ( n > 0 )
+	{
+		memcpy( at, src, (size_t)n );
+	}
+	return at + n;
+}
+
+// Tide: the islands as upstream writes them, each its four numbers and then its bodies, its contacts and its
+// joints, each with how many first. There's an island for every few bodies and most have a few numbers, so
+// they're written into room asked for once, where upstream appends each number: the same bytes, at a tenth
+// of what they cost.
+_Static_assert( sizeof( b3ContactLink ) == 12 && sizeof( b3JointLink ) == 12, "an island's links in an image" );
+
+static void b3SerIslands( b3RecBuffer* buf, const b3World* world )
+{
+	int islandCount = world->islands.count;
+	const b3Island* islands = world->islands.data;
+
+	int size = 4;
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		const b3Island* island = islands + i;
+		size += 7 * 4 + island->bodies.count * 4 + island->contacts.count * 12 + island->joints.count * 12;
+	}
+
+	uint8_t* at = b3RecBufReserve( buf, size );
+	if ( at == NULL )
+	{
+		// Only counted
+		return;
+	}
+
+	const uint8_t* end = at + size;
+	at = b3SnapPutI32( at, islandCount );
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		const b3Island* island = islands + i;
+		at = b3SnapPutI32( at, island->setIndex );
+		at = b3SnapPutI32( at, island->localIndex );
+		at = b3SnapPutI32( at, island->islandId );
+		at = b3SnapPutI32( at, island->constraintRemoveCount );
+		at = b3SnapPutI32( at, island->bodies.count );
+		at = b3SnapPutBytes( at, island->bodies.data, island->bodies.count * 4 );
+		at = b3SnapPutI32( at, island->contacts.count );
+		at = b3SnapPutBytes( at, island->contacts.data, island->contacts.count * 12 );
+		at = b3SnapPutI32( at, island->joints.count );
+		at = b3SnapPutBytes( at, island->joints.data, island->joints.count * 12 );
+	}
+	B3_ASSERT( at == end );
+	B3_UNUSED( end );
+}
+
 int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 {
 	int startSize = buf->size;
@@ -1611,6 +2051,12 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 		else if ( i == b3_firstSleepingSet )
 		{
 			b3SnapSection( buf, b3_sectionSleepingSets );
+
+			// Tide: nothing writes a sleeping set but what says so (b3SnapTouchSleepingSet)
+			if ( b3SnapKeepSection( buf, world->snapTrack.setsTouched ) )
+			{
+				break;
+			}
 		}
 		b3SerSolverSet( buf, world->solverSets.data + i );
 	}
@@ -1626,17 +2072,7 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 	// Sparse body array (userData is host wiring, zero it)
 	// Tide: all 8 bytes of it, and what's after a body's generation
 	b3SnapSection( buf, b3_sectionBodies );
-	{
-		int bodyCount = world->bodies.count;
-		b3SnapW_I32( buf, bodyCount );
-		int start = buf->size;
-		if ( bodyCount > 0 )
-		{
-			b3SnapW_Bytes( buf, world->bodies.data, bodyCount * (int)sizeof( b3Body ) );
-		}
-		b3SnapZero( buf, start, bodyCount, (int)sizeof( b3Body ), (int)offsetof( b3Body, userDataBits ), 8 );
-		b3SnapZero( buf, start, bodyCount, (int)sizeof( b3Body ), 130, 6 );
-	}
+	b3SerBodies( buf, world );
 
 	// Shape sparse array with geometry interning
 	b3SnapSection( buf, b3_sectionShapes );
@@ -1682,21 +2118,7 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 
 	// Islands: 4 scalars + 3 inner arrays each
 	b3SnapSection( buf, b3_sectionIslands );
-	{
-		int islandCount = world->islands.count;
-		b3SnapW_I32( buf, islandCount );
-		for ( int i = 0; i < islandCount; ++i )
-		{
-			b3Island* island = world->islands.data + i;
-			b3SnapW_I32( buf, island->setIndex );
-			b3SnapW_I32( buf, island->localIndex );
-			b3SnapW_I32( buf, island->islandId );
-			b3SnapW_I32( buf, island->constraintRemoveCount );
-			b3SerPodArray( buf, island->bodies );
-			b3SerPodArray( buf, island->contacts );
-			b3SerPodArray( buf, island->joints );
-		}
-	}
+	b3SerIslands( buf, world );
 
 	// Broad phase
 	b3BroadPhase* bp = &world->broadPhase;
@@ -1706,7 +2128,11 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 		b3SerTree( buf, &bp->trees[t] );
 	}
 	b3SnapSection( buf, b3_sectionPairs );
-	b3SerHashSet( buf, &bp->pairSet );
+	// Tide: a pair comes and goes with its contact, which says so (b3SnapTouchPairs)
+	if ( b3SnapKeepSection( buf, world->snapTrack.pairsTouched ) == false )
+	{
+		b3SerHashSet( buf, &bp->pairSet );
+	}
 
 	// Constraint graph
 	b3SnapSection( buf, b3_sectionGraph );
@@ -1792,6 +2218,9 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	{
 		return false;
 	}
+
+	// Tide: the world becomes another: its next image is written whole (see b3SnapTrack)
+	b3SnapTouchAll( world );
 
 	// Free existing per-object heap before overwriting
 	b3FreeLiveSimElements( world );
@@ -2031,6 +2460,198 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	return r->ok;
 }
 
+// Tide: which bodies, shapes and contacts an image in parts writes (see ../TIDE.md, and b3SnapTrack in
+// physics_world.h).
+//
+// Between two images, a body, a shape or a contact, with its manifold, has changed only if
+// - the body, or the shape's body, or one of the contact's two, was awake at the first image, at the second,
+//   or at some time between: the step writes those, on its worker threads, and nothing says which;
+// - or something was done to it from outside, which is said where it's done (b3SnapTouchBody and the like):
+//   a contact that starts or ends changes the lists of both its bodies and its neighbors in them, an
+//   element taken out of an array moves another into its place, and calls change what they're for.
+// A body that's awake at some time between and at neither image woke and fell asleep, or was made and
+// destroyed, and each of those says so for the body, its shapes and its contacts. So the sets hold: what was
+// awake at the last image (b3SnapCommit), what was said since, and what's awake now (b3SnapSeed).
+void b3SnapGrowSet( b3SnapSet* set, int blockCount )
+{
+	// Room to spare, as ids come one after another
+	int grown = blockCount + blockCount / 2 + 4;
+	uint64_t* bits = b3Alloc( (size_t)grown * sizeof( uint64_t ) );
+	memset( bits, 0, (size_t)grown * sizeof( uint64_t ) );
+	if ( set->blockCount > 0 )
+	{
+		memcpy( bits, set->bits, (size_t)set->blockCount * sizeof( uint64_t ) );
+		b3Free( set->bits, (size_t)set->blockCount * sizeof( uint64_t ) );
+	}
+	set->bits = bits;
+	set->blockCount = grown;
+}
+
+static void b3SnapClearSet( b3SnapSet* set )
+{
+	if ( set->blockCount > 0 )
+	{
+		memset( set->bits, 0, (size_t)set->blockCount * sizeof( uint64_t ) );
+	}
+}
+
+void b3SnapTouchBodyDeep( b3World* world, const b3Body* body )
+{
+	b3SnapTrack* track = &world->snapTrack;
+	if ( track->sparse == false || body->id == B3_NULL_INDEX )
+	{
+		return;
+	}
+
+	b3SnapSetBit( &track->bodies, body->id );
+
+	int shapeId = body->headShapeId;
+	while ( shapeId != B3_NULL_INDEX )
+	{
+		b3SnapSetBit( &track->shapes, shapeId );
+		shapeId = world->shapes.data[shapeId].nextShapeId;
+	}
+
+	int contactKey = body->headContactKey;
+	while ( contactKey != B3_NULL_INDEX )
+	{
+		int contactId = contactKey >> 1;
+		b3SnapSetBit( &track->contacts, contactId );
+		contactKey = world->contacts.data[contactId].edges[contactKey & 1].nextKey;
+	}
+}
+
+void b3SnapNoteOp( b3World* world, int op )
+{
+	switch ( op )
+	{
+		// The step, and the calls that say what they write where they write it. b3CreateMeshShape and the
+		// like aren't here by name, as they're recorded by hand: b3CreateShapeInternal says what's needed
+		// for every shape.
+		case b3_recOpStep:
+		case b3_recOpCreateBody:
+		case b3_recOpDestroyBody:
+		case b3_recOpBodySetTransform:
+		case b3_recOpBodySetLinearVelocity:
+		case b3_recOpBodySetAngularVelocity:
+		case b3_recOpBodySetTargetTransform:
+		case b3_recOpBodyApplyForce:
+		case b3_recOpBodyApplyForceToCenter:
+		case b3_recOpBodyApplyTorque:
+		case b3_recOpBodyApplyLinearImpulse:
+		case b3_recOpBodyApplyLinearImpulseToCenter:
+		case b3_recOpBodyApplyAngularImpulse:
+		case b3_recOpCreateSphereShape:
+		case b3_recOpCreateCapsuleShape:
+		case b3_recOpCreateHullShape:
+		// A setting of the world's, which every image writes
+		case b3_recOpWorldSetGravity:
+		// What changes nothing
+		case b3_recOpDestroyWorld:
+		case b3_recOpQueryOverlapAABB:
+		case b3_recOpQueryOverlapShape:
+		case b3_recOpQueryCastRay:
+		case b3_recOpQueryCastShape:
+		case b3_recOpQueryCastRayClosest:
+		case b3_recOpQueryCastMover:
+		case b3_recOpQueryCollideMover:
+		case b3_recOpQueryTag:
+		case b3_recOpStateHash:
+		case b3_recOpRecordingBounds:
+			return;
+
+		// Any other: the next image is written whole
+		default:
+			b3SnapTouchAll( world );
+			return;
+	}
+}
+
+// How many of a world's bodies can be awake for its images to be written in parts: one in this many. With
+// more, there's too little of an image left out for what finding it costs.
+#define B3_SNAP_AWAKE_SHARE 2
+
+static bool b3SnapMostlyAsleep( const b3World* world )
+{
+	int share = world->snapTrack.awakeShare > 0 ? world->snapTrack.awakeShare : B3_SNAP_AWAKE_SHARE;
+	int awake = world->solverSets.data[b3_awakeSet].bodySims.count;
+	return awake * share <= b3GetIdCount( &world->bodyIdPool );
+}
+
+// Every awake body, with its shapes and its contacts, into the sets
+static void b3SnapSeed( b3World* world )
+{
+	const b3SolverSet* awakeSet = world->solverSets.data + b3_awakeSet;
+	const b3BodySim* sims = awakeSet->bodySims.data;
+	int count = awakeSet->bodySims.count;
+	for ( int i = 0; i < count; ++i )
+	{
+		b3SnapTouchBodyDeep( world, world->bodies.data + sims[i].bodyId );
+	}
+}
+
+// An image in sections was taken of the world, whole or in parts: what the next one goes on from
+static void b3SnapCommit( b3World* world, const int* bases, const int* sizes, bool whole )
+{
+	b3SnapTrack* track = &world->snapTrack;
+	memcpy( track->bases, bases, sizeof( track->bases ) );
+	memcpy( track->sizes, sizes, sizeof( track->sizes ) );
+	track->bodyCount = world->bodies.count;
+	track->shapeCount = world->shapes.count;
+	track->contactCount = world->contacts.count;
+	track->setsTouched = false;
+	track->pairsTouched = false;
+
+	if ( whole )
+	{
+		int odd = 0;
+		for ( int i = 0; i < world->shapes.count; ++i )
+		{
+			const b3Shape* shape = world->shapes.data + i;
+			bool round = shape->type == b3_sphereShape || shape->type == b3_capsuleShape || shape->type == b3_hullShape;
+			odd += shape->id == i && ( shape->materials != NULL || round == false );
+		}
+		track->oddShapeCount = odd;
+	}
+
+	track->sparse = b3SnapMostlyAsleep( world );
+	if ( track->sparse )
+	{
+		b3SnapClearSet( &track->bodies );
+		b3SnapClearSet( &track->shapes );
+		b3SnapClearSet( &track->contacts );
+		b3SnapSeed( world );
+	}
+}
+
+void b3DestroySnapshotTrack( b3World* world )
+{
+	b3SnapTrack* track = &world->snapTrack;
+	b3Free( track->bodies.bits, (size_t)track->bodies.blockCount * sizeof( uint64_t ) );
+	b3Free( track->shapes.bits, (size_t)track->shapes.blockCount * sizeof( uint64_t ) );
+	b3Free( track->contacts.bits, (size_t)track->contacts.blockCount * sizeof( uint64_t ) );
+
+	b3SnapParts* p = track->parts;
+	if ( p != NULL )
+	{
+		for ( int i = 0; i < p->blockCount; ++i )
+		{
+			b3Free( p->blocks[i].data, (size_t)p->blocks[i].capacity );
+		}
+		b3Free( p->blocks, (size_t)p->blockCapacity * sizeof( b3SnapBlock ) );
+		b3Free( p->parts, (size_t)p->capacity * sizeof( b3SnapshotPart ) );
+		b3Free( p, sizeof( b3SnapParts ) );
+	}
+
+	*track = ( b3SnapTrack ){ 0 };
+}
+
+void b3World_SetSnapshotAwakeShare( b3WorldId worldId, int share )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	world->snapTrack.awakeShare = share;
+}
+
 // Tide: a world's image, and the world back from one, as calls of their own (see ../TIDE.md). Upstream has
 // both inside its recording only.
 int b3GetSnapshotHead( void )
@@ -2038,7 +2659,8 @@ int b3GetSnapshotHead( void )
 	return (int)sizeof( b3SnapHeader ) + b3_sectionCount * (int)sizeof( int );
 }
 
-int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+// An image written whole. With `last`, it's the one the world's next image in parts goes on from.
+static int b3SnapWhole( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes, bool last )
 {
 	b3World* world = b3GetWorldFromId( worldId );
 
@@ -2050,18 +2672,107 @@ int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, cons
 	}
 
 	// Straight into the caller's memory, once: what doesn't fit is counted and not written
+	int ownSizes[b3_sectionCount];
 	b3RecBuffer buf = { 0 };
 	buf.data = image;
 	buf.capacity = image != NULL ? capacity : 0;
 	buf.fixed = true;
 	buf.bases = bases;
-	buf.sizes = sizes;
+	buf.sizes = ownSizes;
 	b3SerializeWorld( world, &buf, NULL );
+	if ( sizes != NULL )
+	{
+		memcpy( sizes, ownSizes, sizeof( ownSizes ) );
+	}
+
+	// An image in sections that's all there is what the next one in parts goes on from. Any other leaves
+	// the world with none to go on from: the caller is about to ask again.
+	if ( last && bases != NULL )
+	{
+		if ( buf.failed == false && buf.overran == false && buf.countOnly == false )
+		{
+			b3SnapCommit( world, bases, ownSizes, true );
+		}
+		else
+		{
+			world->snapTrack.sparse = false;
+		}
+	}
+
 	if ( buf.failed )
 	{
 		return 0;
 	}
 	return buf.overran ? -1 : buf.size;
+}
+
+int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	return b3SnapWhole( worldId, image, capacity, bases, sizes, true );
+}
+
+int b3World_CheckSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	return b3SnapWhole( worldId, image, capacity, bases, sizes, false );
+}
+
+int b3World_GetSnapshotParts( b3WorldId worldId, const int* bases, int* sizes, const b3SnapshotPart** parts, int* partCount )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3SnapTrack* track = &world->snapTrack;
+	*parts = NULL;
+	*partCount = 0;
+
+	B3_ASSERT( world->locked == false );
+	if ( world->locked )
+	{
+		return 0;
+	}
+
+	// Nothing to go on from, or sections that aren't where the last image had them, or room in it for
+	// another number of bodies, shapes or contacts: every one after would be somewhere else. Or most
+	// of the world is awake.
+	if ( track->sparse == false || bases == NULL || memcmp( bases, track->bases, sizeof( track->bases ) ) != 0 ||
+		 world->bodies.count != track->bodyCount || world->shapes.count != track->shapeCount ||
+		 world->contacts.count != track->contactCount || b3SnapMostlyAsleep( world ) == false )
+	{
+		return 0;
+	}
+
+	// What's awake now, with what was awake at the last image and what was said since
+	b3SnapSeed( world );
+
+	if ( track->parts == NULL )
+	{
+		track->parts = b3Alloc( sizeof( b3SnapParts ) );
+		memset( track->parts, 0, sizeof( b3SnapParts ) );
+	}
+	b3SnapParts* p = track->parts;
+	b3SnapPartsReset( p, track->sizes );
+
+	int ownSizes[b3_sectionCount];
+	b3RecBuffer buf = { 0 };
+	buf.fixed = true;
+	buf.bases = bases;
+	buf.sizes = ownSizes;
+	buf.parts = p;
+	b3SerializeWorld( world, &buf, NULL );
+	if ( sizes != NULL )
+	{
+		memcpy( sizes, ownSizes, sizeof( ownSizes ) );
+	}
+
+	if ( buf.failed || buf.overran )
+	{
+		// No image: the caller takes one whole, with its sections placed again when one overran
+		track->sparse = false;
+		return buf.failed ? 0 : -1;
+	}
+
+	b3SnapCommit( world, bases, ownSizes, false );
+	*parts = p->parts;
+	*partCount = p->count;
+	return buf.size;
 }
 
 bool b3GetSnapshotBases( const uint8_t* image, int size, int* bases )

@@ -200,6 +200,14 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 	b3Contact* contact = b3Array_Get( world->contacts, contactId );
 	int generation = contact->generation;
 	*contact = (b3Contact){ 0 };
+
+	// Tide: the contact, both its bodies, whose lists it joins, and the contacts that headed those lists,
+	// which get a link to it: any of them may be asleep or static (see b3SnapTrack)
+	b3SnapTouchContact( world, contactId );
+	b3SnapTouchBody( world, shapeA->bodyId );
+	b3SnapTouchBody( world, shapeB->bodyId );
+	b3SnapTouchContact( world, bodyA->headContactKey >> 1 );
+	b3SnapTouchContact( world, bodyB->headContactKey >> 1 );
 	contact->contactId = contactId;
 	contact->generation = generation + 1;
 	contact->setIndex = setIndex;
@@ -292,6 +300,8 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 	// Add to pair set for fast lookup
 	uint64_t pairKey = b3ShapePairKey( shapeIdA, shapeIdB, childIndex );
 	b3AddKey( &world->broadPhase.pairSet, pairKey );
+	// Tide: (see b3SnapTrack)
+	b3SnapTouchPairs( world );
 
 	// Contacts are created as non-touching. Later if they are found to be touching
 	// they will link islands and be moved into the constraint graph.
@@ -342,6 +352,10 @@ void b3DestroyContact( b3World* world, b3Contact* contact, bool wakeBodies )
 	// Remove pair from set
 	uint64_t pairKey = b3ShapePairKey( contact->shapeIdA, contact->shapeIdB, contact->childIndex );
 	b3RemoveKey( &world->broadPhase.pairSet, pairKey );
+	// Tide: the pairs, and the set the contact is taken out of, which may be a sleeping one
+	// (see b3SnapTrack)
+	b3SnapTouchPairs( world );
+	b3SnapTouchSleepingSet( world, contact->setIndex );
 
 	b3FreeManifolds( world, contact->manifolds, contact->manifoldCount );
 	contact->manifolds = NULL;
@@ -354,6 +368,16 @@ void b3DestroyContact( b3World* world, b3Contact* contact, bool wakeBodies )
 	int bodyIdB = edgeB->bodyId;
 	b3Body* bodyA = b3Array_Get( world->bodies, bodyIdA );
 	b3Body* bodyB = b3Array_Get( world->bodies, bodyIdB );
+
+	// Tide: the contact, both its bodies, whose lists it leaves, and its neighbors in those lists, whose
+	// links change: any of them may be asleep or static (see b3SnapTrack)
+	b3SnapTouchContact( world, contact->contactId );
+	b3SnapTouchBody( world, bodyIdA );
+	b3SnapTouchBody( world, bodyIdB );
+	b3SnapTouchContact( world, edgeA->prevKey >> 1 );
+	b3SnapTouchContact( world, edgeA->nextKey >> 1 );
+	b3SnapTouchContact( world, edgeB->prevKey >> 1 );
+	b3SnapTouchContact( world, edgeB->nextKey >> 1 );
 
 	uint32_t flags = contact->flags;
 	bool touching = ( flags & b3_contactTouchingFlag ) != 0;
@@ -462,6 +486,8 @@ void b3DestroyContact( b3World* world, b3Contact* contact, bool wakeBodies )
 			int movedContactIndex = set->contactIndices.data[localIndex];
 			b3Contact* movedContact = b3Array_Get( world->contacts, movedContactIndex );
 			movedContact->localIndex = localIndex;
+			// Tide: any contact of the set, which may be a sleeping one or the disabled one
+			b3SnapTouchContact( world, movedContactIndex );
 		}
 	}
 

@@ -1427,8 +1427,9 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
-- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between two ticks, so motion is smooth even at 20 ticks per second.
+- They draw this moment: the two ticks are the last one that ran and the one that's coming, which the engine runs early with this machine's input as `Sample` would give it now, and runs again when that changes before the tick's time comes. What a player does shows in the frame that reads it, at any tick rate. No code takes part: nothing in the language says it, and a game is written as if views read the match as it is. A key counts for the whole tick it's read in, as ever, so what it moves starts as far along as that tick has gone by.
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as the later of the two ticks has them. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
@@ -2444,6 +2445,7 @@ Implemented, awaiting approval:
 - Provisional, awaiting the owner: `out List<T>` is a list C makes, as C#'s `out`: `extern int WriteImage(out List<byte> image);`, called as `physics.size = WriteImage(out physics.image);`. C decides its elements and how many there are, and what the list held isn't passed, so nothing of it is copied for C.
   - C gets a `tide_list_out *` (`tide/list.h`). `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill, with whatever was there in it. Asking again gives memory for the new count and the earlier one is no longer good. `tide_list_out_count(out, count)` says how many of them, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
   - Once C returns, the list is exactly those elements: more than it had, fewer, or none. A world's list is written chunk by chunk and only where its bytes differ from what it had, so chunks that come out the same stay shared with the world's snapshots and aren't hashed again; the chunks past the new count go back to the heap.
+  - C that knows which elements changed says only those, and the list keeps the rest. `tide_list_out_keep(out, count)` says the list keeps what it holds and is `count` long once C returns: the elements past that go, and the ones it gains are zeros. `tide_list_out_part(out, first, elements, count)` then says the `count` elements from `first` on are the ones at `elements`. Nothing of what the list keeps is written, compared or hashed: only the parts are, each with the elements it goes over. A part's elements are read once C has returned, so they're in memory that's still good then (C's own, not the function's variables). Parts are written in the order they're given, and what's past the list's count is left out. Of keeping and asking for room, what C said last stands.
   - Only an `extern` function's `out List<T>` is made this way, of the elements a `mut List<T>` goes to C with; a Tide function's `out List<T>` is a list it assigns, like any `out` parameter. The call says `out`, as every call with an `out` parameter does: `WriteImage(physics.image)`, as it was written before `out` was every function's, is an error that says so.
   - To everything but C it's an `out` parameter like any other: the argument is a list the code can change (a `mut` component's or singleton's field, a `mut` local, a function's own `mut` list), the call is one that writes (see Evaluation order), and a system that makes one of the match's lists this way waits as one that changes it does.
   - Picked beyond that: the room is NULL for no elements, and for more than a list holds (see Limits); a count said before the room is asked for again is forgotten with that room; `mut out` is an error that says to drop `mut`; the memory is the engine's, kept between calls, which C neither frees nor keeps.
@@ -2468,8 +2470,57 @@ Implemented, awaiting approval:
 - tide defines nothing of the runtime's: code that uses `new`, `delete` or a pure virtual function defines `operator new`, `operator delete` and `__cxa_pure_virtual` itself. A global's constructor runs before the game does (at each reload under `tide run`). A function's static with a constructor is made the first time through, with no lock.
 - A build that fails for want of the runtime says so after the compiler's or the linker's errors, with what to write instead: a standard header that isn't there (`<cstdint>` gets C's `<stdint.h>`), `throw`, `try`, `typeid`, `dynamic_cast`, `new`, `delete`, `__cxa_pure_virtual`, and a prebuilt library built to need the runtime.
 
+### Systems written in C
+
+Provisional. The owner approved the direction (2026-10-05: a system whose body is C, "in a way that lets others use this too for their own situations"); the syntax, the semantics and the C API below are picks that await them.
+
+An extern function is called for one entity at a time, with a copy of what it reads. C that wants every entity's data (a physics library, pathfinding, animation, a loop written with SIMD) is handed the components as the arrays the match keeps them in.
+
+```csharp
+[NativeName("game_move")]
+extern system Move(mut Position position, Velocity velocity, Time time, without Frozen);
+```
+
+```c
+void game_move(tide_rows *rows, const Time *time);
+```
+
+- **The declaration.** `extern system Name(parameters);`: a system's declaration with `extern` before it and no body. It takes the attributes a system takes (`[Stage]`, `[Before]`, `[After]`) and `[NativeName]`, as an extern function does: its C function has its own name as written, or the one `[NativeName]` gives, whatever its namespace. Extern systems that share a name each say theirs, and a C function is one extern function or one extern system, declared once. A body is an error that says to end it with `;`. `extern view` and `extern event(...) Name(...)` are errors that say only a system can be written in C.
+- **To the rest of the language it's the system its declaration says.** It runs for the entities its parameters pick, it's ordered and scheduled as a system, and what it reads and writes is what it declares: a component or singleton it takes `mut` is written, and the rest is read. Nothing warns about access it doesn't use, as its code can't be read. `tide schedule` shows it as `Move  (per entity, in C)`, and the editors' line above it says `in C`.
+- **Parameters.** Components, to read or `mut`; `with` and `without` filters; singletons, to read or `mut` (the engine's stay read-only). Each of these is an error that says it isn't there yet for a system written in C, and what to write instead:
+  - a sparse component, or a filter by one: which rows have it is told row by row, and C is handed whole runs;
+  - the `World`, a `query`, `Devices`, the input: a system written in Tide takes them, and can call C;
+  - an `Entity` parameter: C reads each row's entity from its rows;
+  - a component with no fields as a parameter: it's a filter, `with`.
+
+  What no system takes is the error it always was: `with ownership`, `verified`, `out`, a default, `local`, `async`.
+- **What C is called with.** One call for each run of rows: a chunk of an archetype the filters admit, or a piece of one when the tick shares a chunk out over threads, in the order a system written in Tide would go through them on one thread. A run has at least one row. The function takes the run, a `tide_rows *`, then the singletons the declaration takes, in its order, each by address (`const` for one it only reads), and returns nothing. Components are reached through the run, numbered from 0 in the order of the system's parameters; filters and singletons don't count.
+- A system with no component and no filter runs once a tick, as in Tide: C is called once, with a run of no rows and its singletons.
+- **The C API**, `tide/rows.h`:
+  - `tide_rows_count(rows)`, and `tide_rows_entities(rows)`, each row's entity.
+  - `tide_rows_floats(rows, component, offset)` and `tide_rows_ints(rows, component, offset)`: the array of a 4-byte field (a float, an int, an int enum, half a long or an entity), a value a row, by where the field starts in the C struct that has the component's fields in order (`offsetof`). `tide_rows_floats_mut` and `tide_rows_ints_mut` are the same to write, for a `mut` component, with what's there in them.
+  - `tide_rows_get(rows, component, row, &value)` and `tide_rows_set(rows, component, row, &value)`: one row's whole component, for the fields that aren't 4 bytes, for a component whose size isn't a multiple of 4 (kept 2 bytes or 1 at a time), and for C that works a struct at a time.
+- **Nothing is copied to read**: an array is the match's own memory. **Writing is on demand, a field at a time**: asking for an array to write is what makes that field's page the match's own, a copy when a snapshot shares it, and a page that comes out as it was is the snapshot's again once C returns, with its hash. `tide_rows_set` writes the 4 bytes that differ and asks for no other. So C that writes nothing costs nothing, and C that writes 5 fields of 40 touches 5 pages.
+- An array to write is the field from then on: C reads it through that pointer too. One of the same field asked for to read before it may be the memory the snapshot kept.
+- A call that can't be answered stops the program, saying which function it was, in which system, and what to write instead: a component number the system doesn't have, an offset that isn't a 4-byte field's, a component not in fields of 4 bytes, an array to write or a `tide_rows_set` of a component that isn't `mut`, a row past the run.
+- **Text, lists, maps, sets and grids.** A component or a singleton that holds some can be taken; those fields are handles into the match's heap, which C leaves as they are. C has no way to read or change them from here yet.
+- **C can't spawn, destroy, add, remove or send** from a system: there's no call for it. A system written in Tide does, from what C left in a component or singleton.
+- **Threads.** It splits its entities across threads by the rule a system written in Tide does: its runs go to several threads at once unless it takes a singleton as `mut`. C is trusted, so what it does on several threads is the game's to get right: each run reaches its own rows, and a system that keeps something from one run to the next, or needs them in order, takes a `mut` singleton.
+- **How much work it is.** Its code can't be read, so where the engine reckons whether a tick is worth threads, a row counts as 256 operations: what a few calls would, as C is written for what's more work than a line of Tide. No attribute says otherwise yet.
+- tidec declares the C function in the generated `.c`, from the declaration, as it does an extern function's. A web build fails at its link when nothing defines it.
+
+Picked beyond what was asked for:
+
+- A system that runs once a tick is allowed, and gets a run of no rows rather than no run, so every system written in C has one signature.
+- Components and singletons that hold text or lists are allowed (an extern function refuses such a struct), as C can't be handed a singleton any other way and a physics library's is likely to hold lists. Their handles are C's to leave alone.
+- A component with no fields as a parameter is an error rather than a component C can't ask anything of.
+- `tide_rows_get` and `tide_rows_set` number rows from 0 within the run, and a row past it stops the program.
+- The C function's prototype in generated C has no parameter names, as a game's could be anything.
+- `extern` is a word before `system`, a name anywhere else, as it is before a function.
+
 ### Open
 
+- Systems written in C: spawning, sending and structural changes from C; sparse components, with which rows have them as an array; the `World` and queries; text and lists; views and event handlers; and the game saying how much work a row is.
 - Objects C owns (`ma_engine *`): a handle type only local state can hold, since pointers differ between machines.
 - Keeping the state of C libraries across hot reloads, by building them apart from the game's library.
 - Reading declarations from C headers, with tide's built-in clang.
@@ -2521,7 +2572,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ## Mods
 
-`virtual` and `override` are built, as the language has them for any package; nothing else here is. **Decided** is what the owner agreed (2026-10-05), **Provisional** what was picked to build the two words, and the design proposed for the rest is under **Open**.
+**Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, two parts are built (**Provisional**, below): `virtual` and `override`, as the language has them for any package, and the service's first slice, for web games, with `tide publish`. What a mod may be, games that load builds, and the sandbox aren't.
 
 ### Decided
 
@@ -2585,9 +2636,24 @@ override system Move(mut Position position, Velocity velocity, Time time)
 - **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
 - **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
 
+The service's first slice. Implemented, awaiting approval: the service's first slice, at `builds.tide-engine.dev` (`builds/` in the repository). A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+
+- Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
+- Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.
+- Provisional: a version is named by the SHA-256 of what was sent, and `tide` writes that archive itself (a tar, with no times, owners or modes, its files in one order) rather than with the system's `tar`, so the same files are the same version from any machine. `tide publish` says one line, with the version.
+- Provisional: asking for a build is an HTTP call, not a command: `POST /games/<id>/builds` with `{"version": ..., "mods": [...]}` and the key as `Authorization: Bearer`. `GET /games/<id>/builds/<build>` says how it went, with what `tide` said, and `DELETE` there revokes it. The page is at `/b/<build>/`.
+- Provisional: a mod's line is a package from git with its commit, as `tide.packages` writes it, from the hosts `tide` downloads from. What `tide update` follows (`@v1`) is no part of a build's name, a repository listed twice is an error, and a build takes 32 at most. Folders and the packages that come with tide aren't mods. Nothing checks yet that a mod is Tide alone.
+- Provisional: the mods' lines go at the end of the game's `tide.packages`, and the lines of what they need after them, as `tide add` adds them. A mod the game already lists, or two packages of one name, is the error a build of that file gives.
+- Provisional: `tide fetch [folder]`, a new command: it downloads the packages from git that the game lists and the machine doesn't have, each at its commit, adds the lines of what they need, and builds nothing. The service fetches with it, then builds with no network.
+- Provisional: what's signed is a manifest, a line of JSON: `{"build", "target", "sha256", "size"}`, the SHA-256 being the page's. It's at `/b/<build>/manifest.json`, its signature (r then s) at `/b/<build>/manifest.sig`, and the game's public key, 65 bytes uncompressed, at `/games/<id>/key`. Nothing checks them yet: a game that loads builds will.
+- Provisional: a build that failed is built again when it's asked for again. A revoked one never is: what it built is deleted, and its link answers 410.
+- Provisional: a page is fetched again each time it's opened (`Cache-Control: no-cache`, with an `ETag`), so a revoked build is gone from caches too.
+- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 2 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
+- Provisional: whoever asks for a build gets all that `tide` said of it. That's the game's own developer for now, as asking takes the game's key; a modder of a closed game will get what it says of the mod's own files.
+
 ### Open
 
-Proposed, awaiting the owner. None of it is built.
+Proposed, awaiting the owner. None of it is built, but for the service's first slice (Provisional, above).
 
 The language:
 

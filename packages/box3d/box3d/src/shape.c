@@ -109,6 +109,17 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 
 	b3Shape* shape = b3Array_Get( world->shapes, shapeId );
 
+	// Tide: a new shape, the body it's on and the shape that headed that body's list, which gets a link to
+	// it: the body may be static or asleep (see b3SnapTrack). A mesh, a height field or a compound has a
+	// material array of its own that nothing follows.
+	b3SnapTouchShape( world, shapeId );
+	b3SnapTouchShape( world, body->headShapeId );
+	b3SnapTouchBody( world, body->id );
+	if ( shapeType != b3_sphereShape && shapeType != b3_capsuleShape && shapeType != b3_hullShape )
+	{
+		b3SnapTouchAll( world );
+	}
+
 	switch ( shapeType )
 	{
 		case b3_capsuleShape:
@@ -210,6 +221,13 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 		shape->material = ( def->materialCount == 1 && def->materials != NULL ) ? def->materials[0] : def->baseMaterial;
 		shape->materialCount = 1;
 		shape->materials = NULL;
+	}
+
+	// Tide: a material array of its own, as a shape of any geometry can have: nothing follows those
+	// (see b3SnapTrack)
+	if ( shape->materials != NULL )
+	{
+		b3SnapTouchAll( world );
 	}
 
 	if ( body->setIndex != b3_disabledSet )
@@ -1632,6 +1650,9 @@ void b3Shape_SetHull( b3ShapeId shapeId, const b3HullData* hull )
 		return;
 	}
 
+	// Tide: a call that's recorded by hand, so not one b3SnapNoteOp hears of
+	b3SnapTouchAll( world );
+
 	if ( world->recording != NULL )
 	{
 		// Intern the shared hull.
@@ -1666,6 +1687,9 @@ void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Vec3 scal
 	}
 
 	world->locked = true;
+
+	// Tide: a call that's recorded by hand, so not one b3SnapNoteOp hears of
+	b3SnapTouchAll( world );
 
 	if ( world->recording != NULL )
 	{

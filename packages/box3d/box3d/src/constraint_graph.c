@@ -194,6 +194,8 @@ void b3RemoveContactFromGraph( b3World* world, int bodyIdA, int bodyIdB, int col
 			B3_ASSERT( movedContact->colorIndex == colorIndex );
 			B3_ASSERT( movedContact->localIndex == movedIndex );
 			movedContact->localIndex = localIndex;
+			// Tide: another contact of the color (see b3SnapTrack)
+			b3SnapTouchContact( world, movedContactId );
 		}
 	}
 	else
@@ -209,6 +211,8 @@ void b3RemoveContactFromGraph( b3World* world, int bodyIdA, int bodyIdB, int col
 			B3_ASSERT( movedContact->localIndex == movedIndex );
 			B3_ASSERT( ( movedContact->flags & b3_simMeshContact ) == 0 );
 			movedContact->localIndex = localIndex;
+			// Tide: another contact of the color (see b3SnapTrack)
+			b3SnapTouchContact( world, movedContactId );
 		}
 	}
 }

@@ -1,0 +1,46 @@
+namespace Sparkle;
+
+// A mod for the build service's example game. It's a package: what it
+// declares is in its namespace, and it names the game's own declarations
+// (Body, Ball) as the game's code does. It compiles with the game, so its
+// system is in the match's schedule and its views draw with the game's.
+
+singleton Said
+{
+    bool once;
+}
+
+// Says the mod is in the build, once a match: what the test that builds the
+// example waits for.
+system Announce(mut Said said)
+{
+    if (said.once) return;
+    said.once = true;
+    Debug.Log("Sparkle: in the match");
+}
+
+// The ball gets a little faster each time it bounces, up to twice as fast.
+[After(Bounce)]
+system Quicken(mut Body body, with Ball)
+{
+    var speed = Math.Length(body.velocity);
+    var onEdge = Math.Abs(body.position.x) > 160 || Math.Abs(body.position.y) > 160;
+    if (onEdge && speed < 400) body.velocity *= 1.02;
+}
+
+// A ring that pulses around everything that moves, over what the game drew.
+[After(DrawPlayers)]
+view Rings(Body body, Time time)
+{
+    var pulse = 6 + Math.Sin(time.t * 4) * 3;
+    Draw2D.WireCircle(body.position, body.radius + pulse, 2, Color(0.18, 0.83, 0.75));
+}
+
+[After(DrawPlayers)]
+view Label()
+{
+    Draw2D.Screen()
+    {
+        Draw2D.Text("with the Sparkle mod", float2(16, 14), 16, Color(0.18, 0.83, 0.75));
+    }
+}

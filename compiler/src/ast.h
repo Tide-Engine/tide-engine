@@ -419,7 +419,11 @@ typedef struct decl {
     // file does (`unit`).
     const struct unit *named_in;
     bool params_checked;      // A system, view or handler whose parameters were checked ahead of the others: a virtual one, or an override
-    const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
+    // `extern system Move(mut Position position, Time time);`: a DECL_SYSTEM written in C, with no body. C is
+    // called for each run of rows the system's filters admit, with their components as arrays (tide/rows.h) and
+    // the singletons it takes; to the schedule it's the system its signature says
+    bool extern_system;
+    const char *c_name; // Records: the C struct name. Extern functions and systems: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
     // Overloads, as in C#: functions that share a name, a type's methods that
     // do, and systems, views, handlers, frags and verts that do. Their

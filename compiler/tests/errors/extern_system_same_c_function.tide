@@ -1,0 +1,8 @@
+// expect: 'Shift' and 'Move' are the same C function, step
+// expect: declare it once
+scene Main { }
+component Body { float x; }
+[NativeName("step")]
+extern system Move(mut Body body);
+[NativeName("step")]
+extern system Shift(mut Body body);

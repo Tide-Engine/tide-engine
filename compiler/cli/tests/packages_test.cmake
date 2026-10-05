@@ -235,6 +235,30 @@ file(REMOVE "${stopped}/.tide-fetched" "${stopped}/packages/physics/body.tide")
 tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/physics at 2222222222" "Physics.Integrate")
 tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")
 
+# tide fetch downloads what the game lists and this machine doesn't have,
+# each at its commit, and builds nothing: a build after it needs no network.
+# It adds the lines of what they need, as tide add does.
+file(REMOVE_RECURSE "${WORK}/cache")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\n")
+tide("${game}" ARGS fetch
+    EXPECT "downloading github.com/test/physics at 2222222222" "added github.com/test/maths ${M1}, which Physics needs"
+           "downloading github.com/test/maths at 1111111111" "the game's 2 packages are on this machine")
+expect_file("${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\ngithub.com/test/maths ${M1}\n")
+tide("${game}" ARGS fetch EXPECT "the game's 2 packages are on this machine" WITHOUT "downloading" "added")
+# From here, with no host to download from
+set(ENV{TIDE_GIT_MIRROR} "${WORK}/no-mirror")
+tide("${game}" ARGS schedule . EXPECT "Physics.Integrate" WITHOUT "downloading")
+tide("${WORK}" ARGS fetch "${game}" EXPECT "the game's 2 packages are on this machine")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P2}\ngithub.com/test/maths ${M1}\n")
+tide("${game}" ARGS fetch FAILS EXPECT "couldn't download github.com/test/physics at ${P2}")
+set(ENV{TIDE_GIT_MIRROR} "${mirror}")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics@main\n")
+tide("${game}" ARGS fetch FAILS EXPECT "has no commit to build with")
+file(WRITE "${WORK}/no-packages/main.tide" "scene Main { }\n")
+tide("${WORK}/no-packages" ARGS fetch EXPECT "tide.packages lists no packages")
+tide("${game}" ARGS fetch one two FAILS EXPECT "fetch takes the game's folder, or none for this one")
+file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics ${P1}\ngithub.com/test/maths ${M1}\n")
+
 # ---------------------------------------------------------------------------
 # Packages that come with tide
 

@@ -1,0 +1,4 @@
+// expect: the match runs the same on every machine, so a system can't filter by 'with ownership'
+scene Main { }
+component Body { float x; }
+extern system Move(mut Body body, with ownership);
