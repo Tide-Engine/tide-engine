@@ -608,6 +608,18 @@ The language shares the engine's name, Tide. Its syntax and semantics are specif
 - Clients don't have to simulate the whole world. LOD borders and culling are resolved through state sync. Not built yet: every client ticks the whole world.
 - Hosting (not built yet): Tide will host games for people, and hosted matches will run as WebAssembly in a sandbox (a runtime like wasmtime), with a time budget per tick. Owning the language doesn't make hosted code safe by itself: games can call C, and even pure Tide can loop forever. In the sandbox, C only reaches the game's own memory and what the host gives it, so `extern` stays allowed. A hosted game's match code, and the C it calls, has to build for the web; a server build can leave out views and local code.
 
+## Modding
+
+Not built yet. What's agreed (2026-10-05); the design proposed for the rest, and its open questions, are in `docs/spec.md`, Mods.
+
+- Mods are a service we run, the third beside the relay and hosting: remote compilation. A mod is a package that someone other than the game's developer adds to it, and the service builds the game with its mods, whole, natively, for each set of them. So mod code is game code, with its storage, schedule and speed: nothing is interpreted (the owner: the modding community is big, and limiting it is rough), no game carries a runtime for mods, and the engine gains no dynamic path for them.
+- Every machine of a match runs the same build, fetched from the service, never from the host. Builds are signed with a key per game, and can be revoked.
+- A mod is Tide alone: no `extern`, C, C++ or libraries. Its files are virtual, as a web page's are.
+- A mod replaces a game's declaration with an explicit `override`, and what can be replaced is the developer's choice, which the game marks. It's a substitution while compiling. Two mods replacing one declaration are an error that names both.
+- That Tide code can't corrupt memory is Tide's own promise, for every game (the owner: "a Tide issue, not a mod issue"): mods rest on it, and it has to be tested as one.
+- On desktop, a modded build runs in the OS's sandbox as a second layer, since the compiler was never a security boundary. The web has the browser's. WebAssembly isn't that layer on desktop: mod code compiles with the game, so it would put the whole game in a runtime.
+- Stores that forbid downloaded code (iOS, consoles) have the mods a developer built in, and no others.
+
 ## Determinism
 
 Given the same build and the same inputs, simulation results must be bit-identical on every supported platform.
