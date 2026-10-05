@@ -2520,7 +2520,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ## Mods
 
-Not built yet. **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**.
+**Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, one part is built: the service's first slice, for web games, with `tide publish` (**Provisional**, below). The language's part (`virtual`, `override`, what a mod may be), games that load builds, and the sandbox aren't.
 
 ### Decided
 
@@ -2559,9 +2559,26 @@ override system Move(mut Position position, Velocity velocity)
 - That no Tide code can corrupt memory is the language's promise to every game, and mods rest on it: it isn't a rule for mods.
 - Where a store forbids code downloaded after installing (iOS, consoles), a game has the mods its developer built into it and no others.
 
+### Provisional
+
+Implemented, awaiting approval: the service's first slice, at `builds.tide-engine.dev` (`builds/` in the repository). A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+
+- Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
+- Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.
+- Provisional: a version is named by the SHA-256 of what was sent, and `tide` writes that archive itself (a tar, with no times, owners or modes, its files in one order) rather than with the system's `tar`, so the same files are the same version from any machine. `tide publish` says one line, with the version.
+- Provisional: asking for a build is an HTTP call, not a command: `POST /games/<id>/builds` with `{"version": ..., "mods": [...]}` and the key as `Authorization: Bearer`. `GET /games/<id>/builds/<build>` says how it went, with what `tide` said, and `DELETE` there revokes it. The page is at `/b/<build>/`.
+- Provisional: a mod's line is a package from git with its commit, as `tide.packages` writes it, from the hosts `tide` downloads from. What `tide update` follows (`@v1`) is no part of a build's name, a repository listed twice is an error, and a build takes 32 at most. Folders and the packages that come with tide aren't mods. Nothing checks yet that a mod is Tide alone.
+- Provisional: the mods' lines go at the end of the game's `tide.packages`, and the lines of what they need after them, as `tide add` adds them. A mod the game already lists, or two packages of one name, is the error a build of that file gives.
+- Provisional: `tide fetch [folder]`, a new command: it downloads the packages from git that the game lists and the machine doesn't have, each at its commit, adds the lines of what they need, and builds nothing. The service fetches with it, then builds with no network.
+- Provisional: what's signed is a manifest, a line of JSON: `{"build", "target", "sha256", "size"}`, the SHA-256 being the page's. It's at `/b/<build>/manifest.json`, its signature (r then s) at `/b/<build>/manifest.sig`, and the game's public key, 65 bytes uncompressed, at `/games/<id>/key`. Nothing checks them yet: a game that loads builds will.
+- Provisional: a build that failed is built again when it's asked for again. A revoked one never is: what it built is deleted, and its link answers 410.
+- Provisional: a page is fetched again each time it's opened (`Cache-Control: no-cache`, with an `ETag`), so a revoked build is gone from caches too.
+- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 2 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
+- Provisional: whoever asks for a build gets all that `tide` said of it. That's the game's own developer for now, as asking takes the game's key; a modder of a closed game will get what it says of the mod's own files.
+
 ### Open
 
-Proposed, awaiting the owner. None of it is built.
+Proposed, awaiting the owner. None of it is built, but for the service's first slice (Provisional, above).
 
 The language:
 

@@ -35,7 +35,7 @@ event(Spawned) Setup(with Main)
 
 A line always has its commit, and the game builds with that commit's code, whoever builds it and wherever: your machine, someone else's, a build server, the web build and the desktop one. They have to: a match's players simulate it together, so each of them has to run the same code. A branch or a tag can move, so a line never builds with "the newest" of anything.
 
-`tide` keeps each commit it downloads, once for every game on your machine, in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere (or where the `TIDE_PACKAGES` environment variable says). A game whose packages aren't there yet, like one you just cloned, downloads them the first time `tide run` or `tide build` builds it.
+`tide` keeps each commit it downloads, once for every game on your machine, in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere (or where the `TIDE_PACKAGES` environment variable says). A game whose packages aren't there yet, like one you just cloned, downloads them the first time `tide run` or `tide build` builds it. `tide fetch` downloads them without building, for a build that then needs no network.
 
 ## Updating
 
