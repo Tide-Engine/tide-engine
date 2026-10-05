@@ -2927,6 +2927,112 @@ TIDE_TEST(lsp_extern_functions)
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
 }
 
+#define EXTERN_SYSTEMS                                                         \
+    "component Place { float2 at; }\n"                                         \
+    "component Speed { float2 by; }\n"                                         \
+    "component Frozen { }\n"                                                   \
+    "singleton Wind { float2 by; }\n"                                          \
+    "singleton Tally { int moved; }\n"                                         \
+    "scene Main { }\n"                                                         \
+    "event(Spawned) Setup(with Main)\n"                                        \
+    "{\n"                                                                      \
+    "    Spawn(Place, Speed);\n"                                               \
+    "}\n"                                                                      \
+    "system Blow(mut Speed speed, Wind wind)\n"                                \
+    "{\n"                                                                      \
+    "    speed.by += wind.by;\n"                                               \
+    "}\n"
+
+TIDE_TEST(lsp_extern_systems)
+{
+    start();
+#define MOVE "[NativeName(\"game_move\")]\nextern system Move(mut Place place, Speed speed, Time time, mut Tally tally, without Frozen);\n"
+    open_document(EXTERN_SYSTEMS MOVE);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Nothing about parameters its code doesn't use: its code is C's
+
+    // Hover says it's C's, which C function, how C is called, and where the tick has it
+    open_document(EXTERN_SYSTEMS "[NativeName(\"game_move\")]\nextern system Mo$ve(mut Place place, Speed speed, Time time, mut Tally tally, "
+                                 "without Frozen);\n");
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[NativeName(\\\"game_move\\\")]\\nextern system Move(mut Place place, Speed speed, Time time, mut Tally "
+                          "tally, without Frozen)"));
+    TIDE_CHECK(has(hover, "A system written in C: the C function `game_move`") && has(hover, "`tide/rows.h`"));
+    TIDE_CHECK(has(hover, "for each run of rows of the entities that match"));
+    TIDE_CHECK(has(hover, "**Stage 2.** It waits for:\\n- `Blow`: it writes `Speed`, which this reads"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":15,\"character\":14}"));
+    // The line above it: its stage, that it's C, and why it waits
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(has(lenses, "\"title\":\"stage 2 ") && has(lenses, " in C ") && has(lenses, " after Blow: it writes Speed, which this reads"));
+    // The outline, and nothing to fold: it has no body
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Move\",\"detail\":\"extern system\",\"kind\":12"));
+    TIDE_CHECK(count(request("textDocument/foldingRange"), "\"startLine\"") == 2);
+    // Its name is a function's, its parameters parameters, as a system's are
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",1,14,4,9,1,0,9,5,2,0,0,6,5,5,1,"));
+
+    // Its parameters: which of the rows' components each is, as C numbers them, and which pointer after the rows
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place pl$ace, Speed speed, Time time, mut Tally tally, without Frozen);\n");
+    const char *place = request("textDocument/hover");
+    TIDE_CHECK(has(place, "mut Place place") && has(place, "Component 0 of the rows C is handed, which it can change"));
+    TIDE_CHECK(has(place, "`tide_rows_floats_mut(rows, 0, offsetof(...))`"));
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, Speed sp$eed, Time time, mut Tally tally, without Frozen);\n");
+    const char *speed = request("textDocument/hover");
+    TIDE_CHECK(has(speed, "Component 1 of the rows C is handed, read-only") && has(speed, "`tide_rows_floats(rows, 1, offsetof(...))`"));
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, Speed speed, Time ti$me, mut Tally tally, without Frozen);\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Singleton, read-only: C gets a pointer to it, argument 1 after the rows."));
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, Speed speed, Time time, mut Tally ta$lly, without Frozen);\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Singleton, writable: C gets a pointer to it, argument 2 after the rows."));
+    // Without [NativeName], its C function is its own name
+    open_document(EXTERN_SYSTEMS "extern system Mo$ve(mut Place place);\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "the C function `Move`"));
+
+    // Systems written in Tide are ordered against it by name
+    open_document(EXTERN_SYSTEMS "[After(Mo$ve)]\nsystem Later(mut Tally tally)\n{\n    tally.moved = 0;\n}\n" MOVE);
+    TIDE_CHECK(has(request("textDocument/hover"), "extern system Move(mut Place place"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":20,\"character\":14}"));
+    // One that runs once a tick has no rows
+    open_document(EXTERN_SYSTEMS "extern system St$ep(mut Tally tally, Time time);\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "It's called once per tick, with no rows."));
+
+    // Completion: the declaration, and in its parameters what C can be handed
+    TIDE_CHECK(offers(complete(EXTERN_SYSTEMS "$"), "extern system"));
+    const char *after_extern = complete(EXTERN_SYSTEMS "extern $");
+    TIDE_CHECK(offers(after_extern, "system") && offers(after_extern, "float"));
+    const char *params = complete(EXTERN_SYSTEMS "extern system Move($");
+    TIDE_CHECK(offers(params, "mut") && offers(params, "with") && offers(params, "without"));
+    TIDE_CHECK(offers(params, "Place") && offers(params, "Wind") && offers(params, "Time"));
+    TIDE_CHECK(!offers(params, "World") && !offers(params, "Devices") && !offers(params, "query"));
+    TIDE_CHECK(!offers(params, "in") && !offers(params, "out") && !offers(params, "float3")); // An extern function's
+    const char *writes = complete(EXTERN_SYSTEMS "extern system Move(mut $");
+    TIDE_CHECK(offers(writes, "Place") && offers(writes, "Tally") && !offers(writes, "World"));
+    const char *filters = complete(EXTERN_SYSTEMS "extern system Move(mut Place place, with $");
+    TIDE_CHECK(offers(filters, "Frozen") && !offers(filters, "Wind"));
+
+    // What C can't be handed is an error that says what to write instead
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, World world);\n");
+    TIDE_CHECK(has(last_sent(), "a system written in C can't take the World yet"));
+    open_document(EXTERN_SYSTEMS "extern system Move(mut Place place)\n{\n}\nsystem After(mut Tally tally)\n{\n    tally.moved = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "an extern system has no body: its code is in C"));
+    TIDE_CHECK(count(last_sent(), "\"severity\":1") == 1); // ...and the declaration after it is read
+    // A component with no fields as a parameter: the quick fix makes it the filter it can be
+    open_document(EXTERN_SYSTEMS "extern system Move(Frozen frozen, mut Place place);\n");
+    TIDE_CHECK(has(last_sent(), "'Frozen' has no fields, so C has nothing of it to read"));
+    const char *fix = request_with("textDocument/codeAction", "\"range\":{\"start\":{\"line\":14,\"character\":20},\"end\":{\"line\":14,"
+                                                               "\"character\":26}},\"context\":{\"diagnostics\":[]}");
+    TIDE_CHECK(has(fix, "Only require it: 'with Frozen'") && has(fix, "\"newText\":\"with Frozen\""));
+
+    // The formatter leaves it on its line
+    static const char messy[] = "component Place { float2 at; }\nscene Main { }\n[NativeName( \"game_move\" )]\n"
+                                "extern   system  Move( mut Place place ,with Main ) ;\n";
+    static const char expected[] = "component Place { float2 at; }\nscene Main { }\n[NativeName(\"game_move\")]\n"
+                                   "extern system Move(mut Place place, with Main);\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+#undef MOVE
+}
+
 #define OPERATORS                                                              \
     "struct Money\n"                                                           \
     "{\n"                                                                      \

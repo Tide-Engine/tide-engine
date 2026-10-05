@@ -1,0 +1,6 @@
+// expect: 'Heavy' has no fields, so C has nothing of it to read
+// expect: to only require the component, write 'with Heavy'
+scene Main { }
+component Body { float x; }
+component Heavy { }
+extern system Weigh(Heavy heavy, mut Body body);

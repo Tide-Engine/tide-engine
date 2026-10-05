@@ -1,0 +1,178 @@
+// Systems written in C (`extern system`): what C is handed of the match, the
+// rows of the entities each runs for as arrays (tide/rows.h), and what it
+// gives back (extern_system_c.c).
+
+component Place
+{
+    float2 at;
+    int id;
+}
+
+component Speed
+{
+    float2 by;
+}
+
+// Fields that aren't 4 bytes: C reads and writes these a row at a time
+component Badge
+{
+    long serial;
+    Entity me;
+    bool lit;
+}
+
+// Three bytes: not in lanes of 4
+component Dots
+{
+    byte a;
+    byte b;
+    byte c;
+}
+
+// Two full chunks of these, which a tick on threads runs in pieces
+component Wheel
+{
+    float angle;
+    float turns;
+    int id;
+}
+
+component Heavy { }
+
+component Frozen { }
+
+singleton Rules
+{
+    float pull = -2;
+    int bonus = 5;
+}
+
+singleton Tally
+{
+    int runs; // Calls into C's Count
+    int rows;
+    int order; // The ids C was handed, in the order it was handed them
+    int orderInTide; // ...and as a system written in Tide goes through them
+    int bonus;
+    int once; // Calls into C's Once
+    int onceRows;
+    int tick;
+    int wheels;
+}
+
+// What a tick's systems count as, for whether it runs on threads: enough, when
+// `heavy` could be true, which it never is
+singleton Load
+{
+    bool heavy;
+    int spun;
+}
+
+singleton Order
+{
+    int seen;
+    int zero;
+    int first;
+    int inC;
+    int last;
+}
+
+// Arrays: every place moves by its speed, but the frozen ones'
+[NativeName("xs_move")]
+extern system Move(mut Place place, Speed speed, Time time, without Frozen);
+
+// Asks for arrays to write, and writes what's there: nothing changes
+[NativeName("xs_idle")]
+extern system Idle(mut Place place, with Frozen);
+
+// Rows it only reads, a singleton it reads and one it writes: on one thread, in order
+[NativeName("xs_count")]
+extern system Count(Place place, Rules rules, mut Tally tally);
+
+system CountInTide(Place place, mut Tally tally)
+{
+    tally.orderInTide = tally.orderInTide * 31 + place.id;
+}
+
+// A row at a time, with each row's entity
+[NativeName("xs_stamp")]
+extern system Stamp(mut Badge badge, Place place);
+
+[NativeName("xs_dot")]
+extern system Dot(mut Dots dots);
+
+// One field of the heavy ones' speeds
+[NativeName("xs_weigh")]
+extern system Weigh(mut Speed speed, Rules rules, with Heavy);
+
+// Once a tick, with no rows
+[NativeName("xs_once")]
+extern system Once(mut Tally tally, Time time);
+
+// Filters alone: its rows have entities, and no components
+[NativeName("xs_wheels")]
+extern system CountWheels(mut Tally tally, with Wheel);
+
+// Every row of two full chunks, which a tick on threads shares out in pieces
+[NativeName("xs_spin")]
+extern system Spin(mut Wheel wheel);
+
+system Burden(Wheel wheel, mut Load load)
+{
+    if (load.heavy)
+    {
+        for (int i = 0; i < 1000000; i++) load.spun += wheel.id;
+    }
+}
+
+// Ordered against systems written in Tide, whatever order they're declared in
+[After(MarkInC)]
+system MarkLast(mut Order order)
+{
+    order.seen += 1;
+    order.last = order.seen;
+}
+
+[NativeName("xs_mark")]
+[After(MarkFirst)]
+extern system MarkInC(mut Order order);
+
+system MarkFirst(mut Order order)
+{
+    order.seen += 1;
+    order.first = order.seen;
+}
+
+[NativeName("xs_zero")]
+[Before(MarkFirst)]
+extern system MarkZero(mut Order order);
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (int i = 0; i < 5000; i++)
+    {
+        Spawn(Place { at = float2(i, 2 * i), id = i }, Speed { by = float2(1, 0.5) });
+    }
+    for (int i = 0; i < 300; i++)
+    {
+        Spawn(Place { at = float2(i, -i), id = 10000 + i }, Speed { by = float2(0, 1) }, Heavy);
+    }
+    for (int i = 0; i < 40; i++)
+    {
+        Spawn(Place { at = float2(-i, i), id = 20000 + i }, Speed { by = float2(3, 3) }, Frozen);
+    }
+    for (int i = 0; i < 100; i++)
+    {
+        Spawn(Place { at = float2(i, 0), id = 30000 + i }, Speed { by = float2(-1, 0) }, Badge { serial = 1000000000000L + i });
+    }
+    for (int i = 0; i < 10; i++)
+    {
+        Spawn(Place { id = 40000 + i }, Dots { a = byte(i), b = 2, c = 3 });
+    }
+    for (int i = 0; i < 4096; i++)
+    {
+        Spawn(Wheel { angle = i * 0.25, id = i });
+    }
+}

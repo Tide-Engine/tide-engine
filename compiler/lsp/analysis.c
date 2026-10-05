@@ -1354,7 +1354,9 @@ static const char *decl_keyword(const decl *d)
 // and "local component" for what's local.
 static const char *decl_what(const decl *d)
 {
-    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler" : decl_keyword(d);
+    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
+                     : d->extern_system                        ? "extern system" // Written in C
+                                                               : decl_keyword(d);
     if (!d->is_local) return what;
     sb b = {0};
     sb_printf(&b, "local %s", what);
@@ -1401,13 +1403,28 @@ static void format_header(const decl *d, sb *out)
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
         first = d->is_command ? 2 : 1;
     } else {
-        sb_printf(out, "%s " STR_FMT "(", decl_keyword(d), STR_ARG(d->name));
+        sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
     for (int i = first; i < d->params.count; i++) {
         if (i > first) sb_put(out, ", ");
         format_param(&d->params.items[i], out);
     }
     sb_put(out, ")");
+}
+
+// Which of an extern system's parameters `p` is, as its C function counts
+// them: its components from 0 (tide/rows.h), and its singletons from 0, each
+// an argument after the rows. -1 for a filter.
+static int extern_param_number(const decl *sys, const param *p)
+{
+    int number = 0;
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *q = &sys->params.items[i];
+        if (q->mode != PARAM_READ && q->mode != PARAM_MUT) continue;
+        if (q == p) return number;
+        if (q->type.kind == p->type.kind) number++;
+    }
+    return -1;
 }
 
 // What the engine's own events are for.
@@ -2298,10 +2315,27 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     case OCC_SYSTEM:
+        if (o->decl->extern_system && o->decl->c_name && !str_eq_c(o->decl->name, o->decl->c_name)) {
+            sb_printf(&code, "[NativeName(\"%s\")]\n", o->decl->c_name);
+        }
         format_header(o->decl, &code);
         code_block(out, code.data);
         if (is_shader(o->decl)) { // Where it's declared, and where a Draw2D.Mesh names it
             describe_shader(o->decl, out);
+            break;
+        }
+        if (o->decl->extern_system) { // Its code is C's: what C is called with, and how the tick takes it
+            sb_printf(out, "\n\nA system written in C: the C function `%s`, which the game's C files or libraries define. ",
+                      o->decl->c_name ? o->decl->c_name : "?");
+            if (o->decl->per_entity) {
+                sb_put(out, "It's called once per tick for each run of rows of the entities that match, a chunk of them or a "
+                            "piece of one, and reads and writes their components as arrays (`tide/rows.h`), a field a lane. ");
+            } else {
+                sb_put(out, "It's called once per tick, with no rows. ");
+            }
+            sb_put(out, "The singletons it takes follow the rows, each a pointer. The tick takes it to read and write what "
+                        "its declaration says.");
+            describe_order(o->decl, out);
             break;
         }
         if (o->decl->is_handler && o->decl->event) {
@@ -2446,6 +2480,20 @@ static void describe(const occurrence *o, sb *out)
                            "and%s `Set<T>(entity, value)`.", o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
             const decl *code_of = decl_of_param(o->param);
             if (code_of) describe_world(code_of, out);
+            break;
+        }
+        // An extern system's: which of the rows' components it is, or which pointer after them
+        if (of && of->extern_system && o->param->type.kind == TY_COMPONENT && extern_param_number(of, o->param) >= 0) {
+            const int number = extern_param_number(of, o->param);
+            sb_printf(out, "\n\nComponent %d of the rows C is handed, %s: `tide_rows_floats%s(rows, %d, offsetof(...))` is a "
+                           "field of it as an array, a value a row, and `tide_rows_get` a row's whole component.",
+                      number, o->param->mode == PARAM_MUT ? "which it can change" : "read-only",
+                      o->param->mode == PARAM_MUT ? "_mut" : "", number);
+            break;
+        }
+        if (of && of->extern_system && o->param->type.kind == TY_SINGLETON && extern_param_number(of, o->param) >= 0) {
+            sb_printf(out, "\n\nSingleton, %s: C gets a pointer to it, argument %d after the rows.",
+                      o->param->mode == PARAM_MUT ? "writable" : "read-only", extern_param_number(of, o->param) + 1);
             break;
         }
         if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
@@ -2687,7 +2735,7 @@ static void describe(const occurrence *o, sb *out)
             {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
-             "The C function the extern function after it calls, when its name isn't the function's own."},
+             "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -2834,6 +2882,7 @@ void analysis_code_lenses(jbuf *out)
         if (d->at.file != A.doc || d->stage == 0) continue;
         sb title = {0};
         sb_printf(&title, "stage %d", d->stage);
+        if (d->extern_system) sb_put(&title, " \u00B7 in C"); // Scheduled by what it declares: its code isn't read
         put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
@@ -5971,6 +6020,10 @@ static void complete_declarations(completion *c)
          "async event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "extern", CK_SNIPPET, "extern Type Name(parameters);",
          "A function written in C, which the game's C files or libraries define.", "extern ${1:void} ${2:Name}($3);");
+    item(c, "extern system", CK_SNIPPET, "extern system Name(mut Component value);",
+         "A system written in C: called once a tick for each run of rows of the entities that match, with their components as "
+         "arrays (tide/rows.h) and the singletons it takes.",
+         "extern system ${1:Name}(${2:mut Component value});");
     item(c, "const", CK_SNIPPET, "const Type NAME = value;", "A value code reads by name, the same on every machine.",
          "const ${1:int} ${2:NAME} = $0;");
     item(c, "settings", CK_SNIPPET, "settings { name = value; }", "The engine's settings for the game, like its tickRate.",
@@ -6700,7 +6753,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "byte", CK_KEYWORD, "One byte: members from 0 to 255", NULL, NULL);
             item(&c, "ushort", CK_KEYWORD, "Two bytes: members from 0 to 65535", NULL, NULL);
             item(&c, "int", CK_KEYWORD, "Four bytes, as an enum is without one", NULL, NULL);
-        } else if (pk == T_IDENT && str_eq_c(prev->text, "extern")) { // Its return type
+        } else if (pk == T_IDENT && str_eq_c(prev->text, "extern")) { // Its return type, or a system written in C
+            item(&c, "system", CK_SNIPPET, "extern system Name(mut Component value);",
+                 "A system written in C: called once a tick for each run of rows of the entities that match, with their "
+                 "components as arrays (tide/rows.h) and the singletons it takes.",
+                 "system ${1:Name}(${2:mut Component value});");
             item(&c, "void", CK_KEYWORD, "Returns nothing", NULL, NULL);
             complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY);
             complete_structs(&c);
@@ -6717,7 +6774,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "After", CK_FUNCTION, "[After(DeclarationOrPhase)]",
                  "Runs after the named declarations or entire enum phases.", "After($1)");
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
-                 "The C function the extern function after it calls, when its name isn't the function's own.",
+                 "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
         }
         break;
@@ -6797,6 +6854,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
         }
+        // extern system Move(...): a system's parameters, less what C can't be handed
+        const bool extern_system = is_extern && f.header == HEADER_SYSTEM;
+        if (extern_system) is_extern = false;
         if (f.header == HEADER_ROUTINE && !is_extern) {
             // void Heal(mut Stats stats): values, and for a function its Action
             const bool method = depth >= 1 && stack[depth - 1].kind == CTX_DATA;
@@ -6903,15 +6963,20 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (view) item(&c, "verified", CK_KEYWORD, "As the server confirmed it, not as this machine predicts it", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
-                item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
+                if (!extern_system) {
+                    item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
+                }
                 // Systems, views and local handlers take a second set of entities to go through
-                if (f.open >= 2 && !is_async && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
+                if (f.open >= 2 && !is_async && !extern_system
+                    && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");
                 }
             }
-            item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+            if (!extern_system) {
+                item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+            }
             complete_types(&c, true, true, pk != T_MUT);
             complete_namespaces(&c, false);
         } else if (pk == T_IDENT) {
