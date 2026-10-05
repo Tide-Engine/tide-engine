@@ -332,6 +332,8 @@ view Health(Stats stats)
 
 What views draw there is under the GUI's widgets, which draw last.
 
+The mouse, touches and the pointer count pixels from the bottom left instead, with `y` up. `Screen.Flip(devices.pointer.position)` is where the pointer is in the screen's pixels: see [Screen and world coordinates](#screen-and-world-coordinates).
+
 ## Measuring text
 
 `Draw2D.Text` takes the text's top left corner. To center a line, align it to the right, or fit a panel around it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line.
@@ -471,12 +473,12 @@ The conversion helpers use the currently selected camera, including a camera set
 
 In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far limit, rather than a distance in world units. The standard perspective camera has an infinite far limit, so depth 1 has no finite world position. The ray helpers work with perspective and orthographic cameras, including custom projection matrices. Intersect the ray with your game's objects or a plane to pick a world position; a pixel alone has no unique 3D position.
 
-Device positions use a bottom-left origin with `y` up. Flip their `y` before passing them to these helpers:
+The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw2D.Screen()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
 
 ```csharp
 view Pointer(Devices devices)
 {
-    var screen = float2(devices.mouse.position.x, Screen.height - devices.mouse.position.y);
+    var screen = Screen.Flip(devices.pointer.position);
     var world = Draw2D.ScreenToWorld(screen);
     Draw2D.WireCircle(world, 0.2, Color.yellow);
 

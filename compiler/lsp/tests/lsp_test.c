@@ -2068,6 +2068,16 @@ TIDE_TEST(lsp_gui)
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
 
+    // Screen.Flip: a device's position, from the bottom left, as the screen's, from the top left
+    const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
+    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
+    open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw2D.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *flip = request("textDocument/hover");
+    TIDE_CHECK(has(flip, "Screen.Flip(float2 position) -> float2"));
+    TIDE_CHECK(has(flip, "counted from the screen's other edge"));
+
     // The cursor's lock: views ask for it and read whether it holds, and so
     // do the functions they call; the input's Sample only reads; the match
     // has neither.
