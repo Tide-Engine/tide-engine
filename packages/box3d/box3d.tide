@@ -66,7 +66,7 @@ component Box
     float density = 1000; // Water's, in kilograms a cubic meter
     float friction = 0.6;
     float bounce;
-    bool sensor;
+    bool sensor; // Bodies pass through it, and it sends Touched and Parted for the ones in it
 }
 
 // A sphere on the entity's body.
@@ -104,7 +104,11 @@ component SphereMade { }
 [Sparse]
 component CapsuleMade { }
 
-// Two bodies started touching, or stopped: sent to each, with the other.
+// Two bodies started touching, or stopped: sent to each, with the other. A
+// shape that's a sensor stops nothing, and sends them for what comes into it
+// and leaves it, to its own entity and to the other's; two sensors say nothing
+// of each other. `other` is no entity when the other one was destroyed while
+// they touched: its parting still comes, from `default`.
 event Touched
 {
     Entity other;

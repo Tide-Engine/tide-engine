@@ -33,8 +33,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x11977ec9eea11889)
-#define IMAGES_HASH UINT64_C(0x6f9377ec24191d93)
+#define SETTLED_HASH UINT64_C(0xc842e78334900202)
+#define IMAGES_HASH UINT64_C(0xbcb874b875ca4571)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
 // alone. A change to what the image holds of a world moves the two above and
 // leaves this one; a change to how the world steps moves all three.

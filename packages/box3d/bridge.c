@@ -741,6 +741,12 @@ static b3ShapeDef shape_def(const float density, const float friction, const flo
     def.baseMaterial.restitution = bounce;
     def.isSensor = sensor;
     def.enableContactEvents = true; // Touched and Parted
+    // ...which a sensor sends too, for the shapes in it. Box3D only reports a shape to a sensor when both
+    // say so, and neither does unless it's told to: every shape does, as any may come into a sensor
+    def.enableSensorEvents = true;
+    // A sensor doesn't report another: each would report the other, and their entities hear of it twice.
+    // Shapes of one group below zero are never set against each other
+    if (sensor) def.filter.groupIndex = -1;
     return def;
 }
 
@@ -1178,13 +1184,22 @@ void b3t_leave(tide_rows *rows, const physics *p)
     }
 }
 
+// What the tick's step says started touching and stopped, as Box3D has it:
+// the contacts between solid shapes that began and ended, and then the same
+// of its sensors, each with a shape that came into it or left it. They're the
+// step's own, read in the tick that stepped, and a world that's made from its
+// image has the same ones to say after its next step: what each sensor has in
+// it is in the image. Asking changes nothing of the world.
 int32_t b3t_touches(const int64_t stamp)
 {
     (void)stamp;
-    const b3ContactEvents events = b3World_GetContactEvents(active->id);
-    return events.beginCount + events.endCount;
+    const b3ContactEvents contacts = b3World_GetContactEvents(active->id);
+    const b3SensorEvents sensors = b3World_GetSensorEvents(active->id);
+    return contacts.beginCount + contacts.endCount + sensors.beginCount + sensors.endCount;
 }
 
+// Whose body a shape is on, or 0 for a shape that's gone, with its body: its
+// entity was destroyed, and what it touched parts from no entity.
 static int64_t owner_of(const b3ShapeId shape)
 {
     if (!b3Shape_IsValid(shape)) return 0;
@@ -1194,15 +1209,33 @@ static int64_t owner_of(const b3ShapeId shape)
 
 touch b3t_touch(const int32_t index)
 {
-    const b3ContactEvents events = b3World_GetContactEvents(active->id);
+    const b3ContactEvents contacts = b3World_GetContactEvents(active->id);
+    const b3SensorEvents sensors = b3World_GetSensorEvents(active->id);
     touch out = {0};
-    if (index < events.beginCount) {
-        out.a = owner_of(events.beginEvents[index].shapeIdA);
-        out.b = owner_of(events.beginEvents[index].shapeIdB);
+    int32_t at = index;
+    if (at < contacts.beginCount) {
+        out.a = owner_of(contacts.beginEvents[at].shapeIdA);
+        out.b = owner_of(contacts.beginEvents[at].shapeIdB);
         out.began = true;
-    } else if (index - events.beginCount < events.endCount) {
-        out.a = owner_of(events.endEvents[index - events.beginCount].shapeIdA);
-        out.b = owner_of(events.endEvents[index - events.beginCount].shapeIdB);
+        return out;
+    }
+    at -= contacts.beginCount;
+    if (at < contacts.endCount) {
+        out.a = owner_of(contacts.endEvents[at].shapeIdA);
+        out.b = owner_of(contacts.endEvents[at].shapeIdB);
+        return out;
+    }
+    at -= contacts.endCount;
+    if (at < sensors.beginCount) {
+        out.a = owner_of(sensors.beginEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.beginEvents[at].visitorShapeId);
+        out.began = true;
+        return out;
+    }
+    at -= sensors.beginCount;
+    if (at < sensors.endCount) {
+        out.a = owner_of(sensors.endEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.endEvents[at].visitorShapeId);
     }
     return out;
 }
