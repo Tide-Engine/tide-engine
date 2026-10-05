@@ -15,9 +15,9 @@ bool builtin_owner(str name);
 bool builtin_draw_owner(str name);
 
 // The program's Anchor enum, which GUILayout.Area and Draw2D.Text take, its
-// Shape struct, which Draw2D.Shape does, and its Font enum, a text's weight.
-// Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape, const decl *font);
+// Shape struct, which Draw2D.Shape does, its Blend enum, which Draw.Blend
+// does, and its Font enum, a text's weight. Call before resolving calls.
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
 // Its GUITheme and GUIControl structs, which GUI.SetTheme and GUI.Theme take
 // and GUI.Control gives, the same way.
@@ -38,8 +38,9 @@ void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *
 bool builtin_list_param(str owner, str name, int index, const expr *list, type *out);
 
 // Resolves owner.name(args) for a call whose arguments are already checked.
-// Fills e->call, e->c_callee and e->arg_want, and for the GUI e->arg_mut and
-// e->gui. Reports errors and returns TY_ERROR on failure.
+// Fills e->call, e->c_callee, e->c_pack and e->arg_want, and for the GUI and
+// the draw settings e->arg_mut and e->gui. Reports errors and returns
+// TY_ERROR on failure.
 type resolve_builtin_call(str owner, expr *e);
 
 // Resolves owner.member, such as quaternion.identity. Fills e->c_constant.

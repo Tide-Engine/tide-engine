@@ -1,0 +1,12 @@
+// expect: to set it for the draws that follow, write 'target.SetCamera(...);'
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+view Show(Canvas canvas)
+{
+    canvas.target.Camera(float2(0, 0), 5);
+}

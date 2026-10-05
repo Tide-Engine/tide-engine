@@ -27,7 +27,7 @@ vert Wave(mut RibbonVertex vertex, Ribbon ribbon)
 frag Stripes(RibbonVertex vertex, mut Color color, Ribbon ribbon)
 {
     float stripe = 0.5 + 0.5 * Math.Sin(vertex.uv.x * ribbon.bands * 6.283185);
-    color = Color(0.15 + stripe * 0.7, 0.7 + stripe * 0.2, 0.9 - stripe * 0.6);
+    color = Color(0.18 + stripe * 0.8, 0.83 - stripe * 0.08, 0.75 - stripe * 0.61);
 }
 
 view Preview(mut Ribbon ribbon)
@@ -54,6 +54,7 @@ view Preview(mut Ribbon ribbon)
         }
     }
 
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Anchor.UpperLeft)
     {
         GUILayout.Slider("Wave height", ribbon.amplitude, 0, 0.6);
@@ -67,7 +68,7 @@ view Preview(mut Ribbon ribbon)
         if (ribbon.phase > 6.283185) ribbon.phase -= 6.283185;
     }
 
-    Draw2D.Clear(Color(0.055, 0.065, 0.09));
-    Draw2D.Camera(float2(0, 0.3), 2.2);
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0, 0.3), 2.2);
     Draw2D.Mesh(ribbon.vertices, ribbon.indices, Wave, Stripes);
 }

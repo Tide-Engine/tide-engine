@@ -602,11 +602,14 @@ typedef enum builtin_call {
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
 } builtin_call;
 
-// What a GUI call needs besides its arguments (expr.gui).
+// What a GUI call needs besides its arguments, and which form of a draw
+// setting a call is (expr.gui).
 enum {
     GUI_ID = 1,        // A widget ID, from where it's called
     GUI_CONTAINER = 2, // A block after the call: GUILayout.Vertical() { ... }
     GUI_SKIPS = 4,     // A container whose block doesn't always run: it returns -1 then
+    DRAW_BLOCK = 8,    // A draw setting around a block, which puts back what it found: Draw.Blend(...) { ... }
+    DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
 };
 
 // How a constructor call builds its value.
@@ -703,6 +706,7 @@ struct expr {
     builtin_call call;
     ctor_form ctor;         // CALL_CONSTRUCT; CTOR_ENUM even where the checker refused the conversion
     const char *c_callee;   // CALL_BUILTIN
+    const char *c_pack;     // ...and the function that makes the one value it takes of its arguments, or NULL
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
@@ -712,8 +716,10 @@ struct expr {
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
-    int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
+    int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER; CALL_DRAW: DRAW_BLOCK and DRAW_SET
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
+    bool stacked;         // One of the calls listed with commas before one block: each one's block is the
+                          // call after it, and the last one's the block itself
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
     bool blit;           // Draw.Blit: source texture, destination target and a frag
@@ -969,6 +975,7 @@ typedef struct program {
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
+    decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is

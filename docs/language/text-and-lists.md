@@ -186,6 +186,14 @@ enemies.Sort(a, b)
 
 Sorting works in systems, views, handlers and plain functions; not yet in methods or async code.
 
+The bars below are a `List<int>`, and each button changes it with one of its members. The line at the top is the list itself, as text shows it.
+
+::: tide-example lists A list, changed and sorted
+
+<<< @/examples/lists.tide
+
+:::
+
 ### Going through every element at once
 
 A `parallel` loop goes through a list's elements at once, on threads, as it goes through a grid's cells (see [Grids](./grids.md#going-through-every-cell)). Its places are the elements' indices:

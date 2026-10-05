@@ -10,7 +10,7 @@ view DrawBalls(Body body, Ball ball)
 
 view DrawHud(Arena arena)
 {
-    Draw2D.Camera(float2(0, 0), arena.halfSize.y);
+    Draw2D.SetCamera(float2(0, 0), arena.halfSize.y);
     Draw2D.Text("fire: space", float2(-arena.halfSize.x, arena.halfSize.y), 18, Color.gray);
 }
 ```
@@ -86,7 +86,7 @@ view Prepare(mut RenderState render)
         render.made = true;
     }
     render.scene.Clear(Color.black);
-    render.scene.Camera(float2(0), 10);
+    render.scene.SetCamera(float2(0), 10);
 }
 
 [Stage(RenderStages.Objects)]
@@ -101,6 +101,14 @@ view Show(RenderState render)
     Draw.Blit(render.scene.color, Draw.window, Present);
 }
 ```
+
+The view below draws its scene into a target, then blits it to the window through a frag that reads it in blocks. The left of the line is the image as it was drawn. Move the sliders to change the blocks' size and where the line is.
+
+::: tide-example post A scene through a frag
+
+<<< @/examples/post.tide
+
+:::
 
 `Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
 
@@ -152,7 +160,7 @@ The rest is as in a system: queries and rows are used directly in `foreach`, in 
 ```csharp
 view RenderGame(Player player, with ownership)
 {
-    Draw3D.Camera(player.pos, player.rot, 75);
+    Draw3D.SetCamera(player.pos, player.rot, 75);
 }
 
 // Everyone else's body: a first-person camera doesn't draw its own
@@ -199,7 +207,7 @@ view Corpse(Body body, with verified Dead)
 
 view Board(verified Duel duel)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text($"Round {duel.round}", float2(20, 20), 24, Color.white);
 }
 ```
@@ -239,7 +247,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | Function | What it draws |
 |---|---|
 | `Draw2D.Clear(color)` | Fills the screen |
-| `Draw2D.Camera(center, size)` | Sets the camera for the calls after it: `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size |
+| `Draw2D.SetCamera(center, size)` | Sets the camera for the calls after it: `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size. One of the [draw settings](#draw-settings), like the rows that name them below |
 | `Draw2D.Circle(center, radius, color)` | A filled circle |
 | `Draw2D.WireCircle(center, radius, color)` | A circle's outline |
 | `Draw2D.Rect(center, size, color)` | A filled rectangle |
@@ -258,9 +266,12 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
-| `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
-| `Draw2D.Screen()` | The calls after it are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
-| `Draw3D.Camera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
+| `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
+| `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
+| `Draw2D.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
+| `Draw2D.Clip(rect) { ... }` | Only what's inside `rect` draws, in the block (see [Clipping](#clipping)) |
+| `Draw2D.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
+| `Draw3D.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
 | `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
 | `Draw3D.Cube(center, size, color)` | A box with full widths `size.x`, `size.y` and `size.z` |
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
@@ -269,6 +280,142 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw3D.Instanced(vertices, indices, instances)` / `Draw3D.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
 
 Each frame starts black, with the camera at the origin and one world unit per pixel.
+
+## Draw settings
+
+A setting changes how everything drawn after it comes out: how it blends, what tints it, where it lands. Each has two forms, and its name says which.
+
+The plain name wraps a block. It's set for the draws in the block, and when the block ends, what it found is back:
+
+```csharp
+Draw.Blend(Blend.Add)
+{
+    Draw2D.Circle(spark.position, 2, spark.color);
+}
+```
+
+The `Set` name is a statement. It stays for the draws that follow, in this view and the views after it, until it's set again or the frame ends, which is how a camera is set once for a frame:
+
+```csharp
+view Follow(Player player, with ownership)
+{
+    Draw2D.SetCamera(player.position, 10);
+}
+```
+
+| Around a block | For the draws that follow | What it sets |
+|---|---|---|
+| `Draw.Blend(mode)` | `Draw.SetBlend(mode)` | How colors go over what's there (see [Blending](#blending)) |
+| `Draw.Tint(color)` | `Draw.SetTint(color)` | A color everything is multiplied by (see [Tints](#tints)) |
+| `Draw2D.Transform(...)`, `Draw3D.Transform(transform)` | `Draw2D.SetTransform(...)`, `Draw3D.SetTransform(transform)` | Where draws land: moved, turned, scaled (see [Transforms](#transforms)) |
+| `Draw2D.Clip(rect)` | `Draw2D.SetClip(rect)` | The rectangle draws are kept inside (see [Clipping](#clipping)) |
+| `Draw2D.Camera(center, size)`, `Draw3D.Camera(...)` | `Draw2D.SetCamera(center, size)`, `Draw3D.SetCamera(...)` | The camera |
+| `Draw2D.Screen()` | `Draw2D.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
+
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`.
+
+Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
+
+A block that's left early still puts back what it found, as a GUI container still closes:
+
+```csharp
+Draw.Tint(Color(1, 1, 1, 0.5))
+{
+    if (!card.shown) return; // The tint is gone, here too
+    DrawCard(card);
+}
+```
+
+`Draw.Blend` and `Draw.Tint` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others say where it lands, and belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`).
+
+::: info
+Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, and how one nests in another are provisional: they're how it works today, and may still change.
+:::
+
+### Several at once
+
+Calls that take a block can be listed with commas before one block, so settings don't nest three deep:
+
+```csharp
+Draw.Blend(Blend.Add),
+Draw.Tint(Color(1, 1, 1, shown)),
+Draw2D.Clip(panel)
+{
+    DrawGlow(panel);
+}
+```
+
+It means the same as each inside the one before. That's the language's, not `Draw`'s: the [GUI](./gui.md#guilayout-and-gui)'s containers and [your own functions that take a block](../language/functions.md#actions) go in the same list.
+
+### Blending
+
+`Blend.Alpha` is the default: a color goes over what's there by its alpha. The others:
+
+| Mode | What it does | For |
+|---|---|---|
+| `Blend.Add` | Adds the color to what's there, as light adds | Sparks, trails, glows, fire |
+| `Blend.Multiply` | Multiplies what's there by the color: white changes nothing, black makes black | Shadows, stains, tinted glass |
+| `Blend.Replace` | Puts the color and its alpha in place of what's there | Writing into a [render target](#targets-and-post-processing) exactly |
+
+In each, a color's alpha is how much of it there is, so what's clear changes nothing: a shape's smooth edge and the gaps between a text's strokes stay clean when they're added or multiplied.
+
+```csharp
+view Trails(Bullet bullet)
+{
+    Draw.Blend(Blend.Add)
+    {
+        // Where trails cross, they're brighter
+        Draw2D.Line(bullet.position - bullet.velocity * 0.05, bullet.position, 0.2, Color(1, 0.6, 0.2, 0.6));
+    }
+}
+```
+
+`Draw2D.Clear` and `Draw3D.Clear` fill with their color whatever the blend, and [`Draw.Blit`](#targets-and-post-processing) takes a blend of its own (`Draw.Blit(source, destination, Blend.Add, frag)`).
+
+### Tints
+
+A tint multiplies the color of everything drawn inside, alpha too. `Color(1, 1, 1, 0.5)` fades it to half, with no alpha to pass to every call:
+
+```csharp
+view Menu(MenuState menu)
+{
+    Draw2D.Screen(),
+    Draw.Tint(Color(1, 1, 1, menu.shown))
+    {
+        Draw2D.RoundRect(float2(200, 120), float2(320, 160), 12, Color(0.1, 0.1, 0.15));
+        Draw2D.Text("Paused", float2(160, 80), 32, Color.white);
+    }
+}
+```
+
+A tint in a tint's block multiplies it: a faded menu's faded button is fainter than either.
+
+### Transforms
+
+A transform moves, turns and scales everything drawn inside, in the units the calls are in. `Draw2D.Transform` takes an offset, then a rotation in radians, then a scale, each optional after the first:
+
+```csharp
+view Cards(Card card)
+{
+    // Scaled about the card's middle, then turned, then moved there
+    Draw2D.Transform(card.position, card.tilt, 1 + card.lift * 0.1)
+    {
+        Draw2D.RoundRect(float2(0, 0), float2(3, 4), 0.3, Color.white);
+        Draw2D.Text(card.name, float2(-1.2, 1.6), 0.5, Color.black);
+    }
+}
+```
+
+What's inside is drawn around (0, 0), and the transform puts it in the world: scaled, then turned (from `+x` towards `+y`, as [smooth shapes](#smooth-shapes) turn), then moved. The scale is a number, or a `float2` to stretch more one way than the other, and `Draw2D.Transform(matrix)` takes any `float3x3` instead. `Draw3D.Transform(transform)` does the same for 3D meshes with a `float4x4`. A transform in a transform's block is inside it, so a card's badge can have one of its own.
+
+What's drawn through one:
+
+- Shapes stay shapes, with their smooth edges: moved, turned and scaled, exactly. Stretched, a circle is the ellipse it becomes, and a rect follows its own sides; a skew is approximated. Rects that are only moved and scaled still fill whole pixels, so tiles under a transform leave no seams.
+- Meshes go through any transform as they are.
+- Text that's moved and scaled as much each way is text of that size, as sharp as any. Turned or stretched, it has no pixels to be fitted to, so it's a little softer than upright text: fine for a tilting card, and worth avoiding for text people read at length.
+- A clip made inside one is the upright rectangle around what its `Rect` becomes: clips don't turn.
+
+`Draw2D.WorldToScreen` and the other [conversions](#screen-and-world-coordinates) are the camera's alone, whatever the transform. [`Draw2D.MeasureText`](#measuring-text) answers in the units the transform takes, so inside one, text measures as it's drawn.
 
 ## Colors
 
@@ -285,7 +432,7 @@ Colors add, subtract and multiply channel by channel, alpha too, and scale by a 
 ```csharp
 view Bar(Health health)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var middle = float2(120, 40);
     Draw2D.RoundRect(middle, float2(200, 24), 12, Color(0, 0, 0, 0.6));                 // A pill
     Draw2D.RoundRect(float2(22 + health.left * 98, 40), float2(health.left * 196, 20), 10, Color.red);
@@ -295,7 +442,7 @@ view Bar(Health health)
 }
 ```
 
-- Lengths are in the units the calls are in, like positions: world units under the camera, pixels after `Draw2D.Screen()`. That goes for sizes, radii and widths alike.
+- Lengths are in the units the calls are in, like positions: world units under the camera, pixels [on the screen](#on-the-screen). That goes for sizes, radii and widths alike.
 - An outline is `width` thick and inside the shape's edge, so a wire shape is as big as the filled one.
 - A `radius` rounds a rectangle's corners, up to half its smaller side: that much makes a pill, or a circle of a square.
 - An ellipse takes its `radii`, half its width and half its height, as a circle takes its radius.
@@ -339,7 +486,7 @@ struct Shape // Built in
 ```csharp
 view Card(Deal deal)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     // A shadow first: a dark shape whose edge fades outwards
     Draw2D.Shape(Shape { center = deal.at + float2(0, 6), size = float2(180, 240), radius = 16,
                          color = Color(0, 0, 0, 0.5), soft = 18 });
@@ -419,6 +566,14 @@ view Board(mut Art art)
 }
 ```
 
+Drag over the grid below to set its cells, and the next frame draws them. The toggle switches between `Filter.Point` and `Filter.Bilinear`.
+
+::: tide-example textures A grid, drawn as a texture
+
+<<< @/examples/textures.tide
+
+:::
+
 There's nothing to create, upload or free. The grid is ordinary state: change its cells whenever, with `[x, y]`, a loop or `Clear()`, and the next frame draws what it holds. The engine keeps a copy on the GPU while views draw with it, and sends the cells again only when they changed. Nothing holds a handle, so hot reloading carries a texture as it carries any state.
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
@@ -433,35 +588,52 @@ A game's C can draw meshes too, with pixels of its own, like a font atlas a libr
 
 ## Clipping
 
-`Draw2D.Clip(rect)` keeps what's drawn after it inside a rectangle: meshes, shapes, text, and `Draw2D.Clear`, which then fills the rectangle. `Draw2D.Clip()` draws everywhere again.
+`Draw2D.Clip(rect) { ... }` keeps what's drawn in its block inside a rectangle: meshes, shapes, text, and `Draw2D.Clear`, which then fills the rectangle.
 
 ```csharp
 view Panel()
 {
-    Draw2D.Screen();
-    Draw2D.Clip(Rect(20, 20, 200, 100));
-    Draw2D.Clear(Color.black); // The panel only
-    Draw2D.Text("A line too long for the panel is cut off at its edge", float2(28, 28), 18, Color.white);
-    Draw2D.Clip();
+    Draw2D.Screen(),
+    Draw2D.Clip(Rect(20, 20, 200, 100))
+    {
+        Draw2D.Clear(Color.black); // The panel only
+        Draw2D.Text("A line too long for the panel is cut off at its edge", float2(28, 28), 18, Color.white);
+    }
 }
 ```
 
-The `Rect` goes from (x, y) to (x + width, y + height), in the units the calls are in: the world's under a camera, where `y` is up, and pixels after `Draw2D.Screen()`. It stays where it is on the screen when the camera changes afterwards. Each frame starts with none, and a view's clip never clips the GUI.
+The `Rect` goes from (x, y) to (x + width, y + height), in the units the calls are in: the world's under a camera, where `y` is up, and pixels on the screen. It stays where it is on the screen when the camera changes afterwards.
+
+A clip in a clip's block only narrows it: what draws is inside both, which is what a list in a panel wants. `Draw2D.SetClip(rect)` is the [other form](#draw-settings), for the draws that follow, and sets the rectangle outright; `Draw2D.SetClip()` draws everywhere again. Each frame starts with no clip, and a view's clip never clips the GUI.
 
 ## On the screen
 
-After `Draw2D.Screen()`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. `Draw2D.Camera` goes back to the world.
+In `Draw2D.Screen() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
+
+```csharp
+view Nameplates(Player player, Body body)
+{
+    var above = Draw2D.WorldToScreen(body.position + float2(0, 1.5));
+    Draw2D.Screen()
+    {
+        var size = Draw2D.MeasureText(player.name, 14);
+        Draw2D.Text(player.name, above - float2(size.x * 0.5, size.y), 14, Color.white);
+    }
+}
+```
+
+A view that only draws on the screen can set it for the views that follow instead, with `Draw2D.SetScreen()`:
 
 ```csharp
 view Health(Stats stats)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Rect(float2(110, 30), float2(200, 20), Color.gray);
     Draw2D.Rect(float2(10 + stats.health, 30), float2(stats.health * 2, 20), Color.red);
 }
 ```
 
-What views draw there is under the GUI's widgets, which draw last.
+`Draw2D.SetCamera` goes back to the world. What views draw on the screen is under the GUI's widgets, which draw last.
 
 The mouse, touches and the pointer count pixels from the bottom left instead, with `y` up. `Screen.Flip(devices.pointer.position)` is where the pointer is in the screen's pixels: see [Screen and world coordinates](#screen-and-world-coordinates).
 
@@ -476,7 +648,7 @@ Without more, `position` is the text's top left corner. An `Anchor` after the co
 ```csharp
 view Banner(Round round)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     Draw2D.Text("FIGHT!", middle, 64, Color.white, Anchor.MiddleCenter);
     Draw2D.Text($"Round {round.number}", float2(Screen.width - 16, 16), 24, Color.gray, Anchor.UpperRight);
@@ -509,7 +681,7 @@ To fit a panel around a text, or to put something beside it, ask how big it will
 ```csharp
 view Banner(Round round)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     var size = Draw2D.MeasureText(round.message, 48, Font.Bold);
     Draw2D.Rect(middle, size + float2(32, 16), Color.black);
@@ -519,7 +691,15 @@ view Banner(Round round)
 
 That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw2D.MeasureText(text, size, Font.Bold)`.
 
-The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera.
+Below, the cross is the position the text is given, and the frame is the box `MeasureText` says it has. Move the anchor's slider to put another place of the box on the cross, and change the size and the weight to see the box follow.
+
+::: tide-example text Anchors, sizes and weights
+
+<<< @/examples/text.tide
+
+:::
+
+The answer is in the units the Draw calls are in: pixels on the screen, and the world's under a camera.
 
 It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own camera, and pixels of its own to fit text to, so `target.MeasureText(text, size)` measures for it.
 
@@ -536,7 +716,7 @@ struct Vertex3 // Built in
 }
 ```
 
-`Draw3D.Camera(position, rotation, fieldOfView)` sets the 3D camera: where it is, which way it looks, along its rotation's `+z` with `+x` to the right and `+y` up as Unity's cameras do, and how much it sees up and down, in degrees, like Unity's `Camera.fieldOfView`. It sees from 0.3 units in front of it on, however far, and as much across as the screen's shape gives. `Draw3D.Mesh(vertices, indices, transform)` draws a 3D mesh through it, placed in the world by `transform`, which `float4x4.TRS(position, rotation, scale)` makes:
+`Draw3D.SetCamera(position, rotation, fieldOfView)` sets the 3D camera: where it is, which way it looks, along its rotation's `+z` with `+x` to the right and `+y` up as Unity's cameras do, and how much it sees up and down, in degrees, like Unity's `Camera.fieldOfView`. It sees from 0.3 units in front of it on, however far, and as much across as the screen's shape gives. `Draw3D.Mesh(vertices, indices, transform)` draws a 3D mesh through it, placed in the world by `transform`, which `float4x4.TRS(position, rotation, scale)` makes:
 
 ```csharp
 local singleton Scenery
@@ -549,7 +729,7 @@ local singleton Scenery
 view Look(Viewer viewer)
 {
     Draw2D.Clear(Color(0.5, 0.7, 1));
-    Draw3D.Camera(viewer.position, viewer.rotation, 60);
+    Draw3D.SetCamera(viewer.position, viewer.rotation, 60);
 }
 
 // Once for each crate, and drawn for them all at once
@@ -577,6 +757,14 @@ Draw3D.Plane(float3(0, -1, 5), float2(10, 10), quaternion.identity, Color.gray);
 ```
 
 Nonpositive dimensions draw nothing. Geometry is cached by shape and color; consecutive instances of the same shape and color are drawn together. Use a mesh with a frag for textures or lighting.
+
+Everything below is a primitive: a plane, 81 cubes, a sphere and a cylinder, drawn again every frame through a camera that circles them. Drag to turn it yourself, and change its field of view with the slider.
+
+::: tide-example draw3d Primitives through a 3D camera
+
+<<< @/examples/draw3d.tide
+
+:::
 
 ### Big scenes
 
@@ -608,14 +796,14 @@ A mesh drawn again and again in a row, from the same lists, with the same textur
 
 ### Any projection
 
-`Draw3D.Camera(transform, projection)` sets the 3D camera from matrices: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees to the screen, the screen's shape included. `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` makes a perspective one, with the field of view in radians, and `float4x4.Ortho(width, height, near, far)` one without perspective, as isometric games have, as Unity.Mathematics' do. `Screen.width / Screen.height` is the screen's shape.
+`Draw3D.SetCamera(transform, projection)` sets the 3D camera from matrices: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees to the screen, the screen's shape included. `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` makes a perspective one, with the field of view in radians, and `float4x4.Ortho(width, height, near, far)` one without perspective, as isometric games have, as Unity.Mathematics' do. `Screen.width / Screen.height` is the screen's shape.
 
 ```csharp
 view Isometric(Viewer viewer)
 {
     var place = float4x4.TRS(viewer.position, quaternion.Euler(float3(Math.Radians(30), Math.Radians(45), 0)), float3(1));
     float height = 20;
-    Draw3D.Camera(place, float4x4.Ortho(height * Screen.width / Screen.height, height, 0.1, 1000));
+    Draw3D.SetCamera(place, float4x4.Ortho(height * Screen.width / Screen.height, height, 0.1, 1000));
 }
 ```
 
@@ -623,7 +811,7 @@ A game's C draws 3D meshes too, with vertices of its own, like a model a library
 
 ## Screen and world coordinates
 
-The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw2D.Screen()` and the GUI's are.
+The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw2D.Screen` and the GUI's are.
 
 | Function | Result |
 |---|---|
@@ -656,7 +844,7 @@ view Pointer(Devices devices)
 }
 ```
 
-After `Draw2D.Screen()`, its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
+On the screen (`Draw2D.Screen`, `Draw2D.SetScreen`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
 
 ## Looking around
 
@@ -688,7 +876,7 @@ local singleton Menu
 
 view Look(Devices devices, Viewer viewer, mut Menu menu)
 {
-    Draw3D.Camera(viewer.position, viewer.rotation, 75);
+    Draw3D.SetCamera(viewer.position, viewer.rotation, 75);
     if (devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
     // The lock went away on its own: show the pause menu
@@ -728,6 +916,14 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
 Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
+
+The match below ticks only five times a second. Both discs are the same position: the amber one is an ordinary field, which the view sees blended between ticks, and the teal one a `[Snap]` field, drawn as the last tick left it.
+
+::: tide-example tick-rate Five ticks a second, drawn every frame
+
+<<< @/examples/tick-rate.tide
+
+:::
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

@@ -45,6 +45,14 @@ command(Rename rename, PlayerID sender) RenamePlayer(
 
 The engine supplies `sender` from the player's connection. It is not a field that the player sends. `Owner` identifies the target's owner; targeting an entity does not grant permission to change it.
 
+Below are two machines in one match, each with a badge its player owns. Click the name's field in a frame, type one, and press **Rename my badge**: the command goes to the server, which picks its tick, and both machines run the handler. **Rename theirs** sends the same command for the other player's badge. Nothing stops a machine from sending it, so the handler looks at who did, refuses, and counts.
+
+::: tide-match commands A command, and a handler that says no
+
+<<< @/examples/commands.tide
+
+:::
+
 A handler is void. Guard clauses end processing, and writes take effect normally, just as in a system or event handler. There is no acceptance call, return status, or transaction that undoes earlier changes. Each command can have at most one handler. The handler can send ordinary events when other parts of the game should react.
 
 Components and `this` refer to the target entity, as in an event handler. A handler taking no components runs once for the command. The compiler requires an entity target if the handler needs one. A target that no longer exists, or no longer matches the handler, has no effect.

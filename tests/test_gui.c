@@ -95,20 +95,35 @@ TIDE_TEST(gui_draws_over_the_world)
     TIDE_CHECK(draw.count == 0);
 }
 
-// A clip the views left on is theirs: the GUI draws on the whole screen.
-TIDE_TEST(gui_isnt_clipped_by_the_views)
+// What the views left set is theirs: the GUI draws on the whole screen, in its
+// pixels, with its own colors, over what's there.
+TIDE_TEST(gui_isnt_drawn_with_what_the_views_set)
 {
     start();
     begin();
     tide_gui_layout_label(&gui, "Hello");
+    const tide_draw_command label = gui.list.commands[gui.list.count - 1u];
     tide_draw_reset(&draw);
-    tide_draw_clip(&draw, (tide_rect){0.0f, 0.0f, 10.0f, 10.0f});
+    tide_draw_set_camera(&draw, tide_f2(100.0f, 100.0f), 5.0f);
+    tide_draw_set_clip(&draw, (tide_rect){0.0f, 0.0f, 10.0f, 10.0f});
+    tide_draw_set_blend(&draw, TIDE_BLEND_ADD);
+    tide_draw_set_tint(&draw, (tide_color){1.0f, 0.0f, 0.0f, 0.5f});
+    tide_draw_set_transform(&draw, tide_draw_transform_trs(tide_f2(30.0f, 40.0f), 1.0f, tide_f2(2.0f, 3.0f)));
+    tide_draw_rect(&draw, tide_f2(5.0f, 5.0f), tide_f2(2.0f, 2.0f), TIDE_COLOR_WHITE); // A view's, through all of them
+    const uint32_t block = tide_draw_push_tint(&draw, TIDE_COLOR_BLUE);                // ...and one whose block is open
     tide_gui_end(&gui, &draw);
-    TIDE_REQUIRE(draw.count == 4);
-    TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_CLIP);
-    TIDE_CHECK(draw.commands[1].kind == TIDE_DRAW_NO_CLIP);
-    TIDE_CHECK(draw.commands[2].kind == TIDE_DRAW_SCREEN);
-    TIDE_CHECK(draw.commands[3].kind == TIDE_DRAW_TEXT);
+    TIDE_REQUIRE(draw.count == 6);
+    TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_CAMERA && draw.commands[1].kind == TIDE_DRAW_CLIP);
+    TIDE_CHECK(draw.commands[2].kind == TIDE_DRAW_SHAPE && draw.commands[2].blend == TIDE_BLEND_ADD); // Turned: a smooth one
+    TIDE_CHECK(draw.commands[3].kind == TIDE_DRAW_SCREEN && draw.commands[4].kind == TIDE_DRAW_NO_CLIP);
+    const tide_draw_command *text = &draw.commands[5];
+    TIDE_REQUIRE(text->kind == TIDE_DRAW_TEXT);
+    TIDE_CHECK(text->blend == TIDE_BLEND_ALPHA && text->words.turned == 0);
+    TIDE_CHECK(text->a.x == label.a.x && text->a.y == label.a.y && text->b.x == label.b.x);
+    TIDE_CHECK(memcmp(&text->color, &label.color, sizeof label.color) == 0);
+    // The block's end puts back what it found, as it would have without the GUI: the views' red
+    tide_draw_pop(&draw, block);
+    TIDE_CHECK(draw.tinted && draw.tint.r == 1.0f && draw.tint.b == 0.0f && draw.tint.a == 0.5f);
 }
 
 TIDE_TEST(gui_toggle_and_slider_change_values)

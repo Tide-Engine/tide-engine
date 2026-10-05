@@ -97,7 +97,7 @@ view DrawJumper(Body body, with Jumper)
 
 view DrawShot(Camera camera, Shot shot, Time time)
 {
-    Draw2D.Camera(camera.center, 10);
+    Draw2D.SetCamera(camera.center, 10);
     Draw2D.Rect(shot.center, float2(1, 1), Color.blue);
     Draw2D.Rect(float2(time.t, time.tickRate), float2(1, 1), Color.blue); // The match's seconds, between ticks too
 }

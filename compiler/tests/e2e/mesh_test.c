@@ -48,7 +48,8 @@ TIDE_TEST(meshes_draw_in_order)
     tide_world_tick(&world);
     tide_local_init(&local);
     frame(&world);
-    TIDE_REQUIRE(draw.count == 17 && draw.texture_count == 3);
+    // A clip is recorded once something draws through it, and taken back once something draws without it
+    TIDE_REQUIRE(draw.count == 15 && draw.texture_count == 3);
     const tide_draw_texture *theirs = texture(2, 1), *checker = texture(4, 2), *canvas = texture(3, 3);
     TIDE_REQUIRE(theirs && checker && canvas);
     TIDE_CHECK(theirs->space == TIDE_PIXELS_MEMORY && checker->space == TIDE_PIXELS_GRID);
@@ -56,9 +57,9 @@ TIDE_TEST(meshes_draw_in_order)
     // A function that draws, and the C it hands the list
     TIDE_CHECK(command(0)->kind == TIDE_DRAW_CLEAR);
     TIDE_CHECK(is_mesh(1, 6, NULL, TIDE_FILTER_BILINEAR));
-    TIDE_CHECK(command(2)->kind == TIDE_DRAW_CLIP && command(2)->b.x == 1.0f);
+    TIDE_REQUIRE(command(2)->kind == TIDE_DRAW_CLIP && command(2)->clip && command(2)->clip <= draw.clip_count);
+    TIDE_CHECK(draw.clips[command(2)->clip - 1].rect.width == 1.0f);
     TIDE_CHECK(is_mesh(3, 3, theirs, TIDE_FILTER_POINT));
-    TIDE_CHECK(command(4)->kind == TIDE_DRAW_NO_CLIP);
     const tide_vertex *corners = draw.vertices + draw.indices[command(1)->mesh.first];
     TIDE_CHECK(corners[0].position.x == 10.0f && corners[0].position.y == 20.0f);
     TIDE_CHECK(corners[0].color.r == 1.0f && corners[0].color.g == 1.0f && corners[0].color.a == 1.0f); // White, left out
@@ -68,29 +69,30 @@ TIDE_TEST(meshes_draw_in_order)
 
     // The view's own: a clip, a grid as the texture with each filter, and one
     // with no size, which is no texture
-    TIDE_CHECK(command(5)->kind == TIDE_DRAW_CLIP);
-    TIDE_CHECK(command(5)->a.x == 1.0f && command(5)->a.y == 2.0f && command(5)->b.x == 3.0f && command(5)->b.y == 4.0f);
-    TIDE_CHECK(is_mesh(6, 3, checker, TIDE_FILTER_BILINEAR));
-    TIDE_CHECK(is_mesh(7, 3, checker, TIDE_FILTER_POINT)); // Its triangle with an index past the list is left out
-    TIDE_CHECK(is_mesh(8, 3, NULL, TIDE_FILTER_BILINEAR));
-    TIDE_CHECK(command(9)->kind == TIDE_DRAW_NO_CLIP);
-    const tide_vertex *kept = draw.vertices + draw.indices[command(6)->mesh.first];
+    TIDE_REQUIRE(command(4)->kind == TIDE_DRAW_CLIP && command(4)->clip && command(4)->clip <= draw.clip_count);
+    const tide_rect clip = draw.clips[command(4)->clip - 1].rect;
+    TIDE_CHECK(clip.x == 1.0f && clip.y == 2.0f && clip.width == 3.0f && clip.height == 4.0f);
+    TIDE_CHECK(draw.clips[command(4)->clip - 1].parent == 0); // Set, not inside the one before
+    TIDE_CHECK(is_mesh(5, 3, checker, TIDE_FILTER_BILINEAR));
+    TIDE_CHECK(is_mesh(6, 3, checker, TIDE_FILTER_POINT)); // Its triangle with an index past the list is left out
+    TIDE_CHECK(is_mesh(7, 3, NULL, TIDE_FILTER_BILINEAR));
+    const tide_vertex *kept = draw.vertices + draw.indices[command(5)->mesh.first];
     TIDE_CHECK(kept[1].position.x == 3.0f && kept[1].uv.x == 1.0f && kept[1].color.b == 0.0f && kept[1].color.g == 1.0f);
-    TIDE_CHECK(draw.vertices[draw.indices[command(7)->mesh.first]].position.x == 5.0f); // 2, 1, 0
+    TIDE_CHECK(draw.vertices[draw.indices[command(6)->mesh.first]].position.x == 5.0f); // 2, 1, 0
     TIDE_CHECK(pixel_is(checker, 0, 0, 255, 0, 0, 255));
     TIDE_CHECK(pixel_is(checker, 3, 1, 0, 0, 255, 128));
     TIDE_CHECK(pixel_is(checker, 1, 0, 0, 0, 0, 0));
 
-    // On the screen, C again, which says how many commands the list has
-    TIDE_CHECK(command(10)->kind == TIDE_DRAW_SCREEN);
-    TIDE_CHECK(command(11)->kind == TIDE_DRAW_CLIP && is_mesh(12, 3, theirs, TIDE_FILTER_POINT));
-    TIDE_CHECK(command(13)->kind == TIDE_DRAW_NO_CLIP);
-    TIDE_CHECK(command(14)->kind == TIDE_DRAW_TEXT && strcmp(draw.text + command(14)->text, "3") == 0);
-    TIDE_CHECK(draw.vertices[draw.indices[command(12)->mesh.first]].color.g == 1.0f); // Cyan
+    // On the screen, C again, which says how many commands the list has: the screen, its clip and its mesh
+    TIDE_CHECK(command(8)->kind == TIDE_DRAW_SCREEN);
+    TIDE_CHECK(command(9)->kind == TIDE_DRAW_CLIP && is_mesh(10, 3, theirs, TIDE_FILTER_POINT));
+    TIDE_CHECK(command(11)->kind == TIDE_DRAW_NO_CLIP);
+    TIDE_CHECK(command(12)->kind == TIDE_DRAW_TEXT && strcmp(draw.text + command(12)->text, "3") == 0);
+    TIDE_CHECK(draw.vertices[draw.indices[command(10)->mesh.first]].color.g == 1.0f); // Cyan
 
     // The match's grid, as the tick left it
-    TIDE_CHECK(command(15)->kind == TIDE_DRAW_CAMERA);
-    TIDE_CHECK(is_mesh(16, 3, canvas, TIDE_FILTER_BILINEAR));
+    TIDE_CHECK(command(13)->kind == TIDE_DRAW_CAMERA);
+    TIDE_CHECK(is_mesh(14, 3, canvas, TIDE_FILTER_BILINEAR));
     TIDE_CHECK(pixel_is(canvas, 0, 0, 0, 255, 0, 255) && pixel_is(canvas, 1, 0, 0, 0, 0, 0));
 }
 
@@ -100,8 +102,8 @@ TIDE_TEST(meshes_grids_are_copied_when_they_change)
     texture(4, 2)->pixels[4] = 77;
     texture(3, 3)->pixels[4] = 77;
     frame(&world);
-    TIDE_REQUIRE(draw.count == 19 && draw.texture_count == 3); // Another blade: a clip and a mesh more
-    TIDE_CHECK(strcmp(draw.text + command(16)->text, "5") == 0);
+    TIDE_REQUIRE(draw.count == 17 && draw.texture_count == 3); // Another blade: a clip and a mesh more
+    TIDE_CHECK(strcmp(draw.text + command(14)->text, "5") == 0);
     TIDE_CHECK(texture(4, 2)->pixels[4] == 77 && texture(3, 3)->pixels[4] == 77);
 
     // The view changed a cell, and a tick another

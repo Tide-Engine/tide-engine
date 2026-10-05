@@ -1,0 +1,61 @@
+component Body
+{
+    float2 position;
+    float2 velocity;
+    float radius = 20;
+}
+
+component Ball { }
+
+input Controls
+{
+    float2 move;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed) move.x += 1;
+        if (keys.a.pressed) move.x -= 1;
+        if (keys.w.pressed) move.y += 1;
+        if (keys.s.pressed) move.y -= 1;
+    }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { velocity = float2(160, 120) }, Ball);
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Body { radius = 16 }, Owner { player = joined.player });
+}
+
+system Steer(Controls input, mut Body body, with Owner)
+{
+    body.velocity = Math.Normalize(input.move) * 250;
+}
+
+system Move(mut Body body, Time time)
+{
+    body.position += body.velocity * time.dt;
+}
+
+system Bounce(mut Body body, with Ball)
+{
+    if (Math.Abs(body.position.x) > 160) body.velocity.x = -body.velocity.x;
+    if (Math.Abs(body.position.y) > 160) body.velocity.y = -body.velocity.y;
+}
+
+view DrawBalls(Body body, with Ball)
+{
+    Draw2D.Circle(body.position, body.radius, Color.red);
+}
+
+view DrawPlayers(Body body, Owner owner, Session session)
+{
+    var color = owner.player == session.player ? Color.yellow : Color.gray;
+    Draw2D.Circle(body.position, body.radius, color);
+}
