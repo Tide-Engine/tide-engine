@@ -402,6 +402,26 @@ TIDE_TEST(list_out_writes_what_differs)
     tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1 && at(world.scores, 5 * per + 9) == -5);
     TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 9, 0) && tide_heap_hash(0, &world.heap) != before);
+    // The chunk's page was made the list's own without what was in it, which is all written again
+    TIDE_CHECK(counts_up(world.scores, 5 * per + 10, (int32_t)count, 5 * per + 10));
+
+    // Shorter by half a chunk, with a chunk a snapshot shares changed: past the list's end it's zeros
+    list_world second = {0};
+    second.scores = world.scores;
+    tide_heap_copy(&second.heap, &world.heap);
+    const uint32_t fewer = count - (uint32_t)per / 2u;
+    tide_list_out_begin(&out, sizeof(int32_t));
+    room = tide_list_out_room(&out, fewer);
+    for (uint32_t i = 0; i < fewer; i++) room[i] = (int32_t)i + (i >= 7u * (uint32_t)per ? 1 : 0);
+    tide_list_out_count(&out, fewer);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(tide_list_count(world.scores) == (int32_t)fewer && counts_up(world.scores, 7 * per, (int32_t)fewer, 7 * per + 1));
+    tide_list_resize(&world.scores, (int32_t)count, sizeof(int32_t), TIDE_IN_MATCH);
+    TIDE_CHECK(zeros(world.scores, (int32_t)fewer, (int32_t)count));
+    tide_text_use(&second.heap, NULL);
+    TIDE_CHECK(at(second.scores, 5 * per + 9) == -5 && counts_up(second.scores, 7 * per, (int32_t)count, 7 * per));
+    tide_text_use(&world.heap, NULL);
+    tide_heap_free(&second.heap);
 
     make(&world.scores, TIDE_IN_MATCH, 5, 1000, 5); // And all of it, to a few
     tide_heap_flush(&world.heap);

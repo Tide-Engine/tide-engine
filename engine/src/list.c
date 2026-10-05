@@ -469,6 +469,20 @@ static void flat_give(char *flat)
 // Of a world's list, only the runs that differ: a chunk that's written
 // becomes the world's own and is hashed again, which one that's as it was
 // needn't be, so what a snapshot shares of the list stays shared.
+// Where the `n` elements from `i` on go, which are a run (see `run`) about to
+// be written over, all of them. A chunk a snapshot shares is made the list's
+// own without them: megabytes a tick, for a big list C fills, that would be
+// copied only to be replaced.
+static char *run_over(const tide_list l, const uint32_t i, const uint32_t n, const uint32_t size)
+{
+    tide_heap *heap = l.at >> 30 == TIDE_IN_SCRATCH ? NULL : tide_heap_of(l.at >> 30);
+    const tide_block *b = tide_block_at(l.at);
+    uint32_t place = 0;
+    const uint32_t chunk = heap && (b->b & TIDE_LIST_CHUNKED) ? tide_list_chunk(b, i, size, &place) : 0;
+    if (!chunk || place) return tide_list_at_mut(l, (int32_t)i, size);
+    return (char *)(tide_heap_write_over(heap, chunk, n * size) + 1);
+}
+
 static void put_elements(const tide_list l, const char *from, const uint32_t count, const uint32_t size)
 {
     const bool compare = l.at >> 30 != TIDE_IN_SCRATCH;
@@ -477,10 +491,7 @@ static void put_elements(const tide_list l, const char *from, const uint32_t cou
         const char *as_it_was = run(l, i, size, false, &n); // First: it says how many
         if (n > count - i) n = count - i;
         const char *mine = from + (size_t)i * size;
-        if (!compare || memcmp(as_it_was, mine, (size_t)n * size) != 0) {
-            uint32_t room;
-            memcpy(run(l, i, size, true, &room), mine, (size_t)n * size);
-        }
+        if (!compare || memcmp(as_it_was, mine, (size_t)n * size) != 0) memcpy(run_over(l, i, n, size), mine, (size_t)n * size);
         i += n;
     }
 }
