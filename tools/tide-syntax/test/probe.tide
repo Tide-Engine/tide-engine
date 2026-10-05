@@ -115,6 +115,8 @@ view Show(Devices devices)
     Vertex3 corner3 = default;
     Shape panel = default;
     Draw2D.Shape(panel);
+    Random dice = Random(7);
+    var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     if (!Cursor.locked) Cursor.Lock();

@@ -17,10 +17,11 @@ typedef struct world {
     int32_t sum; // Every input, added up every tick
 } world;
 
-static void start(void *w, const float dt, const void *s)
+static void start(void *w, const float dt, const void *s, const uint32_t seed)
 {
     (void)dt;
     (void)s;
+    (void)seed;
     memset(w, 0, sizeof(world));
 }
 

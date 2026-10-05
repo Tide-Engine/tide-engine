@@ -576,3 +576,26 @@ view Touches(mut Box box)
 {
     box.seen = Pack(box.hits, Touch(box));
 }
+
+// A Random's methods step it, so they're calls that write: rolls run left to
+// right, and the generator read beside one is read in its turn.
+singleton Rolls
+{
+    Random random;
+    float2 pair;
+    int digits;
+    long before;
+    long after;
+}
+
+long State(long state, int rolled) { return state + rolled * 0; }
+long Rolled(int rolled, long state) { return state + rolled * 0; }
+
+system RollsInOrder(mut Rolls r)
+{
+    r.random = Random(1);
+    r.pair = float2(r.random.NextFloat(), r.random.NextFloat());
+    r.digits = Pack(r.random.NextInt(10), r.random.NextInt(10));
+    r.before = State(r.random.state, r.random.NextInt(10));
+    r.after = Rolled(r.random.NextInt(10), r.random.state);
+}

@@ -342,6 +342,7 @@ typedef struct decl {
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool named;       // The built-in Random: some code names it, so generated C has it (tide/random.h)
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
     // isn't in program.decls. A component's is kept for the match's entities
@@ -537,6 +538,7 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // pixel.Discard(), in a frag: the pixel isn't drawn
+    CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
 } builtin_call;
 
 // What a GUI call needs besides its arguments (expr.gui).
@@ -893,6 +895,12 @@ typedef struct program {
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time
+    decl *random;        // The built-in struct Random: a random number generator's state
+    // Time.seed, the match's seed: Time's last field while code is checked, and
+    // only in the world when something uses it (uses_seed): code that reads it,
+    // or a Random in the match's state, which the engine seeds from it.
+    field *seed;
+    bool uses_seed;
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match

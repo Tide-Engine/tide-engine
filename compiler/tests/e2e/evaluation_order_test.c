@@ -215,3 +215,26 @@ TIDE_TEST(evaluation_order_local_fields_in_a_view)
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).seen == 12);
     TIDE_CHECK(tide_get_Box_local(&local, slot(9)).hits == 2);
 }
+
+// A Random's methods step it, so they're calls that write: the same numbers,
+// in the same places, as rolling one after another, and the state read beside
+// a roll is the one before it or after it, as it's written.
+TIDE_TEST(evaluation_order_rolls_keep_their_turn)
+{
+    one_tick();
+    tide_random r = tide_random_seeded(1);
+    const float x = tide_random_next_float(&r);
+    const float y = tide_random_next_float(&r);
+    const int32_t tens = tide_random_next_int_below(&r, 10);
+    const int32_t ones = tide_random_next_int_below(&r, 10);
+    const int64_t before = r.state;
+    tide_random_next_int_below(&r, 10);
+    tide_random_next_int_below(&r, 10);
+    const int64_t after = r.state;
+    const Rolls rolls = world.Rolls;
+    TIDE_CHECK(rolls.pair.x == x && rolls.pair.y == y);
+    TIDE_CHECK(rolls.digits == tens * 10 + ones);
+    TIDE_CHECK(rolls.before == before); // State(random.state, random.NextInt(10)): read, then rolled
+    TIDE_CHECK(rolls.after == after);   // Rolled(random.NextInt(10), random.state): rolled, then read
+    TIDE_CHECK(rolls.random.state == after);
+}

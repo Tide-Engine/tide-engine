@@ -86,6 +86,34 @@ TIDE_TEST(jobs_threads_change_nothing)
         }
     }
     TIDE_CHECK(trails == 6000 && shards == many.Stats.chipped);
+
+    // Generators rolled on many threads: every drifter went on from its own, so
+    // they're where one thread left them (the hashes say), and no two alike.
+    // Embers were spawned on threads and seeded once their handles were final:
+    // each rolled something of its own first.
+    int drifters = 0;
+    int embers = 0;
+    int alike = 0;
+    int64_t last_state = 0;
+    int32_t last_first = 0;
+    for (uint32_t i = 0; i < many.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&many.entities, i);
+        if (tide_has_Drifter(&many, e)) {
+            const Drifter drifter = tide_get_Drifter(&many, e);
+            TIDE_CHECK(drifter.random.state != 0 && drifter.random.state != last_state);
+            TIDE_CHECK(drifter.rolls >= 240 && drifter.rolls <= 240 * 6);
+            last_state = drifter.random.state;
+            drifters++;
+        }
+        if (tide_has_Ember(&many, e)) {
+            const Ember ember = tide_get_Ember(&many, e);
+            TIDE_CHECK(ember.random.state != 0 && tide_has_Drifter(&many, ember.of));
+            if (ember.first) alike += ember.first == last_first;
+            if (ember.first) last_first = ember.first;
+            embers++;
+        }
+    }
+    TIDE_CHECK(drifters == 5000 && embers > 500 && alike < 3);
     tide_world_free(&one);
     tide_world_free(&many);
     tide_world_free(&snapshot);
@@ -98,6 +126,18 @@ TIDE_TEST(platform_counts_its_memory)
     const uint64_t bytes = tide_platform_memory();
     printf("    %.1f MB\n", (double)bytes / (1024.0 * 1024.0));
     TIDE_CHECK(bytes > 1u << 20); // In bytes: no program with a world in it has less than a megabyte
+}
+
+// The system gives random bits (tide_platform_entropy), which matches' seeds
+// are made from: other ones each time, here where every platform's tests run.
+TIDE_TEST(platform_gives_entropy)
+{
+    uint64_t bits[4];
+    for (int i = 0; i < 4; i++) bits[i] = tide_platform_entropy();
+    for (int a = 0; a < 4; a++) {
+        TIDE_CHECK(bits[a] != 0);
+        for (int b = a + 1; b < 4; b++) TIDE_CHECK(bits[a] != bits[b]);
+    }
 }
 
 // ---------------------------------------------------------------------------

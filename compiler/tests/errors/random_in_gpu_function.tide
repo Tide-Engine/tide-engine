@@ -1,0 +1,16 @@
+// expect: the GPU can't roll random numbers: a Random keeps its state where the CPU steps it
+local component Glow { float seed; List<Vertex> corners; List<int> faces; }
+scene Main { }
+float Noise(float seed)
+{
+    mut var random = Random(int(seed));
+    return random.NextFloat();
+}
+frag Glitter(Vertex vertex, mut Color color, Glow glow)
+{
+    color = Color(Noise(glow.seed), 0, 0);
+}
+view Show(Glow glow)
+{
+    Draw2D.Mesh(glow.corners, glow.faces, Glitter);
+}

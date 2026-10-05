@@ -22,10 +22,11 @@ static uint64_t correction_clock_ns;
 static const void *correction_borrowed[2];
 static uint32_t correction_borrowed_freed;
 
-static void correction_start(void *world, float dt, const void *start)
+static void correction_start(void *world, float dt, const void *start, uint32_t seed)
 {
     (void)dt;
     (void)start;
+    (void)seed;
     *(correction_world *)world = (correction_world){.magic = CORRECTION_MAGIC};
 }
 

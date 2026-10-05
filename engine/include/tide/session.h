@@ -68,8 +68,9 @@ typedef struct tide_game {
     uint32_t max_input_bytes; // The most write_input or write_input_delta writes
     uint32_t start_size;      // sizeof(tide_start)
     // Clears the world and starts the match: `start` is a tide_start, the scene
-    // it starts in, or NULL for Main.
-    void (*start)(void *world, float dt, const void *start);
+    // it starts in, or NULL for Main. `seed` is the match's (Time.seed, its
+    // low 31 bits), which a game without one ignores (see `seeded`).
+    void (*start)(void *world, float dt, const void *start, uint32_t seed);
     // Runs a tick, on `jobs`' threads (tide/jobs.h), or NULL for this one's.
     void (*tick)(void *world, const tide_jobs *jobs);
     // A snapshot: `to` becomes `from`, sharing its pages until one of them
@@ -126,6 +127,12 @@ typedef struct tide_game {
     // machine joining a match can start it too, and be sent only what the
     // match's world has that the one it started lacks.
     bool pure_start;
+    // The world has a seed, Time.seed: the game reads it, or has generators
+    // (Random) the engine seeds from it. A server picks one for each match it
+    // starts, from its desc's `entropy`, and tells the players who start the
+    // match themselves (pure_start). A game without one starts the same
+    // whatever the seed, and nothing is picked or sent for it.
+    bool seeded;
     // The game's settings (`settings { ... }`), 0 or NULL where it sets none
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
     const char *title;   // title: the window's, unless the host says
@@ -218,6 +225,11 @@ typedef struct tide_server_desc {
     const uint64_t *digests;
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
+    // 64 bits nobody could guess, from the system, for the seed of the match
+    // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
+    // is 0, and a run repeats exactly (tests and benchmarks). A match that
+    // goes on from `world` keeps the seed it has.
+    uint64_t (*entropy)(void);
 } tide_server_desc;
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
@@ -329,6 +341,7 @@ typedef struct tide_session_desc {
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
+    uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're 0
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
 } tide_session_desc;
 

@@ -1,0 +1,7 @@
+// expect: a list's element is a copy, so 'NextInt' can't step it
+singleton Deck { List<Random> dice; int top; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.top = deck.dice[0].NextInt(6);
+}

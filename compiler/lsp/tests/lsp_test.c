@@ -4905,3 +4905,52 @@ TIDE_TEST(lsp_entity_query_unused_bindings)
     json_release();
     TIDE_CHECK(found);
 }
+
+// Random: a generator's methods where one is, what they and the type say,
+// Random(seed), and Time.seed.
+TIDE_TEST(lsp_random)
+{
+    start();
+#define DICE "component Dice\n{\n    Random random;\n    int last;\n}\nscene Main { }\n"
+    const char *methods = complete(DICE "system Roll(mut Dice dice)\n{\n    dice.last = dice.random.$\n}\n");
+    TIDE_CHECK(offers(methods, "NextInt") && offers(methods, "NextFloat") && offers(methods, "NextBool"));
+    TIDE_CHECK(offers(methods, "NextFloat2Direction") && offers(methods, "NextQuaternionRotation") && offers(methods, "state"));
+    TIDE_CHECK(has(methods, "Random.NextInt() -> int") && has(methods, "never goes negative"));
+    TIDE_CHECK(!offers(methods, "NextState") && !offers(methods, "Dot"));
+
+    open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.last = dice.random.Next$Int(1, 7);\n}\n");
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Random.NextInt(int min, int max) -> int") && has(hover, "is a die"));
+
+    open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.last = dice.random.NextInt($\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Random.NextInt(int max) -> int") && has(help, "Random.NextInt(int min, int max) -> int"));
+
+    // The type: where it's a field's, and where Random(seed) makes one
+    open_document("component Dice\n{\n    Ran$dom random;\n}\nscene Main { }\n");
+    const char *type = request("textDocument/hover");
+    TIDE_CHECK(has(type, "struct Random") && has(type, "long state") && has(type, "A random number generator's state"));
+    open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.random = Ran$dom(42);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "A random number generator's state"));
+    open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.random = Random($\n}\n");
+    const char *seeded = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(seeded, "Random(long seed)") && has(seeded, "the same seed, the same numbers"));
+    TIDE_CHECK(offers(complete("component Dice\n{\n    $\n}\nscene Main { }\n"), "Random"));
+    open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.random.sta$te = 5;\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "All there is to the generator"));
+
+    // Time.seed: offered though no code reads it yet, and described where it's read
+    const char *time = complete("scene Main { }\nsystem Roll(Time time)\n{\n    var seed = time.$\n}\n");
+    TIDE_CHECK(offers(time, "seed") && offers(time, "tick") && has(time, "The match's seed"));
+    TIDE_CHECK(count(time, "\"label\":\"seed\"") == 1);
+    open_document("singleton Deck { int seed; }\nscene Main { }\nsystem Roll(Time time, mut Deck deck)\n{\n    deck.seed = time.se$ed;\n}\n");
+    const char *seed = request("textDocument/hover");
+    TIDE_CHECK(has(seed, "int seed") && has(seed, "The match's seed"));
+    const char *read = complete("singleton Deck { int seed; }\nscene Main { }\nsystem Roll(Time time, mut Deck deck)\n{\n"
+                                "    deck.seed = time.seed;\n    deck.seed = time.$\n}\n");
+    TIDE_CHECK(count(read, "\"label\":\"seed\"") == 1); // Once, now that it's among Time's fields
+
+    // Rolling through a read-only parameter says why it can't
+    open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
+}

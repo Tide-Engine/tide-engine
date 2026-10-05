@@ -300,8 +300,8 @@ view PaintBullets(Body body, mut Bullet bullet, mut Fx fx)
         bullet.seenBounces = bullet.bounces;
         bullet.seenSide = bullet.side;
         bullet.trail = body.position;
-        var up = Roll(fx);
-        var spin = Roll(fx);
+        var up = fx.random.NextFloat();
+        var spin = fx.random.NextFloat();
         fx.bits.Add(Bit { position = body.position + direction * 3, color = Color(1, 0.95, 0.8), life = 0.075, size = 30,
                           kind = BitKind.Dot });
         Burst(fx, body.position, direction, 0.75, 4, 400, Mix(color, Color.white, 0.6));

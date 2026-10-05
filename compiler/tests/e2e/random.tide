@@ -1,0 +1,140 @@
+// Random numbers whose state is the world's: generators in components and a
+// singleton, which the engine seeds from the match's seed, ones the game seeds
+// itself, one in a struct, one added later, and local ones for views.
+
+struct Loot
+{
+    int tier;
+    Random dice;
+}
+
+// A generator the engine seeds as its entity spawns
+component Roller
+{
+    Random random;
+    Loot loot;
+    int id;
+    int last;
+    float2 point;
+    int pair;
+    int rolls;
+    // This machine's, for what it shows of the roller: seeded for each entity too
+    local Random glint;
+    local int shine;
+}
+
+// One the game seeds itself
+component Fixed
+{
+    Random random;
+    int last;
+}
+
+// Added later, and again: seeded each time it's added
+component Buff
+{
+    Random random;
+    int first;
+}
+
+// The match's own: seeded as the match starts
+singleton Deck
+{
+    Random random;
+    Random fixed = Random(7);
+    int top;
+    int seed; // What code reads of Time.seed
+    int firstBuff;
+    int secondBuff;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Deck deck, Time time)
+{
+    deck.seed = time.seed;
+    for (var i = 0; i < 8; i++) Spawn(Roller { id = i });
+    // Twins: the same in every field, in the same tick
+    Spawn(Roller { id = 100 });
+    Spawn(Roller { id = 100 });
+    Spawn(Fixed { random = Random(42) });
+    Spawn(Fixed { random = Random(42) });
+}
+
+// Two rolls in one expression, through a function: the tens first
+int Twice(mut Random random)
+{
+    return random.NextInt(10) * 10 + random.NextInt(10);
+}
+
+system Roll(mut Roller roller)
+{
+    roller.last = roller.random.NextInt(1, 7);
+    roller.point = float2(roller.random.NextFloat(), roller.random.NextFloat());
+    roller.pair = Twice(roller.random) * 100 + Twice(roller.random);
+    roller.loot.tier = roller.loot.dice.NextInt(100);
+    roller.rolls += 1;
+}
+
+system RollFixed(mut Fixed fixed)
+{
+    fixed.last = fixed.random.NextInt(1000);
+}
+
+system Deal(mut Deck deck, Time time)
+{
+    deck.top = deck.random.NextInt(52);
+    if (time.tick == 10 || time.tick == 20 || time.tick == 40) Spawn(Roller { id = 200 + time.tick });
+}
+
+system GiveBuff(Roller roller, Time time, without Buff)
+{
+    if (roller.id == 0 && (time.tick == 5 || time.tick == 15)) this.Add(Buff { });
+}
+
+system UseBuff(mut Buff buff, mut Deck deck, Time time)
+{
+    if (buff.first == 0)
+    {
+        buff.first = 1 + buff.random.NextInt(1000000);
+        if (deck.firstBuff == 0) deck.firstBuff = buff.first;
+        else deck.secondBuff = buff.first;
+    }
+    if (time.tick == 12) this.Remove(Buff);
+}
+
+// Local state: this machine's, for effects, seeded from anything
+local singleton Fx
+{
+    Random random;
+    Random fixed = Random(5);
+    int frames;
+    float last;
+    int coin;
+}
+
+local component Spark
+{
+    Random random;
+    int first;
+}
+
+view Sparkle(mut Fx fx)
+{
+    fx.last = fx.random.NextFloat(-1, 1);
+    fx.coin = fx.fixed.NextBool() ? 1 : 0;
+    fx.frames += 1;
+    if (fx.frames <= 6) Spawn(Spark { });
+}
+
+view Glitter(mut Spark spark)
+{
+    if (spark.first == 0) spark.first = 1 + spark.random.NextInt(1000000);
+}
+
+// A match entity's local fields, which a view writes: its generator is the
+// entity's own on this machine, and nothing of the match
+view Shine(mut Roller roller)
+{
+    if (roller.shine == 0) roller.shine = 1 + roller.glint.NextInt(1000000);
+}

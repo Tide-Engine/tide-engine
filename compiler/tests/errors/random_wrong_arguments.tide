@@ -1,0 +1,7 @@
+// expect: Random.NextInt(int min, int max) -> int
+singleton Deck { Random random; int top; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.top = deck.random.NextInt(1, 2, 3);
+}

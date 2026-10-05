@@ -73,7 +73,7 @@ local singleton Fx
     float dt;        // Seconds this frame's effects move on by
     float now;       // Seconds of frames drawn, which never go back
     int frame;
-    int seed;
+    Random random;   // What rolls the effects: this machine's own, as nothing of them is the match's
     float trauma;    // How hard the camera shakes, 0 to 1
     float calm = 1;  // How much of that shows: less while the fight is only the menu's scenery
     float2 shake;    // Where that puts it this frame
@@ -121,12 +121,6 @@ float EaseBack(float t)
     return 1 + left * left * (2.70158 * left + 1.70158);
 }
 
-float Roll(mut Fx fx)
-{
-    fx.seed += 1;
-    return float(Math.Hash(fx.seed) % 100000) / 100000;
-}
-
 void Shake(mut Fx fx, float amount)
 {
     fx.trauma = Math.Min(1, fx.trauma + amount);
@@ -160,10 +154,10 @@ void Burst(mut Fx fx, float2 at, float2 toward, float spread, int count, float s
     var middle = Math.Atan2(toward.y, toward.x);
     for (var i = 0; i < count; i++)
     {
-        var turn = Roll(fx);
-        var pace = Roll(fx);
-        var long = Roll(fx);
-        var thick = Roll(fx);
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var thick = fx.random.NextFloat();
         var angle = middle + (turn - 0.5) * spread;
         fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle)) * speed * (0.3 + pace * 0.9),
                           color = color, life = 0.16 + long * 0.3, size = 2 + thick * 1.8,
@@ -177,12 +171,12 @@ void Chunks(mut Fx fx, float2 at, float2 push, int count, float speed, Color col
     if (fx.bits.count > 900) return;
     for (var i = 0; i < count; i++)
     {
-        var turn = Roll(fx);
-        var pace = Roll(fx);
-        var long = Roll(fx);
-        var big = Roll(fx);
-        var tone = Roll(fx);
-        var round = Roll(fx);
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
+        var round = fx.random.NextFloat();
         var angle = turn * Math.TAU;
         fx.bits.Add(Bit { position = at + float2(Math.Cos(angle), Math.Sin(angle)) * 6,
                           velocity = float2(Math.Cos(angle), Math.Sin(angle)) * speed * (0.25 + pace) + push,
@@ -198,9 +192,9 @@ void Dust(mut Fx fx, float2 at, float2 drift, int count, float size, Color color
     if (fx.bits.count > 900) return;
     for (var i = 0; i < count; i++)
     {
-        var turn = Roll(fx);
-        var pace = Roll(fx);
-        var long = Roll(fx);
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
         var angle = turn * Math.TAU;
         fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) * 0.5 + 0.35) * (20 + pace * 55) + drift,
                           color = color, life = 0.3 + long * 0.35, size = size * (0.7 + pace * 0.6), drag = 3,
@@ -214,11 +208,11 @@ void Confetti(mut Fx fx, float2 at, int count, float speed, Color color)
     if (fx.confetti.count > 500) return;
     for (var i = 0; i < count; i++)
     {
-        var turn = Roll(fx);
-        var pace = Roll(fx);
-        var long = Roll(fx);
-        var big = Roll(fx);
-        var tone = Roll(fx);
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
         var angle = turn * Math.TAU;
         fx.confetti.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) - 0.6) * speed * (0.2 + pace),
                               color = tone < 0.25 ? Color.white : Shade(color, tone * 0.6 - 0.2),
