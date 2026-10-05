@@ -1,0 +1,156 @@
+// What this machine makes of what happens in the match: local handlers of its
+// events. Each runs once for an event, at the start of a frame, with the
+// fighter or the shot as the event left it, and sets off effects (effects.tide)
+// or the local fields the views draw from (paint.tide). A handler of a
+// `verified` event waits until the server has confirmed it: the sparks of a
+// hit come as this machine predicts it, and what must not be wrong, a number,
+// a knockout, a round, comes once it's certain.
+
+// A hit as it's predicted: the fighter flashes and flinches, and sparks fly.
+local event(Hurt hurt) Sting(Body body, mut Fighter fighter, mut Fx fx)
+{
+    fighter.hit = 1;
+    fighter.squashSpeed -= 3;
+    Burst(fx, body.position, hurt.push, 1.5, 9, 430, Color.white);
+    Ripple(fx, body.position, body.radius, body.radius + 24 + hurt.damage * 0.3, 4, 0.24, Color.white);
+}
+
+// The hit, once the server says it happened: what it took, and a knockout.
+local event(verified Hurt hurt) Wound(Body body, mut Fighter fighter, Duel duel, Session session, mut Fx fx, mut Sky sky)
+{
+    var color = FighterColor(fighter.side);
+    var who = fighter.side == 0 ? duel.bluePlayer : duel.orangePlayer;
+    fighter.chip += hurt.damage;
+    fx.labels.Add(Label { position = body.position + float2(0, body.radius + 24), color = Mix(color, Color.white, 0.6),
+                          amount = int(Math.Ceil(hurt.damage)) });
+    if (!fighter.bot && !duel.attract && who == session.player) fx.hurt = 1;
+    if (!hurt.fatal)
+    {
+        Chunks(fx, body.position, hurt.push * 170, 4 + int(hurt.damage * 0.1), 180, color);
+        Shake(fx, 0.2 + hurt.damage * 0.005);
+        fx.kick += 0.5;
+        return;
+    }
+    // Knocked out: it bursts, and the whole arena feels it
+    Chunks(fx, body.position, hurt.push * 230, 36, 430, color);
+    Burst(fx, body.position, float2(0, 1), Math.TAU, 28, 660, Mix(color, Color.white, 0.5));
+    Dust(fx, body.position, float2(0, 30), 9, 24, Fade(color, 0.3));
+    Ripple(fx, body.position, 10, 170, 10, 0.55, Color.white);
+    Ripple(fx, body.position, 6, 100, 6, 0.4, color);
+    Shock(sky, body.position, 1);
+    Shake(fx, 0.9);
+    Flash(fx, Mix(color, Color.white, 0.65), 0.26);
+    fx.kick = 1.7;
+}
+
+// A new round: back at its start, and whole.
+local event(Entered) Arrive(Body body, mut Fighter fighter, mut Fx fx)
+{
+    fighter.chip = 0;
+    fighter.hit = 0;
+    fighter.arrive = 0;
+    fighter.squash = 0;
+    fighter.squashSpeed = 0;
+    fighter.recoil = 0;
+    Ripple(fx, body.position, 8, 52, 4, 0.42, FighterColor(fighter.side));
+}
+
+local event(Fired) Recoil(mut Fighter fighter)
+{
+    fighter.recoil = 1;
+    fighter.squashSpeed += 1.6;
+}
+
+local event(Raised) ShieldUp(Body body, Fighter fighter, mut Fx fx)
+{
+    Ripple(fx, body.position, body.radius, body.radius + 40, 5, 0.3, Color.white);
+    Ripple(fx, body.position, body.radius, body.radius + 26, 3, 0.22, FighterColor(fighter.side));
+}
+
+// It stretches as it jumps, and squashes as it lands, by how fast it fell.
+local event(Jumped) Spring(Body body, mut Fighter fighter, mut Fx fx)
+{
+    fighter.squashSpeed = -6.5;
+    Dust(fx, body.position - float2(0, body.radius), float2(0, -10), 3, 8, Color(0.72, 0.82, 1, 0.22));
+}
+
+local event(Landed landed) Thud(Body body, mut Fighter fighter, mut Fx fx)
+{
+    if (landed.speed < 110) return; // A step down, not a fall
+    fighter.squashSpeed = 5 + Math.Min(4, landed.speed / 220);
+    Dust(fx, body.position - float2(0, body.radius), float2(0, 12), 5, 9, Color(0.72, 0.82, 1, 0.26));
+}
+
+// A shot leaves its gun: a flash at the muzzle, sparks, and a shell that drops.
+local event(Spawned) ShotFired(Body body, mut Bullet bullet, mut Fx fx)
+{
+    var speed = Math.Length(body.velocity);
+    var direction = speed > 1 ? body.velocity / speed : float2(1, 0);
+    var up = fx.random.NextFloat();
+    var spin = fx.random.NextFloat();
+    bullet.trail = body.position;
+    fx.bits.Add(Bit { position = body.position + direction * 3, color = Color(1, 0.95, 0.8), life = 0.075, size = 30,
+                      kind = BitKind.Dot });
+    Burst(fx, body.position, direction, 0.75, 4, 400, Mix(FighterColor(bullet.side), Color.white, 0.6));
+    fx.bits.Add(Bit { position = body.position - direction * 16,
+                      velocity = float2(-direction.x * 90, 190 + up * 110), color = Color(1, 0.8, 0.36),
+                      life = 1.1, size = 2.6, gravity = 1150, drag = 0.5, spin = (spin - 0.5) * 50, kind = BitKind.Shell });
+    Shake(fx, 0.045);
+}
+
+// It turned, off a wall or off a shield: its trail turns where it did.
+local event(Bounced bounced) Ricochet(Body body, mut Bullet bullet, mut Fx fx)
+{
+    var color = FighterColor(bullet.side);
+    var speed = Math.Length(body.velocity);
+    var direction = speed > 1 ? body.velocity / speed : bounced.normal;
+    fx.streaks.Add(Streak { from = bullet.trail, to = bounced.at, color = FighterColor(bounced.side) });
+    bullet.trail = bounced.at;
+    Burst(fx, bounced.at, direction, 2.2, bounced.blocked ? 14 : 7, bounced.blocked ? 460 : 300, Mix(color, Color.white, 0.5));
+    Ripple(fx, bounced.at, 3, bounced.blocked ? 44 : 22, bounced.blocked ? 5 : 3, 0.24, Color.white);
+    if (!bounced.blocked) return;
+    fx.bits.Add(Bit { position = bounced.at, color = Color.white, life = 0.09, size = 34, kind = BitKind.Dot });
+    Shake(fx, 0.16);
+}
+
+// A shot ends on what it hit: a flash, a ring, and sparks off the surface.
+local event(Impact impact) Splash(mut Fx fx)
+{
+    var color = FighterColor(impact.side);
+    var away = Math.Reflect(impact.direction, impact.normal);
+    Burst(fx, impact.at, away + impact.normal * 0.6, 1.9, 9, 330, Mix(color, Color.white, 0.35));
+    Ripple(fx, impact.at, 3, 26, 3.5, 0.22, Mix(color, Color.white, 0.5));
+    fx.bits.Add(Bit { position = impact.at, color = Fade(Color.white, 0.9), life = 0.09, size = 15, kind = BitKind.Dot });
+    Dust(fx, impact.at, impact.normal * 30, 2, 9, Fade(color, 0.22));
+}
+
+// A shot is gone, whatever ended it: the last of its trail, up to where it was.
+local event(Destroyed) ShotGone(Body body, Bullet bullet, mut Fx fx)
+{
+    if (Math.DistanceSq(body.position, bullet.trail) < 1) return;
+    fx.streaks.Add(Streak { from = bullet.trail, to = body.position, color = FighterColor(bullet.side),
+                            width = 7 * Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7) });
+}
+
+// The round's flow, for the words and the lights over the arena (hud.tide).
+local event(PhaseBegan began) NewPhase(mut Flow flow, mut Fx fx, mut Sky sky)
+{
+    flow.age = 0;
+    if (began.phase != Phase.Fight) return;
+    Shock(sky, float2(0, 30), 0.75);
+    Flash(fx, Color.white, 0.1);
+    fx.kick = 0.9;
+}
+
+local event(MatchBegan) NewMatchShown(mut Flow flow)
+{
+    flow.age = 0;
+    flow.since = 100; // Nothing to say of the last match's rounds
+}
+
+// Who took a round is only said once it's certain.
+local event(verified RoundWon won) RoundTold(mut Flow flow)
+{
+    flow.winner = won.side;
+    flow.since = 0;
+}

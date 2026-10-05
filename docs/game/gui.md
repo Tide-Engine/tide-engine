@@ -84,7 +84,7 @@ The engine builds nothing a game couldn't build itself: containers are functions
 
 Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. `Screen.width` and `Screen.height` are the window's size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
 
-`Rect(x, y, width, height)` is measured from the top left corner, with `y` down, as in Unity's GUI. (World drawing, the mouse and touches have `y` up.)
+`Rect(x, y, width, height)` is measured from the top left corner, with `y` down, as in Unity's GUI. World drawing, the mouse and touches have `y` up: `Screen.Flip(devices.pointer.position)` is where the pointer is counted the GUI's way, from the top left, and `Screen.Flip` of a GUI position is where it is for the devices.
 
 `Anchor` names the nine places an area can go, as Unity's `TextAnchor` does: `UpperLeft`, `UpperCenter`, `UpperRight`, `MiddleLeft`, `MiddleCenter`, `MiddleRight`, `LowerLeft`, `LowerCenter` and `LowerRight`.
 
@@ -171,11 +171,13 @@ local singleton Toolbox
 // A toolbox in the window's lower left corner
 view Tools(Devices devices, mut Toolbox box)
 {
-    GUI.ClaimPointer(Rect(0, Screen.height - 200, 200, 200));
+    var top = Screen.height - 200;
+    GUI.ClaimPointer(Rect(0, top, 200, 200));
     if (box.dragging) GUI.ClaimPointer();
 
     var pointer = devices.pointer;
-    var over = pointer.position.x < 200 && pointer.position.y < 200;
+    var at = Screen.Flip(pointer.position); // From the top left, as the Rect is
+    var over = at.x < 200 && at.y >= top;
     if (over && pointer.press.down) box.dragging = true;
     if (!pointer.press.pressed) box.dragging = false;
 
@@ -191,7 +193,7 @@ view Tools(Devices devices, mut Toolbox box)
 
 A claim lasts one frame: make it every frame, as you draw the widget every frame. A view that stops running leaves nothing claimed. A function's claim is the view's that called it.
 
-`GUI.ClaimPointer(rect)` says where a widget is, in the GUI's pixels, from the top left like every `Rect`. Call it every frame the widget is there, whether the pointer is on it or not. A press on it is then the view's from the frame it lands in, as on the GUI's own widgets: a finger that touches it never reaches the game.
+`GUI.ClaimPointer(rect)` says where a widget is, in the GUI's pixels, from the top left like every `Rect`; the pointer's own position counts from the bottom left, which `Screen.Flip` turns into the Rect's. Call it every frame the widget is there, whether the pointer is on it or not. A press on it is then the view's from the frame it lands in, as on the GUI's own widgets: a finger that touches it never reaches the game.
 
 `GUI.ClaimPointer()`, with no rect, claims the pointer wherever it is: for a widget dragged off its rect, as in the example, or a library that only says it wants the mouse.
 

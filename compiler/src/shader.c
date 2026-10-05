@@ -2840,8 +2840,11 @@ void plan_shaders(program *prog)
             bool has = false;
             for (int k = 0; k < view->params.count; k++) {
                 param *p = &view->params.items[k];
-                const bool takes = p->type.decl == d && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
-                                && (p->mode == PARAM_READ || p->mode == PARAM_MUT);
+                bool takes = p->type.decl == d && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
+                          && (p->mode == PARAM_READ || p->mode == PARAM_MUT);
+                // What's drawn is the entity as the view draws it: a component it
+                // takes from the confirmed world beside that isn't the mesh's
+                if (view->verified_join && p->verified && p->type.kind == TY_COMPONENT) takes = false;
                 if (takes && shader_reads_local(sh, d)) p->local_use = true; // Its local fields come with it
                 has |= takes;
             }

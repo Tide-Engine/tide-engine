@@ -1,0 +1,12 @@
+// expect: 'ShowDeath' hears a confirmed tick, and what it takes of the match is that tick's already
+component Body { float2 position; }
+event Died { int by; }
+local singleton Fx { float x; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body).Send(Died); }
+
+local event(verified Died died) ShowDeath(verified Body body, mut Fx fx)
+{
+    fx.x = body.position.x;
+}
