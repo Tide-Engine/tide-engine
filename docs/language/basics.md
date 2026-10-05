@@ -1,6 +1,6 @@
 # Basics
 
-Tide's syntax is C#-like. If you know C#, C or Java, most of it will read as you expect. This page covers what's the same everywhere in the language: values, variables and control flow. What's special to Tide starts with [components and entities](../game/entities.md).
+Tide is a language of its own. Its basics are the familiar kind, braces and semicolons, so if you've programmed before, most of this page will read as you expect. It covers what's the same everywhere in the language: values, variables and control flow. What's special to Tide starts with [components and entities](../game/entities.md).
 
 ## Style
 
@@ -45,7 +45,7 @@ Everything is a value: assigning copies it, and nothing is shared, text and list
 - An `int` converts to `long` by itself too, and the two mix: `total + 1` is a `long` when `total` is. A `long` and a `float` don't: write `float(x)` or `long(x)` to say which way the value goes, and `int(x)` to cut a `long` down to its low 32 bits. `5L` is a `long` literal, and so is any integer literal past the `int` range.
 - Integers can be written in decimal (`255`), hex (`0xFF`) or binary (`0b1010`), and `_` separates digits: `1_000_000`.
 - Integer arithmetic wraps on overflow, and dividing by zero gives 0. No input can crash the simulation.
-- Bitwise operators `& | ^ ~ << >>` work on `int` and `long`, as in C#.
+- Bitwise operators `& | ^ ~ << >>` work on `int` and `long`. `>>` keeps the sign, and a shift uses its count's low 5 bits, or 6 for a `long`: `1 << 33` is `2`.
 
 ## Variables
 
@@ -159,7 +159,25 @@ Its type comes from where it goes: a typed local, an assignment, an argument, a 
 
 ## Operators
 
-Operators and their precedence follow C#, including compound assignments (`+=`, `<<=` and the rest) and `cond ? a : b`. `i++`, `i--`, `++i` and `--i` are statements, the same as `i += 1` and `i -= 1`, not expressions.
+From the ones that bind tightest to the loosest:
+
+1. `-x`, `!x`, `~x`, `try` and `await`
+2. `*`, `/`, `%`
+3. `+`, `-`
+4. `<<`, `>>`
+5. `<`, `<=`, `>`, `>=`, `is`
+6. `==`, `!=`
+7. `&`
+8. `^`
+9. `|`
+10. `&&`
+11. `||`
+12. `??`
+13. `cond ? a : b`
+
+Operators on one line group from the left: `a - b - c` is `(a - b) - c`. `??` and `?:` group from the right: `a ?? b ?? 0` is `a ?? (b ?? 0)`.
+
+The arithmetic and bitwise operators have compound assignments: `+=`, `<<=` and the rest. `i++`, `i--`, `++i` and `--i` are statements, the same as `i += 1` and `i -= 1`, not expressions.
 
 `??`, `is`, `!` after a value and `try` unwrap what a function that can fail gives, and `T?` values (see [Errors](./errors.md)).
 
@@ -169,7 +187,7 @@ So what happens in order, `Spawn`, `Scene.Load` and the GUI's widgets, can't go 
 
 ## Control flow
 
-`if` and `else`, `switch`, and the loops `for`, `foreach` and `while`, with `break`, `continue` and `return`, as in C#.
+Tide has `if` and `else`, `switch`, and the loops `for`, `foreach` and `while`, with `break`, `continue` and `return`.
 
 ```csharp
 for (var i = 0; i < 10; i++)
@@ -193,7 +211,7 @@ A `for` loop's variable is read-only in its body unless it's declared `mut var`;
 
 ## Enums and switch
 
-Enums and `switch` follow C#:
+An enum is a set of named values, and `switch` picks code by a value:
 
 ```csharp
 enum Phase
@@ -240,7 +258,7 @@ Card Offer(int round, int slot)
 ```
 
 - It takes an `int` (or a `byte`). A `float` or a `long` goes through `int(...)` first, `Phase(int(x))`, and so does another enum's value. The compiler says which when it's something else.
-- A number none of the members has is kept as it is, as C#'s cast keeps it: with the `Phase` at the top of this section, `Phase(3)` is a `Phase` whose number is 3. It equals no member, a `switch` on it runs its `default`, and text shows `3`. So bound the number first when it comes from somewhere that can be wrong, as the `% CARDS` does, or handle the rest in a `default`.
+- A number none of the members has is kept as it is: with the `Phase` at the top of this section, `Phase(3)` is a `Phase` whose number is 3. It equals no member, a `switch` on it runs its `default`, and text shows `3`. So bound the number first when it comes from somewhere that can be wrong, as the `% CARDS` does, or handle the rest in a `default`.
 - An enum stored as a `byte` or a `ushort` keeps the number's low 8 or 16 bits, as `byte(x)` does: `Voxel(300)` is `Voxel(44)`.
 - With a constant number it's a constant, so it works in a `const`, a field's default and a `case`.
 

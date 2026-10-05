@@ -126,7 +126,7 @@ Blocks never overlap, so steps never fight over a cell. `offset` says where the 
 
 ### In order: foreach
 
-`foreach (var at in cells)` goes through the cells in order, rows from the first, each from its lowest x. Each step sees what the ones before it changed, as in C#: adding up a row, or anything that runs along the grid.
+`foreach (var at in cells)` goes through the cells in order, rows from the first, each from its lowest x. Each step sees what the ones before it changed, which is what adding up a row needs, or anything that runs along the grid.
 
 ```csharp
 system Count(Field field, mut Stats stats)

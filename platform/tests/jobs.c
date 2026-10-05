@@ -67,34 +67,6 @@ TIDE_TEST(jobs_threads_change_nothing)
     TIDE_CHECK(one.Stats.hits > 100 && one.Stats.spawned == 80);
     TIDE_CHECK(one.Stats.wobbled > 1000); // Tasks went on, the same on threads
 
-    // Work C shared out as tasks (jobs_tasks.c): each ran once, and the pool's
-    // threads took some. A thread only takes one when it has nothing else, so
-    // a few more ticks if none has yet.
-    TIDE_CHECK(one.Stats.lost == 0 && many.Stats.lost == 0 && one.Stats.shared > 0);
-    for (int t = 0; t < 20000 && atomic_load(&jobs_tasks_elsewhere) == 0; t++) {
-        tide_world_tick(&one);
-        tide_world_tick_on(&many, jobs);
-        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
-    }
-    printf("    %d of C's tasks ran on another thread than the one that started them\n", atomic_load(&jobs_tasks_elsewhere));
-    TIDE_CHECK(atomic_load(&jobs_tasks_elsewhere) > 0);
-
-    // C's workers that wait for each other in stages (jobs_tasks.c) sleep while
-    // they wait, on the web, and are woken for each stage: one that wasn't
-    // would have held the tick up for good. Elsewhere they never sleep, as
-    // there the CPU's pause and the system's yield do for a wait
-#ifdef __wasm__
-    const bool waits_sleep = true;
-#else
-    const bool waits_sleep = false;
-#endif
-    for (int t = 0; t < 20000 && waits_sleep && atomic_load(&jobs_tasks_slept) == 0; t++) {
-        tide_world_tick(&one);
-        tide_world_tick_on(&many, jobs);
-        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
-    }
-    printf("    %d of their waits slept\n", atomic_load(&jobs_tasks_slept));
-    TIDE_CHECK(waits_sleep ? atomic_load(&jobs_tasks_slept) > 0 : atomic_load(&jobs_tasks_slept) == 0);
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
     // Entities spawned on many threads: every handle kept is the real one
@@ -146,6 +118,38 @@ TIDE_TEST(jobs_threads_change_nothing)
         }
     }
     TIDE_CHECK(drifters == 5000 && embers > 500 && alike < 3);
+
+    // The ticks from here are as many as it takes for threads to have done
+    // something, which is theirs to say: what's counted above is of the 240.
+
+    // Work C shared out as tasks (jobs_tasks.c): each ran once, and the pool's
+    // threads took some. A thread only takes one when it has nothing else, so
+    // a few more ticks if none has yet.
+    TIDE_CHECK(one.Stats.lost == 0 && many.Stats.lost == 0 && one.Stats.shared > 0);
+    for (int t = 0; t < 20000 && atomic_load(&jobs_tasks_elsewhere) == 0; t++) {
+        tide_world_tick(&one);
+        tide_world_tick_on(&many, jobs);
+        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
+    }
+    printf("    %d of C's tasks ran on another thread than the one that started them\n", atomic_load(&jobs_tasks_elsewhere));
+    TIDE_CHECK(atomic_load(&jobs_tasks_elsewhere) > 0);
+
+    // C's workers that wait for each other in stages (jobs_tasks.c) sleep while
+    // they wait, on the web, and are woken for each stage: one that wasn't
+    // would have held the tick up for good. Elsewhere they never sleep, as
+    // there the CPU's pause and the system's yield do for a wait
+#ifdef __wasm__
+    const bool waits_sleep = true;
+#else
+    const bool waits_sleep = false;
+#endif
+    for (int t = 0; t < 20000 && waits_sleep && atomic_load(&jobs_tasks_slept) == 0; t++) {
+        tide_world_tick(&one);
+        tide_world_tick_on(&many, jobs);
+        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
+    }
+    printf("    %d of their waits slept\n", atomic_load(&jobs_tasks_slept));
+    TIDE_CHECK(waits_sleep ? atomic_load(&jobs_tasks_slept) > 0 : atomic_load(&jobs_tasks_slept) == 0);
     tide_world_free(&one);
     tide_world_free(&many);
     tide_world_free(&snapshot);
