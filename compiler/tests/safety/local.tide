@@ -1,0 +1,118 @@
+// expect: tick 4: sparks 0 kept 3 seen 6 heard 16 left 2
+// ticks: 6
+// draws
+
+// This machine's own world, from views and local handlers: handles to local
+// entities that are gone, local fields of entities the match destroyed, a
+// query's rows of entities that went since, and what the server confirmed
+// read beside what was predicted.
+
+component Body
+{
+    float2 position;
+    int health = 3;
+    List<int> trail;
+    string name = "body";
+    local List<int> drawn;
+    local string label;
+}
+
+local component Spark
+{
+    float2 at;
+    int life = 2;
+    LocalEntity twin;
+    List<int> history;
+}
+
+local singleton Mine
+{
+    LocalEntity gone;
+    LocalEntity never;
+    List<LocalEntity> sparks;
+    int seen;
+    int heard;
+    int kept;
+    int left;
+    string last;
+}
+
+singleton Counts
+{
+    int tick;
+}
+
+event Hit
+{
+    int damage;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 4; i++) Spawn(Body { position = float2(i, i), trail = [i] });
+}
+
+system Fight(mut Body body, mut Counts counts, Time time)
+{
+    counts.tick = time.tick;
+    body.trail.Add(time.tick);
+    body.name = $"body {time.tick}";
+    this.Send(Hit { damage = 1 });
+    body.health -= 1;
+    if (body.health <= 0 && body.trail[0] % 2 == 0) this.Destroy();
+}
+
+// Heard on this machine, for an entity that may be gone by now
+local event(Hit hit) OnHit(mut Body body, mut Mine mine)
+{
+    body.drawn.Add(hit.damage);
+    body.label = body.label + "!";
+    mine.heard += 1;
+    mine.last = body.label;
+}
+
+local event(Forgotten) Left(Body body, mut Mine mine)
+{
+    mine.left += body.drawn.count > 0 ? 1 : 0;
+}
+
+view Show(mut Body body, verified Body confirmed, mut Mine mine, mut World world, query (Body other) all)
+{
+    body.drawn.Add(body.health);
+    body.label = body.name + confirmed.name;
+    mut var others = 0;
+    foreach (var each in all) others += each.other.trail.count > 0 ? 1 : 0;
+    mine.seen = others * 3;
+    Draw2D.Text(body.label, body.position, 12, Color.white);
+    Draw2D.Circle(confirmed.position, confirmed.health, Color.red);
+    // A spark each frame, which goes a frame later, and everything code can do with one that's gone
+    var spark = Spawn(Spark { at = body.position, twin = mine.gone });
+    mine.sparks.Add(spark);
+    mine.gone = spark;
+    spark.Destroy();
+    mut var old = world.Get<Spark>(mine.gone);
+    old.history.Add(1);
+    world.Set<Spark>(mine.gone, old);
+    world.Set<Spark>(mine.never, old);
+    mine.never.Destroy();
+    mine.kept = world.Has<Spark>(mine.never) ? 1 : 3;
+}
+
+[After(Show)]
+view Sweep(mut Mine mine, Counts counts, World world)
+{
+    mut var alive = 0;
+    foreach (var spark in mine.sparks)
+    {
+        if (world.Has<Spark>(spark)) alive += world.Get<Spark>(spark).life;
+        spark.Destroy();
+    }
+    if (mine.sparks.count > 100) mine.sparks.Clear();
+    if (counts.tick == 4 && mine.kept != 0)
+    {
+        Debug.Log($"tick {counts.tick}: sparks {alive} kept {mine.kept} seen {mine.seen} heard {mine.heard} left {mine.left}");
+        mine.kept = 0;
+    }
+}

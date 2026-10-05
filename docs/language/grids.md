@@ -122,7 +122,7 @@ system Fall(Time time, mut Field field)
 }
 ```
 
-Blocks never overlap, so steps never fight over a cell. `offset` says where the blocks start, and changing it each tick moves where their edges are: a grain at the bottom of a block one tick is at the top of another the next, so it keeps falling. `by int2(1, 2)` gives blocks of 1 by 2, and `offset int2(0, 1)` moves them along one axis only. A block is 1 to 64 cells along each axis, a size known while compiling: numbers, or constants. The offset can be any int, or `int2` or `int3`, and can change every time. A block that would go past the grid's size is left out, so along a sized edge some cells are only in every other tick's blocks: walls around the field keep sand off it, as the [sand demo](../guide/sand.md) does.
+Blocks never overlap, so steps never fight over a cell. `offset` says where the blocks start, and changing it each tick moves where their edges are: a grain at the bottom of a block one tick is at the top of another the next, so it keeps falling. `by int2(1, 2)` gives blocks of 1 by 2, and `offset int2(0, 1)` moves them along one axis only. A block is 1 to 64 cells along each axis, a size known while compiling: numbers, or constants. The offset can be any int, or `int2` or `int3`, and can change every time. A block that would go past the grid's size is left out (on an open axis, past the last number an `int` holds), so along a sized edge some cells are only in every other tick's blocks: walls around the field keep sand off it, as the [sand demo](../guide/sand.md) does.
 
 ### In order: foreach
 

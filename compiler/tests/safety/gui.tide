@@ -1,0 +1,145 @@
+// expect: gui ran 12 frames
+// ticks: 6
+// draws
+
+// The GUI with what no layout expects: rects of no size and of every size,
+// sliders whose ranges are the whole of their type or the wrong way around,
+// containers a thousand deep, thousands of widgets, text as long as a book's page, and
+// fields whose values change under them.
+
+local singleton Panel
+{
+    float volume;
+    float broken;
+    int count;
+    int whole;
+    int typed;
+    float number;
+    float2 pair;
+    float3 triple;
+    float4 quad;
+    bool on;
+    bool open = true;
+    string name = "name";
+    string huge;
+    int frames;
+    float zero;
+    int most = 2147483647;
+    int least = 0x80000000;
+}
+
+scene Main { }
+
+// Containers inside containers, as deep as the call goes
+void Nest(int depth, mut Panel panel)
+{
+    if (depth <= 0)
+    {
+        GUILayout.Label("deep");
+        GUILayout.IntSlider("at the bottom", panel.count, 0, 10);
+        return;
+    }
+    if (depth % 3 == 0)
+    {
+        GUILayout.Vertical()
+        {
+            Nest(depth - 1, panel);
+        }
+    }
+    else if (depth % 3 == 1)
+    {
+        GUILayout.Horizontal(),
+        GUI.Disabled(depth % 7 == 0)
+        {
+            Nest(depth - 1, panel);
+        }
+    }
+    else
+    {
+        GUI.Theme(GUITheme { radius = depth })
+        {
+            Nest(depth - 1, panel);
+        }
+    }
+}
+
+view Widgets(mut Panel panel)
+{
+    panel.frames += 1;
+    var nan = panel.zero / panel.zero;
+    var inf = 1.0 / panel.zero;
+
+    // Rects of every kind
+    List<float> bad = [nan, inf, -inf, 3.4028235e38, -1e30, 0.0, -1.0, 1e10];
+    foreach (var v in bad)
+    {
+        var rect = Rect(v, -v, v, v);
+        if (GUI.Button(rect, "button")) panel.count += 1;
+        GUI.Label(rect, "label");
+        GUI.Toggle(rect, "toggle", panel.on);
+        GUI.Slider(rect, "slider", panel.volume, v, -v);
+        GUI.IntSlider(rect, "ints", panel.count, panel.most, panel.most);
+        GUI.TextField(rect, "text", panel.name);
+        GUI.IntField(rect, "int", panel.typed);
+        GUI.FloatField(rect, "float", panel.number);
+        GUI.Float2Field(rect, "pair", panel.pair);
+        GUI.Float3Field(rect, "triple", panel.triple);
+        GUI.Float4Field(rect, "quad", panel.quad);
+        var control = GUI.Control(rect);
+        if (control.clicked || control.pressed) panel.count += 1;
+        GUI.ClaimPointer(rect);
+        GUILayout.Area(rect)
+        {
+            GUILayout.Space(v);
+            GUILayout.Label("in an area of no size");
+        }
+        GUI.SetTheme(GUITheme { radius = v, text = Color(v, v, v, v), panel = Color(nan, inf, v, v) });
+    }
+    GUI.SetTheme(GUITheme { });
+    GUI.ClaimPointer();
+    GUI.ClaimKeyboard();
+    GUI.ShowKeyboard();
+    GUI.Navigate();
+
+    // The values change under the widgets that show them
+    panel.name = panel.frames % 2 == 0 ? "" : panel.name + "x";
+    panel.typed = panel.frames % 3 == 0 ? panel.least : panel.most;
+    panel.number = panel.frames % 3 == 0 ? nan : panel.frames % 3 == 1 ? inf : -3.4028235e38;
+    panel.pair = float2(nan, inf);
+    panel.triple = float3(inf, -inf, nan);
+    panel.quad = float4(nan, nan, nan, nan);
+
+    GUILayout.Area(Anchor(panel.frames * 7 - 20))
+    {
+        Nest(1000, panel);
+    }
+    GUILayout.Modal(Anchor(panel.most), panel.open)
+    {
+        // Thousands of widgets, more than a frame remembers the places of
+        for (var i = 0; i < 1500; i++)
+        {
+            if (GUILayout.Button("many")) panel.count += 1;
+            GUILayout.Toggle("each", panel.on);
+        }
+        GUILayout.TextField("name", panel.name);
+        GUILayout.IntField("typed", panel.typed);
+        GUILayout.FloatField("number", panel.number);
+        GUILayout.IntSlider("whole", panel.whole, panel.least, panel.most);
+        GUILayout.Slider("volume", panel.volume, 1, 0);
+        if (panel.frames > 8) panel.open = false;
+    }
+
+    // Text tens of thousands of characters long, as a label and in a field
+    if (panel.huge.length == 0)
+    {
+        panel.huge = "long ";
+        for (var i = 0; i < 14; i++) panel.huge = panel.huge + panel.huge;
+    }
+    GUILayout.Area(Anchor.LowerLeft)
+    {
+        GUILayout.Label(panel.huge);
+        if (GUILayout.Button(panel.huge)) panel.count += 1;
+        GUILayout.TextField(panel.huge, panel.huge);
+    }
+    if (panel.frames == 12) Debug.Log($"gui ran {panel.frames} frames");
+}

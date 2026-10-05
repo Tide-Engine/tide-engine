@@ -128,8 +128,10 @@ float tide_font_baseline(const unsigned char *font)
 int tide_font_pixels(const float size, const float scale, float *stretch)
 {
     const float wanted = size * scale;
-    int pixels = (int)(wanted + 0.5f);
-    if (pixels < 1) pixels = 1;
+    // A size is any float a game says: only one an int holds is made one
+    // (NaN is none), and one past the most is past it by one, as any is below
+    const float nearest = wanted + 0.5f;
+    int pixels = !(nearest >= 1.0f) ? 1 : nearest < (float)(TIDE_FONT_MAX_PIXELS + 1) ? (int)nearest : TIDE_FONT_MAX_PIXELS + 1;
     *stretch = 1.0f;
     if (pixels > TIDE_FONT_MAX_PIXELS) {
         pixels = TIDE_FONT_MAX_PIXELS;
@@ -169,7 +171,8 @@ void tide_font_size(const unsigned char *font, const char *text, const float siz
     if (!(size > 0.0f) || !(scale_x > 0.0f) || !(scale_y > 0.0f)) return;
     float stretch;
     const int pixels = tide_font_pixels(size, scale_y, &stretch);
-    int widest = 0, across = 0, lines = 1;
+    int64_t widest = 0, across = 0; // A line of any length: more pixels than an int counts
+    int lines = 1;
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             if (across > widest) widest = across;

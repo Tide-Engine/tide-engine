@@ -37,20 +37,6 @@ const char *path_stem(const char *path)
     return out;
 }
 
-// Files are compiled in order of their paths (see path_compare).
-static int path_order(const void *a, const void *b)
-{
-    return path_compare(*(const char *const *)a, *(const char *const *)b);
-}
-
-bool compile_program(const char **inputs, const int count, const codegen_options *opts, sb *schedule)
-{
-    qsort(inputs, (size_t)count, sizeof(char *), path_order);
-    compile_input *files = arena_alloc(sizeof(compile_input) * (size_t)(count > 0 ? count : 1));
-    for (int i = 0; i < count; i++) files[i] = (compile_input){inputs[i], NULL};
-    return compile_inputs(files, count, opts, schedule);
-}
-
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();

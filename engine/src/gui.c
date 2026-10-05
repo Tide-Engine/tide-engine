@@ -1218,9 +1218,12 @@ bool tide_gui_int_slider(tide_gui *g, const uint32_t id, const tide_rect rect, c
     const float steps = range < 0.0f ? -range : range;
     const float moved =
         slider(g, id, track(g, rect, label, text), fraction((float)*value, (float)min, (float)max), steps > 0.0f ? steps : 1.0f);
-    if (moved < 0.0f) return false;
-    const double exact = (double)min + (double)range * (double)moved;
-    const int32_t v = (int32_t)(exact < 0.0 ? exact - 0.5 : exact + 0.5);
+    if (!(moved >= 0.0f)) return false; // Not moved, or by a rect that isn't one (NaN)
+    // A range can be all the ints, which a float doesn't tell apart at its
+    // ends: worked out in doubles, and no further than an int goes
+    const double exact = (double)min + ((double)max - (double)min) * (double)moved;
+    const double nearest = exact < 0.0 ? exact - 0.5 : exact + 0.5;
+    const int32_t v = nearest >= 2147483647.0 ? INT32_MAX : nearest <= -2147483648.0 ? INT32_MIN : (int32_t)nearest;
     if (v == *value) return false;
     *value = v;
     return true;

@@ -2,6 +2,8 @@
 # as the first line says, `// warnings: <count>`, and each text written after
 # it as `// expect: <text>`, a line each, somewhere in what tidec says (a
 # warning's own text, or its note's).
+# A folder named as SOURCE is without its extension holds the packages the
+# program builds with, a folder each, named as the package is.
 # The file is read as one string: file(STRINGS) would split a line on ';'.
 file(READ "${SOURCE}" content)
 string(REPLACE "\r" "" content "${content}")
@@ -10,9 +12,21 @@ if(NOT content MATCHES "^// warnings: ([0-9]+)\n")
 endif()
 set(count "${CMAKE_MATCH_1}")
 
+string(REGEX REPLACE "\\.tide$" "" PACKAGES "${SOURCE}")
+set(package_args "")
+if(IS_DIRECTORY "${PACKAGES}")
+    file(GLOB folders LIST_DIRECTORIES true "${PACKAGES}/*")
+    foreach(folder IN LISTS folders)
+        if(IS_DIRECTORY "${folder}")
+            get_filename_component(package "${folder}" NAME)
+            file(GLOB package_files "${folder}/*.tide")
+            list(APPEND package_args --package "${package}" ${package_files})
+        endif()
+    endforeach()
+endif()
 file(MAKE_DIRECTORY "${OUT}")
 execute_process(
-    COMMAND "${TIDEC}" "${SOURCE}" -o "${OUT}"
+    COMMAND "${TIDEC}" "${SOURCE}" ${package_args} -o "${OUT}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr)

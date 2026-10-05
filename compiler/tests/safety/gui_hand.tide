@@ -1,0 +1,51 @@
+// expect: hand: whole -2147483648 backwards 2147483647 moved 99
+// expect: hand: typed -2147483648 name "-99999999999999999999.5e99"
+// ticks: 64
+// draws
+
+// Widgets under a hand that drags far past them, tabs, steps and types more
+// than they hold: sliders over the whole of an int and the wrong way around,
+// one whose rect stops being a rect while it's held, number fields given
+// twenty digits, and a text field given a character past ASCII.
+
+local singleton Panel
+{
+    float volume;
+    float broken;
+    int whole;
+    int backwards = 5;
+    int moved;
+    int typed;
+    float number;
+    string name;
+    int frames;
+    float zero;
+    int most = 2147483647;
+    int least = 0x80000000;
+}
+
+scene Main { }
+
+view Widgets(mut Panel panel)
+{
+    var nan = panel.zero / panel.zero;
+    var inf = 1.0 / panel.zero;
+    // Under the hand, which presses the middle of the screen: a widget across it for each of its rounds of 16 frames
+    var middle = Rect(0, Screen.height * 0.5 - 14, Screen.width, 28);
+    var which = panel.frames / 16;
+    var step = panel.frames % 16;
+    if (which == 0) GUI.IntSlider(middle, "whole", panel.whole, panel.least, panel.most);
+    if (which == 1) GUI.IntSlider(middle, "backwards", panel.backwards, panel.most, panel.least);
+    if (which == 2) GUI.IntSlider(Rect(step == 6 ? nan : middle.x, middle.y, middle.width, 28), "moved", panel.moved, 0, 100);
+    if (which == 3) GUI.Slider(middle, "float", panel.volume, -inf, inf);
+    if (which == 4) GUI.Slider(Rect(step > 4 ? inf : middle.x, middle.y, step > 5 ? nan : middle.width, 28), "broken", panel.broken, nan, 3.4028235e38);
+    if (which == 5) GUI.IntField(middle, "typed", panel.typed);
+    if (which == 6) GUI.FloatField(middle, "number", panel.number);
+    if (which == 7) GUI.TextField(middle, "name", panel.name);
+    panel.frames += 1;
+    if (panel.frames == 128)
+    {
+        Debug.Log($"hand: whole {panel.whole} backwards {panel.backwards} moved {panel.moved}");
+        Debug.Log($"hand: typed {panel.typed} name \"{panel.name}\"");
+    }
+}

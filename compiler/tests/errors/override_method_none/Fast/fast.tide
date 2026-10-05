@@ -1,0 +1,6 @@
+namespace Fast;
+
+override bool Combat.Stats.IsDed()
+{
+    return health <= 10;
+}

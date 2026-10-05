@@ -1,0 +1,121 @@
+// expect: tick 1: gone false 0 false 0, never false 0 false 0, alive true 10
+// expect: tick 2: gone false 0, reused true 10, alive true 10 poked 0
+// expect: tick 3: brief false 0, stunned false, alive true 11
+// expect: tick 4: entities 3
+
+// Handles to nothing: an entity that was destroyed, one that never was, one
+// whose slot went to another entity, and one made and destroyed in a tick.
+
+component Health
+{
+    int value = 10;
+    List<int> log;
+    string name = "x";
+}
+
+[Sparse]
+component Stun
+{
+    int ticks;
+}
+
+component Tag
+{
+}
+
+singleton Book
+{
+    Entity gone;
+    Entity never;
+    Entity alive;
+    Entity brief;
+    Entity reused;
+    List<Entity> targets;
+    int poked;
+}
+
+event Poke
+{
+    int by;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Book book)
+{
+    book.alive = Spawn(Health);
+    book.gone = Spawn(Health);
+}
+
+event(Poke poke) OnPoke(mut Health health, mut Book book)
+{
+    health.value += poke.by;
+    health.log.Add(poke.by);
+    book.poked += 1;
+}
+
+system Run(mut Book book, mut World world, Time time)
+{
+    if (time.tick == 0)
+    {
+        book.gone.Destroy();
+        book.gone.Destroy();
+        book.gone.Add(Stun);
+        book.gone.Send(Poke { by = 5 });
+    }
+    else if (time.tick == 1)
+    {
+        var read = world.TryGet<Health>(book.gone, out var health);
+        var none = world.TryGet<Health>(book.never, out var nothing);
+        Debug.Log($"tick 1: gone {world.Has<Health>(book.gone)} {world.Get<Health>(book.gone).value} {read} {health.log.count}, "
+            + $"never {world.Has<Health>(book.never)} {world.Get<Health>(book.never).value} {none} {nothing.log.count}, "
+            + $"alive {world.Has<Health>(book.alive)} {world.Get<Health>(book.alive).value}");
+        book.targets = [book.gone, book.never];
+        // Its slot goes to another entity, which the old handle isn't
+        book.reused = Spawn(Health);
+    }
+    else if (time.tick == 2)
+    {
+        book.targets = [book.gone];
+        book.alive.Send(Poke { by = 1 });
+        Debug.Log($"tick 2: gone {world.Has<Health>(book.gone)} {world.Get<Health>(book.gone).value}, "
+            + $"reused {world.Has<Health>(book.reused)} {world.Get<Health>(book.reused).value}, "
+            + $"alive {world.Has<Health>(book.alive)} {world.Get<Health>(book.alive).value} poked {book.poked}");
+        // Made and gone in one tick, with everything in between
+        book.brief = Spawn(Health, Stun);
+        book.targets.Add(book.brief);
+    }
+    else if (time.tick == 3)
+    {
+        book.targets = [];
+        Debug.Log($"tick 3: brief {world.Has<Health>(book.brief)} {world.Get<Health>(book.brief).log.count}, "
+            + $"stunned {world.Has<Stun>(book.alive)}, alive {world.Has<Health>(book.alive)} {world.Get<Health>(book.alive).value}");
+    }
+
+    // Everything code can do with a handle, to ones that are nothing's
+    foreach (var e in book.targets)
+    {
+        e.Add(Stun { ticks = 3 });
+        e.Add(Tag);
+        e.Remove(Stun);
+        e.Remove(Tag);
+        e.Send(Poke { by = 1 });
+        mut var health = world.Get<Health>(e);
+        health.value += 100;
+        health.log.Add(5);
+        health.name = health.name + "!";
+        world.Set<Health>(e, health);
+        e.Destroy();
+        e.Destroy();
+        e.Add(Stun);
+        e.Send(Poke { by = 1 });
+    }
+}
+
+system Count(Time time, query (Health health) all)
+{
+    if (time.tick != 4) return;
+    mut var count = 0;
+    foreach (var each in all) count += each.health.value > 0 ? 1 : 0;
+    Debug.Log($"tick 4: entities {count + 1}");
+}

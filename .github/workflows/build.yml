@@ -85,6 +85,10 @@ jobs:
             os: ubuntu-latest
             preset: web-release
             test-jobs: 4
+          - platform: linux-x64
+            os: ubuntu-latest
+            preset: sanitize
+            test-jobs: 4
           - platform: macos-arm64
             os: macos-latest
             preset: release
@@ -237,6 +241,19 @@ jobs:
           cmake --preset release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset release
           ctest --preset release -LE gpu
+      # Everything again under AddressSanitizer and UndefinedBehaviorSanitizer,
+      # where a read or write out of bounds or an undefined operation is a
+      # report, and a report fails its test: the games of Tide alone that try
+      # to make one (compiler/tests/safety, see AGENTS.md, Language) with the
+      # rest of the suite. Two tests are the other jobs' alone: the relay's,
+      # which is Node's and no sanitizer watches, and rooms with the runner's
+      # browsers, which nobody has run this way yet.
+      - name: Test (sanitizers)
+        if: matrix.preset == 'sanitize'
+        run: |
+          cmake --preset sanitize -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset sanitize
+          ctest --preset sanitize -LE gpu -E '^(relay|tide_platform_rooms)$'
       # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
       # Linux's runners leave them out: without a GPU, Chrome there draws with
       # WebGPU but gives nothing back when the test reads its pixels.

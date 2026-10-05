@@ -36,6 +36,7 @@ event(Spawned) Setup(with Main)
 - A plain name is looked up in the file's namespace, then the namespaces around it, then the `using` ones, then the global namespace. If two `using` namespaces both have it, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values, `Spawn`, `Add` and `Remove`, and `[Before]` and `[After]` (`[After(Physics.Gravity)]`). They work for constants too: `Combat.CRIT_MULTIPLIER`.
 - The same name can be declared in different namespaces.
+- An [override](overrides.md) names what it replaces the same way: `override system Combat.Move(...)`, or `Move` alone after `using Combat;`.
 - There's exactly one `Main` in a game, in any file or namespace.
 
 ## Code for other versions of tide

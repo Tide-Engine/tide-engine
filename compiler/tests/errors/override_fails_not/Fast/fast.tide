@@ -1,0 +1,6 @@
+namespace Fast;
+
+override int Combat.Parse(int value)
+{
+    return value;
+}

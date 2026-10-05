@@ -1,0 +1,5 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: the input is data, and the game's own
+virtual input PlayerInput { float move; }
+
+scene Main { }
