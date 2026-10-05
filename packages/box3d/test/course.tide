@@ -1,0 +1,185 @@
+// A match for the package's tests of what a game does with it
+// (course_test.c): sensors, an impulse given where a body is spawned, systems
+// ordered against the step, bodies at rest that code moves, gravity that
+// changes, and what a view sees of a body that turns. Each is a few bodies of
+// its own, and a host says which before the first tick.
+
+using Box3D;
+
+scene Main { }
+
+enum Case
+{
+    Sensors,
+    Order,
+    Impulse,
+    Rest,
+    Turning
+}
+
+singleton Course
+{
+    Case which;
+    bool made;
+    bool spring; // The bait goes, from inside its trap
+    bool release; // The snare goes, from around its prey
+}
+
+// What an entity heard of the package's events
+component Heard
+{
+    int touched;
+    int parted;
+    int gone; // Of the partings, the ones whose other entity was no more
+    Entity last; // Who it heard of last
+}
+
+component Floor { }
+
+// Sensors: a gate a marble falls through and a fence across it, a probe that
+// falls through a shelf, a trap with its bait and a snare with its prey
+component Gate { }
+component Fence { }
+component Marble { }
+component Shelf { }
+component Probe { }
+component Trap { }
+component Bait { }
+component Snare { }
+component Prey { }
+
+// Order: a body steered before the step, and one after
+component Early
+{
+    int ticks;
+}
+
+component Late
+{
+    int ticks;
+}
+
+// Impulse: a body thrown and spun where it's spawned, and one a tick later
+component Thrown { }
+
+component Nudged
+{
+    bool done;
+}
+
+// Rest: crates that fall asleep, one of them on a ledge
+component Sleeper { }
+component Tilted { }
+component Ledge { }
+component Rider { }
+
+// Turning: a body that spins where it is, and what a view saw of it
+component Spinner { }
+
+local singleton Seen
+{
+    quaternion rotation;
+    float3 position;
+}
+
+system Arrange(mut Course course)
+{
+    if (course.made) return;
+    course.made = true;
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(200, 1, 200) }, Floor, Heard);
+    if (course.which == Case.Sensors)
+    {
+        // A marble through a gate, which a fence crosses without the marble reaching it
+        Spawn(Body { type = BodyType.Static, position = float3(0, 4, 0) }, Box { size = float3(4, 1, 4), sensor = true }, Gate, Heard);
+        Spawn(Body { type = BodyType.Static, position = float3(3, 4, 0) }, Box { size = float3(4, 1, 4), sensor = true }, Fence, Heard);
+        Spawn(Body { position = float3(0, 7, 0) }, Sphere { radius = 0.3 }, Marble, Heard);
+        // A sensor that moves, through a body that doesn't, and then through the floor
+        Spawn(Body { type = BodyType.Static, position = float3(10, 3, 0) }, Box { size = float3(2, 0.5, 2) }, Shelf, Heard);
+        Spawn(Body { position = float3(10, 6, 0) }, Sphere { radius = 0.3, sensor = true }, Probe, Heard);
+        // A crate that's in a sensor from the start, and comes to rest there
+        Spawn(Body { type = BodyType.Static, position = float3(20, 0.8, 0) }, Box { size = float3(2, 1, 2), sensor = true }, Trap, Heard);
+        Spawn(Body { position = float3(20, 0.5, 0) }, Box, Bait, Heard);
+        Spawn(Body { type = BodyType.Static, position = float3(30, 2, 0) }, Capsule { radius = 0.8, height = 3, sensor = true }, Snare, Heard);
+        Spawn(Body { position = float3(30, 0.5, 0) }, Box, Prey, Heard);
+    }
+    if (course.which == Case.Order)
+    {
+        Spawn(Body { position = float3(0, 5, 0), gravityScale = 0 }, Box, Early);
+        Spawn(Body { position = float3(0, 8, 0), gravityScale = 0 }, Box, Late);
+    }
+    if (course.which == Case.Impulse)
+    {
+        Spawn(Body { position = float3(0, 5, 0), impulse = float3(3000, 0, 0), angularImpulse = float3(0, 0, 500), gravityScale = 0 }, Box, Thrown);
+        Spawn(Body { position = float3(0, 8, 0), gravityScale = 0 }, Box, Nudged);
+    }
+    if (course.which == Case.Rest)
+    {
+        Spawn(Body { position = float3(0, 0.5, 0) }, Box, Sleeper);
+        Spawn(Body { position = float3(5, 0.5, 0) }, Box, Tilted);
+        Spawn(Body { type = BodyType.Static, position = float3(10, 3, 0) }, Box { size = float3(2, 0.4, 2) }, Ledge);
+        Spawn(Body { position = float3(10, 3.7, 0) }, Box, Rider);
+    }
+    if (course.which == Case.Turning)
+    {
+        Spawn(Body { position = float3(0, 5, 0), angularVelocity = float3(0, 0, 2), gravityScale = 0 }, Box, Spinner);
+    }
+}
+
+event(Touched touched) Hear(mut Heard heard)
+{
+    heard.touched += 1;
+    heard.last = touched.other;
+}
+
+event(Parted parted) Unhear(mut Heard heard)
+{
+    heard.parted += 1;
+    heard.last = parted.other;
+    if (parted.other == default) heard.gone += 1;
+}
+
+// The probe is a sensor, so nothing stops it: it goes once it's far under the floor
+system Sink(Body body, with Probe)
+{
+    if (body.position.y < -40) this.Destroy();
+}
+
+system Spring(Course course, with Bait)
+{
+    if (course.spring) this.Destroy();
+}
+
+system Release(Course course, with Snare)
+{
+    if (course.release) this.Destroy();
+}
+
+// Before the step: what it writes is what this tick steps from
+[Before(PhysicsStages.Step)]
+system Steer(mut Body body, mut Early early)
+{
+    early.ticks += 1;
+    body.velocity = float3(early.ticks, 0, 0);
+}
+
+// After it, as a game's systems are unless they say: it's the next tick's
+system Follow(mut Body body, mut Late late)
+{
+    late.ticks += 1;
+    body.velocity = float3(late.ticks, 0, 0);
+}
+
+// The impulses the thrown body was spawned with, written once the body is there
+system Nudge(mut Body body, mut Nudged nudged)
+{
+    if (nudged.done) return;
+    nudged.done = true;
+    body.impulse = float3(3000, 0, 0);
+    body.angularImpulse = float3(0, 0, 500);
+}
+
+view Watch(Body body, mut Seen seen, with Spinner)
+{
+    seen.rotation = body.rotation;
+    seen.position = body.position;
+}
