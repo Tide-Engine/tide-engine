@@ -1402,6 +1402,10 @@ static void themed_gui(void)
 {
     static tide_gui gui;
     static tide_devices devices; // Nothing is pressed, and the pointer is in a corner
+    // From nothing each time: the page runs this again once it lost its device
+    tide_draw_free(&gui.list);
+    memset(&gui, 0, sizeof gui);
+    memset(&devices, 0, sizeof devices);
     const tide_gui_theme usual = tide_gui_theme_default();
     tide_gui_theme theme = usual;
     theme.control = blue;
