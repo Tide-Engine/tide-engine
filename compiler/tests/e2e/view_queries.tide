@@ -1,0 +1,365 @@
+// Queries in views and local handlers: a second set of entities to go
+// through, as that code sees the match. A view's rows are blended between
+// ticks like its own parameters, or `verified`; a local handler's are as its
+// event's tick left them. A shield one player raises decides what some ticks
+// do, so a client that hasn't heard of the shield yet predicts those wrong
+// for a while.
+
+component Body
+{
+    float2 position;
+    [Snap] float turn; // As it is, never blended
+    int id;
+}
+
+[Sparse]
+component Fighter
+{
+    int number;
+}
+
+component Health
+{
+    int value = 5;
+}
+
+component Dead { }
+
+// What the match keeps in its heap: a view reads it through a row, as through a parameter
+component Name
+{
+    string title;
+    List<int> marks;
+    List<string> words;
+}
+
+component Player { }
+
+singleton Guard
+{
+    bool up;
+}
+
+// The fighters' heights as tick 110 left them, each times its number: what a
+// handler that hears that tick once it's confirmed has to find
+singleton Witness
+{
+    float y;
+}
+
+input Controls
+{
+    bool shield;
+}
+
+scene Main { }
+
+// Sent to a fighter, for whoever shows it: nothing in the match handles it
+event Rang
+{
+    int at;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { id = 1, position = float2(10, 0) }, Fighter { number = 1 }, Health, Name { title = "Ada", marks = [3, 4], words = ["a", "bc"] });
+    Spawn(Body { id = 2, position = float2(20, 0) }, Fighter { number = 2 }, Health);
+    Spawn(Body { id = 3, position = float2(30, 0) }, Health); // No fighter
+    Spawn(Body { id = 4, position = float2(40, 0) }, Fighter { number = 4 }, Health);
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+system Lower(mut Guard guard)
+{
+    guard.up = false;
+}
+
+system Raise(Controls controls, mut Guard guard, with Player)
+{
+    if (controls.shield) guard.up = true;
+}
+
+// Everything moves right, two units a tick. Fighters rise while the shield
+// is up, so where they are says how many ticks had it.
+system Move(mut Body body)
+{
+    body.position.x += 2;
+    body.turn += 1;
+}
+
+system Rise(mut Body body, Guard guard, with Fighter)
+{
+    if (guard.up) body.position.y += 1;
+}
+
+system Note(Body body, Fighter fighter, mut Witness witness, Time time)
+{
+    if (time.tick == 110) witness.y += body.position.y * fighter.number;
+}
+
+// A mark only a machine that hasn't heard of the shield gives
+system Remark(mut Name name, Guard guard, Time time)
+{
+    if (time.tick == 90 && !guard.up) name.marks.Add(5);
+}
+
+// One entity goes and another comes at tick 10, whatever the shield. Around
+// tick 90 the shield decides: what a machine that hasn't heard of it predicts
+// there, the server never did.
+system Script(Body body, mut Health health, Guard guard, Time time)
+{
+    if (body.id == 4 && time.tick == 10) this.Destroy();
+    if (body.id == 1 && time.tick == 10) Spawn(Body { id = 5, position = float2(50, 0) }, Fighter { number = 5 }, Health);
+    if (body.id == 1 && time.tick == 90 && !guard.up) health.value -= 1;
+    if (body.id == 3 && time.tick == 91 && !guard.up) this.Destroy();
+    if (body.id == 2 && time.tick == 92 && !guard.up) this.Add(Dead);
+    if (body.id == 1 && time.tick == 93) Spawn(Body { id = guard.up ? 7 : 6 }, Health);
+    if (body.id == 1 && time.tick == 94 && !guard.up) Spawn(Body { id = 8 }, Health);
+    if (body.id == 1 && (time.tick == 12 || time.tick == 110)) this.Send(Rang { at = time.tick });
+    if (body.id == 2 && time.tick == 111) this.Destroy();
+}
+
+local component Spark
+{
+    int value;
+}
+
+local singleton Seen
+{
+    int frames;
+    // The match, as it's drawn
+    int runs;         // Times a view with only a query ran
+    float sumX;       // Every body's x, blended
+    float sumTurn;    // ...and its turn, which isn't
+    int ids;          // A bit for each id
+    int fighters;     // ...of those with Fighter
+    int others;       // ...and without
+    int standing;     // Fighters that aren't Dead
+    int pairs;        // Rows a view that runs for each body went through
+    int same;         // ...that were the view's own entity
+    int mismatch;     // ...whose values weren't the view's own
+    int named;        // The ids of the bodies called Ada, added up
+    int marks;        // Their marks, added up
+    int sureNamed;    // The same, as the server confirmed them
+    int sureMarks;
+    int sureWords;    // Their words that are "bc": text in a list, which comes as a copy
+    // The world the server confirmed
+    int confirmed;    // A bit for each id it has
+    int sureHealth;   // Their health, added up
+    int both;         // A bit for each id that's the same entity in both worlds
+    int mismatched;   // Rows of both worlds whose two ids differ
+    int behind;       // Rows whose drawn health is under the confirmed one
+    int undead;       // A bit for each id drawn that isn't Dead as confirmed
+    int corpses;      // ...that's Dead as drawn
+    int sureCorpses;  // ...and as confirmed
+    // This machine's own entities
+    int sparks;       // How many a query found
+    int sparkSum;     // Their values, as each row of a view that changes them found them
+    int sparkSelf;    // Rows that were the view's own spark
+    int tagged;       // How many a query with only a filter found
+    // What local handlers heard
+    int rangs;        // Rang, as predicted
+    float rangX;      // The fighters' x as that tick left them, added up
+    float rangY;      // ...and their y, each times its number, as this machine first ran the tick
+    int rangIds;      // A bit for each fighter then
+    int sureRangs;    // Rang, once confirmed
+    float sureRangY;  // The fighters' y as the confirmed tick left them
+    int gone;         // Destroyed bodies heard
+    int goneIds;      // The fighters left when the last one went
+    int goneSparks;   // Sparks a handler of the match's event found
+    int snuffed;      // Sparks that went, heard locally
+    int snuffedLeft;  // The sparks there as the last one went
+}
+
+view Begin(mut Seen seen)
+{
+    if (seen.frames == 0)
+    {
+        Spawn(Spark { value = 1 });
+        Spawn(Spark { value = 2 });
+        Spawn(Spark { value = 3 });
+    }
+    seen.frames += 1;
+    seen.pairs = 0;
+    seen.same = 0;
+    seen.sparkSum = 0;
+    seen.sparkSelf = 0;
+}
+
+// A view with only a query runs once a frame
+view Everything(mut Seen seen, query (Body body) bodies)
+{
+    seen.runs += 1;
+    seen.sumX = 0;
+    seen.sumTurn = 0;
+    seen.ids = 0;
+    foreach (var row in bodies)
+    {
+        seen.sumX += row.body.position.x;
+        seen.sumTurn += row.body.turn;
+        seen.ids |= 1 << row.body.id;
+    }
+}
+
+view Filters(mut Seen seen, query (Body body, with Fighter) fighters, query (Body body, without Fighter) others,
+    query (with Fighter, without Dead) standing)
+{
+    seen.fighters = 0;
+    seen.others = 0;
+    seen.standing = 0;
+    foreach (var row in fighters) seen.fighters |= 1 << row.body.id;
+    foreach (var row in others) seen.others |= 1 << row.body.id;
+    foreach (var row in standing)
+    {
+        if (row.entity != default) seen.standing += 1;
+    }
+}
+
+// A view that runs for each body, and goes through the fighters for each:
+// their rows are what the view's own parameters are, for the same entity
+view Pairs(Body body, mut Seen seen, query (Body other, Fighter fighter) fighters)
+{
+    foreach (var row in fighters)
+    {
+        seen.pairs += 1;
+        if (row.entity != this) continue;
+        seen.same += 1;
+        if (row.other.position.x != body.position.x || row.other.id != body.id || row.fighter.number != body.id) seen.mismatch += 1;
+    }
+}
+
+// Text and lists of the world a view draws, through a row, and of the world
+// the server confirmed: each is read from its own world's heap
+view Names(mut Seen seen, query (Name name, Body body) named, query (verified Name name, verified Body body) sure)
+{
+    seen.named = 0;
+    seen.marks = 0;
+    seen.sureNamed = 0;
+    seen.sureMarks = 0;
+    seen.sureWords = 0;
+    foreach (var row in named)
+    {
+        if (row.name.title == "Ada") seen.named += row.body.id;
+        foreach (var mark in row.name.marks) seen.marks += mark;
+    }
+    foreach (var row in sure)
+    {
+        if (row.name.title == "Ada") seen.sureNamed += row.body.id;
+        foreach (var mark in row.name.marks) seen.sureMarks += mark;
+        foreach (var word in row.name.words)
+        {
+            if (word == "bc") seen.sureWords += 1;
+        }
+    }
+}
+
+// `verified` in a query: the confirmed world's entities, those in both, and filters
+view Confirmed(mut Seen seen,
+    query (verified Body body, verified Health health) confirmed,
+    query (Body mine, verified Body sure, Health health, verified Health sureHealth) both,
+    query (Body body, without verified Dead) undead,
+    query (Body body, with Dead) corpses,
+    query (Body body, with verified Dead) sureCorpses)
+{
+    seen.confirmed = 0;
+    seen.sureHealth = 0;
+    seen.both = 0;
+    seen.behind = 0;
+    seen.undead = 0;
+    seen.corpses = 0;
+    seen.sureCorpses = 0;
+    foreach (var row in confirmed)
+    {
+        seen.confirmed |= 1 << row.body.id;
+        seen.sureHealth += row.health.value;
+    }
+    foreach (var row in both)
+    {
+        seen.both |= 1 << row.mine.id;
+        if (row.mine.id != row.sure.id) seen.mismatched += 1;
+        if (row.health.value < row.sureHealth.value) seen.behind += 1;
+    }
+    foreach (var row in undead) seen.undead |= 1 << row.body.id;
+    foreach (var row in corpses) seen.corpses |= 1 << row.body.id;
+    foreach (var row in sureCorpses) seen.sureCorpses |= 1 << row.body.id;
+}
+
+// A local query: this machine's own entities, as they are. A view that
+// changes the component it queries reads what its earlier rows wrote.
+view Glow(mut Spark spark, mut Seen seen, query (Spark other) sparks)
+{
+    spark.value += 10;
+    foreach (var row in sparks)
+    {
+        seen.sparkSum += row.other.value;
+        if (row.entity == this) seen.sparkSelf += 1;
+    }
+}
+
+view CountSparks(mut Seen seen, query (Spark spark) sparks, query (with Spark) tagged)
+{
+    seen.sparks = 0;
+    seen.tagged = 0;
+    foreach (var row in sparks)
+    {
+        seen.sparks += 1;
+        if (row.spark.value > 50) row.entity.Destroy(); // A LocalEntity
+    }
+    foreach (var row in tagged)
+    {
+        if (row.entity != default) seen.tagged += 1;
+    }
+}
+
+// A local handler's query: the fighters as the tick that sent the event left them
+local event(Rang) Heard(Body body, mut Seen seen, query (Body other, Fighter fighter) fighters)
+{
+    seen.rangs += 1;
+    seen.rangX = body.position.x * 1000;
+    seen.rangY = 0;
+    seen.rangIds = 0;
+    foreach (var row in fighters)
+    {
+        seen.rangX += row.other.position.x;
+        seen.rangY += row.other.position.y * row.fighter.number;
+        seen.rangIds |= 1 << row.other.id;
+    }
+}
+
+// ...and of the tick the server confirmed
+local event(verified Rang) Sure(mut Seen seen, query (Body other, Fighter fighter) fighters)
+{
+    seen.sureRangs += 1;
+    seen.sureRangY = 0;
+    foreach (var row in fighters) seen.sureRangY += row.other.position.y * row.fighter.number;
+}
+
+// The one that went is in none of them: they're the tick's, once it's done.
+// Its own components are still as its turn left them. And a query over this
+// machine's entities, in the same handler, is the local world as it is.
+local event(Destroyed) Gone(Body body, mut Seen seen, query (Body other, with Fighter) fighters, query (Spark spark) sparks)
+{
+    seen.gone += 1;
+    seen.goneIds = 1 << (body.id + 16);
+    foreach (var row in fighters) seen.goneIds |= 1 << row.other.id;
+    seen.goneSparks = 0;
+    foreach (var row in sparks)
+    {
+        if (row.spark.value > 0) seen.goneSparks += 1;
+    }
+}
+
+// A local event's handler queries this machine's entities
+local event(Destroyed) Snuffed(Spark spark, mut Seen seen, query (Spark other) sparks)
+{
+    seen.snuffed += spark.value;
+    seen.snuffedLeft = 0;
+    foreach (var row in sparks)
+    {
+        if (row.other.value > 0) seen.snuffedLeft += 1;
+    }
+}

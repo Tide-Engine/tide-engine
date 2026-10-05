@@ -50,6 +50,15 @@ tide_heard *tide_event_log_push(tide_event_log *log, uint32_t size, const uint32
     return heard;
 }
 
+void tide_event_log_trim(tide_event_log *log, tide_heard *heard, uint32_t size)
+{
+    if (size < sizeof(tide_heard)) size = sizeof(tide_heard);
+    size = (size + 7u) & ~7u;
+    if (size >= heard->size || (uint8_t *)heard + heard->size != log->bytes + log->size) return; // Only the last, and only less
+    log->size -= heard->size - size;
+    heard->size = size;
+}
+
 // What the log's first event says of when it was sent, once the event is whole.
 static void note_first(tide_event_log *log, const tide_heard *heard)
 {
@@ -155,12 +164,17 @@ void tide_hearing_end(tide_hearing *h, const uint32_t tick)
 {
     tide_heard_tick *t = tick_of(h, tick);
     tide_event_log_clear(&t->run);
+    bool reads = false; // An event of this run that reads the tick's rows went out
     for (uint32_t at = 0; at < h->fresh.size;) {
         tide_heard *heard = (tide_heard *)(h->fresh.bytes + at);
         at += heard->size;
         heard->tick = tick;
         if (heard->wants & TIDE_HEARD_VERIFIED) tide_event_log_copy(&t->run, &h->fresh, heard, 0);
         if (!(heard->wants & TIDE_HEARD_PREDICTED)) continue;
+        if (heard->event == TIDE_HEARD_ROWS) { // After the run's events: they go where one that reads them went
+            if (reads) tide_event_log_copy(h->out, &h->fresh, heard, TIDE_HEARD_PREDICTED);
+            continue;
+        }
         tide_heard_mark *mark = NULL;
         for (uint32_t i = 0; i < t->count && !mark; i++) {
             if (!t->marks[i].met && same_event(&t->marks[i], heard)) mark = &t->marks[i];
@@ -176,6 +190,7 @@ void tide_hearing_end(tide_hearing *h, const uint32_t tick)
         }
         t->marks[t->count++] = (tide_heard_mark){heard->same, heard->target, heard->born, heard->event, true};
         tide_event_log_copy(h->out, &h->fresh, heard, TIDE_HEARD_PREDICTED);
+        reads |= (heard->wants & TIDE_HEARD_READS_ROWS) != 0u;
     }
     tide_event_log_clear(&h->fresh);
 }

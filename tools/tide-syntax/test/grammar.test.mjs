@@ -242,6 +242,23 @@ const cases = {
             ['Fighter', 'entity.name.type'], ['Ghost', 'entity.name.type'], ['Time', 'support.class'],
         ]],
         ['query (', [['query', 'storage.modifier.query']]],
+        ['view ShadowsOfFighters(', [
+            ['view', 'storage.type'], ['ShadowsOfFighters', 'entity.name.function'], ['query', 'storage.modifier.query'],
+            ['Platform', 'entity.name.type'], ['without', 'storage.modifier'], ['Ghost', 'entity.name.type'],
+        ]],
+        ['view SureOfFighters(', [
+            ['query', 'storage.modifier.query'], ['verified', 'storage.modifier.verified', 2], ['with', 'storage.modifier'],
+            ['Health', 'entity.name.type'], ['Fighter', 'entity.name.type'],
+        ]],
+        ['local event(Hit hit) ShowHitNear(', [
+            ['local', 'storage.modifier'], ['event', 'storage.type'], ['Hit', 'entity.name.type'], ['hit', 'variable.parameter'],
+            ['ShowHitNear', 'entity.name.function'], ['query', 'storage.modifier.query'], ['with', 'storage.modifier'],
+            ['Fighter', 'entity.name.type'],
+        ]],
+        ['local event(verified Died) ShowDeathNear(', [
+            ['verified', 'storage.modifier.verified'], ['Died', 'entity.name.type'], ['ShowDeathNear', 'entity.name.function'],
+            ['mut', 'storage.modifier'], ['query', 'storage.modifier.query'], ['Spark', 'entity.name.type'],
+        ]],
         ['with Fighter,', [['with', 'storage.modifier'], ['Fighter', 'entity.name.type']]],
         ['without Ghost', [['without', 'storage.modifier'], ['Ghost', 'entity.name.type']]],
         ['int query(', [['query', 'entity.name.function'], ['query', '!storage.modifier']]],
