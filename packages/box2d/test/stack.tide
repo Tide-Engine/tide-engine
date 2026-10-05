@@ -1,0 +1,84 @@
+// A match for the package's tests: a stack of crates on a floor, balls thrown
+// at it, a crate that's pushed around by its component and one that goes.
+
+using Box2D;
+
+scene Main { }
+
+component Crate { }
+
+component Pushed
+{
+    int ticks;
+}
+
+component Doomed
+{
+    int ticks;
+}
+
+singleton Tally
+{
+    int touched;
+    int parted;
+}
+
+// How many crates there are to be, in stacks of 12: a host says before the
+// first tick, as tests of threads want a step worth sharing out
+singleton Size
+{
+    int crates = 12;
+    int made;
+}
+
+system Stack(mut Size size)
+{
+    while (size.made < size.crates)
+    {
+        int column = size.made / 12;
+        int row = size.made % 12;
+        Spawn(Body { position = float2(2.5 * column + 0.02 * row, 0.5 + 1.05 * row) }, Box, Crate);
+        size.made += 1;
+    }
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float2(0, -0.5) }, Box { size = float2(4000, 1) });
+    for (int i = 0; i < 8; i++)
+    {
+        Spawn(Body { position = float2(-6 + 0.4 * i, 4 + i), velocity = float2(3, 0), bullet = i == 0 },
+              Circle { radius = 0.3, bounce = 0.4 }, Crate);
+    }
+    Spawn(Body { position = float2(-10, 0.5), fixedRotation = true }, Box, Crate, Pushed);
+    Spawn(Body { position = float2(-14, 3) }, Circle, Crate, Doomed { ticks = 90 });
+}
+
+// Code moves a body by writing its component: a shove every so often, and
+// once, somewhere else altogether
+system Push(mut Body body, mut Pushed pushed)
+{
+    pushed.ticks += 1;
+    if (pushed.ticks % 40 == 0) body.impulse = float2(4, 3);
+    if (pushed.ticks == 150)
+    {
+        body.position = float2(-12, 6);
+        body.velocity = float2(0, 0);
+    }
+}
+
+system Doom(mut Doomed doomed)
+{
+    doomed.ticks -= 1;
+    if (doomed.ticks == 0) this.Destroy();
+}
+
+event(Touched touched) Meet(mut Tally tally, with Crate)
+{
+    if (touched.other != this) tally.touched += 1;
+}
+
+event(Parted) Part(mut Tally tally, with Crate)
+{
+    tally.parted += 1;
+}

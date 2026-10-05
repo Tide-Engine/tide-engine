@@ -83,6 +83,25 @@ singleton Stats
     int chipped;
     int matched;
     int wobbled;
+    int shared;
+    int lost;
+}
+
+// Work C shares out itself, as tasks (jobs_tasks.c): the same sum on every
+// machine, however many threads took them
+extern int ShareWork(int from, int count);
+
+system ShareOut(mut Stats stats)
+{
+    int sum = ShareWork(stats.shared % 1000, 24);
+    if (sum < 0)
+    {
+        stats.lost += 1;
+    }
+    else
+    {
+        stats.shared += sum;
+    }
 }
 
 event Hit
