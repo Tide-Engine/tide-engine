@@ -22,7 +22,7 @@ That writes the package's name in the game's `tide.packages`, which is all it ta
 box2d
 ```
 
-Its code is in the namespace `Box2D`, so a file that uses it says `using Box2D;`. From then on `Body`, `Box`, `Circle` and `Physics` name the package's, even in a game that declares a `Body` of its own: a game like that leaves the `using` out and writes the package's names in full, `Box2D.Body`.
+Its code is in the namespace `Box2D`, so a file that uses it says `using Box2D;`. From then on `Body`, `Box`, `Circle` and `Physics` name the package's. A name the game declares itself still means the game's: one with a `Body` of its own writes the package's in full, `Box2D.Body`.
 
 A game that doesn't list the package compiles and ships none of it. One that does ships Box2D, which is under the MIT license, so it ships Box2D's notice with it: the `LICENSE` file in the package's `box2d` folder, `src/packages/box2d/box2d/LICENSE` of the folder `tide version` says `tide` is installed in.
 
