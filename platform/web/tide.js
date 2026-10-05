@@ -13,7 +13,9 @@
 // command). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
 // is `backend=` in the page's address. For a page with rooms (below), `relay`
 // is another relay's address and `lag` a delay for what it sends, and the page
-// reads `Tide.room`, the code of the room the program is in.
+// reads `Tide.room`, the code of the room the program is in. For a game shown
+// in a frame of another page, `wait` holds the program until that page calls
+// `Tide.start()`, and `embedded` leaves that page its scrolling (both below).
 //
 // The lines between the `tide run` markers below are for hot reloading, in the
 // page `tide run --web` serves; the pages made to ship leave them out.
@@ -72,6 +74,7 @@
         endThreads();
         flush(1);
         flush(2);
+        broken(new Error('the program ended before its first frame'));
         // A shader's warning that comes after the program ended still fails a test page
         const end = () => { if (!failed && config.onExit) config.onExit(code); };
         if (shaderChecks.size) Promise.all([...shaderChecks]).then(end);
@@ -110,6 +113,22 @@
         else if (address.has('host')) words.push('--host');
     }
     const args = ['program', ...words].map(a => encoder.encode(a + '\0'));
+
+    // `Tide.wait`, or `wait` in the page's address: the program loads, and
+    // starts when the page calls `Tide.start()`. That's for a page that loads
+    // a game before it shows it, like one further down that starts once it's
+    // scrolled to. With `wait` or without, `Tide.start()` gives a promise of
+    // the program's first frame, from which the canvas has something to show;
+    // a program that stopped before one breaks it.
+    let release = null, shown = null, broken = null;
+    const released = new Promise(done => { release = done; });
+    const firstFrame = new Promise((done, refuse) => { shown = done; broken = refuse; });
+    firstFrame.catch(() => {}); // Nobody has to ask
+    if (!config.wait && !address.has('wait')) release();
+    config.start = () => {
+        release();
+        return firstFrame;
+    };
 
     const wasi = {
         args_sizes_get(countPtr, sizePtr) {
@@ -277,9 +296,11 @@
         field.select();
         try { document.execCommand('copy'); } catch { /* Nothing more to try */ }
         field.remove();
-        canvas.focus();
+        focusCanvas();
     }
     addEventListener('keyup', event => onKey(event, 0));
+    // The focus is the keyboard's: taking it never scrolls a page the game is a frame of.
+    const focusCanvas = () => canvas.focus({ preventScroll: true });
     // Keys and buttons released elsewhere never send keyup or mouseup
     addEventListener('blur', () => { keysHeld.fill(0); keysTapped.fill(0); mouse.buttons = 0; });
 
@@ -326,11 +347,12 @@
         onMouseMove(event);
         mouse.buttons |= buttonBit[event.button] || 0;
         mouse.tapped |= buttonBit[event.button] || 0;
-        canvas.focus();
+        focusCanvas();
         askForCursor(); // A click is when the browser gives the lock
     });
     addEventListener('mouseup', event => { mouse.buttons &= ~(buttonBit[event.button] || 0); });
     canvas.addEventListener('wheel', event => {
+        if (embedded) return; // The page's, to scroll with (see below)
         mouse.wheelX -= Math.sign(event.deltaX);
         mouse.wheelY -= Math.sign(event.deltaY); // Positive away from the user
         event.preventDefault();
@@ -389,33 +411,86 @@
     });
     document.addEventListener('pointerlockerror', () => { cursor.asking = false; });
 
+    // `Tide.embedded`, or `embedded` in the page's address: the game is part
+    // of a page that scrolls, in a frame of it, and leaves that page its
+    // scrolling. The wheel is the page's, and so is a finger that swipes up or
+    // down on the canvas, until the player taps the game: from then its
+    // touches are all the game's, as they are without `embedded`, until the
+    // player touches or clicks the page elsewhere (the frame loses the focus).
+    // The page can change it as the game runs.
+    let embedded = config.embedded === undefined ? address.has('embedded') : !!config.embedded;
+    let playing = false; // The player tapped the game, and hasn't gone elsewhere since
+    function followGestures() {
+        const action = embedded && !playing ? 'pan-y pinch-zoom' : 'none';
+        if (canvas.style.touchAction !== action) canvas.style.touchAction = action;
+    }
+    Object.defineProperty(config, 'embedded', { configurable: true, enumerable: true,
+        get: () => embedded,
+        set: value => { embedded = !!value; followGestures(); } });
+    addEventListener('blur', () => { playing = false; followGestures(); });
+
     // Fingers on the canvas, from pointer events, in the order they happened;
     // the program takes them each frame. A finger is only the touchscreen's:
-    // the browser makes no mouse events of it (its touch events' defaults are
-    // canceled), and takes no gestures of its own on the canvas (touch-action).
-    // Phases are tide_touch_phase's.
+    // the browser makes no mouse events of it (its pointerdown's and its touch
+    // events' defaults are canceled), and takes no gestures of its own on the
+    // canvas (touch-action). Phases are tide_touch_phase's.
+    //
+    // Embedded, before a tap, the browser may take a finger to scroll the page
+    // with, which it says with a pointercancel. So what such a finger does
+    // waits (`unsure`): the program hears of it once it lifted, all at once, a
+    // tap, and never of one the page scrolled with, or a swipe down a page
+    // would press every game it starts on.
     const touches = [];
     let touchTaken = null;
+    const unsure = new Map(); // By finger: what it did so far
     function onTouch(event, phase) {
         if (event.pointerType !== 'touch') return;
         event.preventDefault();
-        if (phase === 1 && touches.length >= 1024) return; // The program isn't taking them: moves can go
         const rect = canvas.getBoundingClientRect();
-        touches.push({
+        const touch = {
             phase,
             source: event.pointerId >>> 0,
             x: (event.clientX - rect.left) * size.width / (rect.width || 1),
             y: (event.clientY - rect.top) * size.height / (rect.height || 1),
-        });
-        if (phase === 0) canvas.focus();
+        };
+        if (phase === 0 && embedded && !playing) {
+            unsure.set(touch.source, [touch]);
+            return;
+        }
+        const waiting = unsure.get(touch.source);
+        if (waiting) {
+            if (phase === 3) { // The page scrolled with it
+                unsure.delete(touch.source);
+                return;
+            }
+            // Where it is now is all that's left of how it moved
+            if (phase === 1 && waiting[waiting.length - 1].phase === 1) waiting[waiting.length - 1] = touch;
+            else waiting.push(touch);
+            if (phase !== 2) return;
+            // A tap: the game has the touchscreen from here, with every finger on it
+            playing = true;
+            followGestures();
+            for (const known of unsure.values()) touches.push(...known);
+            unsure.clear();
+            focusCanvas();
+            return;
+        }
+        if (phase === 1 && touches.length >= 1024) return; // The program isn't taking them: moves can go
+        touches.push(touch);
+        if (phase === 0) focusCanvas();
     }
-    canvas.style.touchAction = 'none';
+    followGestures();
     canvas.addEventListener('pointerdown', event => onTouch(event, 0));
     canvas.addEventListener('pointermove', event => onTouch(event, 1));
     canvas.addEventListener('pointerup', event => onTouch(event, 2));
     canvas.addEventListener('pointercancel', event => onTouch(event, 3));
     for (const name of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
-        canvas.addEventListener(name, event => event.preventDefault(), { passive: false });
+        canvas.addEventListener(name, event => {
+            // A finger the page may scroll with keeps its default until it lifts, and
+            // one it scrolled with has none left to cancel
+            const scrolls = embedded && !playing && (name === 'touchstart' || name === 'touchmove');
+            if (!scrolls && event.cancelable) event.preventDefault();
+        }, { passive: false });
     }
 
     // Frames come on animation frames or, with `timerFrames`, as fast as
@@ -484,6 +559,7 @@
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
+            shown();
         } catch (error) {
             looping = false;
             if (!(error instanceof Exit)) fail(error);
@@ -556,7 +632,7 @@
         take_char: () => typed.length ? typed.shift() : 0,
         typing(on) {
             if (on) typingField().focus({ preventScroll: true });
-            else if (field && document.activeElement === field) canvas.focus();
+            else if (field && document.activeElement === field) focusCanvas();
         },
         copy(textPtr) {
             const text = string(textPtr);
@@ -1503,6 +1579,7 @@
         endCursorLock();
         endThreads();
         printErr('tide: ' + (error && error.stack || error));
+        broken(error);
         if (config.onAbort) config.onAbort(error);
     }
 
@@ -2002,8 +2079,21 @@
         }
     }
 
-    // The program starts once the page knows its GPU; instantiate loads its
-    // saved files too when the program uses them.
+    // The program's bytes, from the base64 the page holds them as.
+    function programBytes(text) {
+        if (Uint8Array.fromBase64) return Uint8Array.fromBase64(text);
+        const binary = atob(text);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
+
+    // The program loads while the page waits to hear about its GPU, and starts
+    // once it knows; instantiate loads its saved files too when the program
+    // uses them.
+    const load = async () => instantiate(programBytes(TIDE_PROGRAM));
+    const loaded = typeof TIDE_PROGRAM === 'string' && !config.reload
+        ? load().then(program => ({ program }), error => ({ error })) : null;
     await deviceAsked;
 
     // <tide run>
@@ -2094,9 +2184,11 @@
     }
     // </tide run>
 
-    try {
-        begin(await instantiate(Uint8Array.from(atob(TIDE_PROGRAM), c => c.charCodeAt(0))));
-    } catch (error) {
+    const { program, error } = await loaded || { error: new Error('the page has no program (TIDE_PROGRAM)') };
+    if (error) {
         fail(error);
+        return;
     }
+    await released; // At once, unless the page said to wait for it
+    begin(program);
 })();
