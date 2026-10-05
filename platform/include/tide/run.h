@@ -32,7 +32,8 @@
 //
 // A game also runs with no window, to see what it draws without one on
 // screen, or in CI (tide_platform_open_headless). Time is made up, a 60th of
-// a second a frame, and so is input, so a run repeats exactly on any machine:
+// a second a frame, and so is input, and its matches start with seed 0
+// (Time.seed), so a run repeats exactly on any machine:
 //
 //     game --frames 300 --capture menu.png    300 frames, the last of them to a PNG
 //     game --script play.txt                  input by frame from a file, which also says

@@ -420,7 +420,9 @@ static inline tide_session *tide_run_new_session(void)
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
         .correct_views = tide_run_game->correct_views ? tide_run_correct_views : NULL,
-        .entropy = tide_platform_entropy, // A seed for each match it starts, so no two go the same
+        // A seed for each match it starts, so no two go the same: but in a run
+        // with no window, whose matches start with seed 0, so it repeats.
+        .entropy = tide_run_headless ? NULL : tide_platform_entropy,
     });
 }
 
