@@ -66,7 +66,7 @@ Box2D keeps its world in C's memory, outside the match, where rollbacks, joins, 
 - **Everything that changes Box2D's world goes through the match**, which is why code moves a body by writing its component, and never calls Box2D. The stamp is the stamp before it and everything done to the world since, hashed: Box2D's next state is its last and what's done to it, so the image is never read to name it.
 - **The image is in the match's hash**, so it's the same bytes on every machine for the same state, 32-bit web builds and 64-bit desktops alike, whatever their SIMD. Box2D doesn't promise that by itself: `box2d/TIDE.md` lists the changes that took. `tide_box2d_stack` pins the simulation's hash and every tick's image on each platform.
 - **The image is in sections that keep their place**, so what changes of it from tick to tick is what changed in the world, and the match's snapshots share the rest. As Box2D writes it, a contact that starts or ends moves every byte after it.
-- **A world at rest isn't stepped.** Nothing awake and nothing written to any body: there's no step, no image, and no call into C.
+- **A world at rest isn't stepped.** Nothing awake and nothing written to any body: there's no step and no image, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
 
 ## What it costs
 
@@ -76,14 +76,15 @@ Measured on a release build, 2,400 crates in stacks (an image of 2.5 MB), one th
 |---|---|---|---|
 | Box2D's step | 0.31 | 0.01 | 0 |
 | Its state into an image | 0.14 | 0.13 | 0 |
-| The image into the match, and bodies in and out | 0.34 | 0.12 | 0.03 |
-| Keeping and hashing the world | 0.28 | 0.05 | 0.00 |
+| The image into the match, and bodies in and out | 0.16 | 0.08 | 0.02 |
+| Keeping and hashing the world | 0.26 | 0.04 | 0.00 |
 | Of the image, what changed | 77% | 7% | 0% |
 
 - The step runs on the tick's threads (`tide_job_start`, `tide/jobs.h`) once 128 bodies are awake, and gives the same world on any number of them: 0.45 ms on one thread and 0.27 on twelve, where every crate is awake.
 - On the web the step takes about 0.6 ms on one thread, and 0.55 shared out over the 24 threads a page gets on a machine of 12 cores, one for each thread its cores run (measured under Node; a tick, 1.7 ms against 1.5 on one thread, and 1.2 on 12 threads, whose step takes 0.34: Box2D's solver gains nothing from a core's second thread). Box2D's workers wait for each stage of a step in a loop, which on the web holds a processor for as long as it goes on, so one that has waited long sleeps there until the next stage (`box2d/TIDE.md`): before that, the same step took 1.3 to 2.2 ms on those 24 threads, and 4.3 on a machine with four other busy threads, where it now takes 0.57.
 - The image is every body, shape and contact, about a kilobyte a body, whatever is awake. Box2D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
 - What the package adds to the step is memory moved, not arithmetic: the image is written (2.5 MB), compared with the last one, what changed of it copied into the match and hashed, and each body's place read back into its component. So it goes by how big the world is, where the step goes by what's awake.
+- Bodies go in and out through two systems written in C (`extern system`, `tide/rows.h`), which read and write the bodies' fields as the arrays the match keeps them in. Every body is looked at every tick, and a system written in Tide copies each one out to look at it. With every crate moving, reading the 2,400 back took 0.17 ms that way (a call, a copy and a `world.Set` for each) and takes 0.015: Box2D says which bodies it moved and where they are, and those are written, 12 fields of a body's 22. Finding what code wrote took 0.034 ms and takes 0.015, or 0.006 at rest, where it took 0.024. Giving new bodies their entities stayed in Tide, as the match keeps that in a map: it asks C of each body whether it's new, and takes 0.009 to 0.012. A tick went from 0.75 ms to 0.61 with everything moving, from 0.26 to 0.21 with one crate pushed, and from 0.031 to 0.017 at rest (seven runs of each, old and new in turn, on a machine that was building other things meanwhile: the runs agree to within a tenth).
 - Making C's world from an image, which a rollback does once, takes about half a millisecond.
 - Compiling Box2D takes about 6 seconds once (9 optimized), and adds about 350 KB to a game.
 
