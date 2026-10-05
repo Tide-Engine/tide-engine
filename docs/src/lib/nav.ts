@@ -92,6 +92,7 @@ export const sidebar: Group[] = [
             { text: 'Editors', link: '/tools/editors' },
             { text: 'Debug views', link: '/tools/debug-views' },
             { text: 'Packages', link: '/tools/packages' },
+            { text: 'Mods', link: '/tools/mods' },
         ],
     },
     {
