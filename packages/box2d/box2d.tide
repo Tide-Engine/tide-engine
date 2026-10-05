@@ -11,6 +11,17 @@
 
 namespace Box2D;
 
+// Where the package's systems are in a tick: all of them are one stage, in
+// the order they're written in here. A system of a game's that has to write
+// into this tick's step says so with [Before(PhysicsStages.Step)]: it then
+// runs before any of these, so what it writes into a body is what this tick
+// steps from. Any other runs after them, as a package's files compile before
+// the game's, and what it writes is the next tick's.
+enum PhysicsStages
+{
+    Step
+}
+
 enum BodyType
 {
     Static,
@@ -136,6 +147,11 @@ extern Contact ReadTouch(int index);
 
 // C's world for this match, at the state the match is in: the one it has, or
 // one made from the image.
+//
+// Each of these systems says where it is in the stage, so that nothing a game
+// orders its own systems by, naming the stage or one of these, can put them in
+// another order: each rests on what the ones before it did to C's world.
+[Stage(PhysicsStages.Step, 0)]
 system Begin(mut Physics physics)
 {
     if (!OpenWorld(physics.stamp))
@@ -155,6 +171,7 @@ system Begin(mut Physics physics)
 // of the ones there's something to write for. A system written in Tide would
 // copy each body out to look at it. It takes Physics to write, which keeps it
 // on one thread: what it does to the world is noted in the order of its rows.
+[Stage(PhysicsStages.Step, 1)]
 [NativeName("b2t_enter")]
 extern system Enter(mut Body body, mut Physics physics);
 
@@ -162,6 +179,7 @@ extern system Enter(mut Body body, mut Physics physics);
 // the match keeps in a map, which is Tide's to write. It runs for the bodies
 // Enter ran for, in its order, and asks C of each whether it was made. It
 // takes no component, so nothing is copied to ask.
+[Stage(PhysicsStages.Step, 2)]
 system Own(mut Physics physics, with Body)
 {
     long made = TakeMade(this);
@@ -172,20 +190,25 @@ system Own(mut Physics physics, with Body)
     }
 }
 
+[Stage(PhysicsStages.Step, 3)]
 system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
 {
     physics.shapes += AttachBox(body.id, box);
     this.Add(BoxMade);
 }
 
+[Stage(PhysicsStages.Step, 4)]
 system AttachCircles(Body body, Circle circle, mut Physics physics, without CircleMade)
 {
     physics.shapes += AttachCircle(body.id, circle);
     this.Add(CircleMade);
 }
 
-// The step, and Box2D's state after it into the match.
-system Step(Time time, mut Physics physics)
+// The step, and Box2D's state after it into the match. It isn't named Step,
+// so that a game's [Before(Step)] is an error and not a place in the middle of
+// these, after what code wrote has gone to Box2D: the stage is what to name.
+[Stage(PhysicsStages.Step, 5)]
+system Simulate(Time time, mut Physics physics)
 {
     long stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
     physics.moved = stamp != physics.stamp;
@@ -195,9 +218,11 @@ system Step(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
+[Stage(PhysicsStages.Step, 6)]
 [NativeName("b2t_leave")]
 extern system Leave(mut Body body, Physics physics);
 
+[Stage(PhysicsStages.Step, 6)]
 system Report(Physics physics)
 {
     int count = physics.moved ? CountTouches(physics.stamp) : 0;
