@@ -169,10 +169,14 @@ static bool shared;   // The running step's tasks go to other threads
 
 // The bodies the running tick's Enter made, in the order it made them, each
 // with its entity, for the system after it to take (b3t_made): the match keeps
-// whose each body is in a map, which is Tide's to write.
+// whose each body is in a map, which is Tide's to write. And each with the
+// impulses its component was spawned with, which the step gives it (push_new):
+// a body has no weight to push until its shapes are on it, later in the tick.
 typedef struct new_body {
     int64_t body;
     tide_entity entity;
+    tide_float3 impulse;
+    tide_float3 angular_impulse;
 } new_body;
 
 static new_body *made;
@@ -356,6 +360,11 @@ static bool same(const tide_float3 a, const tide_float3 b)
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
+static bool none(const tide_float3 v)
+{
+    return v.x == 0 && v.y == 0 && v.z == 0;
+}
+
 static bool same_turn(const tide_quaternion a, const tide_quaternion b)
 {
     return a.value.x == b.value.x && a.value.y == b.value.y && a.value.z == b.value.z && a.value.w == b.value.w;
@@ -533,6 +542,38 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
+// A body that's asleep is awake from here on. It isn't a call an image in
+// parts follows (box3d/TIDE.md), so the world's next image is written whole:
+// it's only made for a body that's asleep, which code seldom does anything to.
+static void wake(const b3BodyId id)
+{
+    if (b3Body_GetType(id) != b3_staticBody && !b3Body_IsAwake(id)) b3Body_SetAwake(id, true);
+}
+
+// Box3D moves a sleeping body and leaves it asleep, hanging where it was put,
+// and leaves asleep what rested on a body that's moved from under it. Code has
+// no other way to say a body should wake than to move it, so a body that's
+// moved is awake, and so is what it touched. It follows from the move, which
+// is what's noted.
+static void wake_moved(const b3BodyId id)
+{
+    static b3ContactData *touching;
+    static int room;
+    wake(id);
+    const int most = b3Body_GetContactCapacity(id);
+    if (most == 0) return;
+    if (most > room) {
+        touching = tide_realloc(touching, (size_t)room * sizeof *touching, (size_t)most * sizeof *touching);
+        room = most;
+    }
+    const int count = b3Body_GetContactData(id, touching, most);
+    for (int i = 0; i < count; i++) {
+        const b3BodyId one = b3Shape_GetBody(touching[i].shapeIdA);
+        const bool own = one.index1 == id.index1 && one.generation == id.generation;
+        wake(own ? b3Shape_GetBody(touching[i].shapeIdB) : one);
+    }
+}
+
 // A body's component into Box3D: made, if it's new, or else what code wrote
 // into it since the last step. Whether it was made.
 static bool sync_body(body *b)
@@ -562,6 +603,7 @@ static bool sync_body(body *b)
         if (!b3Body_IsValid(id)) return 0;
         if (!same(float3(b3ToVec3(b3Body_GetPosition(id))), b->position) || !same_turn(turn(b3Body_GetRotation(id)), b->rotation)) {
             b3Body_SetTransform(id, b3ToPos(vec(b->position)), quat(b->rotation));
+            wake_moved(id);
             did |= 2u;
         }
         if (!same(float3(b3Body_GetLinearVelocity(id)), b->velocity)) {
@@ -573,13 +615,17 @@ static bool sync_body(body *b)
             did |= 8u;
         }
     }
-    if (b->impulse.x != 0 || b->impulse.y != 0 || b->impulse.z != 0) {
-        b3Body_ApplyLinearImpulseToCenter(id, vec(b->impulse), true);
+    // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
+    // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
+    // Either way they're given once, and noted here
+    const bool is_new = did & 1u;
+    if (!none(b->impulse)) {
+        if (!is_new) b3Body_ApplyLinearImpulseToCenter(id, vec(b->impulse), true);
         b->impulse = (tide_float3){0, 0, 0};
         did |= 16u;
     }
-    if (b->angular_impulse.x != 0 || b->angular_impulse.y != 0 || b->angular_impulse.z != 0) {
-        b3Body_ApplyAngularImpulse(id, vec(b->angular_impulse), true);
+    if (!none(b->angular_impulse)) {
+        if (!is_new) b3Body_ApplyAngularImpulse(id, vec(b->angular_impulse), true);
         b->angular_impulse = (tide_float3){0, 0, 0};
         did |= 32u;
     }
@@ -657,13 +703,15 @@ void b3t_enter(tide_rows *rows, physics *p)
         if (!wrote[i % AT_ONCE]) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
+        const tide_float3 impulse = b.impulse;
+        const tide_float3 angular_impulse = b.angular_impulse;
         if (sync_body(&b)) {
             if (made_count == made_room) {
                 const int32_t room = made_room ? made_room * 2 : 64;
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i]};
+            made[made_count++] = (new_body){b.id, entities[i], impulse, angular_impulse};
         }
         if (synced_count == synced_room) {
             const int32_t room = synced_room ? synced_room * 2 : 64;
@@ -693,6 +741,12 @@ static b3ShapeDef shape_def(const float density, const float friction, const flo
     def.baseMaterial.restitution = bounce;
     def.isSensor = sensor;
     def.enableContactEvents = true; // Touched and Parted
+    // ...which a sensor sends too, for the shapes in it. Box3D only reports a shape to a sensor when both
+    // say so, and neither does unless it's told to: every shape does, as any may come into a sensor
+    def.enableSensorEvents = true;
+    // A sensor doesn't report another: each would report the other, and their entities hear of it twice.
+    // Shapes of one group below zero are never set against each other
+    if (sensor) def.filter.groupIndex = -1;
     return def;
 }
 
@@ -803,16 +857,45 @@ static void note_left(const world *w)
     synced_count = 0;
 }
 
+// The impulses the bodies made this tick were spawned with, given now that
+// their shapes are on them and they weigh something: as an impulse written
+// into a body that's there is, a tick sooner. In the order the bodies were
+// made, and noted with them (sync_body), so nothing is noted here. They're
+// calls an image in parts follows, as the ones Enter makes are.
+static void push_new(const world *w)
+{
+    for (int32_t i = 0; i < made_count; i++) {
+        const new_body *n = &made[i];
+        if (none(n->impulse) && none(n->angular_impulse)) continue;
+        const b3BodyId id = body_of(w, n->body);
+        if (!b3Body_IsValid(id)) continue;
+        if (!none(n->impulse)) b3Body_ApplyLinearImpulseToCenter(id, vec(n->impulse), true);
+        if (!none(n->angular_impulse)) b3Body_ApplyAngularImpulse(id, vec(n->angular_impulse), true);
+    }
+}
+
 int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravity)
 {
     world *w = active;
-    // Nothing awake, and nothing done to the world since its last step: a step
-    // would leave it as it is. The stamp stays, which says so.
-    if (w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
+    // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
+    // last step's wherever the world came from
+    const bool turned = !same(float3(b3World_GetGravity(w->id)), gravity);
+    // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
+    // step would leave it as it is. The stamp stays, which says so.
+    if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
+    push_new(w);
     b3World_SetGravity(w->id, vec(gravity));
+    if (turned) {
+        // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box3D
+        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
+        // gravity, which every step notes. Neither call is one an image in parts follows, so the next
+        // image is written whole, as it would be with everything awake.
+        b3World_EnableSleeping(w->id, false);
+        b3World_EnableSleeping(w->id, true);
+    }
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -1101,13 +1184,22 @@ void b3t_leave(tide_rows *rows, const physics *p)
     }
 }
 
+// What the tick's step says started touching and stopped, as Box3D has it:
+// the contacts between solid shapes that began and ended, and then the same
+// of its sensors, each with a shape that came into it or left it. They're the
+// step's own, read in the tick that stepped, and a world that's made from its
+// image has the same ones to say after its next step: what each sensor has in
+// it is in the image. Asking changes nothing of the world.
 int32_t b3t_touches(const int64_t stamp)
 {
     (void)stamp;
-    const b3ContactEvents events = b3World_GetContactEvents(active->id);
-    return events.beginCount + events.endCount;
+    const b3ContactEvents contacts = b3World_GetContactEvents(active->id);
+    const b3SensorEvents sensors = b3World_GetSensorEvents(active->id);
+    return contacts.beginCount + contacts.endCount + sensors.beginCount + sensors.endCount;
 }
 
+// Whose body a shape is on, or 0 for a shape that's gone, with its body: its
+// entity was destroyed, and what it touched parts from no entity.
 static int64_t owner_of(const b3ShapeId shape)
 {
     if (!b3Shape_IsValid(shape)) return 0;
@@ -1117,15 +1209,33 @@ static int64_t owner_of(const b3ShapeId shape)
 
 touch b3t_touch(const int32_t index)
 {
-    const b3ContactEvents events = b3World_GetContactEvents(active->id);
+    const b3ContactEvents contacts = b3World_GetContactEvents(active->id);
+    const b3SensorEvents sensors = b3World_GetSensorEvents(active->id);
     touch out = {0};
-    if (index < events.beginCount) {
-        out.a = owner_of(events.beginEvents[index].shapeIdA);
-        out.b = owner_of(events.beginEvents[index].shapeIdB);
+    int32_t at = index;
+    if (at < contacts.beginCount) {
+        out.a = owner_of(contacts.beginEvents[at].shapeIdA);
+        out.b = owner_of(contacts.beginEvents[at].shapeIdB);
         out.began = true;
-    } else if (index - events.beginCount < events.endCount) {
-        out.a = owner_of(events.endEvents[index - events.beginCount].shapeIdA);
-        out.b = owner_of(events.endEvents[index - events.beginCount].shapeIdB);
+        return out;
+    }
+    at -= contacts.beginCount;
+    if (at < contacts.endCount) {
+        out.a = owner_of(contacts.endEvents[at].shapeIdA);
+        out.b = owner_of(contacts.endEvents[at].shapeIdB);
+        return out;
+    }
+    at -= contacts.endCount;
+    if (at < sensors.beginCount) {
+        out.a = owner_of(sensors.beginEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.beginEvents[at].visitorShapeId);
+        out.began = true;
+        return out;
+    }
+    at -= sensors.beginCount;
+    if (at < sensors.endCount) {
+        out.a = owner_of(sensors.endEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.endEvents[at].visitorShapeId);
     }
     return out;
 }
