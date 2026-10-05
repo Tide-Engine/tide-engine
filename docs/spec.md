@@ -328,7 +328,9 @@ event(Spawned) Setup(with Main)
 
 ### Evaluation order
 
-- Expressions evaluate left to right, like C#: operands, arguments and field initializers run in source order. `Spawn` and calls to C are the only expressions with side effects today, so this is what makes entity IDs, and what C keeps, come out the same on every platform. `Spawn(Pair { a = Spawn(Thing), b = Spawn(Thing) })` spawns `a`'s Thing, then `b`'s, then the Pair.
+- Expressions evaluate left to right, like C#: operands, arguments and field initializers run in source order, the same on every platform and in every build. `Spawn(Pair { a = Spawn(Thing), b = Spawn(Thing) })` spawns `a`'s Thing, then `b`'s, then the Pair.
+- The order shows wherever an expression has side effects: `Spawn` and `Scene.Load` (entity IDs), a widget or a call that draws, a call to C (what C keeps), and a call that writes, which changes what it's given as `mut` or the value a `mut` method is called on. So do the functions, methods and operators that make such calls. `Pack(Next(counter), Next(counter))` runs the first `Next` first.
+- A value is read in its turn too: in `Pack(counter.n, Next(counter))`, `counter.n` is read before `Next` changes it, and in `Pack(Next(counter), counter.n)`, after.
 - `cond ? a : b` runs the condition first, then only the side it picks, as in C#.
 
 ### Archetypes
@@ -398,6 +400,14 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 ### Syntax
 
 - Statements: blocks, `if`/`else`, `switch`, loops (see Loops), `break;`, `continue;`, `return;`, `fail error;` (see Errors), local declarations, assignments (`= += -= *= /= %= <<= >>= &= |= ^=`), `i++` and `i--`, and calls: of `Spawn`, `Add`, `Remove`, `Destroy`, `Send`, the `World`'s `Set`, the `Draw2D`, `Draw3D` and GUI functions, lists' methods, and methods and functions, with a block after the ones that take one, and with `!` after or `try` before the ones that can fail.
+
+### Evaluation order
+
+- A compound assignment reads its target before its value is worked out, as in C#: `counter.n += Next(counter)` adds to what `counter.n` was. An index in the target (`items[Next(counter)] += 5`) runs once, before the value.
+- A method reads the value it's called on as it runs, once its arguments are worked out, as C# reads a struct variable: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out: `items[Push(items, 7) - 1]` is the element `Push` added.
+- A read-only argument is a copy made in its turn, a list's too: `Total(items, Push(items, 4))` totals the list as it was. A `mut` method given its own value's list (`bag.Absorb(bag.items)`) gets a copy as well.
+- A list's, a map's and a set's changes that give a value (`items.Remove(x)`, `seen.Add(k)`) are calls that write, and so are widgets that change what they're given (`GUILayout.Toggle(title, open)`) and C functions with a `mut` parameter.
+- A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
 
 ### Functions and blocks
 
@@ -1031,6 +1041,7 @@ Implemented, awaiting approval:
 - Cancelling a task from code, through a handle.
 - Methods and functions that take an Action being async, and `await` inside a block written after a call.
 - Local handlers of match events (see Events), which a local task awaiting a match event would need too.
+- Whether what's written before an `await` in its statement is read before the wait, as in C#: `score.value + await Bonus()` reads `score.value` once the task goes on today, unless a call that writes comes after it in the statement (see Evaluation order).
 
 ## Input
 
@@ -1841,7 +1852,7 @@ Implemented, awaiting approval:
 - On Android, a game's prebuilt libraries are shared ones (`.so`). An ELF static library has nothing that says whether it's Linux's or Android's (clang makes the same objects for both), and tide tells libraries by their contents, so an ELF one is Linux's: no folder or name says otherwise.
 - Writing `external` gets an error that points to `extern`.
 - C takes pointers without Tide having pointer arithmetic: the parameter says how a value is passed, and the call takes its address. `mut T` is `T *`, `in T` is `const T *`, a `List<T>` is a pointer to its elements (`T *` with `mut`), with the count passed separately, and a `string` is a zero-terminated UTF-8 copy. Each is only valid during the call. A `const char *` that C returns is copied into text.
-- C calls keep the order of evaluation: calls to C, and to functions that call it, run left to right like the rest of Tide, whatever order C would pick.
+- C calls keep the order of evaluation: calls to C, and to functions that call it, run left to right like the rest of Tide, whatever order C would pick. One with a `mut` parameter is a call that writes (see Evaluation order).
 - A game's C draws by taking the frame's draw list: `extern void DrawUI(DrawList list);`, called as `DrawUI(Draw2D.list)` from a view or a function it calls. C draws into it with `tide/draw.h`, as much as it likes, in order with the view's own Draw calls. So libraries that hand over triangles each frame (Dear ImGui, Nuklear, Spine) need no way to return lists to Tide.
 
 ```csharp
