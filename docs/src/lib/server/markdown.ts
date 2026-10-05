@@ -157,7 +157,7 @@ block('details', (tokens, idx) => {
 });
 
 // The code is included from the same .tide file CMake builds for the frame.
-// Frames start only when requested, so reading a page starts no games.
+// A frame starts once it's in view, or when its button says (lib/examples.ts).
 block('tide-example', (tokens, idx) => {
     const token = tokens[idx];
     if (token.nesting !== 1) {
@@ -175,6 +175,42 @@ block('tide-example', (tokens, idx) => {
 <noscript><p>Enable JavaScript to run it here, or open the example separately.</p></noscript>
 </div><div class="example-source">\n`;
 });
+
+// Two frames of one example side by side, each a machine of its own, with the
+// source under them. `tide-players` starts both as they are, for the reader
+// to bring together (a lobby's Host and Join); `tide-match` puts them in one
+// match itself: the first hosts it in a room and the second joins that room,
+// as `tide run --host` and `tide run --join <code>` would. `lag=<ms>` after a
+// match's file name is the latency its slider starts at, each way. One with
+// nothing inside shows no source: for a page that has it beside another frame.
+function players(name: string, match: boolean) {
+    block(name, (tokens, idx) => {
+        const token = tokens[idx];
+        if (token.nesting !== 1) return tokens[idx - 1].type === `container_${name}_open` ? '</section>\n' : '</div></section>\n';
+        const bare = tokens[idx + 1].type === `container_${name}_close`;
+        const parts = /^\S+\s+([a-z][a-z0-9-]*)\s+(?:lag=(\d+)\s+)?(.+)$/.exec(token.info.trim());
+        if (!parts || (parts[2] && !match)) throw new Error(`Use ::: ${name} <file-name> ${match ? '[lag=<ms>] ' : ''}<title>`);
+        const [, id, lag, title] = parts;
+        const src = `/examples/${id}/`;
+        const delay = Math.min(Number(lag ?? 0), 250);
+        const slider = match
+            ? `<label class="example-lag">Latency, each way <input type="range" min="0" max="250" step="25" value="${delay}" data-example-lag><output>${delay} ms</output></label>`
+            : '';
+        const names = match ? ['hosts the match', 'joins it'] : ['', ''];
+        const frames = names
+            .map((role, i) => `<div class="example-player"><p class="example-player-name"><strong>Player ${i + 1}</strong>${role ? ` <span>${role}</span>` : ''}</p><div class="example-viewport"></div></div>`)
+            .join('');
+        return `<section class="tide-example tide-pair" data-example-src="${src}"${match ? ' data-example-match' : ''} aria-label="${escape(title)}">
+<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example, two players</span></div>
+<div class="example-controls"><button type="button" data-example-run>Run both</button><button type="button" data-example-stop disabled>Stop</button>${slider}<a href="${src}" target="_blank" rel="noreferrer">Open separately</a></div>
+<div class="example-players">${frames}</div>
+<p class="example-status" role="status">Run the example to start both players here.</p>
+<noscript><p>Enable JavaScript to run it here, or open the example separately.</p></noscript>
+${bare ? '' : '<div class="example-source">'}\n`;
+    });
+}
+players('tide-players', false);
+players('tide-match', true);
 
 // Tabs over the fences inside, each named by its fence's `[label]`. Radio
 // buttons pick the tab, so they work before the page's script loads.

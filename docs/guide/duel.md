@@ -14,7 +14,9 @@ Win five rounds to win the match. After each round, its loser picks one of three
 
 Shots drop as they fly, so aim over a target that's far away: the dots in front of your fighter show where your next shot goes. Block briefly to send incoming shots back. Your shield takes two seconds to come back. Pick an upgrade by clicking or tapping its card, by pressing `1`, `2` or `3`, or with the arrows or a gamepad's d-pad and Enter. Every menu works that way: the arrows, Tab or the d-pad move between its buttons, and Enter, Space or the gamepad's south button press one.
 
-**Menu**, in the corner, ends practice, and so does Escape.
+**Menu**, in the top right corner, ends practice, and so does Escape.
+
+The bottom right corner shows the frame rate, and your ping in a friend's match. Click or tap it, or press `F8`, and it lists the rest of what the engine is doing: the tick, the entities, what goes over the network, and the systems that take longest. That's the game's [`stats`](../tools/cli.md#stats) setting.
 
 | Action | Mouse and keyboard | Gamepad |
 |---|---|---|
@@ -69,3 +71,4 @@ The game is `examples/duel` in the [repo](https://github.com/BlenMiner/tide-engi
 - `effects.tide` has the sparks, the trails, the rings and the camera's shake, all [local state](../game/local-state.md), and the backdrop, a [frag](../game/shaders.md) over the whole screen. It also has the light: the arena is drawn into a [target that's always the window's size](../game/views.md#targets-and-post-processing), its bright parts are blurred through smaller ones, and a frag puts the arena and its glow in the window, before the score and the menus are drawn there. The pieces that fall land on the platforms, which a view of their own queries, so the rest goes on with no match.
 - `hud.tide` and `play.tide` are the score and the menus. Their buttons and cards are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, the keyboard and a gamepad all work them with no code of the game's. The field for a room's code is the GUI's own, in a [theme](../game/gui.md#themes) that matches the menu.
 - `shapes.tide` has the few shapes the game draws again and again: panels whose fill goes from one color to another under an outline, glows and shadows. Everything but the backdrop is the engine's [smooth shapes](../game/views.md#smooth-shapes), round rects, ellipses, thick lines and arcs, drawn in the order they're written with the text among them.
+- The [draw settings](../game/views.md#draw-settings) do the rest. What's light (sparks, trails, rings, a shot's glow, the flash of a knockout) is drawn inside `Draw.Blend(Blend.Add)`, so it adds to what's under it and is brighter where it crosses. A menu, a banner or a card that fades in is drawn as it is when it's there, inside `Draw.Tint`. An upgrade card is drawn around (0, 0), and `Draw2D.Transform` puts it in its place, turning as it lands; its picture is drawn in a box 100 across that another transform makes the size it is.

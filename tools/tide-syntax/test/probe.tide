@@ -119,6 +119,11 @@ view Show(Devices devices)
     Random dice = Random(7);
     var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
+    Draw.Blend(Blend.Add),
+    Draw2D.Clip(Rect(0, 0, 4, 4))
+    {
+        Draw.SetTint(Color.red);
+    }
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
     GUITheme look = default;

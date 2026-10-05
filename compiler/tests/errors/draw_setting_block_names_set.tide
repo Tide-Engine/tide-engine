@@ -1,0 +1,7 @@
+// expect: to set it for the draws that follow, write 'Draw.SetTint(...);'
+scene Main { }
+
+view Show()
+{
+    Draw.Tint(Color.red);
+}

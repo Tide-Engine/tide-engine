@@ -120,7 +120,7 @@ settings
 | `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |
 | `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../tools/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
 | `version` | The version people see, like `1.2.0`: one to three numbers between dots. Each build's version code, which app stores order updates by, goes up by itself | `1.0` |
-| `stats` | Shows the stats in the window's corner, as `tide run --stats` does (see [The tide command](../tools/cli.md#stats)). It's in what `tide build` makes too, so take it out before players get the game | `false` |
+| `stats` | Shows the stats in the window's bottom right corner: the frame rate, and at a click on it or F8, the rest (see [The tide command](../tools/cli.md#stats)). It's in what `tide build` makes too, so take it out before players get the game, unless the frame rate is theirs to see | `false` |
 | `debugViews` | The engine's [debug views](../tools/debug-views.md) are on: F7 shows the profiler, which says where a frame's time and a tick's go. `--debug-views` turns them on too, whatever this says | `false` |
 
 - Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.

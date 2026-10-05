@@ -63,7 +63,8 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
 
 // What a program leaves the next one: this, then its layout (packed), its
 // match's world as the server has it and its local state, as bytes
-// (tide_world_pack, tide_local_pack), and its GUI, each 8-aligned.
+// (tide_world_pack, tide_local_pack), and its GUI, each 8-aligned. What the
+// host keeps of its own goes too: whether the stats' drawer is open.
 #define SAVED_MAGIC 0x53525550u // "PURS"
 
 typedef struct saved {
@@ -75,6 +76,8 @@ typedef struct saved {
     uint32_t world, world_size; // 0 bytes outside a match
     uint32_t local, local_size;
     uint32_t gui, gui_size;
+    uint32_t stats_open; // The stats' drawer is, as the player left it
+    uint32_t pad;
 } saved;
 
 static uint32_t align8(const uint32_t n)
@@ -108,6 +111,7 @@ __attribute__((export_name("tide_reload_save"))) uint32_t tide_reload_save(void)
     h.local_size = game->local_pack(tide_run_local, NULL, 0);
     h.gui = align8(h.local + h.local_size);
     h.gui_size = sizeof tide_run_gui;
+    h.stats_open = tide_run_drawer.open;
     h.size = h.gui + h.gui_size;
     uint8_t *block = malloc(h.size);
     if (!block) {
@@ -182,6 +186,7 @@ static bool resume(void)
         memcpy(&tide_run_gui, block + h.gui, sizeof tide_run_gui);
         tide_run_gui.list = list;
     }
+    tide_run_drawer.open = h.stats_open != 0;
     if (h.hash == game->game->hash) printf("tide: reloaded\n");
     else say_carried(old, game->layout, local_done.entities_dropped + match_done.entities_dropped,
                      local_done.tasks_dropped + match_done.tasks_dropped);

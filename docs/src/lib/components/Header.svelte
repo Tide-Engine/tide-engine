@@ -1,16 +1,14 @@
 <script lang="ts">
     import { page } from '$app/state';
-    import { nav, repo } from '#lib/nav.ts';
+    import { docs, repo, slugs } from '#lib/nav.ts';
     import { theme, toggleTheme } from '#lib/theme.svelte.ts';
 
     let { onsearch }: { onsearch: () => void } = $props();
 
     let menu = $state(false);
 
-    // A link lights up on its page and those under it, but "Demo" is a page
-    // of the guide: only it lights up there.
-    const under = (path: string, match: string) => path === match || path.startsWith(match.endsWith('/') ? match : `${match}/`);
-    const current = $derived(nav.find((item) => item.match === page.url.pathname) ?? nav.find((item) => under(page.url.pathname, item.match)));
+    // The link lights up on every page of the docs.
+    const inDocs = $derived(slugs.has(page.url.pathname.slice(1)));
 
     $effect(() => {
         page.url.pathname;
@@ -20,15 +18,13 @@
 
 <header class="header" class:open={menu}>
     <div class="bar">
-        <a class="logo" href="/" aria-label="Tide, home">
+        <a class="logo" href="/" aria-label="Tide Engine, home">
             <img src="/favicon.svg" alt="" width="28" height="28" />
-            <span>Tide</span>
+            <span>Tide Engine</span>
         </a>
 
         <nav class="links" aria-label="Main">
-            {#each nav as item (item.link)}
-                <a href={item.link} class:active={current === item} aria-current={current === item ? 'page' : undefined}>{item.text}</a>
-            {/each}
+            <a href={docs.link} class:active={inDocs} aria-current={inDocs ? 'true' : undefined}>{docs.text}</a>
         </nav>
 
         <button class="search" type="button" onclick={onsearch} aria-label="Search">
@@ -45,7 +41,7 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.1A8.5 8.5 0 0 1 9.9 3.5a8.5 8.5 0 1 0 10.6 10.6Z" /></svg>
                 {/if}
             </button>
-            <a class="icon" href={repo} target="_blank" rel="noreferrer" aria-label="Tide on GitHub" title="GitHub">
+            <a class="icon" href={repo} target="_blank" rel="noreferrer" aria-label="Tide Engine on GitHub" title="GitHub">
                 <svg viewBox="0 0 24 24" aria-hidden="true" class="filled"
                     ><path
                         d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2 0 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.4 1.2a11.5 11.5 0 0 1 6 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.1.9 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"
@@ -63,9 +59,7 @@
 
     {#if menu}
         <nav id="mobile-nav" class="mobile" aria-label="Main">
-            {#each nav as item (item.link)}
-                <a href={item.link} class:active={current === item}>{item.text}</a>
-            {/each}
+            <a href={docs.link} class:active={inDocs}>{docs.text}</a>
             <div class="row">
                 <button type="button" onclick={toggleTheme}>{theme.dark ? 'Light theme' : 'Dark theme'}</button>
                 <a href={repo} target="_blank" rel="noreferrer">GitHub</a>

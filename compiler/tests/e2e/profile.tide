@@ -23,7 +23,7 @@ system Move(mut Body body, Time time)
 // Once a frame.
 view Backdrop(Time time)
 {
-    Draw2D.Camera(float2(time.tick, 0), 10);
+    Draw2D.SetCamera(float2(time.tick, 0), 10);
 }
 
 // Once for each body.

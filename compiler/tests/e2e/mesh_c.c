@@ -18,10 +18,10 @@ void DrawFan(tide_draw_list *list, const int blades, const tide_color color)
     const tide_texture texture = {pixels, 2, 1, 1};
     for (int i = 0; i + 1 < corners; i++) {
         const uint32_t triangle[3] = {0, (uint32_t)(1 + i), (uint32_t)(2 + i)};
-        tide_draw_clip(list, (tide_rect){(float)i, 0.0f, 1.0f, 1.0f});
+        tide_draw_set_clip(list, (tide_rect){(float)i, 0.0f, 1.0f, 1.0f});
         tide_draw_triangles(list, base, triangle, 3, &texture, TIDE_FILTER_POINT);
     }
-    tide_draw_no_clip(list);
+    tide_draw_unset_clip(list);
 }
 
 int commands_so_far(tide_draw_list *list)

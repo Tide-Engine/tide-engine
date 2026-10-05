@@ -3759,13 +3759,16 @@ static bool shader_takes_texture(const decl *code)
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    decl *frag = e->args.count == 3 ? named_shader(c, e->args.items[2]) : NULL;
+    // Draw.Blit(source, destination[, blend], frag)
+    const int last = e->args.count - 1;
+    decl *frag = e->args.count == 3 || e->args.count == 4 ? named_shader(c, e->args.items[last]) : NULL;
     for (int i = 0; i < e->args.count; i++) {
-        if (i != 2 || !frag) check_expr(c, e->args.items[i]);
+        if (i != last || !frag) check_expr(c, e->args.items[i]);
     }
     if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-    if (e->args.count != 3) {
+    if (e->args.count != 3 && e->args.count != 4) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
+        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'");
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
@@ -3785,18 +3788,26 @@ static type check_blit(checker *c, expr *e)
         diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
         ok = false;
     }
+    if (e->args.count == 4) {
+        const type blend = e->args.items[2]->type;
+        if (blend.kind != TY_ERROR && !(blend.kind == TY_ENUM && blend.decl == c->prog->blend)) {
+            diag_error(e->args.items[2]->at, "Blit's third of four is how it goes over its destination, a Blend like Blend.Add, "
+                       "not %s", type_name(blend));
+            ok = false;
+        }
+    }
     if (!frag || !frag->is_frag) {
-        diag_error(e->args.items[2]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
+        diag_error(e->args.items[last]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
         return T_ERR;
     }
     e->frag = frag;
     if (!frag->params.count || frag->params.items[0].type.kind != TY_STRUCT
         || frag->params.items[0].type.decl != c->prog->vertex) {
-        diag_error(e->args.items[2]->at, "Blit's frag runs on Vertex, its full-destination quad");
+        diag_error(e->args.items[last]->at, "Blit's frag runs on Vertex, its full-destination quad");
         ok = false;
     }
     if (!shader_takes_texture(frag)) {
-        diag_error(e->args.items[2]->at, "Blit's frag takes its source as a read-only Texture parameter");
+        diag_error(e->args.items[last]->at, "Blit's frag takes its source as a read-only Texture parameter");
         ok = false;
     }
     if (c->method || c->in_input || !in_view(c)) {
@@ -3804,14 +3815,16 @@ static type check_blit(checker *c, expr *e)
         ok = false;
     } else if (ok) {
         const int errors = diag_error_count();
-        check_shader_binding(c, e, e->args.items[2], frag);
+        check_shader_binding(c, e, e->args.items[last], frag);
         ok = diag_error_count() == errors;
     }
     if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
+    if (e->args.count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
     vec_push(e->arg_want, source);
     vec_push(e->arg_want, e->args.items[1]->type);
+    if (e->args.count == 4) vec_push(e->arg_want, e->args.items[2]->type);
     const mesh_draw draw = {e, c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
@@ -4252,20 +4265,67 @@ static type check_world_call(checker *c, expr *e, param *world)
 }
 
 // Target receivers share the two drawing APIs: the argument's dimension picks
-// an overloaded camera or conversion, and the other methods belong to one API.
+// an overloaded camera, transform or conversion, and the other methods belong
+// to one API.
 static str target_draw_owner(const expr *e)
 {
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
-    if (e->args.count && (str_eq_c(e->name, "Camera") || str_eq_c(e->name, "WorldToScreen")
-                         || str_eq_c(e->name, "ScreenToWorld"))) {
+    const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
+    const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
+    if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
         const type_kind kind = e->args.items[0]->type.kind;
-        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (str_eq_c(e->name, "Camera") && e->args.count == 3);
-        if (str_eq_c(e->name, "Camera") && e->args.count == 2
-            && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
+        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (camera && e->args.count == 3);
+        if (camera && e->args.count == 2 && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
     }
     return str_from(three ? "Draw3D" : "Draw2D");
+}
+
+// What a draw call is called on, for messages: Draw2D, or a target's name.
+static const char *draw_receiver(const expr *e)
+{
+    return e->object && e->object->kind == E_NAME ? str_to_cstr(e->object->name) : "target";
+}
+
+// The spellings from before settings had two forms: Draw2D.Clip() and
+// Draw2D.NoClip() put the clip back. Reports them, with what they are now.
+static bool old_setting(const expr *e)
+{
+    if (!str_eq_c(e->name, "NoClip") && !(str_eq_c(e->name, "Clip") && e->args.count == 0 && !e->block)) return false;
+    const char *on = draw_receiver(e);
+    diag_error(e->at, "%s." STR_FMT "() is '%s.SetClip()' now", on, STR_ARG(e->name), on);
+    diag_note("a setting's Set form sets it for the draws that follow, and with no arguments puts it back as each "
+              "frame starts; around some draws only, '%s.Clip(rect) { ... }'", on);
+    suggest_replacement(e->name, "SetClip");
+    return true;
+}
+
+// A draw setting's call is the form its name says: `Name(...) { ... }` around
+// a block, or `SetName(...);` for the draws that follow. Reports the other.
+static bool check_setting(const checker *c, const expr *e)
+{
+    if (!(e->gui & (DRAW_BLOCK | DRAW_SET))) return true;
+    const char *on = draw_receiver(e);
+    if (e->gui & DRAW_BLOCK) {
+        if (e->block && c->statement_call == e) return true;
+        char set[64];
+        snprintf(set, sizeof set, "Set" STR_FMT, STR_ARG(e->name));
+        const char *args = e->args.count ? "..." : "";
+        diag_error(e->at, "%s." STR_FMT " sets it around a block: '%s." STR_FMT "(%s) { ... }'", on, STR_ARG(e->name), on,
+                   STR_ARG(e->name), args);
+        diag_note("what it found is put back when the block ends; to set it for the draws that follow, write '%s.%s(%s);'",
+                  on, set, args);
+        suggest_replacement(e->name, str_to_cstr(str_from(set)));
+        return false;
+    }
+    if (!e->block) return true;
+    const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
+    diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
+    diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
+              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
+    suggest_replacement(e->name, around);
+    return false;
 }
 
 // RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
@@ -4354,11 +4414,8 @@ static type check_method(checker *c, expr *e)
         }
         if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
-        if (str_eq_c(owner, "Draw")) {
-            diag_error(e->object->at, "unknown name 'Draw'");
-            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
-            return T_ERR;
-        }
+        // Draw has what Draw2D and Draw3D share: the settings that are the same wherever a draw goes
+        const bool draws = builtin_draw_owner(owner) || str_eq_c(owner, "Draw");
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
@@ -4377,10 +4434,12 @@ static type check_method(checker *c, expr *e)
                       "the mouse, like 'if (!menu.paused) Cursor.Lock();'");
             return T_ERR;
         }
-        if ((gui || builtin_draw_owner(owner)) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
+        if (builtin_draw_owner(owner) && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
+        if (draws && !check_setting(c, e)) return T_ERR;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
         if (io || flush) {
@@ -4396,9 +4455,9 @@ static type check_method(checker *c, expr *e)
             e->path_operation = true;
             c->prog->uses_text = true;
         }
-        if (builtin_draw_owner(owner)) {
+        if (draws) { // Draw's own are neither's: they go to no destination
             e->call = CALL_DRAW;
-            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : builtin_draw_owner(owner) ? 2 : 0;
         }
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
@@ -4504,9 +4563,14 @@ static type check_method(checker *c, expr *e)
         }
         const str owner = target_draw_owner(e);
         if (!check_frame_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+        if (old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
+        if (!check_setting(c, e)) return T_ERR;
         check_default_args(c, e);
+        // With no arguments, a target's cameras and transforms both go back: nothing says which
+        if (e->args.count == 0 && str_eq_c(e->name, "SetCamera")) e->c_callee = "tide_draw_unset_cameras";
+        if (e->args.count == 0 && str_eq_c(e->name, "SetTransform")) e->c_callee = "tide_draw_unset_transforms";
         e->call = CALL_DRAW;
         e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
         return result;
@@ -5259,8 +5323,8 @@ static type check_member(checker *c, expr *e)
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
-            diag_error(e->object->at, "unknown name 'Draw'");
-            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
+            diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -8240,16 +8304,21 @@ static void check_stmt(checker *c, stmt *s)
             // A Sort's comparison: checked with the call, as code of its own (check_sort)
         } else if (e->block) {
             // The block after a call: the caller's own code, run where the function runs it.
-            const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action);
+            const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action)
+                            || (call == CALL_DRAW && (e->gui & DRAW_BLOCK));
             if (!takes && e->type.kind != TY_ERROR) {
+                // In a list of calls before a block, it's the call that's wrong: its "block" is the next one
+                const loc at = e->stacked ? e->at : e->block->at;
                 if (e->kind == E_METHOD && e->object->kind == E_NAME) {
-                    diag_error(e->block->at, "'" STR_FMT "." STR_FMT "' doesn't take a block", STR_ARG(e->object->name),
-                               STR_ARG(e->name));
+                    diag_error(at, "'" STR_FMT "." STR_FMT "' doesn't take a block", STR_ARG(e->object->name), STR_ARG(e->name));
                 } else {
-                    diag_error(e->block->at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
+                    diag_error(at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
                 }
-                // A setting has two forms: Set for what follows, and the plain name around a block
-                if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                if (e->stacked) {
+                    diag_note("calls listed with commas each take what follows as their block: only calls that take one "
+                              "go in the list");
+                } else if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                    // A setting has two forms: Set for what follows, and the plain name around a block
                     diag_note("GUI.SetTheme sets the theme for the widgets that follow; for the widgets in a block alone, "
                               "write 'GUI.Theme(...) { ... }'");
                 } else {
@@ -11040,6 +11109,18 @@ static void add_builtins(program *prog)
         vec_push(filter->members, m);
     }
     prog->filter = filter;
+    // enum Blend { Alpha, Add, Multiply, Replace }: how what's drawn goes over
+    // what's there, with tide/draw.h's tide_blend's values.
+    static const char *const blends[] = {"Alpha", "Add", "Multiply", "Replace"};
+    decl *blend = NEW(decl);
+    blend->kind = DECL_ENUM;
+    blend->name = str_from("Blend");
+    blend->builtin = true;
+    for (int i = 0; i < (int)(sizeof blends / sizeof blends[0]); i++) {
+        const enum_member m = {str_from(blends[i]), {0, 0, 0}, NULL, i};
+        vec_push(blend->members, m);
+    }
+    prog->blend = blend;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -11103,6 +11184,7 @@ static void add_builtins(program *prog)
     vec_push(decls, theme);
     vec_push(decls, control);
     vec_push(decls, filter);
+    vec_push(decls, blend);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -12948,7 +13030,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->font);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);

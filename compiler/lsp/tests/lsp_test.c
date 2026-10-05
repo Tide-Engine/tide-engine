@@ -684,16 +684,17 @@ TIDE_TEST(lsp_meshes)
     "scene Main { }\n"                                                             \
     "extern void DrawUI(DrawList list);\n"                                         \
     "local singleton Art\n{\n    Grid2<Color> pixels = Grid2(4, 4);\n    List<Vertex> corners;\n}\n"
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Screen();\n    Draw2D.Clip(Rect(0, 0, 4, 4));\n"
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetScreen();\n    Draw2D.SetClip(Rect(0, 0, 4, 4));\n"
                              "    Draw2D.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.Point);\n"
                              "    Draw2D.Mesh([Vertex { position = float2(1, 2) }], [0, 0, 0]);\n"
-                             "    Draw3D.Camera(float3(0, 0, -5), quaternion.identity, 60);\n"
+                             "    Draw3D.SetCamera(float3(0, 0, -5), quaternion.identity, 60);\n"
                              "    Draw3D.Mesh([Vertex3 { position = float3(1, 2, 3) }], [0, 0, 0], float4x4.identity);\n"
-                             "    Draw2D.Clip();\n    DrawUI(Draw2D.list);\n}\n");
+                             "    Draw2D.SetClip();\n    DrawUI(Draw2D.list);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     const char *draw = complete(MESH_TYPES "view V(Art art)\n{\n    Draw2D.$\n}\n");
     TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Screen") && offers(draw, "list"));
+    TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetScreen") && offers(draw, "SetCamera") && offers(draw, "Transform"));
     TIDE_CHECK(has(draw, "Mesh(${1:vertices}, ${2:indices})"));
     TIDE_CHECK(has(draw, "Draw2D.list: DrawList"));
     const char *filter = complete(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.$);\n}\n");
@@ -712,10 +713,10 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear)"));
     TIDE_CHECK(has(mesh, "Triangles: three of `indices` each"));
     // Each version's doc, 2D and 3D
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.Cam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
     const char *camera = request("textDocument/hover");
-    TIDE_CHECK(has(camera, "Draw3D.Camera(float3 position, quaternion rotation, float fieldOfView)"));
-    TIDE_CHECK(has(camera, "Sets the 3D camera for the 3D meshes after it") && !has(camera, "orthographic size"));
+    TIDE_CHECK(has(camera, "Draw3D.SetCamera(float3 position, quaternion rotation, float fieldOfView)"));
+    TIDE_CHECK(has(camera, "The 3D camera the 3D meshes go through") && !has(camera, "orthographic size"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    DrawUI(Draw2D.li$st);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.list: DrawList"));
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
@@ -736,9 +737,73 @@ TIDE_TEST(lsp_meshes)
 
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2]);\n}\n"),
                    "void tide_draw_mesh_lists("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Cl$ip();\n}\n"), "void tide_draw_no_clip("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Scr$een();\n}\n"), "void tide_draw_screen("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetCl$ip();\n}\n"), "void tide_draw_unset_clip("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetScr$een();\n}\n"), "void tide_draw_set_screen("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Cl$ip(Rect(0, 0, 4, 4))\n    {\n    }\n}\n"),
+                   "uint32_t tide_draw_push_clip("));
 #undef MESH_TYPES
+}
+
+// The draw settings: a form around a block and a Set form each, both in
+// completion, with what they are on hover, and each's mistake fixed by a rename.
+TIDE_TEST(lsp_draw_settings)
+{
+    start();
+    open_document("scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Tint(Color(1, 1, 1, 0.5)),\n"
+                  "    Draw2D.Transform(float2(1, 2), 0.5, 2)\n    {\n        Draw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n"
+                  "    }\n    Draw.SetBlend(Blend.Multiply);\n    Draw.SetBlend();\n    Draw3D.SetTransform(float4x4.identity);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // Both forms, the block's with its braces
+    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(shared, "Blend") && offers(shared, "SetBlend") && offers(shared, "Tint") && offers(shared, "SetTint"));
+    TIDE_CHECK(offers(shared, "Blit") && offers(shared, "window"));
+    TIDE_CHECK(has(shared, "Blend(${1:mode})\\n{\\n\\t$0\\n}") && has(shared, "\"SetBlend(${1:mode})\""));
+    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetBlend(Blend.$);\n}\n");
+    TIDE_CHECK(offers(modes, "Alpha") && offers(modes, "Add") && offers(modes, "Multiply") && offers(modes, "Replace"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.Ti$nt(Color.red)\n    {\n    }\n}\n");
+    const char *tint = request("textDocument/hover");
+    TIDE_CHECK(has(tint, "Draw.Tint(Color color, Block content)") && has(tint, "For the draws in its block"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetTi$nt(Color.red);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw.SetTint(Color color)") && has(set, "Draw.SetTint()") && has(set, "For the draws after it"));
+
+    // The block's form with no block is its Set form, and the other way round: each a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.Camera(float2(0, 0), 5);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D.Camera sets it around a block") && has(last_sent(), "Draw2D.SetCamera(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCamera'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetBlend(Blend.Add)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetBlend sets it for the draws that follow, and takes no block"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Blend'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // What put the clip back before there were two forms
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.Clip();\n    Draw2D.NoClip();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D.Clip() is 'Draw2D.SetClip()' now") && has(last_sent(), "Draw2D.NoClip() is 'Draw2D.SetClip()' now"));
+    TIDE_CHECK(has(actions_at(3), "Change to 'SetClip'") && has(actions_at(4), "Change to 'SetClip'"));
+}
+
+// Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
+TIDE_TEST(lsp_format_stacked_calls)
+{
+    start();
+    static const char messy[] = "scene Main { }\nview V()\n{\nDraw.Blend(Blend.Add), Draw.Tint(Color.red),\n"
+                                "        Draw2D.Clip(Rect(0, 0, 4, 4)) {\nDraw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n}\n"
+                                "    GUILayout.Area(Anchor.MiddleCenter),\nGUI.Disabled(true)\n{\nGUILayout.Label(\"a\");\n}\n}\n";
+    static const char expected[] = "scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Tint(Color.red),\n"
+                                   "    Draw2D.Clip(Rect(0, 0, 4, 4))\n    {\n"
+                                   "        Draw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n    }\n"
+                                   "    GUILayout.Area(Anchor.MiddleCenter),\n    GUI.Disabled(true)\n    {\n"
+                                   "        GUILayout.Label(\"a\");\n    }\n}\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+    // Other commas stay where they are: a literal's fields, and arguments over several lines
+    static const char others[] = "scene Main { }\ncomponent Body { float2 position; float radius; }\nevent(Spawned) Setup(with Main)\n{\n"
+                                 "    Spawn(Body { position = float2(1, 2), radius = Math.Abs(1) });\n"
+                                 "    var far = Math.Max(Math.Abs(1),\n        2);\n}\n";
+    TIDE_CHECK(has(format_reply(others), "\"result\":[]"));
 }
 
 // The shapes with smooth edges: their Draw2D functions, the built-in Shape and Color.none
@@ -1969,7 +2034,7 @@ TIDE_TEST(lsp_settings)
     open_document("settings\n{\n    sta$ts = true;\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "bool stats"));
-    TIDE_CHECK(has(hover, "as `tide run --stats` does"));
+    TIDE_CHECK(has(hover, "or F8, opens it to the rest") && has(hover, "`tide run --stats` shows them open"));
     open_document("settings\n{\n    vers$ion = \"1.2.0\";\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "string version"));

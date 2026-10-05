@@ -1,0 +1,8 @@
+// expect: calls listed with commas share the block after the last one: expected '{'
+scene Main { }
+
+view Show()
+{
+    Draw.Blend(Blend.Add),
+    Draw.Tint(Color.red);
+}

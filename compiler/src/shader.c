@@ -2411,8 +2411,8 @@ static void put_structs(emit *em, sb *o)
 static void put_uniforms(const shader *sh, const lang l, sb *o)
 {
     const bool wgsl = l == WGSL;
-    sb_put(o, wgsl ? "struct tide_uniforms {\n    tide_camera: mat4x4f,\n    tide_screen: vec4f,\n"
-                   : "layout(std140) uniform uniforms {\n    mat4 tide_camera;\n    vec4 tide_screen;\n");
+    sb_put(o, wgsl ? "struct tide_uniforms {\n    tide_camera: mat4x4f,\n    tide_screen: vec4f,\n    tide_tint: vec4f,\n"
+                   : "layout(std140) uniform uniforms {\n    mat4 tide_camera;\n    vec4 tide_screen;\n    vec4 tide_tint;\n");
     for (int i = 0; i < packs(sh->uniform_floats); i++) sb_printf(o, wgsl ? "    tide_u%d: vec4f,\n" : "    vec4 tide_u%d;\n", i);
     for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, wgsl ? "    tide_v%d: vec4i,\n" : "    ivec4 tide_v%d;\n", i);
     sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
@@ -2527,7 +2527,10 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
 }
 
 // The fragment stage's own: the vertex as the pixel sees it, blended, then
-// the frag, or with none, the vertex's color times the texture.
+// the frag, or with none, the vertex's color times the texture. What it
+// leaves is the draw's to finish: times its tint (Draw.Tint), and for a draw
+// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
+// towards white as it clears, so what's clear changes nothing.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
     const shader *sh = em->sh;
@@ -2558,6 +2561,15 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
         } else if (sh->textured) {
             sb_printf(o, "    tide_color = tide_color * textureLod(pixels%d, %stide_s%d, 0.0);\n", texture, in, field_index(v, uv));
         }
+    }
+    if (wgsl) {
+        sb_put(o, "    tide_color = tide_color * tide_block.tide_tint;\n"
+                  "    if (tide_block.tide_screen.w > 0.0) {\n"
+                  "        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);\n"
+                  "    }\n");
+    } else {
+        sb_put(o, "    tide_color = tide_color * tide_tint;\n"
+                  "    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);\n");
     }
     sb_printf(o, "    %s tide_color;\n", result);
 }
@@ -2878,10 +2890,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
                   "it reads of the entity's components another: read fewer, or keep what every entity shares in a singleton");
         return NULL;
     }
-    if (uniform_bytes > 4000) {
+    if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES
         sb from = {0};
         list_bound(sh, &from, false);
-        diag_error(call->at, "this draw reads %d bytes of singletons (%s), and a draw's hold 4000", uniform_bytes,
+        diag_error(call->at, "this draw reads %d bytes of singletons (%s), and a draw's hold 3984", uniform_bytes,
                    from.data ? from.data : "");
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;

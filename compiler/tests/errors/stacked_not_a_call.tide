@@ -1,0 +1,11 @@
+// expect: only calls that take a block are listed with commas, before the block they share
+scene Main { }
+
+view Show()
+{
+    mut var faded = 0;
+    Draw.Blend(Blend.Add),
+    faded = 1
+    {
+    }
+}
