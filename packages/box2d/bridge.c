@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "tide/jobs.h"
+#include "tide/list.h"
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/page.h"
@@ -90,6 +91,7 @@ typedef struct world {
     uint64_t chain; // The stamp, and what the running tick did to the world since
     uint64_t used;  // When a tick last had it
     int bases[B2_SNAPSHOT_SECTIONS]; // Where each section of its image goes: part of its state, as the image says them
+    int image_size;                  // Its last image's, which is about the next one's: how much room to ask for
     uint8_t *before; // Measuring: the last image, to count what changed of it
     int before_size;
 } world;
@@ -172,6 +174,7 @@ static void make(world *w, const int workers)
     w->stamp = 0;
     w->chain = 0;
     memset(w->bases, 0, sizeof w->bases);
+    w->image_size = 0;
 }
 
 static void unmake(world *w)
@@ -241,6 +244,7 @@ void b2t_restore(const uint8_t *image, const int32_t size, const int64_t stamp)
     }
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b2GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
+    w->image_size = size;
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
@@ -449,23 +453,32 @@ static int place(world *w, const int *sizes, bool *moved)
     return end;
 }
 
-// The world's state into `image`, the match's own memory, and how many bytes
-// it is: more than `count` when it didn't all fit, and then what's there is
-// no image.
-int32_t b2t_image(uint8_t *image, const int32_t count)
+// The world's state into the match's list, which is then exactly it, and how
+// many bytes that is. Box2D writes it once, into room for a little more than
+// the last one took; a second time when it's more than that, or when a section
+// has to move.
+int32_t b2t_image(tide_list_out *out)
 {
     world *placed = active;
     int sizes[B2_SNAPSHOT_SECTIONS] = {0};
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
-    int size = b2World_GetSnapshotAt(placed->id, count > 0 ? image : NULL, count, placed->bases, sizes);
+    int room = placed->image_size ? placed->image_size + placed->image_size / 16 + 4096 : 0;
+    uint8_t *image = room ? tide_list_out_room(out, (uint32_t)room) : NULL;
+    int size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
     bool moved;
     const int after = place(placed, sizes, &moved);
-    if (moved) { // A section outgrew its place, or left too much of it: once more, where they go now
-        size = after;
-        if (size <= count) size = b2World_GetSnapshotAt(placed->id, image, count, placed->bases, sizes);
+    if (moved || size > room) { // A section outgrew its place or left too much of it, or the image its room
+        if (moved) size = after;
+        if (size > room) {
+            room = size;
+            image = tide_list_out_room(out, (uint32_t)room);
+        }
+        size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
     }
+    tide_list_out_count(out, (uint32_t)size);
+    placed->image_size = size;
     if (measuring) image_ns += tide_time_now_ns() - began;
-    if (measuring && size <= count) {
+    if (measuring) {
         world *w = active;
         enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {

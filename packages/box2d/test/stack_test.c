@@ -28,8 +28,8 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x6b36b5fdd15808a9)
-#define IMAGES_HASH UINT64_C(0xfccb993ef597dfd3)
+#define SETTLED_HASH UINT64_C(0xf7a01bafd461192b)
+#define IMAGES_HASH UINT64_C(0xd1e1a842cbe98ddc)
 
 static tide_world a;
 static tide_world b;

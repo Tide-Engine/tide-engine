@@ -90,7 +90,7 @@ singleton Physics
     int bodies; // Made so far
     int shapes;
     long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
-    int size; // The image's bytes; the list keeps what room it had
+    int size; // The image's bytes
     bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
     List<byte> image; // Box2D's whole state after the last step
     List<long> gone; // Bodies whose entities were destroyed, until the next step
@@ -126,7 +126,7 @@ extern int AttachCircle(long body, in Circle circle);
 extern long StepWorld(float dt, int substeps, float2 gravity);
 
 [NativeName("b2t_image")]
-extern int WriteImage(mut List<byte> image, int count);
+extern int WriteImage(out List<byte> image);
 
 [NativeName("b2t_pull")]
 extern bool ReadBody(mut Body body, long stamp);
@@ -194,17 +194,7 @@ system Step(Time time, mut Physics physics)
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
-    physics.size = WriteImage(physics.image, physics.image.count);
-    if (physics.size > physics.image.count)
-    {
-        // It didn't fit: room for it and a quarter more, so that's seldom
-        int room = physics.size + physics.size / 4;
-        while (physics.image.count < room)
-        {
-            physics.image.Add(0);
-        }
-        physics.size = WriteImage(physics.image, physics.image.count);
-    }
+    physics.size = WriteImage(physics.image);
 }
 
 // Where the step left each body that it moved.
