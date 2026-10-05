@@ -19,6 +19,7 @@
 
 // bridge.c
 void b3t_forget(void);
+void b3t_narrow(bool on);
 void b3t_check(bool on, bool whenever);
 void b3t_images(int32_t *whole, int32_t *in_parts);
 int32_t b3t_restores(void);
@@ -390,10 +391,12 @@ TIDE_TEST(box3d_sensors_report)
     TIDE_CHECK(in_parts - parts_before > 100); // With sensors in it, an image in parts is still the image written whole
 
     // What a sensor holds is in the image: a world made from it again before every tick hears the same, at
-    // the same ticks
+    // the same ticks. And it's the same match solved 4 contacts at a time, as a CPU without AVX2 does
     static uint64_t again[SENSOR_TICKS];
     const int32_t before = b3t_restores();
+    b3t_narrow(true);
     play_sensors(&b, again, true, NULL);
+    b3t_narrow(false);
     TIDE_CHECK(b3t_restores() - before == SENSOR_TICKS - 1); // All but the first, which has no image to make it from
     for (int i = 0; i < SENSOR_TICKS; i++) {
         if (again[i] != went[i]) printf("    tick %d came out different\n", i);
