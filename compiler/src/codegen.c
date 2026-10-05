@@ -8812,8 +8812,8 @@ static bool param_blends(const param *p)
 // A view's singleton parameter it gets a copy of: one it sees blended, or the
 // match's taken as mut for its local fields, which a function it passes it to
 // takes by address, where the match's own is only to read. A `verified` one
-// with text or lists too: they're in the confirmed world's heap, which isn't
-// the one the view reads, so its copy has none (gen_plain_copy).
+// with text or lists too: they're in the confirmed world's heap, which its
+// copy says (gen_confirmed_copy).
 static bool view_copies(const param *p)
 {
     if (p->type.kind != TY_SINGLETON || p->type.decl->is_local) return false;
@@ -8828,15 +8828,86 @@ static bool joined(const decl *sys, const param *p)
     return sys->verified_join && p->verified && p->type.kind == TY_COMPONENT;
 }
 
+// The text in a list's element or a map's key or value of type `t`, at `place`
+// in a copy of it ("(*tide_e)", "tide_e->key"): the confirmed world's, so it
+// says so. Elements hold no lists, maps or grids, so text is all there is.
+static void gen_confirm_texts(sb *o, const type t, const char *place, const char *pad)
+{
+    if (t.kind == TY_STRING) {
+        sb_printf(o, "%s%s.at = tide_confirmed(%s.at);\n", pad, place, place);
+        return;
+    }
+    if (t.kind != TY_STRUCT) return;
+    path_list paths = {0};
+    sb prefix = {0};
+    sb_printf(&prefix, "%s.", place);
+    text_paths(t.decl, prefix.data, &paths);
+    for (int i = 0; i < paths.count; i++) sb_printf(o, "%s%s.at = tide_confirmed(%s.at);\n", pad, paths.items[i].path, paths.items[i].path);
+}
+
+// Whether a map's or set's entries have text in them: its keys or its values.
+static bool map_entries_have_text(const decl *map)
+{
+    return type_has_text(map->fields.items[0].type) || (!map->is_set && type_has_text(map->fields.items[1].type));
+}
+
+// Whether a `d` copied from the confirmed world takes memory of the scratch
+// area (gen_confirmed_copy): it has a list or a map whose elements hold text.
+static bool confirmed_copies(const decl *d)
+{
+    path_list paths = {0};
+    text_paths(d, "", &paths);
+    for (int i = 0; i < paths.count; i++) {
+        const heap_path *hp = &paths.items[i];
+        if (hp->list && type_has_text(list_elem(hp->list))) return true;
+        if (hp->map && map_entries_have_text(hp->map)) return true;
+    }
+    return false;
+}
+
 // The text, lists, maps, sets and grids in `value`, a `d` copied from the
-// confirmed world, read as empty: they're places in that world's heap.
-static void gen_plain_copy(sb *o, const decl *d, const char *value, const char *pad)
+// confirmed world: they're places in that world's heap, which the view reads
+// beside the heap of the world it draws, so each says it's there
+// (tide_confirmed, TIDE_IN_VERIFIED) and nothing is copied. The exception is
+// a list or map whose elements hold text: the text in them would still say
+// it's the drawn world's, so the view gets a copy of the elements in the
+// scratch area, whose text says where it is. Functions the value is passed to
+// read it by what it says, like any other.
+static void gen_confirmed_copy(sb *o, const decl *d, const char *value, const char *pad)
 {
     path_list paths = {0};
     sb prefix = {0};
     sb_printf(&prefix, "%s.", value);
     text_paths(d, prefix.data, &paths);
-    for (int i = 0; i < paths.count; i++) sb_printf(o, "%smemset(&%s, 0, sizeof %s);\n", pad, paths.items[i].path, paths.items[i].path);
+    sb inner = {0};
+    sb_printf(&inner, "%s        ", pad);
+    for (int i = 0; i < paths.count; i++) {
+        const heap_path *hp = &paths.items[i];
+        const char *p = hp->path;
+        if (hp->map) {
+            sb_printf(o, "%s%s.entries.at = tide_confirmed(%s.entries.at);\n%s%s.index.at = tide_confirmed(%s.index.at);\n", pad, p, p,
+                      pad, p, p);
+            if (!map_entries_have_text(hp->map)) continue;
+            const int k = hp->map->index;
+            sb_printf(o, "%sif (%s.entries.at) { // Its entries' text is the confirmed world's too\n", pad, p);
+            sb_printf(o, "%s    %s.entries = tide_list_copy(%s.entries, sizeof(tide_map%d_entry));\n", pad, p, p, k);
+            sb_printf(o, "%s    for (int32_t tide_k = 0; tide_k < tide_list_count(%s.entries); tide_k++) {\n", pad, p);
+            sb_printf(o, "%s        tide_map%d_entry *tide_e = tide_list_at(%s.entries, tide_k, sizeof(tide_map%d_entry));\n", pad, k, p, k);
+            gen_confirm_texts(o, hp->map->fields.items[0].type, "tide_e->key", inner.data);
+            if (!hp->map->is_set) gen_confirm_texts(o, hp->map->fields.items[1].type, "tide_e->value", inner.data);
+            sb_printf(o, "%s    }\n%s}\n", pad, pad);
+            continue;
+        }
+        sb_printf(o, "%s%s.at = tide_confirmed(%s.at);\n", pad, p, p); // Text, a list or a grid
+        if (!hp->list || !type_has_text(list_elem(hp->list))) continue;
+        const char *element = elem_ctype(list_elem(hp->list));
+        sb_printf(o, "%sif (%s.at) { // Its elements' text is the confirmed world's too\n", pad, p);
+        sb_printf(o, "%s    %s = tide_list_copy(%s, sizeof(%s));\n", pad, p, p, element);
+        sb_printf(o, "%s    for (int32_t tide_k = 0; tide_k < tide_list_count(%s); tide_k++) {\n", pad, p);
+        sb_printf(o, "%s        %s *tide_e = tide_list_at(%s, tide_k, sizeof(%s));\n", pad, element, p, element);
+        gen_confirm_texts(o, list_elem(hp->list), "(*tide_e)", inner.data);
+        sb_printf(o, "%s    }\n%s}\n", pad, pad);
+    }
 }
 
 // Whether a system reads an input through its entities' Owner: it takes the
@@ -9084,7 +9155,7 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         if (sys->is_view && p->verified) {
             sb value = {0};
             sb_printf(&value, "tide_v%d", i);
-            gen_plain_copy(o, p->type.decl, value.data, pad);
+            gen_confirmed_copy(o, p->type.decl, value.data, pad);
         }
         if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
@@ -9144,7 +9215,7 @@ static void gen_row_join(gen *g, const decl *sys, const char *pad)
         if (!joined(sys, p) || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
         sb value = {0};
         sb_printf(&value, "tide_v%d", i);
-        gen_plain_copy(o, p->type.decl, value.data, pad);
+        gen_confirmed_copy(o, p->type.decl, value.data, pad);
         if (has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
 }
@@ -10908,6 +10979,7 @@ static void gen_system_run(gen *g, const decl *sys)
     }
     const bool split = system_splits(sys);
     bool fresh_mark = false; // A view's: it borrowed text for its entities' default local fields
+    bool confirmed_mark = false; // ...and copied elements out of the confirmed world
 
     if (view) {
         // A view with `verified` parameters is handed the world the server has confirmed too
@@ -10925,6 +10997,15 @@ static void gen_system_run(gen *g, const decl *sys)
                       "    (void)tide_blend;\n    (void)tide_prev;\n    (void)tide_alpha;\n");
         }
         else sb_put(o, "    const bool tide_blend = tide_prev && tide_alpha < 1.0f;\n    (void)tide_blend;\n");
+        // What it takes `verified` with text in a list's or a map's elements gets copies of those
+        // (gen_confirmed_copy), which go once it has run for every entity
+        for (int i = 0; i < sys->params.count && !confirmed_mark; i++) {
+            const param *p = &sys->params.items[i];
+            const type_kind k = p->type.kind;
+            confirmed_mark = p->verified && (k == TY_COMPONENT || k == TY_SINGLETON) && (p->mode == PARAM_READ || p->mode == PARAM_MUT)
+                          && confirmed_copies(p->type.decl);
+        }
+        if (confirmed_mark) sb_put(o, "    const uint32_t tide_confirmed_mark = tide_scratch_mark();\n");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
             if (!view_copies(p)) continue;
@@ -10935,7 +11016,7 @@ static void gen_system_run(gen *g, const decl *sys)
             if (p->verified) {
                 sb value = {0};
                 sb_printf(&value, "tide_v%d", i);
-                gen_plain_copy(o, p->type.decl, value.data, "    ");
+                gen_confirmed_copy(o, p->type.decl, value.data, "    ");
             }
         }
         // The local fields of an entity nothing was written for: their defaults
@@ -11039,6 +11120,7 @@ static void gen_system_run(gen *g, const decl *sys)
     g->blending = NULL;
     g->row_born = NULL;
     if (fresh_mark) sb_put(o, "    tide_scratch_reset(tide_fresh_mark);\n");
+    if (confirmed_mark) sb_put(o, "    tide_scratch_reset(tide_confirmed_mark);\n");
     sb_put(o, "}\n\n");
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
     if (!view && split && system_owns(g, sys)) gen_system_own(g, sys);
@@ -11343,6 +11425,10 @@ static void gen_api(gen *g)
     if (prog->uses_heap) {
         // Views only read the match, so its heap is theirs to read, not change.
         sb_put(o, "    tide_text_use(w ? (tide_heap *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
+        // ...and the confirmed world's, for what views take `verified` (gen_confirmed_copy)
+        bool confirmed = false;
+        for (int i = 0; i < prog->views.count && !confirmed; i++) confirmed = prog->views.items[i]->takes_verified;
+        if (confirmed) sb_put(o, "    tide_text_use_verified(verified ? &verified->heap : w ? &w->heap : NULL);\n");
     } else if (world_heap(prog, true)) {
         sb_put(o, "    tide_text_use(NULL, &local->heap); // The match holds no text or lists\n");
     }

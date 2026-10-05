@@ -698,7 +698,7 @@ static bool enter_layer(tide_grid_rows *r, uint32_t i)
 void tide_grid_rows_begin(tide_grid_rows *r, const tide_grid g, const tide_grid_shape *s)
 {
     *r = (tide_grid_rows){.done = true};
-    const tide_heap *heap = tide_heap_of(g.at >> 30);
+    const tide_heap *heap = tide_heap_read(g.at >> 30);
     if (!heap || !g.at) return;
     const tide_grid_dir *d = dir_of(heap, g);
     bool open = false;
