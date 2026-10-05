@@ -184,3 +184,99 @@ TIDE_TEST(heap_snapshots_share_until_changed)
     tide_heap_free(&back);
     tide_heap_free(&snapshot.heap);
 }
+
+static bool all(const uint8_t *bytes, const uint32_t count, const uint8_t value)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        if (bytes[i] != value) return false;
+    }
+    return true;
+}
+
+// A page nothing refers to any more is the next page of its size, with
+// whatever it held: a copy made in it is still what's kept and then zeros.
+TIDE_TEST(pages_let_go_are_handed_out_again)
+{
+    tide_pages_free();
+    tide_page *first = tide_page_new(4096);
+    memset(tide_page_data(first), 0xAB, 4096);
+    tide_page_release(first, 1);
+
+    tide_page *from = tide_page_new(4096);
+    memset(tide_page_data(from), 0x11, 4096);
+    tide_page *copy = tide_page_copy(from, 1, 100);
+    TIDE_CHECK(copy == first); // No memory was asked for
+    TIDE_CHECK(copy->refs == 1 && copy->size == 4096 && copy->hashed == UINT32_MAX);
+    const uint8_t *bytes = tide_page_data(copy);
+    TIDE_CHECK(all(bytes, 100, 0x11) && all(bytes + 100, 4096 - 100, 0));
+
+    // And one made around a part that's about to be written over: that part is whatever it was
+    tide_page_release(copy, 1);
+    from->refs = 2; // As a snapshot would have it too
+    tide_page *around = tide_page_own_copy_around(from, 1, 3000, 16, 1000);
+    TIDE_CHECK(around == first && from->refs == 1);
+    bytes = tide_page_data(around);
+    // (zeros from 100 on, as the copy before left this memory, where a copy of `from` would have its bytes)
+    TIDE_CHECK(all(bytes, 16, 0x11) && all(bytes + 100, 916, 0) && all(bytes + 1016, 3000 - 1016, 0x11));
+    TIDE_CHECK(all(bytes + 3000, 4096 - 3000, 0));
+    // A part that reaches past what's kept, and past the page
+    tide_page_release(around, 1);
+    from->refs = 2;
+    around = tide_page_own_copy_around(from, 1, 3000, 2900, 5000);
+    bytes = tide_page_data(around);
+    TIDE_CHECK(around == first && all(bytes, 2900, 0x11));
+
+    // A size none is kept of is new memory, and so is the next of a size once those kept are gone
+    tide_page *odd = tide_page_take(3000);
+    odd->size = 3000;
+    TIDE_CHECK(odd != first);
+    tide_page_give(odd);
+    tide_page_release(around, 1);
+    tide_page_release(from, 1);
+    tide_pages_free();
+}
+
+// A block that's written over whole, in a heap a snapshot shares: its page is
+// the heap's own without those bytes copied, and everything else in it is as
+// it was, in both.
+TIDE_TEST(heap_blocks_written_over_keep_the_rest)
+{
+    start();
+    const uint32_t a = tide_heap_alloc(&world.heap, 100);
+    const uint32_t b = tide_heap_alloc(&world.heap, 100);
+    tide_block *block = tide_heap_write(&world.heap, a);
+    block->a = 7;
+    memset(block + 1, 0x11, 100);
+    block = tide_heap_write(&world.heap, b);
+    block->a = 9;
+    memset(block + 1, 0x22, 100);
+    TIDE_REQUIRE(a >> TIDE_HEAP_PAGE_SHIFT == b >> TIDE_HEAP_PAGE_SHIFT);
+    tide_heap snapshot = {0};
+    tide_heap_copy(&snapshot, &world.heap);
+    const tide_page *shared = world.heap.page[a >> TIDE_HEAP_PAGE_SHIFT];
+    const uint32_t moves = world.heap.moves;
+
+    block = tide_heap_write_over(&world.heap, a, 60);
+    TIDE_CHECK(world.heap.page[a >> TIDE_HEAP_PAGE_SHIFT] != shared && world.heap.moves != moves);
+    TIDE_CHECK(block == tide_heap_block(&world.heap, a) && block->a == 7); // Its header came along
+    memset(block + 1, 0x33, 60);
+    TIDE_CHECK(all((const uint8_t *)(block + 1) + 60, 40, 0x11)); // And what's after the part written over
+    const tide_block *other = tide_heap_block(&world.heap, b);
+    TIDE_CHECK(other->a == 9 && all((const uint8_t *)(other + 1), 100, 0x22));
+    TIDE_CHECK(all((const uint8_t *)(tide_heap_block(&snapshot, a) + 1), 100, 0x11));
+
+    // The same as written the plain way, to a hash
+    tide_heap plain = {0};
+    tide_heap_copy(&plain, &snapshot);
+    block = tide_heap_write(&plain, a);
+    memset(block + 1, 0x33, 60);
+    TIDE_CHECK(tide_heap_hash(1, &plain) == tide_heap_hash(1, &world.heap));
+    TIDE_CHECK(tide_heap_hash(1, &plain) != tide_heap_hash(1, &snapshot));
+
+    // A page the heap alone has is written where it is
+    const tide_page *own = world.heap.page[a >> TIDE_HEAP_PAGE_SHIFT];
+    TIDE_CHECK(tide_heap_write_over(&world.heap, a, 100) == block || world.heap.page[a >> TIDE_HEAP_PAGE_SHIFT] == own);
+    TIDE_CHECK(world.heap.page[a >> TIDE_HEAP_PAGE_SHIFT] == own);
+    tide_heap_free(&plain);
+    tide_heap_free(&snapshot);
+}

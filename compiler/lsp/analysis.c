@@ -3103,6 +3103,53 @@ static void quick_fix(jbuf *out, int *written, const char *title, const bool pre
     jb_put(out, "}]}}}");
 }
 
+// One change of a quick fix that makes several, in any of the game's files.
+typedef struct text_edit {
+    loc start;
+    loc end;
+    const char *text;
+} text_edit;
+
+typedef VEC(text_edit) text_edits;
+
+// A quick fix that changes several places at once, file by file.
+static void quick_fix_edits(jbuf *out, int *written, const char *title, const bool preferred, const diagnostic *d,
+                            const text_edits *edits)
+{
+    if ((*written)++) jb_put(out, ",");
+    jb_put(out, "{\"title\":");
+    jb_string(out, title);
+    jb_printf(out, ",\"kind\":\"quickfix\",\"isPreferred\":%s", preferred ? "true" : "false");
+    if (d) {
+        jb_put(out, ",\"diagnostics\":[");
+        write_diagnostic(out, d);
+        jb_put(out, "]");
+    }
+    jb_put(out, ",\"edit\":{\"changes\":{");
+    int files = 0;
+    for (int file = 0; file < A.file_count; file++) {
+        int in_file = 0;
+        for (int i = 0; i < edits->count; i++) {
+            const text_edit *e = &edits->items[i];
+            if (e->start.file != file) continue;
+            if (in_file++ == 0) {
+                if (files++) jb_put(out, ",");
+                jb_string(out, A.files[file].uri);
+                jb_put(out, ":[");
+            } else {
+                jb_put(out, ",");
+            }
+            jb_put(out, "{\"range\":");
+            write_edit_range(out, e->start, e->end);
+            jb_put(out, ",\"newText\":");
+            jb_string(out, e->text);
+            jb_put(out, "}");
+        }
+        if (in_file) jb_put(out, "]");
+    }
+    jb_put(out, "}}}");
+}
+
 static loc expr_start(const expr *e);
 static loc expr_end(const expr *e);
 static const unit *doc_unit(void);
@@ -3233,6 +3280,56 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
     }
 }
 
+// An `out` parameter read before it's assigned, as the checker's note says:
+// its default as the function starts, which keeps what its calls write, or
+// the parameter as `mut`, to read what the caller has, with the word gone
+// from every call. The second isn't offered where a call declares the
+// variable there (`out var x`, `out _`), which a `mut` parameter can't take.
+static void assign_first_actions(const fix *f, jbuf *out, int *written)
+{
+    const param *p = f->param;
+    const decl *m = f->method;
+    const diagnostic *d = diagnostic_at(f->at);
+    const int open = m->body && m->body->at.file == A.doc ? token_at(m->body->at) : -1;
+    if (open >= 0 && open + 1 < DOC->tok_count) {
+        const token *next = &DOC->toks[open + 1]; // The body's first statement
+        sb title = {0};
+        sb text = {0};
+        sb_printf(&title, "Assign '" STR_FMT " = default;' first", STR_ARG(p->name));
+        if (next->at.line > m->body->at.line) { // On a line of its own, as far in as the statement after it
+            const str line = doc_line(next->at.line);
+            const int indent = next->at.col - 1 < line.len ? next->at.col - 1 : line.len;
+            sb_printf(&text, "%.*s" STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            const loc at = {next->at.line, 1, A.doc};
+            quick_fix(out, written, title.data, true, d, at, at, text.data);
+        } else {
+            sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            quick_fix(out, written, title.data, true, d, next->at, next->at, text.data);
+        }
+    }
+    if (p->out_at.line == 0) return;
+    const int k = (int)(p - m->params.items);
+    text_edits edits = {0};
+    const text_edit word = {p->out_at, {p->out_at.line, p->out_at.col + 3, p->out_at.file}, "mut"};
+    vec_push(edits, word);
+    int calls = 0;
+    for (int i = 0; i < A.calls.count; i++) {
+        const expr *call = A.calls.items[i];
+        if ((call->call != CALL_FUNCTION && call->call != CALL_METHOD) || call->method != m || k >= call->args.count) continue;
+        const expr *arg = call->args.items[k];
+        if (!arg->is_out) continue; // Wrong already, and said so
+        if (arg->out_local) return; // It makes the variable there
+        const int t = token_at(arg->out_at);
+        if (t < 0 || t + 1 >= A.files[arg->out_at.file].tok_count) return;
+        const text_edit gone = {arg->out_at, A.files[arg->out_at.file].toks[t + 1].at, ""};
+        vec_push(edits, gone);
+        calls++;
+    }
+    sb title = {0};
+    sb_printf(&title, "Take '" STR_FMT "' as 'mut'%s", STR_ARG(p->name), calls == 0 ? "" : calls == 1 ? ", at its call too" : ", at its calls too");
+    quick_fix_edits(out, written, title.data, false, d, &edits);
+}
+
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
 {
     jb_put(out, "[");
@@ -3255,6 +3352,10 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             continue;
         }
         if (f->kind == FIX_UNUSED_LOCAL) continue; // Nothing to offer: the note says what to do
+        if (f->kind == FIX_ASSIGN_FIRST) {
+            assign_first_actions(f, out, &written);
+            continue;
+        }
         const param *p = f->param;
         sb title = {0};
         sb text = {0};
@@ -3361,7 +3462,52 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             fixed = diagnostic_at(f->at);
             break;
         }
+        case FIX_ASSIGN_OUT: { // A return, or a function's end, that leaves an `out` parameter unassigned
+            const bool at_end = loc_cmp(f->at, f->method->at) == 0;
+            const loc where = at_end ? f->method->end : f->at; // Its closing brace, or the return
+            const int t = where.file == A.doc ? token_at(where) : -1;
+            if (t <= 0) continue;
+            sb_printf(&title, "Assign '" STR_FMT " = default;'", STR_ARG(p->name));
+            fixed = diagnostic_at(f->at);
+            // A return that's an if's or a loop's body with no braces has to stay one statement: in braces, with
+            // the assignment before it
+            const tok_kind before = DOC->toks[t - 1].kind;
+            if (before != T_LBRACE && before != T_RBRACE && before != T_SEMI && before != T_COLON) {
+                int last = t; // The ';' that ends it
+                for (int depth = 0; last < DOC->tok_count; last++) {
+                    const tok_kind k = DOC->toks[last].kind;
+                    if (k == T_EOF || (k == T_SEMI && depth == 0)) break;
+                    if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) depth++;
+                    else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
+                }
+                if (at_end || last >= DOC->tok_count || DOC->toks[last].kind != T_SEMI) continue;
+                sb_printf(&text, "{ " STR_FMT " = default; ", STR_ARG(p->name));
+                const loc after = token_end(&DOC->toks[last]);
+                text_edits both = {0};
+                const text_edit opens = {where, where, text.data};
+                const text_edit closes = {after, after, " }"};
+                vec_push(both, opens);
+                vec_push(both, closes);
+                quick_fix_edits(out, &written, title.data, true, fixed, &both);
+                continue;
+            }
+            const str line = doc_line(where.line);
+            const int indent = where.col - 1 < line.len ? where.col - 1 : line.len;
+            bool first = true; // On its line: the assignment gets a line of its own
+            for (int i = 0; i < indent; i++) first &= isspace((unsigned char)line.ptr[i]) != 0;
+            start = end = where;
+            if (first && at_end) { // A step in from the brace
+                start = end = (loc){where.line, 1, A.doc};
+                sb_printf(&text, "%.*s    " STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            } else if (first) {
+                sb_printf(&text, STR_FMT " = default;\n%.*s", STR_ARG(p->name), indent, line.ptr);
+            } else {
+                sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            }
+            break;
+        }
         case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
+        case FIX_ASSIGN_FIRST:
             continue; // Their own actions, above
         }
         quick_fix(out, &written, title.data, preferred, fixed, start, end, text.data ? text.data : "");

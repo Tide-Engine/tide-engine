@@ -22,7 +22,7 @@ void b2t_forget(void);
 int32_t b2t_shared_steps(void);
 int32_t b2t_restores(void);
 void b2t_measure(uint64_t *step, uint64_t *image);
-void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all);
+void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 #define DT (1.0f / 60.0f)
 
@@ -34,6 +34,7 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all);
 static tide_world a;
 static tide_world b;
 static tide_world kept;
+static tide_world kept_too;
 
 static void start(tide_world *w, const int crates)
 {
@@ -166,8 +167,9 @@ static void cost(tide_world *w, const char *what, const int ticks)
     uint64_t image;
     uint64_t changed;
     uint64_t in_all;
+    uint64_t counting; // What counting the image's changes took inside the ticks: the measuring's, not a match's
     b2t_measure(&step, &image);
-    b2t_measure_blocks(&changed, &in_all);
+    b2t_measure_blocks(&changed, &in_all, &counting);
     // As a match does: each tick's world is kept (a snapshot, which shares what
     // the tick left alone) and hashed (what the tick changed)
     uint64_t took = 0;
@@ -185,7 +187,8 @@ static void cost(tide_world *w, const char *what, const int ticks)
         kept_ns += tide_time_now_ns() - ticked;
     }
     b2t_measure(&step, &image);
-    b2t_measure_blocks(&changed, &in_all);
+    b2t_measure_blocks(&changed, &in_all, &counting);
+    took -= counting;
     printf("    %-19s a tick takes %.3f ms: %.3f Box2D's step, %.3f its image, %.3f the rest; keeping and hashing it %.3f, "
            "with %.0f%% of the image changed\n",
            what, (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
@@ -237,14 +240,22 @@ TIDE_TEST(box2d_threads_change_nothing)
     uint64_t images[2] = {0, 0};
     uint64_t step;
     uint64_t image;
+    uint64_t changed;
+    uint64_t in_all;
+    uint64_t counting; // The measuring's own time inside a tick, taken off it
     b2t_measure(&step, &image);
+    b2t_measure_blocks(&changed, &in_all, &counting);
     for (int i = 0; i < TICKS; i++) {
         for (int on = 0; on < 2; on++) {
             const uint64_t t = tide_time_now_ns();
             if (on) tide_world_tick_on(&b, jobs);
             else tide_world_tick(&a);
             ticks[on] += tide_time_now_ns() - t;
+            // As a client keeps each tick's world: the next tick writes what it changes apart from it
+            tide_world_copy(on ? &kept_too : &kept, on ? &b : &a);
             b2t_measure(&step, &image);
+            b2t_measure_blocks(&changed, &in_all, &counting);
+            ticks[on] -= counting;
             steps[on] += step;
             images[on] += image;
         }
@@ -266,11 +277,14 @@ TIDE_TEST(box2d_threads_change_nothing)
     b2t_measure(&step, &image);
     const uint64_t t = tide_time_now_ns();
     tide_world_tick(&a);
-    const uint64_t ticked = tide_time_now_ns() - t;
     b2t_measure(&step, &image);
+    b2t_measure_blocks(&changed, &in_all, &counting);
+    const uint64_t ticked = tide_time_now_ns() - t - counting;
     printf("    a tick that makes Box2D's world from the image first takes %.2f ms, %.2f more than one that has it\n",
            (double)ticked / 1e6, ((double)ticked - (double)ticks[0] / TICKS) / 1e6);
     tide_world_free(&a);
     tide_world_free(&b);
+    tide_world_free(&kept);
+    tide_world_free(&kept_too);
 }
 #endif

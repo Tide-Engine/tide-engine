@@ -1081,6 +1081,12 @@ typedef enum fix_kind {
     FIX_ADD_OUT,      // An argument for an `out` parameter, written without the word: `out` before it
     FIX_REMOVE_OUT,   // `out` before an argument no `out` parameter takes: remove the word
     FIX_DISCARD_OUT,  // A local an `out` argument declares that nothing reads: `out _` instead
+    // A return, or a function's end, that leaves an `out` parameter (`param`) of `method` unassigned:
+    // `x = default;` before it. At the function's name for its end
+    FIX_ASSIGN_OUT,
+    // An `out` parameter (`param`) of `method` read before it's assigned: `x = default;` as the function
+    // starts, or the parameter as `mut`, with the word gone from its calls
+    FIX_ASSIGN_FIRST,
 } fix_kind;
 
 typedef struct fix {
@@ -1157,7 +1163,7 @@ bool check(program *prog);
 // on every path that returns, and the locals `out` arguments declare, which
 // are only read where the call that makes them has run (assigned.c). `code`
 // is the function or method whose body it is, or NULL for other code.
-void check_assigned(const decl *code, const stmt *body);
+void check_assigned(program *prog, const decl *code, const stmt *body);
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):

@@ -693,9 +693,14 @@
     // half to what it receives, so a lag of 100 reads as a ping of 100, not as
     // 100 more than it was. A page that hosts adds nothing: its machine runs
     // the server, and each player who joined says its own. The page can change
-    // it while the game runs. `Tide.room` is the code of the room the program
-    // hosts or joined ("" for none), for the page to show or to link to.
+    // it while the game runs, and reads `Tide.minLag`, the least a lag can make
+    // the trip: what trips took while the page added nothing, 0 until the
+    // program measured 8 of them so (a page that wants it starts with no lag).
+    // `Tide.room` is the code of the room the program hosts or joined ("" for
+    // none), for the page to show or to link to.
     if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
+    Object.defineProperty(config, 'minLag', { configurable: true, enumerable: true,
+        get: () => room && !room.hosting && room.leastOf >= 8 ? Math.round(room.least) : 0 });
     Object.defineProperty(config, 'room', { configurable: true, enumerable: true,
         get: () => room && !room.failed && room.reachable ? room.code : '' });
     const CODE_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // No look-alikes: 0 and O, 1 and I
@@ -714,9 +719,11 @@
             ws: null, announced: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
             key: key || (hosting ? newKey() : ''), moving: !!key, moved: 0,
             // `Tide.lag`: what the page adds to a round trip and since when,
-            // what a trip takes with nothing added, once one was measured,
-            // and whether the program heard from the room since it last said
-            added: 0, addedSince: 0, rest: 0, measured: false, heard: false,
+            // what a trip takes beside that, once one was measured, what
+            // trips took while nothing was added and how many of them that's
+            // from (`Tide.minLag`), and whether the program heard from the
+            // room since it last said
+            added: 0, addedSince: 0, rest: 0, measured: false, least: 0, leastOf: 0, heard: false,
         };
         if (/^[2-9A-HJ-NP-Z]{6}$/.test(code)) {
             connectRelay(room);
@@ -1036,7 +1043,11 @@
         // within 50 ms of the change doesn't count. Nor does one said again
         // with nothing heard since. Frames come when they come, so trips
         // differ by a frame's length: the page goes by what they take on
-        // the whole.
+        // the whole. What's left of a trip with something added isn't what
+        // one takes with nothing: it follows how the page's delays fall
+        // among the server's ticks. So `Tide.minLag` is from the trips with
+        // nothing added alone: their mean, of the last 32 or so once there
+        // are that many, as it's there to be read.
         room_ping(ping) {
             const r = room;
             if (!r) return;
@@ -1047,6 +1058,10 @@
             const rest = Math.max(ping - add, 0);
             r.rest = r.measured ? r.rest + (rest - r.rest) / 8 : rest;
             r.measured = true;
+            if (add === 0) {
+                r.leastOf = Math.min(r.leastOf + 1, 32);
+                r.least += (ping - r.least) / r.leastOf;
+            }
         },
     });
 

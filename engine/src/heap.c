@@ -72,6 +72,17 @@ tide_block *tide_heap_write_shared(tide_heap *h, const uint32_t block)
     return tide_heap_block(h, block);
 }
 
+tide_block *tide_heap_write_over(tide_heap *h, const uint32_t block, const uint32_t bytes)
+{
+    tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
+    if (p->refs == places(p)) return tide_heap_write(h, block);
+    const uint32_t from = block - (p->first << TIDE_HEAP_PAGE_SHIFT) + (uint32_t)sizeof(tide_block);
+    tide_page *own = tide_page_own_copy_around(p, places(p), in_use(h, p), from, bytes);
+    for (uint32_t k = 0; k < places(own); k++) __atomic_store_n(&h->page[own->first + k], own, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
+    return tide_heap_block(h, block);
+}
+
 uint32_t tide_heap_alloc(tide_heap *h, const uint32_t bytes)
 {
     const uint64_t size = (uint64_t)sizeof(tide_block) + bytes;

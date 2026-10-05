@@ -1298,6 +1298,10 @@ static void parse_routine_params(parser *p, decl *m)
                 if (mut) {
                     diag_error(mut->at, "'out' says the call makes the variable, which 'mut' would only change: drop 'mut'");
                     diag_note("like 'bool TryFind(Entity target, out Health health)'");
+                    const token *word = peek(p);
+                    if (word->at.line == mut->at.line) { // What editors offer: `mut out` as `out`
+                        suggest_replacement((str){mut->text.ptr, (int)(word->text.ptr + word->text.len - mut->text.ptr)}, "out");
+                    }
                     longjmp(p->fail, 1);
                 }
                 prm.out_at = advance(p)->at;
@@ -1657,6 +1661,7 @@ static void parse_query_params(parser *p, decl *d)
                     } else {
                         diag_note("this takes what it changes as 'mut', like 'mut Health health'");
                     }
+                    if (prm.mode == PARAM_READ) suggest_replacement(peek(p)->text, "mut"); // What editors offer
                     longjmp(p->fail, 1);
                 }
             }
