@@ -1,4 +1,4 @@
-// expect: query parameters are only supported in ordinary systems
+// expect: a match event handler can't take a query yet
 component Body { float x; }
 scene Main { }
 event(Spawned) Hits(query (Body body) bodies) { }

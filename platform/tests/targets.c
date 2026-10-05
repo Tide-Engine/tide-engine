@@ -17,8 +17,7 @@ static const char vertex[] =
     "layout(std140) uniform uniforms { vec4 settings; };\n"
     "out vec2 uv;\n"
     "void main() {\n"
-    "    vec2 points[3] = vec2[3](vec2(-1, -1), vec2(3, -1), vec2(-1, 3));\n"
-    "    vec2 at = points[gl_VertexID];\n"
+    "    vec2 at = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;\n" // (-1, -1), (3, -1), (-1, 3)
     "    uv = at * vec2(0.5, -0.5) + vec2(0.5);\n"
     "    gl_Position = vec4(at, settings.z, 1);\n"
     "}\n";
@@ -343,6 +342,307 @@ static void check_owned_targets(void)
     render_expect(expected, "unloaded owned targets discarded without stale pointer reads");
 }
 
+// ---------------------------------------------------------------------------
+// Targets on a scaled display, and under a window that changes: a list drawn
+// as a window of a given size would draw it on a display of a given scale
+// (tide_platform_read_pixels_as), with every pixel of that window read.
+
+enum { MOST_PIXELS = 128 * 80 };
+
+static uint32_t window_pixels[MOST_PIXELS];
+static int window_wide, window_high;
+
+static void read_window(const int width, const int height, const float scale)
+{
+    static tide_float2 points[MOST_PIXELS];
+    window_wide = (int)((float)width * scale + 0.5f);
+    window_high = (int)((float)height * scale + 0.5f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) points[y * window_wide + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    tide_platform_read_pixels_as(&render_list, width, height, scale, points, window_wide * window_high, window_pixels);
+}
+
+static bool channel_near(const uint32_t a, const uint32_t b, const int shift)
+{
+    const int difference = (int)(a >> shift & 0xffu) - (int)(b >> shift & 0xffu);
+    return difference >= -1 && difference <= 1;
+}
+
+// The window's pixel (x, y) is `wanted`, to a step of a channel, alpha aside.
+static void expect_pixel(const int x, const int y, const uint32_t wanted, const char *what)
+{
+    const uint32_t got = window_pixels[y * window_wide + x];
+    if (channel_near(got, wanted, 24) && channel_near(got, wanted, 16) && channel_near(got, wanted, 8)) return;
+    if (failures++ < 6) fprintf(stderr, "%s (%d, %d): %08x instead of %08x\n", what, x, y, got, wanted);
+}
+
+static void expect_all(const uint32_t wanted, const char *what)
+{
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, wanted, what);
+    }
+}
+
+static uint32_t byte_of(const float v)
+{
+    return v >= 1.0f ? 255u : (uint32_t)(v * 255.0f + 0.5f);
+}
+
+// What the list shader's mode 1 writes at a target's pixel (x, y), in a
+// target of `high` pixels with `scale` of them to a logical one: where the
+// pixel is in logical pixels, over the window's size, and how high the image
+// is in its own pixels, over the window's height.
+static uint32_t position_color(const int x, const int y, const float scale, const int high)
+{
+    return byte_of(((float)x + 0.5f) / scale / (WIDTH * 2)) << 24 | byte_of(((float)y + 0.5f) / scale / (HEIGHT * 2)) << 16
+         | byte_of((float)high / (HEIGHT * 2)) << 8 | 0xffu;
+}
+
+static void blit_target(const tide_render_target target, const float mode)
+{
+    const uint32_t texture = tide_draw_texture_source(&render_list, tide_render_target_color(target));
+    const float settings[4] = {mode, WIDTH * 2, HEIGHT * 2, 0};
+    tide_draw_blit(&render_list, &list_shader, NULL, settings, &texture, 0);
+}
+
+// A pattern one of the display's pixels wide, drawn into a target of the
+// window's size and brought to the window, comes out pixel for pixel: the
+// target has the display's resolution, not the window's logical one.
+static void check_full_resolution(const float scale)
+{
+    const tide_render_target screen = tide_render_target_window();
+    const int wide = WIDTH * 2, high = HEIGHT * 2;
+    char what[96];
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, screen);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    tide_draw_screen(&render_list);
+    const int across = (int)((float)wide * scale + 0.5f), down = (int)((float)high * scale + 0.5f);
+    for (int y = 0; y < down; y++) {
+        for (int x = (y & 1); x < across; x += 2) { // Every other one of its own pixels, in logical pixels
+            tide_draw_rect(&render_list, tide_f2(((float)x + 0.5f) / scale, ((float)y + 0.5f) / scale),
+                           tide_f2(1.0f / scale, 1.0f / scale), TIDE_COLOR_RED);
+        }
+    }
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(screen, 0);
+    read_window(wide, high, scale);
+    snprintf(what, sizeof what, "a screen target has the display's pixels, at scale %g", (double)scale);
+    if (window_wide != across || window_high != down) failures++, fprintf(stderr, "%s: the window read is another size\n", what);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, ((x + y) & 1) ? 0x00ff00ffu : 0xff0000ffu, what);
+    }
+
+    // What a frag is told is in logical pixels, in a target as in the window:
+    // a pixel's position, and the scale that takes it there
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, screen);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(screen, 0);
+    read_window(wide, high, scale);
+    snprintf(what, sizeof what, "a frag's pixel is in logical pixels in a target, at scale %g", (double)scale);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, position_color(x, y, scale, window_high), what);
+    }
+
+    // A clip in a target is in logical pixels too: the left half of it, whatever the scale
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, screen);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    tide_draw_screen(&render_list);
+    tide_draw_clip(&render_list, (tide_rect){0, 0, (float)wide * 0.5f, (float)high});
+    tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(screen, 0);
+    read_window(wide, high, scale);
+    snprintf(what, sizeof what, "a target's clip is in logical pixels, at scale %g", (double)scale);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, x < window_wide / 2 ? 0x0000ffffu : 0x00ff00ffu, what);
+    }
+    tide_render_target_dispose(screen);
+}
+
+// A bit of everything the renderer fits to pixels: shapes whose edges are a
+// pixel wide, a line, text, on the screen and through a camera.
+static void record_scene(void)
+{
+    const tide_color white = TIDE_COLOR_WHITE;
+    tide_draw_clear(&render_list, (tide_color){0.1f, 0.1f, 0.3f, 1.0f});
+    tide_draw_screen(&render_list);
+    tide_draw_circle(&render_list, tide_f2(8.0f, 7.0f), 5.0f, TIDE_COLOR_RED);
+    tide_draw_wire_circle(&render_list, tide_f2(20.0f, 7.0f), 5.0f, white);
+    tide_draw_round_rect(&render_list, tide_f2(32.0f, 7.0f), tide_f2(12.0f, 10.0f), 3.0f, TIDE_COLOR_GREEN);
+    tide_draw_thick_line(&render_list, tide_f2(2.0f, 16.0f), tide_f2(38.0f, 22.0f), 1.5f, (tide_color){1, 1, 0, 1});
+    tide_draw_line(&render_list, tide_f2(2.0f, 22.0f), tide_f2(38.0f, 16.0f), white);
+    tide_draw_rect(&render_list, tide_f2(20.3f, 20.1f), tide_f2(3.3f, 2.7f), (tide_color){1, 0, 1, 1});
+    tide_draw_text(&render_list, "Tide", tide_f2(4.25f, 11.0f), 10.0f, white);
+    tide_draw_camera(&render_list, tide_f2(0.0f, 0.0f), 12.0f);
+    tide_draw_circle(&render_list, tide_f2(14.0f, -8.0f), 2.5f, (tide_color){0, 1, 1, 1});
+    tide_draw_text(&render_list, "ok", tide_f2(-18.0f, -4.0f), 5.0f, white);
+}
+
+// Drawing into a target is drawing into the window: the same commands into a
+// target of the window's size, brought to the window, are the pixels they are
+// when they go to the window itself. So its text is fitted to the display's
+// pixels, and its shapes' edges are one of them wide.
+static void check_same_as_window(const float scale)
+{
+    enum { WIDE = 40, HIGH = 24 };
+    static uint32_t direct[MOST_PIXELS];
+    const tide_render_target screen = tide_render_target_window();
+    tide_draw_reset(&render_list);
+    record_scene();
+    read_window(WIDE, HIGH, scale);
+    memcpy(direct, window_pixels, (size_t)window_wide * (size_t)window_high * sizeof direct[0]);
+
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, screen);
+    record_scene();
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(screen, 0);
+    read_window(WIDE, HIGH, scale);
+    int different = 0, inked = 0;
+    for (int i = 0; i < window_wide * window_high; i++) {
+        different += (direct[i] >> 8) != (window_pixels[i] >> 8);
+        inked += (direct[i] >> 8) == 0xffffffu; // Text and the white outlines
+    }
+    if (different || inked < 20) {
+        failures++;
+        fprintf(stderr, "drawn into a screen target, %d of %d pixels aren't the window's, at scale %g (%d white)\n",
+                different, window_wide * window_high, (double)scale, inked);
+    }
+    tide_render_target_dispose(screen);
+}
+
+// A target with pixels per unit of its own has exactly those pixels on any
+// display, and what's in it stays when the display's scale or the window's
+// size changes. One at the display's scale is made again, empty, when the
+// scale changes, and one that follows the window when either does.
+static void check_scales_and_window(void)
+{
+    const int wide = WIDTH * 2, high = HEIGHT * 2;
+    const tide_render_target exact = tide_render_target_make_scaled(WIDTH, HEIGHT, 1); // 4 by 6 pixels, always
+    const tide_render_target card = tide_render_target_make(WIDTH, HEIGHT);           // 4 by 6, at the display's scale
+    const tide_render_target half = tide_render_target_screen(0.5f);                   // Half the window
+    static const float scales[] = {1.0f, 2.0f, 1.5f};
+    char what[112];
+
+    // Each is filled once, with where its pixels are...
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, exact);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_render_target(&render_list, card);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_render_target(&render_list, half);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(half, 0);
+    read_window(wide, high, 1.0f);
+    for (int y = 0; y < window_high; y++) { // 4 by 6 pixels of its own, each 2 by 2 of the window's
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 1.0f, HEIGHT), "a target of half the window has half its pixels");
+        }
+    }
+
+    // ...and the exact one is those 4 by 6 pixels on a display of any scale: never filled again
+    for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
+        const float scale = scales[i];
+        const int block = (int)(2.0f * scale + 0.5f); // The window's pixels to one of the target's
+        tide_draw_reset(&render_list);
+        blit_target(exact, 0);
+        read_window(wide, high, scale);
+        snprintf(what, sizeof what, "a target with 1 pixel a unit keeps its pixels and what's in them, at scale %g", (double)scale);
+        for (int y = 0; y < window_high; y++) {
+            for (int x = 0; x < window_wide; x++) expect_pixel(x, y, position_color(x / block, y / block, 1.0f, HEIGHT), what);
+        }
+    }
+
+    // The one at the display's scale was made for a scale of 1: on another display it's
+    // made again, empty, with that display's pixels
+    tide_draw_reset(&render_list);
+    blit_target(card, 0);
+    read_window(wide, high, 2.0f);
+    expect_all(0x000000ffu, "a target at the display's scale is made again, empty, when the scale changes");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, card);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(card, 0);
+    read_window(wide, high, 2.0f);
+    for (int y = 0; y < window_high; y++) { // 8 by 12 pixels now, each 2 by 2 of the window's
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 2.0f, HEIGHT * 2), "a target at a display's scale of 2 has twice the pixels");
+        }
+    }
+    tide_draw_reset(&render_list); // ...which stay while the display does
+    blit_target(card, 0);
+    read_window(wide, high, 2.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 2.0f, HEIGHT * 2), "a target keeps what's in it while the display's scale stays");
+        }
+    }
+
+    // The window's target follows the window: another size empties it, with no Resize...
+    const int wider = HEIGHT * 2, lower = WIDTH * 2; // The window turned on its side: 12 by 8
+    tide_draw_reset(&render_list);
+    blit_target(half, 0);
+    read_window(wider, lower, 1.0f);
+    expect_all(0x000000ffu, "a target that follows the window is made again, empty, when the window's size changes");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, half);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(half, 0);
+    read_window(wider, lower, 1.0f);
+    for (int y = 0; y < window_high; y++) { // 6 by 4 pixels of its own now
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 1.0f, WIDTH), "a target that follows the window has its new size");
+        }
+    }
+    // ...and so does another display scale under the same window
+    tide_draw_reset(&render_list);
+    blit_target(half, 0);
+    read_window(wider, lower, 2.0f);
+    expect_all(0x000000ffu, "a target that follows the window is made again, empty, when the display's scale changes");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, half);
+    blit_image(TARGET_B, WIDTH, HEIGHT, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(half, 0);
+    read_window(wider, lower, 2.0f);
+    for (int y = 0; y < window_high; y++) { // 12 by 8 pixels of its own, 2 to a logical one
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 2.0f, WIDTH * 2), "a target that follows the window has the display's scale");
+        }
+    }
+
+    // Through all of that, the exact one was never touched
+    tide_draw_reset(&render_list);
+    blit_target(exact, 0);
+    read_window(wide, high, 1.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, position_color(x / 2, y / 2, 1.0f, HEIGHT), "a target with pixels of its own isn't made again");
+        }
+    }
+
+    // Resize is the window's to do for the one that follows it: refused, and it stays as it was
+    tide_render_target_resize(half, 2, 2);
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, half);
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(half, 0);
+    read_window(wide, high, 1.0f);
+    expect_all(0xff0000ffu, "a target that follows the window refuses Resize");
+
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
 static void expect(const uint8_t *actual, const uint8_t *source, const int scale, const char *what)
 {
     const int width = WIDTH * scale, height = HEIGHT * scale;
@@ -484,6 +784,15 @@ static void check_targets(void)
     gpu->pipeline_free(pipeline);
 }
 
+// Only the first failures say which pixels were wrong: this says which group
+// of checks any were in, and how many.
+static void checked(const char *what)
+{
+    static int before;
+    if (failures != before) fprintf(stderr, "%s: %d checks failed\n", what, failures - before);
+    before = failures;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -494,9 +803,19 @@ static int frame(void *user, const float seconds)
     printf("renderer: %s\n", tide_platform_renderer());
     check_targets();
     check_targets(); // Reused backend ids must not find a freed texture's bind group.
+    checked("the backend's targets");
     check_render_list();
     check_render_depth_alpha();
     check_owned_targets();
+    checked("the renderer's targets");
+    static const float scales[] = {1.0f, 2.0f, 1.5f, 3.0f, 1.25f};
+    for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
+        check_full_resolution(scales[i]);
+        check_same_as_window(scales[i]);
+    }
+    checked("targets on scaled displays");
+    check_scales_and_window();
+    checked("targets under a window and a display that change");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

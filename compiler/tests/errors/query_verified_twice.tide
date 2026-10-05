@@ -1,0 +1,7 @@
+// expect: 'verified Body' appears twice in the query
+component Body { float x; }
+scene Main { }
+view Show(query (verified Body body, with verified Body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x}");
+}

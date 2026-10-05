@@ -328,6 +328,13 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_targets COMMAND tide_platform_targets)
         set_tests_properties(tide_platform_targets PROPERTIES LABELS gpu)
     endif()
+else()
+    # As the draw checks, an app: install tide_platform_targets_app.apk, start
+    # it, and read what it prints (`adb logcat -s tide`).
+    add_library(tide_platform_targets_app SHARED tests/targets.c)
+    target_include_directories(tide_platform_targets_app PRIVATE src)
+    target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
+    tide_android_app(tide_platform_targets_app LABEL "Tide targets")
 endif()
 
 # frag and vert, written in Tide: every shader tidec writes for
@@ -343,6 +350,10 @@ if(NOT TIDE_ANDROID)
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
         set_tests_properties(tide_platform_shaders PROPERTIES LABELS gpu)
     endif()
+else()
+    # An app there too, to install and start by hand: OpenGL ES 3 has to
+    # compile what tidec writes as the others do (`adb logcat -s tide`).
+    tide_add_game(tide_platform_shaders_app SOURCES tests/shaders.tide NAME game HOST tests/shaders.c WINDOW)
 endif()
 
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)

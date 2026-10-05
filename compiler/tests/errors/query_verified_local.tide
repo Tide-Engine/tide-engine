@@ -1,0 +1,7 @@
+// expect: 'Spark' is local: it's this machine's own, and no server confirms it
+local component Spark { float x; }
+scene Main { }
+view Show(query (verified Spark spark) sparks)
+{
+    foreach (var row in sparks) Debug.Log($"{row.spark.x}");
+}

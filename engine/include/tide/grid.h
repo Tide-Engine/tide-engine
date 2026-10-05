@@ -147,7 +147,7 @@ static inline const void *tide_grid_peek(const tide_grid g, const int32_t x, con
     if (!d || !d->records || !tide_grid_inside(d, x, y, z)) return NULL;
     const uint32_t i = tide_grid_find(d, x >> s->shift[0], y >> s->shift[1], z >> s->shift[2]);
     if (!i) return NULL;
-    return tide_grid_chunk_at(tide_heap_of(g.at >> 30), tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
+    return tide_grid_chunk_at(tide_heap_read(g.at >> 30), tide_grid_records(d)[i - 1u].block) + tide_grid_place(s, x, y, z);
 }
 
 // A cell, to change, made if `make` (a value that isn't zero) and its chunk
@@ -204,7 +204,7 @@ static inline const void *tide_grid_cached_peek(tide_grid_cache *c, const tide_g
 {
     const int32_t cx = x >> s->shift[0], cy = y >> s->shift[1], cz = z >> s->shift[2];
     if (!tide_grid_cache_holds(c, g.at, cx, cy, cz)) {
-        const tide_heap *heap = tide_heap_of(g.at >> 30);
+        const tide_heap *heap = tide_heap_read(g.at >> 30);
         if (!heap || !g.at) return tide_grid_peek(g, x, y, z, s); // The scratch area's, or empty
         *c = (tide_grid_cache){.at = g.at, .moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED), .heap = heap,
                                .chunk = {cx, cy, cz}};

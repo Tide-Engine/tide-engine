@@ -1508,16 +1508,20 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_note("leave the field at default and create its target in a view or local handler");
             return T_ERR;
         }
-        if (argc != 2 || !type_assignable(T_INT_, first) || !type_assignable(T_INT_, e->args.items[1]->type)) {
-            diag_error(e->at, "RenderTarget takes its width and height in pixels, two ints: 'RenderTarget(width, height)'");
+        // Its size in logical pixels, like the window's, and its image's pixels in each: the display's when left out
+        bool numbers = argc == 2 || argc == 3;
+        for (int i = 0; numbers && i < argc; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
+        if (!numbers) {
+            diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
+                              "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
+            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = "tide_render_target_make";
+        e->c_callee = argc == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make";
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
-        vec_push(e->arg_want, T_INT_);
-        vec_push(e->arg_want, T_INT_);
+        for (int i = 0; i < argc; i++) vec_push(e->arg_want, T_FLOAT_);
         return target;
     }
     if (target.kind == TY_TEXTURE) {
@@ -3505,6 +3509,41 @@ static str target_draw_owner(const expr *e)
     return str_from(three ? "Draw3D" : "Draw2D");
 }
 
+// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// window's size, or that part of it. Made where the constructor's are.
+static type check_screen_target(checker *c, expr *e)
+{
+    bool any_error = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
+    }
+    if (!str_eq_c(e->name, "Screen")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
+        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+                  "one of a size of its own");
+        return T_ERR;
+    }
+    if (any_error) return T_ERR;
+    if (gpu_refuses(c, e->at, "create a RenderTarget", "the view creates it and supplies its color image as a Texture")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a RenderTarget is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its target in a view or local handler");
+        return T_ERR;
+    }
+    if (e->args.count > 1 || (e->args.count == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
+        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
+        diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = e->args.count ? "tide_render_target_screen" : "tide_render_target_window";
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    for (int i = 0; i < e->args.count; i++) vec_push(e->arg_want, T_FLOAT_);
+    return (type){TY_RENDER_TARGET, NULL};
+}
+
 static type check_method(checker *c, expr *e)
 {
     // world.Get<Health>(e): the World parameter's methods
@@ -3554,6 +3593,7 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
+        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         if (str_eq_c(owner, "Draw")) {
             diag_error(e->object->at, "unknown name 'Draw'");
@@ -3672,23 +3712,24 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_RENDER_TARGET) {
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
-            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_INT_);
+            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "Draw.window is owned by the platform: it can't be resized or disposed");
                 return T_ERR;
             }
             if (gpu_refuses(c, e->at, resize ? "resize a RenderTarget" : "dispose a RenderTarget", "the view owns the target")) return T_ERR;
             if (e->args.count != (resize ? 2 : 0)) {
-                diag_error(e->at, resize ? "Resize takes width and height in pixels: 'target.Resize(width, height)'"
+                diag_error(e->at, resize ? "Resize takes width and height in logical pixels: 'target.Resize(width, height)'"
                                        : "Dispose takes no arguments: 'target.Dispose()'");
+                if (resize) diag_note("the target keeps the pixels per unit it was made with");
                 return T_ERR;
             }
             for (int i = 0; i < e->args.count; i++) {
                 const type t = e->args.items[i]->type;
-                if (!type_assignable(T_INT_, t)) {
-                    diag_error(e->args.items[i]->at, "a render target's size is in pixels, an int, not %s", type_name(t));
+                if (!type_assignable(T_FLOAT_, t)) {
+                    diag_error(e->args.items[i]->at, "a render target's size is in logical pixels, a number, not %s", type_name(t));
                 }
-                vec_push(e->arg_want, T_INT_);
+                vec_push(e->arg_want, T_FLOAT_);
             }
             e->call = CALL_BUILTIN;
             e->c_callee = resize ? "tide_render_target_resize" : "tide_render_target_dispose";
@@ -4332,28 +4373,38 @@ static bool through_local_field(const expr *target)
     return false;
 }
 
+// The query binding a value is read through, or NULL: `row.body` and
+// `row.body.position.x`, where `row` is a foreach's row over a query.
+static const param *row_binding(const expr *e)
+{
+    for (; e->kind == E_MEMBER && !e->local_field; e = e->object) {
+        const expr *row = e->object;
+        if (row->kind != E_NAME || row->bind != BIND_LOCAL || !row->local || !row->local->query) continue;
+        const param *query = row->local->query;
+        for (int i = 0; i < query->query.count; i++) {
+            const param *binding = &query->query.items[i];
+            if (binding->mode == PARAM_READ && str_eq(binding->name, e->member)) return binding;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 // Whether a value is the match's as a local handler hears it: its event, or a
 // component or singleton of the match it takes, or a field of one. They're
-// copies from the event's turn, without what the match keeps in its heap.
+// copies from the event's turn, without what the match keeps in its heap. So
+// are the rows of its queries over the match, from the event's tick.
 static bool heard_value(const checker *c, const expr *e)
 {
     const decl *sys = c->method ? NULL : c->system;
     if (!sys || sys->kind != DECL_SYSTEM || !sys->listens) return false;
+    const param *binding = row_binding(e);
+    if (binding) return binding->type.kind == TY_COMPONENT && !binding->type.decl->is_local;
     while (e->kind == E_MEMBER && !e->local_field) e = e->object;
     if (e->kind != E_NAME || e->bind != BIND_PARAM) return false;
     const type t = e->param->type;
     if (t.kind == TY_EVENT) return true;
     return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
-}
-
-// Whether a value is a view's `verified` parameter, or a field of one: the
-// confirmed world's, whose heap isn't the one the view reads text from.
-static bool verified_value(const checker *c, const expr *e)
-{
-    const decl *sys = c->method ? NULL : c->system;
-    if (!sys || sys->kind != DECL_SYSTEM || !sys->is_view) return false;
-    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
-    return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->verified;
 }
 
 // Text, a list, a map, a set or a grid: what a world keeps in its heap.
@@ -4406,6 +4457,13 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         return T_ERR;
     }
     param *p = local_fields_param(e->object, d);
+    if (!p && row_binding(e->object)) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and a query's rows have the match's fields only",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("local fields stay with the entity on this machine: a view that runs for the entity reads and writes "
+                  "them, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
+        return T_ERR;
+    }
     if (!p) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and this is a copy of its value, which has none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -4657,13 +4715,6 @@ static type check_member(checker *c, expr *e)
                     diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
                               "sets and grids stay in the match: send what it needs of them in a field of another type, or "
                               "read them in a view");
-                    return T_ERR;
-                }
-                if (verified_value(c, e->object) && kept_in_heap(f->type)) {
-                    diag_error(e->at, "'" STR_FMT "' is %s of the confirmed match's, which a view doesn't read yet",
-                               STR_ARG(f->name), heap_what(f->type));
-                    diag_note("a 'verified' parameter gives the confirmed world's numbers, vectors, enums and entities; its "
-                              "text, lists, maps, sets and grids are read through a parameter that isn't 'verified'");
                     return T_ERR;
                 }
                 e->field = f;
@@ -7296,7 +7347,8 @@ static void check_stmt(checker *c, stmt *s)
             s->query = s->value->param;
             element = (type){TY_STRUCT, list.decl};
             if (c->parallel || c->block_depth || c->compare) {
-                diag_error(s->at, "a query foreach must run directly in its system, outside parallel loops and callback blocks");
+                diag_error(s->at, "a query foreach must run directly in its %s, outside parallel loops and callback blocks",
+                           c->system ? system_what(c->system) : "system");
             }
         } else if (list.kind == TY_LIST) {
             element = list_element(list);
@@ -9128,6 +9180,8 @@ static void check_listener(const program *prog, decl *sys)
     const param *of_local = NULL; // A local component: an entity of this machine's
     for (int i = 1; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
+        // A query over the match's entities is something of the match too
+        if (p->type.kind == TY_QUERY && p->query_of && !p->query_local && !of_match) of_match = p;
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         if (!p->type.decl->is_local && !of_match) of_match = p;
         if (p->type.decl->is_local && p->type.kind == TY_COMPONENT && !of_local) of_local = p;
@@ -9203,13 +9257,63 @@ static bool check_verified_param(const decl *sys, const param *p, const decl *d)
     return true;
 }
 
+// `verified` on a binding or a filter of a query, as on a view's own
+// parameter: of the entity as the server confirmed it. Only a view's query
+// has it; a local handler's rows come from one tick already. Returns false
+// after an error.
+static bool check_verified_binding(const decl *sys, const param *p)
+{
+    const loc at = p->verified_at;
+    if (!is_local_code(sys)) {
+        diag_error(at, "the match is the same on every machine, so a query has nothing 'verified' to read");
+        diag_note("what the server has confirmed is one machine's to know: a view's query reads it, 'view Name(query (verified "
+                  STR_FMT " %s) confirmed) { ... }'", STR_ARG(p->type_name), p->name.len ? str_to_cstr(p->name) : "value");
+        return false;
+    }
+    if (sys->is_handler) {
+        const param *trigger = &sys->params.items[0];
+        if (trigger->verified) {
+            diag_error(at, "'" STR_FMT "' hears a confirmed tick, and its query's rows are that tick's already",
+                       STR_ARG(sys->name));
+            diag_note("drop 'verified' here: 'event(verified ...)' says it for all of them");
+        } else {
+            diag_error(at, "a local handler's query has the match as its event's tick left it, so it has nothing 'verified' "
+                       "to read yet");
+            diag_note("to hear the event once the server confirmed it, with everything as that tick left it, write 'local "
+                      "event(verified " STR_FMT " ...) " STR_FMT "(...)'", STR_ARG(trigger->type_name), STR_ARG(sys->name));
+        }
+        return false;
+    }
+    return true;
+}
+
 // A second candidate set belongs to the system, but never to its outer
 // entity filter. Its row is compiler-only data: code reads its named fields.
+// A view takes one as a system does, and so does a local handler: local code
+// reads the match, so their rows are the match as they see it (a view's
+// blended between ticks, or `verified`; a handler's as its event's tick left
+// it), or the local world's as it is.
+// A binding the query refused still names a field of its rows, of no type, so
+// the code that reads it says nothing more.
+static void refused_binding(decl *row, const param *p)
+{
+    if (p->mode != PARAM_READ || !p->name.len) return;
+    const field binding = {.name = p->name, .type_name = p->type_name, .type = T_ERR, .at = p->name_at};
+    vec_push(row->fields, binding);
+}
+
 static void check_entity_query(const checker *c, decl *sys, param *query)
 {
-    if (sys->is_view || sys->is_handler || sys->is_async) {
-        diag_error(query->at, "query parameters are only supported in ordinary systems");
+    // The match's handlers and tasks have none yet
+    const bool refused = sys->is_async || (sys->is_handler && !sys->is_local);
+    if (refused) {
+        diag_error(query->at, "%s can't take a query yet", sys->is_async ? "a task" : sys->is_command ? "a command handler"
+                                                                                                      : "a match event handler");
+        diag_note("systems, views and local handlers take them: a handler reads the entity its event was sent to, and "
+                  "others through 'World world'");
     }
+    // What a local handler takes of the match is its event's: one of a local event has none
+    const bool hears = sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command;
     decl *row = arena_alloc(sizeof(decl));
     row->kind = DECL_STRUCT;
     row->name = str_from("query row");
@@ -9221,6 +9325,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     field entity = {.name = str_from("entity"), .type = T_ENTITY_, .at = query->at};
     vec_push(row->fields, entity);
     comp_mask seen = mask_none();
+    comp_mask seen_verified = mask_none(); // A view's `verified` ones: of the entity as the server confirmed it
     const decl *side_of = NULL;
     for (int i = 0; i < query->query.count; i++) {
         param *p = &query->query.items[i];
@@ -9228,19 +9333,23 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (p->mode == PARAM_QUERY) {
             diag_error(p->at, "a query can't contain another query");
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (p->mode == PARAM_MUT) {
             diag_error(p->at, "query component bindings are read-only and can't be 'mut'");
+            if (is_local_code(sys)) {
+                diag_note("a query's rows are copies of the match's fields; an entity's local fields are written by "
+                          "a view that runs for it, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(p->type_name),
+                          p->name.len ? str_to_cstr(p->name) : "value");
+            }
             p->mode = PARAM_READ;
         }
-        if (p->verified) {
-            diag_error(p->verified_at, "the match is the same on every machine, so a query has nothing 'verified' to read");
-            p->verified = false;
-        }
+        if (p->verified && !check_verified_binding(sys, p)) p->verified = false;
         if (p->ownership) {
             diag_error(p->at, "a query filters by components, so 'ownership' isn't a query filter");
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (p->name.len) {
@@ -9258,17 +9367,45 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
             p->type = T_ERR;
+            refused_binding(row, p);
+            continue;
+        }
+        if (!d->is_local && sys->is_handler && sys->is_local && !hears && !refused) {
+            diag_error(p->type_at, "'" STR_FMT "' belongs to the match, and a handler of a local event only queries local "
+                       "entities", STR_ARG(d->name));
+            diag_note("a local handler of one of the match's events queries the match as that event's tick left it, like "
+                      "'local event(Hit hit) Name(query (" STR_FMT " %s) others) { ... }'", STR_ARG(d->name), example_name(d));
+            p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (!check_param_side(sys, p, d)) {
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
+        if (p->verified && d->is_local) {
+            diag_error(p->verified_at, "'" STR_FMT "' is local: it's this machine's own, and no server confirms it",
+                       STR_ARG(d->name));
+            diag_note("'verified' is for the match's components, which a client predicts ahead of the server");
+            p->verified = false;
+        }
         p->type = (type){TY_COMPONENT, d};
-        if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice in the query", STR_ARG(d->name));
-        seen = mask_or(seen, bit(d));
-        if (p->mode == PARAM_WITHOUT) query->query_without_mask = mask_or(query->query_without_mask, bit(d));
-        else query->query_need_mask = mask_or(query->query_need_mask, bit(d));
+        if (p->verified) { // Of the entity as the server confirmed it
+            // What the confirmed world keeps in its heap is read there, as for a view's own parameter
+            if (p->mode == PARAM_READ && decl_holds_text(d)) c->prog->uses_text = true;
+            if (mask_has(seen_verified, d->index)) {
+                diag_error(p->at, "'verified " STR_FMT "' appears twice in the query", STR_ARG(d->name));
+            }
+            seen_verified = mask_or(seen_verified, bit(d));
+            if (p->mode == PARAM_WITHOUT) query->query_verified_without = mask_or(query->query_verified_without, bit(d));
+            else query->query_verified_need = mask_or(query->query_verified_need, bit(d));
+        } else {
+            if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice in the query", STR_ARG(d->name));
+            seen = mask_or(seen, bit(d));
+            if (p->mode == PARAM_WITHOUT) query->query_without_mask = mask_or(query->query_without_mask, bit(d));
+            else query->query_need_mask = mask_or(query->query_need_mask, bit(d));
+        }
         if (side_of && side_of->is_local != d->is_local) {
             diag_error(p->type_at, "a query can't mix local and match components: no entity has both");
         } else if (!side_of) side_of = d;
@@ -9289,7 +9426,25 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     if (mask_intersects(query->query_need_mask, query->query_without_mask)) {
         diag_error(query->at, "a query both requires and excludes the same component");
     }
+    if (mask_intersects(query->query_verified_need, query->query_verified_without)) {
+        diag_error(query->at, "a query both requires and excludes the same 'verified' component");
+    }
+    // As a view's own parameters (check_params): with nothing of the world it
+    // draws, the confirmed world's entities are the query's, and its masks
+    // theirs; with some of both, the drawn world's that are in the confirmed
+    // one too
+    if (mask_any(seen_verified) && !mask_any(seen)) {
+        query->query_verified_entities = true;
+        query->query_need_mask = query->query_verified_need;
+        query->query_without_mask = query->query_verified_without;
+        query->query_verified_need = mask_none();
+        query->query_verified_without = mask_none();
+    } else if (mask_any(seen_verified)) {
+        query->query_verified_join = true;
+    }
+    sys->takes_verified |= mask_any(seen_verified) && sys->is_view;
     query->query_local = side_of && side_of->is_local;
+    query->query_of = side_of;
     if (query->query_local) row->fields.items[0].type = (type){TY_LOCAL_ENTITY, NULL};
 }
 
@@ -9324,6 +9479,8 @@ static void check_params(const checker *c, decl *sys)
         }
 
         if (p->verified && p->mode != PARAM_EVENT && !check_verified_param(sys, p, d)) p->verified = false;
+        // What the confirmed world keeps in its heap is read there, and elements with text come as copies in the scratch area
+        if (p->verified && p->mode != PARAM_EVENT && d && decl_holds_text(d)) c->prog->uses_text = true;
         if (p->mode == PARAM_SENDER) {
             if (!str_eq_c(p->type_name, "PlayerID")) {
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
@@ -9540,6 +9697,20 @@ static void check_params(const checker *c, decl *sys)
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
     if (sys->is_handler && sys->is_local && sys->event == prog->forgotten) check_forgotten(sys);
     if (sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command) check_listener(prog, sys);
+    // Whose entities each query goes through. One that names no component is
+    // the code's own world's: the match's for a view and a handler that hears
+    // it, the local world's for a handler of local events. A view's and a
+    // local handler's over the match have their rows made for them, as that
+    // code sees the match (codegen: gen_query_fill, gen_hear_rows).
+    for (int i = 0; i < sys->params.count; i++) {
+        param *p = &sys->params.items[i];
+        if (p->type.kind != TY_QUERY) continue;
+        if (!p->query_of && sys->is_handler && sys->is_local && !sys->listens) {
+            p->query_local = true;
+            p->type.decl->fields.items[0].type = (type){TY_LOCAL_ENTITY, NULL};
+        }
+        p->query_rows = !p->query_local && (sys->is_view || sys->listens);
+    }
 
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).

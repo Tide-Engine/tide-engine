@@ -249,4 +249,34 @@ TIDE_TEST(random_net_a_session_seeds_each_match)
     TIDE_REQUIRE(w != NULL);
     TIDE_CHECK(w->Time.seed == 0);
     tide_session_destroy(plain);
+
+    // ...or with the seed its desc picked, every match, without its top bit
+    const uint32_t asked[2] = {123456789u, 0x80000007u};
+    for (int i = 0; i < 2; i++) {
+        tide_session *picked = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample,
+                                                                        .user = &who[0], .seed = asked[i]});
+        t = 0.0;
+        for (int match = 0; match < 2; match++) {
+            tide_session_start(picked, NULL, t);
+            for (int frame = 0; frame < 60; frame++) {
+                t += 1.0 / 60.0;
+                tide_session_update(picked, t);
+            }
+            const tide_world *theirs = tide_session_server_world(picked);
+            const tide_world *mine = tide_session_world(picked);
+            TIDE_REQUIRE(theirs != NULL && mine != NULL);
+            TIDE_CHECK(theirs->Time.seed == (int32_t)(asked[i] & 0x7FFFFFFFu) && mine->Time.seed == theirs->Time.seed);
+        }
+        tide_session_destroy(picked);
+    }
+
+    // Entropy goes over a seed: a host that has both asked for the system's
+    tide_session *both = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample,
+                                                                  .user = &who[0], .entropy = entropy, .seed = 7u});
+    tide_session_start(both, NULL, 0.0);
+    tide_session_update(both, 0.1);
+    w = tide_session_server_world(both);
+    TIDE_REQUIRE(w != NULL);
+    TIDE_CHECK(w->Time.seed != 7 && w->Time.seed > 0);
+    tide_session_destroy(both);
 }

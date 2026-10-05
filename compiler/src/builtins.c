@@ -85,6 +85,7 @@ static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
 static const type T_INSTANCES = {TY_LIST, &mesh_instances};
 static const type T_RECT = {TY_RECT, NULL};
 static const type T_TEXTURE = {TY_TEXTURE, NULL};
+static const type T_TARGET = {TY_RENDER_TARGET, NULL};
 
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
                        const decl *filter, const decl *transforms)
@@ -585,6 +586,16 @@ static void build_signatures(void)
     describe(add("Draw2D", "Screen", T_NONE, "tide_draw_screen", 0, T_NONE, T_NONE, T_NONE), NULL,
              "The Draw2D calls after it are in the screen's pixels: from the top left, with y down, as the GUI's are. "
              "`Draw2D.Camera` goes back to the world.");
+    // The checker takes these itself (check_screen_target): they're here for editors
+    static const char screen_target_doc[] =
+        "A render target that's always the window's size, or that part of it (`RenderTarget.Screen(0.5)` is half as "
+        "wide and half as high), at the display's full resolution. It's made again, empty, whenever the window's "
+        "size or the display's scale changes, so it's for what a view draws again every frame, like a pass over "
+        "the whole screen, and it's never resized by hand.";
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window", 0, T_NONE, T_NONE, T_NONE), NULL,
+             screen_target_doc);
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
+             screen_target_doc);
 
     describe(add("Draw3D", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");

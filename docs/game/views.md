@@ -49,13 +49,30 @@ An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects
 
 `RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
 
-Create a target with `RenderTarget(width, height)`, using positive pixel dimensions. Its color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+There are three ways to make one:
 
 ```csharp
-local singleton RenderState { RenderTarget scene; bool initialized; }
+render.scene = RenderTarget.Screen();      // Always the window's size, at full resolution
+render.blur  = RenderTarget.Screen(0.5);   // Always half of it, each way
+render.card  = RenderTarget(200, 300);     // A size of its own, in logical pixels, at the display's resolution
+render.small = RenderTarget(320, 180, 1);  // A size of its own, in exactly these pixels
+```
+
+A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Screen()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
+
+- `RenderTarget.Screen()` is for exactly that: a target that's always the window's size. `RenderTarget.Screen(factor)` is always that part of it, for the smaller targets a blur or a glow goes through. The engine makes them again when the window's size changes, so there's nothing to resize and nothing to forget. What was drawn in one is lost then, which doesn't matter for a target a view draws again every frame. `Resize` on one is refused.
+- `RenderTarget(width, height)` is a target of a size of its own. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size.
+- A third argument is the target's pixels per unit, where the display's isn't wanted: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels on every display, for pixel art and anything else that must not depend on the display.
+
+When the display's scale changes (the window moves to another monitor, a browser zooms), the targets at the display's scale are made again, empty. One with pixels per unit of its own is left alone. There's no way to read the display's scale, and nothing here needs it.
+
+Otherwise a target's color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+
+```csharp
+local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
 
-frag Blur(Vertex vertex, mut Color color, Texture source)
+frag Present(Vertex vertex, mut Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }
@@ -63,10 +80,10 @@ frag Blur(Vertex vertex, mut Color color, Texture source)
 [Stage(RenderStages.Prepare)]
 view Prepare(mut RenderState render)
 {
-    if (!render.initialized)
+    if (!render.made)
     {
-        render.scene = RenderTarget(1280, 720);
-        render.initialized = true;
+        render.scene = RenderTarget.Screen();
+        render.made = true;
     }
     render.scene.Clear(Color.black);
     render.scene.Camera(float2(0), 10);
@@ -79,19 +96,54 @@ view Objects(Body body, RenderState render)
 }
 
 [Stage(RenderStages.Effects)]
-view Present(RenderState render)
+view Show(RenderState render)
 {
-    Draw.Blit(render.scene.color, Draw.window, Blur);
+    Draw.Blit(render.scene.color, Draw.window, Present);
 }
 ```
 
 `Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
 
-Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, dimensions and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
+A Blit replaces what's in its destination, and nothing blends two images for you yet, so an effect that adds to the picture, like a glow, ends in a frag that reads both and writes their sum: the scene as the Blit's source, and the other image as a `Texture` field of a singleton the frag takes. The [Duel](../guide/duel.md) example does it: its arena goes into a `RenderTarget.Screen()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
+
+A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
+
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
 A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
+
+## Other entities
+
+A view runs for its own entities, and often needs the others too: a shadow falls on the highest platform under a fighter, an aim line ends at whoever it would hit. A `query` parameter is that second set, as in a [system](./systems.md#another-set-of-entities):
+
+```csharp
+// A fighter's shadow falls on the highest platform under it.
+view DrawFighter(Body body, with Fighter, query (Platform box) platforms)
+{
+    mut var ground = -10000.0;
+    foreach (var entry in platforms)
+    {
+        var top = entry.box.center.y + entry.box.half.y;
+        var over = Math.Abs(body.position.x - entry.box.center.x) < entry.box.half.x;
+        if (over && top <= body.position.y && top > ground) ground = top;
+    }
+    Draw2D.Ellipse(float2(body.position.x, ground), float2(body.radius, 2), Color(0, 0, 0, 0.5));
+    Draw2D.Circle(body.position, body.radius, Color.white);
+}
+```
+
+The view's own parameters still pick the entities it runs for, and the query picks the ones it goes through for each: neither filters the other. Inside the `foreach`, `entry.box` is that platform's `Platform`, to read, and `entry.entity` is its handle. The syntax and the filters are a system's: bindings, `with` and `without`. A view with only queries runs once a frame.
+
+- **Rows are what the view sees.** They're [blended](#smooth-at-any-tick-rate) between the last two ticks like the view's own parameters, with corrections smoothed the same way: the row of the view's own entity has the values its parameters have. An entity that wasn't there last tick is as it is, and one that's gone is in no row.
+- **`verified` works in a query** as it does on a view's own parameters (see [Confirmed state](#confirmed-state)). `query (verified Health health) confirmed` goes through the confirmed world's entities, as its last tick has them. A query with bindings or filters of both worlds, `query (Body body, verified Health sure) both`, takes the entities that are in both: the same entity, and not only the same handle. `with verified Dead` and `without verified Dead` filter there too.
+- **A query is all the match's or all this machine's.** A view goes through local entities too, like its own sparks: `query (Spark spark) sparks`. Those are as they are now, with what views earlier in the frame wrote, and `entry.entity` is a `LocalEntity`.
+- **Rows are read-only, and have the match's fields.** A binding can't be `mut`, and an entity's [local fields](./local-state.md#local-fields) are read and written by a view that runs for that entity.
+- **A view that queries the match only runs in a match**, like any view that reads it. What should go on outside one stays in a view of its own.
+- **Going through a lot stays cheap.** A query's rows are made once a frame, however many entities the view runs for: a view over thousands of entities that goes through thousands of others blends those others once, not once for each.
+
+The rest is as in a system: queries and rows are used directly in `foreach`, in the view's own code, and can't be stored or passed on, where a component value like `entry.box` can. The order is the ECS's, not by distance or by entity ID. The editor says what a view's queries read above the view and on hover, as it does for a system.
 
 ## Your own entities
 
@@ -156,6 +208,7 @@ view Board(verified Duel duel)
 - **A view whose components are all `verified`** runs for the confirmed world's entities, and draws them as they are there: `this` is the confirmed entity, and corrections aren't smoothed.
 - **Filters take it**: `with verified Dead`, `without verified Dead`. Either asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so it skips an entity whose spawn isn't confirmed yet too.
 - **Singletons take it**: `verified Duel duel`.
+- **A `verified` value is whole.** Its text, lists, maps, sets and grids are the confirmed world's, and read like any other's: `sure.build.cards.count`, `foreach (var card in sure.build.cards)`, a copy of the value, a function it's passed to. They're to read, like everything a view takes of the match: to change one, take a copy.
 - **A `verified` value isn't blended.** It's as the last confirmed tick has it, where the rest of what a view reads is [blended](#smooth-at-any-tick-rate) between two ticks.
 - **`mut` goes with it.** `mut verified Health health` reads the confirmed `Health` and writes the entity's [local fields](./local-state.md#local-fields), which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`.
 - **The same entity** in both worlds is the entity, not only its handle: running a tick again can give a handle to another entity, which is then in one world only (see [After a rollback](./local-state.md#after-a-rollback)).
@@ -174,7 +227,6 @@ With a predicted `Body`, an entity is gone from a view the moment the prediction
 
 ### What isn't there yet
 
-- **Text, lists, maps, sets and grids of the confirmed world.** Naming one through a `verified` parameter is an error, and a copy of a component that has one has it empty. Read them through a parameter that isn't `verified`.
 - **`verified World world`**, which is an error that points to `verified` component parameters. A view's `World` is the world it draws.
 - **Blending confirmed state.** A `verified` value steps at the tick rate. Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead, isn't there yet.
 
@@ -469,7 +521,7 @@ That's the message in the middle of the screen, on a panel that fits it. Bold te
 
 The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera.
 
-It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own pixels and camera, and `target.MeasureText(text, size)` measures for it.
+It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own camera, and pixels of its own to fit text to, so `target.MeasureText(text, size)` measures for it.
 
 ## 3D
 
