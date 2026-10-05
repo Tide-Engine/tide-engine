@@ -6,6 +6,10 @@
 # warnings off. The package's bridge is ours, and compiles with each test.
 file(GLOB box2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d/src/*.c")
 add_library(tide_box2d STATIC ${box2d_sources})
+# With the flags a game's C gets, which keep float math the same everywhere:
+# without them, clang fuses a multiply and an add on ARM, and Box2D steps
+# otherwise there
+target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
 
 tide_add_game(tide_box2d_stack SOURCES box2d/box2d.tide box2d/bridge.c box2d/test/stack.tide NAME game
