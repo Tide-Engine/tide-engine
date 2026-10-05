@@ -125,6 +125,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.WireRect(center, size, color)` | A rectangle's outline |
 | `Draw2D.Line(from, to, color)` | A line |
 | `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
+| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)) |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
 | `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
@@ -250,6 +251,32 @@ view Health(Stats stats)
 ```
 
 What views draw there is under the GUI's widgets, which draw last.
+
+## Measuring text
+
+`Draw2D.Text` takes the text's top left corner. To center a line, align it to the right, or fit a panel around it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line.
+
+```csharp
+view Banner(Round round)
+{
+    Draw2D.Screen();
+    var size = Draw2D.MeasureText(round.message, 48);
+    var corner = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
+    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, size + float2(32, 16), Color.black);
+    Draw2D.Text(round.message, corner, 48, Color.white);
+}
+```
+
+That's the message in the middle of the screen, on a panel that fits it. Text against the right edge starts at `Screen.width - size.x`.
+
+The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered on a body starts half its height above the body's middle:
+
+```csharp
+var size = Draw2D.MeasureText(player.name, 0.5);
+Draw2D.Text(player.name, body.position + float2(-size.x, size.y) * 0.5, 0.5, Color.white);
+```
+
+It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own pixels and camera, and `target.MeasureText(text, size)` measures for it.
 
 ## 3D
 

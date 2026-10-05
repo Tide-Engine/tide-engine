@@ -5,8 +5,9 @@
 // the order they were recorded whatever the renderer batches together, that
 // a frame can draw far more than a list used to hold, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
-// that 3D meshes draw through their cameras, nearest in front, and that
-// meshes draw through shaders of the game's, with what those read.
+// that 3D meshes draw through their cameras, nearest in front, that meshes
+// draw through shaders of the game's, with what those read, and that text is
+// as big as it measures.
 // `--bench` (or `?bench` on the web) times frames of many shapes instead.
 
 #include <math.h>
@@ -1225,6 +1226,98 @@ static void tiles_leave_no_gaps(void)
 }
 
 // ---------------------------------------------------------------------------
+// Measuring text: as big as it's drawn
+
+// Pixels are read back from a target of the window's size, which is in its
+// own pixels whatever the display's scale is: text measures as it's fitted
+// there.
+static tide_float2 measure_read_back(const char *text, const float size, const bool target)
+{
+    (void)target;
+    return tide_platform_measure_text(text, size, true);
+}
+
+enum { TEXT_AREA_W = 200, TEXT_AREA_H = 84 };
+
+// A frame that draws through a camera of `pixels` a world unit, or on the
+// screen for 0.
+static void text_frame(const float pixels, const tide_float2 center)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    if (pixels > 0.0f) tide_draw_camera(&list, center, screen.y / (2.0f * pixels));
+    else tide_draw_screen(&list);
+}
+
+// The screen's top left corner, as the frame drew it.
+static void text_area(uint32_t *out)
+{
+    static tide_float2 points[TEXT_AREA_W * TEXT_AREA_H];
+    for (int y = 0; y < TEXT_AREA_H; y++) {
+        for (int x = 0; x < TEXT_AREA_W; x++) points[y * TEXT_AREA_W + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    tide_platform_read_pixels(&list, points, TEXT_AREA_W * TEXT_AREA_H, out);
+}
+
+// Text is as big as it measures, to the pixel, on the screen and through
+// cameras whose pixels to a unit aren't whole: two lines drawn at once are
+// the same pixels as their parts drawn where the parts before them measure
+// to, and their ink ends where the measure says. One size is halfway between
+// two whole numbers of pixels, where measuring and drawing have to round the
+// same way.
+static void text_measures_as_drawn(void)
+{
+    static const float scales[] = {0.0f, 1.0f, 2.75f, 0.4f, 7.3f};
+    static const tide_float2 centers[] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.3f, 0.7f}, {-40.0f, 12.5f}, {3.0f, -2.0f}};
+    static const float heights[] = {16.0f, 19.0f, 13.3f, 22.6f, 30.5f}; // The text's size, in pixels
+    const tide_float2 corner = {6.25f, 5.25f};                          // Its top left corner, in pixels
+    for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
+        const float s = scales[k], unit = s > 0.0f ? s : 1.0f;
+        const float size = heights[k] / unit;
+        const float down = s > 0.0f ? -1.0f : 1.0f; // The way lines go: y is up in the world
+        const tide_float2 at = s > 0.0f ? tide_f2(centers[k].x + (corner.x - screen.x * 0.5f) / s,
+                                                  centers[k].y - (corner.y - screen.y * 0.5f) / s)
+                                        : corner;
+
+        static uint32_t together[TEXT_AREA_W * TEXT_AREA_H], apart[TEXT_AREA_W * TEXT_AREA_H];
+        text_frame(s, centers[k]);
+        const tide_float2 both = tide_draw_measure_text(&list, "Tide fits\nits texts", size, screen, measure_read_back);
+        const tide_float2 start = tide_draw_measure_text(&list, "Tide ", size, screen, measure_read_back);
+        const tide_float2 line = tide_draw_measure_text(&list, "Tide fits", size, screen, measure_read_back);
+        tide_draw_text(&list, "Tide fits\nits texts", at, size, white);
+        text_area(together);
+
+        text_frame(s, centers[k]);
+        tide_draw_text(&list, "Tide ", at, size, white);
+        tide_draw_text(&list, "fits", tide_f2(at.x + start.x, at.y), size, white);
+        tide_draw_text(&list, "its texts", tide_f2(at.x, at.y + down * (both.y - line.y)), size, white);
+        text_area(apart);
+
+        int different = 0, ink = 0, right = -1, bottom = -1;
+        for (int i = 0; i < TEXT_AREA_W * TEXT_AREA_H; i++) {
+            different += together[i] != apart[i];
+            if (near(together[i], rgba(background), 0)) continue;
+            ink++;
+            if (i % TEXT_AREA_W > right) right = i % TEXT_AREA_W;
+            bottom = i / TEXT_AREA_W;
+        }
+        char what[128];
+        snprintf(what, sizeof what, "text drawn in parts, each where the last measures to, is the text drawn at once "
+                                    "(%.1f pixels high, %d pixels differ)", (double)heights[k], different);
+        expect(different == 0 && ink > 100, what);
+
+        // Its last letters' ink, within a third of a letter's height of the measured corner
+        const float measured_right = corner.x + both.x * unit, measured_bottom = corner.y + both.y * unit;
+        const float slack = heights[k] / 3.0f + 1.0f;
+        snprintf(what, sizeof what, "its ink ends where it measures to (at %d, %d of %.2f, %.2f)", right + 1, bottom + 1,
+                 (double)measured_right, (double)measured_bottom);
+        expect(line.y * unit > heights[k] - 0.01f && line.y * unit < heights[k] + 0.01f
+               && (float)(right + 1) <= measured_right + 1.0f && (float)(right + 1) > measured_right - slack
+               && (float)(bottom + 1) <= measured_bottom + 1.0f && (float)(bottom + 1) > measured_bottom - slack, what);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // --bench: frames of many shapes, rendered offscreen and read back, so it
 // works in a hidden window or page, where tide_platform_draw draws nothing.
 // Recording is timed separately. Rendering includes CPU submission, the GPU
@@ -1438,6 +1531,7 @@ static int frame(void *user, const float seconds)
         primitives();
         shaded();
         tiles_leave_no_gaps();
+        text_measures_as_drawn();
         return run_checks();
     }
 #endif
@@ -1446,6 +1540,7 @@ static int frame(void *user, const float seconds)
     primitives();
     shaded();
     tiles_leave_no_gaps();
+    text_measures_as_drawn();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

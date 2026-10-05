@@ -360,6 +360,7 @@ TIDE_TEST(lsp_complete_builtin_owners)
     TIDE_CHECK(offers(draw, "Circle"));
     TIDE_CHECK(has(draw, "Circle(${1:center}, ${2:radius}, ${3:color})"));
     TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && offers(draw, "Instanced") && !offers(draw, "Cube"));
+    TIDE_CHECK(has(draw, "MeasureText(${1:text}, ${2:size})"));
 
     const char *draw3 = complete(GAME_TYPES "view V(Body body)\n{\n    Draw3D.$\n}\n");
     TIDE_CHECK(offers(draw3, "Cube") && offers(draw3, "Sphere") && offers(draw3, "Cylinder") && offers(draw3, "Plane"));
@@ -614,6 +615,11 @@ TIDE_TEST(lsp_hover)
     const char *function = request("textDocument/hover");
     TIDE_CHECK(has(function, "Draw2D.Circle(float2 center, float radius, Color color)"));
     TIDE_CHECK(has(function, "A filled circle."));
+
+    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(Draw2D.Measure$Text(\"a\", 12), 1, Color.red);\n}\n");
+    const char *measure = request("textDocument/hover");
+    TIDE_CHECK(has(measure, "Draw2D.MeasureText(string text, float size) -> float2"));
+    TIDE_CHECK(has(measure, "the width of its widest line in x and the height of its lines in y"));
 
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.Nor$malize(body.position);\n}\n");
     const char *normalize = request("textDocument/hover");

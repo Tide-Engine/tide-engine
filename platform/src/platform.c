@@ -415,11 +415,16 @@ static uint32_t frame_target_capacity;
 // window's logical pixels: a render target or the readback target does.
 static bool offscreen;
 
+// The window's pixels in a logical one, which its text is fitted to (see font.h).
+static tide_float2 window_scale(void)
+{
+    return tide_f2((float)pixel_width / (float)screen_width, (float)pixel_height / (float)screen_height);
+}
+
 // The target's pixels per logical pixel.
 static tide_float2 pixel_scale(void)
 {
-    if (offscreen) return tide_f2(1.0f, 1.0f);
-    return tide_f2((float)pixel_width / (float)screen_width, (float)pixel_height / (float)screen_height);
+    return offscreen ? tide_f2(1.0f, 1.0f) : window_scale();
 }
 
 static draw_step *add_step(const uint32_t kind)
@@ -498,7 +503,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
     const int pixels = tide_font_pixels(size, scale.y, &stretch);
     // In the target's pixels, as the pen is
     const float left = floorf(at.x * scale.x + 0.5f);
-    const float pitch = floorf(tide_font_line() * (float)pixels * stretch + 0.5f);
+    const float pitch = tide_font_pitch(pixels, stretch);
     float pen_x = left, pen_y = floorf((at.y + tide_font_baseline() * size) * scale.y + 0.5f); // On the baseline
 
     if (step_count == 0 || steps[step_count - 1].kind != STEP_TEXT) add_step(STEP_TEXT)->first = mesh_vertex_count;
@@ -1628,15 +1633,13 @@ tide_float2 tide_platform_screen_size(void)
     return tide_f2((float)screen_width, (float)screen_height);
 }
 
-// The window's pixels in a logical one, which text is fitted to (see font.h).
-static float window_scale(void)
+// As add_text draws it: on the window's pixels, or a render target's own.
+tide_float2 tide_platform_measure_text(const char *text, const float size, const bool target)
 {
-    return (float)pixel_height / (float)screen_height;
-}
-
-float tide_platform_measure_text(const char *text, const float size)
-{
-    return tide_font_measure(text, size, window_scale());
+    const tide_float2 scale = target ? tide_f2(1.0f, 1.0f) : window_scale();
+    tide_float2 measured;
+    tide_font_size(text, size, scale.x, scale.y, &measured.x, &measured.y);
+    return measured;
 }
 
 const char *tide_platform_renderer(void)
@@ -1665,7 +1668,7 @@ void tide_platform_draw_overlay(const char *text)
         if (n >= sizeof lines[0]) n = sizeof lines[0] - 1;
         memcpy(lines[count], line, n);
         lines[count][n] = '\0';
-        widths[count] = ceilf(tide_font_measure(lines[count], size, window_scale()));
+        widths[count] = ceilf(tide_font_measure(lines[count], size, window_scale().y));
         if (widths[count] > widest) widest = widths[count];
         line = end ? end + 1 : NULL;
     }
