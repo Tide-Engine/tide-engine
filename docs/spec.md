@@ -1153,6 +1153,36 @@ component Body
 ```
 
 - Something that jumps, like a respawn, a portal or a camera cut, says so from match code: `entity.Snap()` or `singleton.Snap()`. For the tick it happens in, views draw it as it is instead of sliding from where it was.
+
+#### Provisional correction smoothing
+
+**Provisional.** `[Position]` and `[Rotation]` describe how a match field is presented when prediction is corrected. The names and contract may change as games test them.
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    [Rotation] float heading; // Radians, for 2D
+    float2 velocity;          // Ordinary tick interpolation
+}
+
+component Pose
+{
+    [Position] float3 position;
+    [Rotation] quaternion rotation;
+}
+```
+
+- `[Position]` applies to a float or floating-point vector. Tick interpolation stays linear. A correction accumulates the additive difference needed to preserve the displayed value, and the presentation removes that error over time.
+- `[Rotation]` applies to a float in radians or a quaternion. A float interpolates and corrects through the shortest wrapped angular difference; a quaternion uses the shortest relative rotation. Its correction error decays toward zero angle or the identity rotation.
+- Error is local to presentation and decays exponentially with frame time, with a provisional half-life of 75 ms. Further corrections accumulate with the error still present. Ordinary motion follows the corrected simulation; it is not low-passed along with the correction.
+- Untagged fields keep ordinary tick interpolation. An ordinary struct can contain annotated built-in fields, including through nested ordinary structs. Correction smoothing through a type with its own `Interpolate` remains deferred; no companion custom-type method is agreed.
+- `entity.Snap()` and `singleton.Snap()` remain immediate and clear the accumulated correction error. The retained errors change neither simulation values nor collisions, the simulation hash or serialized match state. No new correction-rate setting is agreed.
+- The tags take no arguments and cannot be combined with each other or `[Snap]` on the same field. They describe match component and singleton fields, or ordinary struct fields held by them, not local state, inputs or events.
+- A new match, a hot reload or a replacement world with no comparable presentation history clears the error. Host migration retains the frozen presentation while reconnecting, then clears the error when the new network timeline begins.
+
+#### Other view rules
+
 - A view filters its entities by whether this machine's player owns them, with `with ownership` and `without ownership`, beside `with` and `without`:
 
 ```csharp
@@ -1599,7 +1629,7 @@ Local fields, beyond what's decided:
   - Each entity is born as a number: a hash of the tick it was spawned in and what it was spawned with (which components, its scene, and each component's value). An entity is in a world, for when local fields go, when the world has its handle born as the same.
   - So a replay that spawns something else on a handle takes what was kept there, `Forgotten` first, and the other entity starts from the defaults. The same spawn again (the server had the tick as the client predicted it) keeps them.
   - A spawn that comes out with other values, like a position a wrong guess moved, is another entity. Text and lists among the values count by where the match keeps them, so a replay that changed the match's text before the spawn can make it another too. Either way the cost is the local fields starting over.
-  - The number is this machine's, beside the world and never in it: the world's hash, its bytes, its deltas and what's sent are the same with it or without, a game with no local fields on components keeps none, and it costs 4 bytes an entity where there are. An entity that came with a world the server sent (a player who joins, or one whose world the server put right) has none, and is known by its handle alone; so are local fields C set for an entity that had none.
+  - The number is this machine's, beside the world and never in it: the world's hash, its bytes, its deltas and what's sent are the same with it or without, a game with neither local fields nor correction-tagged fields on components keeps none, and it costs 4 bytes an entity where there are. An entity that came with a world the server sent (a player who joins, or one whose world the server put right) has none, and is known by its handle alone; so are local fields C set for an entity that had none.
 - **`Forgotten`** is how a local handler hears of it, to let go of what the fields hold, like a C library's handle: a built-in local event, sent to an entity as its local fields of a component go, before they do.
 
 ```csharp

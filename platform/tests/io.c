@@ -13,6 +13,7 @@
 #include <windows.h>
 #else
 #include <sched.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -199,6 +200,30 @@ TIDE_TEST(io_recursive_delete_does_not_follow_directory_links)
     TIDE_CHECK(files.ok && tide_list_count(files.value) == 0);
     TIDE_REQUIRE(tide_directory_delete(io, path(root, "inside"), true).ok);
     TIDE_CHECK(contents(io, path(root, "outside/keep.txt"), "keep"));
+    TIDE_REQUIRE(tide_directory_delete(io, root, true).ok);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(io_flush_only_opens_directories_that_changed)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests");
+    char folder[80];
+    snprintf(folder, sizeof folder, "above-test-%ld", (long)getpid());
+    const tide_str root = path(tide_application_temporary_cache_path(io), folder);
+    if (tide_directory_exists(io, root)) TIDE_REQUIRE(tide_directory_delete(io, root, true).ok);
+    TIDE_REQUIRE(tide_directory_create_directory(io, path(root, "above/own")).ok);
+    TIDE_REQUIRE(finish_flush(io, tide_storage_flush_begin(io)) == TIDE_IO_NONE);
+    // A directory to go through but not to open, as those above an app's own
+    // folders can be (Android's /data). Making one below it changes nothing
+    // in it, so the flush has no reason to open it.
+    const tide_str above = path(root, "above");
+    TIDE_REQUIRE(chmod(tide_str_c(above), 0100) == 0);
+    TIDE_CHECK(tide_directory_create_directory(io, path(root, "above/own/made")).ok);
+    TIDE_CHECK(tide_file_write_all_text(io, path(root, "above/own/made/file.txt"), text("kept")).ok);
+    TIDE_CHECK(finish_flush(io, tide_storage_flush_begin(io)) == TIDE_IO_NONE);
+    TIDE_REQUIRE(chmod(tide_str_c(above), 0700) == 0);
+    TIDE_CHECK(contents(io, path(root, "above/own/made/file.txt"), "kept"));
     TIDE_REQUIRE(tide_directory_delete(io, root, true).ok);
     tide_scratch_reset(mark);
 }

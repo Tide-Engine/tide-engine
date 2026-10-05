@@ -1,0 +1,3 @@
+// expect: describes a match field
+component Body { [Position] local float2 position; }
+scene Main {}
