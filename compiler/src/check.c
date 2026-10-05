@@ -5938,8 +5938,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                    && !through_local_field(target) && !(arg_of && target == root && root->param->type.decl->local_part)) {
             diag_note("a view can't change the match: put what it wants in the input, and change it in a system");
         } else {
-            diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to write to it",
-                      STR_ARG(root->param->type_name), STR_ARG(root->name));
+            diag_note("declare the parameter as 'mut %s" STR_FMT " " STR_FMT "' to write to it",
+                      root->param->verified ? "verified " : "", STR_ARG(root->param->type_name), STR_ARG(root->name));
             const fix f = {.kind = FIX_ADD_MUT, .at = root->at, .param = root->param};
             vec_push(c->prog->fixes, f);
         }
@@ -9528,9 +9528,7 @@ static void warn_unused_params(checker *c, const decl *sys)
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             if (p->verified) {
                 diag_note("to only require the component in the confirmed world, write 'with verified " STR_FMT "'", STR_ARG(type));
-                continue; // The quick fix writes 'with', which would ask the drawn world instead
-            }
-            if (sys->is_handler || sys->is_view) {
+            } else if (sys->is_handler || sys->is_view) {
                 diag_note("to only require the component, write 'with " STR_FMT "'", STR_ARG(type));
             } else {
                 diag_note("to only require the component, write 'with " STR_FMT "': a filter doesn't make other "
