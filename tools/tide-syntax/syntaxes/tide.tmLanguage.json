@@ -641,6 +641,14 @@
     "calls": {
       "patterns": [
         {
+          "comment": "Damage(10, crit: true): an argument by its parameter's name, which starts the argument",
+          "match": "(?<=[(,])\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(:)",
+          "captures": {
+            "1": { "name": "variable.parameter.tide" },
+            "2": { "name": "punctuation.separator.colon.tide" }
+          }
+        },
+        {
           "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "entity.name.function.call.tide" }

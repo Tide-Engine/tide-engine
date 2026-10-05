@@ -466,6 +466,53 @@ static bool converts_enum(const expr *e)
     return e->ctor == CTOR_ENUM && (e->call == CALL_NONE || e->call == CALL_CONSTRUCT) && e->type_decl;
 }
 
+static void walk_expr(const expr *e);
+
+// A call's arguments as its code wrote them. Where a call names arguments or
+// leaves some out, the checker puts `args` in the parameters' order, with
+// their defaults, and keeps what was written apart.
+static int written_count(const expr *call)
+{
+    return call->settled ? call->written.count : call->args.count;
+}
+
+static const expr *written_arg(const expr *call, const int i)
+{
+    return call->settled ? call->written.items[i] : call->args.items[i];
+}
+
+// The name a written argument has, `crit` in `crit: true`, or empty.
+static str written_name(const expr *call, const int i)
+{
+    return i < call->arg_names.count ? call->arg_names.items[i] : (str){"", 0};
+}
+
+// The parameter a written argument goes to, by its place among them.
+static int written_param(const expr *call, const int i)
+{
+    if (!call->settled) return i;
+    for (int k = 0; k < call->args.count; k++) {
+        if (call->args.items[k] == call->written.items[i]) return k;
+    }
+    return i;
+}
+
+// A call's arguments, and the names the game's own parameters are passed by:
+// each is a use of its parameter.
+static void walk_args(const expr *e)
+{
+    const decl *m = e->call == CALL_METHOD || e->call == CALL_FUNCTION ? e->method : NULL;
+    for (int i = 0; i < written_count(e); i++) {
+        const str name = written_name(e, i);
+        const int k = written_param(e, i);
+        if (name.len > 0 && m && k < m->params.count && str_eq(m->params.items[k].name, name)) {
+            add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_PARAM, .param = &m->params.items[k],
+                                 .param_of = m, .name = name, .type = m->params.items[k].type});
+        }
+        walk_expr(written_arg(e, i));
+    }
+}
+
 static void walk_expr(const expr *e)
 {
     if (!e) return;
@@ -553,9 +600,10 @@ static void walk_expr(const expr *e)
             o.kind = OCC_CONST;
             o.decl = e->constant;
             break;
-        case BIND_SHADER: // The vert or frag a Draw2D.Mesh names
+        case BIND_SHADER: // The vert or frag a Draw2D.Mesh names, maybe with its parameters' types: Shade(BoxVertex, Color)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
+            for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
             break;
         case BIND_NONE:
             // The owner in Math.Dot(...) or quaternion.identity, which the checker doesn't bind.
@@ -582,6 +630,7 @@ static void walk_expr(const expr *e)
         } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw2D.Mesh(..., Effects.Shade)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
+            for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]); // Its parameters' types, where it's written with them
         } else if (e->enum_member) { // Title in Page.Title
             o.kind = OCC_ENUM_MEMBER;
             o.decl = e->type_decl;
@@ -640,7 +689,7 @@ static void walk_expr(const expr *e)
             o.param = e->param;
             add_occ(o);
         }
-        for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
+        walk_args(e);
         walk_stmt(e->block);
         break;
     }
@@ -711,7 +760,7 @@ static void walk_expr(const expr *e)
             o.component = e->type_decl && e->type_decl->kind == DECL_COMPONENT ? e->type_decl : NULL;
             add_occ(o);
         }
-        for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
+        walk_args(e);
         walk_stmt(e->block);
         break;
     }
@@ -876,6 +925,17 @@ static void walk_routine(const decl *m)
     walk_code = NULL;
 }
 
+// The types a declaration's name is written with, where others share it:
+// [After(Move(Position, with Player))]. Each is its parameter's.
+static void signature_refs(const sig_item *items, const int count)
+{
+    for (int i = 0; i < count; i++) {
+        const sig_item *item = &items[i];
+        if (item->mode == PARAM_QUERY) signature_refs(item->query.items, item->query.count);
+        else if (item->param && !item->param->ownership) type_ref(item->type_qual_at, item->type_at, item->type_name, item->param->type);
+    }
+}
+
 // In source order, and at one position in the order they were found: qsort
 // leaves ties in any order.
 static int occ_order(const void *a, const void *b)
@@ -919,6 +979,7 @@ static void index_program(void)
                     qualifier_ref(q->at, q->name_at, q->text);
                     add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_SYSTEM,
                                          .decl = q->decl, .name = name});
+                    signature_refs(q->signature.items, q->signature.count); // Move(Position, with Player): the types it's written with
                 }
             }
             for (int v = 0; v < at->values.count; v++) walk_expr(at->values.items[v]);
@@ -1270,6 +1331,7 @@ static void format_param(const param *p, sb *out)
     if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
+    if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
 }
 
 // `system Move(mut Body body)`, or a handler's `event(Hit hit) TakeHit(mut Health health)`.
@@ -1430,7 +1492,7 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 
 // Scene's functions.
 static const method_form scene_calls[] = {
-    {"Load", "Scene.Load(scene, SceneVisibility visibility)",
+    {"Load", "Scene.Load(scene, SceneVisibility visibility = SceneVisibility.Public)",
      "Loads a scene and returns its entity. Its `Spawned` handlers set it up at the end of the tick; it's public unless it's `SceneVisibility.Private`."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
     {"AddPlayer", "Scene.AddPlayer(scene, PlayerID player)", "Lets a player see a private scene."},
@@ -1442,18 +1504,18 @@ static const method_form session_calls[] = {
     {"Start", "Session.Start(scene)",
      "Starts a match on this machine, in `scene`: it runs the server, and no one else joins until it's opened. It leaves "
      "the match it's in first."},
-    {"Open", "Session.Open(int port)",
+    {"Open", "Session.Open(int port = 7777)",
      "Lets others join the match this machine runs: in a room, whose code is `Session.room`, and on `port` too (7777 "
      "unless it says), except on the web."},
     {"Close", "Session.Close()", "No one else joins the match this machine runs from now on; the players in it stay."},
-    {"Kick", "Session.Kick(PlayerID player, string message)",
+    {"Kick", "Session.Kick(PlayerID player, string message = \"\")",
      "Sends a player on another machine out of the match this machine runs. They get `Disconnected` with `Kicked` and "
      "`message`, and `PlayerLeft` follows. They can join again while the match is open."},
-    {"KickAll", "Session.KickAll(string message)",
+    {"KickAll", "Session.KickAll(string message = \"\")",
      "Sends every player on another machine out of the match this machine runs, with `message`, as `Kick` does."},
     {"Join", "Session.Join(string code)",
      "Joins the match in the room with `code`, like \"K7QF2M\": its host's `Session.room`. It leaves the match it's in first."},
-    {"Connect", "Session.Connect(string address, int port)",
+    {"Connect", "Session.Connect(string address, int port = 7777)",
      "Joins the match at `address`, like \"192.168.1.5\" or \"localhost\", on `port` (7777 unless it says). It leaves the "
      "match it's in first."},
     {"Leave", "Session.Leave()",
@@ -1534,7 +1596,7 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
-    {"Sample", "Sample(float2 uv, Filter filter) -> Color",
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
      "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
      "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). The "
      "grid is a `Grid2<Color>` field of a component or singleton the frag or vert takes, and the filter is written "
@@ -3124,7 +3186,8 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             VEC(char *) names = {0};
             for (int k = 0; k < call->args.count; k++) {
                 sb name = {0};
-                argument_name(call->args.items[k], &name);
+                if (written_name(call, k).len > 0) sb_printf(&name, STR_FMT, STR_ARG(written_name(call, k))); // Foo(count: 3)
+                else argument_name(call->args.items[k], &name);
                 for (int j = 0; j < names.count; j++) {
                     if (strcmp(names.items[j], name.data) == 0) sb_printf(&name, "%d", k + 1); // Two of the same
                 }
@@ -3705,7 +3768,7 @@ static void select_in_expr(const expr *e, const loc at, span_list *spans)
     select_in_expr(e->lhs, at, spans);
     select_in_expr(e->rhs, at, spans);
     select_in_expr(e->cond, at, spans);
-    for (int i = 0; i < e->args.count; i++) select_in_expr(e->args.items[i], at, spans);
+    for (int i = 0; i < written_count(e); i++) select_in_expr(written_arg(e, i), at, spans);
     for (int i = 0; e->kind == E_LITERAL && i < e->inits.count; i++) select_in_expr(e->inits.items[i].value, at, spans);
     if (e->kind == E_CALL || e->kind == E_METHOD) select_in_stmt(e->block, at, spans);
 }
@@ -4087,12 +4150,15 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
         str names[16];
         const int count = call_param_names(call, names, 16);
-        for (int k = 0; k < call->args.count && k < count; k++) {
+        for (int n = 0; n < written_count(call); n++) {
+            const int k = written_param(call, n);
+            const expr *arg = written_arg(call, n);
+            if (k >= count || written_name(call, n).len > 0) continue; // One written with its name says it already
             // A one-letter name (float3's x, y, z, Color's r, g, b) says no more than where the argument is.
-            if (!is_literal(call->args.items[k]) || names[k].len <= 1) continue;
+            if (!is_literal(arg) || names[k].len <= 1) continue;
             sb label = {0};
             sb_printf(&label, STR_FMT ":", STR_ARG(names[k]));
-            inlay_hint(out, &written, expr_start(call->args.items[k]), label.data, HINT_PARAMETER, true);
+            inlay_hint(out, &written, expr_start(arg), label.data, HINT_PARAMETER, true);
         }
     }
     jb_put(out, "]");
@@ -5314,6 +5380,50 @@ static void complete_shader_code(completion *c, const scope *sc, const bool stat
     complete_namespaces(c, false);
 }
 
+// Where an argument starts in a call of one of the game's functions or
+// methods: the names its parameters can be passed by, `crit:`, for those the
+// call hasn't given yet, by place or by name. `open` is the call's '(' and
+// `last` the token before the cursor.
+static void complete_argument_names(completion *c, const int open, const int last)
+{
+    if (DOC->toks[open - 1].kind != T_IDENT) return;
+    const str name = DOC->toks[open - 1].text;
+    const bool method = open >= 2 && DOC->toks[open - 2].kind == T_DOT;
+    // What the call wrote so far: arguments by place, then names
+    int unnamed = 0;
+    VEC(str) named = {0};
+    for (int i = open + 1, depth = 0, start = open + 1; i <= last; i++) {
+        const tok_kind k = DOC->toks[i].kind;
+        if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) depth++;
+        else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
+        if (k != T_COMMA || depth != 0) continue; // Each ',' ends an argument
+        if (DOC->toks[start].kind == T_IDENT && DOC->toks[start + 1].kind == T_COLON) vec_push(named, DOC->toks[start].text);
+        else if (named.count == 0) unnamed++;
+        start = i + 1;
+    }
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *m = k < 0 ? d : d->methods.items[k];
+            if (!is_routine(m) || m->is_operator || !str_eq(m->name, name) || (method && !m->owner)) continue;
+            const int count = m->params.count - (m->takes_action ? 1 : 0); // An Action is the block after the call
+            for (int p = unnamed; p < count; p++) {
+                const param *prm = &m->params.items[p];
+                bool given = false;
+                for (int n = 0; n < named.count; n++) given |= str_eq(named.items[n], prm->name);
+                if (given) continue;
+                sb label = {0};
+                sb detail = {0};
+                sb insert = {0};
+                sb_printf(&label, STR_FMT ":", STR_ARG(prm->name));
+                format_param(prm, &detail);
+                sb_printf(&insert, STR_FMT ": ", STR_ARG(prm->name));
+                item(c, label.data, CK_VARIABLE, detail.data, "Passes this argument by its parameter's name.", insert.data);
+            }
+        }
+    }
+}
+
 // Names and keywords that can start an expression or statement.
 static void complete_expression(completion *c, const loc at, const bool statement)
 {
@@ -6296,7 +6406,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             if (DOC->toks[first].kind == T_IDENT && (str_eq_c(type_text, "Grid2") || str_eq_c(type_text, "Grid3"))) {
                 const bool flat = str_eq_c(type_text, "Grid2");
                 item(&c, flat ? "Grid2" : "Grid3", CK_FUNCTION,
-                     flat ? "Grid2(int width, int height)" : "Grid3(int width, int height, int depth)", GRID_SIZE_DOC,
+                     flat ? "Grid2(int width = 0, int height = 0)" : "Grid3(int width = 0, int height = 0, int depth = 0)", GRID_SIZE_DOC,
                      flat ? "Grid2($1)" : "Grid3($1)");
             }
         }
@@ -6379,6 +6489,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const bool three_d = str_eq_c(DOC->toks[call - 3].text, "Draw3D");
             if (sc.decl && sc.decl->is_view && (!vertex || vertex_is_3d(vertex) == three_d)) complete_shaders(&c, vertex);
         }
+        // Damage(10, : the names its other parameters can be passed by
+        if (call >= 1 && (pk == T_LPAREN || pk == T_COMMA)) complete_argument_names(&c, call, last);
         const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE;
         complete_expression(&c, at, at_statement);
         break;
@@ -6757,31 +6869,85 @@ typedef struct signature_list {
     int active;       // The first signature with enough parameters, or -1
     int active_param; // Its parameter under the cursor
     int shown;
+    str named;        // The name that argument is written with, `crit` in `crit: true`, or empty: its parameter is the one named so
+    bool picked;      // The next signature is the one the call means, whichever came before
 } signature_list;
+
+// The parameters in a signature's label, "Name(float2 center, float radius = 1)":
+// where each starts and ends, apart from the commas and parentheses of a
+// default's own, a generic type's, and text's. Returns how many (16 at most),
+// or -1 for a label with no parameter list.
+static int label_split(const char *label, int starts[16], int ends[16])
+{
+    const char *open = strchr(label, '(');
+    if (!open) return -1;
+    int count = 0;
+    int depth = 0;
+    int angle = 0;
+    bool in_default = false;
+    const char *start = open + 1;
+    for (const char *p = open + 1; *p; p++) {
+        const char ch = *p;
+        if (ch == '"') { // Text, as a default
+            for (p++; *p && *p != '"'; p++) {
+                if (*p == '\\' && p[1]) p++;
+            }
+            if (!*p) return -1;
+        } else if (ch == '(' || ch == '[' || ch == '{') {
+            depth++;
+        } else if ((ch == ')' || ch == ']' || ch == '}') && depth > 0) {
+            depth--;
+        } else if (ch == '<' && !in_default) {
+            angle++;
+        } else if (ch == '>' && !in_default && angle > 0) {
+            angle--;
+        } else if (ch == '=' && depth == 0) {
+            in_default = true;
+        } else if ((ch == ',' || ch == ')') && depth == 0 && angle == 0) {
+            if (p > start && count < 16) {
+                starts[count] = (int)(start - label);
+                ends[count] = (int)(p - label);
+                count++;
+            }
+            if (ch == ')') return count;
+            start = p + 1;
+            while (*start == ' ') start++;
+            in_default = false;
+        }
+    }
+    return -1;
+}
 
 // Adds a signature, finding its parameters in the label: "Name(float2 center, float radius)".
 static void add_signature(signature_list *s, const char *label, const char *doc)
 {
-    const char *open = strchr(label, '(');
-    const char *close = open ? strchr(open, ')') : NULL;
-    if (!open || !close) return;
     int starts[16];
     int ends[16];
-    int params = 0;
-    const char *p = open + 1;
-    while (p < close && params < 16) {
-        const char *end = p;
-        while (end < close && *end != ',') end++;
-        starts[params] = (int)(p - label);
-        ends[params] = (int)(end - label);
-        params++;
-        p = end < close ? end + 2 : close;
-    }
+    const int params = label_split(label, starts, ends);
+    if (params < 0) return;
     const bool variadic = strstr(label, "...") != NULL;
-    if (s->active < 0 && (variadic || params > s->arg)) {
-        s->active = s->shown;
-        s->active_param = variadic && s->arg >= params ? params - 1 : s->arg;
+    // The parameter the cursor's argument goes to: by its place, or by the name it's written with
+    int at = variadic && s->arg >= params ? params - 1 : s->arg;
+    bool takes = variadic || params > s->arg;
+    if (s->named.len > 0) {
+        takes = false;
+        for (int i = 0; i < params && !takes; i++) {
+            const char *end = label + ends[i];
+            const char *value = strstr(label + starts[i], " = ");
+            if (value && value < end) end = value;
+            const char *name = end;
+            while (name > label + starts[i] && name[-1] != ' ') name--;
+            if (end - name == s->named.len && memcmp(name, s->named.ptr, (size_t)s->named.len) == 0) {
+                takes = true;
+                at = i;
+            }
+        }
     }
+    if ((s->active < 0 || s->picked) && takes) {
+        s->active = s->shown;
+        s->active_param = at;
+    }
+    s->picked = false;
 
     if (s->shown++) jb_put(s->out, ",");
     jb_put(s->out, "{\"label\":");
@@ -6831,8 +6997,8 @@ static const struct {
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
-    {"Grid2", {"Grid2(int width, int height)"}, GRID_SIZE_DOC},
-    {"Grid3", {"Grid3(int width, int height, int depth)"}, GRID_SIZE_DOC},
+    {"Grid2", {"Grid2(int width = 0, int height = 0)"}, GRID_SIZE_DOC},
+    {"Grid3", {"Grid3(int width = 0, int height = 0, int depth = 0)"}, GRID_SIZE_DOC},
 };
 
 // The type of what's before the dot at token `dot`, from what's written
@@ -6905,16 +7071,19 @@ typedef struct label_params {
 static void parse_label(const char *label, label_params *out)
 {
     out->count = 0;
-    const char *open = strchr(label, '(');
-    const char *close = open ? strchr(open, ')') : NULL;
-    if (!open || !close) return;
+    int starts[16];
+    int ends[16];
+    const int count = label_split(label, starts, ends);
+    if (count < 0) return;
     if (strstr(label, "...")) {
         out->count = -1;
         return;
     }
-    for (const char *p = open + 1; p < close && out->count < 16;) {
-        const char *end = p;
-        while (end < close && *end != ',') end++;
+    for (int i = 0; i < count; i++) {
+        const char *p = label + starts[i];
+        const char *end = label + ends[i];
+        const char *value = strstr(p, " = "); // "bool overwrite = false": the default isn't the name
+        if (value && value < end) end = value;
         const char *name = end; // The last word, and the one before it: "mut float value"
         while (name > p && name[-1] != ' ') name--;
         const char *type_end = name > p ? name - 1 : p;
@@ -6923,7 +7092,6 @@ static void parse_label(const char *label, label_params *out)
         out->names[out->count] = (str){name, (int)(end - name)};
         out->types[out->count] = (str){type_start, (int)(type_end - type_start)};
         out->count++;
-        p = end < close ? end + 2 : close;
     }
     // A GUI container's block isn't an argument
     if (out->count > 0 && str_eq_c(out->types[out->count - 1], "Block")) out->count--;
@@ -7210,7 +7378,18 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     const str owner = method && callee >= 2 && DOC->toks[callee - 2].kind == T_IDENT ? DOC->toks[callee - 2].text : (str){"", 0};
 
     jbuf list = {0};
-    signature_list s = {&list, commas, -1, commas, 0};
+    signature_list s = {&list, commas, -1, commas, 0, {"", 0}, false};
+    // The argument the cursor is in may be written with its parameter's name: `crit: `
+    int first_of_arg = open + 1;
+    for (int i = open + 1, depth = 0; i <= last; i++) {
+        const tok_kind k = DOC->toks[i].kind;
+        if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) depth++;
+        else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
+        else if (k == T_COMMA && depth == 0) first_of_arg = i + 1;
+    }
+    if (first_of_arg + 1 < DOC->tok_count && DOC->toks[first_of_arg].kind == T_IDENT && DOC->toks[first_of_arg + 1].kind == T_COLON) {
+        s.named = DOC->toks[first_of_arg].text;
+    }
     const occurrence *attribute = occurrence_at(DOC->toks[callee].at);
     if (attribute && attribute->kind == OCC_ATTRIBUTE) {
         if (str_eq_c(name, "Stage")) {
@@ -7295,16 +7474,21 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     if (s.shown == 0) {
         // The game's methods and functions: the one the call resolved to, or
         // while it's half written, every one with that name.
+        // Where others share its name, as overloads do, every one of them,
+        // with the one the call means as the active one.
         const occurrence *o = occurrence_at(DOC->toks[callee].at);
-        for (int i = 0; i < A.prog->decls.count && !(o && is_routine(o->decl) && i > 0); i++) {
+        const decl *meant = o && is_routine(o->decl) ? o->decl : NULL;
+        for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
             for (int k = -1; k < d->methods.count; k++) {
                 const decl *m = k < 0 ? d : d->methods.items[k];
-                const bool match = o && is_routine(o->decl) ? m == o->decl
-                                                            : is_routine(m) && str_eq(m->name, name) && (m->owner != NULL) == method;
+                if (!is_routine(m) || m->is_operator || !str_eq(m->name, name)) continue;
+                const bool match = meant ? m->owner == meant->owner && str_eq(m->qualified, meant->qualified)
+                                         : (m->owner != NULL) == method;
                 if (!match) continue;
                 sb label = {0};
                 format_routine(m, &label);
+                s.picked = m == meant;
                 add_signature(&s, label.data, NULL);
             }
         }
@@ -7426,6 +7610,14 @@ static bool is_label_colon(const int i)
     return false;
 }
 
+// Whether the ':' at token `i` follows an argument's name, `crit: true`: a
+// name that starts an argument, which no value of `?:` does.
+static bool is_argument_colon(const int i)
+{
+    return DOC->toks[i].kind == T_COLON && i >= 2 && DOC->toks[i - 1].kind == T_IDENT
+        && (DOC->toks[i - 2].kind == T_LPAREN || DOC->toks[i - 2].kind == T_COMMA);
+}
+
 // A type written with another in <>, which the formatter keeps tight: List<int>.
 static bool generic_type(const str name)
 {
@@ -7438,6 +7630,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     const tok_kind x = DOC->toks[a->tok].kind;
     const tok_kind y = DOC->toks[b->tok].kind;
     if (y == T_COLON && is_label_colon(b->tok)) return false;
+    if (y == T_COLON && is_argument_colon(b->tok)) return false; // Damage(10, crit: true)
     // $"a {x:F2} b": the values in text sit against its braces
     if (y == T_INTERP_PART || y == T_INTERP_FORMAT) return false;
     if ((x == T_INTERP || x == T_INTERP_PART) && DOC->toks[a->tok].text.ptr[DOC->toks[a->tok].text.len - 1] == '{') return false;

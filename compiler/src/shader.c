@@ -143,6 +143,12 @@ static const char *struct_name(const decl *d)
 // A function's name, or a method's: its type's, then which of its methods it is.
 static const char *function_name(const decl *fn)
 {
+    if (!fn->owner && fn->c_suffix) { // One of several that share the name: its parameters' types go on, as in generated C
+        sb b = {0};
+        sb_printf(&b, "%s%s", name_of(fn->kind == DECL_SHADER ? "ts_" : "tf_", fn->qualified.len ? fn->qualified : fn->name),
+                  name_of("_3", str_from(fn->c_suffix)));
+        return b.data;
+    }
     if (!fn->owner) return name_of(fn->kind == DECL_SHADER ? "ts_" : "tf_", fn->qualified.len ? fn->qualified : fn->name);
     int index = 0;
     while (index < fn->owner->methods.count && fn->owner->methods.items[index] != fn) index++;
@@ -2804,9 +2810,13 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
     if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
-    sb name = {0};
-    if (sh->vert) sb_printf(&name, STR_FMT "%s", STR_ARG(sh->vert->name), sh->frag ? " and " : " ");
-    if (sh->frag) sb_printf(&name, STR_FMT " ", STR_ARG(sh->frag->name));
+    sb name = {0}; // A vert or frag that shares its name goes with its parameters' types
+    if (sh->vert) {
+        if (sh->vert->signature) sb_printf(&name, "%s%s", sh->vert->signature, sh->frag ? " and " : " ");
+        else sb_printf(&name, STR_FMT "%s", STR_ARG(sh->vert->name), sh->frag ? " and " : " ");
+    }
+    if (sh->frag && sh->frag->signature) sb_printf(&name, "%s ", sh->frag->signature);
+    else if (sh->frag) sb_printf(&name, STR_FMT " ", STR_ARG(sh->frag->name));
     sb_printf(&name, "%s" STR_FMT, sh->vert || sh->frag ? "on " : "meshes of ", STR_ARG(vertex->name));
     sh->name = name.data;
 

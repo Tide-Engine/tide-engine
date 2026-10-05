@@ -131,6 +131,18 @@ system Move(mut Body body, Time time)
 
 Of the systems whose constraints are met, the earliest in the default order runs next. Constraints that form a loop are an error that names the loop. Hover a system in your editor to see its place in the order.
 
+Systems can share a name when their parameters differ, as [functions can](../language/functions.md#default-values-names-and-overloads). Nothing calls a system, so where one of them is named, it's written with its parameters' types, in order, with its filters and without names or `mut`:
+
+```csharp
+system Move(mut Body body, Speed speed, with Player) { ... }
+system Move(mut Body body, Speed speed, with Enemy) { ... }
+
+[After(Move(Body, Speed, with Player)), Before(Move(Body, Speed, with Enemy))]
+system Aim(mut Turret turret, Body body) { ... }
+```
+
+A name alone is fine while only one system has it. When several share it, `[After(Move)]` is an error that lists them as they're written, and so is a parameter list that isn't exactly one's. Views and event handlers work the same way, and the schedule and the profiler show a shared name with its parameters.
+
 ### Named phases
 
 An enum gives shared names to parts of the tick. Assign systems to its phases with `Stage`:

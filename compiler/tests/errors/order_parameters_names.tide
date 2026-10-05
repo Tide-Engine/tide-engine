@@ -1,0 +1,6 @@
+// expect: a declaration is named by its parameters' types: leave out their names
+scene Main { }
+component Body { float x; }
+system Move(mut Body body) { body.x += 1; }
+[After(Move(Body body))]
+system Settle(mut Body body) { body.x *= 0.5; }

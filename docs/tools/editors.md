@@ -5,7 +5,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Hovers, go to definition or to a value's type, find usages, the uses of a name highlighted, and rename.
 - Go to implementation, from an event to its handlers and from the input to its `Sample` and `Sanitize`, and the call hierarchy: what calls a function, and what it calls.
-- Formatting, of a file or a selection, parameter hints and inlay hints.
+- Formatting, of a file or a selection, parameter hints and inlay hints. Parameter hints list every function that shares the name being called, with each parameter's default, and follow an argument written by name; where an argument starts, completion offers the names the other parameters go by.
 - The outline, symbols across the game, folding, growing a selection, and semantic highlighting.
 - Moving a declaration to a file of its own.
 - Each system's place in [the schedule](../game/schedule.md) above it: its stage, what it reaches through its `World`, and why it waits.

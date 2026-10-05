@@ -1,0 +1,4 @@
+// expect: 'float3' takes its arguments in order, without names
+scene Main { }
+singleton Log { float3 at; }
+system Run(mut Log log) { log.at = float3(x: 1, 2, 3); }
