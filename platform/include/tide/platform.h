@@ -195,7 +195,8 @@ uint64_t tide_platform_memory(void);
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from
 // (tide_session_desc.entropy), so no two go the same. 0 if the system gives
-// none.
+// none. A host whose runs have to repeat gives its session none, as
+// tide/run.h's does for a run with no window.
 uint64_t tide_platform_entropy(void);
 
 // The window's size in pixels, which tide_gui_begin takes.

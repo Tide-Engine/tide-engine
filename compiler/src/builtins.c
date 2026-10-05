@@ -33,6 +33,18 @@ static decl shape_struct;
 static const type T_SHAPE = {TY_STRUCT, &shape_struct};
 static const decl *shape_decl;
 
+// The GUITheme and GUIControl structs, which the GUI takes and gives, the same way.
+static decl theme_struct, control_struct;
+static const type T_THEME = {TY_STRUCT, &theme_struct};
+static const type T_CONTROL = {TY_STRUCT, &control_struct};
+static const decl *theme_decl, *control_decl;
+
+void builtins_use_gui(const decl *theme, const decl *control)
+{
+    theme_decl = theme;
+    control_decl = control;
+}
+
 static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *transforms_decl;
 static const decl *bytes_decl, *paths_decl;
 static decl io_bytes, io_paths;
@@ -94,6 +106,8 @@ static type real_type(const type t)
     if (t.decl == &io_paths && paths_decl) return (type){TY_LIST, (decl *)paths_decl};
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
+    if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
+    if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
     if (t.decl == &mesh_vertices3 && vertices3_decl) return (type){TY_LIST, (decl *)vertices3_decl};
     if (t.decl == &mesh_indices && indices_decl) return (type){TY_LIST, (decl *)indices_decl};
@@ -115,6 +129,8 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_transforms) return "List<float4x4>";
     if (t.decl == &mesh_instances) return "List<T>";
     if (t.decl == &shape_struct) return "Shape";
+    if (t.decl == &theme_struct) return "GUITheme";
+    if (t.decl == &control_struct) return "GUIControl";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
 }
 
@@ -222,6 +238,7 @@ static void add_gui(const char *owner, const char *name, const type result, cons
         type t = {TY_ERROR, NULL};
         if (strcmp(type_text, "string") == 0) t = T_STR;
         else if (strcmp(type_text, "Anchor") == 0) t = T_ANCHOR;
+        else if (strcmp(type_text, "GUITheme") == 0) t = T_THEME;
         else builtin_type_named(str_from(type_text), &t);
         if (mut) s->mut |= 1u << s->argc;
         s->params[s->argc++] = t;
@@ -681,7 +698,27 @@ static void build_signatures(void)
     add_gui("GUI", "Disabled", T_NONE, "tide_gui_begin_disabled", "bool disabled", GUI_CONTAINER,
             "Grays out the widgets in its block while `disabled` is true: they're drawn faded and can't be "
             "clicked, focused or typed into. They stay where they are, laid out as usual.");
-    // Widgets a view draws itself, or a library's: what they use of the devices
+    // A widget a view draws itself: the GUI handles its input, and draws nothing.
+    // Generated C has it as Tide's GUIControl (tide_gui_control_value), and a
+    // theme as tide/gui.h's (tide_gui_set_theme_value, tide_gui_begin_theme_value).
+    add_gui("GUI", "Control", T_CONTROL, "tide_gui_control_value", "Rect rect", GUI_ID,
+            "A widget this view draws itself, at `rect`: the GUI handles its input as a button's, and draws "
+            "nothing. It says whether it's `hovered`, `pressed` (the pointer holds it), `focused` (the keyboard and "
+            "gamepad are on it) and `clicked`. A press on it never reaches the input's `Sample` or the other views; "
+            "Tab, the arrows, the d-pad and the left stick move the focus to it with the other widgets, and Enter, "
+            "Space and the south button click it. `GUI.Disabled` and modals stop it like any widget.");
+    add_gui("GUI", "Navigate", T_NONE, "tide_gui_navigate", "", 0,
+            "A menu is up: the arrows, the d-pad and the left stick can start moving the focus between widgets, "
+            "though the match reads the devices. Without it they only move a focus that's there, which Tab starts, "
+            "so they never take a HUD's button away from the game. Call it every frame the menu is up.");
+    add_gui("GUI", "SetTheme", T_NONE, "tide_gui_set_theme_value", "GUITheme theme", 0,
+            "How the GUI's own widgets look from here on: in this view and the ones after it, until it's set again "
+            "or the frame ends. Every frame starts with the default look. For some widgets alone, wrap them: "
+            "`GUI.Theme(theme) { ... }`.");
+    add_gui("GUI", "Theme", T_NONE, "tide_gui_begin_theme_value", "GUITheme theme", GUI_CONTAINER,
+            "How the GUI's own widgets look in its block: after it, they look as they did before. For the views "
+            "that follow too, `GUI.SetTheme(theme)`.");
+    // Widgets that read the devices themselves, like a library's: what they use of them
     add_gui("GUI", "ClaimPointer", T_NONE, "tide_gui_claim_pointer_at", "Rect rect", 0,
             "This view has a widget of its own at `rect`: while the pointer is on it, the mouse's buttons and "
             "scroll, the pointer's press and the primary touch are hidden from the input's `Sample` and from the "
@@ -1051,6 +1088,10 @@ type resolve_builtin_call(const str owner, expr *e)
     if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "Shape")) {
         diag_note("a Shape is written with the fields it sets, like 'Draw2D.Shape(Shape { center = position, size = "
                   "float2(4, 2), radius = 1, color = Color.red });'");
+    }
+    if (str_eq_c(owner, "GUI") && (str_eq_c(e->name, "SetTheme") || str_eq_c(e->name, "Theme"))) {
+        diag_note("a GUITheme is written with the fields it changes, like 'GUI." STR_FMT "(GUITheme { control = Color.red, "
+                  "radius = 8 })%s'", STR_ARG(e->name), str_eq_c(e->name, "Theme") ? " { ... }" : ";");
     }
     return (type){TY_ERROR, NULL};
 }
