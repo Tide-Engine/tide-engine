@@ -263,6 +263,8 @@ TIDE_TEST(events_rows_go_where_an_event_that_reads_them_goes)
     sent(run, 5, 0, 0, 0xE, reads);
     recorded(run, 1, 7, BOTH);
     tide_hearing_end(&h, 6);
+    event = find(&out, 4, &at); // Again: the log grew, so its events may be elsewhere
+    TIDE_REQUIRE(event != NULL);
     TIDE_CHECK(tide_event_log_rows(&out, at, event, 1) == NULL);
     event = find(&out, 5, &at);
     TIDE_REQUIRE(event != NULL);

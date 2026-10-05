@@ -207,9 +207,15 @@ const void *tide_grid_read(const tide_heap *heap, const tide_grid g, const int32
 // ---------------------------------------------------------------------------
 // Loops over a grid's cells (see tide/grid.h)
 
-static int32_t floor_div(const int32_t a, const int32_t b)
+// Places are worked out 64 bits wide: a game's offsets are any int and its
+// cells anywhere an int can say, so their sums and products go past 32 bits.
+// `b` is above 0.
+static int64_t floor_div(const int64_t a, const int64_t b)
 {
-    return a / b - (a % b != 0 && (a < 0) != (b < 0) ? 1 : 0);
+    // By a power of two, as chunks' sides are and blocks mostly are (1, 2):
+    // a shift, as a task works this out each tick and 64-bit division is slow
+    if ((b & (b - 1)) == 0) return a >> __builtin_ctzll((uint64_t)b);
+    return a / b - (a % b != 0 && a < 0 ? 1 : 0);
 }
 
 static const tide_grid_dir *dir_of(const tide_heap *heap, const tide_grid g)
@@ -248,18 +254,29 @@ static int32_t block_reach(const int32_t side, const int32_t block)
     return (side + block - 2) / side;
 }
 
-// The blocks that start in tile `t`, within the size, by index on each axis.
-static void tile_blocks(const tide_par_loop *l, const int32_t t[3], int32_t from[3], int32_t to[3])
+// The blocks that start in the tile at chunk place `t` along axis `a`, within
+// the loop's range: how many, and where the first starts (`origin`).
+static int32_t tile_blocks(const tide_par_loop *l, const uint32_t a, const int64_t t, int32_t *origin)
 {
-    for (uint32_t a = 0; a < 3; a++) {
-        const int32_t side = (int32_t)(1u << l->shape->shift[a]);
-        const int32_t start = t[a] * side; // Its first cell
-        const int32_t o = l->offset[a], b = l->block[a];
-        from[a] = -floor_div(o - start, b); // The first block that starts in it...
-        to[a] = floor_div(start + side - 1 - o, b) + 1; // ...and past the last
-        if (from[a] < l->lo[a]) from[a] = l->lo[a];
-        if (to[a] > l->hi[a]) to[a] = l->hi[a];
-    }
+    const int64_t side = (int64_t)1 << l->shape->shift[a];
+    const int64_t start = t * side, end = start + side - 1; // Its cells
+    const int64_t o = l->offset[a], b = l->block[a];
+    int64_t from = o - floor_div(o - start, b) * b; // The first block that starts in it...
+    int64_t to = o + floor_div(end - o, b) * b;     // ...and the last
+    if (from < l->first[a]) from = l->first[a];
+    if (to > l->last[a]) to = l->last[a];
+    *origin = 0;
+    if (from > to) return 0;
+    *origin = (int32_t)from;
+    return (int32_t)((to - from) / b) + 1;
+}
+
+// Memory for `count` places, 3 ints each. More of them than a count holds, or
+// than memory can, is more than there's memory for.
+static int32_t *places_room(const uint64_t count)
+{
+    if (count > UINT32_MAX || count > SIZE_MAX / (3u * sizeof(int32_t))) tide_out_of_memory();
+    return tide_alloc((size_t)count * 3u * sizeof(int32_t));
 }
 
 void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, const uint32_t where, const int32_t block[3],
@@ -269,67 +286,74 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
     if (!g->at || g->at >> 30 != where) return; // Not a world's: nothing to go through
     const tide_heap *heap = tide_heap_of(where);
     const tide_grid_dir *d = dir_of(heap, *g);
-    int32_t side[3], reach[3];
+    int64_t side[3];
+    int32_t reach[3];
     uint64_t per_tile = 1; // Blocks in a tile, about
     for (uint32_t a = 0; a < 3; a++) {
         const bool axis = a < s->dims;
         const int32_t b = axis && block[a] > 0 ? block[a] : 1;
-        const int32_t o = axis ? offset[a] : 0;
+        // Blocks start at the offset plus any multiple of their size, so the
+        // offset is as good as what's left of it by that size
+        const int64_t o = axis ? offset[a] - floor_div(offset[a], b) * b : 0;
         l->block[a] = b;
-        l->offset[a] = o;
-        side[a] = (int32_t)(1u << s->shift[a]);
-        reach[a] = block_reach(side[a], b);
+        l->offset[a] = (int32_t)o;
+        side[a] = (int64_t)1 << s->shift[a];
+        reach[a] = block_reach((int32_t)side[a], b);
         per_tile *= (uint64_t)((side[a] + b - 1) / b);
-        if (axis && !d->size[a]) {
-            l->open = true;
-            l->lo[a] = INT32_MIN;
-            l->hi[a] = INT32_MAX;
-        } else {
-            const int32_t size = axis ? d->size[a] : 1;
-            l->lo[a] = -floor_div(o, b);              // The first block from 0 on...
-            l->hi[a] = floor_div(size - o - b, b) + 1; // ...and past the last one wholly inside
-            if (l->lo[a] >= l->hi[a]) return;
+        // Its range: its size, or along an open axis, what an int can say
+        const bool open = axis && !d->size[a];
+        const int64_t least = open ? INT32_MIN : 0;
+        const int64_t most = open ? INT32_MAX : axis ? (int64_t)d->size[a] - 1 : 0;
+        l->open |= open;
+        l->first[a] = o - floor_div(o - least, b) * b;      // The first block wholly inside...
+        l->last[a] = o + floor_div(most - (b - 1) - o, b) * b; // ...and the last
+        if (l->first[a] > l->last[a]) {
+            l->open = false;
+            return;
         }
     }
 
     // Its tiles: every chunk place that sized blocks start in, or with an
     // open axis, the places of chunks the grid has and of those before them
     // whose blocks get into them
+    const uint64_t around = (uint64_t)(reach[0] + 1) * (uint64_t)(reach[1] + 1) * (uint64_t)(reach[2] + 1);
     uint32_t count = 0;
     if (!l->open) {
-        int32_t first[3], last[3];
+        int64_t first[3], last[3];
         uint64_t total = 1;
         for (uint32_t a = 0; a < 3; a++) {
-            first[a] = floor_div(l->offset[a] + l->lo[a] * l->block[a], side[a]);
-            last[a] = floor_div(l->offset[a] + (l->hi[a] - 1) * l->block[a], side[a]);
+            first[a] = floor_div(l->first[a], side[a]);
+            last[a] = floor_div(l->last[a], side[a]);
             total *= (uint64_t)(last[a] - first[a] + 1);
+            if (total > UINT32_MAX) tide_out_of_memory(); // More tiles than there's a count for
         }
-        l->tiles = tide_alloc((size_t)total * 3u * sizeof(int32_t));
-        for (int32_t z = first[2]; z <= last[2]; z++) {
-            for (int32_t y = first[1]; y <= last[1]; y++) {
-                for (int32_t x = first[0]; x <= last[0]; x++) {
+        l->tiles = places_room(total);
+        for (int64_t z = first[2]; z <= last[2]; z++) {
+            for (int64_t y = first[1]; y <= last[1]; y++) {
+                for (int64_t x = first[0]; x <= last[0]; x++) {
                     int32_t *t = &l->tiles[3u * count++];
-                    t[0] = x;
-                    t[1] = y;
-                    t[2] = z;
+                    t[0] = (int32_t)x;
+                    t[1] = (int32_t)y;
+                    t[2] = (int32_t)z;
                 }
             }
         }
     } else {
-        const uint32_t around = (uint32_t)((reach[0] + 1) * (reach[1] + 1) * (reach[2] + 1));
-        l->tiles = tide_alloc(((size_t)d->records * around + 1u) * 3u * sizeof(int32_t));
+        l->tiles = places_room((uint64_t)d->records * around + 1u);
         for (uint32_t i = 0; i < d->records; i++) {
             const int32_t *c = tide_grid_records(d)[i].chunk;
             for (int32_t dz = 0; dz <= reach[2]; dz++) {
                 for (int32_t dy = 0; dy <= reach[1]; dy++) {
                     for (int32_t dx = 0; dx <= reach[0]; dx++) {
-                        int32_t *t = &l->tiles[3u * count];
-                        t[0] = c[0] - dx;
-                        t[1] = c[1] - dy;
-                        t[2] = c[2] - dz;
-                        int32_t from[3], to[3];
-                        tile_blocks(l, t, from, to);
-                        if (from[0] < to[0] && from[1] < to[1] && from[2] < to[2]) count++; // Blocks within its size start there
+                        const int64_t place[3] = {(int64_t)c[0] - dx, (int64_t)c[1] - dy, (int64_t)c[2] - dz};
+                        bool starts = true; // Blocks within its range start there
+                        for (uint32_t a = 0; a < 3 && starts; a++) {
+                            int32_t origin;
+                            starts = tile_blocks(l, a, place[a], &origin) > 0;
+                        }
+                        if (!starts) continue; // A place with blocks is one an int can say: it has cells
+                        int32_t *t = &l->tiles[3u * count++];
+                        for (uint32_t a = 0; a < 3; a++) t[a] = (int32_t)place[a];
                     }
                 }
             }
@@ -339,31 +363,36 @@ void tide_par_begin(tide_par_loop *l, tide_grid *g, const tide_grid_shape *s, co
     l->tasks = count;
     l->steps = per_tile * count;
 
-    // The chunks its blocks can write in: each tile's, and those its reach gets into
-    const uint32_t around = (uint32_t)((reach[0] + 1) * (reach[1] + 1) * (reach[2] + 1));
-    l->chunk = tide_alloc(((size_t)count * around + 1u) * 3u * sizeof(int32_t));
+    // The chunks its blocks can write in: each tile's, and those its reach
+    // gets into, as far as the loop's last cells go
+    l->chunk = places_room((uint64_t)count * around + 1u);
     uint32_t chunks = 0;
     for (uint32_t i = 0; i < count; i++) {
         const int32_t *t = &l->tiles[3u * i];
         for (int32_t dz = 0; dz <= reach[2]; dz++) {
             for (int32_t dy = 0; dy <= reach[1]; dy++) {
                 for (int32_t dx = 0; dx <= reach[0]; dx++) {
+                    const int64_t place[3] = {(int64_t)t[0] + dx, (int64_t)t[1] + dy, (int64_t)t[2] + dz};
+                    bool reached = true;
+                    for (uint32_t a = 0; a < 3 && reached; a++) reached = place[a] * side[a] <= l->last[a] + l->block[a] - 1;
+                    if (!reached) continue;
                     int32_t *c = &l->chunk[3u * chunks++];
-                    c[0] = t[0] + dx;
-                    c[1] = t[1] + dy;
-                    c[2] = t[2] + dz;
+                    for (uint32_t a = 0; a < 3; a++) c[a] = (int32_t)place[a];
                 }
             }
         }
     }
     l->chunks = order_places(l->chunk, chunks);
-    l->buffers = tide_alloc_zeroed(l->chunks + 1u, sizeof(uint8_t *));
+    l->buffers = tide_alloc_zeroed((size_t)l->chunks + 1u, sizeof(uint8_t *));
 }
 
-bool tide_par_tile(const tide_par_loop *l, const uint32_t task, int32_t from[3], int32_t to[3])
+bool tide_par_tile(const tide_par_loop *l, const uint32_t task, int32_t origin[3], int32_t from[3], int32_t to[3])
 {
     const int32_t *t = &l->tiles[3u * task];
-    tile_blocks(l, t, from, to);
+    for (uint32_t a = 0; a < 3; a++) {
+        from[a] = 0;
+        to[a] = tile_blocks(l, a, t[a], &origin[a]);
+    }
     if (!l->open) return false;
     const tide_grid_dir *d = dir_of(tide_heap_of(l->where), *l->grid);
     return !tide_grid_find(d, t[0], t[1], t[2]);
@@ -377,7 +406,7 @@ bool tide_par_live(const tide_par_loop *l, const int32_t x, const int32_t y, con
     int32_t first[3], last[3];
     for (uint32_t a = 0; a < 3; a++) {
         first[a] = at[a] >> s->shift[a];
-        last[a] = (at[a] + l->block[a] - 1) >> s->shift[a];
+        last[a] = (int32_t)(((int64_t)at[a] + l->block[a] - 1) >> s->shift[a]);
     }
     for (int32_t cz = first[2]; cz <= last[2]; cz++) {
         for (int32_t cy = first[1]; cy <= last[1]; cy++) {
@@ -502,16 +531,19 @@ typedef struct window_chunks {
     const uint8_t *cells[WINDOW_CHUNKS]; // By z, then y, then x; NULL where the grid has none
 } window_chunks;
 
-static void window_chunks_find(const tide_par_loop *l, window_chunks *w, const int32_t lo[3], const int32_t hi[3])
+static void window_chunks_find(const tide_par_loop *l, window_chunks *w, const int32_t lo[3], const uint32_t extent[3])
 {
     const tide_grid_shape *s = l->shape;
     int64_t total = 1;
+    bool wraps = false; // A window past the ints' edge has cells from both ends of them: each chunk is looked up as it comes
     for (uint32_t a = 0; a < 3; a++) {
+        const int64_t hi = (int64_t)lo[a] + extent[a] - 1;
+        wraps |= hi > INT32_MAX;
         w->first[a] = lo[a] >> s->shift[a];
-        w->count[a] = (hi[a] >> s->shift[a]) - w->first[a] + 1;
+        w->count[a] = wraps ? 1 : (int32_t)(hi >> s->shift[a]) - w->first[a] + 1;
         total *= w->count[a];
     }
-    w->listed = total <= WINDOW_CHUNKS;
+    w->listed = !wraps && total <= WINDOW_CHUNKS;
     for (int32_t i = 0; w->listed && i < (int32_t)total; i++) {
         const int32_t cx = w->first[0] + i % w->count[0];
         const int32_t cy = w->first[1] + i / w->count[0] % w->count[1];
@@ -554,61 +586,109 @@ static void zero_cells(uint8_t *to, const size_t bytes)
     else copy_cells(to, zeros, bytes);
 }
 
-void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const int32_t hi[3], void *cells)
+// The place `steps` past `from`, in 32 bits: past the last int it's the first
+// again, as a step's own `at + 1` is.
+static int32_t place_past(const int32_t from, const uint32_t steps)
+{
+    return (int32_t)((uint32_t)from + steps);
+}
+
+void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const uint32_t extent[3], void *cells)
 {
     const tide_grid_shape *s = l->shape;
     const tide_grid_dir *d = dir_of(tide_heap_of(l->where), *l->grid);
     const size_t cell = s->cell;
-    const size_t row = (size_t)((int64_t)hi[0] - lo[0] + 1) * cell;
+    const size_t row = (size_t)extent[0] * cell;
+    const int64_t x_last = (int64_t)lo[0] + extent[0] - 1; // Past the last int for a row that wraps
+    const bool wraps = x_last > INT32_MAX;
     uint8_t *out = cells;
     window_chunks cache;
-    window_chunks_find(l, &cache, lo, hi);
-    for (int32_t z = lo[2]; z <= hi[2]; z++) {
-        for (int32_t y = lo[1]; y <= hi[1]; y++, out += row) {
-            // The row's cells within the grid's size, from x0 to x1: zero around them
-            int64_t x0 = lo[0], x1 = hi[0];
-            if (d->size[0]) {
-                if (x0 < 0) x0 = 0;
-                if (x1 > (int64_t)d->size[0] - 1) x1 = (int64_t)d->size[0] - 1;
-            }
+    window_chunks_find(l, &cache, lo, extent);
+    for (uint32_t k = 0; k < extent[2]; k++) {
+        const int32_t z = place_past(lo[2], k);
+        for (uint32_t j = 0; j < extent[1]; j++, out += row) {
+            const int32_t y = place_past(lo[1], j);
             const bool inside = (!d->size[1] || (y >= 0 && y < d->size[1])) && (!d->size[2] || (z >= 0 && z < d->size[2]));
-            if (!inside || !d->records || x0 > x1) {
+            if (!inside || !d->records) {
                 zero_cells(out, row);
                 continue;
             }
-            if (x0 > lo[0]) zero_cells(out, (size_t)(x0 - lo[0]) * cell);
-            if (x1 < hi[0]) zero_cells(out + (size_t)(x1 + 1 - lo[0]) * cell, (size_t)(hi[0] - x1) * cell);
-            for (int64_t x = x0; x <= x1;) { // Chunk by chunk
-                const int32_t cx = (int32_t)(x >> s->shift[0]);
-                const int64_t last = ((int64_t)cx + 1) * ((int64_t)1 << s->shift[0]) - 1;
-                const int64_t end = last < x1 ? last : x1;
-                const size_t bytes = (size_t)(end - x + 1) * cell;
-                uint8_t *to = out + (size_t)(x - lo[0]) * cell;
-                const uint8_t *chunk = window_chunk(l, &cache, cx, y >> s->shift[1], z >> s->shift[2]);
+            if (!wraps) {
+                // The row's cells within the grid's size, from x0 to x1: zero around them
+                int64_t x0 = lo[0], x1 = x_last;
+                if (d->size[0]) {
+                    if (x0 < 0) x0 = 0;
+                    if (x1 > (int64_t)d->size[0] - 1) x1 = (int64_t)d->size[0] - 1;
+                }
+                if (x0 > x1) {
+                    zero_cells(out, row);
+                    continue;
+                }
+                if (x0 > lo[0]) zero_cells(out, (size_t)(x0 - lo[0]) * cell);
+                if (x1 < x_last) zero_cells(out + (size_t)(x1 + 1 - lo[0]) * cell, (size_t)(x_last - x1) * cell);
+                for (int64_t x = x0; x <= x1;) { // Chunk by chunk
+                    const int32_t cx = (int32_t)(x >> s->shift[0]);
+                    const int64_t last = ((int64_t)cx + 1) * ((int64_t)1 << s->shift[0]) - 1;
+                    const int64_t end = last < x1 ? last : x1;
+                    const size_t bytes = (size_t)(end - x + 1) * cell;
+                    uint8_t *to = out + (size_t)(x - lo[0]) * cell;
+                    const uint8_t *chunk = window_chunk(l, &cache, cx, y >> s->shift[1], z >> s->shift[2]);
+                    if (chunk) copy_cells(to, chunk + tide_grid_place(s, (int32_t)x, y, z), bytes);
+                    else zero_cells(to, bytes);
+                    x = end + 1;
+                }
+                continue;
+            }
+            // A row that goes past the last int and on from the first: in
+            // runs, each as far as a chunk goes, which is no further than
+            // the ints do, and as far as the grid's size does
+            for (uint32_t i = 0; i < extent[0];) {
+                const int64_t x = place_past(lo[0], i);
+                const int64_t chunk_end = ((x >> s->shift[0]) + 1) * ((int64_t)1 << s->shift[0]); // Past its last cell
+                int64_t run = (int64_t)extent[0] - i;
+                if (run > chunk_end - x) run = chunk_end - x;
+                bool outside = false; // The grid's size, where it has one: zero around it
+                if (d->size[0] && x < 0) {
+                    outside = true;
+                    if (run > -x) run = -x;
+                } else if (d->size[0] && x >= d->size[0]) {
+                    outside = true;
+                } else if (d->size[0] && run > d->size[0] - x) {
+                    run = d->size[0] - x;
+                }
+                uint8_t *to = out + (size_t)i * cell;
+                const size_t bytes = (size_t)run * cell;
+                const uint8_t *chunk = outside ? NULL : window_chunk(l, &cache, (int32_t)(x >> s->shift[0]), y >> s->shift[1],
+                                                                     z >> s->shift[2]);
                 if (chunk) copy_cells(to, chunk + tide_grid_place(s, (int32_t)x, y, z), bytes);
                 else zero_cells(to, bytes);
-                x = end + 1;
+                i += (uint32_t)run;
             }
         }
     }
 }
 
-void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const int32_t hi[3], const int32_t from[3],
+void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const uint32_t extent[3], const int32_t from[3],
                          const int32_t to[3], const void *cells, const void *was)
 {
     const tide_grid_shape *s = l->shape;
     const size_t cell = s->cell;
-    const size_t width = (size_t)((int64_t)hi[0] - lo[0] + 1), height = (size_t)((int64_t)hi[1] - lo[1] + 1);
+    const size_t width = extent[0], height = extent[1];
     const uint8_t *now = cells, *before = was;
     tide_par_cache cache = {{0, 0, 0}, NULL};
-    for (int32_t z = from[2]; z <= to[2]; z++) {
-        for (int32_t y = from[1]; y <= to[1]; y++) {
-            const size_t row = ((size_t)(z - lo[2]) * height + (size_t)(y - lo[1])) * width;
+    // The task's own cells are cells: none of their places is past an int.
+    // Where each is in the window is how far it is from `lo`, which may be
+    // from the ints' other end, so in 32 bits that wrap.
+    for (int64_t z = from[2]; z <= to[2]; z++) {
+        for (int64_t y = from[1]; y <= to[1]; y++) {
+            const size_t row = ((size_t)((uint32_t)z - (uint32_t)lo[2]) * height + (size_t)((uint32_t)y - (uint32_t)lo[1])) * width;
             for (int64_t x = from[0]; x <= to[0];) { // Chunk by chunk
-                const int64_t last = (((int64_t)x >> s->shift[0]) + 1) * ((int64_t)1 << s->shift[0]) - 1;
+                const int64_t last = ((x >> s->shift[0]) + 1) * ((int64_t)1 << s->shift[0]) - 1;
                 const int64_t end = last < to[0] ? last : to[0];
-                const size_t at = (row + (size_t)(x - lo[0])) * cell, bytes = (size_t)(end - x + 1) * cell;
-                if (memcmp(now + at, before + at, bytes) != 0) memcpy(tide_par_cell(l, &cache, (int32_t)x, y, z), now + at, bytes);
+                const size_t at = (row + (size_t)((uint32_t)x - (uint32_t)lo[0])) * cell, bytes = (size_t)(end - x + 1) * cell;
+                if (memcmp(now + at, before + at, bytes) != 0) {
+                    memcpy(tide_par_cell(l, &cache, (int32_t)x, (int32_t)y, (int32_t)z), now + at, bytes);
+                }
                 x = end + 1;
             }
         }
@@ -651,9 +731,10 @@ void tide_par_end(tide_par_loop *l)
 
 // The cells of chunk place `c` along axis `a`, within the grid's size there:
 // false when there are none.
-static bool cells_along(const tide_grid_rows *r, const uint32_t a, const int32_t c, int32_t *from, int32_t *to)
+static bool cells_along(const tide_grid_rows *r, const uint32_t a, const int32_t c, int64_t *from, int64_t *to)
 {
-    *from = c * r->side[a];
+    // 64 bits wide: past the cells of the last chunk an int can say is one more than an int holds
+    *from = (int64_t)c * r->side[a];
     *to = *from + r->side[a];
     if (r->size[a]) {
         if (*from < 0) *from = 0;
@@ -721,7 +802,7 @@ void tide_grid_rows_begin(tide_grid_rows *r, const tide_grid g, const tide_grid_
     r->done = !enter_layer(r, 0);
 }
 
-bool tide_grid_rows_next(tide_grid_rows *r, int32_t *x0, int32_t *x1, int32_t *y, int32_t *z)
+bool tide_grid_rows_next(tide_grid_rows *r, int64_t *x0, int64_t *x1, int32_t *y, int32_t *z)
 {
     if (r->done) return false;
     if (!r->chunk) { // Sized: a row at a time, each whole
@@ -734,22 +815,22 @@ bool tide_grid_rows_next(tide_grid_rows *r, int32_t *x0, int32_t *x1, int32_t *y
         }
         *x0 = 0;
         *x1 = r->size[0];
-        *y = r->y++;
-        *z = r->z;
+        *y = (int32_t)r->y++;
+        *z = (int32_t)r->z;
         return true;
     }
     for (;;) {
         if (r->next < r->row_end) { // Along the row: the chunks side by side from the next, as one run
             const uint32_t first = r->next++;
-            while (r->next < r->row_end && r->chunk[3u * r->next] == r->chunk[3u * (r->next - 1u)] + 1) r->next++;
-            int32_t from, to, unused;
+            while (r->next < r->row_end && (int64_t)r->chunk[3u * r->next] == (int64_t)r->chunk[3u * (r->next - 1u)] + 1) r->next++;
+            int64_t from, to, unused;
             const bool starts = cells_along(r, 0, r->chunk[3u * first], &from, &unused);
             const bool ends = cells_along(r, 0, r->chunk[3u * (r->next - 1u)], &unused, &to);
             if (!starts || !ends || from >= to) continue;
             *x0 = from;
             *x1 = to;
-            *y = r->y;
-            *z = r->z;
+            *y = (int32_t)r->y;
+            *z = (int32_t)r->z;
             return true;
         }
         if (r->y + 1 < r->y_end) { // The next row of cells in these chunks

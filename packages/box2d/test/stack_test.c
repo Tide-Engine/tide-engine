@@ -20,6 +20,7 @@
 // bridge.c
 void b2t_forget(void);
 int32_t b2t_shared_steps(void);
+void b2t_share_from(int32_t bodies);
 int32_t b2t_restores(void);
 void b2t_measure(uint64_t *step, uint64_t *image);
 void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
@@ -234,6 +235,7 @@ TIDE_TEST(box2d_threads_change_nothing)
     b2t_forget();
     start(&a, CRATES);
     start(&b, CRATES);
+    b2t_share_from(128); // Fewer than it takes for sharing to pay, so that the steps here are shared on every platform
     const int32_t before = b2t_shared_steps();
     uint64_t ticks[2] = {0, 0};
     uint64_t steps[2] = {0, 0};
@@ -271,6 +273,7 @@ TIDE_TEST(box2d_threads_change_nothing)
     }
     printf("    %d steps were shared out; the image is %d bytes\n", (int)(b2t_shared_steps() - before), (int)a.Box2D_Physics.size);
     TIDE_CHECK(b2t_shared_steps() - before > TICKS / 2);
+    b2t_share_from(0);
 
     // What a rollback pays once: C's world made from the match's image
     b2t_forget();
