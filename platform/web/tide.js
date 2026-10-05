@@ -126,8 +126,11 @@
     // starts when the page calls `Tide.start()`. That's for a page that loads
     // a game before it shows it, like one further down that starts once it's
     // scrolled to. With `wait` or without, `Tide.start()` gives a promise of
-    // the program's first frame, from which the canvas has something to show;
-    // a program that stopped before one breaks it.
+    // the program's first frame that drew something, from which the canvas
+    // has something to show; a program that stopped before one breaks it. A
+    // game's first frames may draw nothing: views that read the match don't
+    // run until this machine is in it, a few frames after it started.
+    let drew = false; // The program made a draw call
     let release = null, shown = null, broken = null;
     const released = new Promise(done => { release = done; });
     const firstFrame = new Promise((done, refuse) => { shown = done; broken = refuse; });
@@ -567,7 +570,7 @@
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
-            shown();
+            if (drew) shown();
         } catch (error) {
             looping = false;
             if (!(error instanceof Exit)) fail(error);
@@ -1189,10 +1192,18 @@
         glDeleteVertexArrays: (n, ptr) => remove('vertexArray', o => gl.deleteVertexArray(o), n, ptr),
         glDepthFunc: f => gl.depthFunc(f),
         glDisable: cap => gl.disable(cap),
-        glDrawArrays: (mode, first, count) => gl.drawArrays(mode, first, count),
-        glDrawArraysInstanced: (mode, first, count, instances) => gl.drawArraysInstanced(mode, first, count, instances),
-        glDrawElementsInstanced: (mode, count, type, offset, instances) =>
-            gl.drawElementsInstanced(mode, count, type, offset, instances),
+        glDrawArrays(mode, first, count) {
+            drew = true;
+            gl.drawArrays(mode, first, count);
+        },
+        glDrawArraysInstanced(mode, first, count, instances) {
+            drew = true;
+            gl.drawArraysInstanced(mode, first, count, instances);
+        },
+        glDrawElementsInstanced(mode, count, type, offset, instances) {
+            drew = true;
+            gl.drawElementsInstanced(mode, count, type, offset, instances);
+        },
         glEnable: cap => gl.enable(cap),
         glEnableVertexAttribArray: i => gl.enableVertexAttribArray(i),
         glFramebufferRenderbuffer: (target, attachment, rbTarget, r) =>
@@ -1470,6 +1481,7 @@
         bound: false };
 
     function beforeDraw() {
+        drew = true;
         if (drawing.bound) return;
         pass.setBindGroup(0, bindGroup(drawing.pipeline.textures, drawing.textures, drawing.blended), [uniformsAt]);
         drawing.bound = true;

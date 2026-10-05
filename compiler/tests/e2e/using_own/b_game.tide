@@ -1,0 +1,36 @@
+// A game in the global namespace that imports both, and has a Body and a
+// Double of its own: what it declares itself is what its code means.
+using Lib;
+using Other;
+
+component Body
+{
+    float2 at;
+}
+
+int Double(int x)
+{
+    return x + 100;
+}
+
+singleton Seen
+{
+    int doubled;
+    int hit;
+    int inner;
+}
+
+scene Main { }
+
+event(Spawned) Build(with Main)
+{
+    // The game's own Body, the library's by its namespace, and Hit, which only the library has
+    Spawn(Body { at = float2(1, 2) }, Lib.Body { mass = 5 }, Hit);
+}
+
+system Count(Body body, Lib.Body theirs, Hit hit, mut Seen seen)
+{
+    seen.doubled = Double(theirs.mass); // The game's Double
+    seen.hit = hit.amount + Lib.Double(hit.amount);
+    if (body.at.y == 2) seen.hit += 1000;
+}
