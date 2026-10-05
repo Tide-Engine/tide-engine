@@ -33,15 +33,15 @@ A client keeps a snapshot of every tick from the last one the server confirmed, 
 
 Below are two machines in one match: the first runs the server, and the second joined its room. Move the pointer over a frame to steer that machine's player. A disc is where the machine drawing it predicts the body is, and the ring of its color is where the server has confirmed it, which a view reads [`verified`](#predicted-and-confirmed).
 
-Both machines are at one desk here, so their packets arrive at once. The slider makes each page send its packets late, as a slow connection would:
+Both machines are at one desk here, so their packets arrive at once. The slider is player 2's ping, the round trip between its machine and the server, there and back: its page holds back what it sends and what it receives, half the trip each, as a slow connection would. It's the number player 2's frame shows.
 
 - **Player 2's own disc still answers at once**, however late its packets are. Its ring trails behind: that's the server's answer, a round trip old.
-- **Player 1 sees player 2 late**, by one trip, and guesses in between: steer player 2 in a circle, and its disc in player 1's frame cuts the corners, walking to where it last heard player 2 point.
+- **Player 1 sees player 2 late**, by the way there, half the round trip, and guesses in between: steer player 2 in a circle, and its disc in player 1's frame cuts the corners, walking to where it last heard player 2 point.
 - **Player 1's own disc and ring stay together.** Its machine runs the server, so nothing of its own is ever late.
 
 A guess that was wrong is put right the moment the server's answer arrives, which would move a disc all at once. The bodies' `position` is marked `[Position]`, so a disc glides to where the correction put it (see [correction smoothing](#provisional-correction-smoothing)); a ring is the confirmed world as it is.
 
-::: tide-match prediction lag=100 Predicted, and confirmed by the server
+::: tide-match prediction lag=200 Predicted, and confirmed by the server
 
 <<< @/examples/prediction.tide
 
