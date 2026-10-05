@@ -45,6 +45,7 @@ tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
+tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code

@@ -29,8 +29,20 @@
 // whatever the display's scale. A plain circle's is smooth over a logical
 // pixel, which is the same where a display isn't scaled; where it is, the
 // renderer draws circles as smooth shapes (see add_circle in platform.c).
+//
+// Every pipeline but the first is made once for each way of blending (see
+// tide_gpu_blend), from the same shaders. What multiplies what's there needs
+// a color that's gone to white where its alpha is 0, so that what's clear
+// changes nothing: `fix.x` is 1 for those and 0 for the others, whose colors
+// it leaves as they are. A run of plain shapes that multiplies goes through
+// the second pipeline, so the first's shaders have none of it.
 
-#define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; };\n"
+#define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; vec4 fix; };\n"
+
+// A color as its pipeline blends it: towards white as it clears, by `by`.
+#define GLSL_WHITEN "vec4 whiten(vec4 c, float by) { return vec4(c.rgb + by * (1.0 - c.a) * (1.0 - c.rgb), c.a); }\n"
+#define WGSL_WHITEN \
+    "fn whiten(c: vec4f, by: f32) -> vec4f { return vec4f(c.rgb + by * (1.0 - c.a) * (1.0 - c.rgb), c.a); }\n"
 
 // Where a plain kind's corner goes. `c` is the quad's, from -1 to 1.
 #define SHAPE_GLSL_PLACE                                                                                    \
@@ -150,6 +162,7 @@ static const char smooth_shape_glsl_fragment[] =
     "in vec4 rim;\n"
     SHAPE_GLSL_UNIFORMS
     "out vec4 pixel;\n"
+    GLSL_WHITEN
     "float ellipse(vec2 at, vec2 radii) {\n"
     "    vec2 q = abs(at);\n"
     "    vec2 t = vec2(0.70710678);\n" // Where on the edge: the nearest point is radii * t
@@ -181,7 +194,7 @@ static const char smooth_shape_glsl_fragment[] =
     "void main() {\n"
     "    if (form < 4.5) {\n"
     "    " SHAPE_GLSL_COVER
-    "        pixel = vec4(tint.rgb, tint.a * cover);\n"
+    "        pixel = whiten(vec4(tint.rgb, tint.a * cover), fix.x);\n"
     "        return;\n"
     "    }\n"
     "    float px = (scale.x + scale.y) * 0.5;\n"
@@ -214,11 +227,11 @@ static const char smooth_shape_glsl_fragment[] =
     "        paint = mix(vec4(rim.rgb * rim.a, rim.a), paint, clamp(0.5 - (d + outline) * px, 0.0, 1.0));\n"
     "    }\n"
     "    if (paint.a <= 0.0) discard;\n"
-    "    pixel = vec4(paint.rgb / paint.a, paint.a * cover);\n"
+    "    pixel = whiten(vec4(paint.rgb / paint.a, paint.a * cover), fix.x);\n"
     "}\n";
 
-#define SHAPE_WGSL_UNIFORMS                                         \
-    "struct Uniforms { screen: mat4x4f, texel: vec2f, scale: vec2f }\n" \
+#define SHAPE_WGSL_UNIFORMS                                                      \
+    "struct Uniforms { screen: mat4x4f, texel: vec2f, scale: vec2f, fix: vec4f }\n" \
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
 
 #define SHAPE_WGSL_PLACE                                                                                            \
@@ -313,6 +326,7 @@ static const char *const smooth_shape_wgsl_vertex = WGSL(
     "}\n");
 
 static const char *const smooth_shape_wgsl_fragment = WGSL(
+    WGSL_WHITEN
     "fn ellipse(at: vec2f, radii: vec2f) -> f32 {\n"
     "    let q = abs(at);\n"
     "    var t = vec2f(0.70710678);\n"
@@ -345,7 +359,7 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
     "    if (in.form < 4.5) {\n"
     "    " SHAPE_WGSL_COVER
-    "        return vec4f(in.tint.rgb, in.tint.a * cover);\n"
+    "        return whiten(vec4f(in.tint.rgb, in.tint.a * cover), u.fix.x);\n"
     "    }\n"
     "    let px = (u.scale.x + u.scale.y) * 0.5;\n"
     "    var d: f32;\n"
@@ -380,55 +394,63 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "        paint = mix(vec4f(in.rim.rgb * in.rim.a, in.rim.a), paint, clamp(0.5 - (d + outline) * px, 0.0, 1.0));\n"
     "    }\n"
     "    if (paint.a <= 0.0) { discard; }\n"
-    "    return vec4f(paint.rgb / paint.a, paint.a * cover);\n"
+    "    return whiten(vec4f(paint.rgb / paint.a, paint.a * cover), u.fix.x);\n"
     "}\n");
 
 // Meshes: a mesh's pixels are its corners' colors, blended across each
-// triangle, times its texture's (a white pixel, for a mesh with none).
+// triangle, times its texture's (a white pixel, for a mesh with none). The
+// vertex stage hands the pixels `fix.x` (see above), as 2D and 3D meshes
+// share their fragment shader and not their uniforms.
 
 static const char mesh_glsl_vertex[] =
     "layout(location = 0) in vec2 position;\n" // In window pixels
     "layout(location = 1) in vec2 uv;\n"
     "layout(location = 2) in vec4 color;\n"
-    "layout(std140) uniform uniforms { mat4 screen; vec2 texel; };\n"
+    SHAPE_GLSL_UNIFORMS
     "out vec2 at;\n"
     "out vec4 tint;\n"
+    "out float white;\n"
     "void main() {\n"
     "    at = uv;\n"
     "    tint = color;\n"
+    "    white = fix.x;\n"
     "    gl_Position = screen * vec4(position, 0.0, 1.0);\n"
     "}\n";
 
 static const char mesh_glsl_fragment[] =
     "in vec2 at;\n"
     "in vec4 tint;\n"
+    "in float white;\n"
     "uniform sampler2D pixels0;\n"
     "out vec4 pixel;\n"
+    GLSL_WHITEN
     "void main() {\n"
-    "    pixel = texture(pixels0, at) * tint;\n"
+    "    pixel = whiten(texture(pixels0, at) * tint, white);\n"
     "}\n";
 
 #define MESH_WGSL_VERTEX                                                                                               \
-    "struct Uniforms { screen: mat4x4f, texel: vec2f }\n"                                                              \
-    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"                                                                \
+    SHAPE_WGSL_UNIFORMS                                                                                                \
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"                                                            \
     "@group(0) @binding(2) var how0: sampler;\n"                                                                       \
     "struct Corner {\n"                                                                                                \
     "    @builtin(position) position: vec4f,\n"                                                                        \
     "    @location(0) at: vec2f,\n"                                                                                    \
     "    @location(1) tint: vec4f,\n"                                                                                  \
+    "    @location(2) white: f32,\n"                                                                                   \
     "}\n"                                                                                                              \
+    WGSL_WHITEN                                                                                                        \
     "@vertex fn vertex(@location(0) position: vec2f, @location(1) uv: vec2f, @location(2) color: vec4f) -> Corner {\n" \
     "    var out: Corner;\n"                                                                                           \
     "    out.at = uv;\n"                                                                                               \
     "    out.tint = color;\n"                                                                                          \
+    "    out.white = u.fix.x;\n"                                                                                       \
     "    out.position = u.screen * vec4f(position, 0.0, 1.0);\n"                                                       \
     "    return out;\n"                                                                                                \
     "}\n"
 
 static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return textureSample(pixels0, how0, in.at) * in.tint;\n"
+    "    return whiten(textureSample(pixels0, how0, in.at) * in.tint, in.white);\n"
     "}\n");
 
 // Text: its pixels are its color, as much as the font atlas says its glyph
@@ -445,14 +467,16 @@ static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
 static const char text_glsl_fragment[] =
     "in vec2 at;\n"
     "in vec4 tint;\n"
+    "in float white;\n"
     "uniform sampler2D pixels0;\n"
-    "layout(std140) uniform uniforms { mat4 screen; vec2 texel; };\n"
+    SHAPE_GLSL_UNIFORMS
     "out vec4 pixel;\n"
+    GLSL_WHITEN
     "void main() {\n"
     "    float cover = texture(pixels0, at * texel).r;\n"
     "    float light = dot(tint.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) cover = pow(cover, 1.0 - 0.45 * light);\n"
-    "    pixel = vec4(tint.rgb, tint.a * cover);\n"
+    "    pixel = whiten(vec4(tint.rgb, tint.a * cover), white);\n"
     "}\n";
 
 static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX
@@ -460,11 +484,11 @@ static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX
     "    var cover = textureSample(pixels0, how0, in.at * u.texel).r;\n"
     "    let light = dot(in.tint.rgb, vec3f(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) { cover = pow(cover, 1.0 - 0.45 * light); }\n"
-    "    return vec4f(in.tint.rgb, in.tint.a * cover);\n"
+    "    return whiten(vec4f(in.tint.rgb, in.tint.a * cover), u.fix.x);\n"
     "}\n");
 
 // 3D meshes: a mesh's corners go through its instance's transform and the
-// camera, with depth; its pixels are as a mesh's.
+// camera, with depth; its pixels are as a mesh's, times `tint`, the run's.
 
 static const char mesh_3d_glsl_vertex[] =
     "layout(location = 0) in vec3 position;\n"
@@ -474,17 +498,19 @@ static const char mesh_3d_glsl_vertex[] =
     "layout(location = 4) in vec4 model1;\n"
     "layout(location = 5) in vec4 model2;\n"
     "layout(location = 6) in vec4 model3;\n"
-    "layout(std140) uniform uniforms { mat4 camera; };\n" // From the world to clip space
+    "layout(std140) uniform uniforms { mat4 camera; vec4 run_tint; vec4 fix; };\n" // The camera: from the world to clip space
     "out vec2 at;\n"
     "out vec4 tint;\n"
+    "out float white;\n"
     "void main() {\n"
     "    at = uv;\n"
-    "    tint = color;\n"
+    "    tint = color * run_tint;\n"
+    "    white = fix.x;\n"
     "    gl_Position = camera * (mat4(model0, model1, model2, model3) * vec4(position, 1.0));\n"
     "}\n";
 
 static const char *const mesh_3d_wgsl = WGSL(
-    "struct Uniforms { camera: mat4x4f }\n"
+    "struct Uniforms { camera: mat4x4f, tint: vec4f, fix: vec4f }\n"
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
     "@group(0) @binding(2) var how0: sampler;\n"
@@ -492,19 +518,22 @@ static const char *const mesh_3d_wgsl = WGSL(
     "    @builtin(position) position: vec4f,\n"
     "    @location(0) at: vec2f,\n"
     "    @location(1) tint: vec4f,\n"
+    "    @location(2) white: f32,\n"
     "}\n"
+    WGSL_WHITEN
     "@vertex fn vertex(@location(0) position: vec3f, @location(1) uv: vec2f, @location(2) color: vec4f,\n"
     "                  @location(3) model0: vec4f, @location(4) model1: vec4f, @location(5) model2: vec4f,\n"
     "                  @location(6) model3: vec4f) -> Corner {\n"
     "    let p = u.camera * (mat4x4f(model0, model1, model2, model3) * vec4f(position, 1.0));\n"
     "    var out: Corner;\n"
     "    out.at = uv;\n"
-    "    out.tint = color;\n"
+    "    out.tint = color * u.tint;\n"
+    "    out.white = u.fix.x;\n"
     "    out.position = vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n" // The camera's clip space is OpenGL's: depth from -1
     "    return out;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return textureSample(pixels0, how0, in.at) * in.tint;\n"
+    "    return whiten(textureSample(pixels0, how0, in.at) * in.tint, in.white);\n"
     "}\n");
 
 // A clear: one triangle over the whole target, as far as depth goes, in one

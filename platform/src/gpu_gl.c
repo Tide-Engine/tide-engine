@@ -381,11 +381,22 @@ static void gl_use(const tide_gpu_id pipeline)
     glUseProgram(current->program);
     glUniform1i(current->target_height, pass_texture ? pass_height : 0);
     glBindVertexArray(current->vao);
-    if (current->desc.blend == TIDE_GPU_BLEND_ALPHA) {
+    switch (current->desc.blend) {
+    case TIDE_GPU_BLEND_ALPHA:
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    } else {
+        break;
+    case TIDE_GPU_BLEND_ADD:
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ONE, GL_ONE);
+        break;
+    case TIDE_GPU_BLEND_MULTIPLY:
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ONE);
+        break;
+    default:
         glDisable(GL_BLEND);
+        break;
     }
     // OpenGL only writes depth where it tests it
     if (current->desc.depth == TIDE_GPU_DEPTH_NONE) {

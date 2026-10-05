@@ -1,0 +1,7 @@
+// expect: Draw.Blend sets it around a block: 'Draw.Blend(...) { ... }'
+scene Main { }
+
+view Show()
+{
+    Draw.Blend(Blend.Add);
+}

@@ -63,14 +63,14 @@ static const tide_shader list_shader = {
                    {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
     .uniform_floats = 1, .texture_count = 1,
     .glsl_vertex =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 settings; };\n"
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
         "layout(location=0) in vec2 position;\n"
         "layout(location=1) in vec2 coords;\n"
         "layout(location=2) in vec4 tint;\n"
         "out vec2 uv; out vec4 shade;\n"
         "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; shade = tint; }\n",
     .glsl_fragment =
-        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 settings; };\n"
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
         "uniform sampler2D pixels0;\n"
         "in vec2 uv; in vec4 shade; out vec4 color;\n"
         "void main() {\n"
@@ -80,7 +80,7 @@ static const tide_shader list_shader = {
         "               (screen.z - gl_FragCoord.y) / screen.y / settings.z, screen.z / settings.z, 1) : sampled;\n"
         "}\n",
     .wgsl =
-        "struct Uniforms { camera: mat4x4f, screen: vec4f, settings: vec4f }\n"
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
         "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
         "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
         "@group(0) @binding(2) var how0: sampler;\n"
@@ -105,7 +105,7 @@ static void blit_image(const uint64_t id, const int width, const int height, con
 {
     const uint32_t texture = tide_draw_target_texture(&render_list, id, width, height);
     const float settings[4] = {mode, WIDTH * 2, HEIGHT * 2, 0};
-    tide_draw_blit(&render_list, &list_shader, NULL, settings, &texture, 0);
+    tide_draw_blit(&render_list, &list_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
 }
 
 static void render_expect(const uint32_t *expected, const char *what)
@@ -132,17 +132,17 @@ static void check_render_list(void)
     uint32_t expected[WIDTH * HEIGHT * 4];
     const tide_float2 screen = tide_platform_screen_size();
     tide_draw_reset(&render_list);
-    tide_draw_camera(&render_list, tide_f2(100, 100), screen.y * 0.5f);
+    tide_draw_set_camera(&render_list, tide_f2(100, 100), screen.y * 0.5f);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
     tide_draw_clear(&render_list, TIDE_COLOR_RED);
-    tide_draw_camera(&render_list, tide_f2(10, 20), HEIGHT * 0.5f);
-    tide_draw_clip(&render_list, (tide_rect){8, 20, WIDTH, HEIGHT * 0.5f});
+    tide_draw_set_camera(&render_list, tide_f2(10, 20), HEIGHT * 0.5f);
+    tide_draw_set_clip(&render_list, (tide_rect){8, 20, WIDTH, HEIGHT * 0.5f});
     tide_draw_rect(&render_list, tide_f2(10, 20), tide_f2(100, 100), TIDE_COLOR_BLUE);
     tide_draw_to(&render_list, TARGET_B, WIDTH * 2, HEIGHT * 2);
     tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
-    tide_draw_screen(&render_list);
-    tide_draw_clip(&render_list, (tide_rect){0, 0, 2, 2});
-    tide_draw_camera(&render_list, tide_f2(30, 40), HEIGHT);
+    tide_draw_set_screen(&render_list);
+    tide_draw_set_clip(&render_list, (tide_rect){0, 0, 2, 2});
+    tide_draw_set_camera(&render_list, tide_f2(30, 40), HEIGHT);
     blit_image(TARGET_A, WIDTH, HEIGHT, 0); // Full destination, despite B's camera and clip.
     tide_draw_rect(&render_list, tide_f2(30, 40), tide_f2(100, 100), (tide_color){1, 0, 1, 1});
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
@@ -183,7 +183,7 @@ static void check_render_list(void)
 
     tide_draw_reset(&render_list);
     tide_draw_to(&render_list, TARGET_A, WIDTH / 2, HEIGHT / 2);
-    tide_draw_screen(&render_list);
+    tide_draw_set_screen(&render_list);
     tide_draw_rect(&render_list, tide_f2(0.5f, 0.5f), tide_f2(1, 1), TIDE_COLOR_RED);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_image(TARGET_A, WIDTH / 2, HEIGHT / 2, 0);
@@ -224,11 +224,11 @@ static void check_render_depth_alpha(void)
     tide_draw_reset(&render_list);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
     tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
-    tide_draw_camera_matrices(&render_list, identity, identity);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
     tide_draw_mesh_3d(&render_list, &near_mesh, identity, NULL, TIDE_FILTER_POINT);
     tide_draw_to(&render_list, TARGET_B, WIDTH * 2, HEIGHT * 2);
     tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
-    tide_draw_camera_3d(&render_list, tide_f3(100, 100, 100), tide_identity_q(), 60);
+    tide_draw_set_camera_3d(&render_list, tide_f3(100, 100, 100), tide_identity_q(), 60);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
     blit_image(TARGET_B, WIDTH * 2, HEIGHT * 2, 0); // Replace color while retaining near_mesh's depth.
     tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
@@ -239,7 +239,7 @@ static void check_render_depth_alpha(void)
 
     tide_draw_reset(&render_list);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
-    tide_draw_camera_matrices(&render_list, identity, identity);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
     tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_image(TARGET_A, WIDTH, HEIGHT, 0);
@@ -248,7 +248,7 @@ static void check_render_depth_alpha(void)
     tide_draw_reset(&render_list);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
     tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
-    tide_draw_camera_matrices(&render_list, identity, identity);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
     tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_image(TARGET_A, WIDTH, HEIGHT, 0);
@@ -262,7 +262,7 @@ static void check_render_depth_alpha(void)
     tide_draw_clear(&render_list, (tide_color){1, 0, 0, 0.25f});
     tide_draw_to(&render_list, TARGET_B, WIDTH * 2, HEIGHT * 2);
     tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
-    tide_draw_screen(&render_list);
+    tide_draw_set_screen(&render_list);
     const tide_vertex vertices[4] = {{{0, 0}, {0, 0}, TIDE_COLOR_WHITE},
                                      {{WIDTH * 2, 0}, {1, 0}, TIDE_COLOR_WHITE},
                                      {{WIDTH * 2, HEIGHT * 2}, {1, 1}, TIDE_COLOR_WHITE},
@@ -311,7 +311,7 @@ static void check_owned_targets(void)
     tide_draw_to(&render_list, 0, 0, 0);
     const uint32_t texture = tide_draw_texture_source(&render_list, tide_render_target_color(alias));
     const float settings[4] = {0, 0, 0, 0};
-    tide_draw_blit(&render_list, &list_shader, NULL, settings, &texture, 0);
+    tide_draw_blit(&render_list, &list_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
     for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x0000ffffu;
     render_expect(expected, "owned aliases follow resized dimensions");
 
@@ -403,7 +403,7 @@ static void blit_target(const tide_render_target target, const float mode)
 {
     const uint32_t texture = tide_draw_texture_source(&render_list, tide_render_target_color(target));
     const float settings[4] = {mode, WIDTH * 2, HEIGHT * 2, 0};
-    tide_draw_blit(&render_list, &list_shader, NULL, settings, &texture, 0);
+    tide_draw_blit(&render_list, &list_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
 }
 
 // A pattern one of the display's pixels wide, drawn into a target of the
@@ -417,7 +417,7 @@ static void check_full_resolution(const float scale)
     tide_draw_reset(&render_list);
     tide_draw_render_target(&render_list, screen);
     tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
-    tide_draw_screen(&render_list);
+    tide_draw_set_screen(&render_list);
     const int across = (int)((float)wide * scale + 0.5f), down = (int)((float)high * scale + 0.5f);
     for (int y = 0; y < down; y++) {
         for (int x = (y & 1); x < across; x += 2) { // Every other one of its own pixels, in logical pixels
@@ -451,8 +451,8 @@ static void check_full_resolution(const float scale)
     tide_draw_reset(&render_list);
     tide_draw_render_target(&render_list, screen);
     tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
-    tide_draw_screen(&render_list);
-    tide_draw_clip(&render_list, (tide_rect){0, 0, (float)wide * 0.5f, (float)high});
+    tide_draw_set_screen(&render_list);
+    tide_draw_set_clip(&render_list, (tide_rect){0, 0, (float)wide * 0.5f, (float)high});
     tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_target(screen, 0);
@@ -470,7 +470,7 @@ static void record_scene(void)
 {
     const tide_color white = TIDE_COLOR_WHITE;
     tide_draw_clear(&render_list, (tide_color){0.1f, 0.1f, 0.3f, 1.0f});
-    tide_draw_screen(&render_list);
+    tide_draw_set_screen(&render_list);
     tide_draw_circle(&render_list, tide_f2(8.0f, 7.0f), 5.0f, TIDE_COLOR_RED);
     tide_draw_wire_circle(&render_list, tide_f2(20.0f, 7.0f), 5.0f, white);
     tide_draw_round_rect(&render_list, tide_f2(32.0f, 7.0f), tide_f2(12.0f, 10.0f), 3.0f, TIDE_COLOR_GREEN);
@@ -478,7 +478,7 @@ static void record_scene(void)
     tide_draw_line(&render_list, tide_f2(2.0f, 22.0f), tide_f2(38.0f, 16.0f), white);
     tide_draw_rect(&render_list, tide_f2(20.3f, 20.1f), tide_f2(3.3f, 2.7f), (tide_color){1, 0, 1, 1});
     tide_draw_text(&render_list, "Tide", tide_f2(4.25f, 11.0f), 10.0f, white);
-    tide_draw_camera(&render_list, tide_f2(0.0f, 0.0f), 12.0f);
+    tide_draw_set_camera(&render_list, tide_f2(0.0f, 0.0f), 12.0f);
     tide_draw_circle(&render_list, tide_f2(14.0f, -8.0f), 2.5f, (tide_color){0, 1, 1, 1});
     tide_draw_text(&render_list, "ok", tide_f2(-18.0f, -4.0f), 5.0f, white);
 }

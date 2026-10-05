@@ -2,6 +2,7 @@
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 layout(location = 0) in vec2 tide_a0;
@@ -24,6 +25,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 in vec2 tide_s1;
@@ -40,6 +42,8 @@ void ts_Copy(tt_Vertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -47,6 +51,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
@@ -79,6 +84,10 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
@@ -86,6 +95,7 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 layout(location = 0) in vec2 tide_a0;
@@ -108,6 +118,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 in vec2 tide_s1;
@@ -124,6 +135,8 @@ void ts_Copy(tt_Vertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -131,6 +144,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
@@ -163,6 +177,10 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
@@ -170,6 +188,7 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -200,6 +219,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -217,6 +237,8 @@ void ts_Copy(tt_Vertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -224,6 +246,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
@@ -265,6 +288,10 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Copy(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
@@ -272,6 +299,7 @@ fn ts_Copy(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -305,6 +333,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -316,6 +345,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     tide_color = tide_s2;
     tide_color = tide_color * textureLod(pixels2, tide_s1, 0.0);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -323,6 +354,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
@@ -365,6 +397,10 @@ fn ts_Offset(t_vertex: ptr<function, tt_Vertex>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     tide_color = in.tide_s2;
     tide_color = tide_color * textureSampleLevel(pixels2, sampler2, in.tide_s1, 0.0);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
@@ -372,6 +408,7 @@ fn ts_Offset(t_vertex: ptr<function, tt_Vertex>) {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -398,6 +435,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
 };
 uniform sampler2D pixels0;
 uniform sampler2D pixels1;
@@ -418,6 +456,8 @@ void ts_Combine(tt_Vertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Combine(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -425,6 +465,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<f32>;
@@ -465,6 +506,10 @@ fn ts_Combine(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Combine(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
