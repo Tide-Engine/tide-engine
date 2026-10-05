@@ -107,7 +107,68 @@ view Bodies(Player player, Scenery scenery, without ownership)
 
 They're filters, beside `with` and `without`: the view takes neither `Owner` nor `Session` for them, and `if (owner.player != session.player) return;` goes. A view that wants both kinds at once, like one that draws your player yellow and the others gray, still takes `Owner` and `Session` and compares.
 
-Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. A local handler doesn't filter by them either: one of a match event takes `Owner owner` and `Session session`, and compares (see [Events](./events.md#what-isn-t-there-yet)). `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+
+## Confirmed state
+
+In a match with other machines, a client runs ahead of the server: its views draw the world as this machine predicts it, and a prediction can be wrong for a moment, until the server says how the tick went (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). That suits what has to answer at once, like movement. What must not be wrong, like a health bar, a score or a death, is read `verified`: from the world the server has confirmed.
+
+`verified` goes before a parameter's type, like `mut`:
+
+```csharp
+// Movement as predicted, the health bar only what's confirmed.
+view DrawFighter(Body body, verified Health health)
+{
+    Draw2D.Circle(body.position, 0.5, Color.white);
+    Draw2D.Rect(body.position + float2(0, 0.8), float2(health.value * 0.01, 0.1), Color.red);
+}
+
+// The same component twice: what's predicted, and what's confirmed so far.
+view HealthBar(Body body, Health health, verified Health confirmed)
+{
+    var at = body.position + float2(0, 1);
+    Draw2D.Rect(at, float2(confirmed.value * 0.01, 0.1), Color.gray);
+    Draw2D.Rect(at, float2(health.value * 0.01, 0.1), Color.red);
+}
+
+// A filter, and a singleton.
+view Corpse(Body body, with verified Dead)
+{
+    Draw2D.Circle(body.position, 0.5, Color.gray);
+}
+
+view Board(verified Duel duel)
+{
+    Draw2D.Screen();
+    Draw2D.Text($"Round {duel.round}", float2(20, 20), 24, Color.white);
+}
+```
+
+- **A view runs for an entity when each parameter exists in the world it names.** A view with components of both worlds needs the entity in both, so it skips one whose spawn isn't confirmed yet. A game that wants it drawn sooner splits the view in two: one that draws what's predicted, and one that adds what's confirmed.
+- **A view whose components are all `verified`** runs for the confirmed world's entities, and draws them as they are there: `this` is the confirmed entity, and corrections aren't smoothed.
+- **Filters take it**: `with verified Dead`, `without verified Dead`. Either asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so it skips an entity whose spawn isn't confirmed yet too.
+- **Singletons take it**: `verified Duel duel`.
+- **A `verified` value isn't blended.** It's as the last confirmed tick has it, where the rest of what a view reads is [blended](#smooth-at-any-tick-rate) between two ticks.
+- **`mut` goes with it.** `mut verified Health health` reads the confirmed `Health` and writes the entity's [local fields](./local-state.md#local-fields), which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`.
+- **The same entity** in both worlds is the entity, not only its handle: running a tick again can give a handle to another entity, which is then in one world only (see [After a rollback](./local-state.md#after-a-rollback)).
+- **It's the view's to say.** A function's parameter can't say `verified`: the view takes the value `verified` and passes it on. Nor can a [frag or vert](./shaders.md), which reads what its view is given.
+- **The match has no "confirmed".** It's the same on every machine, so `verified` in a system, a match handler or a task is an error, which points to views and local handlers.
+
+Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match. A local handler takes `verified` on its event, to hear it once it's certain: see [Events](./events.md#verified-handlers).
+
+### Holding a death until it's confirmed
+
+With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says: the view needs the entity in both worlds. There are three ways to hold a death until the server has confirmed it:
+
+- **Make the death a state of a living entity**, a field or a tag like `Dead`, and destroy the entity later. Views read the state `verified`, as `Corpse` does above.
+- **Take everything `verified` in that view.** It then runs for the confirmed world's entities, so the entity is drawn, as the server last confirmed it, until the server says it's gone.
+- **Show it from a local handler**: `local event(verified Destroyed) ...` hears the entity go once it's certain, with its components as they were (see [Events](./events.md#verified-handlers)).
+
+### What isn't there yet
+
+- **Text, lists, maps, sets and grids of the confirmed world.** Naming one through a `verified` parameter is an error, and a copy of a component that has one has it empty. Read them through a parameter that isn't `verified`.
+- **`verified World world`**, which is an error that points to `verified` component parameters. A view's `World` is the world it draws.
+- **Blending confirmed state.** A `verified` value steps at the tick rate. Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead, isn't there yet.
 
 ## Draw functions
 
@@ -564,7 +625,7 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

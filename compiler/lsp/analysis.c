@@ -50,6 +50,7 @@ typedef enum occ_kind {
     OCC_CONST,    // A constant the game declares, MAX_HEALTH, with `decl`
     OCC_SETTING,  // One of the engine's settings, tickRate in settings { ... }
     OCC_OWNERSHIP, // `ownership` after `with` or `without`, with `param` the filter
+    OCC_VERIFIED, // `verified` before a parameter's or filter's type, or a trigger's event, with `param` the one it's on
 } occ_kind;
 
 typedef struct occurrence {
@@ -835,6 +836,12 @@ static void walk_param(const param *p, const decl *d)
         if (keyword >= 0) A.files[p->at.file].query_keywords[keyword] = true;
         for (int i = 0; i < p->query.count; i++) walk_param(&p->query.items[i], d);
     } else {
+        // `verified Health health`, `with verified Dead`, `event(verified Died died)`: the word, where the parser
+        // read it as one, whatever the checker then made of it
+        if (p->verified_at.line > 0) {
+            add_occ((occurrence){.at = p->verified_at, .len = 8, .kind = OCC_VERIFIED, .param = p, .param_of = d,
+                                 .name = str_from("verified")});
+        }
         if (p->ownership) { // A word of its own there, not a type's name
             add_occ((occurrence){.at = p->type_at, .len = p->type_name.len, .kind = OCC_OWNERSHIP, .param = p,
                                  .param_of = d, .name = p->type_name});
@@ -1260,6 +1267,7 @@ static void format_param(const param *p, sb *out)
     case PARAM_WITHOUT: sb_put(out, "without "); break;
     case PARAM_READ: case PARAM_EVENT: case PARAM_QUERY: case PARAM_SENDER: break;
     }
+    if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
 }
@@ -1954,6 +1962,76 @@ static void describe_world(const decl *d, sb *out)
 
 static const char *name_for(const decl *d);
 
+// How many handlers `event` has: its local handlers that hear the match's
+// (decl.listens), or the handlers its own world runs. From the program's
+// handlers rather than the event's lists, which the checker only fills once
+// the game has no errors.
+static int handler_count(const decl *event, const bool listens)
+{
+    int count = 0;
+    for (int i = 0; i < A.prog->handlers.count; i++) {
+        const decl *h = A.prog->handlers.items[i];
+        count += h->event == event && h->listens == listens;
+    }
+    return count;
+}
+
+// A match event's local handlers, after what its hover says of the match's:
+// who hears it on each machine, and which of them wait for the server.
+static void describe_listeners(const decl *event, sb *out)
+{
+    int count = 0;
+    for (int i = 0; i < A.prog->handlers.count; i++) {
+        const decl *h = A.prog->handlers.items[i];
+        if (h->event != event || !h->listens) continue;
+        sb_put(out, count++ ? ", " : "\n\nLocal handlers hear it on each machine, at the start of a frame: ");
+        put_decl_name(out, h, "`", event);
+        if (h->listens_verified) sb_put(out, " (once the server confirmed it)");
+    }
+    if (count) sb_put(out, ".");
+}
+
+// `verified` where it is: before a view's component or singleton, after its
+// `with` or `without`, or before a local handler's event.
+static void describe_verified(const param *p, const decl *of, sb *out)
+{
+    const bool heard = p->mode == PARAM_EVENT && of && of->is_handler && of->is_local;
+    const bool seen = p->mode != PARAM_EVENT && of && of->is_view;
+    if (!p->verified || (!heard && !seen)) { // Somewhere it can't be, which the error there explains
+        code_block(out, "verified");
+        sb_put(out, "\n\nFrom the world the server has confirmed. It goes before a component or singleton of the match "
+                    "in a view's parameters, after a view's `with` or `without`, and before a local handler's event.");
+        return;
+    }
+    sb code = {0};
+    if (heard) sb_put(&code, "event(");
+    format_param(p, &code);
+    if (heard) sb_put(&code, ")");
+    code_block(out, code.data);
+    const str type = last_part(p->type_name);
+    if (heard) {
+        sb_printf(out, "\n\nThe handler hears each `" STR_FMT "` once, when the server confirmed the tick that sent it: "
+                       "never one this machine only predicted. What it takes of the match is as that tick left it.",
+                  STR_ARG(type));
+    } else if (p->mode == PARAM_WITH) {
+        sb_printf(out, "\n\nFilter: the view runs for the entities that have `" STR_FMT "` in the world the server has "
+                       "confirmed, whatever this machine predicts.", STR_ARG(type));
+    } else if (p->mode == PARAM_WITHOUT) {
+        sb_printf(out, "\n\nFilter: the view runs for the entities that are in the world the server has confirmed and "
+                       "don't have `" STR_FMT "` there, whatever this machine predicts.", STR_ARG(type));
+    } else if (p->type.kind == TY_SINGLETON) {
+        sb_printf(out, "\n\n`" STR_FMT "` as the last tick the server confirmed has it: not as this machine predicts it, "
+                       "and not blended between ticks.", STR_ARG(type));
+    } else {
+        sb_printf(out, "\n\nThe entity's `" STR_FMT "` as the last tick the server confirmed has it: not as this machine "
+                       "predicts it, and not blended between ticks. %s", STR_ARG(type),
+                  of->verified_entities ? "All the view's components are `verified`, so it runs for the confirmed world's "
+                                          "entities."
+                                        : "The view runs for the entities it draws that are the same entity in the "
+                                          "confirmed world too.");
+    }
+}
+
 // What Card(number) gives, for its hover and its signature.
 static void describe_enum_conversion(const decl *d, sb *out)
 {
@@ -2005,10 +2083,15 @@ static void describe(const occurrence *o, sb *out)
             } else if (o->decl->kind == DECL_EVENT && o->decl->is_local) {
                 sb_put(out, "\n\nLocal: sent with `Send` from views, and handled by `local event(...)` handlers at the end of the frame.");
             } else if (o->decl->kind == DECL_EVENT) {
-                sb_put(out, "\n\nSent with `Send`, and handled by `event(...)` handlers at the end of the tick.");
+                // One that only local handlers take is the match's to send, and nothing of the match's to handle
+                const bool heard_only = handler_count(o->decl, true) > 0 && handler_count(o->decl, false) == 0;
+                sb_put(out, heard_only ? "\n\nSent with `Send`, and only for local code: no handler in the match takes it, "
+                                         "so it costs the match nothing."
+                                       : "\n\nSent with `Send`, and handled by `event(...)` handlers at the end of the tick.");
             } else if (o->decl->is_local) {
                 sb_put(out, "\n\nLocal: this machine's own, never sent, rolled back or hashed. Views change it; the match can't see it.");
             }
+            if (o->decl->kind == DECL_EVENT && !o->decl->is_local && !o->decl->is_command) describe_listeners(o->decl, out);
             if (o->decl->kind == DECL_ENUM && o->call == CALL_CONSTRUCT) { // Card(2)
                 sb_put(out, "\n\n");
                 describe_enum_conversion(o->decl, out);
@@ -2030,7 +2113,18 @@ static void describe(const occurrence *o, sb *out)
             if (o->decl->is_command) sb_put(out, "\n\nHandles an untrusted player submission. The connection supplies its sender; check permissions and game rules before changing match state.");
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
-            if (o->decl->per_entity) {
+            const char *to = o->decl->per_entity ? " to an entity that matches its parameters" : "";
+            if (o->decl->listens && o->decl->listens_verified) {
+                sb_printf(out, "\n\nA local handler of the match's `" STR_FMT "`: it runs on this machine at the start of a "
+                               "frame, before the views, for each `" STR_FMT "` sent%s in the ticks the server confirmed "
+                               "since the last frame. It hears each once, when the server confirmed its tick, with what it "
+                               "takes of the match as that tick left it.", STR_ARG(event), STR_ARG(event), to);
+            } else if (o->decl->listens) {
+                sb_printf(out, "\n\nA local handler of the match's `" STR_FMT "`: it runs on this machine at the start of a "
+                               "frame, before the views, for each `" STR_FMT "` the ticks since the last frame sent%s. It "
+                               "hears each once, whatever ticks are run again, with what it takes of the match as the "
+                               "event's turn left it.", STR_ARG(event), STR_ARG(event), to);
+            } else if (o->decl->per_entity) {
                 sb_printf(out, "\n\nRuns when a `" STR_FMT "` is sent to an entity that matches its parameters, "
                                "at the end of the %s.", STR_ARG(event), when);
             } else {
@@ -2053,6 +2147,9 @@ static void describe(const occurrence *o, sb *out)
                            "player's, and those with no `Owner`. With `with Owner` too, only another player's.");
         break;
     }
+    case OCC_VERIFIED:
+        describe_verified(o->param, o->param_of, out);
+        break;
     case OCC_SETTING: {
         const setting *st = setting_named(o->name);
         sb_printf(&code, "%s %s", type_name((type){st->kind, NULL}), st->name);
@@ -2384,10 +2481,14 @@ static void describe_order(const decl *d, sb *out)
                   STR_ARG(d->order_enum->qualified), STR_ARG(d->order_member->name), d->order_offset);
     }
     if (d->is_handler) {
-        if (!d->event || d->event->handlers.count < 2) return;
+        if (!d->event) return;
+        // A match event's local handlers hear it among themselves, apart from the handlers the tick runs
+        const int count = d->listens ? d->event->listeners.count : d->event->handlers.count;
+        decl *const *among = d->listens ? d->event->listeners.items : d->event->handlers.items;
         int index = 0;
-        while (index < d->event->handlers.count && d->event->handlers.items[index] != d) index++;
-        sb_printf(out, "\n\nRuns %s of %d handlers of `" STR_FMT "`", ordinal(index + 1), d->event->handlers.count,
+        while (index < count && among[index] != d) index++;
+        if (count < 2 || index == count) return;
+        sb_printf(out, "\n\nRuns %s of %d %shandlers of `" STR_FMT "`", ordinal(index + 1), count, d->listens ? "local " : "",
                   STR_ARG(d->event->name));
         for (int i = 0; i < d->after.count; i++) {
             sb_printf(out, "%s`" STR_FMT "`", i ? ", " : ", after ", STR_ARG(d->after.items[i]->qualified));
@@ -2431,7 +2532,19 @@ static void describe_order(const decl *d, sb *out)
 }
 
 // ---------------------------------------------------------------------------
-// Code lenses: above each system, its stage and why it waits
+// Code lenses: above each system, its stage and why it waits, and above each
+// local handler of a match event, when it hears it
+
+// A lens with `title` above `d`'s name. It only says: it runs no command.
+static void write_lens(jbuf *out, int *written, const decl *d, const char *title)
+{
+    if ((*written)++) jb_put(out, ",");
+    jb_put(out, "{\"range\":");
+    write_range(out, d->at, d->name.len);
+    jb_put(out, ",\"command\":{\"title\":");
+    jb_string(out, title);
+    jb_put(out, ",\"command\":\"\"}}");
+}
 
 void analysis_code_lenses(jbuf *out)
 {
@@ -2477,12 +2590,18 @@ void analysis_code_lenses(jbuf *out)
             }
             if (d->alongside_count > shown) sb_printf(&title, " and %d more", d->alongside_count - shown);
         }
-        if (written++) jb_put(out, ",");
-        jb_put(out, "{\"range\":");
-        write_range(out, d->at, d->name.len);
-        jb_put(out, ",\"command\":{\"title\":");
-        jb_string(out, title.data);
-        jb_put(out, ",\"command\":\"\"}}");
+        write_lens(out, &written, d, title.data);
+    }
+    // The program's handlers rather than each event's listeners, which the
+    // checker only lists once the game has no errors
+    for (int i = 0; i < A.prog->handlers.count; i++) {
+        const decl *h = A.prog->handlers.items[i];
+        if (h->at.file != A.doc || !h->listens || !h->event) continue;
+        sb title = {0};
+        sb_put(&title, "hears ");
+        put_decl_name(&title, h->event, "", h);
+        sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
+        write_lens(out, &written, h, title.data);
     }
     jb_put(out, "]");
 }
@@ -2493,6 +2612,13 @@ void analysis_code_lenses(jbuf *out)
 static loc type_start(const param *p)
 {
     return p->type_qual_at.line > 0 ? p->type_qual_at : p->type_at;
+}
+
+// Where a parameter's `mut` goes, and what follows one it has: its `verified`
+// (`mut verified Target target`), or its type.
+static loc mut_end(const param *p)
+{
+    return p->verified_at.line > 0 ? p->verified_at : type_start(p);
 }
 
 static void write_edit_range(jbuf *out, const loc start, const loc end)
@@ -2861,7 +2987,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
         const param *p = f->param;
         sb title = {0};
         sb text = {0};
-        loc start = p ? type_start(p) : f->at;
+        loc start = p ? mut_end(p) : f->at;
         loc end = start;
         bool preferred = true;
         const char *separator = "";
@@ -2875,11 +3001,11 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             start = p->at;
             sb_put(&text, "");
             break;
-        case FIX_USE_WITH:
-            sb_printf(&title, "Only require it: 'with " STR_FMT "'", STR_ARG(p->type_name));
+        case FIX_USE_WITH: // A view's `verified Health health` is still the confirmed world's: `with verified Health`
+            sb_printf(&text, "with %s" STR_FMT, p->verified_at.line > 0 ? "verified " : "", STR_ARG(p->type_name));
+            sb_printf(&title, "Only require it: '%s'", text.data);
             start = p->at;
             end = (loc){p->name_at.line, p->name_at.col + p->name.len, p->name_at.file};
-            sb_printf(&text, "with " STR_FMT, STR_ARG(p->type_name));
             break;
         case FIX_MUT_LOCAL:
             sb_printf(&title, "Declare '" STR_FMT "' as mut", STR_ARG(f->local->name));
@@ -4037,6 +4163,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_THIS: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_DEFAULT: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_OWNERSHIP: *type = ST_KEYWORD; *mods = 0; break;
+    case OCC_VERIFIED: *type = ST_KEYWORD; *mods = 0; break;
     }
 }
 
@@ -4841,6 +4968,29 @@ static void complete_events(completion *c, const bool builtin, const bool comman
     }
 }
 
+// The match's events, the engine's own among them: what a local handler hears
+// `verified`, once the server confirmed the tick that sent one.
+static void complete_match_events(completion *c)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_EVENT || d->is_command || d->is_local) continue;
+        item(c, name_for(d), CK_EVENT, decl_what(d), d->builtin ? builtin_event_doc(A.prog, d) : NULL, NULL);
+    }
+}
+
+// The match's components and, with `singletons`, its singletons: what a view
+// takes `verified`, from the world the server has confirmed.
+static void complete_match_types(completion *c, const bool singletons)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->is_local) continue;
+        if (d->kind == DECL_COMPONENT) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
+        if (singletons && d->kind == DECL_SINGLETON) item(c, name_for(d), CK_CLASS, decl_what(d), NULL, NULL);
+    }
+}
+
 // The events code on one side can send.
 static void complete_events_of(completion *c, const bool local)
 {
@@ -5372,6 +5522,17 @@ static header_kind top_header(const int i)
     return keyword->kind == T_IDENT && str_eq_c(keyword->text, "view") ? HEADER_SYSTEM : HEADER_ROUTINE;
 }
 
+// Whether the handler whose trigger opens at token `open` is local: `local
+// event(`, with `async` before or after the word.
+static bool local_trigger(const int open)
+{
+    for (int k = open - 2; k >= 0 && k >= open - 3 && DOC->toks[k].kind == T_IDENT; k--) {
+        if (str_eq_c(DOC->toks[k].text, "local")) return true;
+        if (!str_eq_c(DOC->toks[k].text, "async")) return false;
+    }
+    return false;
+}
+
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
 // Sanitize, or a method's (`bool IsDead(`, `Money operator +(`). None for a
 // value, like a field's default.
@@ -5866,10 +6027,23 @@ void analysis_completion(const int line, const int character, jbuf *out)
             break;
         }
         if (sample && str_eq_c(DOC->toks[f.open - 1].text, "Sanitize")) break; // It takes nothing
+        // `verified` is a word before a parameter's type, and what was typed after it is that type
+        const bool after_verified = pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
+        const tok_kind before_verified = after_verified ? DOC->toks[last - 1].kind : T_EOF;
+        const bool view = f.header == HEADER_SYSTEM && f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT
+                       && str_eq_c(DOC->toks[f.open - 2].text, "view");
         if (trigger) {
             const bool command = str_eq_c(DOC->toks[f.open - 1].text, "command");
+            // local event(verified Died died): a local handler hears the match's events, confirmed ones too
+            const bool hears = !command && local_trigger(f.open);
             if (pk == T_LPAREN) {
+                if (hears) {
+                    item(&c, "verified", CK_KEYWORD, "Once the server confirmed the tick that sent the event", NULL, NULL);
+                }
                 complete_events(&c, true, command);
+                complete_namespaces(&c, false);
+            } else if (hears && before_verified == T_LPAREN) {
+                complete_match_events(&c);
                 complete_namespaces(&c, false);
             } else if (command && pk == T_COMMA) {
                 item(&c, "PlayerID", CK_STRUCT, "Authenticated command sender", builtin_type_doc(TY_PLAYER), NULL);
@@ -5888,14 +6062,26 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
             // view Camera(Player player, with ownership): by this machine's player, which only views ask
-            if (f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT && str_eq_c(DOC->toks[f.open - 2].text, "view")) {
+            if (view) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+                // ...and with verified Dead: by the world the server has confirmed, which only they see
+                item(&c, "verified", CK_KEYWORD,
+                     pk == T_WITH ? "Entities that have it in the world the server has confirmed"
+                                  : "Entities that don't have it in the world the server has confirmed", NULL, NULL);
             }
             complete_types(&c, true, false, false);
+        } else if (view && (before_verified == T_WITH || before_verified == T_WITHOUT)) {
+            complete_match_types(&c, false);
+            complete_namespaces(&c, false);
+        } else if (view && (before_verified == T_LPAREN || before_verified == T_COMMA || before_verified == T_MUT)) {
+            complete_match_types(&c, true);
+            complete_namespaces(&c, false);
         } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT) {
             if (pk != T_MUT) {
                 item(&c, "mut", CK_KEYWORD, "Write access", NULL, NULL);
+                // view HealthBar(Health health, verified Health confirmed): where a view's parameter starts, like mut
+                if (view) item(&c, "verified", CK_KEYWORD, "As the server confirmed it, not as this machine predicts it", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
                 item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
@@ -6110,7 +6296,8 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_THIS:
     case OCC_CONST: return a->decl == b->decl;
     case OCC_DEFAULT:
-    case OCC_OWNERSHIP: return false; // A keyword, not a symbol
+    case OCC_OWNERSHIP:
+    case OCC_VERIFIED: return false; // A keyword, not a symbol
     }
     return false;
 }
@@ -6185,6 +6372,8 @@ static const char *rename_target(const int line, const int character, const occu
         return "'this' is a keyword, so it can't be renamed.";
     case OCC_OWNERSHIP:
         return "'ownership' is a keyword after 'with' and 'without', so it can't be renamed.";
+    case OCC_VERIFIED:
+        return "'verified' is a keyword before a parameter's type or a handler's event, so it can't be renamed.";
     case OCC_SETTING:
         return "Settings are the engine's, so they can't be renamed.";
     default:

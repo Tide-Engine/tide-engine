@@ -50,6 +50,19 @@ Event handlers, at the end of the tick, as their events are sent:
 
 In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover.
 
+Each event's handlers are listed in the order they run. A game with [local handlers](./events.md#local-handlers) of the match's events has those listed after the match's, apart, since they run on each machine at the start of a frame and not in the tick. The ones that wait for the server say `(verified)`:
+
+```
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup
+         Hit: TakeHit
+
+Local handlers of the match's events, at the start of a frame, for what the ticks since the last one sent:
+         Destroyed: Mourn (verified)
+         Hit: Count (verified), Flash
+         Glanced: Spark
+```
+
 ### Through the World
 
 A system's parameters say what it reads and writes of the entities it runs for. What it reaches through a [`World`](./systems.md#other-entities-the-world) parameter is any entity's, and its signature doesn't name those components, so the schedule does, on lines of their own:
