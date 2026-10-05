@@ -86,7 +86,7 @@ Measured on a release build, 2,400 crates in stacks (an image of 3.5 MB, and 1.4
 - The image is every body, shape and contact, about a kilobyte and a half a body, whatever is awake. Box3D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
 - What's left, with everything moving, is mostly that: each chunk of the image that changed gets a page of its own, which the tick before's snapshot can't share.
 - Making C's world from an image, which a rollback does once, takes about a millisecond.
-- On the web Box3D has no SIMD (it only knows Emscripten's WebAssembly): the same step takes about 3 ms there on one thread. Shared out over a page's threads it took longer, not shorter, where this was measured (Node, 24 threads on 12 cores: 21 ms), as Box2D's does there.
+- On the web Box3D has no SIMD (it only knows Emscripten's WebAssembly): the same step takes about 2.2 ms there on one thread. Shared out, it takes 0.8 with a thread for each of the machine's 12 cores, and 3.6, longer than on one thread, with the 24 a page gets on that machine, one for each thread its cores run (measured under Node). Box3D's workers spin while they wait for each other, and two on one core take it from each other. Box2D's step goes the same way there: it's how many threads a page's ticks get, not either package.
 - Compiling Box3D takes about 8 seconds of one core once (14 optimized), and adds about 800 KB to a game.
 
 ## Not there yet
@@ -96,4 +96,3 @@ Measured on a release build, 2,400 crates in stacks (an image of 3.5 MB, and 1.4
 - A body's `type` and the fields read when it's made don't follow later changes, and a shape's don't either.
 - Removing `Body` from an entity that stays leaves its body in the world.
 - Reading the world from views.
-- Box3D on ARM: its Neon code is changed here as its scalar code is (`box3d/TIDE.md`), and compiles, but only x64 and the web have run the tests.

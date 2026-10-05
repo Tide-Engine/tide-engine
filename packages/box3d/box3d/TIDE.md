@@ -116,8 +116,7 @@ match has no recording, and a player who joins has only the match's bytes.
   another on the web than on x64, at the test's tick 7. Neon's own
   (`vminq_f32`, `vmaxq_f32`) take -0 for less than 0, which is a third
   answer. x64's is the one kept, as its code is the one that can't change.
-  The Neon change compiles (Android, arm64) and hasn't run: the test's pins
-  are x64's and the web's until an ARM machine runs them.
+  The Neon path gives the test's pins too: CI's ARM Macs run it.
 
 ### Threads where upstream knows none
 
