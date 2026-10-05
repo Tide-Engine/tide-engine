@@ -416,9 +416,10 @@ button {
     font-size: 12px;
 }
 
+/* The examples draw on the dark theme's code background, in both themes. */
 .example-viewport {
     height: 400px;
-    background: #0e0e14;
+    background: #161618;
 }
 
 .example-viewport iframe {
@@ -444,26 +445,25 @@ button {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 1px;
-    background: #2a2a38;
+    background: var(--divider);
 }
 
 .example-player {
     min-width: 0;
-    background: #0e0e14;
+    background: var(--bg);
 }
 
 .prose .example-player-name {
     margin: 0;
     padding: 6px 12px;
-    border-bottom: 1px solid #2a2a38;
-    background: #16161f;
-    color: #e4e4ec;
+    border-bottom: 1px solid var(--divider);
+    color: var(--text-1);
     font-size: 12px;
     line-height: 1.5;
 }
 
 .example-player-name span {
-    color: #9a9aa8;
+    color: var(--text-2);
 }
 
 .tide-pair .example-viewport {

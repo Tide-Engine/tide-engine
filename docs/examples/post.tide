@@ -31,15 +31,15 @@ view DrawScene(mut Post post)
     if (post.turn > Math.TAU) post.turn -= Math.TAU;
 
     // A target has the drawing methods Draw2D has, and a camera of its own.
-    post.scene.Clear(Color(0.04, 0.07, 0.12));
+    post.scene.Clear(Color(0.086, 0.086, 0.094));
     post.scene.SetCamera(float2(0), 2);
     for (var i = 0; i < 7; i++)
     {
         var angle = post.turn + i * 0.9;
         var at = float2(Math.Cos(angle), Math.Sin(angle * 2)) * (0.5 + i * 0.18);
-        post.scene.Circle(at, 0.16 + i * 0.03, Color(0.3 + i * 0.1, 0.8 - i * 0.05, 1 - i * 0.1));
+        post.scene.Circle(at, 0.16 + i * 0.03, Color(0.98 - i * 0.13, 0.75 + i * 0.013, 0.14 + i * 0.1));
     }
-    post.scene.Line(float2(-1.8, -1.6), float2(1.8, 1.6), 0.05, Color(1, 0.65, 0.3));
+    post.scene.Line(float2(-1.8, -1.6), float2(1.8, 1.6), 0.05, Color(0.98, 0.44, 0.52));
 
     // The window gets the scene through the frag.
     Draw.Blit(post.scene.color, Draw.window, Pixelate);
@@ -50,6 +50,7 @@ view Controls(mut Post post)
     Draw2D.SetScreen();
     Draw2D.Text("As drawn", float2(16, 14), 16, Color.white);
     Draw2D.Text("Through the frag", float2(Screen.width - 16, 14), 16, Color.white, Anchor.UpperRight);
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))
     {
         GUILayout.Slider("Blocks", post.blocks, 8, 128);

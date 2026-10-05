@@ -86,9 +86,9 @@ local event(Destroyed) Burst(Ball ball, mut Fx fx)
 
 view Arena()
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetCamera(float2(0, 0.15), 2.3);
-    Draw2D.WireRect(float2(0), float2(3.8, 3.8), 0.03, Color(0.18, 0.24, 0.32));
+    Draw2D.WireRect(float2(0), float2(3.8, 3.8), 0.03, Color(0.24, 0.25, 0.27));
 }
 
 view Balls(mut Ball ball, Devices devices)
@@ -96,7 +96,7 @@ view Balls(mut Ball ball, Devices devices)
     ball.flash = Math.Max(0, ball.flash - Frame.dt);
     var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (devices.pointer.press.down && Math.Distance(pointer, ball.position) < 0.45) this.Send(Poke { });
-    Draw2D.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(1, 0.65, 0.3));
+    Draw2D.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(0.98, 0.75, 0.14));
 }
 
 view Sparks(mut Fx fx)

@@ -10,7 +10,7 @@ local singleton Dice
 
 view Scatter(mut Dice dice)
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetCamera(float2(0, -0.25), 2.2);
 
     // A generator is a value. The same seed rolls the same numbers, on every
@@ -20,7 +20,7 @@ view Scatter(mut Dice dice)
     {
         var at = random.NextFloat2Direction() * Math.Sqrt(random.NextFloat()) * 1.5;
         var size = random.NextFloat(0.015, 0.05);
-        Draw2D.Circle(at, size, Color(random.NextFloat(0.3, 1), random.NextFloat(0.6, 0.9), 1));
+        Draw2D.Circle(at, size, Color(1, random.NextFloat(0.5, 0.85), random.NextFloat(0.1, 0.45)));
     }
 
     // Another generator with that seed starts the same sequence over.
@@ -30,6 +30,7 @@ view Scatter(mut Dice dice)
 
     Draw2D.SetScreen();
     Draw2D.Text(rolls, float2(16, 14), 16, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))
     {
         GUILayout.IntSlider("Seed", dice.seed, 0, 20);

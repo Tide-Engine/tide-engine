@@ -1,7 +1,7 @@
 local singleton Menu
 {
     bool open;
-    bool blue = true;
+    bool teal = true;
     bool guide = true;
     int choices;
 }
@@ -10,7 +10,7 @@ local scene Main { }
 
 view TryLayout(mut Menu menu)
 {
-    Draw2D.Clear(Color(0.05, 0.07, 0.11));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetScreen();
 
     GUILayout.Area(Anchor.UpperLeft)
@@ -18,14 +18,14 @@ view TryLayout(mut Menu menu)
         GUILayout.Label("Horizontal: a row of buttons");
         GUILayout.Horizontal()
         {
-            if (GUILayout.Button("Blue"))
+            if (GUILayout.Button("Teal"))
             {
-                menu.blue = true;
+                menu.teal = true;
                 menu.choices += 1;
             }
             if (GUILayout.Button("Gold"))
             {
-                menu.blue = false;
+                menu.teal = false;
                 menu.choices += 1;
             }
         }
@@ -37,7 +37,7 @@ view TryLayout(mut Menu menu)
     }
 
     var center = float2(Screen.width * 0.5, Screen.height - 136);
-    var color = menu.blue ? Color(0.4, 0.8, 1) : Color(1, 0.77, 0.24);
+    var color = menu.teal ? Color(0.18, 0.83, 0.75) : Color(0.98, 0.75, 0.14);
     Draw2D.Rect(center, float2(120, 80), color);
     if (menu.guide) Draw2D.WireRect(center, float2(144, 104), Color.white);
 
@@ -46,7 +46,7 @@ view TryLayout(mut Menu menu)
     GUILayout.Modal(Anchor.MiddleCenter, menu.open)
     {
         GUILayout.Label("The modal has the focus");
-        GUILayout.Label("Try the Blue / Gold buttons");
+        GUILayout.Label("Try the Teal / Gold buttons");
         GUILayout.Toggle("Show guide", menu.guide);
         if (GUILayout.Button("Close")) menu.open = false;
     }

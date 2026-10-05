@@ -917,7 +917,7 @@ Views draw at whatever frame rate the game renders, not the tick rate, and see t
 
 Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
 
-The match below ticks only five times a second. Both discs are the same position: the green one is an ordinary field, which the view sees blended between ticks, and the orange one a `[Snap]` field, drawn as the last tick left it.
+The match below ticks only five times a second. Both discs are the same position: the amber one is an ordinary field, which the view sees blended between ticks, and the teal one a `[Snap]` field, drawn as the last tick left it.
 
 ::: tide-example tick-rate Five ticks a second, drawn every frame
 

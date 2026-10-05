@@ -29,7 +29,7 @@ input Steer
 // A body nobody owns. It reads the server's input: the machine hosting the match.
 event(Spawned) Setup(with Main)
 {
-    Spawn(Body { position = float2(0, 1.4), color = Color(0.6, 0.65, 0.75), speed = 0.8 });
+    Spawn(Body { position = float2(0, 1.4), color = Color(0.64, 0.64, 0.68), speed = 0.8 });
 }
 
 // Owner ties an entity to a player, so it reads that player's input.
@@ -38,7 +38,7 @@ event(PlayerJoined joined) Arrive(mut Roster roster)
     var first = roster.arrivals % 2 == 0;
     roster.arrivals += 1;
     roster.bodies[joined.player] = Spawn(
-        Body { position = float2(first ? -1 : 1, 0), color = first ? Color(0.3, 0.8, 1) : Color(1, 0.65, 0.3) },
+        Body { position = float2(first ? -1 : 1, 0), color = first ? Color(0.98, 0.75, 0.14) : Color(0.18, 0.83, 0.75) },
         Owner { player = joined.player });
 }
 
@@ -76,10 +76,11 @@ command(Trade trade, PlayerID sender) TradeBodies(mut Roster roster)
 
 view Point(Devices devices, mut Aim aim)
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetCamera(float2(0, 0.2), 2.4);
     aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
+    GUI.SetTheme(GUITheme { radius = 6 });
     if (GUI.Button(Rect(12, Screen.height - 44, Screen.width - 24, 32), "Trade bodies")) Send(Trade { });
 }
 
@@ -91,7 +92,7 @@ view Others(Body body, without ownership)
 
 view Unowned(Body body, without Owner)
 {
-    Draw2D.Text("no Owner", body.position + float2(0, 0.3), 0.17, Color(0.6, 0.65, 0.75), Anchor.LowerCenter);
+    Draw2D.Text("no Owner", body.position + float2(0, 0.3), 0.17, Color(0.64, 0.64, 0.68), Anchor.LowerCenter);
 }
 
 view Mine(Body body, with ownership)

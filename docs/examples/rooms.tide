@@ -33,11 +33,10 @@ input Steer
 // The match, the same on every machine in it: a body for each player.
 event(PlayerJoined joined) Arrive(mut Roster roster)
 {
-    var hue = roster.arrivals % 4;
+    var seat = roster.arrivals % 4;
     roster.arrivals += 1;
-    roster.bodies[joined.player] = Spawn(
-        Body { position = float2(hue - 1.5, 0), color = Color(hue == 1 ? 1 : 0.3, hue == 2 ? 0.5 : 0.8, hue == 0 ? 1 : 0.4) },
-        Owner { player = joined.player });
+    var color = seat == 0 ? Color(0.98, 0.75, 0.14) : seat == 1 ? Color(0.18, 0.83, 0.75) : seat == 2 ? Color(0.98, 0.44, 0.52) : Color(0.47, 0.72, 1);
+    roster.bodies[joined.player] = Spawn(Body { position = float2(seat - 1.5, 0), color = color }, Owner { player = joined.player });
 }
 
 event(PlayerLeft left) Depart(mut Roster roster)
@@ -54,7 +53,8 @@ system Follow(Steer steer, mut Body body, Time time)
 // This machine's side of it: which match it's in is local code's to say.
 view Lobby(Session session, mut Menu menu)
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(8, 8, Screen.width - 16, session.state == SessionState.Offline ? 118 : 86))
     {
         if (session.state == SessionState.Offline)

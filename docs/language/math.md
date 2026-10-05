@@ -74,7 +74,7 @@ And these build values:
 
 `Mul` (two matrices, or a matrix and a vector of its size), `Transpose`, `Inverse`, `Determinant`, and for `float4x4`, `Transform` (a point) and `Rotate` (a direction).
 
-Each button below plots a function of `Math` from 0 to 1. The white dot goes along the curve, and the orange one moves by the same number, to see what it does to something that moves.
+Each button below plots a function of `Math` from 0 to 1. The white dot goes along the curve, and the teal one moves by the same number, to see what it does to something that moves.
 
 ::: tide-example math Curves from Math
 
