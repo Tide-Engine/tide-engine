@@ -156,8 +156,14 @@ block('details', (tokens, idx) => {
     return `<details class="callout details"><summary>${escape(title || 'Details')}</summary>\n`;
 });
 
+// On a touchscreen a swipe on an example scrolls the page until a tap on it
+// (tide.js: `embedded`), which its heading says where a finger is the pointer.
+const touchHint = '<span class="example-touch">, tap it to play</span>';
+
 // The code is included from the same .tide file CMake builds for the frame.
-// A frame starts once it's in view, or when its button says (lib/examples.ts).
+// A frame loads as it comes near, and starts once it's in view or when its
+// button says, which is also when the status under it has something to say
+// (lib/examples.ts).
 block('tide-example', (tokens, idx) => {
     const token = tokens[idx];
     if (token.nesting !== 1) {
@@ -168,10 +174,10 @@ block('tide-example', (tokens, idx) => {
     const [, id, title] = match;
     const src = `/examples/${id}/`;
     return `<section class="tide-example" data-example-src="${src}" aria-label="${escape(title)}">
-<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example</span></div>
+<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example${touchHint}</span></div>
 <div class="example-columns"><div class="example-preview">
 <div class="example-controls"><button type="button" data-example-run>Run example</button><button type="button" data-example-stop disabled>Stop</button><a href="${src}" target="_blank" rel="noreferrer">Open separately</a></div>
-<div class="example-viewport"></div><p class="example-status" role="status">Run the example to try it here.</p>
+<div class="example-viewport"></div><p class="example-status" role="status" hidden></p>
 <noscript><p>Enable JavaScript to run it here, or open the example separately.</p></noscript>
 </div><div class="example-source">\n`;
 });
@@ -201,10 +207,10 @@ function players(name: string, match: boolean) {
             .map((role, i) => `<div class="example-player"><p class="example-player-name"><strong>Player ${i + 1}</strong>${role ? ` <span>${role}</span>` : ''}</p><div class="example-viewport"></div></div>`)
             .join('');
         return `<section class="tide-example tide-pair" data-example-src="${src}"${match ? ' data-example-match' : ''} aria-label="${escape(title)}">
-<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example, two players</span></div>
+<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example, two players${touchHint}</span></div>
 <div class="example-controls"><button type="button" data-example-run>Run both</button><button type="button" data-example-stop disabled>Stop</button>${slider}<a href="${src}" target="_blank" rel="noreferrer">Open separately</a></div>
-<div class="example-players">${frames}</div>
-<p class="example-status" role="status">Run the example to start both players here.</p>
+<div class="example-stage"><div class="example-players">${frames}</div>
+<p class="example-status" role="status" hidden></p></div>
 <noscript><p>Enable JavaScript to run it here, or open the example separately.</p></noscript>
 ${bare ? '' : '<div class="example-source">'}\n`;
     });
