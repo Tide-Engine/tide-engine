@@ -1,0 +1,568 @@
+// What makes the duel feel alive is this machine's own: sparks, rings, trails,
+// a camera that shakes. None of it is in the match. Views watch the match, and
+// add an effect here when they see something happen in it.
+enum PaintStages { Prepare, Arena, Platforms, Fighters, Bullets, Effects, Hud, Menu, Overlay }
+
+enum BitKind { Streak, Dot, Puff, Chunk, Shell }
+
+// Something small that flies, fades and is gone.
+struct Bit
+{
+    float2 position;
+    float2 velocity;
+    Color color = Color.white;
+    float age;
+    float life = 0.4;
+    float size = 3;
+    float gravity;
+    float drag;
+    float spin;
+    BitKind kind;
+}
+
+// A ring that grows.
+struct Wave
+{
+    float2 center;
+    Color color = Color.white;
+    float age;
+    float life = 0.4;
+    float from;
+    float to = 40;
+    float width = 3;
+}
+
+// A piece of a shot's trail.
+struct Streak
+{
+    float2 from;
+    float2 to;
+    Color color = Color.white;
+    float age;
+    float life = 0.26;
+    float width = 7;
+}
+
+// A number that floats up from a hit.
+struct Label
+{
+    float2 position;
+    Color color = Color.white;
+    float age;
+    float life = 0.9;
+    int amount;
+}
+
+// The match's platforms and fighters as the last frame drew them, for effects
+// to bounce off and shots to end on.
+struct Slab { float2 center; float2 half; }
+struct Mark { float2 position; float radius; bool shield; }
+
+// A shot the frame drew. One that's missing from the next frame hit something.
+struct Shot
+{
+    Entity entity;
+    float2 position;
+    float2 velocity;
+    int side;
+    int frame;
+}
+
+local singleton Fx
+{
+    int tick;        // The match's tick at the last frame
+    float pace = 0.0167; // How long a frame takes, evened out
+    float dt;        // Seconds this frame's effects move on by
+    float now;       // Seconds of frames drawn, which never go back
+    int frame;
+    int seed;
+    float trauma;    // How hard the camera shakes, 0 to 1
+    float calm = 1;  // How much of that shows: less while the fight is only the menu's scenery
+    float2 shake;    // Where that puts it this frame
+    float kick;      // A zoom that eases back
+    float flash;     // The whole screen lit, fading
+    Color flashColor = Color.white;
+    float hurt;      // The screen's edges lit when this machine's fighter is hit
+    List<Bit> bits;
+    List<Bit> confetti; // In the screen's pixels, over the menus
+    List<Wave> waves;
+    List<Streak> streaks;
+    List<Label> labels;
+    List<Slab> slabs;
+    List<Mark> marks;
+    List<Shot> shots;
+}
+
+// What the backdrop's frag reads.
+local singleton Sky
+{
+    List<Corner> quad;
+    List<int> faces;
+    float4 view;   // Half the screen in pixels, pixels per arena unit, seconds
+    float2 look;   // The camera's offset
+    float4 shock;  // A ring of light through the floor: where, how old, how strong
+    float4 shock2;
+}
+
+float EaseOut(float t)
+{
+    var left = 1 - Math.Saturate(t);
+    return 1 - left * left * left;
+}
+
+// Past its end and back, like something that lands.
+float EaseBack(float t)
+{
+    var left = Math.Saturate(t) - 1;
+    return 1 + left * left * (2.70158 * left + 1.70158);
+}
+
+float Roll(mut Fx fx)
+{
+    fx.seed += 1;
+    return float(Math.Hash(fx.seed) % 100000) / 100000;
+}
+
+void Shake(mut Fx fx, float amount)
+{
+    fx.trauma = Math.Min(1, fx.trauma + amount);
+}
+
+void Flash(mut Fx fx, Color color, float amount)
+{
+    if (amount < fx.flash) return;
+    fx.flash = amount;
+    fx.flashColor = color;
+}
+
+void Shock(mut Sky sky, float2 at, float strength)
+{
+    // The older of the two rings makes room
+    if (sky.shock.w * Math.Max(0, 1 - sky.shock.z) <= sky.shock2.w * Math.Max(0, 1 - sky.shock2.z))
+        sky.shock = float4(at, 0, strength);
+    else
+        sky.shock2 = float4(at, 0, strength);
+}
+
+void Ripple(mut Fx fx, float2 at, float from, float to, float width, float life, Color color)
+{
+    fx.waves.Add(Wave { center = at, color = color, life = life, from = from, to = to, width = width });
+}
+
+// Sparks thrown around `toward`, within `spread` radians of it.
+void Burst(mut Fx fx, float2 at, float2 toward, float spread, int count, float speed, Color color)
+{
+    if (fx.bits.count > 900) return;
+    var middle = Math.Atan2(toward.y, toward.x);
+    for (var i = 0; i < count; i++)
+    {
+        var turn = Roll(fx);
+        var pace = Roll(fx);
+        var long = Roll(fx);
+        var thick = Roll(fx);
+        var angle = middle + (turn - 0.5) * spread;
+        fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle)) * speed * (0.3 + pace * 0.9),
+                          color = color, life = 0.16 + long * 0.3, size = 2 + thick * 1.8,
+                          gravity = 520, drag = 2.6, kind = BitKind.Streak });
+    }
+}
+
+// Pieces thrown every way, which fall and bounce.
+void Chunks(mut Fx fx, float2 at, float2 push, int count, float speed, Color color)
+{
+    if (fx.bits.count > 900) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = Roll(fx);
+        var pace = Roll(fx);
+        var long = Roll(fx);
+        var big = Roll(fx);
+        var tone = Roll(fx);
+        var round = Roll(fx);
+        var angle = turn * Math.TAU;
+        fx.bits.Add(Bit { position = at + float2(Math.Cos(angle), Math.Sin(angle)) * 6,
+                          velocity = float2(Math.Cos(angle), Math.Sin(angle)) * speed * (0.25 + pace) + push,
+                          color = Shade(color, tone * 0.7 - 0.25), life = 0.6 + long * 0.9, size = 3 + big * 5.5,
+                          gravity = 1000, drag = 0.6, spin = (turn - 0.5) * 22,
+                          kind = round < 0.45 ? BitKind.Dot : BitKind.Chunk });
+    }
+}
+
+// Soft puffs that drift and thin out.
+void Dust(mut Fx fx, float2 at, float2 drift, int count, float size, Color color)
+{
+    if (fx.bits.count > 900) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = Roll(fx);
+        var pace = Roll(fx);
+        var long = Roll(fx);
+        var angle = turn * Math.TAU;
+        fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) * 0.5 + 0.35) * (20 + pace * 55) + drift,
+                          color = color, life = 0.3 + long * 0.35, size = size * (0.7 + pace * 0.6), drag = 3,
+                          kind = BitKind.Puff });
+    }
+}
+
+// Paper thrown over the screen, in its pixels.
+void Confetti(mut Fx fx, float2 at, int count, float speed, Color color)
+{
+    if (fx.confetti.count > 500) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = Roll(fx);
+        var pace = Roll(fx);
+        var long = Roll(fx);
+        var big = Roll(fx);
+        var tone = Roll(fx);
+        var angle = turn * Math.TAU;
+        fx.confetti.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) - 0.6) * speed * (0.2 + pace),
+                              color = tone < 0.25 ? Color.white : Shade(color, tone * 0.6 - 0.2),
+                              life = 1.1 + long * 1.3, size = 4 + big * 5, gravity = 620, drag = 1.3,
+                              spin = (turn - 0.5) * 26, kind = BitKind.Chunk });
+    }
+}
+
+// Where something going `delta` from `start` first meets a platform, or a
+// fighter; a fraction over 1 when it meets none.
+Sweep Strike(Fx fx, float2 start, float2 delta, float radius)
+{
+    mut var closest = Sweep { };
+    foreach (var slab in fx.slabs)
+    {
+        var hit = SweepBox(start, delta, slab.center, slab.half + radius);
+        if (hit.fraction < closest.fraction) closest = hit;
+    }
+    foreach (var mark in fx.marks)
+    {
+        var hit = SweepCircle(start, delta, mark.position, mark.radius + radius + (mark.shield ? 10 : 0));
+        if (hit.fraction < closest.fraction) closest = hit;
+    }
+    return closest;
+}
+
+// A shot ends on what it hit: a flash, a ring, and sparks off the surface.
+void Impact(mut Fx fx, float2 at, float2 velocity, Color color)
+{
+    var speed = Math.Length(velocity);
+    var direction = speed > 1 ? velocity / speed : float2(1, 0);
+    var reach = velocity * (1.6 / 60);
+    var hit = Strike(fx, at, reach, 5);
+    var where = hit.fraction <= 1 ? at + reach * hit.fraction : at + reach * 0.4;
+    var normal = hit.fraction <= 1 ? hit.normal : -direction;
+    var away = Math.Reflect(direction, normal);
+    Burst(fx, where, away + normal * 0.6, 1.9, 9, 330, Mix(color, Color.white, 0.35));
+    Ripple(fx, where, 3, 26, 3.5, 0.22, Mix(color, Color.white, 0.5));
+    fx.bits.Add(Bit { position = where, color = Fade(Color.white, 0.9), life = 0.09, size = 15, kind = BitKind.Dot });
+    Dust(fx, where, normal * 30, 2, 9, Fade(color, 0.22));
+}
+
+// The frame's clock, camera and backdrop, before anything else draws.
+[Stage(PaintStages.Prepare)]
+view BeginFrame(Time time, mut Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
+{
+    // Nothing tells a view how long a frame is. The match's ticks do, as
+    // whole steps: evened out over the frames that drew, they're a frame's
+    // length, however long the match has run and whatever the display's rate.
+    var ticks = time.tick - fx.tick;
+    fx.tick = time.tick;
+    fx.pace += ((ticks > 0 && ticks < 30 ? ticks * time.dt : 0) - fx.pace) * 0.03;
+    fx.dt = Math.Min(fx.pace, 0.05);
+    fx.now += fx.dt;
+    fx.frame += 1;
+
+    fx.trauma = Math.Max(0, fx.trauma - fx.dt * 1.7);
+    var shake = fx.trauma * fx.trauma * 15 * fx.calm;
+    fx.shake = float2(Math.Sin(fx.now * 71) + Math.Sin(fx.now * 43.7 + 1.3) * 0.6,
+                      Math.Sin(fx.now * 63 + 2.1) + Math.Sin(fx.now * 38.3 + 0.4) * 0.6) * shake;
+    fx.kick = Math.Max(0, fx.kick - fx.dt * 5) * Math.Max(0, 1 - fx.dt * 6);
+    fx.flash = Math.Max(0, fx.flash - fx.dt * 2.2);
+    fx.hurt = Math.Max(0, fx.hurt - fx.dt * 1.9);
+    fx.slabs.Clear();
+    fx.marks.Clear();
+
+    var screen = float2(Screen.width, Screen.height);
+    canvas.screenHalf = screen * 0.5;
+    // Room above and under the arena for the score and the keys
+    canvas.band = Math.Clamp(screen.y * 0.14, 54, 100);
+    canvas.scale = Math.Max(0.1, Math.Min((screen.x - 32) / ARENA_WIDTH, (screen.y - canvas.band * 2) / ARENA_HEIGHT));
+
+    if (sky.quad.count == 0)
+    {
+        sky.quad = [Corner { position = float2(0, 0) }, Corner { position = float2(1, 0) },
+                    Corner { position = float2(1, 1) }, Corner { position = float2(0, 1) }];
+        sky.faces = [0, 1, 2, 0, 2, 3];
+    }
+    sky.view = float4(canvas.screenHalf, canvas.scale, fx.now);
+    sky.look = fx.shake;
+    sky.shock.z += fx.dt * 1.35;
+    sky.shock2.z += fx.dt * 1.35;
+    Draw2D.Clear(UI_BACKGROUND);
+    Draw2D.Screen();
+    Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
+
+    var zoom = 1 + fx.kick * 0.035 * fx.calm;
+    Draw2D.Camera(fx.shake, screen.y * 0.5 / (canvas.scale * zoom));
+    StartShapes(shapes, 1 / (canvas.scale * zoom));
+}
+
+vert PlaceSky(mut Corner corner, Sky sky)
+{
+    corner.position = corner.position * sky.view.xy * 2;
+}
+
+// Night air with each side's light in it, lamps that drift far off, and a
+// floor of dots that light travels through when something big happens.
+frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
+{
+    var half = sky.view.xy;
+    var scale = sky.view.z;
+    var time = sky.view.w;
+    var across = pixel.position / (half * 2);
+    // Arena units from its middle, y up. What's far moves less with the camera.
+    var here = float2(pixel.position.x - half.x, half.y - pixel.position.y) / scale + sky.look * 0.55;
+    var side = here.x / (ARENA_WIDTH * 0.5);
+    var rise = here.y / (ARENA_HEIGHT * 0.5);
+
+    var top = Color(0.085, 0.07, 0.21);
+    var bottom = Color(0.02, 0.032, 0.085);
+    mut var paint = bottom + (top - bottom) * Math.Saturate(0.5 + rise * 0.5);
+
+    // Each side's light, from where its fighter starts
+    var blue = Math.Saturate(1 - Math.Length(float2(side + 0.9, rise + 0.7) * float2(0.55, 0.72)));
+    var orange = Math.Saturate(1 - Math.Length(float2(side - 0.9, rise + 0.7) * float2(0.55, 0.72)));
+    paint = paint + Color(0.08, 0.34, 0.7) * (blue * blue * 0.5) + Color(0.72, 0.27, 0.08) * (orange * orange * 0.42);
+
+    // Lamps far off, and haze that drifts between them
+    var first = float2(Math.Sin(time * 0.05) * 260 - 150, Math.Cos(time * 0.04) * 60 + 130);
+    var second = float2(Math.Cos(time * 0.045) * 240 + 190, Math.Sin(time * 0.055) * 70 + 60);
+    var lamp = Math.Saturate(1 - Math.Length(here + sky.look * 0.3 - first) / 300);
+    var lamp2 = Math.Saturate(1 - Math.Length(here + sky.look * 0.3 - second) / 240);
+    paint = paint + Color(0.3, 0.14, 0.5) * (lamp * lamp * 0.32) + Color(0.1, 0.3, 0.48) * (lamp2 * lamp2 * 0.24);
+    var haze = Math.Sin(here.x * 0.007 + time * 0.13) * Math.Sin(here.y * 0.009 - time * 0.09)
+             + Math.Sin((here.x + here.y) * 0.0045 + time * 0.06);
+    paint = paint + Color(0.09, 0.05, 0.17) * (haze * 0.16 + 0.12);
+
+    // Beams of light that lean across the room
+    var lean = here.x * 0.9 + here.y * 0.5;
+    var beam = Math.Saturate(Math.Sin(lean * 0.011 + time * 0.07) * Math.Sin(lean * 0.0043 - time * 0.03));
+    paint = paint + Color(0.22, 0.3, 0.6) * (beam * beam * 0.1 * Math.Saturate(0.6 + rise * 0.5));
+
+    // Dots, lit by the rings that pass
+    var reach = Math.Length(here - sky.shock.xy) - sky.shock.z * 900;
+    var reach2 = Math.Length(here - sky.shock2.xy) - sky.shock2.z * 900;
+    var ring = Math.Exp(-reach * reach / 2400) * sky.shock.w * Math.Saturate(1 - sky.shock.z)
+             + Math.Exp(-reach2 * reach2 / 2400) * sky.shock2.w * Math.Saturate(1 - sky.shock2.z);
+    var cell = Math.Frac(here / 30 + 0.5) - 0.5;
+    var dot = Math.Saturate((1.3 + ring * 1.6 - Math.Length(cell) * 30) * scale);
+    var breath = 0.5 + 0.5 * Math.Sin(time * 0.8 + here.x * 0.012 + here.y * 0.016);
+    paint = paint + Color(0.4, 0.54, 0.9) * (dot * (0.16 + breath * 0.1 + ring)) + Color(0.5, 0.62, 1) * (ring * 0.07);
+
+    // Motes that rise through the room, one to a cell of a wider grid, each in its own place there
+    var drift = (here + float2(Math.Sin(time * 0.3 + here.y * 0.01) * 12, -time * 14)) / 110;
+    var home = Math.Floor(drift);
+    var luck = Math.Frac(Math.Sin(Math.Dot(home, float2(127.1, 311.7))) * 43758.5);
+    var place = float2(luck, Math.Frac(luck * 57.3)) * 0.7 + 0.15;
+    var mote = Math.Saturate((1.5 + luck - Math.Length(Math.Frac(drift) - place) * 110) * scale);
+    paint = paint + Color(0.55, 0.66, 1) * (mote * Math.Step(0.45, luck) * (0.2 + 0.2 * Math.Sin(time * 1.3 + luck * 40)));
+
+    // Darker past the arena's walls, and towards the screen's corners
+    var past = Math.Max(Math.Abs(here.x) - ARENA_WIDTH * 0.5, Math.Max(-here.y - ARENA_HEIGHT * 0.5 + 10, here.y - ARENA_HEIGHT * 0.5));
+    paint = paint * (1 - 0.4 * Math.Saturate(past / 24 + 0.5));
+    var corner2 = across - 0.5;
+    paint = paint * (1 - Math.Dot(corner2, corner2) * 0.75);
+    color = Color(paint.r, paint.g, paint.b, 1);
+}
+
+// Everything in the arena was added as shapes, in order. The effects go over
+// them, and it's all drawn at once.
+[Stage(PaintStages.Effects)]
+view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
+{
+    // A shot that this frame didn't draw is gone: it hit something
+    mut var s = 0;
+    while (s < fx.shots.count)
+    {
+        var shot = fx.shots[s];
+        if (shot.frame == fx.frame)
+        {
+            s++;
+            continue;
+        }
+        Impact(fx, shot.position, shot.velocity, FighterColor(shot.side));
+        fx.shots[s] = fx.shots[fx.shots.count - 1];
+        fx.shots.RemoveAt(fx.shots.count - 1);
+    }
+
+    mut var t = 0;
+    while (t < fx.streaks.count)
+    {
+        mut var streak = fx.streaks[t];
+        streak.age += fx.dt;
+        if (streak.age >= streak.life)
+        {
+            fx.streaks[t] = fx.streaks[fx.streaks.count - 1];
+            fx.streaks.RemoveAt(fx.streaks.count - 1);
+            continue;
+        }
+        fx.streaks[t] = streak;
+        var left = 1 - streak.age / streak.life;
+        GlowLine(shapes, streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
+        Capsule(shapes, streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
+        t++;
+    }
+
+    mut var w = 0;
+    while (w < fx.waves.count)
+    {
+        mut var wave = fx.waves[w];
+        wave.age += fx.dt;
+        if (wave.age >= wave.life)
+        {
+            fx.waves[w] = fx.waves[fx.waves.count - 1];
+            fx.waves.RemoveAt(fx.waves.count - 1);
+            continue;
+        }
+        fx.waves[w] = wave;
+        var along = wave.age / wave.life;
+        var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
+        Ring(shapes, wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
+        w++;
+    }
+
+    mut var i = 0;
+    while (i < fx.bits.count)
+    {
+        mut var bit = fx.bits[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life)
+        {
+            fx.bits[i] = fx.bits[fx.bits.count - 1];
+            fx.bits.RemoveAt(fx.bits.count - 1);
+            continue;
+        }
+        bit.velocity.y -= bit.gravity * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        if (bit.kind == BitKind.Chunk || bit.kind == BitKind.Shell || bit.kind == BitKind.Dot && bit.gravity > 0)
+        {
+            foreach (var slab in fx.slabs)
+            {
+                var offset = bit.position - slab.center;
+                var inside = slab.half + bit.size * 0.5 - Math.Abs(offset);
+                if (inside.x <= 0 || inside.y <= 0) continue;
+                if (inside.x < inside.y)
+                {
+                    bit.position.x += (offset.x < 0 ? -1 : 1) * inside.x;
+                    bit.velocity.x *= -0.5;
+                }
+                else
+                {
+                    bit.position.y += (offset.y < 0 ? -1 : 1) * inside.y;
+                    bit.velocity.y *= -0.42;
+                    bit.velocity.x *= 0.72;
+                    bit.spin *= 0.6;
+                }
+            }
+        }
+        fx.bits[i] = bit;
+        i++;
+
+        var along = bit.age / bit.life;
+        var left = 1 - along;
+        if (bit.kind == BitKind.Streak)
+        {
+            var speed = Math.Length(bit.velocity);
+            var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
+            GlowLine(shapes, tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
+            Capsule(shapes, tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
+        }
+        else if (bit.kind == BitKind.Puff)
+        {
+            Disc(shapes, bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
+        }
+        else if (bit.kind == BitKind.Dot)
+        {
+            Disc(shapes, bit.position, bit.size * 0.5 * (bit.gravity > 0 ? Math.Min(1, left * 3) : left),
+                 Fade(bit.color, Math.Min(1, left * 2.5)));
+        }
+        else if (bit.kind == BitKind.Shell)
+        {
+            Tilted(shapes, bit.position, float2(bit.size * 2.3, bit.size), 1, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 4)));
+        }
+        else
+        {
+            Tilted(shapes, bit.position, float2(bit.size), bit.size * 0.28, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 3)));
+        }
+    }
+
+    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+    shapes.list.Clear();
+
+    // Numbers, over everything in the arena
+    mut var l = 0;
+    while (l < fx.labels.count)
+    {
+        mut var label = fx.labels[l];
+        label.age += fx.dt;
+        if (label.age >= label.life)
+        {
+            fx.labels[l] = fx.labels[fx.labels.count - 1];
+            fx.labels.RemoveAt(fx.labels.count - 1);
+            continue;
+        }
+        fx.labels[l] = label;
+        l++;
+        var along = label.age / label.life;
+        var size = 15 + Math.Min(label.amount, 90) * 0.12 + 7 * Math.Max(0, 1 - along * 6);
+        var at = label.position + float2(0, 34 * EaseOut(along));
+        var text = $"{label.amount}";
+        var alpha = Math.Saturate((1 - along) * 3);
+        WriteUp(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8));
+        WriteUp(text, at, size, Fade(label.color, alpha));
+    }
+
+    if (sky.shock.z > 1) sky.shock.w = 0;
+    if (sky.shock2.z > 1) sky.shock2.w = 0;
+}
+
+// Light over the whole screen, after the menus: a flash, a hit's red edges,
+// and paper for the winner.
+[Stage(PaintStages.Overlay)]
+view PaintOverlay(mut Fx fx, mut Shapes shapes)
+{
+    Draw2D.Screen();
+    shapes.pixel = 1;
+    var screen = float2(Screen.width, Screen.height);
+
+    mut var i = 0;
+    while (i < fx.confetti.count)
+    {
+        mut var bit = fx.confetti[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life || bit.position.y > screen.y + 20)
+        {
+            fx.confetti[i] = fx.confetti[fx.confetti.count - 1];
+            fx.confetti.RemoveAt(fx.confetti.count - 1);
+            continue;
+        }
+        // Down is +y on the screen
+        bit.velocity.y += bit.gravity * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        fx.confetti[i] = bit;
+        i++;
+        var left = 1 - bit.age / bit.life;
+        // Paper turns as it falls, so it's seen from its side now and then
+        var turned = Math.Abs(Math.Sin(bit.spin * bit.age * 0.5)) * 0.8 + 0.2;
+        Tilted(shapes, bit.position, float2(bit.size * 1.5, bit.size * turned), 1.5, bit.spin * bit.age * 0.3,
+               Fade(bit.color, Math.Min(1, left * 3)));
+    }
+
+    if (fx.hurt > 0.01)
+        Inset(shapes, screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
+    if (fx.flash > 0.01)
+        Box(shapes, screen * 0.5, screen, 0, Fade(fx.flashColor, fx.flash * fx.calm));
+    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+    shapes.list.Clear();
+}
