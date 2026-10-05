@@ -110,11 +110,11 @@ static void scene(void)
     tide_draw_wire_circle(&list, at(208, 160), 20, yellow);
 
     // Another camera: 2 pixels a world unit
-    tide_draw_camera(&list, tide_f2(1000, 1000), screen.y / 4.0f);
+    tide_draw_set_camera(&list, tide_f2(1000, 1000), screen.y / 4.0f);
     tide_draw_rect(&list, tide_f2(1040, 970), tide_f2(4, 4), purple);
 
     // The GUI's pixels: from the top left, y down
-    tide_draw_screen(&list);
+    tide_draw_set_screen(&list);
     tide_draw_rect(&list, tide_f2(16, 250), tide_f2(10, 10), green);
 }
 
@@ -231,11 +231,11 @@ static void mesh_scene(void)
     // A clip, in the world's units: what's drawn after it only shows inside
     // it, a clear and shapes too
     const tide_float2 corner = at(176, 136);
-    tide_draw_clip(&list, (tide_rect){corner.x, corner.y, 40, 40});
+    tide_draw_set_clip(&list, (tide_rect){corner.x, corner.y, 40, 40});
     tide_draw_clear(&list, cyan);
     quad(at(186, 106), at(206, 126), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
     tide_draw_rect(&list, at(226, 131), tide_f2(40, 6), orange);
-    tide_draw_no_clip(&list);
+    tide_draw_unset_clip(&list);
     tide_draw_rect(&list, at(236, 150), tide_f2(10, 10), green);
 
     // In the order they were recorded, among shapes
@@ -244,13 +244,13 @@ static void mesh_scene(void)
     tide_draw_rect(&list, at(24, 240), tide_f2(16, 32), red);
 
     // On the screen: pixels from the top left, y down, the clip too
-    tide_draw_screen(&list);
-    tide_draw_clip(&list, (tide_rect){16, 176, 48, 32});
+    tide_draw_set_screen(&list);
+    tide_draw_set_clip(&list, (tide_rect){16, 176, 48, 32});
     quad(tide_f2(0, 170), tide_f2(100, 220), purple, purple, NULL, TIDE_FILTER_BILINEAR, true);
-    tide_draw_no_clip(&list);
+    tide_draw_unset_clip(&list);
     quad(tide_f2(80, 176), tide_f2(112, 208), white, white, &four_texture, TIDE_FILTER_POINT, true);
     // ...and through a camera again
-    tide_draw_camera(&list, tide_f2(0, 0), screen.y / 2.0f);
+    tide_draw_set_camera(&list, tide_f2(0, 0), screen.y / 2.0f);
     quad(at(120, 176), at(136, 192), white, white, NULL, TIDE_FILTER_BILINEAR, true);
 }
 
@@ -408,7 +408,7 @@ static void mesh_3d_scene(void)
     const tide_quaternion ahead = tide_identity_q();
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
-    tide_draw_camera_3d(&list, tide_f3(0, 0, -10), ahead, field_of_view_3d());
+    tide_draw_set_camera_3d(&list, tide_f3(0, 0, -10), ahead, field_of_view_3d());
     // A clear clears depth too: nothing behind this hides after it
     square_3d(tide_f3(0, 0, -5), ahead, 20.0f, yellow, NULL);
     tide_draw_clear(&list, background);
@@ -439,11 +439,11 @@ static void mesh_3d_scene(void)
 
     // Turned a quarter around y, the camera looks along +x, its right along -z
     const tide_quaternion turned = tide_axisangle_q(tide_f3(0, 1, 0), TIDE_PI_F * 0.5f);
-    tide_draw_camera_3d(&list, tide_f3(0, 0, -10), turned, field_of_view_3d());
+    tide_draw_set_camera_3d(&list, tide_f3(0, 0, -10), turned, field_of_view_3d());
     square_3d(tide_f3(10, -4, -14), turned, 2.0f, purple, NULL);
 
     // Any projection: an orthographic one, 10 pixels a unit
-    tide_draw_camera_matrices(&list, tide_translate_f4x4(tide_f3(100, 0, 0)),
+    tide_draw_set_camera_matrices(&list, tide_translate_f4x4(tide_f3(100, 0, 0)),
                               tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.1f, 100.0f));
     square_3d(tide_f3(100, -12, 5), ahead, 2.0f, green, NULL);
 }
@@ -494,7 +494,7 @@ static void primitive_scene(void)
 {
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
-    tide_draw_camera_matrices(&list, tide_identity_f4x4(),
+    tide_draw_set_camera_matrices(&list, tide_identity_f4x4(),
                               tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.3f, 100.0f));
     tide_draw_cube(&list, primitive_at(40, 40, 10), tide_f3(4, 4, 4), red);
     tide_draw_sphere(&list, primitive_at(110, 40, 10), 2, blue);
@@ -562,17 +562,23 @@ static void primitives(void)
 #endif
 
 // What every shader's uniforms start with, before its own.
-#define GLSL_UNIFORMS(own) "layout(std140) uniform uniforms { mat4 tide_camera; vec4 tide_screen; " own "};\n"
+#define GLSL_UNIFORMS(own) \
+    "layout(std140) uniform uniforms { mat4 tide_camera; vec4 tide_screen; vec4 tide_tint; " own "};\n"
 #define WGSL_UNIFORMS(own)                                                                                             \
-    "struct Uniforms { tide_camera: mat4x4f, tide_screen: vec4f, " own "}\n"                                           \
+    "struct Uniforms { tide_camera: mat4x4f, tide_screen: vec4f, tide_tint: vec4f, " own "}\n"                         \
     "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
 
-// A pixel in the color its corners hand it.
+// A pixel in the color its corners hand it, finished as every shader of a
+// game's is (see tide_shader): times the draw's tint, and where the draw
+// multiplies what's there, towards white as it clears.
 #define GLSL_TINT_FRAGMENT                                                                                             \
     "in vec4 tint;\n"                                                                                                  \
+    GLSL_UNIFORMS("")                                                                                                  \
     "out vec4 pixel;\n"                                                                                                \
     "void main() {\n"                                                                                                  \
-    "    pixel = tint;\n"                                                                                              \
+    "    vec4 c = tint * tide_tint;\n"                                                                                 \
+    "    if (tide_screen.w > 0.0) c.rgb = c.rgb * c.a + (1.0 - c.a);\n"                                                \
+    "    pixel = c;\n"                                                                                                 \
     "}\n"
 #define WGSL_TINT_CORNER                                                                                               \
     "struct Corner {\n"                                                                                                \
@@ -581,7 +587,9 @@ static void primitives(void)
     "}\n"
 #define WGSL_TINT_FRAGMENT                                                                                             \
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"                                                      \
-    "    return in.tint;\n"                                                                                            \
+    "    var c = in.tint * u.tide_tint;\n"                                                                             \
+    "    if (u.tide_screen.w > 0.0) { c = vec4f(c.rgb * c.a + (1.0 - c.a), c.a); }\n"                                  \
+    "    return c;\n"                                                                                                  \
     "}\n"
 
 // In 3D: a position and a normal, an instance's transform and color, with
@@ -707,13 +715,13 @@ static const tide_shader picked_shader = {
 // As many uniforms of its own as a shader takes: colors, and after them the
 // int that says which is the pixel's.
 typedef struct many_uniforms {
-    tide_color colors[249];
+    tide_color colors[248];
     int32_t pick[4];
 } many_uniforms;
 
 _Static_assert(sizeof(many_uniforms) == TIDE_SHADER_UNIFORM_BYTES, "all the uniforms a shader takes");
 
-#define MANY_GLSL_UNIFORMS GLSL_UNIFORMS("vec4 colors[249]; ivec4 pick; ")
+#define MANY_GLSL_UNIFORMS GLSL_UNIFORMS("vec4 colors[248]; ivec4 pick; ")
 
 static const tide_shader many_shader = {
     .name = "many",
@@ -727,7 +735,7 @@ static const tide_shader many_shader = {
                      "void main() {\n"
                      "    pixel = colors[pick.x];\n"
                      "}\n",
-    .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 249>, pick: vec4i ")
+    .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
         "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
         "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
@@ -740,7 +748,7 @@ static const tide_shader many_shader = {
     .vertex_size = 2 * sizeof(float),
     .attribute_count = 1,
     .attributes = {{TIDE_SHADER_FLOAT2, 0}},
-    .uniform_floats = 249,
+    .uniform_floats = 248,
     .uniform_ints = 1,
 };
 
@@ -990,10 +998,10 @@ static void shaded_scene(void)
     picked_commands = list.count - before;
 
     // As many uniforms as a shader takes, the last of them too, and each draw's its own
-    static many_uniforms many = {.pick = {248}};
-    many.colors[248] = cyan;
+    static many_uniforms many = {.pick = {247}};
+    many.colors[247] = cyan;
     tide_draw_shaded(&list, &many_shader, quad_2d(15, at(160, 16), at(192, 48)), NULL, &many, NULL, 0);
-    many.colors[248] = magenta;
+    many.colors[247] = magenta;
     tide_draw_shaded(&list, &many_shader, quad_2d(16, at(208, 16), at(240, 48)), NULL, &many, NULL, 0);
 
     // Ints in the vertices and the instances, which are one command
@@ -1042,10 +1050,10 @@ static void shaded_scene(void)
     // first camera, through another, and on the screen
     quad(at(96, 192), at(128, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
     flat_quad(11, at(96, 192), at(128, 224), cyan);
-    tide_draw_camera(&list, tide_f2(1000, 1000), screen.y / 4.0f);
+    tide_draw_set_camera(&list, tide_f2(1000, 1000), screen.y / 4.0f);
     quad(at_second(144, 192), at_second(176, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
     flat_quad(12, at_second(144, 192), at_second(176, 224), cyan);
-    tide_draw_screen(&list);
+    tide_draw_set_screen(&list);
     quad(tide_f2(192, 192), tide_f2(224, 224), magenta, magenta, NULL, TIDE_FILTER_BILINEAR, true);
     flat_quad(13, tide_f2(192, 192), tide_f2(224, 224), cyan);
 }
@@ -1129,7 +1137,7 @@ static void shaded_3d_scene(void)
     const tide_color colors[3] = {red, green, blue};
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
-    tide_draw_camera_3d(&list, tide_f3(0, 0, -10), ahead, field_of_view_3d());
+    tide_draw_set_camera_3d(&list, tide_f3(0, 0, -10), ahead, field_of_view_3d());
     // An ordinary mesh in front of where the last instance goes, drawn before it
     square_3d(tide_f3(3.2f, 1.6f, -2), ahead, 0.8f, white, NULL);
     const uint32_t mesh = quad_mesh(14, corners, sizeof corners[0]);
@@ -1200,7 +1208,7 @@ static void tiles_leave_no_gaps(void)
         const float s = scales[k];
         tide_draw_reset(&list);
         tide_draw_clear(&list, background);
-        tide_draw_camera(&list, centers[k], screen.y / (2.0f * s));
+        tide_draw_set_camera(&list, centers[k], screen.y / (2.0f * s));
         for (int y = -HALF; y < HALF; y++) {
             for (int x = -HALF; x < HALF; x++) {
                 tide_draw_rect(&list, tide_f2((float)x + 0.5f, (float)y + 0.5f), tide_f2(1, 1), orange);
@@ -1288,7 +1296,7 @@ static void smooth_scene(void)
     tide_draw_shape(&list, shape);
 
     // On the screen, where y goes down: angles go clockwise, and a fill's first color is still its top's
-    tide_draw_screen(&list);
+    tide_draw_set_screen(&list);
     shape = TIDE_SHAPE_WHITE;
     shape.center = tide_f2(20, 285), shape.size = tide_f2(20, 20), shape.color2 = TIDE_COLOR_CLEAR;
     tide_draw_shape(&list, shape);
@@ -1497,8 +1505,8 @@ static void text_frame(const float pixels, const tide_float2 center)
 {
     tide_draw_reset(&list);
     tide_draw_clear(&list, background);
-    if (pixels > 0.0f) tide_draw_camera(&list, center, screen.y / (2.0f * pixels));
-    else tide_draw_screen(&list);
+    if (pixels > 0.0f) tide_draw_set_camera(&list, center, screen.y / (2.0f * pixels));
+    else tide_draw_set_screen(&list);
 }
 
 // The screen's top left corner, as the frame drew it.
@@ -1717,6 +1725,437 @@ static void text_checks(void)
 }
 
 // ---------------------------------------------------------------------------
+// Settings: how what's drawn goes over what's there, what tints it, what moves
+// it, and clips inside clips
+
+static const tide_color under = {0.5f, 0.25f, 0.25f, 1.0f}; // What's there
+static const tide_color ink = {0.25f, 0.5f, 1.0f, 0.5f};    // What goes over it
+
+// `ink` over `under`, as each way of blending has it.
+static tide_color blended(const tide_blend blend)
+{
+    const float a = ink.a;
+    switch (blend) {
+    case TIDE_BLEND_ADD: return (tide_color){under.r + ink.r * a, under.g + ink.g * a, under.b + ink.b * a, 1.0f};
+    case TIDE_BLEND_MULTIPLY:
+        return (tide_color){under.r * (ink.r * a + 1.0f - a), under.g * (ink.g * a + 1.0f - a),
+                            under.b * (ink.b * a + 1.0f - a), 1.0f};
+    case TIDE_BLEND_REPLACE: return (tide_color){ink.r, ink.g, ink.b, 1.0f};
+    default:
+        return (tide_color){under.r + (ink.r - under.r) * a, under.g + (ink.g - under.g) * a,
+                            under.b + (ink.b - under.b) * a, 1.0f};
+    }
+}
+
+// The middle of a cell of the settings' scenes, 16 pixels across, in the screen's pixels.
+static tide_float2 cell(const int column, const int row)
+{
+    return tide_f2(20.0f + 24.0f * (float)column, 20.0f + 24.0f * (float)row);
+}
+
+// A 3D camera whose units are the screen's pixels, as the first 2D camera's are: `at` says where.
+static void pixel_camera_3d(void)
+{
+    tide_draw_set_camera_matrices(&list, tide_identity_f4x4(), tide_ortho_f4x4(screen.x, screen.y, 0.1f, 100.0f));
+}
+
+// One of each kind of thing that draws, 16 pixels across around the screen's (x, y), in `color`.
+enum { KIND_RECT, KIND_CIRCLE, KIND_ROUND_RECT, KIND_MESH, KIND_MESH_3D, KIND_SHADED, KINDS };
+static const char *const kind_names[KINDS] = {"a rect", "a circle", "a smooth shape", "a mesh", "a 3D mesh",
+                                              "a mesh through a shader"};
+
+static void draw_kind(const int kind, const tide_float2 p, const tide_color color)
+{
+    const tide_float2 world = at(p.x, p.y);
+    switch (kind) {
+    case KIND_RECT: tide_draw_rect(&list, world, tide_f2(16, 16), color); break;
+    case KIND_CIRCLE: tide_draw_circle(&list, world, 8, color); break;
+    case KIND_ROUND_RECT: tide_draw_round_rect(&list, world, tide_f2(16, 16), 3, color); break;
+    case KIND_MESH: quad(at(p.x - 8, p.y - 8), at(p.x + 8, p.y + 8), color, color, NULL, TIDE_FILTER_BILINEAR, true); break;
+    case KIND_MESH_3D: square_3d(tide_f3(world.x, world.y, 5), tide_identity_q(), 16.0f, color, NULL); break;
+    default: flat_quad(900 + (uint64_t)(p.x + p.y * 512.0f), at(p.x - 8, p.y - 8), at(p.x + 8, p.y + 8), color); break;
+    }
+}
+
+// Every kind, a row each, blended each way, a column each, over a rect that's there.
+static void blend_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    for (int kind = 0; kind < KINDS; kind++) {
+        for (int blend = TIDE_BLEND_ALPHA; blend <= TIDE_BLEND_REPLACE; blend++) {
+            const tide_float2 p = cell(blend, kind);
+            tide_draw_rect(&list, at(p.x, p.y), tide_f2(20, 20), under);
+            const uint32_t mark = tide_draw_push_blend(&list, (tide_blend)blend);
+            draw_kind(kind, p, ink);
+            tide_draw_pop(&list, mark);
+        }
+    }
+    // What's clear changes nothing, however it's blended: here, a rect that's all clear
+    for (int blend = TIDE_BLEND_ALPHA; blend <= TIDE_BLEND_MULTIPLY; blend++) {
+        const tide_float2 p = cell(5 + blend, 0);
+        tide_draw_rect(&list, at(p.x, p.y), tide_f2(20, 20), under);
+        tide_draw_set_blend(&list, (tide_blend)blend);
+        tide_draw_rect(&list, at(p.x, p.y), tide_f2(16, 16), (tide_color){1.0f, 1.0f, 1.0f, 0.0f});
+        tide_draw_round_rect(&list, at(p.x, p.y), tide_f2(16, 16), 3, (tide_color){1.0f, 1.0f, 1.0f, 0.0f});
+        tide_draw_unset_blend(&list);
+    }
+}
+
+static const tide_color tint = {0.5f, 1.0f, 0.25f, 1.0f};
+
+// Every kind, a column each: tinted, tinted inside another tint, and faded.
+static void tint_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    for (int kind = 0; kind < KINDS; kind++) {
+        const uint32_t outer = tide_draw_push_tint(&list, tint);
+        draw_kind(kind, cell(kind, 0), white);
+        const uint32_t inner = tide_draw_push_tint(&list, (tide_color){1.0f, 0.5f, 1.0f, 1.0f});
+        draw_kind(kind, cell(kind, 1), white);
+        tide_draw_pop(&list, inner);
+        draw_kind(kind, cell(kind, 2), yellow); // The tint again, times its own color
+        tide_draw_pop(&list, outer);
+        tide_draw_set_tint(&list, (tide_color){1.0f, 1.0f, 1.0f, 0.5f});
+        draw_kind(kind, cell(kind, 3), cyan);
+        tide_draw_unset_tint(&list);
+        draw_kind(kind, cell(kind, 4), cyan);
+    }
+    tide_draw_set_tint(&list, (tide_color){0.0f, 1.0f, 0.0f, 1.0f});
+    tide_draw_text(&list, "MMMM", at(16, 140), 24, white);
+    tide_draw_unset_tint(&list);
+}
+
+// How many of the `width` by `height` pixels from (x, y) on the frame drew `is` true of.
+static int count_pixels(const int x, const int y, const int width, const int height, bool (*is)(uint32_t pixel))
+{
+    static tide_float2 points[96 * 96];
+    static uint32_t got[96 * 96];
+    for (int row = 0; row < height; row++) {
+        for (int column = 0; column < width; column++) {
+            points[row * width + column] = tide_f2((float)(x + column) + 0.5f, (float)(y + row) + 0.5f);
+        }
+    }
+    tide_platform_read_pixels(&list, points, width * height, got);
+    int count = 0;
+    for (int i = 0; i < width * height; i++) count += is(got[i]);
+    return count;
+}
+
+static bool is_background(const uint32_t pixel)
+{
+    return near(pixel, rgba(background), 2);
+}
+
+static bool is_inked(const uint32_t pixel)
+{
+    return !is_background(pixel);
+}
+
+// Green, and no more red or blue than the background has.
+static bool is_green_ink(const uint32_t pixel)
+{
+    return (pixel >> 16 & 0xFFu) > 128u && (pixel >> 24) <= 34u && (pixel >> 8 & 0xFFu) <= 34u;
+}
+
+// Orange, or darker: as much less of each as of the others.
+static bool is_orange_or_darker(const uint32_t pixel)
+{
+    const int r = (int)(pixel >> 24), g = (int)(pixel >> 16 & 0xFFu), b = (int)(pixel >> 8 & 0xFFu);
+    return b <= 4 && g * 2 <= r + 6 && g * 2 >= r - 6;
+}
+
+static bool is_orange(const uint32_t pixel)
+{
+    return near(pixel, rgba(orange), 2);
+}
+
+// Text that multiplies darkens where its ink is, and changes nothing where its quads are clear; added, it lightens.
+static void blend_text_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    tide_draw_rect(&list, tide_f2(64, 32), tide_f2(96, 40), orange);
+    const uint32_t multiplied = tide_draw_push_blend(&list, TIDE_BLEND_MULTIPLY);
+    tide_draw_text(&list, "MMMM", tide_f2(24, 20), 24, (tide_color){0.0f, 0.0f, 0.0f, 1.0f});
+    tide_draw_pop(&list, multiplied);
+    const uint32_t added = tide_draw_push_blend(&list, TIDE_BLEND_ADD);
+    tide_draw_text(&list, "MMMM", tide_f2(24, 70), 24, (tide_color){0.0f, 0.5f, 0.0f, 1.0f});
+    tide_draw_pop(&list, added);
+}
+
+// Shapes, a mesh and text, moved, turned and stretched.
+static void transform_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    // Moved and twice as big: a rect at (5, 5), 10 across, is one at (110, 30), 20 across
+    uint32_t mark = tide_draw_push_transform(&list, tide_draw_transform_scaled(tide_f2(100, 20), 0.0f, 2.0f));
+    tide_draw_rect(&list, tide_f2(5, 5), tide_f2(10, 10), red);
+    tide_draw_pop(&list, mark);
+    // Turned a quarter, clockwise on the screen: a rect 30 long to the right of it hangs under it
+    mark = tide_draw_push_transform(&list, tide_draw_transform_turned(tide_f2(40, 30), TIDE_PI_F * 0.5f));
+    tide_draw_rect(&list, tide_f2(20, 0), tide_f2(30, 8), green);
+    tide_draw_wire_rect(&list, tide_f2(60, 0), tide_f2(20, 20), white); // Its outline, a pixel wide still
+    tide_draw_pop(&list, mark);
+    // Stretched three times across: a circle is an ellipse
+    mark = tide_draw_push_transform(&list, tide_draw_transform_trs(tide_f2(190, 30), 0.0f, tide_f2(3.0f, 1.0f)));
+    tide_draw_circle(&list, tide_f2(0, 0), 8, blue);
+    tide_draw_pop(&list, mark);
+    // One inside another: moved, then twice as big about where it was moved to
+    mark = tide_draw_push_transform(&list, tide_draw_transform_moved(tide_f2(100, 100)));
+    tide_draw_push_transform(&list, tide_draw_transform_scaled(tide_f2(0, 0), 0.0f, 2.0f));
+    tide_draw_round_rect(&list, tide_f2(10, 5), tide_f2(8, 8), 2, yellow);
+    quad(tide_f2(20, 0), tide_f2(28, 8), cyan, cyan, NULL, TIDE_FILTER_BILINEAR, true); // A mesh, corner by corner
+    tide_draw_pop(&list, mark);
+    // Mirrored: what was right of it is left of it
+    mark = tide_draw_push_transform(&list, tide_draw_transform_trs(tide_f2(40, 150), 0.0f, tide_f2(-1.0f, 1.0f)));
+    tide_draw_rect(&list, tide_f2(10, 0), tide_f2(12, 12), magenta);
+    tide_draw_pop(&list, mark);
+    // A mesh through a shader, and a 3D mesh, each through its own
+    tide_draw_unset_camera(&list);
+    pixel_camera_3d();
+    mark = tide_draw_push_transform(&list, tide_draw_transform_moved(tide_f2(40, 0)));
+    tide_draw_push_transform_3d(&list, tide_translate_f4x4(tide_f3(0, -40, 0)));
+    draw_kind(KIND_SHADED, tide_f2(120, 150), orange);
+    draw_kind(KIND_MESH_3D, tide_f2(200, 150), purple);
+    tide_draw_pop(&list, mark);
+    // Text turned a quarter runs down the screen, its lines' tops to the right
+    tide_draw_set_screen(&list);
+    mark = tide_draw_push_transform(&list, tide_draw_transform_turned(tide_f2(40, 220), TIDE_PI_F * 0.5f));
+    tide_draw_text(&list, "MMMM", tide_f2(0, 0), 20, white);
+    tide_draw_pop(&list, mark);
+}
+
+// Clips inside clips, each under its own camera, and what's back after each.
+static void clip_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    const uint32_t outer = tide_draw_push_clip(&list, (tide_rect){20, 20, 60, 60});
+    const uint32_t inner = tide_draw_push_clip(&list, (tide_rect){50, 50, 60, 60});
+    tide_draw_rect(&list, tide_f2(64, 64), tide_f2(128, 128), red); // Only where both are
+    tide_draw_pop(&list, inner);
+    tide_draw_rect(&list, tide_f2(30, 64), tide_f2(12, 128), green); // The outer one's again
+    tide_draw_pop(&list, outer);
+    tide_draw_rect(&list, tide_f2(120, 120), tide_f2(10, 10), blue); // And none
+
+    // One in the world, y up, and one on the screen inside it: both where they were made
+    tide_draw_unset_camera(&list);
+    const tide_float2 corner = at(150, 60);
+    const uint32_t world = tide_draw_push_clip(&list, (tide_rect){corner.x, corner.y, 40, 40});
+    tide_draw_push_screen(&list);
+    tide_draw_push_clip(&list, (tide_rect){170, 0, 100, 40});
+    tide_draw_rect(&list, tide_f2(180, 40), tide_f2(120, 120), yellow);
+    // A clear is cut by them too
+    tide_draw_pop(&list, world);
+    const uint32_t cleared = tide_draw_push_clip(&list, (tide_rect){at(20, 200).x, at(20, 200).y, 30, 30});
+    tide_draw_clear(&list, cyan);
+    tide_draw_pop(&list, cleared);
+}
+
+// A setting around each of many draws, the same or not, is no more draw calls than none.
+static uint32_t wrapped_draw_calls(const int kind)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    for (int i = 0; i < 200; i++) {
+        const float x = 8.0f + (float)(i % 20) * 12.0f, y = 8.0f + (float)(i / 20) * 12.0f;
+        const uint32_t mark = tide_draw_push_blend(&list, TIDE_BLEND_ADD);
+        tide_draw_push_clip(&list, (tide_rect){at(0, screen.y).x, at(0, screen.y).y, screen.x, screen.y});
+        if (kind == KIND_MESH_3D) { // A 3D mesh's tint is its run's, and each instance goes through the transform
+            tide_draw_push_tint(&list, tint);
+            tide_draw_push_transform_3d(&list, tide_translate_f4x4(tide_f3(x, -y, 0)));
+        } else if (kind == KIND_SHADED) { // A shader's tint and transform are its run's
+            tide_draw_push_tint(&list, tint);
+            tide_draw_push_transform(&list, tide_draw_transform_moved(tide_f2(40, -40)));
+        } else { // What's recorded into a shape as it's drawn: each its own
+            tide_draw_push_tint(&list, (tide_color){1.0f, (float)i / 200.0f, 0.5f, 1.0f});
+            tide_draw_push_transform(&list, tide_draw_transform_moved(tide_f2(x, -y)));
+        }
+        draw_kind(kind, tide_f2(0, 0), white);
+        tide_draw_pop(&list, mark);
+    }
+    tide_platform_read_pixels(&list, &(tide_float2){0, 0}, 1, &(uint32_t){0});
+    return tide_platform_draw_calls();
+}
+
+// The frame drew twice: the pixels of its top left corner, `width` by `height`.
+static void corner_pixels(uint32_t *out, const int width, const int height)
+{
+    static tide_float2 points[96 * 64];
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) points[y * width + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    tide_platform_read_pixels(&list, points, width * height, out);
+}
+
+static void settings(void)
+{
+    char what[160];
+    blend_scene();
+    static const char *const blend_names[] = {"over what's there, by its alpha", "added to it", "multiplying it",
+                                              "in its place"};
+    check checks[KINDS * 4 + 3];
+    static char names[KINDS * 4][96];
+    for (int kind = 0; kind < KINDS; kind++) {
+        for (int blend = 0; blend < 4; blend++) {
+            const tide_float2 p = cell(blend, kind);
+            snprintf(names[kind * 4 + blend], sizeof names[0], "%s %s", kind_names[kind], blend_names[blend]);
+            checks[kind * 4 + blend] = (check){p.x, p.y, blended((tide_blend)blend), names[kind * 4 + blend]};
+        }
+    }
+    for (int blend = 0; blend < 3; blend++) {
+        checks[KINDS * 4 + blend] = (check){cell(5 + blend, 0).x, cell(5 + blend, 0).y, under,
+                                            "what's clear changes nothing, however it's blended"};
+    }
+    check_pixels(checks, KINDS * 4 + 3);
+
+    tint_scene();
+    static char tint_names[KINDS * 5][96];
+    const tide_color faded = over(cyan, 0.5f);
+    for (int kind = 0; kind < KINDS; kind++) {
+        const tide_color expected[5] = {tint, {0.5f, 0.5f, 0.25f, 1.0f}, {0.5f, 1.0f, 0.0f, 1.0f}, faded, cyan};
+        static const char *const how[5] = {"tinted", "tinted inside a tint", "tinted, times its own color",
+                                           "faded by a tint's alpha", "as it is once the tint is gone"};
+        for (int row = 0; row < 5; row++) {
+            snprintf(tint_names[kind * 5 + row], sizeof tint_names[0], "%s %s", kind_names[kind], how[row]);
+            checks[row] = (check){cell(kind, row).x, cell(kind, row).y, expected[row], tint_names[kind * 5 + row]};
+        }
+        check_pixels(checks, 5);
+    }
+    const int green_ink = count_pixels(16, 140, 80, 28, is_green_ink), any_ink = count_pixels(16, 140, 80, 28, is_inked);
+    snprintf(what, sizeof what, "tinted text is its tint's color (%d of its %d pixels)", green_ink, any_ink);
+    expect(any_ink > 100 && green_ink > any_ink / 3 && count_pixels(16, 140, 80, 28, is_background) + any_ink == 80 * 28, what);
+
+    blend_text_scene();
+    const int orange_left = count_pixels(16, 12, 96, 40, is_orange), toned = count_pixels(16, 12, 96, 40, is_orange_or_darker);
+    snprintf(what, sizeof what, "text that multiplies darkens what's under its ink, and nothing else (%d of %d as "
+                                "they were, %d darker)", orange_left, 96 * 40, toned - orange_left);
+    expect(toned == 96 * 40 && orange_left > 96 * 40 / 3 && toned - orange_left > 100, what);
+    const int lit = count_pixels(16, 62, 96, 40, is_inked), red_or_blue = lit - count_pixels(16, 62, 96, 40, is_green_ink);
+    snprintf(what, sizeof what, "text that's added lightens what's under its ink (%d pixels)", lit);
+    expect(lit > 100 && red_or_blue >= 0, what);
+
+    transform_scene();
+    const check moved[] = {
+        {110, 30, red, "a rect moved and twice as big"},
+        {119, 39, red, "to its corner"},
+        {122, 30, background, "and no further"},
+        {40, 50, green, "a rect turned a quarter"},
+        {40, 63, green, "along what was its length"},
+        {46, 50, background, "and no wider than it was thick"},
+        {60, 30, background, "and not where it was"},
+        {40, 100, background, "a turned outline's middle"},
+        {30.5f, 90, white, "and its edge, a pixel wide"},
+        {190, 30, blue, "a circle stretched across"},
+        {210, 30, blue, "is an ellipse as long"},
+        {190, 36, blue, "and as tall as the circle was"},
+        {190, 40, background, "and no taller"},
+        {218, 30, background, "nor longer"},
+        {120, 110, yellow, "a shape in a transform inside another"},
+        {130, 110, background, "and beside it"},
+        {148, 108, cyan, "a mesh's corners through both"},
+        {158, 108, background, "and past them"},
+        {30, 150, magenta, "a rect mirrored to the other side"},
+        {50, 150, background, "and not where it was"},
+        {160, 150, orange, "a mesh through a shader, moved before the camera"},
+        {120, 150, background, "and not where it was"},
+        {200, 190, purple, "a 3D mesh moved on its way to the world"},
+        {200, 150, background, "and not where it was"},
+    };
+    check_pixels(moved, sizeof moved / sizeof moved[0]);
+    const int down = count_pixels(20, 220, 20, 80, is_inked), across = count_pixels(44, 220, 80, 20, is_inked);
+    snprintf(what, sizeof what, "text turned a quarter runs down the screen (%d pixels of it, %d where it would be upright)",
+             down, across);
+    expect(down > 150 && across == 0, what);
+
+    // Text moved and twice as big is text of twice the size where it lands: the same pixels, fitted the same
+    enum { W = 96, H = 48 };
+    static uint32_t through[W * H], direct[W * H];
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    tide_draw_set_transform(&list, tide_draw_transform_scaled(tide_f2(4.0f, 6.0f), 0.0f, 2.0f));
+    tide_draw_text(&list, "Tide", tide_f2(1.5f, 2.0f), 11.0f, white);
+    const tide_float2 measured = tide_draw_measure_text(&list, "Tide", 11.0f, TIDE_FONT_REGULAR, screen, measure_read_back);
+    corner_pixels(through, W, H);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    tide_draw_text(&list, "Tide", tide_f2(7.0f, 10.0f), 22.0f, white);
+    const tide_float2 twice = tide_draw_measure_text(&list, "Tide", 22.0f, TIDE_FONT_REGULAR, screen, measure_read_back);
+    corner_pixels(direct, W, H);
+    int different = 0, inked = 0;
+    for (int i = 0; i < W * H; i++) {
+        different += through[i] != direct[i];
+        inked += !near(direct[i], rgba(background), 0);
+    }
+    snprintf(what, sizeof what, "text scaled by a transform is text of that size (%d pixels differ)", different);
+    expect(different == 0 && inked > 100, what);
+    expect(measured.x * 2.0f == twice.x && measured.y * 2.0f == twice.y, "and measures as it draws, in the units the transform takes");
+
+    // Text keeps its anchor through a transform that turns it: against its lower right corner it's up and to the
+    // left of that place, and turned half way round about it, down and to the right
+    static uint32_t upright[W * H], turned[W * H];
+    for (int pass = 0; pass < 2; pass++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        if (pass) tide_draw_set_transform(&list, tide_draw_transform_turned(tide_f2(48.0f, 24.0f), 3.14159265f));
+        tide_draw_text_at(&list, "Tide", pass ? tide_f2(0.0f, 0.0f) : tide_f2(48.0f, 24.0f), 16.0f, white,
+                          TIDE_ANCHOR_LOWER_RIGHT, TIDE_FONT_REGULAR);
+        corner_pixels(pass ? turned : upright, W, H);
+    }
+    int above = 0, below = 0, stray = 0;
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            const bool up = !near(upright[y * W + x], rgba(background), 24), down = !near(turned[y * W + x], rgba(background), 24);
+            const bool first = x < 49 && y < 25, last = x >= 47 && y >= 23; // A pixel's slack, as turned text is soft
+            above += up && first;
+            below += down && last;
+            stray += (up && !first) + (down && !last);
+        }
+    }
+    snprintf(what, sizeof what, "text at an anchor is turned about it (%d pixels before it, %d after it turned, %d astray)",
+             above, below, stray);
+    expect(above > 60 && below > 60 && stray == 0, what);
+
+    clip_scene();
+    const check clipped[] = {
+        {65, 65, red, "a clip in a clip: inside both"},
+        {95, 95, background, "inside the inner one only"},
+        {45, 45, background, "inside the outer one only"},
+        {10, 10, background, "and outside both"},
+        {30, 30, green, "the outer clip again, once the inner one's block ended"},
+        {30, 90, background, "and what's outside it"},
+        {120, 120, blue, "and no clip, once both ended"},
+        {180, 30, yellow, "a clip on the screen inside one in the world"},
+        {160, 30, background, "left of the screen's"},
+        {180, 50, background, "under the screen's"},
+        {180, 10, background, "above the world's"},
+        {200, 30, background, "right of the world's"},
+        {30, 190, cyan, "a clear inside a clip"},
+        {60, 190, background, "and beside it"},
+    };
+    check_pixels(clipped, sizeof clipped / sizeof clipped[0]);
+
+    for (int kind = 0; kind < KINDS; kind++) {
+        const uint32_t calls = wrapped_draw_calls(kind);
+        snprintf(what, sizeof what, "%s 200 times, a blend, a clip, a tint and a transform around each, is one draw call (%u, "
+                                    "with the clear)", kind_names[kind], (unsigned)calls);
+        expect(calls == 2u, what);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // --bench: frames of many shapes, rendered offscreen and read back, so it
 // works in a hidden window or page, where tide_platform_draw draws nothing.
 // Recording is timed separately. Rendering includes CPU submission, the GPU
@@ -1849,7 +2288,7 @@ static void bench_scene(void)
 {
     tide_draw_reset(&list);
     if (bench_kind == 5) {
-        tide_draw_camera_3d(&list, tide_f3(128, 60, -40), tide_axisangle_q(tide_f3(1, 0, 0), 0.6f), 70.0f);
+        tide_draw_set_camera_3d(&list, tide_f3(128, 60, -40), tide_axisangle_q(tide_f3(1, 0, 0), 0.6f), 70.0f);
         for (uint32_t i = 0; i < WIDTH * 256u; i++) {
             const tide_float3 p = tide_f3((float)(i % WIDTH), 0.0f, (float)(i / WIDTH));
             tide_draw_mesh_3d(&list, &cube, tide_translate_f4x4(p), NULL, TIDE_FILTER_BILINEAR);
@@ -1940,6 +2379,7 @@ static int frame(void *user, const float seconds)
         themed_gui();
         tiles_leave_no_gaps();
         text_checks();
+    settings();
         return run_checks();
     }
 #endif
@@ -1951,6 +2391,7 @@ static int frame(void *user, const float seconds)
     themed_gui();
     tiles_leave_no_gaps();
     text_checks();
+    settings();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

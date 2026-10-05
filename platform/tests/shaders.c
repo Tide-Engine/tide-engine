@@ -71,6 +71,13 @@ static const check checks[] = {
     {0, 3, 0, 0, 0, 1, 0, "a frag branches on an int of its instance"},
     {1, 3, 0, 0, 0.5f, 0, 0.5f, "on an enum and a bool, and reads a struct's fields"},
     {2, 3, 0, 0, 0, 0, 1, "and neither"},
+    // The draw's settings
+    {7, 0, 0, 0, 0.5f, 0.5f, 0, "a tint multiplies what a frag wrote, in a mesh a transform moved"},
+    {7, 1, 0, 0, 1, 0.5f, 0.5f, "a mesh through a frag, added to what's there"},
+    {7, 2, 0, 0, 0.5f, 0.75f, 0.5f, "and multiplying it, by as much as its alpha says"},
+    {7, 6, 7, 0, 1, 0.5f, 0, "a transform turns and scales a mesh through a frag: past where its side was"},
+    {7, 6, 5, 5, back, back, back, "and short of where its corner was"},
+    {7, 3, 0, 0, 0, 1, 0, "a 3D mesh through a frag, tinted, through the 3D transform"},
     // 2D
     {0, 4, 0, 0, 0, 1, 0, "a rect drawn after a 2D mesh is over it"},
     {0, 4, 8, 0, 1, 0.5f, 0, "the mesh, through its frag, over the rect before it"},

@@ -1,0 +1,10 @@
+// expect: Draw.SetBlend sets it for the draws that follow, and takes no block
+scene Main { }
+
+view Show()
+{
+    Draw.SetBlend(Blend.Add)
+    {
+        Draw2D.Clear(Color.black);
+    }
+}

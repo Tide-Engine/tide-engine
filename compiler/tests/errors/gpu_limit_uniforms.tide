@@ -1,4 +1,4 @@
-// expect: this draw reads 4032 bytes of singletons (Sun), and a draw's hold 4000
+// expect: this draw reads 4032 bytes of singletons (Sun), and a draw's hold 3984
 scene Main { }
 
 struct V

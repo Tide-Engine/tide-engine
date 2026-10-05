@@ -60,21 +60,21 @@ TIDE_TEST(draw_targets_preserve_recording_state_and_append_sources)
 {
     tide_draw_list d = {0}, appended = {0};
     tide_draw_to(&d, 17, 8, 6);
-    tide_draw_clip(&d, (tide_rect){0, 0, 4, 3});
+    tide_draw_set_clip(&d, (tide_rect){0, 0, 4, 3});
     const uint32_t first_count = d.count;
     tide_draw_to(&d, 17, 8, 6);
     TIDE_CHECK(d.count == first_count);
     tide_draw_to(&d, 18, 4, 3);
-    TIDE_CHECK(!d.clipped);
+    TIDE_CHECK(!d.place.clip);
     tide_draw_to(&d, 17, 8, 6);
-    TIDE_CHECK(d.clipped);
+    TIDE_CHECK(d.place.clip);
     const uint32_t color = tide_draw_target_texture(&d, 17, 8, 6);
     TIDE_REQUIRE(color && d.textures[color - 1u].space == TIDE_PIXELS_TARGET);
     TIDE_CHECK(d.textures[color - 1u].pixels == NULL && d.textures[color - 1u].capacity == 0);
     static const tide_shader shader = {.dims = 2, .vertex_size = sizeof(tide_vertex), .texture_count = 1};
     tide_draw_to(&d, 18, 4, 3);
-    tide_draw_blit(&d, &shader, NULL, NULL, &color, 0);
-    tide_draw_blit(&d, &shader, NULL, NULL, &color, 0);
+    tide_draw_blit(&d, &shader, TIDE_BLEND_REPLACE, NULL, NULL, &color, 0);
+    tide_draw_blit(&d, &shader, TIDE_BLEND_REPLACE, NULL, NULL, &color, 0);
     TIDE_REQUIRE(d.run_count == 2 && d.runs[0].count == 1 && d.runs[1].count == 1);
     tide_draw_to(&appended, 19, 2, 2);
     tide_draw_append(&appended, &d);
@@ -85,7 +85,7 @@ TIDE_TEST(draw_targets_preserve_recording_state_and_append_sources)
     TIDE_CHECK(copied->space == TIDE_PIXELS_TARGET && copied->id == 17 && copied->pixels == NULL);
     TIDE_CHECK(appended.commands[1].kind == TIDE_DRAW_TARGET && appended.commands[1].target == 0);
     tide_draw_reset(&d);
-    TIDE_CHECK(d.target_count == 0 && d.target == 0 && !d.clipped);
+    TIDE_CHECK(d.target_count == 0 && d.target == 0 && !d.place.clip);
     tide_draw_free(&appended);
     tide_draw_free(&d);
 }
@@ -246,11 +246,12 @@ TIDE_TEST(draw_meshes_keep_their_triangles)
     TIDE_CHECK(d.indices[6] == 4 && d.indices[8] == 6 && d.indices[11] == 7);
 
     // Something between them, or another filter, starts another
-    tide_draw_clip(&d, (tide_rect){1.0f, 2.0f, 3.0f, 4.0f});
+    tide_draw_set_clip(&d, (tide_rect){1.0f, 2.0f, 3.0f, 4.0f});
     tide_draw_mesh(&d, quad, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
     tide_draw_mesh(&d, quad, 4, quad_indices, 6, NULL, TIDE_FILTER_POINT);
     TIDE_REQUIRE(d.count == 5);
-    TIDE_CHECK(d.commands[2].kind == TIDE_DRAW_CLIP && d.commands[2].a.y == 2.0f && d.commands[2].b.x == 3.0f);
+    TIDE_REQUIRE(d.commands[2].kind == TIDE_DRAW_CLIP && d.commands[2].clip == 1 && d.clip_count == 1);
+    TIDE_CHECK(d.clips[0].rect.y == 2.0f && d.clips[0].rect.width == 3.0f);
     TIDE_CHECK(d.commands[3].mesh.first == 12 && d.commands[3].mesh.count == 6);
     TIDE_CHECK(d.commands[4].mesh.first == 18 && d.commands[4].mesh.filter == TIDE_FILTER_POINT);
 
@@ -272,7 +273,7 @@ TIDE_TEST(draw_meshes_keep_their_triangles)
     const uint32_t base = tide_draw_vertices(&d, quad, 4);
     TIDE_CHECK(base == 4);
     tide_draw_triangles(&d, base, quad_indices, 3, NULL, TIDE_FILTER_BILINEAR);
-    tide_draw_no_clip(&d);
+    tide_draw_set_clip(&d, (tide_rect){0.0f, 0.0f, 1.0f, 1.0f});
     tide_draw_triangles(&d, base, quad_indices + 3, 3, NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(d.count == 4 && d.vertex_count == 8 && d.index_count == 6);
     TIDE_CHECK(d.indices[0] == 4 && d.indices[5] == 7);
@@ -357,15 +358,16 @@ TIDE_TEST(draw_meshes_append)
     static const uint8_t pixel[4] = {1, 2, 3, 4};
     tide_draw_list world = {0}, over = {0};
     tide_draw_mesh(&world, quad, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
-    tide_draw_clip(&world, (tide_rect){0.0f, 0.0f, 4.0f, 4.0f});
-    TIDE_CHECK(world.clipped);
+    tide_draw_set_clip(&world, (tide_rect){0.0f, 0.0f, 4.0f, 4.0f});
+    TIDE_CHECK(world.place.clip);
     tide_draw_vertices(&over, quad, 2); // Before its mesh's, so its indices don't start at 0
     tide_draw_mesh(&over, quad, 4, quad_indices, 6, &(tide_texture){pixel, 1, 1, 5}, TIDE_FILTER_POINT);
-    tide_draw_no_clip(&over);
+    tide_draw_unset_clip(&over);
     tide_draw_append(&world, &over);
-    TIDE_REQUIRE(world.count == 4 && world.vertex_count == 10 && world.index_count == 12 && world.texture_count == 1);
-    TIDE_CHECK(!world.clipped);
-    const tide_draw_command *c = &world.commands[2];
+    // The clip nothing drew through records nothing, and isn't the appended list's
+    TIDE_REQUIRE(world.count == 2 && world.vertex_count == 10 && world.index_count == 12 && world.texture_count == 1);
+    TIDE_CHECK(!world.place.clip);
+    const tide_draw_command *c = &world.commands[1];
     TIDE_CHECK(c->kind == TIDE_DRAW_MESH && c->mesh.first == 6 && c->mesh.count == 6 && c->mesh.texture == 1);
     TIDE_CHECK(c->mesh.filter == TIDE_FILTER_POINT);
     TIDE_CHECK(world.indices[6] == 6 && world.indices[11] == 9);
@@ -448,11 +450,11 @@ TIDE_TEST(draw_grids_are_textures)
 // ---------------------------------------------------------------------------
 // 3D
 
-// Where a world position lands through the list's camera command `i`, from
-// -1 to 1 across the screen each way, and its depth.
+// Where a world position lands through the list's 3D camera `i`, from -1 to 1
+// across the screen each way, and its depth.
 static tide_float3 through(const tide_draw_list *d, const uint32_t i, const tide_float3 p)
 {
-    const tide_float4 clip = tide_mul_f4x4_f4(d->matrices[d->commands[i].camera.matrix], tide_f4(p.x, p.y, p.z, 1.0f));
+    const tide_float4 clip = tide_mul_f4x4_f4(d->cameras_3d[i].matrix, tide_f4(p.x, p.y, p.z, 1.0f));
     return tide_f3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
 }
 
@@ -466,8 +468,9 @@ static bool about(const float a, const float b)
 TIDE_TEST(draw_cameras_3d)
 {
     tide_draw_list d = {0};
-    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
-    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_CAMERA_3D && d.commands[0].camera.fit == 1);
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
+    // The list has it, and records nothing until something draws through it
+    TIDE_REQUIRE(d.count == 0 && d.camera_3d_count == 1 && d.place.camera_3d == 1 && d.cameras_3d[0].fit == 1);
     tide_float3 p = through(&d, 0, tide_f3(0.0f, 0.0f, 0.0f));
     TIDE_CHECK(about(p.x, 0.0f) && about(p.y, 0.0f) && p.z > 0.0f && p.z < 1.0f);
     p = through(&d, 0, tide_f3(1.0f, 2.0f, 0.0f));
@@ -477,18 +480,18 @@ TIDE_TEST(draw_cameras_3d)
     TIDE_CHECK(through(&d, 0, tide_f3(0.0f, 0.0f, 10.0f)).z > p.z);         // Farther is deeper
 
     // Turned a quarter around y, it looks along +x, its right along -z
-    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_axisangle_q(tide_f3(0.0f, 1.0f, 0.0f), TIDE_PI_F * 0.5f), 90.0f);
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_axisangle_q(tide_f3(0.0f, 1.0f, 0.0f), TIDE_PI_F * 0.5f), 90.0f);
     p = through(&d, 1, tide_f3(5.0f, 0.0f, -1.0f));
     TIDE_CHECK(about(p.x, 0.2f) && about(p.y, 0.0f) && p.z > 0.0f);
 
     // Any projection, from where the camera is
     const tide_float4x4 at = tide_trs_f4x4(tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), tide_f3_splat(1.0f));
-    tide_draw_camera_matrices(&d, at, tide_perspectivefov_f4x4(TIDE_PI_F * 0.5f, 2.0f, 0.3f, 100.0f));
-    TIDE_REQUIRE(d.commands[2].kind == TIDE_DRAW_CAMERA_3D && d.commands[2].camera.fit == 0);
+    tide_draw_set_camera_matrices(&d, at, tide_perspectivefov_f4x4(TIDE_PI_F * 0.5f, 2.0f, 0.3f, 100.0f));
+    TIDE_REQUIRE(d.camera_3d_count == 3 && d.cameras_3d[2].fit == 0);
     p = through(&d, 2, tide_f3(1.0f, 2.0f, 0.0f));
     TIDE_CHECK(about(p.x, 0.1f) && about(p.y, 0.4f) && p.z > -1.0f && p.z < 1.0f);
     TIDE_CHECK(about(through(&d, 2, tide_f3(0.0f, 0.0f, 95.0f)).z, 1.0f));
-    tide_draw_camera_matrices(&d, at, tide_ortho_f4x4(10.0f, 4.0f, 1.0f, 11.0f));
+    tide_draw_set_camera_matrices(&d, at, tide_ortho_f4x4(10.0f, 4.0f, 1.0f, 11.0f));
     p = through(&d, 3, tide_f3(5.0f, -2.0f, 1.0f));
     TIDE_CHECK(about(p.x, 1.0f) && about(p.y, -1.0f) && about(p.z, 0.0f));
     tide_draw_free(&d);
@@ -514,7 +517,7 @@ TIDE_TEST(draw_meshes_3d_are_kept_and_instanced)
     static const uint8_t pixel[4] = {1, 2, 3, 4};
     const tide_texture texture = {pixel, 1, 1, 7};
     tide_draw_mesh_3d(&d, &mesh, tide_identity_f4x4(), &texture, TIDE_FILTER_POINT); // Another texture: a run of its own
-    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     tide_draw_mesh_3d(&d, &mesh, tide_identity_f4x4(), &texture, TIDE_FILTER_POINT); // After a camera too
     TIDE_REQUIRE(d.count == 4 && d.mesh_count == 1 && d.texture_count == 1);
     const tide_draw_command *c = &d.commands[0];
@@ -660,7 +663,7 @@ TIDE_TEST(draw_meshes_3d_forget_and_append)
 {
     const tide_mesh mesh = {cube_corners, 4, cube_indices, 6, 1};
     tide_draw_list d = {0}, world = {0};
-    tide_draw_camera_3d(&d, tide_f3(1.0f, 2.0f, 3.0f), tide_identity_q(), 60.0f);
+    tide_draw_set_camera_3d(&d, tide_f3(1.0f, 2.0f, 3.0f), tide_identity_q(), 60.0f);
     tide_draw_mesh_3d(&d, &mesh, tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
     tide_draw_mesh_3d(&d, &mesh, tide_translate_f4x4(tide_f3(2.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
 
@@ -719,7 +722,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     TIDE_CHECK(d.matrices[COUNT].c3.x == (float)COUNT && d.matrices[COUNT + 1].c3.x == -1.0f);
     TIDE_CHECK(d.matrices[2 * COUNT].c3.x == (float)(COUNT - 1));
 
-    tide_draw_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
     tide_draw_mesh3_instances_grid(&d, vertices, indices, transforms, grid, &colors, TIDE_FILTER_POINT);
     tide_draw_mesh3_instances_lists(&d, vertices, indices, transforms);
     TIDE_REQUIRE(d.count == 4 && d.mesh_count == 1 && d.texture_count == 1);

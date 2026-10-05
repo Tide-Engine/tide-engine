@@ -40,9 +40,16 @@ typedef enum tide_gpu_attribute_format {
     TIDE_GPU_INT4,
 } tide_gpu_attribute_format;
 
+// How a pipeline's pixels go over what's there. A pixel's color is as its
+// fragment shader wrote it, its alpha how much of it there is, but for
+// TIDE_GPU_BLEND_MULTIPLY, whose shader writes a color that's gone to white
+// where its alpha is 0 (the renderer's shaders do, by a uniform, as one
+// shader is drawn through pipelines that blend each way).
 typedef enum tide_gpu_blend {
-    TIDE_GPU_BLEND_ALPHA,   // Over what's there, by its alpha
-    TIDE_GPU_BLEND_REPLACE, // In place of what's there, alpha too
+    TIDE_GPU_BLEND_ALPHA,    // Over what's there, by its alpha
+    TIDE_GPU_BLEND_ADD,      // Added to what's there, by its alpha; the alpha there grows by it
+    TIDE_GPU_BLEND_MULTIPLY, // What's there times its color; the alpha there stays
+    TIDE_GPU_BLEND_REPLACE,  // In place of what's there, alpha too
 } tide_gpu_blend;
 
 typedef enum tide_gpu_depth {

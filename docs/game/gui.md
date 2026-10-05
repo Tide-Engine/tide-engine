@@ -118,6 +118,16 @@ view Menu(Session session, mut Lobby lobby)
 }
 ```
 
+`GUI.Disabled` and the `Area` it's in can share one block, [listed with a comma](../language/functions.md#several-calls-one-block), when nothing else goes in the area:
+
+```csharp
+GUILayout.Area(Anchor.MiddleCenter),
+GUI.Disabled(busy)
+{
+    if (GUILayout.Button("Connect")) Session.Connect(lobby.address);
+}
+```
+
 It lays nothing out: its widgets stay where they'd be without it, in the container around it, and it works with `GUI` and `GUILayout` widgets alike. Tab skips disabled widgets. One disabled while it's pressed lets go, and a field disabled while the player types into it keeps its old value. The pointer on a disabled widget is still the GUI's, so a click on it doesn't reach the game. Inside another `GUI.Disabled` that's disabled, a block stays disabled whatever its own `disabled` is.
 
 ## Themes
@@ -225,7 +235,7 @@ local singleton Draft
 
 view Cards(mut Draft draft)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     for (var slot = 0; slot < 3; slot++)
     {
         var rect = Rect(Screen.width * 0.5 - 330 + slot * 220, 200, 200, 280);

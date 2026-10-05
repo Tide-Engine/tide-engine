@@ -63,6 +63,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
 - **`mut Color color` is the pixel.** A frag writes its output through `mut`, as a system writes a component, and returns nothing. What `color` holds when the frag ends is the pixel's color, blended over what's behind it by its alpha.
+- **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`.
 - `color` starts as `Color.white`. It isn't the pixel already on the screen: a GPU doesn't let a frag read that. A frag that never writes it draws white.
 - A frag has one output for now, a `Color`. More, and other types, aren't there yet.
 
@@ -144,7 +145,7 @@ frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun 
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen()`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture.
 
@@ -156,7 +157,7 @@ frag Leaves(BoxVertex vertex, mut Color color, Models models, Pixel pixel)
 }
 ```
 
-The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.Camera` reads it too, and take that.
+The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.SetCamera` reads it too, and take that.
 
 ## What the GPU runs
 
