@@ -13,17 +13,22 @@
 #endif
 
 // Shapes: each instance's quad covers its shape in window pixels, which the
-// camera already applied, and `screen` takes to the target. `scale` is the
-// target's own pixels in one of those, across and down: an edge is smooth
-// over one of the target's, whatever the display's scale.
+// camera already applied, and `screen` takes to the target.
 //
 // There are two pipelines of them. The first draws the plain kinds (rects,
 // their outlines, circles and lines a pixel wide) from an instance of 24
-// bytes, and is what a run of those alone goes through, however long. The
-// second draws every kind: a run with a smooth shape in it goes through that
-// one, each shape with its extra (see shape_extra in platform.c). Both draw
-// the plain kinds from the same lines below, so a rect is the same pixels
-// whichever its run goes through.
+// bytes, and is what a run of those alone goes through, however long: its
+// shaders are what they were before there were smooth shapes, so such a run
+// costs what it did. The second draws every kind: a run with a smooth shape
+// in it goes through that one, each shape with its extra (see shape_extra in
+// platform.c). Both draw the plain kinds from the same lines below, so a rect
+// is the same pixels whichever its run goes through.
+//
+// The second one's `scale` is the target's own pixels in a logical one,
+// across and down: a smooth shape's edge is smooth over one of the target's,
+// whatever the display's scale. A plain circle's is smooth over a logical
+// pixel, which is the same where a display isn't scaled; where it is, the
+// renderer draws circles as smooth shapes (see TIDE_DRAW_CIRCLE in platform.c).
 
 #define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; };\n"
 
@@ -42,15 +47,15 @@
     "        p = shape.xy + local;\n"                                                                       \
     "    }\n"
 
-// How much of a pixel a plain kind covers. `px` is the target's pixels in a logical one.
+// How much of a pixel a plain kind covers.
 #define SHAPE_GLSL_COVER                                                                                    \
     "float cover = 1.0;\n"                                                                                  \
     "    if (form > 0.5 && form < 1.5) {\n" /* A rect's outline: the pixel inside its edge */              \
     "        if (all(lessThan(abs(local), extent - 1.0))) discard;\n"                                       \
     "    } else if (form > 1.5 && form < 3.5) {\n" /* Circles, with a smooth edge */                        \
     "        float d = length(local);\n"                                                                    \
-    "        cover = clamp((extent.x - d) * px + 0.5, 0.0, 1.0);\n"                                         \
-    "        if (form > 2.5) cover *= clamp((d - extent.x + 1.0) * px + 0.5, 0.0, 1.0);\n" /* An outline */ \
+    "        cover = clamp(extent.x - d + 0.5, 0.0, 1.0);\n"                                                \
+    "        if (form > 2.5) cover *= clamp(d - extent.x + 1.5, 0.0, 1.0);\n" /* An outline: the pixel inside it */ \
     "        if (cover <= 0.0) discard;\n"                                                                  \
     "    }\n"
 
@@ -59,7 +64,7 @@ static const char shape_glsl_vertex[] =
     "layout(location = 1) in vec4 shape;\n"  // a, then b
     "layout(location = 2) in vec4 color;\n"
     "layout(location = 3) in float kind;\n"
-    SHAPE_GLSL_UNIFORMS
+    "layout(std140) uniform uniforms { mat4 screen; };\n"
     "out vec2 local;\n"  // Pixels from its middle; for a line, along and across it
     "out vec2 extent;\n" // Half its size in pixels
     "out vec4 tint;\n"
@@ -78,10 +83,8 @@ static const char shape_glsl_fragment[] =
     "in vec2 extent;\n"
     "in vec4 tint;\n"
     "in float form;\n"
-    SHAPE_GLSL_UNIFORMS
     "out vec4 pixel;\n"
     "void main() {\n"
-    "    float px = (scale.x + scale.y) * 0.5;\n"
     "    " SHAPE_GLSL_COVER
     "    pixel = vec4(tint.rgb, tint.a * cover);\n"
     "}\n";
@@ -176,12 +179,12 @@ static const char smooth_shape_glsl_fragment[] =
     "    return dot(s, s) < 1.0 ? -apart : apart;\n"
     "}\n"
     "void main() {\n"
-    "    float px = (scale.x + scale.y) * 0.5;\n"
     "    if (form < 4.5) {\n"
     "    " SHAPE_GLSL_COVER
     "        pixel = vec4(tint.rgb, tint.a * cover);\n"
     "        return;\n"
     "    }\n"
+    "    float px = (scale.x + scale.y) * 0.5;\n"
     "    float d;\n"
     "    float outline = look.y;\n"
     "    if (form > 6.5) {\n" // Part of a ring `outline` thick inside its radius
@@ -241,13 +244,14 @@ static const char smooth_shape_glsl_fragment[] =
     "        if (all(abs(in.local) < in.extent - 1.0)) { discard; }\n"                                              \
     "    } else if (in.form > 1.5 && in.form < 3.5) {\n"                                                            \
     "        let d = length(in.local);\n"                                                                           \
-    "        cover = clamp((in.extent.x - d) * px + 0.5, 0.0, 1.0);\n"                                              \
-    "        if (in.form > 2.5) { cover *= clamp((d - in.extent.x + 1.0) * px + 0.5, 0.0, 1.0); }\n"                \
+    "        cover = clamp(in.extent.x - d + 0.5, 0.0, 1.0);\n"                                                     \
+    "        if (in.form > 2.5) { cover *= clamp(d - in.extent.x + 1.5, 0.0, 1.0); }\n"                             \
     "        if (cover <= 0.0) { discard; }\n"                                                                      \
     "    }\n"
 
 static const char *const shape_wgsl = WGSL(
-    SHAPE_WGSL_UNIFORMS
+    "struct Uniforms { screen: mat4x4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
     "struct Corner {\n"
     "    @builtin(position) position: vec4f,\n"
     "    @location(0) local: vec2f,\n"
@@ -267,7 +271,6 @@ static const char *const shape_wgsl = WGSL(
     "    return out;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    let px = (u.scale.x + u.scale.y) * 0.5;\n"
     "    " SHAPE_WGSL_COVER
     "    return vec4f(in.tint.rgb, in.tint.a * cover);\n"
     "}\n");
@@ -340,11 +343,11 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "    return apart;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    let px = (u.scale.x + u.scale.y) * 0.5;\n"
     "    if (in.form < 4.5) {\n"
     "    " SHAPE_WGSL_COVER
     "        return vec4f(in.tint.rgb, in.tint.a * cover);\n"
     "    }\n"
+    "    let px = (u.scale.x + u.scale.y) * 0.5;\n"
     "    var d: f32;\n"
     "    var outline = in.look.y;\n"
     "    if (in.form > 6.5) {\n"
