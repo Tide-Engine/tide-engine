@@ -7,7 +7,9 @@
 #include <string.h>
 
 #include "game.h"
+#include "tide/jobs.h"
 #include "tide/net.h"
+#include "tide/profile.h"
 #include "tide/time.h"
 #include "tide_test.h"
 
@@ -170,9 +172,12 @@ static void cost(tide_world *w, const char *what, const int ticks)
     // the tick left alone) and hashed (what the tick changed)
     uint64_t took = 0;
     uint64_t kept_ns = 0;
+    static tide_profile profile;
+    const tide_jobs alone = {.threads = 1, .profile = &profile};
+    tide_profile_clear(&profile);
     for (int i = 0; i < ticks; i++) {
         const uint64_t began = tide_time_now_ns();
-        tide_world_tick(w);
+        tide_world_tick_on(w, &alone);
         const uint64_t ticked = tide_time_now_ns();
         tide_world_copy(&kept, w);
         (void)tide_world_hash(w);
@@ -186,6 +191,12 @@ static void cost(tide_world *w, const char *what, const int ticks)
            what, (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
            (double)(took - step - image) / (ticks * 1e6), (double)kept_ns / (ticks * 1e6),
            in_all ? 100.0 * (double)changed / (double)in_all : 0.0);
+    if (getenv("B2T_SYSTEMS")) {
+        for (uint32_t i = 0; i < profile.systems.count; i++) {
+            printf("        %-24s %.3f ms\n", profile.systems.items[i].name, profile.systems.items[i].total / ticks);
+        }
+        printf("        %-24s %.3f ms\n", "(changes and events)", profile.changes_ms / ticks);
+    }
 }
 
 TIDE_TEST(box2d_costs)

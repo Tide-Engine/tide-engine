@@ -4247,14 +4247,27 @@ static type check_world_call(checker *c, expr *e, param *world)
         return T_ERR;
     }
     // Set changes any entity's component, this one's included, which its
-    // parameter would then put back as it was: one way or the other.
+    // parameter would then put back as it was: one way or the other. A
+    // parameter that's only read puts nothing back, so this entity's own can
+    // be set beside it: code that goes through many entities and writes a few
+    // reads them all for what reading costs. The parameter stays as the code
+    // came to the entity. Another entity's is still refused: the rows the code
+    // hasn't come to yet would be read changed or not by whether a snapshot
+    // shares their pages.
     for (int i = 0; set && i < code->params.count; i++) {
         const param *q = &code->params.items[i];
         if (q->type.kind != TY_COMPONENT || q->type.decl != d || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
+        if (q->mode == PARAM_READ && e->args.items[0]->kind == E_THIS) continue;
         diag_error(e->at, "Set<" STR_FMT "> changes any entity's " STR_FMT ", and the %s takes this entity's too",
                    STR_ARG(d->name), STR_ARG(d->name), system_what(code));
-        diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
-                  ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
+        if (q->mode == PARAM_READ) {
+            diag_note("this entity's can be set beside '" STR_FMT "', which is only read: '" STR_FMT ".Set<" STR_FMT
+                      ">(this, value)'. For another entity's, send it an event", STR_ARG(q->name), STR_ARG(world->name),
+                      STR_ARG(d->name));
+        } else {
+            diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
+                      ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
+        }
         return T_ERR;
     }
     e->call = CALL_WORLD;

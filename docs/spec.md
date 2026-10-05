@@ -387,7 +387,8 @@ system Heal(Healer healer, mut World world)
 ```
 
 - What a system reaches through its `World` is access to every entity's component, which the schedule takes from the calls in its body: `Get<T>` and `Has<T>` read every entity's `T`, and `Set<T>` writes every entity's `T` and keeps the system on one thread. A system that reads through its `World` a component it also changes through a parameter runs on one thread too, and reads the rows it changed earlier in the same run.
-- `Set<T>` of a component the system also takes as a parameter is an error: this entity's goes through the parameter.
+- `Set<T>` of a component the system also takes as a parameter is an error: this entity's goes through the parameter, which would put it back as it was.
+  - **Provisional** (the owner's "maybe the world should allow it", 2026-10-05; the shape is Claude's pick): where the parameter is only read, `world.Set<T>(this, value)` sets this entity's own. Nothing puts a read parameter back, and the parameter stays as the code came to the entity: `world.Get<T>(this)` has what was set. It's for code that goes through many entities and writes a few of them, which reads them all for what reading costs; taken as `mut`, a component is copied and compared for every entity once a snapshot shares the world's pages. Another entity's `T` is still an error there: the entities the code hasn't come to yet would be read changed or not by whether a snapshot shares their pages.
 - The signature doesn't list those components, so tooling does: `tidec --schedule` says what each system reads and writes through its `World`, and so do the language server's hover and the line above each system.
 - A `World` parameter that's never used is a warning, and so is a `mut World` that never calls `Set`.
 - Views take `World` to read the match, never to change it: `Set` of the match's component in a view is an error.
