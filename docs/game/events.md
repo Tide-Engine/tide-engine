@@ -68,11 +68,11 @@ Handlers can also use [named phases](./systems.md#named-phases): `[Stage(MyStage
 
 A handler of an event nothing sends is a warning: it would never run. So is declared access a handler doesn't use, as for systems (see [Systems](./systems.md)).
 
-Events waiting to be handled are part of the world: a snapshot holds them, and running a tick again sends and handles them again the same way.
+Events waiting to be handled are part of the world: a snapshot holds them, and running a tick again sends and handles them again the same way. What a machine shows of an event is heard [once](#once-under-rollback) all the same, by a local handler.
 
 ## Built-in events
 
-The engine sends these. They cost nothing where no handler takes them.
+The engine sends these. They cost nothing where no handler takes them. The match's handlers take the first four, and so do [local handlers](#the-engine-s-events), on each machine.
 
 | Event | Sent to | When |
 |---|---|---|
@@ -97,4 +97,190 @@ event(PlayerJoined joined) GiveBody()
 
 The server picks the tick a player joins or leaves on, so every machine handles it on the same one.
 
-Handlers can't draw: drawing happens every frame, in [views](./views.md). Local state has events of its own (see [Local state](./local-state.md)).
+Handlers can't draw: drawing happens every frame, in [views](./views.md). What a machine shows of an event goes through a local handler, which leaves it in local state for the views.
+
+## Local handlers
+
+A match handler changes the match. What a machine shows of an event is something else: a flash, a burst of sparks, a line in the chat. That's a **local handler**'s, which hears the match's events on each machine. It's `local` before the same `event(...)`, with no keyword of its own:
+
+```csharp
+component Fighter
+{
+    int health = 100;
+    local float flash; // This machine's: how long the hit still shows
+}
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    float shake;
+}
+
+event Hit
+{
+    int damage;
+}
+
+// The match handles the hit...
+event(Hit hit) TakeHit(mut Fighter fighter)
+{
+    fighter.health -= hit.damage;
+}
+
+// ...and each machine shows it.
+local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)
+{
+    fighter.flash = 0.2; // A local field of the fighter that was hit
+    fx.sparks.Add(Spark { position = body.position, velocity = float2(0, hit.damage * 0.1) });
+}
+
+// Views draw what the handler left.
+view DrawFighter(Body body, mut Fighter fighter)
+{
+    fighter.flash = Math.Max(0, fighter.flash - Frame.dt);
+    Draw2D.Circle(body.position, 0.5, fighter.flash > 0 ? Color.white : Color.red);
+}
+```
+
+A local handler changes [local state](./local-state.md) and never the match. Like every handler it can't draw: it leaves what happened where views find it, in a local singleton, in local entities, or in the [local fields](./local-state.md#local-fields) of the entity the event was sent to.
+
+### What they take
+
+- **The event**, as a match handler does. One that doesn't read it leaves its name out.
+- **The components of the entity the event was sent to**, to read. `mut` on one reaches only its local fields, as in a view: `fighter.flash` above. `with` and `without` filter as they do for a match handler.
+- **The match's singletons**, to read. `Time` is the tick the event was sent in.
+- **Local singletons**, which it changes.
+
+A handler that takes no components runs once per event, as a match handler does, and one that takes components needs every `Send` of its event to name an entity.
+
+What it takes of the match is a copy from the event's turn: as the match's handlers of that event left it, and for `Destroyed`, before the entity goes. So it's all there even when the entity is gone by the frame, which is what lets `Destroyed` say where something ended:
+
+```csharp
+// Where a shot ended: its Body as it was when it went
+local event(Destroyed) ShotEnded(Body body, mut Fx fx, with Bullet)
+{
+    fx.sparks.Add(Spark { position = body.position });
+}
+```
+
+An event sent to an entity that's gone by its turn isn't heard, as it isn't handled. Local fields are the entity's whether or not it's still there: what a handler writes for an entity that's gone goes with the rest of its local fields, at that frame.
+
+### At the start of a frame
+
+Local handlers run at the start of a frame, before the views, for each tick this machine simulated since the last frame, in order. What they spawn, change and send locally is handled at the end of the frame, like a view's, and they send [commands](./commands.md) as views do. [Local state](./local-state.md#a-frame-in-order) has a frame's whole order.
+
+An event's local handlers run in the order they're declared, and `[Before]` and `[After]` order them among themselves, apart from the match's handlers of the event. An event has 64 of them at most. A local handler of an event nothing sends is a warning, like a match handler's, and `tide schedule` lists each event's local handlers after the match's (see [the schedule](./schedule.md#reading-it)).
+
+### Once, under rollback
+
+In a match with other machines, a client predicts ticks ahead of the server, and runs some of them again when the server turns out to have had them otherwise (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). The match's handlers run again with their tick. A local handler doesn't: it hears each event once.
+
+- An event the tick sends again as it runs again **stays silent**. It's the same event when it's of the same tick, with the same fields, sent to the same entity.
+- An event **only the corrected tick has** is heard then, late.
+- An event **the correction removed** isn't taken back: the spark it made has been shown.
+
+Two events alike in one tick are two, and each is heard once. The same entity is the entity, not only its handle: when running a tick again gives a handle to another entity, an event sent to it is another event, and it's heard (see [After a rollback](./local-state.md#after-a-rollback)).
+
+### `verified` handlers
+
+Where what's shown must not be wrong, like a death or a goal, the handler waits for the server. `verified` before the event hears it once the server has confirmed the tick that sent it:
+
+```csharp
+event Died
+{
+    Entity killer;
+}
+
+// The spark as it's predicted, the death once it's certain
+local event(verified Died) ShowDeath(Body body, mut Fx fx)
+{
+    fx.sparks.Add(Spark { position = body.position, velocity = float2(0, 4) });
+    fx.shake = 0.3;
+}
+```
+
+- **It's never wrong, and never taken back.** It runs once, for what the tick sent as the server ran it.
+- **It's late**, by as far as this machine runs ahead of what the server has confirmed.
+- **What it takes of the match is that confirmed tick's**, as the event's turn left it, so nothing else in it is marked `verified`.
+- **Both kinds can hear one event**: a handler of `Hit` for the spark, at once, and one of `verified Hit` for the damage number, once it's certain.
+
+`verified` is local code's word. On a match handler it's an error, as the match is the same on every machine and has no "confirmed". Views take it on what they read: see [Confirmed state](./views.md#confirmed-state).
+
+### Events only local code handles
+
+The match can send an event no match handler takes, purely for what's shown:
+
+```csharp
+// Nothing in the match handles Impact: it's sent for whoever shows it
+event Impact
+{
+    float2 at;
+    float2 normal;
+}
+
+system Fly(mut Body body, Arena arena, Time time, with Bullet)
+{
+    body.position += body.velocity * time.dt;
+    if (Math.Abs(body.position.x) > arena.halfSize.x)
+    {
+        Send(Impact { at = body.position, normal = float2(body.position.x > 0 ? -1 : 1, 0) });
+        this.Destroy();
+    }
+}
+
+local event(Impact impact) ShowImpact(mut Fx fx)
+{
+    fx.sparks.Add(Spark { position = impact.at, velocity = impact.normal * 3 });
+}
+```
+
+It costs the match nothing. The world's bytes, its hash, its snapshots and what's sent are what they'd be without the event, and a machine with nobody to show it to does no work for it.
+
+### The engine's events
+
+`Spawned`, `Destroyed`, `PlayerJoined` and `PlayerLeft` have local handlers too:
+
+```csharp
+local event(PlayerJoined joined) Greet(mut Chat chat)
+{
+    chat.lines.Add($"{joined.player} joined");
+}
+
+// It takes a component of the match's, so it hears the match's entities
+local event(Spawned) CrateLanded(Body body, with Crate)
+{
+    Spawn(Puff { position = body.position }); // A local entity
+}
+```
+
+- **`Spawned` and `Destroyed` are sent in both worlds.** A local handler of one hears the match's when it takes something of the match, a component, a filter or a singleton, or when it's `verified`. One that takes only local state hears this machine's local entities'. One that takes a local component and something of the match is an error.
+- **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. The entities that were in the world by then, those the match was set up with as it started among them, have no `Spawned` for it. What every entity needs, however this machine learned of it, goes in a view and the entity's [local fields](./local-state.md#local-fields) instead.
+- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there.
+- **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them.
+
+### What isn't there yet
+
+- **Text, lists, maps, sets and grids of the match** aren't heard. Naming one, in the event or in a component or singleton the handler takes, is an error that says so, and a copy of a component that has one has it empty. Local state has them as ever.
+- **The `World`**, which is the match as it is now and not as the event left it. Nor `Devices` or the input.
+- **`with ownership`.** A handler takes `Owner owner` and `Session session`, and compares:
+
+  ```csharp
+  // Only this machine's own fighter shakes the screen
+  local event(Hit) Shake(Owner owner, Session session, mut Fx fx)
+  {
+      if (owner.player != session.player) return;
+      fx.shake = 0.2;
+  }
+  ```
+
+- **`async`.** A local handler of one of the match's events starts a [task](./tasks.md) instead, by calling an async function with what the task needs.
+- **`verified` components beside a predicted event.** A handler that hears a tick as it's predicted takes the match as that tick left it.
+
+Local state has events of its own too, `local event`, sent and handled on one machine: see [Local state](./local-state.md#local-scenes-and-events).

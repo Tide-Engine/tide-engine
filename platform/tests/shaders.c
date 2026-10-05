@@ -83,6 +83,15 @@ static const check checks[] = {
     {0, 5, 0, 0, 0, 1, 0, "a frag's numbers, vectors, matrices, structs, functions and loops come out as on the CPU"},
     {1, 5, 0, 0, 0, 1, 0, "a vert reads its vertex's ints, samples a grid, and changes the color its pixels get"},
     {2, 5, 0, 0, 0, 1, 0, "and so do its matrices, int vectors, assignments, counting loops, structs in structs and the rest of Math"},
+    // Math, against what the CPU worked out
+    {3, 3, 0, 0, 0, 1, 0, "Math.Hash in a frag is the CPU's number, for an int and each int vector, of constants too"},
+    {4, 3, 0, 0, 0, 1, 0, "quaternions in a frag: products, rotations, slerps, and what builds one"},
+    {5, 3, 0, 0, 0, 1, 0, "matrices in a frag: inverses, determinants, products, and what builds one"},
+    {6, 3, 0, 0, 0, 1, 0, "the rest of Math in a frag is forgiving as the CPU's: NaN, vectors with no direction, powers of numbers under 0"},
+    {3, 5, 0, 0, 0, 1, 0, "Math.Hash in a vert is the CPU's number"},
+    {4, 5, 0, 0, 0, 1, 0, "quaternions in a vert"},
+    {5, 5, 0, 0, 0, 1, 0, "matrices in a vert"},
+    {6, 5, 0, 0, 0, 1, 0, "and the rest of Math in a vert"},
     // Instances of a 2D mesh
     {0, 6, 0, 0, 1, 0, 0, "three entities in one 2D draw: the vert puts each where its component says"},
     {1, 6, 0, 0, 0, 1, 0, "the second"},

@@ -303,6 +303,18 @@ const char *sys_env(const char *name)
     return value && value[0] ? value : NULL;
 }
 
+bool sys_hidden(void)
+{
+    const char *value = sys_env("TIDE_HIDDEN");
+    const bool hidden = value && strcmp(value, "0") != 0;
+#ifdef _WIN32
+    // What tide starts shows none of the system's dialogs either (a library a
+    // game needs that's missing, a crash): they take tide's own setting
+    if (hidden) SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#endif
+    return hidden;
+}
+
 const char *sys_tool(const char *name)
 {
 #ifdef _WIN32

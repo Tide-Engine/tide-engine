@@ -32,7 +32,8 @@
 //
 // A game also runs with no window, to see what it draws without one on
 // screen, or in CI (tide_platform_open_headless). Time is made up, a 60th of
-// a second a frame, and so is input, so a run repeats exactly on any machine:
+// a second a frame, and so is input, and its matches start with seed 0
+// (Time.seed), so a run repeats exactly on any machine:
 //
 //     game --frames 300 --capture menu.png    300 frames, the last of them to a PNG
 //     game --script play.txt                  input by frame from a file, which also says
@@ -43,6 +44,10 @@
 // Such a run ends with exit code 0 at --frames or the script's `quit`, with
 // 1 when a picture can't be written, and with 2, having started nothing,
 // when a flag or a line of the script is wrong. Desktop only.
+//
+// Where nobody watches (TIDE_HIDDEN in the environment: tide/page.h), a game
+// shows no window, so a run with one is refused the same way, with exit code
+// 2 and what to give it instead.
 //
 // The loop itself is in tide/host.h, which runs the game through
 // tide_host_game_api, made here from the game's header.
@@ -70,6 +75,11 @@ static inline void tide_run_views(const void *world, const void *previous, const
                                   void *local, tide_draw_list *draw, tide_gui *gui)
 {
     tide_frame(world, previous, alpha, verified, local, draw, gui);
+}
+
+static inline void tide_run_events(void *local, tide_event_log *events)
+{
+    tide_local_events(local, events);
 }
 
 static inline void tide_run_frame_time(void *local, const float seconds)
@@ -171,6 +181,7 @@ static const tide_host_game tide_host_game_api = {
     .sample_input = tide_run_sample_input,
 #endif
     .frame = tide_run_views,
+    .events = tide_run_events,
     .frame_time = tide_run_frame_time,
     .take_request = tide_run_take_request,
 #ifdef TIDE_HAS_COMMANDS

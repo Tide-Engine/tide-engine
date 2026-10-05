@@ -778,6 +778,40 @@ TIDE_TEST(lsp_shapes)
 #undef SHAPE_VIEW
 }
 
+// Text at an anchor and in a weight: every version of Draw2D.Text, and the built-in Font
+TIDE_TEST(lsp_text_anchor_and_font)
+{
+    start();
+#define TEXT_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anchor.MiddleCenter, Font.Bold);\n"
+                            "    Font weight = Font.Regular;\n"
+                            "    var size = Draw2D.MeasureText(\"DUEL\", 88, weight);\n"
+                            "    Draw2D.Text(\"DUEL\", size, 88, Color.white, weight);"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *weights = complete(TEXT_VIEW("    var weight = Font.$"));
+    TIDE_CHECK(offers(weights, "Regular") && offers(weights, "Bold"));
+
+    open_document(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
+    const char *text = request("textDocument/hover");
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Font font)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font)"));
+    TIDE_CHECK(has(text, "Anchor.MiddleCenter") && has(text, "Font.Bold"));
+    open_document(TEXT_VIEW("    var size = Draw2D.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw2D.Rect(size, size, Color.white);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font) -> float2"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
+
+    // Its C, which takes both
+    TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
+                   "void tide_draw_text_at("));
+#undef TEXT_VIEW
+}
+
 static const char *hover_at(const int line, const int character)
 {
     return request_at("file:///test.tide", "textDocument/hover", line, character, "");
@@ -2042,11 +2076,41 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
 
-    // Claims, for widgets a view draws itself
+    // Claims, for widgets that read the devices themselves
     const char *claims = complete("scene Main { }\nview V()\n{\n    GUI.$\n}\n");
     TIDE_CHECK(offers(claims, "ClaimPointer"));
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
+
+    // A widget a view draws itself, and the look of the GUI's own
+    TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));
+    TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}")); // The one that takes a block
+#define CONTROL_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(CONTROL_VIEW("    GUI.Navigate();\n    var card = GUI.Con$trol(Rect(0, 0, 200, 200));\n"
+                               "    if (card.clicked || card.pressed && card.hovered) GUI.SetTheme(GUITheme { radius = 4 });\n"
+                               "    GUI.Theme(GUITheme { hot = Color.red, fieldHot = Color.red })\n    {\n"
+                               "        GUI.Label(Rect(0, 0, 10, 10), card.focused ? \"on\" : \"off\");\n    }"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *control = request("textDocument/hover");
+    TIDE_CHECK(has(control, "GUI.Control(Rect rect) -> GUIControl"));
+    TIDE_CHECK(has(control, "the GUI handles its input as a button's, and draws nothing"));
+    const char *said = complete(CONTROL_VIEW("    var card = GUI.Control(Rect(0, 0, 200, 200));\n    var on = card.$"));
+    TIDE_CHECK(offers(said, "hovered") && offers(said, "pressed") && offers(said, "focused") && offers(said, "clicked"));
+    TIDE_CHECK(has(said, "a press on it let go on it"));
+    const char *looks = complete(CONTROL_VIEW("    GUI.SetTheme(GUITheme { $ });"));
+    TIDE_CHECK(offers(looks, "text") && offers(looks, "panel") && offers(looks, "control") && offers(looks, "hot"));
+    TIDE_CHECK(offers(looks, "pressed") && offers(looks, "field") && offers(looks, "fieldHot") && offers(looks, "accent"));
+    TIDE_CHECK(offers(looks, "radius"));
+    open_document(CONTROL_VIEW("    GUI.Set$Theme(GUITheme { });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.SetTheme(GUITheme theme)"));
+    open_document(CONTROL_VIEW("    GUI.The$me(GUITheme { })\n    {\n    }"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.Theme(GUITheme theme, Block content)"));
+    open_document(CONTROL_VIEW("    var look = GUIThe$me { radius = 4 };\n    GUI.SetTheme(look);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "a theme names what it changes"));
+    // One form says the other's name
+    open_document(CONTROL_VIEW("    GUI.Theme(GUITheme { });"));
+    TIDE_CHECK(has(last_sent(), "GUI.Theme takes a block") && has(last_sent(), "GUI.SetTheme(...)"));
+#undef CONTROL_VIEW
     open_document("scene Main { }\nview V()\n{\n    GUI.Claim$Pointer();\n    GUI.ClaimKeyboard();\n    GUI.ShowKeyboard();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *claim = request("textDocument/hover");
@@ -2067,6 +2131,16 @@ TIDE_TEST(lsp_gui)
 
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
+
+    // Screen.Flip: a device's position, from the bottom left, as the screen's, from the top left
+    const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
+    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
+    open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw2D.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *flip = request("textDocument/hover");
+    TIDE_CHECK(has(flip, "Screen.Flip(float2 position) -> float2"));
+    TIDE_CHECK(has(flip, "counted from the screen's other edge"));
 
     // The cursor's lock: views ask for it and read whether it holds, and so
     // do the functions they call; the input's Sample only reads; the match
@@ -3039,6 +3113,237 @@ TIDE_TEST(lsp_ownership)
     TIDE_CHECK(has(request("textDocument/hover"), "local singleton ownership"));
     const char *tokens = request("textDocument/semanticTokens/full");
     TIDE_CHECK(has(tokens, ",1,5,5,9,1,0,6,9,3,0,0,10,9,5,3,")); // Share, then a class (3) and a parameter (5)
+}
+
+#define VERIFIED_TYPES                                                         \
+    GAME_TYPES                                                                 \
+    "component Dead { }\n"                                                     \
+    "component Box { float3 pos; local int bakes; }\n"                         \
+    "local singleton Seen { int count; }\n"
+
+// `verified` before a view's parameter, after its `with` and `without`: from
+// the world the server has confirmed. A keyword there, and a name anywhere else.
+TIDE_TEST(lsp_verified)
+{
+    start();
+    // Offered where a view's parameter starts, and after its `with` and `without`
+    const char *first = complete(VERIFIED_TYPES "view Bar($)\n{\n}\n");
+    TIDE_CHECK(offers(first, "verified") && offers(first, "mut") && offers(first, "Body"));
+    TIDE_CHECK(has(first, "As the server confirmed it, not as this machine predicts it"));
+    TIDE_CHECK(offers(complete(VERIFIED_TYPES "view Bar(Body body, $)\n{\n}\n"), "verified"));
+    const char *with = complete(VERIFIED_TYPES "view Corpses(Body body, with $)\n{\n}\n");
+    TIDE_CHECK(offers(with, "verified") && offers(with, "ownership") && offers(with, "Dead"));
+    TIDE_CHECK(has(with, "Entities that have it in the world the server has confirmed"));
+    const char *without = complete(VERIFIED_TYPES "view Fresh(Body body, without $)\n{\n}\n");
+    TIDE_CHECK(offers(without, "verified"));
+    TIDE_CHECK(has(without, "Entities that don't have it in the world the server has confirmed"));
+    // ...then what the confirmed world has: the match's components and singletons, never local state
+    const char *type = complete(VERIFIED_TYPES "view Bar(Body body, verified $)\n{\n}\n");
+    TIDE_CHECK(offers(type, "Body") && offers(type, "Dead") && offers(type, "Arena"));
+    TIDE_CHECK(!offers(type, "Seen") && !offers(type, "PlayerInput") && !offers(type, "verified"));
+    const char *filter = complete(VERIFIED_TYPES "view Corpses(Body body, with verified $)\n{\n}\n");
+    TIDE_CHECK(offers(filter, "Dead") && offers(filter, "Body") && !offers(filter, "Arena") && !offers(filter, "Seen"));
+    // Nowhere else: the match has nothing confirmed to read, and a function takes what it's passed
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Move(mut Body body, $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "local event(Spawned) Grow(Body body, $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "frag Shade(Vertex vertex, mut Color color, $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "void Heal(Body body, $)\n{\n}\n"), "verified"));
+    // It's offered where a parameter starts, as `mut` is, and not after one, though its type is: `mut verified Box box`
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "view Bar(mut $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(offers(complete(VERIFIED_TYPES "view Bar(mut verified $)\n{\n}\n"), "Box"));
+
+    // The word: its hover says what it means there, and it's a keyword
+    open_document(VERIFIED_TYPES "view Bar(Body mine, veri$fied Body sure, mut Seen seen)\n{\n"
+                                 "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "verified Body sure"));
+    TIDE_CHECK(has(hover, "The entity's `Body` as the last tick the server confirmed has it"));
+    TIDE_CHECK(has(hover, "The view runs for the entities it draws that are the same entity in the confirmed world too."));
+    // A keyword (11), 6 columns after the parameter `mine`, then the struct (2) it's of
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,5,4,5,3,0,6,8,11,0,0,9,4,2,0,"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "'verified' is a keyword before a parameter's type"));
+    // The view's hover and the parameter's show it
+    open_document(VERIFIED_TYPES "view Ba$r(Body mine, verified Body sure, mut Seen seen)\n{\n"
+                                 "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "view Bar(Body mine, verified Body sure, mut Seen seen)"));
+    open_document(VERIFIED_TYPES "view Bar(Body mine, verified Body su$re, mut Seen seen)\n{\n"
+                                 "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "verified Body sure"));
+    // A view of the confirmed world alone, a singleton, and the filters
+    open_document(VERIFIED_TYPES "view Sure(veri$fied Body body, mut Seen seen)\n{\n    if (body.radius > 0) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "All the view's components are `verified`, so it runs for the confirmed "
+                                                  "world's entities."));
+    open_document(VERIFIED_TYPES "view Board(Arena mine, veri$fied Arena sure, mut Seen seen)\n{\n"
+                                 "    if (mine.halfSize.x != sure.halfSize.x) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "`Arena` as the last tick the server confirmed has it"));
+    open_document(VERIFIED_TYPES "view Corpses(Body body, mut Seen seen, with veri$fied Dead)\n{\n"
+                                 "    if (body.radius > 0) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *has_it = request("textDocument/hover");
+    TIDE_CHECK(has(has_it, "with verified Dead"));
+    TIDE_CHECK(has(has_it, "Filter: the view runs for the entities that have `Dead` in the world the server has confirmed"));
+    open_document(VERIFIED_TYPES "view Fresh(Body body, mut Seen seen, without veri$fied Dead)\n{\n"
+                                 "    if (body.radius > 0) seen.count += 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *lacks_it = request("textDocument/hover");
+    TIDE_CHECK(has(lacks_it, "without verified Dead"));
+    TIDE_CHECK(has(lacks_it, "are in the world the server has confirmed and don't have `Dead` there"));
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,14,8,11,0,0,9,4,2,0,")); // After `seen, without`, then Dead
+
+    // In the match it's an error, still a keyword, and its hover says where it goes
+    open_document(VERIFIED_TYPES "system Move(veri$fied Body body, mut Arena arena)\n{\n    arena.halfSize.x = body.radius;\n}\n");
+    TIDE_CHECK(has(last_sent(), "the match is the same on every machine, so a system has nothing 'verified' to read"));
+    TIDE_CHECK(has(request("textDocument/hover"), "It goes before a component or singleton of the match in a view's parameters"));
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,5,8,11,0,0,9,4,2,0,")); // After `Move`
+
+    // The quick fixes keep the word where it goes: `mut` before it, and `with` before it
+    static const char unused[] = VERIFIED_TYPES "view Ghosts(Body body, verified Dead dead, mut Seen seen)\n{\n"
+                                                "    if (body.radius > 0) seen.count += 1;\n}\n";
+    open_document(unused);
+    TIDE_CHECK(has(last_sent(), "'dead' is never used"));
+    TIDE_CHECK(has(actions_at(25), "Only require it: 'with verified Dead'"));
+    TIDE_CHECK(has(apply_first_action(unused), "view Ghosts(Body body, with verified Dead, mut Seen seen)\n"));
+    static const char never_written[] = VERIFIED_TYPES "view Show(mut verified Box box, mut Seen seen)\n{\n"
+                                                       "    if (box.bakes > 0) seen.count += 1;\n}\n";
+    open_document(never_written);
+    TIDE_CHECK(has(last_sent(), "'box' is declared mut but never written"));
+    TIDE_CHECK(has(actions_at(25), "Remove 'mut' from 'box'"));
+    TIDE_CHECK(has(apply_first_action(never_written), "view Show(verified Box box, mut Seen seen)\n"));
+    static const char read_only[] = VERIFIED_TYPES "view Show(verified Box box)\n{\n    box.bakes += 1;\n}\n";
+    open_document(read_only);
+    TIDE_CHECK(has(last_sent(), "'box' is read-only"));
+    TIDE_CHECK(has(actions_at(27), "Declare 'box' as mut"));
+    TIDE_CHECK(has(apply_first_action(read_only), "view Show(mut verified Box box)\n"));
+
+    // The formatter keeps the word, a space from what's around it
+    static const char messy[] = VERIFIED_TYPES
+        "view Bar( Body mine,verified   Body sure ,mut Seen seen,without  verified Dead ){ if (mine.radius < sure.radius) seen.count += 1; }\n";
+    format_reply(messy);
+    TIDE_CHECK(has(apply_reply(messy, NULL), "view Bar(Body mine, verified Body sure, mut Seen seen, without verified Dead) { "));
+
+    // Anywhere else `verified` is a name: a singleton's, a field's, a parameter's
+    open_document("local singleton verified { int verified = 3; }\nscene Main { }\n"
+                  "int Twice(int verified) { return verified * 2; }\n"
+                  "view Share(veri$fied trust)\n{\n    if (Twice(trust.verified) > 1) Draw2D.Clear(Color.black);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "local singleton verified"));
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, ",1,5,5,9,1,0,6,8,3,0,0,9,5,5,3,")); // Share, then a class (3) and a parameter (5)
+}
+
+#define HEARD                                                                                                   \
+    GAME_TYPES                                                                                                  \
+    "event Hit { int damage; }\n"                                                                               \
+    "event Rang { int at; }\n"                                                                                  \
+    "local singleton Fx { int flashes; }\n"                                                                     \
+    "system Strike(with Body) { this.Send(Hit { damage = 2 }); Send(Rang { at = 1 }); }\n"                      \
+    "event(Hit hit) TakeHit(mut Body body) { body.radius -= hit.damage; }\n"                                    \
+    "local event(Hit hit) ShowHit(Body body, mut Fx fx) { if (body.radius > hit.damage) fx.flashes += 1; }\n"   \
+    "local event(verified Hit hit) SureHit(mut Fx fx) { fx.flashes += hit.damage; }\n"                          \
+    "local event(Rang rang) HearRang(mut Fx fx) { fx.flashes += rang.at; }\n"                                   \
+    "local event(Spawned) Born(Body body, mut Fx fx) { if (body.radius > 0) fx.flashes += 1; }\n"
+
+// Local handlers of the match's events: `local event(Hit hit) ShowHit(...)`
+// hears what the ticks sent, and `local event(verified Hit hit)` what the
+// server confirmed. Hovers, lenses and an event's implementations say so.
+TIDE_TEST(lsp_local_handlers_of_match_events)
+{
+    start();
+    open_document(HEARD);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // The handlers: what they hear, when, and where they run among their event's local handlers
+    const char *shows = request_at("file:///test.tide", "textDocument/hover", 27, 24, ""); // ShowHit
+    TIDE_CHECK(has(shows, "local event(Hit hit) ShowHit(Body body, mut Fx fx)"));
+    TIDE_CHECK(has(shows, "A local handler of the match's `Hit`: it runs on this machine at the start of a frame, before the views"));
+    TIDE_CHECK(has(shows, "for each `Hit` the ticks since the last frame sent to an entity that matches its parameters"));
+    TIDE_CHECK(has(shows, "It hears each once, whatever ticks are run again"));
+    TIDE_CHECK(has(shows, "Runs 1st of 2 local handlers of `Hit`."));
+    const char *sure = request_at("file:///test.tide", "textDocument/hover", 28, 33, ""); // SureHit
+    TIDE_CHECK(has(sure, "local event(verified Hit hit) SureHit(mut Fx fx)"));
+    TIDE_CHECK(has(sure, "for each `Hit` sent in the ticks the server confirmed since the last frame"));
+    TIDE_CHECK(has(sure, "It hears each once, when the server confirmed its tick"));
+    TIDE_CHECK(has(sure, "Runs 2nd of 2 local handlers of `Hit`."));
+    const char *born = request_at("file:///test.tide", "textDocument/hover", 30, 23, ""); // Born
+    TIDE_CHECK(has(born, "A local handler of the match's `Spawned`"));
+    // The match's own handler of the event is alone among the tick's
+    const char *takes = request_at("file:///test.tide", "textDocument/hover", 26, 17, ""); // TakeHit
+    TIDE_CHECK(has(takes, "Runs when a `Hit` is sent to an entity that matches its parameters, at the end of the tick."));
+    TIDE_CHECK(!has(takes, "handlers of"));
+
+    // `verified` before the event: a keyword (11), then the event (a struct, 2), its name and the handler's
+    const char *word = request_at("file:///test.tide", "textDocument/hover", 28, 14, "");
+    TIDE_CHECK(has(word, "event(verified Hit hit)"));
+    TIDE_CHECK(has(word, "The handler hears each `Hit` once, when the server confirmed the tick that sent it"));
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",1,12,8,11,0,0,9,3,2,0,0,4,3,5,3,0,5,7,9,1,"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 14, ""), "'verified' is a keyword"));
+
+    // The events: who hears them, and one nothing in the match handles
+    const char *hit = request_at("file:///test.tide", "textDocument/hover", 22, 7, "");
+    TIDE_CHECK(has(hit, "Sent with `Send`, and handled by `event(...)` handlers at the end of the tick."));
+    TIDE_CHECK(has(hit, "Local handlers hear it on each machine, at the start of a frame: `ShowHit`, `SureHit` (once the "
+                        "server confirmed it)."));
+    const char *rang = request_at("file:///test.tide", "textDocument/hover", 23, 7, "");
+    TIDE_CHECK(has(rang, "only for local code: no handler in the match takes it, so it costs the match nothing."));
+    TIDE_CHECK(has(rang, "at the start of a frame: `HearRang`."));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 30, 14, ""), "at the start of a frame: `Born`.")); // Spawned
+
+    // A lens above each, as above each system
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(has(lenses, "stage 1"));
+    TIDE_CHECK(has(lenses, "{\"range\":{\"start\":{\"line\":27,\"character\":21},\"end\":{\"line\":27,\"character\":28}},"
+                           "\"command\":{\"title\":\"hears Hit at the start of a frame\""));
+    TIDE_CHECK(has(lenses, "\"title\":\"hears Hit once the server confirmed it\""));
+    TIDE_CHECK(has(lenses, "\"title\":\"hears Rang at the start of a frame\""));
+    TIDE_CHECK(has(lenses, "\"title\":\"hears Spawned at the start of a frame\""));
+    TIDE_CHECK(count(lenses, "\"title\":\"hears ") == 4); // None for the match's handlers
+
+    // An event's implementations are all its handlers, and its uses their triggers too
+    const char *handlers = request_at("file:///test.tide", "textDocument/implementation", 22, 7, "");
+    TIDE_CHECK(has(handlers, "{\"line\":26,\"character\":15}")); // TakeHit
+    TIDE_CHECK(has(handlers, "{\"line\":27,\"character\":21}")); // ShowHit
+    TIDE_CHECK(has(handlers, "{\"line\":28,\"character\":30}")); // SureHit
+    TIDE_CHECK(count(handlers, "\"uri\"") == 3);
+    const char *uses = request_at("file:///test.tide", "textDocument/references", 22, 7, "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(uses, "\"uri\"") == 5); // Declared, sent, and handled three times
+    TIDE_CHECK(has(uses, "{\"line\":28,\"character\":21}")); // After `verified`
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"ShowHit\",\"detail\":\"local event handler\""));
+
+    // While the game has an error elsewhere, as it does while typing
+    open_document(HEARD "system Break(mut Body body)\n{\n    body.pos = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(count(request("textDocument/codeLens"), "\"title\":\"hears ") == 4);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 23, 7, ""), "only for local code"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/implementation", 22, 7, ""), "\"uri\"") == 3);
+
+    // Before the event of one of the match's own handlers it's an error, and its hover says where it goes
+    open_document(GAME_TYPES "event Hit { int damage; }\nsystem Strike(with Body) { this.Send(Hit { damage = 2 }); }\n"
+                             "event(veri$fied Hit hit) TakeHit(mut Body body) { body.radius -= hit.damage; }\n");
+    TIDE_CHECK(has(last_sent(), "so a match handler has no 'verified' events"));
+    TIDE_CHECK(has(request("textDocument/hover"), "and before a local handler's event."));
+
+    // Completion: `verified` where a local handler's event goes, then the match's events
+    const char *trigger = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event($)\n");
+    TIDE_CHECK(offers(trigger, "verified") && offers(trigger, "Hit") && offers(trigger, "Note") && offers(trigger, "Spawned"));
+    TIDE_CHECK(has(trigger, "Once the server confirmed the tick that sent the event"));
+    const char *confirmed = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event(verified $)\n");
+    TIDE_CHECK(offers(confirmed, "Hit") && offers(confirmed, "Spawned") && offers(confirmed, "PlayerJoined"));
+    TIDE_CHECK(!offers(confirmed, "Note") && !offers(confirmed, "Forgotten") && !offers(confirmed, "verified"));
+    // The match hears nothing confirmed, and a command comes from one machine
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent($)\n"), "verified"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "command Bump { }\ncommand($)\n"), "verified"));
+
+    // The formatter keeps the trigger's word
+    static const char messy[] = GAME_TYPES "event Hit { int damage; }\nlocal singleton Fx { int flashes; }\n"
+                                           "system Strike(with Body) { this.Send(Hit { damage = 2 }); }\n"
+                                           "local event( verified   Hit hit )SureHit(mut Fx fx){ fx.flashes += hit.damage; }\n";
+    format_reply(messy);
+    TIDE_CHECK(has(apply_reply(messy, NULL), "local event(verified Hit hit) SureHit(mut Fx fx) { fx.flashes += hit.damage; }\n"));
 }
 
 // An error nothing handles: carry on with the default, or pass it on.

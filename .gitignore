@@ -3,7 +3,8 @@ cmake-build-*/
 .cache/
 .idea/
 .vs/
-.claude/
+.claude/*
+!.claude/settings.json
 .codex/
 CMakeUserPresets.json
 docs/node_modules/

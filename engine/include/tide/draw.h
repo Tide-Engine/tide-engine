@@ -33,7 +33,7 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_RECT,        // a = center, b = size, color
     TIDE_DRAW_WIRE_RECT,   // a = center, b = size, color
     TIDE_DRAW_LINE,        // a = from, b = to, color
-    TIDE_DRAW_TEXT,        // a = top left corner, b.x = font size, color, text
+    TIDE_DRAW_TEXT,        // a = where its anchor is, b.x = font size, color, text, words
     TIDE_DRAW_SCREEN,      // The commands after it are in the screen's pixels
     TIDE_DRAW_MESH,        // mesh: its triangles, and the texture they sample
     TIDE_DRAW_CLIP,        // a = the corner where x and y are lowest, b = size
@@ -78,6 +78,12 @@ typedef struct tide_draw_command {
         struct {          // TIDE_DRAW_SHADED
             uint32_t run; // Its place in tide_draw_list.runs
         } shaded;
+        struct {             // TIDE_DRAW_TEXT, after its `a` and `b.x`
+            tide_float2 at;  // `a`
+            float size;      // `b.x`
+            uint32_t anchor; // tide_anchor: the place of its box that's at `a`
+            uint32_t bold;   // 1: in the bold weight, whose file is tide_draw_list.bold
+        } words;
     };
     tide_color color;
 } tide_draw_command;
@@ -86,6 +92,32 @@ typedef struct tide_draw_command {
 typedef struct tide_rect {
     float x, y, width, height;
 } tide_rect;
+
+// A place of a box, named as Unity's TextAnchor: which of a text's is at its
+// position, and where GUILayout.Area puts an area on the screen. Tide's
+// Anchor enum has the same values. Upper is towards the top of the screen.
+typedef enum tide_anchor {
+    TIDE_ANCHOR_UPPER_LEFT,
+    TIDE_ANCHOR_UPPER_CENTER,
+    TIDE_ANCHOR_UPPER_RIGHT,
+    TIDE_ANCHOR_MIDDLE_LEFT,
+    TIDE_ANCHOR_MIDDLE_CENTER,
+    TIDE_ANCHOR_MIDDLE_RIGHT,
+    TIDE_ANCHOR_LOWER_LEFT,
+    TIDE_ANCHOR_LOWER_CENTER,
+    TIDE_ANCHOR_LOWER_RIGHT,
+} tide_anchor;
+
+// The weights text is drawn in, each a file of the engine's font. C names a
+// weight by its file: TIDE_FONT_REGULAR, which every renderer has, or
+// TIDE_FONT_BOLD, whose file is in the platform layer's library, in an object
+// of its own. Nothing in the engine or the platform layer names that file, so
+// a program only carries it when its own code does: a game's C that draws in
+// bold, or the C generated for a game that says `Font.Bold`. A program that
+// names it links the platform layer, or defines the array itself.
+extern const unsigned char tide_font_bold_ttf[];
+#define TIDE_FONT_REGULAR ((const unsigned char *)0)
+#define TIDE_FONT_BOLD tide_font_bold_ttf
 
 // What a shape with smooth edges is: a box, whose corners can be round, the
 // ellipse that fits its size, or part of a ring.
@@ -416,6 +448,7 @@ typedef struct tide_draw_list {
     tide_draw_shape_data *shapes; // The TIDE_DRAW_SHAPE commands' shapes
     uint32_t shape_count;
     uint32_t shape_capacity;
+    const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t clipped; // Whether a clip is on for the commands to come
     uint32_t camera_2d; // 1 + the current 2D camera or screen command, or 0 for the default
@@ -540,6 +573,16 @@ void tide_draw_arc(tide_draw_list *d, tide_float2 center, float radius, float st
 // height of a line of it, with its capitals in the line's middle. A newline
 // starts another line under it. The text is copied into the list.
 void tide_draw_text(tide_draw_list *d, const char *text, tide_float2 position, float size, tide_color color);
+
+// The same, with `position` the place `anchor` names of the text's box,
+// which is as wide as its widest line and as tall as its lines: its middle
+// for TIDE_ANCHOR_MIDDLE_CENTER, its top right corner for
+// TIDE_ANCHOR_UPPER_RIGHT. Upper is towards the top of the screen, under a
+// camera too. Each line is against the anchor's side: lines start at a left
+// anchor, end at a right one, and are centered on one between. `font` is the
+// weight it's drawn in: TIDE_FONT_REGULAR or TIDE_FONT_BOLD.
+void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position, float size, tide_color color,
+                       tide_anchor anchor, const unsigned char *font);
 
 // Triangles: three of `indices` each, places in `vertices`, both copied into
 // the list. Each pixel is its corners' colors blended across the triangle,
@@ -696,8 +739,8 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 // `screen_size` is the window's width and height in logical pixels. When a
 // target is selected, its dimensions are used instead. Screen
 // positions are from the top left, with y down, as tide_draw_screen and the
-// GUI's are. Device positions are from the bottom left: change their y to
-// screen_size.y - y before passing them here.
+// GUI's are. Device positions are from the bottom left:
+// tide_draw_screen_flip gives them as screen positions.
 //
 // Each target keeps its own cameras. The 2D helpers use its most recent
 // 2D camera or screen command, or the
@@ -706,6 +749,12 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 // leave the 3D camera as it was. Neither needs a frame to have been rendered.
 tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
 tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+
+// The same point counted from the window's other edge: a device position
+// (pixels from the bottom left, y up) as a screen position (from the top left,
+// y down), and a screen position as a device's. It's the window's whatever
+// target is selected, as the devices are.
+tide_float2 tide_draw_screen_flip(tide_float2 point, tide_float2 screen_size);
 
 // The 3D helpers use the most recent 3D camera, or the default perspective
 // camera. A screen position's z is depth: 0 at the near plane, 1 at the far
@@ -731,20 +780,21 @@ tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, tide_float2 
 // next. Text is fitted to the pixels it's drawn on, so where it's drawn is
 // part of the answer: in the window, whose units are its logical pixels, or
 // (`target`) in a render target, whose units are its own pixels. The platform
-// measures with its font (tide_platform_measure_text).
-typedef tide_float2 (*tide_measure_fn)(const char *text, float size, bool target);
+// measures with its font (tide_platform_measure_text), in the weight `font`
+// is the file of: TIDE_FONT_REGULAR or TIDE_FONT_BOLD.
+typedef tide_float2 (*tide_measure_fn)(const char *text, float size, bool target, const unsigned char *font);
 
 // What stands in for a host's tide_measure_fn when it has none (NULL), as
-// tests and servers do: a guess, on the wide side.
-tide_float2 tide_draw_guess_text(const char *text, float size, bool target);
+// tests and servers do: a guess, on the wide side, the same for every weight.
+tide_float2 tide_draw_guess_text(const char *text, float size, bool target, const unsigned char *font);
 
-// The size of `text` as tide_draw_text would draw it now, at `size`, in the
-// units the commands recorded next are in: the screen's pixels after
-// tide_draw_screen, and world units through the current 2D camera, which
-// draws text as many times bigger as it has pixels to a unit. `x` is its
-// widest line's width and `y` the height of its lines, both from the
-// position tide_draw_text takes, its top left corner. `screen_size` is as for
-// the coordinate helpers above, and `measure` the renderer's, or NULL to
-// guess. Nothing for a size that isn't above 0, as nothing is drawn.
-tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, tide_float2 screen_size,
-                                   tide_measure_fn measure);
+// The size of `text` as tide_draw_text_at would draw it now, at `size` in the
+// weight `font` is the file of, in the units the commands recorded next are
+// in: the screen's pixels after tide_draw_screen, and world units through the
+// current 2D camera, which draws text as many times bigger as it has pixels
+// to a unit. `x` is its widest line's width and `y` the height of its lines:
+// its box, which an anchor names a place of. `screen_size` is as for the
+// coordinate helpers above, and `measure` the renderer's, or NULL to guess.
+// Nothing for a size that isn't above 0, as nothing is drawn.
+tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, const unsigned char *font,
+                                   tide_float2 screen_size, tide_measure_fn measure);

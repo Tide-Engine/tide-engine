@@ -1,0 +1,12 @@
+// expect: 'Flash' needs the entity a Hit is sent to, and this Send has none
+component Body { float2 position; }
+event Hit { int damage; }
+local singleton Log { float x; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Send(Hit); }
+
+local event(Hit hit) Flash(Body body, mut Log log)
+{
+    log.x = body.position.x;
+}

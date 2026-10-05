@@ -1,0 +1,7 @@
+// expect: no version of GUI.Label takes (Rect, string, Font)
+scene Main { }
+
+view Show()
+{
+    GUI.Label(Rect(0, 0, 100, 20), "DUEL", Font.Bold);
+}

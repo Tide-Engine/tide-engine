@@ -106,7 +106,7 @@ system Heal(Healer healer, mut World world)
 
 The signature doesn't say which components a system reaches this way: the engine reads it off the calls. Each counts as access to every entity's component, so the system is scheduled like one that touches them all, and one that calls `Set` runs on one thread. [The schedule](./schedule.md#through-the-world) and your editor show what each system reads and writes through its `World`. Where the change can wait for the end of the tick, an event (`e.Send(Hit { ... })`) keeps systems running side by side; see [Events](./events.md).
 
-A system changes its own entity's component through the parameter, not through `Set`: `Set<Health>` in a system that also takes `Health` is an error. Views and event handlers take a `World` too; a view only reads the match through it.
+A system changes its own entity's component through the parameter, not through `Set`: `Set<Health>` in a system that also takes `Health` is an error. Views and event handlers take a `World` too; a view only reads the match through it. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
 
 ## Once per entity, or once per tick
 
