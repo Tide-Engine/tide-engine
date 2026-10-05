@@ -1,0 +1,152 @@
+// Frame.dt: how long this machine's frame is, as its host says before each
+// one. Local code reads it, in a match and with none: views, the functions
+// they call, local handlers and local tasks.
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 1;
+}
+
+local singleton Clock
+{
+    float seen;     // What the last frame's view read
+    float total;    // Added up by a view that runs with no match too
+    float inMatch;  // ...and by a view of the match's entities
+    float helper;   // Read by a function, through another
+    int nearest;    // What a comparison in a function picked by it
+    float handled;  // Read by a local handler
+    float tweened;  // Added up by a local task, a frame at a time
+    float before;   // Read as the menu opened, before any frame, plus one
+    int frames;
+    bool tween;
+    bool burst;
+    bool play;
+    List<Spark> sparks;
+}
+
+local singleton Field
+{
+    Grid2<float> cells = Grid2(4, 4);
+    float corner;
+}
+
+component Ball
+{
+    float2 position;
+}
+
+// The program starts in a menu, with no match.
+local scene Main { }
+
+scene Arena { }
+
+event(Spawned) Setup(with Arena)
+{
+    Spawn(Ball { position = float2(1, 2) });
+}
+
+local event(Spawned) Open(mut Clock clock, with Main)
+{
+    clock.before = Frame.dt + 1;
+}
+
+float Step()
+{
+    return Frame.dt;
+}
+
+float TwoSteps()
+{
+    return Step() * 2;
+}
+
+// The mark nearest to where `speed` gets in a frame.
+int Nearest(float speed)
+{
+    mut List<float> marks = [3, 1, 2];
+    marks.Sort(a, b) { return Math.Abs(a - speed * Frame.dt) < Math.Abs(b - speed * Frame.dt); }
+    return int(marks[0]);
+}
+
+view Tick(mut Clock clock)
+{
+    clock.seen = Frame.dt;
+    clock.total += Frame.dt;
+    clock.helper = TwoSteps();
+    clock.nearest = Nearest(8);
+    clock.frames += 1;
+    if (clock.play)
+    {
+        clock.play = false;
+        Session.Start(Arena);
+    }
+}
+
+// Sparks fly and fade at the same speed whatever the frame rate.
+view Sparks(mut Clock clock)
+{
+    if (clock.burst)
+    {
+        clock.burst = false;
+        clock.sparks.Add(Spark { velocity = float2(8, -4) });
+        clock.sparks.Add(Spark { velocity = float2(-2, 6), life = 0.5 });
+    }
+    mut var i = 0;
+    while (i < clock.sparks.count)
+    {
+        mut var spark = clock.sparks[i];
+        spark.age += Frame.dt;
+        if (spark.age >= spark.life)
+        {
+            clock.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.position += spark.velocity * Frame.dt;
+        clock.sparks[i] = spark;
+        i++;
+    }
+}
+
+// Once for each of the match's balls: not at all with no match.
+view Balls(Ball ball, mut Clock clock)
+{
+    clock.inMatch += Frame.dt * ball.position.x;
+}
+
+// Every cell at once reads it too.
+view Grow(mut Field field)
+{
+    parallel (var at in field.cells)
+    {
+        field.cells[at] += Frame.dt;
+    }
+    field.corner = field.cells[3, 3];
+}
+
+local event Ping { }
+
+local event(Ping) Heard(mut Clock clock)
+{
+    clock.handled = Frame.dt;
+}
+
+// A tween: a task that goes on once a frame adds up the frames it saw.
+async void Tween(mut Clock clock)
+{
+    for (var i = 0; i < 3; i++)
+    {
+        clock.tweened += Step();
+        await Wait.Frames(1);
+    }
+}
+
+view Start(mut Clock clock)
+{
+    if (!clock.tween) return;
+    clock.tween = false;
+    Tween(clock);
+    Send(Ping);
+}
