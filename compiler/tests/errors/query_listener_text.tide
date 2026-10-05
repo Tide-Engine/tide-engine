@@ -1,0 +1,9 @@
+// expect: 'title' is text of the match's, which a local handler doesn't hear yet
+component Name { string title; }
+event Hit { int damage; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Name { title = "Ada" }).Send(Hit { damage = 1 }); }
+local event(Hit hit) Show(query (Name name) names)
+{
+    foreach (var row in names) Debug.Log($"{row.name.title} {hit.damage}");
+}

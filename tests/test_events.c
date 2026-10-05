@@ -178,3 +178,105 @@ TIDE_TEST(events_of_another_build_are_dropped)
     tide_event_log_free(&log);
     tide_event_log_free(&taker);
 }
+
+// A tick's rows (TIDE_HEARD_ROWS), which come after its events: `rows` of 8
+// bytes each, numbered `which`, pushed with more room than they turn out to need.
+static void recorded(tide_event_log *run, const uint64_t which, const uint32_t rows, const uint8_t wants)
+{
+    tide_heard *heard = tide_event_log_push(run, (uint32_t)sizeof *heard + rows * 8u + 64u, BUILD);
+    heard->event = TIDE_HEARD_ROWS;
+    heard->handlers = which;
+    heard->same = rows;
+    heard->wants = wants;
+    for (uint32_t i = 0; i < rows; i++) ((uint64_t *)(heard + 1))[i] = which * 100u + i;
+    tide_event_log_trim(run, heard, (uint32_t)sizeof *heard + rows * 8u);
+}
+
+// The first event in `log` numbered `event`, and where it ends.
+static const tide_heard *find(const tide_event_log *log, const uint16_t event, uint32_t *at)
+{
+    *at = 0;
+    for (const tide_heard *heard; (heard = tide_event_log_next(log, at));) {
+        if (heard->event == event) return heard;
+    }
+    return NULL;
+}
+
+TIDE_TEST(events_rows_go_where_an_event_that_reads_them_goes)
+{
+    tide_event_log out = {.taken = true};
+    tide_hearing h = {0};
+    tide_hearing_init(&h, 8, &out);
+    const uint8_t reads = BOTH | TIDE_HEARD_READS_ROWS;
+    uint32_t at = 0;
+
+    // Tick 5: an event whose handlers read rows, one whose don't, then the
+    // tick's rows, the second of them only for handlers of confirmed ticks
+    tide_event_log *run = tide_hearing_begin(&h, 5);
+    sent(run, 1, 10, 100, 0xA, reads);
+    sent(run, 2, 0, 0, 0xB, BOTH);
+    recorded(run, 0, 3, BOTH);
+    recorded(run, 1, 2, TIDE_HEARD_VERIFIED);
+    TIDE_CHECK(run->count == 4 && run->size == 4u * sizeof(tide_heard) + 2u * 8u + 3u * 8u + 2u * 8u); // Trimmed to what they hold
+    tide_hearing_end(&h, 5);
+    TIDE_CHECK(out.count == 3 && count(&out, TIDE_HEARD_PREDICTED, TIDE_HEARD_ROWS) == 1);
+    const tide_heard *event = find(&out, 1, &at);
+    const tide_heard *rows = tide_event_log_rows(&out, at, event, 0);
+    TIDE_REQUIRE(event && rows);
+    TIDE_CHECK(rows->tick == 5 && tide_heard_row_count(rows, 8) == 3 && ((const uint64_t *)(rows + 1))[2] == 2);
+    TIDE_CHECK(tide_heard_row_count(rows, 16) == 0 && tide_heard_row_count(NULL, 8) == 0); // Not as big as it says
+    TIDE_CHECK(tide_event_log_rows(&out, at, event, 1) == NULL);
+    tide_event_log_clear(&out);
+
+    // Run again, the same: its events stay silent, and its rows go nowhere
+    run = tide_hearing_begin(&h, 5);
+    sent(run, 1, 10, 100, 0xA, reads);
+    sent(run, 2, 0, 0, 0xB, BOTH);
+    recorded(run, 0, 4, BOTH);
+    recorded(run, 1, 2, TIDE_HEARD_VERIFIED);
+    tide_hearing_end(&h, 5);
+    TIDE_CHECK(out.count == 0);
+
+    // Again, with a new event whose handlers read none: it goes alone
+    run = tide_hearing_begin(&h, 5);
+    sent(run, 1, 10, 100, 0xA, reads);
+    sent(run, 3, 0, 0, 0xC, BOTH);
+    recorded(run, 0, 4, BOTH);
+    tide_hearing_end(&h, 5);
+    TIDE_CHECK(out.count == 1 && count(&out, TIDE_HEARD_PREDICTED, 3) == 1);
+    tide_event_log_clear(&out);
+
+    // Again, with a new one that reads them: this run's rows go with it
+    run = tide_hearing_begin(&h, 5);
+    sent(run, 1, 10, 100, 0xA, reads);
+    sent(run, 4, 10, 100, 0xD, reads);
+    recorded(run, 0, 5, BOTH);
+    recorded(run, 1, 2, TIDE_HEARD_VERIFIED);
+    tide_hearing_end(&h, 5);
+    TIDE_CHECK(out.count == 2);
+    event = find(&out, 4, &at);
+    TIDE_REQUIRE(event != NULL);
+    TIDE_CHECK(tide_heard_row_count(tide_event_log_rows(&out, at, event, 0), 8) == 5);
+
+    // Another tick's rows, after it in the log, aren't this one's
+    run = tide_hearing_begin(&h, 6);
+    sent(run, 5, 0, 0, 0xE, reads);
+    recorded(run, 1, 7, BOTH);
+    tide_hearing_end(&h, 6);
+    TIDE_CHECK(tide_event_log_rows(&out, at, event, 1) == NULL);
+    event = find(&out, 5, &at);
+    TIDE_REQUIRE(event != NULL);
+    TIDE_CHECK(tide_heard_row_count(tide_event_log_rows(&out, at, event, 1), 8) == 7);
+    tide_event_log_clear(&out);
+
+    // Confirmed as it last ran: its events and both its rows, as verified
+    tide_hearing_confirm(&h, 5);
+    TIDE_CHECK(out.count == 4 && count(&out, TIDE_HEARD_VERIFIED, 0) == 4);
+    event = find(&out, 4, &at);
+    TIDE_REQUIRE(event != NULL);
+    TIDE_CHECK(tide_heard_row_count(tide_event_log_rows(&out, at, event, 0), 8) == 5);
+    rows = tide_event_log_rows(&out, at, event, 1);
+    TIDE_CHECK(tide_heard_row_count(rows, 8) == 2 && rows && ((const uint64_t *)(rows + 1))[1] == 101);
+    tide_hearing_free(&h);
+    tide_event_log_free(&out);
+}
