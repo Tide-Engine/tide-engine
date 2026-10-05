@@ -171,3 +171,26 @@ TIDE_TEST(box3d_views_glide_through_a_correction)
     tide_world_free(&b);
     tide_world_free(&previous);
 }
+
+// ---------------------------------------------------------------------------
+// An impulse where a body is spawned
+
+TIDE_TEST(box3d_gives_a_new_body_its_impulse)
+{
+    start(&a, Case_Impulse);
+    tick(&a, 2);
+    const Box3D_Body thrown = body_of(&a, tide_has_Thrown);
+    printf("    spawned with an impulse of 3000 and an angular one of 500, a crate goes at %g and turns at %g\n", (double)thrown.velocity.x,
+           (double)thrown.angularVelocity.z);
+    // A crate a meter wide weighs a ton, and turns as a sixth of that
+    TIDE_CHECK(near(thrown.velocity.x, 3.0f) && thrown.velocity.y == 0.0f && near(thrown.angularVelocity.z, 3.0f));
+    TIDE_CHECK(thrown.impulse.x == 0.0f && thrown.angularImpulse.z == 0.0f); // Given, once
+    tick(&a, 1);
+    // ...as the same impulses do that are written into a body that's there
+    const Box3D_Body nudged = body_of(&a, tide_has_Nudged);
+    TIDE_CHECK(nudged.velocity.x == thrown.velocity.x && nudged.velocity.y == thrown.velocity.y
+               && nudged.angularVelocity.z == thrown.angularVelocity.z);
+    tick(&a, 30);
+    TIDE_CHECK(body_of(&a, tide_has_Thrown).velocity.x == thrown.velocity.x); // And not again
+    tide_world_free(&a);
+}

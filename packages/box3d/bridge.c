@@ -169,10 +169,14 @@ static bool shared;   // The running step's tasks go to other threads
 
 // The bodies the running tick's Enter made, in the order it made them, each
 // with its entity, for the system after it to take (b3t_made): the match keeps
-// whose each body is in a map, which is Tide's to write.
+// whose each body is in a map, which is Tide's to write. And each with the
+// impulses its component was spawned with, which the step gives it (push_new):
+// a body has no weight to push until its shapes are on it, later in the tick.
 typedef struct new_body {
     int64_t body;
     tide_entity entity;
+    tide_float3 impulse;
+    tide_float3 angular_impulse;
 } new_body;
 
 static new_body *made;
@@ -354,6 +358,11 @@ static tide_float3 float3(const b3Vec3 v)
 static bool same(const tide_float3 a, const tide_float3 b)
 {
     return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+static bool none(const tide_float3 v)
+{
+    return v.x == 0 && v.y == 0 && v.z == 0;
 }
 
 static bool same_turn(const tide_quaternion a, const tide_quaternion b)
@@ -573,13 +582,17 @@ static bool sync_body(body *b)
             did |= 8u;
         }
     }
-    if (b->impulse.x != 0 || b->impulse.y != 0 || b->impulse.z != 0) {
-        b3Body_ApplyLinearImpulseToCenter(id, vec(b->impulse), true);
+    // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
+    // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
+    // Either way they're given once, and noted here
+    const bool is_new = did & 1u;
+    if (!none(b->impulse)) {
+        if (!is_new) b3Body_ApplyLinearImpulseToCenter(id, vec(b->impulse), true);
         b->impulse = (tide_float3){0, 0, 0};
         did |= 16u;
     }
-    if (b->angular_impulse.x != 0 || b->angular_impulse.y != 0 || b->angular_impulse.z != 0) {
-        b3Body_ApplyAngularImpulse(id, vec(b->angular_impulse), true);
+    if (!none(b->angular_impulse)) {
+        if (!is_new) b3Body_ApplyAngularImpulse(id, vec(b->angular_impulse), true);
         b->angular_impulse = (tide_float3){0, 0, 0};
         did |= 32u;
     }
@@ -657,13 +670,15 @@ void b3t_enter(tide_rows *rows, physics *p)
         if (!wrote[i % AT_ONCE]) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
+        const tide_float3 impulse = b.impulse;
+        const tide_float3 angular_impulse = b.angular_impulse;
         if (sync_body(&b)) {
             if (made_count == made_room) {
                 const int32_t room = made_room ? made_room * 2 : 64;
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i]};
+            made[made_count++] = (new_body){b.id, entities[i], impulse, angular_impulse};
         }
         if (synced_count == synced_room) {
             const int32_t room = synced_room ? synced_room * 2 : 64;
@@ -803,6 +818,23 @@ static void note_left(const world *w)
     synced_count = 0;
 }
 
+// The impulses the bodies made this tick were spawned with, given now that
+// their shapes are on them and they weigh something: as an impulse written
+// into a body that's there is, a tick sooner. In the order the bodies were
+// made, and noted with them (sync_body), so nothing is noted here. They're
+// calls an image in parts follows, as the ones Enter makes are.
+static void push_new(const world *w)
+{
+    for (int32_t i = 0; i < made_count; i++) {
+        const new_body *n = &made[i];
+        if (none(n->impulse) && none(n->angular_impulse)) continue;
+        const b3BodyId id = body_of(w, n->body);
+        if (!b3Body_IsValid(id)) continue;
+        if (!none(n->impulse)) b3Body_ApplyLinearImpulseToCenter(id, vec(n->impulse), true);
+        if (!none(n->angular_impulse)) b3Body_ApplyAngularImpulse(id, vec(n->angular_impulse), true);
+    }
+}
+
 int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravity)
 {
     world *w = active;
@@ -812,6 +844,7 @@ int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravi
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
+    push_new(w);
     b3World_SetGravity(w->id, vec(gravity));
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
