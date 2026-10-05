@@ -41,14 +41,18 @@ typedef struct tide_textref tide_textref;
 // GUI: tide_gui_begin works out what changed since last frame, and hides what
 // the GUI is using from them too.
 //
-// A view that draws widgets of its own, or a library's, claims what they use
-// (GUI.ClaimPointer, GUI.ClaimKeyboard), each frame it uses it: from the end
-// of that frame to the end of the next, it's hidden from the game and from the
-// other views as what the GUI uses is, and the view that claimed it goes on
-// reading it. A view that says where its widget is (GUI.ClaimPointer(rect))
-// has the pointer wherever it's on it, from the frame it comes there. The
-// GUI's own use comes first: a view never reads what the GUI is using,
-// whatever it claimed.
+// A view's own widgets are controls (GUI.Control): the view draws one however
+// it likes, and the GUI says what the player does with it, as it would for a
+// button of its own. The GUI draws nothing for it.
+//
+// A view with widgets that read the devices themselves, like a library's,
+// claims what they use (GUI.ClaimPointer, GUI.ClaimKeyboard), each frame it
+// uses it: from the end of that frame to the end of the next, it's hidden from
+// the game and from the other views as what the GUI uses is, and the view that
+// claimed it goes on reading it. A view that says where its widget is
+// (GUI.ClaimPointer(rect)) has the pointer wherever it's on it, from the frame
+// it comes there. The GUI's own use comes first: a view never reads what the
+// GUI is using, whatever it claimed.
 //
 // A modal (GUILayout.Modal) takes the whole screen while it's up: the widgets
 // outside it stop working, the focus goes to its first widget, the game and
@@ -68,8 +72,14 @@ typedef struct tide_textref tide_textref;
 //
 // Widgets have IDs, which generated code derives from where they're called
 // (see tide_gui_id). Keyboard and gamepad navigation are built in: Tab, the
-// arrows or the d-pad move the focus between widgets, Enter, Space or the south
-// button press, Escape or the east button let go.
+// arrows or the d-pad move the focus between widgets, in the order they're
+// called, Enter, Space or the south button press, Escape or the east button
+// let go. Left and right step a slider's or a number field's value, and move
+// the focus from the other widgets.
+//
+// The GUI's own widgets look as its theme says (tide_gui_theme: their colors
+// and their corners), which every frame starts as the default
+// (GUI.SetTheme, GUI.Theme).
 
 #ifndef TIDE_GUI_MAX_DEPTH
 #define TIDE_GUI_MAX_DEPTH 32 // Containers and Disabled blocks open at once
@@ -93,6 +103,32 @@ typedef struct tide_textref tide_textref;
 #define TIDE_GUI_MAX_CLAIM_RECTS 256 // Places views claim the pointer at, per frame
 #endif
 
+// How the GUI's own widgets look: their colors, and how round their corners
+// are. Tide's GUITheme has the same fields. Every frame starts with the
+// default (tide_gui_theme_default), and a theme is that with what it changes.
+// The stats overlay and the debug views aren't the GUI's widgets: they keep
+// their own look.
+typedef struct tide_gui_theme {
+    tide_color text;      // Text, and a slider's thumb
+    tide_color panel;     // An area's background
+    tide_color control;   // A button, a toggle's box, a slider's rail and a color's frame
+    tide_color hot;       // ...with the pointer on it
+    tide_color pressed;   // ...held down
+    tide_color field;     // A field to type into
+    tide_color field_hot; // ...with the pointer on it
+    tide_color accent;    // The focus's outline, a toggle's check and a slider's filled part
+    float radius;         // Their corners', in pixels: 0 for square ones. No rounder than half a part's smaller side
+} tide_gui_theme;
+
+// What the player is doing with a control (GUI.Control). Tide's GUIControl
+// has the same fields.
+typedef struct tide_control {
+    bool hovered; // The pointer is on it, with nothing of the GUI's over it
+    bool pressed; // The pointer holds it: from a press on it until it lets go, wherever it goes meanwhile
+    bool focused; // The keyboard and the gamepad are on it
+    bool clicked; // A press on it let go on it, or Enter, Space or the south button went down with the focus on it
+} tide_control;
+
 typedef struct tide_gui_group {
     uint32_t id;
     uint32_t kind;            // Vertical, horizontal or area
@@ -111,8 +147,11 @@ typedef struct tide_gui_group {
     uint32_t hot_before;      // An area: what was under the mouse before its content
     uint32_t rects_before;    // An area: how many places were remembered before its content
     uint32_t in_modal_before; // The modal it's in, back when it closes
+    float radius;             // An area: its background's corners, as the theme had them when it opened
     bool disabled;            // Its widgets are grayed out and don't work: it's in a Disabled block
-    bool scope;               // A Disabled block: the container around it, carried on, and handed back when it closes
+    bool scope;               // A Disabled or Theme block: the container around it, carried on, and handed back when it closes
+    bool themed;              // A Theme block...
+    tide_gui_theme before;    // ...and the theme it found, which is back when it closes
 } tide_gui_group;
 
 // A container's size last frame, which lays out the next.
@@ -183,6 +222,7 @@ typedef struct tide_gui {
     tide_gui_claim_rect claim_rects_next[TIDE_GUI_MAX_CLAIM_RECTS];
     uint32_t claim_rect_count, claim_rect_count_next;
     bool keyboard_shown, keyboard_shown_next; // A view asked for the phone's keyboard (GUI.ShowKeyboard)
+    bool navigate, navigate_next;             // A view said a menu is up (GUI.Navigate)
     bool cursor_lock, cursor_lock_next;       // A view asked for the cursor's lock (Cursor.Lock)
     // Where the frame's views say how long each took (tide/profile.h), or
     // NULL: nothing is measured. The host's, set before each tide_frame.
@@ -196,6 +236,13 @@ typedef struct tide_gui {
     bool active_seen, claimed;
     uint32_t focus;                   // The widget the keyboard and gamepad are on
     bool focus_seen;
+    // The control that has the focus and the view that called it, which goes
+    // on reading the keyboard and the gamepad, less the keys that move the
+    // focus and click
+    uint32_t focus_control, focus_view;
+    bool focus_reads;                 // ...this frame, as these have them
+    tide_keyboard focus_keyboard;
+    tide_gamepad focus_gamepad;
     uint32_t editing;                 // The field being typed into
     bool editing_seen;
     uint32_t edit_len;
@@ -213,9 +260,13 @@ typedef struct tide_gui {
     uint32_t in_modal;                // The modal whose content is being drawn
     uint32_t grab;                    // A modal just came on top: its first widget takes the focus
     uint32_t nav[TIDE_GUI_MAX_NAV];   // This frame's widgets, in order
+    bool nav_steps[TIDE_GUI_MAX_NAV]; // ...and whether each steps its value with left and right
     uint32_t nav_count;
     uint32_t nav_last[TIDE_GUI_MAX_NAV]; // Last frame's
+    bool nav_steps_last[TIDE_GUI_MAX_NAV];
     uint32_t nav_last_count;
+
+    tide_gui_theme theme; // How widgets drawn now look (GUI.SetTheme, GUI.Theme)
 
     tide_gui_group groups[TIDE_GUI_MAX_DEPTH + 1]; // [0] is the screen's own
     int depth;
@@ -287,6 +338,13 @@ void tide_gui_claim_pointer_at(tide_gui *g, tide_rect rect);
 // phones show their keyboard. Called every frame they are.
 void tide_gui_show_keyboard(tide_gui *g);
 
+// GUI.Navigate: a menu is up, so the arrows, the d-pad and the left stick can
+// start moving the focus though the game reads the devices. Without it they
+// only move a focus that's there, so they never take a HUD's button away from
+// the game. Called every frame the menu is up. Once a widget has the focus,
+// the keyboard and the gamepad are hidden from the game, as ever.
+void tide_gui_navigate(tide_gui *g);
+
 // Cursor.Lock: a view wants the mouse for itself, so the window holds the
 // cursor, hidden (see tide_gui_cursor_lock). Called every frame it does: the
 // cursor comes back once a frame goes by without it.
@@ -299,6 +357,25 @@ uint32_t tide_gui_seed(uint32_t a, uint32_t b);
 // entities a view runs for and the places a function is called from. Calls
 // from the same site with the same seed, as in a loop, count up.
 uint32_t tide_gui_id(tide_gui *g, uint32_t seed, uint32_t site);
+
+// The look every frame starts with.
+tide_gui_theme tide_gui_theme_default(void);
+
+// GUI.SetTheme: the GUI's widgets look as `theme` says from here on, in this
+// view and the ones after it, until it's set again or the frame ends.
+void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
+
+// GUI.Control: a widget the caller draws itself, at `rect`. The GUI draws
+// nothing for it, and handles its input as a button's: the pointer on it is
+// the GUI's, so a press there never reaches the game or the views, from the
+// frame it lands in; the focus moves to it and from it with the other widgets,
+// in the order they're called; and a Disabled block or a modal over it stops
+// it as it stops any widget: then nothing of it is true. While it has the
+// focus, the view that called it goes on reading the keyboard and the
+// gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter,
+// Space and Escape, and the d-pad, the left stick and the south and east
+// buttons.
+tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
 
 // Widgets at a rect (GUI). The ones with a value change it, and return whether
 // they did; a button returns whether it was pressed.
@@ -346,4 +423,7 @@ int tide_gui_begin_modal(tide_gui *g, uint32_t id, int32_t anchor, bool *open);
 // and let go of what they had. It lays out nothing: its widgets go on in the
 // container around it. Inside another, it stays disabled whatever `disabled` is.
 int tide_gui_begin_disabled(tide_gui *g, bool disabled);
+// GUI.Theme: widgets until the matching close look as `theme` says, and then
+// as they did before it. It lays out nothing, like a Disabled block.
+int tide_gui_begin_theme(tide_gui *g, tide_gui_theme theme);
 void tide_gui_close(tide_gui *g, int depth);

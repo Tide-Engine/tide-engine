@@ -1,0 +1,3 @@
+// expect: a GUITheme is written with the fields it changes, like 'GUI.SetTheme(GUITheme { control = Color.red, radius = 8 });'
+scene Main { }
+view Look() { GUI.SetTheme(Color.red); }
