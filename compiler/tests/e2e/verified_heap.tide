@@ -1,0 +1,166 @@
+// What a world keeps in its heap, read through `verified` parameters: text,
+// lists, maps, sets and grids of the world the server confirmed, beside those
+// of the world a view draws. Every tick adds to them and rewrites them, so two
+// worlds that ticked differently hold different things at different places,
+// and a view that read one world's through the other's heap would say so.
+
+struct Item
+{
+    string name;
+    int count;
+}
+
+component Pack
+{
+    int id;
+    int n; // Ticks it has seen
+    string label;
+    List<int> scores;
+    List<Item> items;        // Elements with text in them
+    List<string> tags;
+    Map<int, int> byId;
+    Map<string, int> byName; // Text for keys
+    Map<int, Item> slots;    // ...and in values
+    Set<string> seen;
+}
+
+singleton Board
+{
+    int n;
+    string title;
+    List<int> row;
+    List<string> notes;
+    Grid2<int> cells = Grid2(64, 64);
+}
+
+// What the views read, as text a test compares
+local singleton Probe
+{
+    string drawn;      // Pack 1 as it's drawn...
+    string sure;       // ...and as confirmed, in the same view
+    string copied;     // The confirmed one through a copy of the whole value, and a function that takes it
+    string only;       // Every pack, by a view of the confirmed world's entities
+    string board;      // The singleton as drawn
+    string sureBoard;  // ...and as confirmed
+    List<Item> kept;   // Confirmed items put in local state: this machine's own copy
+    string keptLabel;
+    int grown;         // A list taken out and changed: the copy's sum
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pack { id = 1 });
+    Spawn(Pack { id = 2 });
+}
+
+system Grow(mut Pack pack)
+{
+    pack.n += 1;
+    var n = pack.n;
+    pack.label = $"pack {pack.id} at {n}";
+    pack.scores.Add(n * pack.id);
+    pack.items.Add(Item { name = $"item {n}", count = n });
+    pack.tags.Add($"tag {n}");
+    pack.byId[n] = n * 10;
+    pack.byName[$"name {n}"] = n;
+    pack.slots[n] = Item { name = $"slot {n}", count = n * 2 };
+    pack.seen.Add($"seen {n}");
+}
+
+system Fill(mut Board board)
+{
+    board.n += 1;
+    var n = board.n;
+    board.title = $"board at {n}";
+    board.row.Add(n);
+    board.notes.Add($"note {n}");
+    board.cells[int2(n, 1)] = n;
+}
+
+int Sum(List<int> values)
+{
+    mut var total = 0;
+    foreach (var v in values) total += v;
+    return total;
+}
+
+string Names(List<Item> items)
+{
+    mut var names = "";
+    foreach (var item in items) names = names + $"{item.name}={item.count},";
+    return names;
+}
+
+string Join(List<string> parts)
+{
+    mut var joined = "";
+    foreach (var part in parts) joined = joined + part + ",";
+    return joined;
+}
+
+// Everything a pack holds, read every way: a member's count and elements,
+// methods, loops, and functions that take a list
+string Read(Pack pack)
+{
+    mut var text = $"{pack.label}|{pack.scores.count}:{Sum(pack.scores)}:{pack.scores[pack.scores.count - 1]}";
+    text = text + $"|{Names(pack.items)}|{Join(pack.tags)}{pack.tags.IndexOf("tag 2")}:{(pack.tags.Contains("tag 5") ? 1 : 0)}";
+    mut var ids = 0;
+    foreach (var e in pack.byId) ids += e.key + e.value;
+    text = text + $"|{pack.byId.count}:{pack.byId[2]}:{pack.byId[5]}:{(pack.byId.Has(5) ? 1 : 0)}:{ids}";
+    mut var names = "";
+    foreach (var e in pack.byName) names = names + $"{e.key}={e.value},";
+    text = text + $"|{names}{pack.byName["name 2"]}:{(pack.byName.Has("name 5") ? 1 : 0)}";
+    var slot = pack.slots[2];
+    text = text + $"|{slot.name}={slot.count}:{pack.slots[5].name}";
+    mut var seen = "";
+    foreach (var key in pack.seen) seen = seen + key + ",";
+    return text + $"|{seen}{pack.seen.count}:{(pack.seen.Has("seen 2") ? 1 : 0)}:{(pack.seen.Has("seen 5") ? 1 : 0)}";
+}
+
+string ReadBoard(Board board)
+{
+    mut var cells = 0;
+    foreach (var at in board.cells) cells += board.cells[at];
+    return $"{board.title}|{Sum(board.row)}|{Join(board.notes)}|{board.cells[int2(2, 1)]}:{board.cells[int2(5, 1)]}:{cells}";
+}
+
+// One entity from both worlds
+view Both(Pack pack, verified Pack sure, mut Probe probe)
+{
+    if (pack.id != 1) return;
+    probe.drawn = Read(pack);
+    probe.sure = Read(sure);
+
+    // A copy of the whole value has what it held, and a field read straight from the parameter does
+    var copy = sure;
+    var last = copy.items[copy.items.count - 1];
+    probe.copied = $"{copy.label}|{last.name}|{sure.label.length}|{sure.items[0].name}|{sure.tags[1]}|{sure.slots[1].name}";
+
+    // Into local state: a copy of this machine's own, which stays as the worlds go on
+    if (probe.kept.count == 0)
+    {
+        probe.kept = sure.items;
+        probe.keptLabel = sure.label;
+    }
+
+    // Taken out and changed: the copy changes, and nothing of either world
+    mut var scores = sure.scores;
+    scores.Add(1000);
+    scores[0] = 500;
+    probe.grown = Sum(scores);
+}
+
+// The confirmed world's own entities
+view Confirmed(verified Pack sure, mut Probe probe)
+{
+    if (sure.id == 1) probe.only = "";
+    probe.only = probe.only + $"{sure.label}:{Names(sure.items)}{Join(sure.tags)};";
+}
+
+view Boards(Board board, verified Board sure, mut Probe probe)
+{
+    probe.board = ReadBoard(board);
+    probe.sureBoard = ReadBoard(sure);
+}

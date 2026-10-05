@@ -179,6 +179,7 @@ view Board(verified Duel duel)
 - **A view whose components are all `verified`** runs for the confirmed world's entities, and draws them as they are there: `this` is the confirmed entity, and corrections aren't smoothed.
 - **Filters take it**: `with verified Dead`, `without verified Dead`. Either asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so it skips an entity whose spawn isn't confirmed yet too.
 - **Singletons take it**: `verified Duel duel`.
+- **A `verified` value is whole.** Its text, lists, maps, sets and grids are the confirmed world's, and read like any other's: `sure.build.cards.count`, `foreach (var card in sure.build.cards)`, a copy of the value, a function it's passed to. They're to read, like everything a view takes of the match: to change one, take a copy.
 - **A `verified` value isn't blended.** It's as the last confirmed tick has it, where the rest of what a view reads is [blended](#smooth-at-any-tick-rate) between two ticks.
 - **`mut` goes with it.** `mut verified Health health` reads the confirmed `Health` and writes the entity's [local fields](./local-state.md#local-fields), which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`.
 - **The same entity** in both worlds is the entity, not only its handle: running a tick again can give a handle to another entity, which is then in one world only (see [After a rollback](./local-state.md#after-a-rollback)).
@@ -197,7 +198,6 @@ With a predicted `Body`, an entity is gone from a view the moment the prediction
 
 ### What isn't there yet
 
-- **Text, lists, maps, sets and grids of the confirmed world.** Naming one through a `verified` parameter, or a query's `verified` binding, is an error, and a copy of a component that has one has it empty. Read them through a parameter that isn't `verified`.
 - **`verified World world`**, which is an error that points to `verified` component parameters. A view's `World` is the world it draws.
 - **Blending confirmed state.** A `verified` value steps at the tick rate. Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead, isn't there yet.
 

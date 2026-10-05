@@ -80,6 +80,7 @@ TIDE_TEST(view_queries_blend_between_ticks)
     // Four bodies, three fighters each; the three that are fighters found themselves, as the view sees them
     TIDE_CHECK(seen->pairs == 12 && seen->same == 3 && seen->mismatch == 0);
     TIDE_CHECK(seen->named == 1 && seen->marks == 7); // Text and a list of the match's, read through a row
+    TIDE_CHECK(seen->sureNamed == 1 && seen->sureMarks == 7 && seen->sureWords == 1);
     // One world: it's the confirmed one too
     TIDE_CHECK(seen->confirmed == bits(1, 2, 3, 5, 0) && seen->sureHealth == 20 && seen->both == seen->confirmed);
     TIDE_CHECK(seen->mismatched == 0 && seen->behind == 0 && seen->undead == seen->confirmed);
@@ -136,6 +137,8 @@ TIDE_TEST(view_queries_two_worlds)
     // In both, and the same entity: not 3 (gone from the drawn one), nor 6, 7 and 8
     TIDE_CHECK(seen->both == bits(1, 2, 5, 0, 0) && seen->mismatched == 0);
     TIDE_CHECK(seen->behind == 1); // Body 1 took a hit only the drawn world had
+    // ...and a mark: each world's list is read from its own heap
+    TIDE_CHECK(seen->named == 1 && seen->marks == 12 && seen->sureNamed == 1 && seen->sureMarks == 7 && seen->sureWords == 1);
     TIDE_CHECK(seen->undead == bits(1, 2, 5, 0, 0) && seen->corpses == 1 << 2 && seen->sureCorpses == 0);
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);
@@ -229,6 +232,7 @@ static void run(const double until)
         TIDE_CHECK((seen->confirmed & bits(6, 8, 0, 0, 0)) == 0 && seen->sureCorpses == 0 && seen->mismatched == 0);
         TIDE_CHECK((seen->both & bits(6, 7, 8, 0, 0) & ~seen->confirmed) == 0 && seen->mismatch == 0);
         TIDE_CHECK(seen->sureRangs <= seen->rangs);
+        TIDE_CHECK(seen->sureMarks == (view.current ? 7 : 0)); // Never the mark only a prediction gave
     }
 }
 
@@ -266,6 +270,7 @@ TIDE_TEST(view_queries_through_wrong_predictions)
     TIDE_CHECK(behind_frames > 0 && ahead_frames > 0);
     TIDE_CHECK(seen->confirmed == bits(1, 3, 5, 7, 0) && seen->both == seen->confirmed && seen->ids == seen->confirmed);
     TIDE_CHECK(seen->behind == 0 && seen->corpses == 0 && seen->sureHealth == 20);
+    TIDE_CHECK(seen->marks == 7 && seen->sureMarks == 7 && seen->sureWords == 1); // The mark it predicted never was
     // Rang, sent in tick 110, was heard once however often that tick ran, with
     // the fighters where it left them: their x is the same whatever the shield
     TIDE_CHECK(seen->rangs == rangs_before + 1 && seen->rangIds == bits(1, 2, 5, 0, 0));

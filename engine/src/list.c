@@ -34,7 +34,7 @@ static uint32_t directory_room(const tide_block *b)
 const void *tide_list_cache_fill(tide_list_cache *c, const tide_list l, const int32_t i, const uint32_t size)
 {
     *c = (tide_list_cache){0};
-    const tide_heap *heap = l.at ? tide_heap_of(l.at >> 30) : NULL;
+    const tide_heap *heap = l.at ? tide_heap_read(l.at >> 30) : NULL;
     if (!heap) return tide_list_at(l, i, size); // A list in the scratch area moves as it grows: never cached
     const uint32_t moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED); // Before finding anything
     const void *found = tide_list_at(l, i, size);

@@ -21,6 +21,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
@@ -45,8 +46,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build:
-    name: Build (${{ matrix.platform }})
+  checks:
+    name: ${{ matrix.preset == 'package' && format('Package ({0})', matrix.platform) || format('Test ({0}, {1})', matrix.platform, matrix.preset) }}
     needs: version
     strategy:
       fail-fast: false # The other platforms finish, so a run shows every failure
@@ -54,14 +55,55 @@ jobs:
         include:
           - platform: windows-x64
             os: windows-latest
+            preset: package
+            test-jobs: 4
           - platform: linux-x64
             os: ubuntu-latest
+            preset: package
+            test-jobs: 4
           - platform: macos-arm64
             os: macos-latest
+            preset: package
+            test-jobs: 2
+          - platform: windows-x64
+            os: windows-latest
+            preset: release
+            test-jobs: 4
+          - platform: windows-x64
+            os: windows-latest
+            preset: web-release
+            test-jobs: 4
+          - platform: windows-x64
+            os: windows-latest
+            preset: mingw-release
+            test-jobs: 4
+          - platform: linux-x64
+            os: ubuntu-latest
+            preset: release
+            test-jobs: 4
+          - platform: linux-x64
+            os: ubuntu-latest
+            preset: web-release
+            test-jobs: 4
+          - platform: macos-arm64
+            os: macos-latest
+            preset: release
+            test-jobs: 2
+          - platform: macos-arm64
+            os: macos-latest
+            preset: web-release
+            test-jobs: 2
     runs-on: ${{ matrix.os }}
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version }}
       TIDE_CHANNEL: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
+      CTEST_PARALLEL_LEVEL: ${{ matrix.test-jobs }}
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NODIRECT: 'true'
     defaults:
       run:
         shell: bash
@@ -91,25 +133,34 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build zstd libx11-dev libxrandr-dev \
+          sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
             libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
+      - name: Cache LLVM tools (Windows)
+        id: llvm-tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:/llvm
+          key: llvm-tools-Windows-${{ env.LLVM_VERSION }}-${{ hashFiles('cmake/LLVM.cmake') }}
       # LLVM's own release, the very archive tide's package unpacks: its
       # programs and clang's headers.
       - name: Install tools (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install ninja zstandard -y --no-progress
-          name="clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc"
-          mkdir -p /c/llvm
-          curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.zst" \
-            | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
+          choco install ninja zstandard ccache -y --no-progress
+          if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
+            name="clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc"
+            mkdir -p /c/llvm
+            curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.zst" \
+              | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
+          fi
           echo "LLVM_ROOT=C:/llvm" >> "$GITHUB_ENV"
       # Apple's clang builds native code; web builds need Homebrew's LLVM, and its lld for wasm-ld.
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install ninja llvm lld zstd
+          brew install ninja llvm lld zstd ccache
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
@@ -124,6 +175,7 @@ jobs:
           key: llvm-mingw-${{ hashFiles('cmake/mingw-toolchain.cmake') }}
       # The package builds clang and lld into tide from LLVM's release (cmake/LLVM.cmake).
       - uses: actions/cache@v4
+        if: matrix.preset == 'package'
         with:
           path: build/llvm-[0-9]*
           key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
@@ -131,27 +183,40 @@ jobs:
       # tide (minutes); its cache keeps that work between runs. Only LLVM and
       # the code that calls it decide what's in it.
       - uses: actions/cache@v4
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.preset == 'package'
         with:
           path: build/package/lto-cache
           key: lto-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
           restore-keys: lto-
+
+      # CMake inherits these launchers in its native host builds too. ccache
+      # hashes the compiler and preprocessed source, including optional headers.
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: build/ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-
+      - name: Compiler cache statistics (start)
+        run: ccache --zero-stats
 
       # Native tests that open a window (label gpu: the demo's smoke test, the
       # renderer's) need OpenGL in a window, which no runner has: Windows' and
       # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
       # with. The web ones run in headless Chrome.
       - name: Test (native)
+        if: matrix.preset == 'release'
         run: |
-          cmake --preset release
+          cmake --preset release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset release
           ctest --preset release -LE gpu
       # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
       # Linux's runners leave them out: without a GPU, Chrome there draws with
       # WebGPU but gives nothing back when the test reads its pixels.
       - name: Test (web)
+        if: matrix.preset == 'web-release'
         run: |
-          cmake --preset web-release
+          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset web-release
           if [ "$RUNNER_OS" = Linux ]; then
             ctest --preset web-release -LE webgpu
@@ -160,9 +225,9 @@ jobs:
           fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
-        if: runner.os == 'Windows'
+        if: matrix.preset == 'mingw-release'
         run: |
-          cmake --preset mingw-release
+          cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset mingw-release
           ctest --preset mingw-release -LE gpu
 
@@ -170,7 +235,7 @@ jobs:
       # (KVM). Its SDK is on the runners; the emulator and its image come
       # through the SDK's manager, under Google's license.
       - name: Test (Android)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.preset == 'package'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
@@ -189,6 +254,9 @@ jobs:
             -no-snapshot -memory 4096 -cores 4 -partition-size 6144 > emulator.log 2>&1 &
           emulator=$!
           adb="$ANDROID_HOME/platform-tools/adb"
+          # Build while Android boots; only running tests needs the device.
+          cmake --preset android-debug -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset android-debug
           # Until Android says it booted. An emulator that ends first, or hasn't
           # booted in 15 minutes, fails the step with what it said.
           until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
@@ -198,16 +266,24 @@ jobs:
             fi
             sleep 2
           done
-          cmake --workflow --preset android-debug
+          ctest --preset android-debug
 
       # The package's Android half is the platform layer for each CPU, built
       # with the runner's NDK (ANDROID_NDK_HOME).
       - name: Package
+        if: matrix.preset == 'package'
         run: |
+          # MinGW stages its tools before the native tools replace them.
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+            cmake --build --preset mingw-release --target tide_cli tidels tide_platform
+          fi
           cmake --preset package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-          cmake --build --preset package
+          targets=(tide_cli tidels tide_vscode)
+          if [ "$RUNNER_OS" != Windows ]; then targets+=(tide_platform); fi
+          cmake --build --preset package --target "${targets[@]}"
           cmake --preset web-package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-          cmake --build --preset web-package
+          cmake --build --preset web-package --target tide_platform
           for abi in arm64 x86_64; do
             cmake --preset android-package-$abi
             cmake --build --preset android-package-$abi --target tide_platform
@@ -215,6 +291,7 @@ jobs:
           cmake -DNAME=tide-${{ matrix.platform }} -P cmake/package.cmake
       # Build a game with the package, as a user would.
       - name: Try the package
+        if: matrix.preset == 'package'
         run: |
           mkdir -p build/try
           cp demo/demo.tide build/try/
@@ -226,8 +303,10 @@ jobs:
       # target with the package's own compiler and headers, and what tide says
       # when it can't.
       - name: Try the package (C++)
+        if: matrix.preset == 'package'
         run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
       - name: Try the package (incremental builds)
+        if: matrix.preset == 'package'
         run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
       # Its app and bundle made to ship, checked with Google's tools: apksigner,
       # Java's JAR signatures, and bundletool (pinned), which Play runs on what
@@ -235,7 +314,7 @@ jobs:
       # tide's key as Play signs with its own, play on the emulator, which the
       # Android tests started.
       - name: Try the package (Google Play)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.preset == 'package'
         run: |
           printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
           build/dist/tide/bin/tide build build/try --android --release
@@ -258,10 +337,32 @@ jobs:
           "$adb" shell dumpsys activity activities | grep topResumedActivity | grep -q dev.tide.trydemo
 
       - uses: actions/upload-artifact@v4
+        if: matrix.preset == 'package'
         with:
           name: tide-${{ matrix.platform }}
           path: build/dist/tide-${{ matrix.platform }}.*
           if-no-files-found: error
+          compression-level: 0
+
+      - name: Compiler cache statistics (end)
+        if: always()
+        run: ccache --show-stats
+
+  # Preserve the required Build checks. Tests and packages run together above,
+  # and every check must pass before these checks or a release can pass.
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: checks
+    if: always()
+    strategy:
+      matrix:
+        platform: [windows-x64, linux-x64, macos-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test and package
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: test "$RESULT" = success
 
   # The plugin for JetBrains IDEs (tools/tide-jetbrains), checked against
   # the oldest IDE it supports and the newest CLion.
@@ -292,6 +393,7 @@ jobs:
           name: tide-jetbrains
           path: tools/tide-jetbrains/build/distributions/tide-jetbrains.zip
           if-no-files-found: error
+          compression-level: 0
 
   release:
     name: Release
