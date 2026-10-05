@@ -114,6 +114,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runners' own Node is 22, whose libuv ends a Windows process, about
+      # one in 500, as it starts its first TCP connection (exit code
+      # 3221226505, before a test file's first test ran): libuv's #5107, which
+      # Node has from 24.16. So the Node tests here run on 24, on every
+      # platform, as the docs' do.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       # A push that releases nothing builds as this repo's version, as builds
       # here do: the package's tests check `#if TIDE_0_1_OR_NEWER` against it.
       - name: Version

@@ -1,0 +1,11 @@
+// A file in a namespace of its own, which also imports the library: the
+// global namespace is around its own, so the game's Body comes before the
+// library's here too.
+namespace Game.Inner;
+
+using Lib;
+
+system Look(Body body, mut Seen seen)
+{
+    seen.inner = body.at.x == 1 ? Double(1) : -1;
+}
