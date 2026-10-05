@@ -1,0 +1,133 @@
+// A match for the tests of Box3D's image in parts (parts_test.c): stacks of
+// crates that fall asleep, and then what's hard for an image that only writes
+// what changed, each at its tick. Most of it is done to bodies that are asleep
+// or static, which the step doesn't write.
+
+using Box3D;
+
+scene Main { }
+
+component Crate
+{
+    int stack;
+    int row;
+}
+
+// A ball that's pushed along beside the stacks: it comes near sleeping crates
+// and leaves them, without ever touching one
+component Roller { }
+
+// A floor that comes late, and goes again
+component Shelf { }
+
+// A body that's moved by its speed, whatever is in its way
+component Paddle
+{
+    int ticks;
+}
+
+singleton Script
+{
+    int tick;
+    bool quiet; // Nothing more is done: what's there comes to rest
+}
+
+singleton Tally
+{
+    int touched;
+    int parted;
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(200, 1, 200) });
+    for (int stack = 0; stack < 10; stack++)
+    {
+        for (int row = 0; row < 3; row++)
+        {
+            Spawn(Body { position = float3(-9 + 2 * stack, 0.5 + row, 0) }, Box, Crate { stack = stack, row = row });
+        }
+    }
+    Spawn(Body { position = float3(-12, 0.5, 1.06), linearDamping = 0.3, angularDamping = 0.3 }, Sphere, Roller);
+}
+
+system Count(mut Script script)
+{
+    if (!script.quiet) script.tick += 1;
+}
+
+// The ball rolls along the stacks and is put back at their start
+system Roll(mut Body body, Script script, with Roller)
+{
+    if (script.quiet) return;
+    if (script.tick % 30 == 0) body.impulse = float3(900, 0, 0);
+    if (script.tick % 240 == 239)
+    {
+        body.position = float3(-12, 0.5, 1.06);
+        body.velocity = float3(0, 0, 0);
+        body.angularVelocity = float3(0, 0, 0);
+    }
+    // Gone, while it's moving
+    if (script.tick == 600) this.Destroy();
+}
+
+system Tease(mut Body body, Crate crate, Script script)
+{
+    if (script.quiet) return;
+    // Asleep, and moved: onto another stack, where it goes on sleeping
+    if (script.tick == 150 && crate.stack == 2 && crate.row == 2) body.position = float3(-9 + 2 * 7, 3.5, 0);
+    // Asleep, and gone: from under the rest of its stack
+    if (script.tick == 200 && crate.stack == 4 && crate.row == 0) this.Destroy();
+    // Asleep, with another shape on it
+    if (script.tick == 300 && crate.stack == 8 && crate.row == 1) this.Add(Sphere { radius = 0.3, offset = float3(0, 0, 0.6) });
+    // Asleep, and given a speed
+    if (script.tick == 380 && crate.stack == 0 && crate.row == 2) body.velocity = float3(0, 4, 1);
+    // Asleep, and turned where it is
+    if (script.tick == 430 && crate.stack == 1 && crate.row == 2) body.rotation = quaternion.Euler(float3(0, 0.4, 0));
+    // Asleep and gone, with nothing on it: the top of a stack
+    if (script.tick == 470 && crate.stack == 6 && crate.row == 2) this.Destroy();
+    // Moved while it's falling
+    if (script.tick == 345 && crate.stack == 20) body.position = float3(8.4, 5, 0.2);
+}
+
+system Stage(Script script)
+{
+    if (script.quiet) return;
+    // A static body that comes late, over the fifth stack, and a crate onto it
+    if (script.tick == 260) Spawn(Body { type = BodyType.Static, position = float3(1, 4.2, 0) }, Box { size = float3(3, 0.4, 3) }, Shelf);
+    if (script.tick == 262) Spawn(Body { position = float3(1, 5, 0) }, Box, Crate { stack = 21, row = 0 });
+    // A crate thrown at the last stack: one island wakes another
+    if (script.tick == 340) Spawn(Body { position = float3(4, 2.5, 0), velocity = float3(9, 1, 0) }, Box, Crate { stack = 20, row = 0 });
+    // A capsule and a ball that come to rest by themselves, away from the rest
+    if (script.tick == 100) Spawn(Body { position = float3(-6, 1.5, -6), angularDamping = 0.6 }, Capsule { radius = 0.4, height = 1.6 }, Crate { stack = 22, row = 0 });
+    if (script.tick == 110) Spawn(Body { position = float3(6, 2, -6), linearDamping = 0.4, angularDamping = 0.6 }, Sphere { bounce = 0.5 }, Crate { stack = 23, row = 0 });
+    // A body that's moved through the first stacks
+    if (script.tick == 500)
+    {
+        Spawn(Body { type = BodyType.Kinematic, position = float3(-12, 0.6, 0), velocity = float3(3, 0, 0) }, Box { size = float3(0.5, 1, 2) },
+              Paddle);
+    }
+}
+
+// The static body goes, from under what's on it
+system Unshelve(Script script, with Shelf)
+{
+    if (!script.quiet && script.tick == 420) this.Destroy();
+}
+
+system Sweep(mut Body body, mut Paddle paddle)
+{
+    paddle.ticks += 1;
+    if (paddle.ticks == 70) body.velocity = float3(0, 0, 0);
+    if (paddle.ticks == 130) this.Destroy();
+}
+
+event(Touched touched) Meet(mut Tally tally, with Crate)
+{
+    if (touched.other != this) tally.touched += 1;
+}
+
+event(Parted) Part(mut Tally tally, with Crate)
+{
+    tally.parted += 1;
+}

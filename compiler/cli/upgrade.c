@@ -8,6 +8,7 @@
 #include "editors.h"
 #include "install.h"
 #include "json.h"
+#include "line.h"
 #include "release.h"
 #include "sha256.h"
 #include "sys.h"
@@ -135,25 +136,6 @@ static int64_t asset_size(const json *release, const char *name)
 // What an upgrade shows: a bar for each step that takes a while, drawn over
 // itself on its line of the terminal, and a line once it's done.
 
-static int drawn; // How long the line the terminal's cursor is still on is
-
-// Writes `line` over what's on the cursor's line.
-static void draw(const char *line)
-{
-    const int n = (int)strlen(line);
-    printf("%s%s%*s", drawn ? "\r" : "", line, drawn > n ? drawn - n : 0, "");
-    fflush(stdout);
-    drawn = n;
-}
-
-// Leaves the line as it is, for the next one.
-static void end_line(void)
-{
-    if (drawn) printf("\n");
-    fflush(stdout);
-    drawn = 0;
-}
-
 // Draws how far a step is: a bar when its size is known, a spinner when it
 // isn't.
 static void draw_progress(const char *step, int64_t got, const int64_t size, const int64_t ms, const int frame,
@@ -180,7 +162,7 @@ static void draw_progress(const char *step, int64_t got, const int64_t size, con
     }
     if (done) snprintf(line + n, sizeof line - (size_t)n, "  in %.1fs", seconds);
     else if (seconds >= 1) snprintf(line + n, sizeof line - (size_t)n, "  %.1f MB/s", got / mb / seconds);
-    draw(line);
+    line_draw(line);
 }
 
 // How many bytes the files in `dir` and its folders hold so far.
@@ -228,7 +210,7 @@ static bool run_step(const char *step, const char *const *argv, const char *work
             if (!ended || code == 0) draw_progress(step, progress(path), size, sys_now_ms() - start, frame, ended);
             if (ended) break;
         }
-        end_line();
+        line_end();
         char *said = sys_read_file(log, NULL);
         if (said) fputs(said, stderr);
         free(said);
@@ -405,7 +387,7 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
 #endif
     const char *const editors[] = {tide, "editors", "--update", NULL};
     char *log = path_join(work, "editors.log");
-    if (sys_is_terminal() && tide_editors_have_tide()) draw("Updating Tide in your editors...");
+    if (sys_is_terminal() && tide_editors_have_tide()) line_draw("Updating Tide in your editors...");
     sys_process *update = sys_start_logged(editors, NULL, log);
     int code = 0;
     while (update && !sys_wait(update, 1000, &code)) {
@@ -419,8 +401,8 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     char line[256];
     if (order == 0) snprintf(line, sizeof line, "Installed tide %s again (%s).", next, channel);
     else snprintf(line, sizeof line, "Upgraded tide %s -> %s (%s).", TIDE_VERSION, next, channel);
-    draw(line);
-    end_line();
+    line_draw(line);
+    line_end();
     if (said) fputs(said, stderr);
     free(said);
     return 0;

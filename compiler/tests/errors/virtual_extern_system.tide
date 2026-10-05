@@ -1,0 +1,7 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: an extern system's code is C, which Tide can't replace: a system written in Tide can be virtual
+component Position { float value; }
+
+virtual extern system Move(mut Position position);
+
+scene Main { }

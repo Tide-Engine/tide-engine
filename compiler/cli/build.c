@@ -225,6 +225,89 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
     return inputs;
 }
 
+char *tide_work_folder(const char *folder)
+{
+    char *tide_dir = path_join(folder, ".tide");
+    sys_mkdirs(tide_dir);
+    sys_hide(tide_dir);
+    char *ignore = path_join(tide_dir, ".gitignore");
+    if (!sys_exists(ignore)) sys_write_text(ignore, "# Made by tide; safe to delete.\n*\n");
+    free(ignore);
+    return tide_dir;
+}
+
+// Adds what a build reads of the game or package in `dir` (ending in '/') to
+// `list`: its tide.packages, its .tide files and its C side, each as `under`
+// (the folder's path from the game's, ending in '/' or empty) and its path
+// from `dir`. What tide made itself (.tide/, build/) is no part of a game.
+static void add_sources_of(file_list *list, const char *dir, const char *under)
+{
+    file_list found = tide_files(dir);
+    file_list c = own_files_of(dir, c_side_extensions);
+    for (int i = 0; i < c.count; i++) add_file(&found, c.items[i]);
+    free_files(&c);
+    char *packages = path_join(dir, PACKAGES_FILE);
+    if (sys_exists(packages)) add_file(&found, packages);
+    free(packages);
+    const size_t prefix = strlen(dir);
+    for (int i = 0; i < found.count; i++) {
+        const char *relative = found.items[i] + prefix;
+        while (*relative == '/') relative++;
+        if (strncmp(relative, ".tide/", 6) == 0 || strncmp(relative, "build/", 6) == 0) continue;
+        char *path = format("%s%s", under, relative);
+        add_file(list, path);
+        free(path);
+    }
+    free_files(&found);
+}
+
+// The same on every machine, whatever its file system does with case.
+static int byte_order(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+char **tide_game_sources(const char *folder_arg, int *count)
+{
+    *count = 0;
+    char *folder = path_absolute(folder_arg);
+    game_packages packages = {0};
+    if (!find_packages(folder, &packages)) {
+        free(folder);
+        return NULL;
+    }
+    file_list sources = {0};
+    char *own = path_join(folder, "");
+    add_sources_of(&sources, own, "");
+    free(own);
+    free(folder);
+    // The packages in folders: those from git are named by their commit, and tide's own come with tide
+    const char *game = packages.file.folder;
+    bool ok = true;
+    for (int p = 0; p < packages.count; p++) {
+        const package *package = &packages.items[p];
+        if (!package->line->local) continue;
+        if (strncmp(package->folder, game, strlen(game)) != 0) {
+            fprintf(stderr, "%s:%d: error: %s is in a folder outside the game's, so it can't be published with it\n",
+                    packages.file.path, package->line->line, package->name);
+            fprintf(stderr, "  = note: list it from git, by its repository and commit, or move its folder into the game's\n");
+            ok = false;
+            continue;
+        }
+        add_sources_of(&sources, package->folder, package->folder + strlen(game));
+    }
+    packages_free(&packages);
+    if (!ok) {
+        free_files(&sources);
+        return NULL;
+    }
+    if (sources.count > 0) qsort(sources.items, (size_t)sources.count, sizeof(char *), byte_order);
+    *count = sources.count;
+    if (!sources.items) sources.items = calloc(1, sizeof(char *)); // A folder with nothing to send isn't this function's to refuse
+    if (!sources.items) abort();
+    return sources.items;
+}
+
 // The folder's name, as a window title and a file name.
 static const char *game_name(const char *folder)
 {
@@ -652,14 +735,8 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
     if (!find_target(root, opts)) return false;
     b->headers = header_stamp(b->include);
 
-    // Everything tide makes goes in <folder>/.tide/<configuration>, hidden
-    // like .git.
-    char *tide_dir = path_join(b->folder, ".tide");
-    sys_mkdirs(tide_dir);
-    sys_hide(tide_dir);
-    char *ignore = path_join(tide_dir, ".gitignore");
-    if (!sys_exists(ignore)) sys_write_text(ignore, "# Made by tide; safe to delete.\n*\n");
-    free(ignore);
+    // Everything tide makes goes in <folder>/.tide/<configuration>.
+    char *tide_dir = tide_work_folder(b->folder);
     char config[32];
     snprintf(config, sizeof config, "%s-%s", opts->web ? "web" : opts->android ? "android" : "native",
              opts->release ? "release" : "debug");

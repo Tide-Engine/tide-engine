@@ -10152,6 +10152,54 @@ static void check_extern_param(const checker *c, decl *fn, param *p)
     fn->takes_action = false; // It's no longer inlined
 }
 
+// The C function an extern function or system is: its own, among the game's
+// extern functions and systems and the names generated C has.
+static void check_extern_c_name(const checker *c, decl *fn)
+{
+    const bool system = fn->kind == DECL_SYSTEM;
+    fn->c_name = extern_c_name(fn);
+    if (!fn->c_name) return;
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *other = c->prog->decls.items[i];
+        if (other == fn) break;
+        if ((other->is_extern || other->extern_system) && other->c_name && strcmp(other->c_name, fn->c_name) == 0) {
+            if (fn->shares_name && other->kind == fn->kind && str_eq(other->qualified, fn->qualified)) { // C has one function of a name
+                diag_error(fn->at, "extern %ss that share a name each name a C function of their own, and both of these "
+                                   "are %s", system ? "system" : "function", fn->c_name);
+                diag_note("say which C function each is: '[NativeName(\"...\")] extern %s " STR_FMT "(...);'",
+                          system ? "system" : "...", STR_ARG(fn->name));
+                return;
+            }
+            diag_error(fn->at, "'" STR_FMT "' and '" STR_FMT "' are the same C function, %s", STR_ARG(fn->qualified),
+                       STR_ARG(other->qualified), fn->c_name);
+            if (system != (other->kind == DECL_SYSTEM)) {
+                diag_note("an extern system's C function takes its rows, and an extern function's what it's passed: name "
+                          "each with [NativeName(\"...\")]");
+            } else {
+                diag_note("declare it once");
+            }
+            return;
+        }
+    }
+    const decl_index *by_c_name = decls_by(c->prog, true);
+    for (int i = first_c_named(by_c_name, fn->c_name, strlen(fn->c_name)); i >= 0; i = by_c_name->next[i]) {
+        const decl *other = c->prog->decls.items[i];
+        if (other->kind == DECL_FUNCTION || other->kind == DECL_SYSTEM || other->builtin) continue;
+        sb theirs = {0};
+        c_name_of(other, &theirs);
+        if (strcmp(theirs.data, fn->c_name) != 0) continue;
+        diag_error(fn->at, "the C function %s has the same name as '" STR_FMT "' in generated C", fn->c_name,
+                   STR_ARG(other->qualified));
+        if (system) { // A system and a component can share a name in Tide: it's the C function that needs another
+            diag_note("give the C function a name of its own with [NativeName(\"...\")], or rename '" STR_FMT "'",
+                      STR_ARG(other->qualified));
+        } else {
+            diag_note("rename '" STR_FMT "'", STR_ARG(other->qualified));
+        }
+        return;
+    }
+}
+
 // `extern float Noise(float x);`: a function whose code is in C. It takes and
 // returns plain data, a `mut` or `in` parameter by address, text as C text
 // and lists as pointers to their elements, and its C name must be its own.
@@ -10167,35 +10215,76 @@ static void check_extern_decl(const checker *c, decl *fn)
         diag_error(fn->return_type_at, "C functions can't return %s yet", c_refuses(fn->return_type));
         diag_note("return numbers, vectors, enums, text, or structs of them");
     }
-    fn->c_name = extern_c_name(fn);
-    if (!fn->c_name) return;
-    for (int i = 0; i < c->prog->decls.count; i++) {
-        const decl *other = c->prog->decls.items[i];
-        if (other == fn) break;
-        if (other->is_extern && other->c_name && strcmp(other->c_name, fn->c_name) == 0) {
-            if (fn->shares_name && str_eq(other->qualified, fn->qualified)) { // C has one function of a name
-                diag_error(fn->at, "extern functions that share a name each name a C function of their own, and both of these "
-                                   "are %s", fn->c_name);
-                diag_note("say which C function each is: '[NativeName(\"...\")] extern ... " STR_FMT "(...);'", STR_ARG(fn->name));
-                return;
+    check_extern_c_name(c, fn);
+}
+
+// `extern system Move(mut Position position, Velocity velocity, Time time);`:
+// a system whose code is in C. Its parameters are what C can be handed: the
+// components of the entities it runs for, as arrays (tide/rows.h), filters by
+// components, and singletons, each a pointer. What a system written in Tide
+// takes beyond that is an error that says so, and what to write instead.
+static void check_extern_system(const checker *c, decl *sys)
+{
+    for (int i = 0; i < sys->params.count; i++) {
+        param *p = &sys->params.items[i];
+        const loc at = p->type_at.line ? p->type_at : p->at;
+        switch (p->type.kind) {
+        case TY_QUERY:
+            diag_error(p->at, "a system written in C can't take a query yet");
+            diag_note("a system written in Tide goes through one, and can call C with what it finds: 'system " STR_FMT
+                      "(query (...) others) { ... }'", STR_ARG(sys->name));
+            break;
+        case TY_WORLD:
+            diag_error(at, "a system written in C can't take the World yet: it's handed the rows of the entities it runs for");
+            diag_note("to reach other entities, write the system in Tide and pass C what it reads: 'system " STR_FMT
+                      "(World world) { ... }'", STR_ARG(sys->name));
+            break;
+        case TY_RECORD:
+            diag_error(at, "a system written in C can't read the devices yet");
+            diag_note("a system written in Tide reads them into a component, which C then gets as an array");
+            break;
+        case TY_INPUT:
+            diag_error(at, "a system written in C can't read the input yet");
+            diag_note("a system written in Tide reads it into a component, which C then gets as an array");
+            break;
+        case TY_COMPONENT:
+            // Nothing of a component with no fields is in a row: it's there or it isn't
+            if ((p->mode == PARAM_READ || p->mode == PARAM_MUT) && p->type.decl->fields.count == 0) {
+                diag_error(at, "'" STR_FMT "' has no fields, so C has nothing of it to read", STR_ARG(p->type.decl->name));
+                diag_note("to only require the component, write 'with " STR_FMT "'", STR_ARG(p->type_name));
+                const fix f = {.kind = FIX_USE_WITH, .at = p->name_at, .param = p};
+                vec_push(c->prog->fixes, f);
             }
-            diag_error(fn->at, "'" STR_FMT "' and '" STR_FMT "' are the same C function, %s", STR_ARG(fn->qualified),
-                       STR_ARG(other->qualified), fn->c_name);
-            diag_note("declare it once");
-            return;
+            break;
+        default:
+            break;
         }
     }
-    const decl_index *by_c_name = decls_by(c->prog, true);
-    for (int i = first_c_named(by_c_name, fn->c_name, strlen(fn->c_name)); i >= 0; i = by_c_name->next[i]) {
-        const decl *other = c->prog->decls.items[i];
-        if (other->kind == DECL_FUNCTION || other->kind == DECL_SYSTEM || other->builtin) continue;
-        sb theirs = {0};
-        c_name_of(other, &theirs);
-        if (strcmp(theirs.data, fn->c_name) != 0) continue;
-        diag_error(fn->at, "the C function %s has the same name as '" STR_FMT "' in generated C", fn->c_name,
-                   STR_ARG(other->qualified));
-        diag_note("rename '" STR_FMT "'", STR_ARG(other->qualified));
-        return;
+    check_extern_c_name(c, sys);
+}
+
+// A system written in C runs for whole runs of rows, so it can't be told which
+// rows have a sparse component, which is the row's and not the archetype's:
+// checked once the archetypes are derived, which says which components are.
+static void check_extern_sparse(const program *prog)
+{
+    for (int i = 0; i < prog->systems.count; i++) {
+        const decl *sys = prog->systems.items[i];
+        for (int k = 0; sys->extern_system && k < sys->params.count; k++) {
+            const param *p = &sys->params.items[k];
+            if (p->type.kind != TY_COMPONENT || !p->type.decl->is_sparse) continue;
+            const loc at = p->type_at.line ? p->type_at : p->at;
+            const bool filter = p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT;
+            if (filter) {
+                diag_error(at, "a system written in C can't filter by a sparse component yet, and '" STR_FMT "' is one",
+                           STR_ARG(p->type.decl->name));
+            } else {
+                diag_error(at, "a system written in C can't take a sparse component yet, and '" STR_FMT "' is one",
+                           STR_ARG(p->type.decl->name));
+            }
+            diag_note("which entities have it is told row by row, and C is handed whole runs of rows: write the system in "
+                      "Tide, which can call C for each entity, 'system " STR_FMT "(...) { ... }'", STR_ARG(sys->name));
+        }
     }
 }
 
@@ -10967,6 +11056,14 @@ static void check_params(const checker *c, decl *sys)
 
         // The entity the code runs for is `this`. The parameter still names it,
         // so its uses don't report errors of their own.
+        if ((is_entity || is_local_entity) && sys->extern_system) { // C has no `this`: its rows say whose they are
+            diag_error(p->type_at.line ? p->type_at : p->at, "a system written in C gets the entities it runs for with its rows, "
+                                                             "not as a parameter");
+            diag_note("remove the parameter: C reads each row's entity from 'tide_rows_entities(rows)'");
+            entity = p;
+            p->type = is_entity ? T_ENTITY_ : (type){TY_LOCAL_ENTITY, NULL};
+            continue;
+        }
         if (is_entity || is_local_entity) {
             diag_error(p->type_at.line ? p->type_at : p->at, "the entity %s runs for is 'this', not a parameter",
                        sys->is_view ? "a view" : sys->is_handler ? "an event handler" : "a system");
@@ -12731,10 +12828,15 @@ static void check_attributes(checker *c)
                 continue;
             }
             if (str_eq_c(attr->name, "NativeName")) { // Checked with the extern's signature
-                if (!d->is_extern) {
-                    diag_error(attr->at, "NativeName names the C function of an extern function, and '" STR_FMT
+                if (!d->is_extern && !d->extern_system) {
+                    diag_error(attr->at, "NativeName names the C function of an extern function or system, and '" STR_FMT
                                "' isn't one", STR_ARG(d->name));
-                    diag_note("declare a C function as 'extern float Noise(float x);'");
+                    if (d->kind == DECL_SYSTEM && !d->is_view && !d->is_handler) {
+                        diag_note("a system written in C is declared with no body: 'extern system " STR_FMT "(...);'",
+                                  STR_ARG(d->name));
+                    } else {
+                        diag_note("declare a C function as 'extern float Noise(float x);'");
+                    }
                 }
                 continue;
             }
@@ -12761,7 +12863,7 @@ static void check_attributes(checker *c)
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
-                          "NativeName, which names an extern function's C function, and Sparse, for a component that "
+                          "NativeName, which names an extern function's or system's C function, and Sparse, for a component that "
                           "entities gain and lose");
                 continue;
             }
@@ -14264,6 +14366,10 @@ bool check(program *prog)
         c.unit = d->unit;
         if (!d->params_checked) check_params(&c, d);
         c.system = d;
+        if (d->extern_system) { // Its code is C's: there's nothing of it to check, or to warn about not using
+            check_extern_system(&c, d);
+            continue;
+        }
         const int errors = diag_error_count();
         const int outs = c.outs;
         check_stmt(&c, d->body);
@@ -14354,6 +14460,7 @@ bool check(program *prog)
 
     diag_phase("checking the rest");
     derive_archetypes(&c);
+    check_extern_sparse(prog);
     diag_phase("deriving archetypes");
     if (diag_error_count() > 0) return false;
 

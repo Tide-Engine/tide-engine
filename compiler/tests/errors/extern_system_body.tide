@@ -1,0 +1,5 @@
+// expect: an extern system has no body: its code is in C
+// expect: end it with ';', like 'extern system Move(mut Position position, Time time);', or remove 'extern' to write it in Tide
+scene Main { }
+component Body { float x; }
+extern system Move(mut Body body) { }

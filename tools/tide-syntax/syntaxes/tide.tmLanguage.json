@@ -159,11 +159,11 @@
       ]
     },
     "declarations": {
-      "comment": "Declaration words are keywords only where a declaration starts: at the start of a line, after 'local', 'async', 'virtual' or 'override' (in any order), or after attributes on the same line",
+      "comment": "Declaration words are keywords only where a declaration starts: at the start of a line, after 'local', 'async', 'virtual' or 'override' (in any order), after 'extern' for a system written in C, or after attributes on the same line",
       "patterns": [
         {
-          "comment": "A system's or a view's parameter list, including read-only query (Body body, with Fighter) fighters",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "comment": "A system's or a view's parameter list, including read-only query (Body body, with Fighter) fighters. extern system Move(mut Position position): a system written in C",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -303,8 +303,8 @@
           }
         },
         {
-          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, extern system MoveInC",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
