@@ -275,6 +275,12 @@ bool tide_platform_room_join(const char *code, tide_transport *out, tide_address
 void tide_platform_room_code(char *out, size_t size);
 // The room joined turned out not to be one, or its host couldn't be reached.
 bool tide_platform_room_failed(void);
+// The round trip the session measures to the room's host, in milliseconds (0
+// for none: this machine hosts it, or nothing's measured yet), which a host
+// says every frame. A page told to play at a slow connection goes by it (the
+// page's `Tide.lag`, platform/web/tide.js): its lag is the round trip its
+// player is to have, so it adds what this one lacks. Nothing on desktop.
+void tide_platform_room_ping(uint32_t ping_ms);
 // The key of the room this machine hosts into `out`, "" for none: what lets
 // the players of its match meet there again when it goes (see
 // tide_session_set_room). Up to TIDE_ROOM_KEY_LENGTH letters and digits.

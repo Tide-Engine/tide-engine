@@ -30,7 +30,7 @@ scene Main { }
 
 system Make(mut Image image)
 {
-    image.size = Fill(image.bytes);
+    image.size = Fill(out image.bytes);
 }
 
 system Size(mut Scores scores)

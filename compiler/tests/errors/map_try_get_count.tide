@@ -1,0 +1,4 @@
+// expect: TryGet takes 2 arguments: 'TryGet(key, out value)'
+scene Main { }
+singleton Board { Map<int, float> scores; bool has; }
+system Run(mut Board board) { board.has = board.scores.TryGet(3); }

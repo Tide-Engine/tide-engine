@@ -1,0 +1,9 @@
+// expect: 'TryHalf' returns here without assigning its 'half'
+// expect: an 'out' parameter is assigned on every path that returns: 'half = default;' fills it where there's nothing to give
+scene Main { }
+bool TryHalf(int value, out int half)
+{
+    if (value % 2 != 0) return false;
+    half = value / 2;
+    return true;
+}

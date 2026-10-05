@@ -2,7 +2,7 @@
 interface GamePage {
     /** The code of the room the game hosts or joined, "" for none. */
     room?: string;
-    /** Milliseconds its packets to the room's players leave late. */
+    /** The round trip its player is to have to the match's server, in milliseconds. */
     lag?: number;
     /** Starts a program that waited for it. Done once its first frame is drawn. */
     start?: () => Promise<void>;
@@ -56,7 +56,7 @@ export function liveExamples(article: HTMLElement) {
         if (game(frame)) showsFocus(frame); // It loaded before this ran
     }
 
-    const cleanups = [...article.querySelectorAll<HTMLElement>('.tide-example')].map((example) => {
+    const examples = [...article.querySelectorAll<HTMLElement>('.tide-example')].map((example) => {
         const run = example.querySelector<HTMLButtonElement>('[data-example-run]')!;
         const stop = example.querySelector<HTMLButtonElement>('[data-example-stop]')!;
         const viewports = [...example.querySelectorAll<HTMLElement>('.example-viewport')];
@@ -164,15 +164,18 @@ export function liveExamples(article: HTMLElement) {
             });
         }
 
+        // The page the frames that load first show: a match's first player
+        // hosts it.
+        const address = () => page(match ? { wait: '', host: '' } : { wait: '' });
+
         // Loads the frames, their programs waiting to be started. In a match
         // that's the first player's: the second's address has the room's code.
         function load() {
             if (request) return;
             const current = new AbortController();
             request = current;
-            const options: Record<string, string> = match ? { wait: '', host: '' } : { wait: '' };
             const first = match ? viewports.slice(0, 1) : viewports;
-            ready = Promise.all(first.map((viewport, i) => open(viewport, i, page(options), current)))
+            ready = Promise.all(first.map((viewport, i) => open(viewport, i, address(), current)))
                 .then((pages) => (pages.includes(null) ? null : (pages as GamePage[])))
                 .catch(() => {
                     if (current.signal.aborted) return null;
@@ -221,7 +224,9 @@ export function liveExamples(article: HTMLElement) {
             start();
         }
 
-        // The slider changes what's running, and what starts next.
+        // The slider changes what's running, and what starts next. Each page
+        // is told the same ping: the one that hosts has no trip to the server
+        // and adds nothing, and the one that joined makes its round trip that.
         function delay() {
             if (lagText) lagText.textContent = `${latency()} ms`;
             for (const frame of frames) {
@@ -265,18 +270,75 @@ export function liveExamples(article: HTMLElement) {
         run.addEventListener('click', restart);
         stop.addEventListener('click', halt);
         lag?.addEventListener('input', delay);
-        return () => {
-            near.disconnect();
-            arrive.disconnect();
-            clearTimeout(dwell);
-            reset('');
-            run.removeEventListener('click', restart);
-            stop.removeEventListener('click', halt);
-            lag?.removeEventListener('input', delay);
+        return {
+            where,
+            // The page to download ahead (below), unless the example is
+            // loading it itself already, or waits for its button.
+            ahead: () => (request || held || !eager() ? null : address()),
+            // Done once the frames it's loading itself have loaded.
+            loading: () => ready,
+            cleanup() {
+                near.disconnect();
+                arrive.disconnect();
+                clearTimeout(dwell);
+                reset('');
+                run.removeEventListener('click', restart);
+                stop.removeEventListener('click', halt);
+                lag?.removeEventListener('input', delay);
+            },
         };
     });
+
+    // Once this page has loaded and has nothing else to do, the browser
+    // downloads its examples' pages, nearest the view first and one at a time,
+    // each after the examples near the view have loaded theirs: those are what
+    // the reader is waiting for. So an example the reader gets to, however
+    // fast, has no download left: its frame asks the server whether its page
+    // changed, and has it from the browser's cache.
+    //
+    // Only a frame's own load puts a page where a frame finds it: browsers
+    // keep a frame's page apart from what a script fetches or a link
+    // prefetches. So each downloads in a frame nobody sees, where nothing
+    // runs: `#download` tells the page so (tide.js), and what's after the `#`
+    // is no part of the address the cache goes by.
+    let downloading: HTMLIFrameElement | undefined;
+    let over = false;
+    async function download() {
+        const middle = innerHeight / 2;
+        const far = new Map(examples.map((example) => {
+            const box = example.where.getBoundingClientRect();
+            return [example, Math.abs((box.top + box.bottom) / 2 - middle)];
+        }));
+        const got = new Set<string>();
+        for (const example of [...examples].sort((a, b) => far.get(a)! - far.get(b)!)) {
+            await Promise.all(examples.map((near) => near.loading()));
+            if (over) return;
+            const url = example.ahead();
+            if (!url || got.has(url)) continue;
+            got.add(url);
+            const frame = document.createElement('iframe');
+            frame.hidden = true;
+            const loaded = new Promise<void>((done) => frame.addEventListener('load', () => done(), { once: true }));
+            frame.src = `${url}#download`;
+            downloading = frame;
+            document.body.append(frame);
+            await loaded;
+            const found = game(frame) !== undefined;
+            frame.remove();
+            downloading = undefined;
+            if (!found) return; // A build of the docs without its games
+        }
+    }
+    const idle = window.requestIdleCallback?.bind(window) ?? ((run: () => void) => setTimeout(run, 200));
+    const loaded = () => idle(() => void download());
+    if (document.readyState === 'complete') loaded();
+    else addEventListener('load', loaded, { once: true });
+
     return () => {
+        over = true;
+        downloading?.remove();
+        removeEventListener('load', loaded);
         document.removeEventListener('pointerdown', elsewhere, true);
-        cleanups.forEach((cleanup) => cleanup());
+        examples.forEach((example) => example.cleanup());
     };
 }

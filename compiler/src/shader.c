@@ -2197,6 +2197,37 @@ static void st_for(emit *em, const stmt *s)
     }
 }
 
+// Whether an `out` argument in `e` declares a local: F(out var x).
+static bool has_outs(const expr *e)
+{
+    if (!e) return false;
+    if (e->out_local) return true;
+    if (has_outs(e->object) || has_outs(e->lhs) || has_outs(e->rhs) || has_outs(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (has_outs(e->args.items[i])) return true;
+    }
+    return false;
+}
+
+// The locals `out` arguments declare in an expression, declared before its
+// statement, as the CPU's code has them: the call that makes each takes it as
+// it takes a `mut` argument, a whole variable.
+static void st_outs(emit *em, const expr *e)
+{
+    if (!e) return;
+    if (e->out_local) {
+        line(em);
+        st_var(em, e->out_local);
+        sb_put(em->o, ";\n");
+        return;
+    }
+    st_outs(em, e->object);
+    st_outs(em, e->cond);
+    st_outs(em, e->lhs);
+    st_outs(em, e->rhs);
+    for (int i = 0; i < e->args.count; i++) st_outs(em, e->args.items[i]);
+}
+
 static void st(emit *em, const stmt *s)
 {
     if (s->kind == S_BLOCK) {
@@ -2204,6 +2235,19 @@ static void st(emit *em, const stmt *s)
         st_body(em, s);
         sb_put(em->o, "\n");
         return;
+    }
+    if (s->kind == S_FOR) {
+        const stmt *v = s->init;
+        const stmt *step = s->step;
+        if (has_outs(s->cond) || (v && has_outs(v->value)) || (step && (has_outs(step->value) || has_outs(step->target)))) {
+            refuse(em, s->at, "a loop the GPU runs counts on its own line, which declares nothing with 'out'");
+            diag_note("make the call before the loop, and count to what it gave");
+            return;
+        }
+    } else {
+        st_outs(em, s->cond);
+        st_outs(em, s->value);
+        st_outs(em, s->target);
     }
     line(em);
     switch (s->kind) {

@@ -153,6 +153,7 @@ system Burn(mut Unit unit)
 - A function can draw and use the GUI. Then only views, and other functions like it, can call it, as with `Draw2D` and `Draw3D`.
 - Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace but other functions, whose parameters tell them apart (see Default values, named arguments and overloads).
 - A parameter can have a default value, which a call can leave out, and a call can pass arguments by name: see the same section.
+- A parameter can be `out`: the call gives the caller's variable its value, as in C# (see Out parameters).
 - A function's last parameter can be an `Action`: code the caller writes in braces after the call, `Section("Audio") { ... }`. A function takes at most one, always last, and it's always written after the call, never inside the parentheses.
 - The function runs the block by calling it, `content();`, as many times as it chooses, including none. The block runs as if it were written at the call: it sees the caller's locals and parameters, and what it reads and writes counts toward the caller's signature.
 - A function that takes an `Action` is inlined where it's called, so blocks cost nothing and need no closures. It can't call itself, directly or through other functions, and a block can only be run, not stored.
@@ -269,6 +270,66 @@ system Move(mut Position position, Velocity velocity, with Enemy) { ... }
 system Aim(mut Turret turret, Position position) { ... }
 ```
 
+### Out parameters
+
+**Following C# here is agreed**, and so is the pattern it's for: a function that returns whether it has something, and gives it through `out`, or the default. The points marked Provisional are picks the owner hasn't confirmed.
+
+- **Declaring.** `out` before a parameter's type makes the call give the caller's variable its value: `bool TryHalf(int value, out int half)`. Functions, methods and `extern` functions have them. The word is a name like any other everywhere else, as `in` is.
+  - What the engine calls itself takes none, since nothing would take what's made: systems, views, event and command handlers, frags and verts. Neither do operators, `Interpolate` or, as in C#, async functions, whose call returns before the task has made anything: they return a struct instead.
+  - Provisional: an `out` parameter is of any type a parameter can be, but the devices and an `Action`.
+  - It has no default, and `mut out` is an error that says to drop `mut`. A parameter after one with a default needs a default too, so `out` parameters come before those.
+- **In the function.** An `out` parameter starts unassigned: what the caller's variable held isn't passed in. The code assigns it before it reads it, and on every path that returns. This is C#'s definite assignment:
+  - A path is what the code can run through: an `if` assigns it when both sides do, `&&`, `||`, `?:` and `??` only run their right sides sometimes, a `while (true)` only ends at its breaks, and where a `return` or a `break` leaves, what follows isn't reached. A condition that's `true` or `false` as written counts as that.
+  - A loop may run no rounds, so what its body assigns isn't assigned after it. Provisional: the same goes for a block written after a call (see Calls that take a block), which its call runs when it does.
+  - Passing it on as another call's `out` argument assigns it, once that call has run.
+  - Provisional: it's assigned whole. `pair.a = 1` before `pair = ...` reads a variable that has no value yet, where C# would let a struct be filled a field at a time.
+  - `default` is how a path with nothing to give fills it: `health = default;`.
+  - **Provisional: `fail` owes it nothing**, and neither does a `try` that passes an error on. C# has nothing to follow here. After a call that failed, each of its `out` variables is what the function assigned before it failed, or its type's default, never what the variable held before: nothing the code wrote is undone, and nothing is left unset.
+- **At the call.** The argument for an `out` parameter says `out`, and no other argument does:
+  - `out health` assigns a variable the code has: a `mut` local, a field of a component or singleton it takes as `mut`, its own `mut` or `out` parameter. The rules are a `mut` argument's: its type is the parameter's exactly, and a copy can't be one, which a list's element is, and a swizzle of several components (`v.xy`). (A swizzle passed to a `mut` parameter used to compile, and change a copy: it's the same error now.)
+  - `out var health` and `out Health health` declare a local there, of the parameter's type. Provisional: it's read-only, as a `var` is, and `out mut var health` declares one the code changes later.
+  - `out _` leaves what the call makes out. Provisional: as in C#, `_` is that only while nothing in scope is named `_`; `out var _` and `out int _` are too.
+  - By name, the name comes first: `TryHalf(value: 8, half: out var h)`.
+  - **Provisional: the word is written at every call, for an `extern` function's `out List<T>` too**, which took none before `out` was every function's (see C functions). `mut` and `in` still take none: `out` does because the argument can declare.
+- **Scope**, as in C#: a local an `out` argument declares belongs to the block its statement is in, from the call on. Declared in an `if`'s condition, it's in scope in both branches and after the `if`. Declared in a `while`'s or a `for`'s condition, it's the loop's own. A statement that's a branch or a loop's body with no braces is a block of its own.
+  - It's only read where the call that makes it has run, by the same rules as above: in `if (ready && TryHalf(8, out var half))`, `half` has a value inside the `if` and not after it.
+  - One that nothing reads is a warning, like any local (see Mutability), whose note says to write `out _`.
+- **Everything else treats an `out` argument as a write**, as a `mut` one: a system needs `mut` on the component or singleton the variable is in, a view can't make the match's, a parallel loop's step and a sort's comparison only make their own variables, and the call is one that writes, which keeps its turn among what's read beside it (see Evaluation order).
+- **Overloads.** `out` doesn't tell functions that share a name apart, as `mut` doesn't: their parameters' types do. A call picks among them as ever, where an `out` argument only goes to an `out` parameter, and `out var` takes its type from the one picked.
+- **`extern` functions.** `out T` is a `T *` in C, as `mut T` is: the difference is Tide's, which passes nothing in and takes it that C writes. `out List<T>` stays the list C makes through its writer. C can't make text, so `out string` is an error there (see C functions).
+- **Code the GPU runs.** A function a frag or vert calls can have `out` parameters: `inout` in GLSL and a pointer in WGSL, as `mut` ones are. Provisional: a local an `out` argument declares can't be declared on a counting loop's own line there.
+- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets).
+- In generated C an `out` parameter is a pointer, as a `mut` one is, and code that has none generates the C it always did.
+
+```csharp
+bool TryHalf(int value, out int half)
+{
+    if (value % 2 != 0)
+    {
+        half = default;
+        return false;
+    }
+    half = value / 2;
+    return true;
+}
+
+system Halve(mut Pile pile, mut Tally tally)
+{
+    if (TryHalf(pile.size, out var half))
+    {
+        pile.size = half;               // Declared in the condition: the call ran here
+    }
+    tally.last = half;                  // ...and it's the block's, so it's still there after the if
+
+    TryHalf(pile.size, out pile.next);  // A field of a component taken as mut
+    TryHalf(pile.size, out _);          // Not wanted
+
+    if (tally.scores.TryGet(pile.owner, out var score)) tally.total += score;
+}
+```
+
+Open: functions take no `World`, so one can't look an entity's component up to give it through `out` (`bool TryFind(Entity target, World world, out Health health)`): whether a function can take the World is a decision of its own.
+
 ### Operators
 
 - A struct can declare operators, in C#'s form: `Money operator +(Money a, Money b) { ... }`. They compile to plain function calls.
@@ -303,7 +364,7 @@ mut float scale = 1;             // mutable, explicit type
 ```
 
 - A local that's declared and never read is a warning, `local 'fwd' is never used`: a value worked out and then not used is a mistake more often than not, as when code computes `fwd` and then moves by `move`. Assigned but never read counts as never read.
-- The warning's note says what to do: remove the local or use it. When its value is a call that does something (a `Spawn`, a call to C, a call that sends or changes state), the note says to keep the call, as a statement of its own.
+- The warning's note says what to do: remove the local or use it. When its value is a call that does something (a `Spawn`, a call to C, a call that sends or changes state), the note says to keep the call, as a statement of its own. For a local an `out` argument declares (see Out parameters), it says to write `out _`.
 - Parameters are apart: systems, views and handlers warn about theirs that are never used (see System parameters), and a plain function's or a method's stay quiet.
 
 ### System parameters
@@ -427,7 +488,7 @@ event(Spawned) Setup(with Main)
 ### Evaluation order
 
 - Expressions evaluate left to right, like C#: operands, arguments and field initializers run in source order, the same on every platform and in every build. `Spawn(Pair { a = Spawn(Thing), b = Spawn(Thing) })` spawns `a`'s Thing, then `b`'s, then the Pair.
-- The order shows wherever an expression has side effects: `Spawn` and `Scene.Load` (entity IDs), a widget or a call that draws, a call to C (what C keeps), and a call that writes, which changes what it's given as `mut` or the value a `mut` method is called on (a `Random`'s methods are such calls: see Random numbers). So do the functions, methods and operators that make such calls. `Pack(Next(counter), Next(counter))` runs the first `Next` first.
+- The order shows wherever an expression has side effects: `Spawn` and `Scene.Load` (entity IDs), a widget or a call that draws, a call to C (what C keeps), and a call that writes, which changes what it's given as `mut`, makes what it's given as `out`, or changes the value a `mut` method is called on (a `Random`'s methods are such calls: see Random numbers). So do the functions, methods and operators that make such calls. `Pack(Next(counter), Next(counter))` runs the first `Next` first.
 - A value is read in its turn too: in `Pack(counter.n, Next(counter))`, `counter.n` is read before `Next` changes it, and in `Pack(Next(counter), counter.n)`, after.
 - `cond ? a : b` runs the condition first, then only the side it picks, as in C#.
 
@@ -457,7 +518,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
   - The names code needs whether it uses them or not are exempt, as in C#: a `foreach`'s and a `parallel` loop's variable (a loop that only counts), the name after `is`, and a `Sort`'s two elements.
   - No name opts out, `_` included: a value that isn't needed isn't given a name, and a call that's there for what it does is a statement.
   - A read is the local's name anywhere but where an assignment writes: `total = 5`, `total += hits`, `total++`, `stats.health = 3` and `seen[i] = 1` don't read `total`, `stats` or `seen`. A read on the right of its own assignment counts (`total = total + 1`), and so does passing it, as a `mut` argument too, and calling a method on it.
-  - A call does something when it's a `Spawn`, `Scene.Load` or the like, a widget (`GUILayout.Button`), an `await`, a `try`, a list's or a map's change (`items.Remove(x)`), or a function or method that calls C, draws, is async, takes a `mut` parameter or is a `mut` method. Any other call only gives a value, a function's too.
+  - A call does something when it's a `Spawn`, `Scene.Load` or the like, a widget (`GUILayout.Button`), an `await`, a `try`, a list's or a map's change (`items.Remove(x)`), or a function or method that calls C, draws, is async, takes a `mut` or an `out` parameter or is a `mut` method. Any other call only gives a value, a function's too.
   - A local that's assigned later gets a note of its own: remove it and what assigns it, or use it.
   - Errors hide uses, so a local whose scope has an error in it waits: the warning comes once the code checks.
 - `default` of a struct or component is its fields' defaults, not all zeros as in C#, where `default` skips field initializers: a Tide value never exists without them.
@@ -505,7 +566,8 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - A compound assignment reads its target before its value is worked out, as in C#: `counter.n += Next(counter)` adds to what `counter.n` was. An index in the target (`items[Next(counter)] += 5`) runs once, before the value.
 - A method reads the value it's called on as it runs, once its arguments are worked out, as C# reads a struct variable: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out: `items[Push(items, 7) - 1]` is the element `Push` added.
 - A read-only argument is a copy made in its turn, a list's too: `Total(items, Push(items, 4))` totals the list as it was. A `mut` method given its own value's list (`bag.Absorb(bag.items)`) gets a copy as well.
-- A list's, a map's and a set's changes that give a value (`items.Remove(x)`, `seen.Add(k)`) are calls that write, and so are widgets that change what they're given (`GUILayout.Toggle(title, open)`) and C functions with a `mut` parameter.
+- A list's, a map's and a set's changes that give a value (`items.Remove(x)`, `seen.Add(k)`) are calls that write, and so are widgets that change what they're given (`GUILayout.Toggle(title, open)`), C functions with a `mut` or an `out` parameter, and a map's `TryGet`.
+- A variable an `out` argument makes is read in its turn like any other: in `Count(tally, out var made) * 10 + made`, `made` is what the call gave, and in `seen * 100 + Count(tally, out seen)`, `seen` is read before the call makes it anew.
 - A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
 - Arguments passed by name are worked out in the order the call writes them, not the parameters': in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`. A default the call leaves out is a constant, so it has no turn.
 
@@ -1005,7 +1067,7 @@ system Advance(mut Match match)
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
 - Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
-- A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
+- A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value, or the value type's `default`: C#'s `TryGetValue`, see Out parameters), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
 - Text shows maps as `{1: "a", 2: "b"}` and sets as `{1, 2}`, the keys in their order.
@@ -1213,7 +1275,7 @@ Implemented, awaiting approval:
 - An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Only systems, views, handlers and async code start tasks: a plain function or method can't, as a task belongs to a world.
 - `await` waits for an async call, or for `Wait.Ticks(n)` (the match's ticks; match code only), `Wait.Frames(n)` (this machine's frames; local code only) or `Wait.Seconds(s)`: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `Wait` only goes after `await`. `await` isn't allowed in a block written after a call.
 - Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
-- A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables.
+- A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables, and it has no `out` parameters: its call returns before it has made anything, so it returns a struct instead.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.
 - An async function's world comes from what it does: changing the match (spawning, `mut` match components and singletons, sending match events, entity changes, `Snap`, `Wait.Ticks`) makes it match code, and local state (local components and singletons, `Session` calls, `Wait.Frames`, `Frame.dt`) makes it local. What it awaits or starts decides it too. One that does neither runs in whichever world starts it, and tidec makes it for each. Doing both is an error, as is starting or awaiting one from the other world. Tasks can't draw or read this frame's `Devices`.
 - A task belongs to the entity the code that started it runs for, or with a task, to that task's entity, and ends when it's destroyed; code that runs for no entity starts tasks that belong to their world. A local task can belong to a match entity (a view of the match's entities started it), and ends with it, or when there's no match.
@@ -1701,7 +1763,7 @@ view Sparks(Spark spark, Hud hud)
     - It gives a number wherever the CPU does, which the shader languages' own functions leave open: `Math.Pow` of a number under 0 to a whole power, and of anything to the power of 0, which is 1; `Math.Atan2(0, 0)`, which is 0; `Math.SmoothStep` with its edges the wrong way around, or at the same place; `Math.Inverse` of a matrix, which one of the languages has no function for. Where the CPU gives no number (NaN or an infinity: `Sqrt` and `Log` of a number under 0, `Asin` and `Acos` outside -1 to 1, `Pow` of a number under 0 to a power that isn't whole, the inverse of a matrix that has none), the GPU gives whatever it gives.
   - Not there yet: `while` and `switch`.
   - Never there: lists, maps and sets, text, entities and players, `byte`, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Frame`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
-  - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.
+  - A function a frag or vert calls takes `mut` and `out` parameters as anywhere, and a call that changes a variable that isn't a whole one (a field, a swizzle) is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
   - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
   - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
@@ -2318,8 +2380,8 @@ Implemented, awaiting approval:
 - A game's C++ files (`.cpp`) compile with it too, as C++ with no runtime: tide brings no C++ standard library, exceptions or RTTI. What Tide calls is `extern "C"`. C++ that needs the runtime comes as a prebuilt library behind a C API: a shared one, which has its runtime inside, or a static one built to need none, which is the only kind the web has.
 - On Android, a game's prebuilt libraries are shared ones (`.so`). An ELF static library has nothing that says whether it's Linux's or Android's (clang makes the same objects for both), and tide tells libraries by their contents, so an ELF one is Linux's: no folder or name says otherwise.
 - Writing `external` gets an error that points to `extern`.
-- C takes pointers without Tide having pointer arithmetic: the parameter says how a value is passed, and the call takes its address. `mut T` is `T *`, `in T` is `const T *`, a `List<T>` is a pointer to its elements (`T *` with `mut`), with the count passed separately, and a `string` is a zero-terminated UTF-8 copy. Each is only valid during the call. A `const char *` that C returns is copied into text.
-- C calls keep the order of evaluation: calls to C, and to functions that call it, run left to right like the rest of Tide, whatever order C would pick. One with a `mut` parameter is a call that writes (see Evaluation order).
+- C takes pointers without Tide having pointer arithmetic: the parameter says how a value is passed, and the call takes its address. `mut T` and `out T` are `T *`, `in T` is `const T *`, a `List<T>` is a pointer to its elements (`T *` with `mut`), with the count passed separately, and a `string` is a zero-terminated UTF-8 copy. Each is only valid during the call. A `const char *` that C returns is copied into text.
+- C calls keep the order of evaluation: calls to C, and to functions that call it, run left to right like the rest of Tide, whatever order C would pick. One with a `mut` or an `out` parameter is a call that writes (see Evaluation order).
 - A game's C draws by taking the frame's draw list: `extern void DrawUI(DrawList list);`, called as `DrawUI(Draw2D.list)` from a view or a function it calls. C draws into it with `tide/draw.h`, as much as it likes, in order with the view's own Draw calls. So libraries that hand over triangles each frame (Dear ImGui, Nuklear, Spine) need no way to return lists to Tide.
 
 ```csharp
@@ -2344,13 +2406,14 @@ Implemented, awaiting approval:
 
 - Extern functions take and return numbers, `bool`, vectors, matrices, quaternions, `Color`, `Rect`, `Entity`, `PlayerID`, enums (`int32_t` in C, or `uint8_t` and `uint16_t` for `: byte` and `: ushort`), and structs and components of those, by value. A struct is a C struct with the same fields in the same order: Tide's types have no padding the compiler adds, so the layouts match. The vector types are `tide/math.h`'s (`tide_float3` and the like), which C files can include.
 - A `mut` parameter is a pointer to the caller's variable (`float *`, `Stats *`), which C can change, as `mut` works for Tide functions.
+- An `out` parameter that isn't a list is the same pointer (see Out parameters): `extern bool TryHalf(int value, out int half);` is `bool TryHalf(int value, int *half)`. The difference is Tide's: the call says `out`, can declare the variable there, and passes in nothing C should read. C is trusted to write it: a variable C leaves alone keeps what it held, which for one declared at the call is its type's default. `out string` is an error, as C can't make Tide's text: C returns text.
 - An `in` parameter points at the caller's variable or field when it's one of the parameter's type, and otherwise at a copy made for the call, like a computed value or one that converts (`int3` to `in float3`). `in` is only for extern functions: Tide functions' parameters are read-only already. It doesn't go on text or lists, which go by address anyway.
 - A list's elements are plain data (no text or lists in them). C gets NULL for an empty list. With `mut`, C can change the elements, but not how many there are. C can't return a list.
-- Provisional, awaiting the owner: `out List<T>` is a list C makes, as C#'s `out`: `extern int WriteImage(out List<byte> image);`, called as `physics.size = WriteImage(physics.image);`. C decides its elements and how many there are, and what the list held isn't passed, so nothing of it is copied for C.
+- Provisional, awaiting the owner: `out List<T>` is a list C makes, as C#'s `out`: `extern int WriteImage(out List<byte> image);`, called as `physics.size = WriteImage(out physics.image);`. C decides its elements and how many there are, and what the list held isn't passed, so nothing of it is copied for C.
   - C gets a `tide_list_out *` (`tide/list.h`). `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill, with whatever was there in it. Asking again gives memory for the new count and the earlier one is no longer good. `tide_list_out_count(out, count)` says how many of them, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
   - Once C returns, the list is exactly those elements: more than it had, fewer, or none. A world's list is written chunk by chunk and only where its bytes differ from what it had, so chunks that come out the same stay shared with the world's snapshots and aren't hashed again; the chunks past the new count go back to the heap.
-  - Only `extern` functions take `out`, and only for lists, of the elements a `mut List<T>` goes to C with. `out` is a word before a parameter's type and its name, and a name anywhere else, as `in` is; there's none at the call, as with `mut` and `in`.
-  - To everything but C it's a `mut` parameter: the argument is a list the code can change (a `mut` component's or singleton's field, a `mut` local, a function's own `mut` list), the call is one that writes (see Evaluation order), and a system that makes one of the match's lists this way waits as one that changes it does.
+  - Only an `extern` function's `out List<T>` is made this way, of the elements a `mut List<T>` goes to C with; a Tide function's `out List<T>` is a list it assigns, like any `out` parameter. The call says `out`, as every call with an `out` parameter does: `WriteImage(physics.image)`, as it was written before `out` was every function's, is an error that says so.
+  - To everything but C it's an `out` parameter like any other: the argument is a list the code can change (a `mut` component's or singleton's field, a `mut` local, a function's own `mut` list), the call is one that writes (see Evaluation order), and a system that makes one of the match's lists this way waits as one that changes it does.
   - Picked beyond that: the room is NULL for no elements, and for more than a list holds (see Limits); a count said before the room is asked for again is forgotten with that room; `mut out` is an error that says to drop `mut`; the memory is the engine's, kept between calls, which C neither frees nor keeps.
 - C gets text as it is when a zero follows it, and a copy in the scratch area otherwise. Text C returns is copied into the scratch area, as C may reuse its memory; NULL is empty text. A `mut string` can't go to C.
 - An `Action` and the devices can't be passed to C, nor structs that hold text or lists.
@@ -2424,6 +2487,111 @@ Packages that come with tide: a package in tide's installation, which a game opt
 - Packages from private repositories, and hosts other than those four.
 - Symbols for the packages a game has, so code can add to another package only when it's there (`#if PHYSICS`).
 
+## Mods
+
+Not built yet. **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**.
+
+### Decided
+
+- A mod is a package that someone other than a game's developer adds to it. It builds as packages do: its files compile with the game's, as one program, so a mod's code is game code, with the same language, storage, schedule and speed. There's no scripting layer, nothing is interpreted, and games carry no runtime for mods.
+- Mods are built by a service we run, beside the relay and hosting, not on players' machines: it has the game's source and the mods', builds the game with them for each platform, and signs what it built. A game runs only builds signed for it.
+- Every machine of a match runs the same build, as ever, its local code included: mods never differ between the players of a match, not even ones that only change views, since a view can show a player what gives them an advantage.
+- A player who joins a match with other mods gets its build from the service, never from the match's host. The game is told first, with the mods' names and where they're from, so that it can ask its player ("this match runs these mods"), who then knows that code from outside the game is about to be downloaded. It joins once local code says yes, and nothing is fetched before that.
+- That prompt is the game's own, in its look and its language. The engine draws none and enforces none: it can't tell whether a game asked, one of its own wouldn't fit the game, and it isn't what keeps a player safe. A game whose code never says yes joins no such match, so none skips the prompt by accident. For mods a developer listed, whether to ask is the game's choice, as the developer approved them. For mods from anyone, telling the player is a condition of the service, which turns such mods off for a game that doesn't.
+- A build's mods are a set: the order they're listed in changes nothing, since what would depend on it is an error.
+- A mod is Tide alone: no `extern`, no C or C++ files, no libraries.
+- `virtual` before a declaration says it can be replaced, as in C#, and `override` before another replaces it. Both are always written: nothing is replaced by having the same name, and nothing can be replaced that its developer didn't mark. It happens while compiling: what was replaced isn't in the build, and an override costs what the code it replaced would.
+- An override matches by name and by parameters, both: the parameters' types, a system's filters among them, as overloads are told apart. Two systems can have the same parameters and filters under different names, and several declarations can share a name, so neither alone says which is meant.
+- An override takes the place of what it replaces: its stage, its `[Before]` and `[After]`, and every reference to its name. Nothing calls the code that was replaced, for now (see Open).
+- Two mods that replace the same declaration are an error that names both.
+
+```csharp
+// The game
+virtual system Move(mut Position position, Velocity velocity)
+{
+    position.value += velocity.value * Time.dt;
+}
+
+// A mod
+override system Move(mut Position position, Velocity velocity)
+{
+    position.value += velocity.value * Time.dt * 2;
+}
+```
+
+- A mod's code sees files as a web page's does: files of its own, and nothing else of the machine.
+- A mod's code calls nothing that reaches outside the game: `Session.Connect` and `Clipboard.Copy` are the first two. Which calls those are is part of the sandbox's work.
+- `mods` is a setting, false by default. With it, what `tide build` makes can also run the builds the service signed for the game. A game without it has none of this.
+- A closed game's source is seen by the service alone. Its modders have its declarations, each without its body.
+- Builds are signed with a key per game, and a build can be revoked: a game stops running one the service says no longer stands.
+- On desktop, a build with mods runs inside the system's sandbox, as a second layer under the language's own rules. On the web, the browser's is that layer. A system that can't sandbox a build runs no mods, and the game says why: making the sandbox work wherever games ship is our job, so that's the exception.
+- That no Tide code can corrupt memory is the language's promise to every game, and mods rest on it: it isn't a rule for mods.
+- Where a store forbids code downloaded after installing (iOS, consoles), a game has the mods its developer built into it and no others.
+
+### Open
+
+Proposed, awaiting the owner. None of it is built.
+
+The language:
+
+- `virtual` and `override` go where `local` and `async` do, on declarations with a body: systems, views, handlers, functions, methods, frags and verts. They're keywords only there.
+- An override that matches nothing `virtual` is an error that lists what the name has.
+- An override writes no `[Stage]`, `[Before]` or `[After]` of its own. It can differ in `mut`, and the schedule is worked out from what's built.
+- The two words aren't only for mods: an override is in another package than what it replaces, and a game's own packages can use both, as an expansion would. A mod can mark its own declarations `virtual`, for the mods that need it.
+- Declarations of data aren't replaced: components, singletons, events, enums, scenes, the input, the settings. A mod adds components of its own to the game's entities, as any code does.
+- A mod sees every declaration of the game's, as a package does (see Open, Access control). It declares what a package can, less `extern`. The packages it needs are mods too, or come with tide, or are ones the game lists itself: only those last two can have C.
+
+What a mod's code reaches:
+
+- Files. In a mod's code, `File`, `Directory` and the `Application` paths are that mod's: a persistent folder and a temporary one of its own, inside the game's, and the files its package came with, to read. A path that leaves them fails with `IOError.AccessDenied`. It goes by where the call is written, which the compiler knows. In a build with mods, the game's own code is kept to the game's folders too, by the sandbox, so a function of the game's that a mod calls reaches no further.
+- Sessions. A mod's matches are in rooms: besides `Session.Connect`, a port for `Session.Open` isn't a mod's to give.
+- `Clipboard.Copy` is on the list because text a player pastes elsewhere is a way out of the game.
+- The rest is as it is for any code: devices (the game's window's alone), drawing, the GUI, `Debug`.
+- What no rule stops: a mod can hang the game or end it, use its memory, draw anything in its window (a box that asks for a password included), and send what a player does in the game to the match's other players. Revoking builds, and the developer's say over who publishes, answer those.
+
+The game:
+
+- With the `mods` setting, a game runs another build of itself as a library on desktop and a program on the web, loaded as `tide run`'s host loads one, with nothing watched or carried over. It has the game's public key in it.
+- A build is named by what it's made from: the game's published version, its mods, each at its commit, and tide's version. The mods are sorted first, so the same set listed in another order is the same build. The platform isn't part of the name: a build's generated C is the same everywhere, so its players share matches across platforms as they do now.
+- Local code asks for a build by its mods, written as `tide.packages` writes packages. The game gets it, checks it, and starts it in the running one's place: the match and the local state start over. The command line takes the same. The names are to pick.
+- A room says which build its match runs, and a server on an address says it as it refuses a hello. That's what a game about to join is told from. Once local code says yes, it gets the build, starts it, and joins. A join nothing said yes to ends with a reason of its own.
+- Host migration and hosted servers need nothing new: every machine has the build, and the service builds a hosted server's with the rest.
+
+The service:
+
+- A developer publishes each version's source to it (`tide publish`, a name to pick): the Tide, the C, the libraries and the packages' commits. It stays private unless the developer says otherwise.
+- Modders of an open game have its source. A closed one's declarations are what `tide` and the language server check a mod against. Only the service can build such a mod: `tide run` sends the mod's files as they are and runs what comes back. What a build says of the game is then its declarations, never its code.
+- Who publishes mods for a game is the developer's choice, at the service, changed without shipping the game again: anyone, or the mods the developer lists.
+- Builds run in machines made for one build, with no network while they compile (packages are fetched before, by commit) and limits on time, memory and what they write.
+- A build is made once for each platform, the first time one is asked for, and kept by its name.
+- Signatures are ECDSA on P-256 over a SHA-256 of the build's name, its platform and its file. A game checks one with the code it has for WebRTC (`rtc_p256_verify`), a page with the browser's own, every time a build is loaded, not only when it's fetched. The service keeps each game's key.
+- Revoking is how a build that turned out harmful stops running on machines that already have it. So before a game loads a build it has, it asks the service whether the build is still allowed. It keeps the answer for a while, a day as proposed, and asks again after that: within that time the build runs with no network, and a build revoked meanwhile may still run. A shorter time stops a bad build sooner, and keeps modded play from starting sooner when a player is offline or the service is down. A revoked build is deleted. The developer revokes, and so do we.
+- It's billed to the game: builds, what's kept and what's downloaded.
+
+The sandbox:
+
+- A build with mods runs in a process of its own, which the game starts sandboxed: an AppContainer and a job object on Windows, Landlock and seccomp on Linux, a sandbox profile on macOS. It has its window, the GPU, gamepads, the network, the game's folders, and its builds to read. It has no other file, no other process, and starts no program.
+- The network stays open, as rooms need it. So code that got past the language's rules could still reach the network, with nothing of the machine's to send but the game's own files.
+- WebAssembly is the sandbox where the platform runs it itself: browsers. On desktop it would mean a runtime in every game, ours to write or someone else's, and mod code slower than the game's, which the first decision rules out.
+- Phones: Apple's and Google's stores forbid native code downloaded after installing, as far as we know (to check before building). Their own web views may run WebAssembly, so a modded game could be its web build there.
+
+The order to do the work in, proposed:
+
+1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in.
+2. Memory safety as a tested promise (see Open, at the end).
+3. tidec's rules for mods: Tide alone, and files of their own.
+4. Games that load signed builds, and the service, with listed mods only.
+5. The sandbox, then mods from anyone.
+
+Questions:
+
+- Whether a game can also open every declaration at once, without a `virtual` on each.
+- `base()` in an override, to call what it replaced: maybe later.
+- Whether scenes and singletons' defaults can be replaced, which is how a mod would change `Main`.
+- What else a mod's code can't call, beyond `Session.Connect` and `Clipboard.Copy`.
+- How long a build runs offline before the service is asked again.
+- Whether a modded game on a phone is its web build in the system's web view.
+
 ## Conditional compilation
 
 ### Decided
@@ -2454,3 +2622,4 @@ Implemented, awaiting approval:
 - Archetype growth past what reachability trims: an `Add` or `Remove` on an entity read from a field or a parameter still reaches every archetype of its world, so a game that toggles many components on arbitrary entities multiplies combinations. Sparse components (a presence bit in the row instead of an archetype of their own) are the way out; see Entities.
 - How modules, such as the engine's built-in systems, initialize when there's a single `Main`.
 - Access control: whether a namespace can keep declarations to itself.
+- Memory safety as a promise: that no Tide code, however wrong, can corrupt memory or reach outside its world, tested with generated programs under sanitizers. Mods rest on it (see Mods), and so does a player who takes a world from a host they don't know.

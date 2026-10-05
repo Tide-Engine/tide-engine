@@ -1,0 +1,6 @@
+// expect: a swizzle of several components is a copy, so 'Two' can't make it
+// expect: make a variable, and assign the components from it: 'Two(..., out var made); v.xy = made;'
+scene Main { }
+singleton Tally { float3 v; }
+void Two(out float2 pair) { pair = float2(1, 2); }
+system Run(mut Tally tally) { Two(out tally.v.xy); }

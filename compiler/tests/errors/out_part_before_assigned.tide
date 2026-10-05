@@ -1,0 +1,8 @@
+// expect: 'pair' is read before it's assigned
+scene Main { }
+struct Pair { int a; int b; }
+void Make(int seed, out Pair pair)
+{
+    pair.a = seed;
+    pair.b = seed + 1;
+}

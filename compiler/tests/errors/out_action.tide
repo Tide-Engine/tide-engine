@@ -1,0 +1,3 @@
+// expect: an Action can't be 'out'; it's code, run with 'content();'
+scene Main { }
+void Twice(out Action content) { content(); content(); }

@@ -1,0 +1,15 @@
+// expect: 'Grade' returns here without assigning its 'name'
+scene Main { }
+int Grade(int score, out string name)
+{
+    switch (score / 10)
+    {
+        case 9:
+            name = "A";
+            break;
+        case 8:
+            name = "B";
+            break;
+    }
+    return score;
+}

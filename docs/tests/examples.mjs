@@ -79,8 +79,19 @@ try {
     let next = 0;
     const pending = new Map();
     const errors = [];
+    // The examples' pages as they finished loading, in order: each one's
+    // address, whether it was only being downloaded ahead (`#download`), and
+    // what came over the network for it.
+    const asked = new Map();
+    const loads = [];
     socket.addEventListener('message', ({ data }) => {
         const message = JSON.parse(data);
+        if (message.method === 'Network.requestWillBeSent' && message.params.request.url.includes('/examples/')) {
+            const { url, urlFragment } = message.params.request;
+            asked.set(message.params.requestId, { url, ahead: urlFragment === '#download' });
+        } else if (message.method === 'Network.loadingFinished' && asked.has(message.params.requestId)) {
+            loads.push({ ...asked.get(message.params.requestId), bytes: message.params.encodedDataLength });
+        }
         if (message.id) {
             const request = pending.get(message.id);
             if (request) {
@@ -120,6 +131,7 @@ try {
     }
     await command('Page.enable');
     await command('Runtime.enable');
+    await command('Network.enable');
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
         for (const name of ['drawArraysInstanced', 'drawElementsInstanced', 'drawArrays', 'drawElements']) {
@@ -154,7 +166,8 @@ try {
     let held = false;  // Whether one was checked to stay stopped...
     let scrolled = false; // ...one to stop off screen and start again in view...
     let waited = false; // ...one to load before it's in view, and wait there...
-    let wheeled = false; // ...and one to leave the page its wheel, and take the keyboard at a click
+    let wheeled = false; // ...one to leave the page its wheel, and take the keyboard at a click...
+    let ahead = false; // ...and one to be downloaded before it's scrolled to
     // Where something is in the window, and a real click there.
     const inside = (which, x, y) => evaluate(`(() => { const r = ${which}.getBoundingClientRect(); return { x: r.x + ${x}, y: r.y + ${y} }; })()`);
     const press = async (at) => {
@@ -170,6 +183,20 @@ try {
         await until(`location.pathname === '${page}' && document.querySelector('.tide-example')`, `${page} page`);
         const ids = await evaluate(`Array.from(document.querySelectorAll('.tide-example'), e => e.dataset.exampleSrc.split('/')[2])`);
         const sourced = new Set(); // The examples whose source this page shows
+        // Once the page has loaded, the browser downloads its examples: the
+        // last one's too, screens further down, with nothing scrolled. The
+        // frame that later shows it has its page from the browser's cache.
+        let downloaded = null;
+        if (!only && !ahead && await evaluate(`[...document.querySelectorAll('.tide-example')].at(-1).getBoundingClientRect().top > 3 * innerHeight`)) {
+            const last = `/examples/${ids.at(-1)}/`;
+            const deadline = Date.now() + 20000;
+            while (!(downloaded = loads.find((load) => load.ahead && load.url.includes(last)))) {
+                assert.ok(Date.now() < deadline, `Timed out: ${page} downloads its last example ahead`);
+                await new Promise((done) => setTimeout(done, 50));
+            }
+            assert.ok(downloaded.bytes > 100000, `${ids.at(-1)}: downloaded ahead`);
+            await until('document.querySelectorAll("body > iframe").length === 0', `${ids.at(-1)}: in a frame that's gone once it has`);
+        }
         for (const [index, id] of ids.entries()) {
             visited.add(id);
             await evaluate(`window.example = document.querySelectorAll('.tide-example')[${index}];`);
@@ -192,6 +219,11 @@ try {
             assert.ok((await evaluate(`${frame(0)}.src`)).includes(`backend=${backend}`), `${id}: the page's backend`);
             await until(rendering(players), `${id}: actual rendering`);
             await until(`example.querySelectorAll("iframe.shown").length === ${players}`, `${id}: every frame shows`);
+            if (downloaded && index === ids.length - 1) {
+                ahead = true;
+                const shown = loads.find((load) => !load.ahead && load.url === downloaded.url);
+                assert.ok(shown && shown.bytes < downloaded.bytes / 10, `${id}: its frame has its page from the cache (${shown?.bytes} bytes of ${downloaded.bytes})`);
+            }
             // One further down the page, within a screen of this one, has
             // loaded already, and waits to be in view to start.
             const next = `[...document.querySelectorAll('.tide-example iframe')].find(f => !example.contains(f) && f.getBoundingClientRect().top >= innerHeight)`;
@@ -231,7 +263,9 @@ try {
                 // hosts, and each hears the other's packets: they're in one match.
                 await until(`${frame(0)}.contentWindow.Tide.room.length === 6 && ${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`, `${id}: one room`);
                 await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, `${id}: a match between the two`);
-                // The slider is what both pages delay their packets by, at once.
+                // The slider is the ping both pages are told, at once: the
+                // round trip the one that joined is to have (what it then
+                // adds is tide_platform_web_lag's to check, in made-up time).
                 await evaluate(`(() => { const lag = example.querySelector('[data-example-lag]'); lag.value = 125; lag.dispatchEvent(new Event('input')); })()`);
                 assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.lag + ',' + ${frame(1)}.contentWindow.Tide.lag`), '125,125', `${id}: latency`);
                 assert.equal(await evaluate('example.querySelector(".example-lag output").textContent'), '125 ms');
@@ -333,7 +367,7 @@ try {
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');
     assert.deepEqual([...written].sort(), built);
-    if (!only) assert.ok(held && scrolled && waited && wheeled, 'Stopping, leaving the screen, waiting out of view and the wheel were checked');
+    if (!only) assert.ok(held && scrolled && waited && wheeled && ahead, 'Stopping, leaving the screen, waiting out of view, the wheel and downloading ahead were checked');
     await command('Page.navigate', { url: `${origin}/game/shaders` });
     await until(`location.pathname === '/game/shaders' && document.querySelector('.tide-example')`, 'shaders page');
     // A build of the docs without its games: what loads isn't one, and the

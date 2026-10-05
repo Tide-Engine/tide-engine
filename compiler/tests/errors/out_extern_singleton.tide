@@ -1,0 +1,4 @@
+// expect: C functions can't take singletons yet
+scene Main { }
+singleton Store { int size; }
+extern void Fill(out Store store);

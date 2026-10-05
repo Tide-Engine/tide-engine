@@ -635,6 +635,8 @@ static inline int tide_run_frame(void *user, const float seconds)
         else game->disconnected(tide_run_local, event.reason, event.message);
     }
     const tide_session_status status = tide_session_status_of(s);
+    // What a page that plays at a slow connection makes up the rest of (tide.js: `Tide.lag`)
+    tide_platform_room_ping(status.server ? 0u : status.client.ping_ms);
     char room[TIDE_ROOM_CODE_LENGTH + 1] = "";
     if (status.open || !status.server) tide_platform_room_code(room, sizeof room); // A closed room isn't one to join
     game->set_session(tide_run_local, status.client.state, status.client.player, status.client.ping_ms, status.server,
