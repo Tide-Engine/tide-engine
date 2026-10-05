@@ -131,9 +131,8 @@ double rtc_now(void); // Seconds, from some point
 rtc_socket rtc_udp_open(void);
 bool rtc_local_only(void);
 uint16_t rtc_socket_port(rtc_socket s);
+// What arrives on it is read through ../arrivals.h, which says when it did.
 void rtc_udp_send(rtc_socket s, rtc_addr to, const void *data, size_t size);
-// The next datagram: its size, or 0 when there's none.
-size_t rtc_udp_receive(rtc_socket s, rtc_addr *from, void *out, size_t capacity);
 void rtc_socket_close(rtc_socket s);
 // The address this machine reaches the internet from.
 bool rtc_local_ip(uint32_t *ip);
@@ -335,6 +334,8 @@ typedef struct rtc_pair {
 
 typedef struct rtc_ice {
     rtc_socket socket;
+    struct tide_arrivals *arrivals; // Reads the socket, and says when each datagram arrived (../arrivals.h)
+    double arrived;                 // ...which for the one rtc_ice_receive last gave was then: seconds, by rtc_now
     int state;
     bool controlling;
     bool relay_only; // TIDE_RTC_RELAY_ONLY: through TURN or not at all, to test it
@@ -578,13 +579,16 @@ typedef struct rtc_peer {
     char *signals[RTC_PEER_SIGNALS];
     int signal_count;
     bool description_told;
-    // Messages from the other side
+    // Messages from the other side, each with when the datagram it came in arrived
     struct {
         uint16_t size;
+        double arrived;
         uint8_t data[1200];
     } inbox[RTC_PEER_INBOX];
     int inbox_head;
     int inbox_count;
+    double reading; // When the datagram being read arrived
+    double arrived; // ...and the one the message rtc_peer_receive last gave came in: seconds, by rtc_now
 } rtc_peer;
 
 // Heap-allocated: it's big.

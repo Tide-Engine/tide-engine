@@ -331,7 +331,7 @@ static void counted_close(void *self)
 static tide_transport counted(const intptr_t i, const uint32_t endpoint)
 {
     counted_inner[i] = tide_loopback_endpoint(net, endpoint);
-    return (tide_transport){(void *)i, counted_send, counted_receive, counted_close, NULL};
+    return (tide_transport){.self = (void *)i, .send = counted_send, .receive = counted_receive, .close = counted_close};
 }
 
 TIDE_TEST(net_a_match_costs_little_to_keep_going)
@@ -356,6 +356,60 @@ TIDE_TEST(net_a_match_costs_little_to_keep_going)
     // round trip says they came: 316 KB and 45 KB before the frames shrank.
     TIDE_CHECK(counted_bytes[0] < 140000u);
     TIDE_CHECK(counted_bytes[1] < 28000u && counted_bytes[2] < 28000u);
+    finish();
+}
+
+// A ping is the network's round trip, and counts no wait for an update: the
+// transport says when a datagram arrived, which is before the update that
+// read it, and the server says how long it held what it answers. Updates here
+// are 11 and 22 ms apart, so an answer is read up to two of them after it
+// could have been, which is what the client waits by and no part of its ping.
+TIDE_TEST(net_a_ping_is_the_networks_round_trip)
+{
+    start((tide_net_conditions){.latency = 0.04}, 7);
+    join(0);
+    join(1);
+    run(3.0);
+    for (int i = 0; i < 2; i++) {
+        const tide_client_status s = tide_client_status_of(clients[i]);
+        TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
+        TIDE_CHECK(s.ping_ms >= 79u && s.ping_ms <= 81u); // 40 ms each way
+        TIDE_CHECK(s.answer_ms >= s.ping_ms + 11u);       // ...and an update or two before it's read
+    }
+    // A network that takes no time, as between two players at one desk: a
+    // ping of nothing, whatever the updates' pace
+    tide_loopback_set_conditions(net, (tide_net_conditions){0});
+    run(4.0);
+    for (int i = 0; i < 2; i++) {
+        const tide_client_status s = tide_client_status_of(clients[i]);
+        TIDE_CHECK(s.ping_ms == 0u);
+        TIDE_CHECK(s.answer_ms >= 11u);
+    }
+    // ...and one that jitters: the ping follows each trip, never a frame more
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02, .jitter = 0.01});
+    run(6.0);
+    for (int i = 0; i < 2; i++) {
+        const tide_client_status s = tide_client_status_of(clients[i]);
+        TIDE_CHECK(s.ping_ms >= 39u && s.ping_ms <= 61u);
+        TIDE_CHECK(s.resyncs == 0);
+    }
+    finish();
+
+    // Through a transport that can't say when datagrams arrive, they arrive
+    // as they're read: the ping counts the waits, as an answer does.
+    now = 0.0;
+    net = tide_loopback_create(7);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.04});
+    const tide_server_desc desc = {.game = &tide_game_api, .tick_rate = 60, .transports = {counted(0, 1)}};
+    server = tide_server_create(&desc, now);
+    memset(clients, 0, sizeof clients);
+    const tide_client_desc client = {.game = &tide_game_api, .transport = counted(1, 2), .server = tide_loopback_address(1),
+                                     .sample = sample, .user = &who[0], .lead = 2};
+    clients[0] = tide_client_create(&client, now);
+    run(3.0);
+    const tide_client_status s = tide_client_status_of(clients[0]);
+    TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(s.ping_ms >= 80u + 11u && s.ping_ms + 1u >= s.answer_ms && s.ping_ms <= s.answer_ms + 1u);
     finish();
 }
 
@@ -1008,7 +1062,7 @@ static void deaf_close(void *self)
 static tide_transport sometimes_deaf(const tide_transport t)
 {
     hearing = t;
-    return (tide_transport){NULL, deaf_send, deaf_receive, deaf_close, NULL};
+    return (tide_transport){.send = deaf_send, .receive = deaf_receive, .close = deaf_close};
 }
 
 // A kicked player who heard nothing of it times out, and hears it the next

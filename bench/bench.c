@@ -151,7 +151,8 @@ static void counted_end(void *self)
 static tide_transport count(machine *m, const tide_transport inner)
 {
     m->transport = (counted){inner, m};
-    return (tide_transport){&m->transport, counted_send, counted_receive, counted_close, inner.end ? counted_end : NULL};
+    return (tide_transport){.self = &m->transport, .send = counted_send, .receive = counted_receive, .close = counted_close,
+                            .end = inner.end ? counted_end : NULL};
 }
 
 // The platform's pool, with only its first `threads` threads taking part.

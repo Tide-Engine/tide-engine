@@ -241,6 +241,52 @@ TIDE_TEST(udp_players_play_together)
     players_play_together(false);
 }
 
+// A ping is the network's round trip: the sockets say when each datagram
+// arrived, so the wait for the frame that reads it is no part of it. Frames
+// here are 60 ms apart, in real time, on one machine: an answer takes a frame
+// to be read, and the network next to nothing. The least of the pings is
+// what's checked, as a machine busy with other things can note one late.
+TIDE_TEST(udp_a_ping_counts_no_wait_for_a_frame)
+{
+    tide_transport network;
+    uint16_t port = 47200;
+    while (!tide_platform_udp_open_local(port, &network) && port < 47300) port++;
+    TIDE_REQUIRE(port < 47300);
+    TIDE_REQUIRE(network.clock != NULL && network.arrived != NULL);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game, .tick_rate = 60, .transports = {network}}, 0.0);
+    TIDE_REQUIRE(server != NULL);
+    tide_transport joining;
+    TIDE_REQUIRE(tide_platform_udp_open_local(0, &joining));
+    int32_t factor = 1;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &game, .transport = joining,
+                                                                 .server = {TIDE_ADDRESS_IPV4, 0x7F000001u, port},
+                                                                 .sample = sample, .user = &factor, .lead = 2},
+                                             0.0);
+    TIDE_REQUIRE(client != NULL);
+
+    const uint64_t began = tide_time_now_ns();
+    const uint64_t frame_ns = 60000000ull;
+    uint32_t least = UINT32_MAX;
+    uint32_t answer = 0;
+    int measured = 0;
+    for (uint64_t frame = 1; frame <= 200 && measured < 20; frame++) {
+        while (tide_time_now_ns() - began < frame * frame_ns) tide_yield();
+        const double now = (double)(tide_time_now_ns() - began) * 1e-9;
+        tide_server_update(server, now);
+        tide_client_update(client, now);
+        const tide_client_status s = tide_client_status_of(client);
+        if (s.state != TIDE_SESSION_CONNECTED || frame < 8) continue;
+        if (s.ping_ms < least) least = s.ping_ms;
+        answer = s.answer_ms;
+        measured++;
+    }
+    TIDE_CHECK(measured == 20);
+    TIDE_CHECK(answer >= 50u); // A frame, to read it
+    TIDE_CHECK(least < 30u);   // ...of which the network took next to none
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+}
+
 TIDE_TEST(udp_players_play_together_after_delayed_receive)
 {
     players_play_together(true);

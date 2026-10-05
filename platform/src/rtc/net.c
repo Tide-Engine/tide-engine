@@ -142,25 +142,6 @@ void rtc_udp_send(const rtc_socket s, const rtc_addr to, const void *data, const
     sendto(FD(s), (const char *)data, (int)size, 0, (const struct sockaddr *)&a, sizeof a);
 }
 
-size_t rtc_udp_receive(const rtc_socket s, rtc_addr *from, void *out, const size_t capacity)
-{
-    for (;;) {
-        struct sockaddr_in a;
-        socklen_t length = sizeof a;
-        const int n = (int)recvfrom(FD(s), (char *)out, (int)capacity, 0, (struct sockaddr *)&a, &length);
-        if (n > 0 && a.sin_family == AF_INET) {
-            *from = (rtc_addr){ntohl(a.sin_addr.s_addr), ntohs(a.sin_port)};
-            return (size_t)n;
-        }
-        if (n > 0) continue;
-#ifdef _WIN32
-        const int error = WSAGetLastError();
-        if (n < 0 && (error == WSAECONNRESET || error == WSAEMSGSIZE)) continue;
-#endif
-        return 0;
-    }
-}
-
 // The address this machine reaches others from: "connecting" a UDP socket
 // sends nothing, but picks the route, and with it the local address.
 bool rtc_local_ip(uint32_t *ip)
