@@ -51,6 +51,9 @@ typedef enum occ_kind {
     OCC_SETTING,  // One of the engine's settings, tickRate in settings { ... }
     OCC_OWNERSHIP, // `ownership` after `with` or `without`, with `param` the filter
     OCC_VERIFIED, // `verified` before a parameter's or filter's type, or a trigger's event, with `param` the one it's on
+    // `out` before a parameter's type (a declaration, with `param` the one it's on), or before an argument, with
+    // `param` the parameter it's for where the game declares one, and `local` the variable the argument declares
+    OCC_OUT,
 } occ_kind;
 
 typedef struct occurrence {
@@ -70,7 +73,7 @@ typedef struct occurrence {
     const char *c_name; // Functions and constants: what they are in C, like tide_draw_circle
     builtin_call call;  // Built-in methods: which kind, CALL_LIST for items.Add(...)
     int order;          // When it was found, which decides between two at one position
-    bool write;         // What an assignment changes: `x` in `x = 1`, `radius` in `body.radius += 1`
+    bool write;         // What an assignment changes: `x` in `x = 1`, `radius` in `body.radius += 1`; and what a call makes, `x` in `F(out x)`
     const decl *component; // The World's methods: the component in <>, Health in world.Get<Health>(e)
     bool backing;       // An enum's backing type: byte in `enum Voxel : byte`
 } occurrence;
@@ -497,6 +500,11 @@ static int written_param(const expr *call, const int i)
     return i;
 }
 
+// The parameter of the game's that the argument being walked is for, and
+// whose it is: an `out` argument's word says which.
+static const param *walk_arg_param;
+static const decl *walk_arg_of;
+
 // A call's arguments, and the names the game's own parameters are passed by:
 // each is a use of its parameter.
 static void walk_args(const expr *e)
@@ -505,17 +513,54 @@ static void walk_args(const expr *e)
     for (int i = 0; i < written_count(e); i++) {
         const str name = written_name(e, i);
         const int k = written_param(e, i);
-        if (name.len > 0 && m && k < m->params.count && str_eq(m->params.items[k].name, name)) {
-            add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_PARAM, .param = &m->params.items[k],
-                                 .param_of = m, .name = name, .type = m->params.items[k].type});
+        const param *p = m && k < m->params.count ? &m->params.items[k] : NULL;
+        if (name.len > 0 && p && str_eq(p->name, name)) {
+            add_occ((occurrence){.at = e->arg_name_at.items[i], .len = name.len, .kind = OCC_PARAM, .param = p,
+                                 .param_of = m, .name = name, .type = p->type});
         }
+        walk_arg_param = p;
+        walk_arg_of = m;
         walk_expr(written_arg(e, i));
+        walk_arg_param = NULL;
+        walk_arg_of = NULL;
     }
 }
 
+static void walk_value(const expr *e);
+
+// An expression, and for an argument written with `out`, its word and the
+// variable the call makes. `out var half` and `out int half` declare that
+// variable where they're written, as a statement does: its type, when it
+// writes one, and its name. `out _` makes a place nothing names, so there's
+// only a type it may write. Anything else is a variable or a field the code
+// has, which the call writes as an assignment would.
 static void walk_expr(const expr *e)
 {
     if (!e) return;
+    if (!e->is_out) {
+        walk_value(e);
+        return;
+    }
+    const stmt *local = e->out_local;
+    if (e->out_at.line > 0) {
+        add_occ((occurrence){.at = e->out_at, .len = 3, .kind = OCC_OUT, .param = walk_arg_param, .param_of = walk_arg_of,
+                             .local = local, .name = str_from("out"), .type = e->type});
+    }
+    if (!local) {
+        const expr *outer = walk_written;
+        walk_written = written_place(e);
+        walk_value(e);
+        walk_written = outer;
+        return;
+    }
+    type_ref(local->type_qual_at.line ? local->type_qual_at : local->type_at, local->type_at, local->type_name, local->type);
+    if (local->discard) return;
+    add_occ((occurrence){.at = local->name_at, .len = local->name.len, .kind = OCC_LOCAL, .declaration = true, .local = local,
+                         .name = local->name, .type = local->type});
+}
+
+static void walk_value(const expr *e)
+{
     switch (e->kind) {
     case E_INT:
     case E_FLOAT:
@@ -723,8 +768,9 @@ static void walk_expr(const expr *e)
             o.c_name = e->c_callee;
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
-                   || e->call == CALL_LIST || e->call == CALL_GRID || e->call == CALL_SNAP || e->call == CALL_DISCARD) {
-            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), cells.Clear(), this.Snap(), pixel.Discard()
+                   || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
+                   || e->call == CALL_DISCARD) {
+            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), pixel.Discard()
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -890,6 +936,11 @@ static void walk_param(const param *p, const decl *d)
         if (p->verified_at.line > 0) {
             add_occ((occurrence){.at = p->verified_at, .len = 8, .kind = OCC_VERIFIED, .param = p, .param_of = d,
                                  .name = str_from("verified")});
+        }
+        // `out Health health`, a function's or method's: the word, whatever the checker then made of it
+        if (p->out_at.line > 0) {
+            add_occ((occurrence){.at = p->out_at, .len = 3, .kind = OCC_OUT, .declaration = true, .param = p, .param_of = d,
+                                 .name = str_from("out"), .type = p->type});
         }
         if (p->ownership) { // A word of its own there, not a type's name
             add_occ((occurrence){.at = p->type_at, .len = p->type_name.len, .kind = OCC_OWNERSHIP, .param = p,
@@ -1157,7 +1208,7 @@ static bool unused_local(const diagnostic *d)
 {
     for (int i = 0; d->severity == DIAG_WARNING && i < A.prog->fixes.count; i++) {
         const fix *f = &A.prog->fixes.items[i];
-        if (f->kind != FIX_UNUSED_LOCAL && f->kind != FIX_REMOVE_LOCAL && f->kind != FIX_KEEP_CALL) continue;
+        if (f->kind != FIX_UNUSED_LOCAL && f->kind != FIX_REMOVE_LOCAL && f->kind != FIX_KEEP_CALL && f->kind != FIX_DISCARD_OUT) continue;
         if (loc_cmp(d->at, f->at) == 0) return true;
     }
     return false;
@@ -1584,6 +1635,9 @@ static const method_form list_calls[] = {
 static const method_form map_calls[] = {
     {"Has", "Has(K key) -> bool", "Whether the key is in the map."},
     {"Get", "Get(K key) -> V?", "The key's value, or nothing when it isn't there."},
+    {"TryGet", "TryGet(K key, out V value) -> bool",
+     "Whether the key is in the map, and through `out`, its value, or the value type's default when it isn't there: "
+     "`if (scores.TryGet(key, out var score)) { ... }`."},
     {"Remove", "Remove(K key) -> bool", "Removes the key and its value, if it's there, and says whether it was."},
     {"Clear", "Clear()", "Removes every key."},
 };
@@ -2150,6 +2204,25 @@ static void describe_enum_conversion(const decl *d, sb *out)
     sb_put(out, ".");
 }
 
+// What an `out` parameter of `of` is: the caller's variable, which the call
+// makes. An extern function's is C's to make: a list through its writer, and
+// anything else through a pointer.
+static void describe_out_param(const param *p, const decl *of, sb *out)
+{
+    if (of && of->is_extern && p->type.kind == TY_LIST) {
+        sb_put(out, "\n\nParameter, the caller's list, which C makes: it gets a `tide_list_out`, asks it for room, fills it, "
+                    "and says how many elements there are (`tide/list.h`). What the list held isn't passed.");
+    } else if (of && of->is_extern) {
+        sb_put(out, "\n\nParameter, the caller's variable, which C makes: it gets a pointer, and writes the value through "
+                    "it. What the variable held isn't passed.");
+    } else {
+        sb_put(out, "\n\nParameter, the caller's variable, which the call makes: it starts unassigned here, so the code "
+                    "assigns it before it reads it, and on every path that returns. What the variable held isn't passed.");
+    }
+    sb_printf(out, " A call says `out` before its argument: `out var " STR_FMT "` declares the variable there, `out` before "
+                   "one the code has assigns it, and `out _` leaves it out.", STR_ARG(p->name));
+}
+
 // Markdown for a hover over `o`.
 static void describe(const occurrence *o, sb *out)
 {
@@ -2272,6 +2345,36 @@ static void describe(const occurrence *o, sb *out)
     case OCC_VERIFIED:
         describe_verified(o->param, o->param_of, out);
         break;
+    case OCC_OUT: {
+        if (o->declaration) { // On a parameter: what the parameter is
+            format_param(o->param, &code);
+            code_block(out, code.data);
+            describe_out_param(o->param, o->param_of ? o->param_of : decl_of_param(o->param), out);
+            break;
+        }
+        // Before an argument: what the call makes there
+        const stmt *made = o->local;
+        if (made && made->discard) {
+            code_block(out, "out _");
+            sb_put(out, "\n\nLeaves out what the call makes there: no variable takes it.");
+        } else if (made) {
+            sb_printf(&code, "out %s%s " STR_FMT, made->is_mut ? "mut " : "", type_name(made->type), STR_ARG(made->name));
+            code_block(out, code.data);
+            sb_printf(out, "\n\nDeclares `" STR_FMT "` here, a local the call makes: %s.", STR_ARG(made->name),
+                      made->is_mut ? "the code can change it afterwards" : "read-only afterwards, unless it's declared `out mut`");
+        } else {
+            sb_printf(&code, "out %s", type_name(o->type));
+            code_block(out, code.data);
+            sb_put(out, "\n\nThe call makes the variable after it: it's written, as by an assignment, and what it held "
+                        "isn't passed.");
+        }
+        if (o->param && o->param_of) {
+            sb_printf(out, " For `" STR_FMT "`'s `", STR_ARG(o->param_of->name));
+            format_param(o->param, out);
+            sb_put(out, "`.");
+        }
+        break;
+    }
     case OCC_SETTING: {
         const setting *st = setting_named(o->name);
         sb_printf(&code, "%s %s", type_name((type){st->kind, NULL}), st->name);
@@ -2349,7 +2452,7 @@ static void describe(const occurrence *o, sb *out)
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
-        else if (o->param->is_out) sb_put(out, "\n\nParameter, the caller's list, which C makes: it gets a `tide_list_out`, asks it for room, fills it, and says how many elements there are (`tide/list.h`). What the list held isn't passed.");
+        else if (o->param->is_out) describe_out_param(o->param, of, out);
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
         else sb_put(out, "\n\nParameter, read-only.");
         break;
@@ -2366,6 +2469,15 @@ static void describe(const occurrence *o, sb *out)
                   STR_ARG(o->local->name));
         code_block(out, code.data);
         sb_put(out, o->local->is_mut ? "\n\nLocal variable." : "\n\nLocal variable, read-only.");
+        if (o->local->out_decl) { // F(out var name)
+            sb_put(out, " An `out` argument declares it, and the call it's in makes it: it has a value where that call has "
+                        "run, from there to the end of the block its statement is in, or of the loop whose condition "
+                        "declares it.");
+            if (!o->local->is_mut) {
+                sb_printf(out, " `out mut %s " STR_FMT "` declares one the code can change afterwards.",
+                          o->local->type_name.len > 0 ? str_to_cstr(o->local->type_name) : "var", STR_ARG(o->local->name));
+            }
+        }
         break;
     case OCC_THIS: {
         const decl *d = o->decl;
@@ -3150,6 +3262,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
         loc end = start;
         bool preferred = true;
         const char *separator = "";
+        const diagnostic *fixed = NULL; // The diagnostic it fixes, where the fix is at it
         switch (f->kind) {
         case FIX_ADD_MUT:
             sb_printf(&title, "Declare '" STR_FMT "' as mut", STR_ARG(p->name));
@@ -3194,9 +3307,14 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
                     if (strcmp(names.items[j], name.data) == 0) sb_printf(&name, "%d", k + 1); // Two of the same
                 }
                 vec_push(names, name.data);
-                sb_printf(&text, "%s%s %s", k ? ", " : "", type_name(call->args.items[k]->type), name.data);
+                sb_printf(&text, "%s%s%s %s", k ? ", " : "", call->args.items[k]->is_out ? "out " : "",
+                          type_name(call->args.items[k]->type), name.data);
             }
-            sb_put(&text, ")\n{\n}\n");
+            sb_put(&text, ")\n{\n");
+            for (int k = 0; k < call->args.count; k++) { // What it makes through `out`, so it's whole as it's made
+                if (call->args.items[k]->is_out) sb_printf(&text, "    %s = default;\n", names.items[k]);
+            }
+            sb_put(&text, "}\n");
             preferred = false;
             break;
         }
@@ -3218,10 +3336,60 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             sb_put(&text, "");
             break;
         }
+        case FIX_ADD_OUT: // An argument for an `out` parameter: the word before it
+            sb_put(&title, "Add 'out'");
+            start = end = f->at;
+            sb_put(&text, "out ");
+            fixed = diagnostic_at(f->at);
+            break;
+        case FIX_REMOVE_OUT: { // `out` where no `out` parameter takes it: the word, up to the argument
+            const int t = token_at(f->at);
+            if (t < 0) continue;
+            sb_put(&title, "Remove 'out'");
+            start = f->at;
+            end = DOC->toks[t + 1].at;
+            sb_put(&text, "");
+            fixed = diagnostic_at(f->at);
+            break;
+        }
+        case FIX_DISCARD_OUT: { // `out var rest` that nothing reads: `out _`, from its `var`, `mut` or type to its name
+            const stmt *l = f->local;
+            sb_printf(&title, "Leave '" STR_FMT "' out: 'out _'", STR_ARG(l->name));
+            start = l->at;
+            end = (loc){l->name_at.line, l->name_at.col + l->name.len, l->name_at.file};
+            sb_put(&text, "_");
+            fixed = diagnostic_at(f->at);
+            break;
+        }
+        case FIX_ASSIGN_OUT: { // A return, or a function's end, that leaves an `out` parameter unassigned
+            const bool at_end = loc_cmp(f->at, f->method->at) == 0;
+            const loc where = at_end ? f->method->end : f->at; // Its closing brace, or the return
+            const int t = where.file == A.doc ? token_at(where) : -1;
+            if (t <= 0) continue;
+            // Only before a statement of a block: a return that's an if's body with no braces stays one statement
+            const tok_kind before = DOC->toks[t - 1].kind;
+            if (before != T_LBRACE && before != T_RBRACE && before != T_SEMI && before != T_COLON) continue;
+            const str line = doc_line(where.line);
+            const int indent = where.col - 1 < line.len ? where.col - 1 : line.len;
+            bool first = true; // On its line: the assignment gets a line of its own
+            for (int i = 0; i < indent; i++) first &= isspace((unsigned char)line.ptr[i]) != 0;
+            sb_printf(&title, "Assign '" STR_FMT " = default;'", STR_ARG(p->name));
+            start = end = where;
+            if (first && at_end) { // A step in from the brace
+                start = end = (loc){where.line, 1, A.doc};
+                sb_printf(&text, "%.*s    " STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            } else if (first) {
+                sb_printf(&text, STR_FMT " = default;\n%.*s", STR_ARG(p->name), indent, line.ptr);
+            } else {
+                sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            }
+            fixed = diagnostic_at(f->at);
+            break;
+        }
         case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
             continue; // Their own actions, above
         }
-        quick_fix(out, &written, title.data, preferred, NULL, start, end, text.data ? text.data : "");
+        quick_fix(out, &written, title.data, preferred, fixed, start, end, text.data ? text.data : "");
     }
     move_to_file_action(start_line, out, &written);
     jb_put(out, "]");
@@ -3983,9 +4151,11 @@ static bool is_literal(const expr *e)
     return e->kind == E_INT || e->kind == E_FLOAT || e->kind == E_BOOL || e->kind == E_STRING || e->kind == E_DEFAULT;
 }
 
-// Where an expression starts: its leftmost token.
+// Where an expression starts: its leftmost token. An argument written with
+// `out` starts at the word.
 static loc expr_start(const expr *e)
 {
+    if (e->is_out && e->out_at.line > 0) return e->out_at;
     for (;;) {
         if ((e->kind == E_MEMBER || e->kind == E_METHOD || e->kind == E_INDEX) && e->object) e = e->object;
         else if (e->kind == E_BINARY || e->kind == E_COALESCE || e->kind == E_IS || e->kind == E_DEFAULTED) e = e->lhs;
@@ -4045,7 +4215,9 @@ static loc expr_end(const expr *e)
     const afile *f = &A.files[e->at.file];
     const int t = token_at(e->at);
     switch (e->kind) {
-    case E_NAME: return (loc){e->at.line, e->at.col + e->name.len, e->at.file};
+    case E_NAME:
+        if (e->out_local && e->out_local->discard) break; // `out _`: its name is generated code's, and its token the `_`
+        return (loc){e->at.line, e->at.col + e->name.len, e->at.file};
     case E_MEMBER: return (loc){e->at.line, e->at.col + e->member.len, e->at.file};
     case E_BINARY: case E_COALESCE: case E_CONDITIONAL: return expr_end(e->rhs);
     case E_UNARY: case E_TRY: case E_AWAIT: return expr_end(e->lhs);
@@ -4327,6 +4499,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_DEFAULT: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_OWNERSHIP: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_VERIFIED: *type = ST_KEYWORD; *mods = 0; break;
+    case OCC_OUT: *type = ST_KEYWORD; *mods = 0; break; // A word only before a parameter's type and before an argument
     }
 }
 
@@ -4527,6 +4700,54 @@ static void collect_locals(const stmt *block, const loc at, scope *sc)
     collect_list(block->stmts.items, block->stmts.count, at, sc);
 }
 
+typedef VEC(const stmt *) local_list;
+
+// The locals `out` arguments declare in an expression, `out var half`, in the
+// order they're written. Not those in a call's block: they're the block's.
+static void out_locals(const expr *e, local_list *found)
+{
+    if (!e) return;
+    if (e->is_out && e->out_local && !e->out_local->discard) vec_push(*found, e->out_local);
+    out_locals(e->object, found);
+    out_locals(e->cond, found);
+    out_locals(e->lhs, found);
+    out_locals(e->rhs, found);
+    for (int i = 0; i < written_count(e); i++) out_locals(written_arg(e, i), found);
+    for (int i = 0; e->kind == E_LITERAL && i < e->inits.count; i++) out_locals(e->inits.items[i].value, found);
+}
+
+// Those of them declared before the cursor: in scope from there on.
+static void collect_outs(const expr *e, const loc at, scope *sc)
+{
+    local_list found = {0};
+    out_locals(e, &found);
+    for (int i = 0; i < found.count; i++) {
+        if (loc_cmp(found.items[i]->name_at, at) < 0) vec_push(sc->locals, found.items[i]);
+    }
+}
+
+// What the `out` arguments in a statement's own expressions declared before
+// the cursor, as the checker has it: a statement's, an if's condition's, a
+// switch's value's and a foreach's list's are the enclosing block's, so the
+// list of statements they're in has them; a while's and a for's header's are
+// the loop's own, in scope up to its end.
+static void collect_stmt_outs(const stmt *s, const loc at, scope *sc)
+{
+    if (!s) return;
+    if (s->kind == S_WHILE || s->kind == S_FOR) {
+        if (loc_cmp(at, stmt_end(s)) > 0) return;
+        collect_stmt_outs(s->init, at, sc);
+        collect_outs(s->cond, at, sc);
+        collect_stmt_outs(s->step, at, sc);
+        return;
+    }
+    collect_outs(s->cond, at, sc);
+    collect_outs(s->target, at, sc);
+    collect_outs(s->value, at, sc);
+    collect_outs(s->by, at, sc);
+    collect_outs(s->offset, at, sc);
+}
+
 // The locals declared before the cursor in a list of statements, and in the
 // ones around it.
 static void collect_list(stmt *const *stmts, const int count, const loc at, scope *sc)
@@ -4535,6 +4756,7 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
         const stmt *s = stmts[i];
         if (loc_cmp(s->at, at) >= 0) break;
         if (s->kind == S_VAR && loc_cmp(s->name_at, at) < 0) vec_push(sc->locals, s);
+        collect_stmt_outs(s, at, sc); // if (TryHalf(8, out var half)): half, from there on
         if (block_contains(s, at)) collect_locals(s, at, sc);
         if (s->kind == S_IF) {
             if (body_contains(s->then_stmt, at)) {
@@ -4745,6 +4967,31 @@ static void add_target_member(void *user, const builtin_member *m)
     item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
 }
 
+static int label_split(const char *label, int starts[16], int ends[16]);
+
+// What a built-in method's call starts as: its name and parentheses, with the
+// cursor inside when it takes arguments. One with an `out` parameter has its
+// arguments laid out, as that one's says `out`: TryGet(key, out var value).
+static void method_snippet(const method_form *form, sb *out)
+{
+    int starts[16];
+    int ends[16];
+    const int params = strstr(form->form, "out ") ? label_split(form->form, starts, ends) : 0;
+    if (params <= 0) {
+        sb_printf(out, "%s(%s)", form->name, strstr(form->form, "()") ? "" : "$1");
+        return;
+    }
+    sb_printf(out, "%s(", form->name);
+    for (int i = 0; i < params; i++) {
+        const char *text = form->form + starts[i];
+        const char *name = form->form + ends[i]; // Its name: the last word
+        while (name > text && name[-1] != ' ') name--;
+        const bool makes = strncmp(text, "out ", 4) == 0;
+        sb_printf(out, "%s%s${%d:%.*s}", i ? ", " : "", makes ? "out var " : "", i + 1, (int)(form->form + ends[i] - name), name);
+    }
+    sb_put(out, ")");
+}
+
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
     if (t.decl && t.decl->query_row) {
@@ -4902,7 +5149,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb detail = {0};
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
-            sb_printf(&snippet, "%s(%s)", forms[i].name, strstr(forms[i].form, "()") ? "" : "$1");
+            method_snippet(&forms[i], &snippet);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
     }
@@ -4929,6 +5176,7 @@ typedef enum order_completion {
 
 static bool complete_in_namespace(completion *c, str ns, order_completion order);
 static const char *name_for(const decl *d);
+static type out_variable_type(int use, loc at);
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
@@ -4973,6 +5221,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     const param *p;
     type t = name_type(&sc, base, &p);
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, ids[n - 1]);
+    if (t.kind == TY_ERROR) t = out_variable_type(ids[n - 1], at);
     if (t.kind == TY_ERROR && n == 2 && str_eq_c(base, "Draw") && str_eq_c(DOC->toks[ids[0]].text, "window") && !gpu) {
         list_members(c, (type){TY_RENDER_TARGET, NULL}, false, &sc);
         return;
@@ -6009,6 +6258,202 @@ static const decl *mesh_vertex(const scope *sc, const int first, const int last)
     return t.decl->fields.items[0].type.decl;
 }
 
+// An argument being typed for an `out` parameter: `TryHalf(8, `, `TryHalf(8, out `.
+typedef struct out_argument {
+    int stage;             // What's written of it before the cursor: OUT_START and the rest, or OUT_NONE when it's no `out` parameter's
+    bool only;             // Every function the call can mean makes its variable there: nothing but an `out` argument fits
+    str name;              // The parameter's name: half
+    const char *type_text; // ...and its type, as code writes it: "int"
+    type type;             // ...as a type, or TY_ERROR where that isn't known
+} out_argument;
+
+enum { OUT_NONE = -1, OUT_START, OUT_WORD, OUT_MUT }; // Nothing yet, or its name and ':'; `out`; `out mut`
+
+// What the argument the cursor is in is for, when that's an `out` parameter,
+// in the call whose '(' is token `open`: `last` is the token before the cursor.
+// The parameter is the one in the argument's place, or the one it's named for
+// (`half: `), of the game's functions and methods of the call's name (the one
+// it means, once it resolved) or of a built-in method, a map's TryGet.
+static out_argument out_argument_at(const int open, const int last, const loc at)
+{
+    const out_argument none = {OUT_NONE, false, {"", 0}, NULL, {TY_ERROR, NULL}};
+    const token *toks = DOC->toks;
+    const int callee = open - 1;
+    if (callee < 0 || toks[callee].kind != T_IDENT) return none;
+    // The argument's place among those written, and where it starts
+    int place = 0;
+    int first = open + 1;
+    bool names = false; // An argument before it has a name: it needs one too
+    for (int i = open + 1, depth = 0; i <= last; i++) {
+        const tok_kind k = toks[i].kind;
+        if (k == T_LPAREN || k == T_LBRACKET || k == T_LBRACE) depth++;
+        else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
+        if (k != T_COMMA || depth != 0) continue;
+        names |= toks[first].kind == T_IDENT && toks[first + 1].kind == T_COLON;
+        place++;
+        first = i + 1;
+    }
+    str named = {"", 0};
+    if (first + 1 <= last && toks[first].kind == T_IDENT && toks[first + 1].kind == T_COLON) {
+        named = toks[first].text;
+        first += 2;
+    }
+    if (names && named.len == 0) return none;
+    out_argument found = none;
+    if (first > last) found.stage = OUT_START;
+    else if (toks[first].kind != T_IDENT || !str_eq_c(toks[first].text, "out")) return none;
+    else if (first == last) found.stage = OUT_WORD;
+    else if (first + 1 == last && toks[last].kind == T_MUT) found.stage = OUT_MUT;
+    else return none;
+
+    const str name = toks[callee].text;
+    const bool method = callee >= 1 && toks[callee - 1].kind == T_DOT;
+    const occurrence *o = occurrence_at(toks[callee].at);
+    if (o && loc_cmp(o->at, toks[callee].at) != 0) o = NULL;
+    const decl *meant = o && is_routine(o->decl) ? o->decl : NULL;
+    int candidates = 0;
+    int makes = 0;
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *m = k < 0 ? d : d->methods.items[k];
+            if (!is_routine(m) || m->is_operator) continue;
+            if (meant ? m != meant : !str_eq(m->name, name) || (method && !m->owner)) continue;
+            const int count = m->params.count - (m->takes_action ? 1 : 0); // An Action is the block after the call
+            int at_param = named.len > 0 ? -1 : place;
+            for (int p = 0; named.len > 0 && p < count; p++) {
+                if (str_eq(m->params.items[p].name, named)) at_param = p;
+            }
+            if (at_param < 0 || at_param >= count) continue;
+            candidates++;
+            const param *prm = &m->params.items[at_param];
+            if (!prm->is_out) continue;
+            if (makes++ > 0) continue; // The first one's name and type
+            found.name = prm->name;
+            found.type_text = str_to_cstr(prm->type_name);
+            found.type = prm->type;
+        }
+    }
+    // scores.TryGet(key, out value): what it's called on says whose method it is
+    if (candidates == 0 && method) {
+        const type t = o && o->call != CALL_NONE && o->object_type.kind != TY_ERROR ? o->object_type : receiver_type(callee - 1, at);
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        const method_form *form = t.kind == TY_WORLD ? NULL : find_form(forms, count, name);
+        sb label = {0};
+        int starts[16];
+        int ends[16];
+        if (form) format_method(form, t, &label);
+        const int params = form ? label_split(label.data, starts, ends) : 0;
+        for (int p = 0; p < params; p++) {
+            const char *text = label.data + starts[p];
+            const char *end = label.data + ends[p];
+            const char *word = end; // Its name: the last word
+            while (word > text && word[-1] != ' ') word--;
+            const str param_name = {word, (int)(end - word)};
+            if (named.len > 0 ? !str_eq(param_name, named) : p != place) continue;
+            candidates++;
+            if (end - text < 4 || strncmp(text, "out ", 4) != 0 || word < text + 5) continue;
+            makes++;
+            found.name = param_name;
+            char *type_text = arena_alloc((size_t)(word - text) - 4);
+            memcpy(type_text, text + 4, (size_t)(word - text) - 5);
+            type_text[word - text - 5] = '\0';
+            found.type_text = type_text;
+            if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
+        }
+    }
+    if (makes == 0) return none;
+    found.only = makes == candidates;
+    return found;
+}
+
+// The type of the local an `out` argument declares earlier in the statement
+// the cursor is in, named at token `use`, read from the tokens: for a
+// statement that doesn't parse yet, like `if (scores.TryGet(key, out var
+// stats)) total += stats.`, which has no call to look at. `out var` takes its
+// parameter's type, and a type written there is the local's own.
+static type out_variable_type(const int use, const loc at)
+{
+    const token *toks = DOC->toks;
+    const str name = toks[use].text;
+    for (int k = use - 1; k >= 3; k--) {
+        if (toks[k].kind == T_LBRACE || toks[k].kind == T_RBRACE || toks[k].kind == T_SEMI) break; // Out of the statement
+        if (toks[k].kind != T_IDENT || !str_eq(toks[k].text, name)) continue;
+        int word = k - 2; // `out` before `var stats` or `Stats stats`, maybe with `mut` between
+        if (toks[word].kind == T_MUT) word--;
+        if (word < 1 || toks[word].kind != T_IDENT || !str_eq_c(toks[word].text, "out")) continue;
+        const tok_kind before = toks[word - 1].kind;
+        if (before != T_LPAREN && before != T_COMMA && before != T_COLON) continue; // Where an argument starts
+        const token *written = &toks[k - 1];
+        if (written->kind == T_IDENT) {
+            type t;
+            if (builtin_type_named(written->text, &t)) return t;
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *d = A.prog->decls.items[i];
+                if (str_eq(d->name, written->text) && type_of_decl(d).kind != TY_ERROR) return type_of_decl(d);
+            }
+            return (type){TY_ERROR, NULL};
+        }
+        if (written->kind != T_VAR) continue;
+        int commas;
+        const int open = open_call(word - 1, &commas);
+        return open >= 1 ? out_argument_at(open, word, at).type : (type){TY_ERROR, NULL};
+    }
+    return (type){TY_ERROR, NULL};
+}
+
+// What can follow in an argument for an `out` parameter, as far as it's
+// written: `out var half`, which declares the variable there, `out` before one
+// the code has, and `out _`; after the word, `var`, `mut`, `_`, the
+// parameter's type, and the variables in scope the code can change.
+static void complete_out_argument(completion *c, const out_argument *arg, const loc at)
+{
+    sb declares = {0};
+    sb declared = {0};
+    sb_printf(&declares, "out var " STR_FMT, STR_ARG(arg->name));
+    sb_printf(&declared, "A read-only local of the parameter's type, `%s`, which the call makes: in scope from here to the "
+                         "end of the block its statement is in.", arg->type_text);
+    if (arg->stage == OUT_START) {
+        sb snippet = {0};
+        sb_printf(&snippet, "out var ${1:" STR_FMT "}", STR_ARG(arg->name));
+        item(c, declares.data, CK_SNIPPET, "Declares the variable the call makes", declared.data, snippet.data);
+        item(c, "out", CK_KEYWORD, "Before a variable or field the code has: the call assigns it", NULL, NULL);
+        item(c, "out _", CK_KEYWORD, "Leaves out what the call makes", NULL, NULL);
+        return;
+    }
+    sb name_snippet = {0};
+    sb type_snippet = {0};
+    sb_printf(&name_snippet, "var ${1:" STR_FMT "}", STR_ARG(arg->name));
+    sb_printf(&type_snippet, "%s ${1:" STR_FMT "}", arg->type_text, STR_ARG(arg->name));
+    item(c, "var", CK_KEYWORD, "Declares the variable here, of the parameter's type", declared.data, name_snippet.data);
+    item(c, arg->type_text, CK_STRUCT, "The parameter's type: declares the variable here", NULL, type_snippet.data);
+    if (arg->stage == OUT_MUT) return;
+    item(c, "mut", CK_KEYWORD, "Declares a variable the code can change afterwards: 'out mut var'", NULL, NULL);
+    item(c, "_", CK_KEYWORD, "Leaves out what the call makes", NULL, NULL);
+    // What the call can assign: the code's `mut` locals of the parameter's type, and what it takes to change, whose
+    // fields the call can make too
+    const scope sc = scope_at(at);
+    for (int i = sc.locals.count - 1; i >= 0; i--) {
+        const stmt *s = sc.locals.items[i];
+        if (!s->is_mut || s->kind != S_VAR) continue;
+        const bool fits = arg->type.kind == TY_ERROR || s->type.kind == TY_STRUCT
+                       || (s->type.kind == arg->type.kind && s->type.decl == arg->type.decl);
+        if (fits) item(c, str_to_cstr(s->name), CK_VARIABLE, type_name(s->type), NULL, NULL);
+    }
+    for (int i = 0; sc.decl && !sc.in_input && i < sc.decl->params.count; i++) {
+        const param *p = &sc.decl->params.items[i];
+        if (p->name.len == 0 || p->mode != PARAM_MUT || p->type.kind == TY_WORLD) continue;
+        sb detail = {0};
+        format_param(p, &detail);
+        item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
+    }
+    for (int i = 0; sc.fields_of && sc.decl && sc.decl->is_mut_method && i < sc.fields_of->fields.count; i++) {
+        const field *f = &sc.fields_of->fields.items[i];
+        if (!f->hidden) item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), NULL, NULL);
+    }
+}
+
 
 void analysis_completion(const int line, const int character, jbuf *out)
 {
@@ -6236,11 +6681,20 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const bool method = depth >= 1 && stack[depth - 1].kind == CTX_DATA;
             const bool operator_ = f.open >= 2 && DOC->toks[f.open - 2].kind == T_IDENT
                                 && str_eq_c(DOC->toks[f.open - 2].text, "operator");
-            if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT) {
-                if (pk != T_MUT && !operator_) {
+            // `out` where a parameter starts is the word, and what's typed after it is the parameter's type: what
+            // the call can make, as after `mut`
+            const bool after_out = pk == T_IDENT && str_eq_c(prev->text, "out") && last > f.open
+                                && (DOC->toks[last - 1].kind == T_LPAREN || DOC->toks[last - 1].kind == T_COMMA);
+            if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT || after_out) {
+                if (pk != T_MUT && !after_out && !operator_) {
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
+                    // An operator gives one value, and an async function goes on after its call returned
+                    if (!is_async) {
+                        item(&c, "out", CK_KEYWORD, "The caller's variable, which the call makes: assigned here on every path that returns",
+                             NULL, NULL);
+                    }
                 }
-                complete_routine_param_types(&c, pk == T_MUT, !method);
+                complete_routine_param_types(&c, pk == T_MUT || after_out, !method);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -6250,13 +6704,16 @@ void analysis_completion(const int line, const int character, jbuf *out)
             if (pk == T_LPAREN || pk == T_COMMA) {
                 item(&c, "in", CK_KEYWORD, "C gets a read-only pointer to the value", NULL, NULL);
                 item(&c, "mut", CK_KEYWORD, "C gets a pointer to the caller's variable, which it can change", NULL, NULL);
-                item(&c, "out", CK_KEYWORD, "C makes the caller's list: it gets a tide_list_out to fill", NULL, NULL);
+                item(&c, "out", CK_KEYWORD, "C makes the caller's variable: it gets a pointer to write through, or for a list, a tide_list_out to fill",
+                     NULL, NULL);
             }
-            // `out` where a parameter starts is the word, and what's typed after it is a list
+            // `out` where a parameter starts is the word, and what's typed after it is what C can make: not text
             const bool after_out = pk == T_IDENT && str_eq_c(prev->text, "out") && last > f.open
                                 && (DOC->toks[last - 1].kind == T_LPAREN || DOC->toks[last - 1].kind == T_COMMA);
             if (after_out) {
-                item(&c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
+                complete_value_types(&c, VT_VALUES | VT_BOOL | VT_ENTITY | VT_LOCAL_ENTITY | VT_LIST);
+                complete_structs(&c);
+                complete_namespaces(&c, false);
             } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT || (pk == T_IDENT && str_eq_c(prev->text, "in"))) {
                 complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY);
                 complete_structs(&c);
@@ -6442,6 +6899,14 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_CODE: {
         if (pk == T_VAR) break; // Naming a local
+        // TryHalf(8, out : what the argument for an `out` parameter goes on with
+        int commas;
+        const int call = open_call(last, &commas);
+        const out_argument made = call >= 1 ? out_argument_at(call, last, at) : (out_argument){.stage = OUT_NONE};
+        if (made.stage == OUT_WORD || made.stage == OUT_MUT) {
+            complete_out_argument(&c, &made, at);
+            break;
+        }
         if (pk == T_MUT) { // mut var count = 0;, or mut int count = 0;
             const scope sc = scope_at(at);
             const bool local = sc.decl && (sc.decl->is_view || sc.decl->is_local);
@@ -6487,8 +6952,6 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
         // Draw2D.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
-        int commas;
-        const int call = open_call(last, &commas);
         if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
             call_args args;
@@ -6499,6 +6962,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
         }
         // Damage(10, : the names its other parameters can be passed by
         if (call >= 1 && (pk == T_LPAREN || pk == T_COMMA)) complete_argument_names(&c, call, last);
+        // TryHalf(8, : an `out` parameter's argument says `out`, and where every function of that name has one
+        // there, nothing else fits
+        if (made.stage == OUT_START) {
+            complete_out_argument(&c, &made, at);
+            if (made.only) break;
+        }
         const bool at_statement = pk == T_LBRACE || pk == T_RBRACE || pk == T_SEMI || pk == T_RPAREN || pk == T_ELSE;
         complete_expression(&c, at, at_statement);
         break;
@@ -6541,7 +7010,8 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_CONST: return a->decl == b->decl;
     case OCC_DEFAULT:
     case OCC_OWNERSHIP:
-    case OCC_VERIFIED: return false; // A keyword, not a symbol
+    case OCC_VERIFIED:
+    case OCC_OUT: return false; // A keyword, not a symbol
     }
     return false;
 }
@@ -6618,6 +7088,8 @@ static const char *rename_target(const int line, const int character, const occu
         return "'ownership' is a keyword after 'with' and 'without', so it can't be renamed.";
     case OCC_VERIFIED:
         return "'verified' is a keyword before a parameter's type or a handler's event, so it can't be renamed.";
+    case OCC_OUT:
+        return "'out' is a keyword before a parameter's type or an argument, so it can't be renamed.";
     case OCC_SETTING:
         return "Settings are the engine's, so they can't be renamed.";
     default:
@@ -6634,10 +7106,27 @@ const char *analysis_prepare_rename(const int line, const int character, jbuf *o
     return NULL;
 }
 
+// Whether an `out` argument in one of a statement's own expressions declares
+// a local named `name`: F(out var name).
+static bool out_local_named(const stmt *s, const str name)
+{
+    local_list made = {0};
+    out_locals(s->cond, &made);
+    out_locals(s->target, &made);
+    out_locals(s->value, &made);
+    out_locals(s->by, &made);
+    out_locals(s->offset, &made);
+    for (int i = 0; i < made.count; i++) {
+        if (str_eq(made.items[i]->name, name)) return true;
+    }
+    return false;
+}
+
 static bool local_named(const stmt *s, const str name)
 {
     if (!s) return false;
     if (s->kind == S_VAR && str_eq(s->name, name)) return true;
+    if (out_local_named(s, name)) return true;
     if (s->kind == S_BLOCK) {
         for (int i = 0; i < s->stmts.count; i++) {
             if (local_named(s->stmts.items[i], name)) return true;
@@ -6657,7 +7146,9 @@ static bool local_named(const stmt *s, const str name)
         return local_named(s->value->block, name);
     }
     if (s->kind == S_FOREACH || s->kind == S_PARALLEL) return str_eq(s->name, name) || local_named(s->then_stmt, name);
-    if (s->kind == S_WHILE || s->kind == S_FOR) return local_named(s->init, name) || local_named(s->then_stmt, name);
+    if (s->kind == S_WHILE || s->kind == S_FOR) {
+        return local_named(s->init, name) || local_named(s->step, name) || local_named(s->then_stmt, name);
+    }
     return s->kind == S_IF && (local_named(s->then_stmt, name) || local_named(s->else_stmt, name));
 }
 
@@ -7027,6 +7518,7 @@ static type receiver_type(const int dot, const loc at)
     const param *ignored;
     type t = name_type(&sc, DOC->toks[first].text, &ignored);
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, first);
+    if (t.kind == TY_ERROR) t = out_variable_type(first, at);
     for (int k = first + 2; k < dot && t.kind != TY_ERROR; k += 2) t = member_type(t, DOC->toks[k].text);
     return t;
 }
@@ -7626,10 +8118,11 @@ static bool is_argument_colon(const int i)
         && (DOC->toks[i - 2].kind == T_LPAREN || DOC->toks[i - 2].kind == T_COMMA);
 }
 
-// A type written with another in <>, which the formatter keeps tight: List<int>.
+// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>.
 static bool generic_type(const str name)
 {
-    return str_eq_c(name, "List") || str_eq_c(name, "Grid2") || str_eq_c(name, "Grid3");
+    return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+        || str_eq_c(name, "Grid3");
 }
 
 static bool space_between(const fmt_item *a, const fmt_item *b)
@@ -7656,9 +8149,9 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     // List<Item>: a type, not a comparison
     if (x == T_IDENT && y == T_LT && generic_type(DOC->toks[a->tok].text)) return false;
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
-    if (y == T_GT) {
+    if (y == T_GT) { // ...past a map's key and the comma after it
         int k = b->tok - 1;
-        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT)) k--;
+        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
         if (k > 0 && DOC->toks[k].kind == T_LT && generic_type(DOC->toks[k - 1].text)) return false;
     }
     // i++ and ++i: against what they change

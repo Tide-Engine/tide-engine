@@ -1,0 +1,12 @@
+// expect: 'Both' returns here without assigning its 'halfB'
+// The right side of '&&' only runs when the left is true
+scene Main { }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+bool Both(int a, int b, out int halfA, out int halfB)
+{
+    return TryHalf(a, out halfA) && TryHalf(b, out halfB);
+}

@@ -45,6 +45,8 @@ typedef struct checker {
     int compare_locals;       // ...and how many locals were in scope before its own
     const expr *member_object; // a.b's a, about to be checked: a Forgotten handler's component is only named for its local fields
     const expr *query_value; // A foreach's direct query parameter name, which is only iterable
+    const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
+    int outs;                // `out` arguments checked so far: code that has some is checked for what it assigns (assigned.c)
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -405,18 +407,43 @@ static void push_scope(checker *c)
 // A local that a statement declared and nothing read by the end of its scope
 // is noted, for a warning once every body is checked (warn_unused_locals). A
 // foreach's or a parallel loop's variable, a name after `is` and a Sort's two
-// elements aren't: their code needs a name there, used or not.
+// elements aren't: their code needs a name there, used or not. A local an
+// `out` argument declares is, as `out _` is there for what nothing reads.
 static void pop_scope(checker *c)
 {
     const int kept = c->scope_marks.items[--c->scope_marks.count];
     for (int i = kept; i < c->locals.count; i++) {
         stmt *s = c->locals.items[i];
-        if (s->kind != S_VAR || !s->value || s->read || s->unused) continue;
+        if (s->kind != S_VAR || (!s->value && !s->out_decl) || s->read || s->unused) continue;
         if (s->type.kind == TY_ERROR || diag_error_count() != s->errors_before) continue; // Errors hide uses
         s->unused = true;
         vec_push(c->unused, s);
     }
     c->locals.count = kept;
+}
+
+// Ends an if's own scope, which holds the names its condition's `is` tests
+// give. The locals `out` arguments declared there stay: as in C#, they're the
+// enclosing block's, in scope in the else and after the if.
+static void pop_scope_keeping_out(checker *c)
+{
+    const int kept = c->scope_marks.items[c->scope_marks.count - 1];
+    stmt **stay = NULL;
+    int staying = 0;
+    for (int i = kept; i < c->locals.count; i++) staying += c->locals.items[i]->out_decl;
+    if (staying > 0) {
+        stay = arena_alloc(sizeof(stmt *) * (size_t)staying);
+        staying = 0;
+        for (int i = kept; i < c->locals.count; i++) {
+            if (!c->locals.items[i]->out_decl) continue;
+            stay[staying++] = c->locals.items[i];
+            c->locals.items[i] = c->locals.items[c->locals.count - 1]; // Out of the scope that ends, in any order
+            c->locals.count--;
+            i--;
+        }
+    }
+    pop_scope(c);
+    for (int i = 0; i < staying; i++) vec_push(c->locals, stay[i]);
 }
 
 static stmt *find_local(const checker *c, const str name)
@@ -2426,6 +2453,164 @@ static str arg_name(const expr *e, const int i)
     return i < e->arg_names.count ? e->arg_names.items[i] : (str){"", 0};
 }
 
+// ---------------------------------------------------------------------------
+// `out` arguments, as C#'s: `out health` assigns a variable the code has, `out
+// var health` and `out Health health` declare one where they're written, in
+// the enclosing block's scope, and `out _` leaves what the call makes out.
+
+static type method_type(const checker *c, str name, loc at, bool is_return);
+static bool holds_heap(type t);
+
+// Whether an `out` argument takes its type from the parameter it's for: `out
+// var health` and `out _`. Which function a shared name means is picked
+// without it.
+static bool out_untyped(const expr *arg)
+{
+    return arg->is_out && arg->out_local && arg->out_local->type_name.len == 0;
+}
+
+// Where an expression starts: `body` in `body.health`, which is at `health`.
+static loc expr_start(const expr *e)
+{
+    while ((e->kind == E_MEMBER || e->kind == E_INDEX || e->kind == E_METHOD) && e->object) e = e->object;
+    if (e->kind == E_LITERAL && e->qual_at.line) return e->qual_at;
+    return e->at;
+}
+
+// The source from `from` to the end of the name of a local an `out` argument
+// declares, `var half` in `out var half`: what an editor's fix replaces. Empty
+// when the two aren't on one line.
+static str up_to_name(const stmt *local, const loc from)
+{
+    if (from.file != local->name_at.file || from.line != local->name_at.line || from.col > local->name_at.col) return (str){NULL, 0};
+    const int before = local->name_at.col - from.col;
+    return (str){local->name.ptr - before, local->name.len + before};
+}
+
+// An argument written `out ...`, before the parameter it's for is known. A
+// declaration puts its local in scope, with its type if it writes one. `out
+// _`, where the code has nothing named `_`, and a declaration of that name
+// make a place nothing names. Anything else is a variable the code has, which
+// the call writes: checked as an assignment's target, so naming it there
+// doesn't count as reading it.
+static void begin_out_arg(checker *c, expr *arg)
+{
+    c->outs++;
+    c->prog->out_args = true;
+    stmt *local = arg->out_local;
+    const bool blank = arg->kind == E_NAME && str_eq_c(arg->name, "_")
+                    && (local || (!find_local(c, arg->name) && !find_param(c, arg->name) && !field_in_scope(c, arg->name)));
+    if (blank) {
+        if (!local) {
+            local = NEW(stmt);
+            local->kind = S_VAR;
+            local->at = arg->at;
+            local->name_at = arg->at;
+            local->out_decl = true;
+            local->out_arg = arg;
+            arg->out_local = local;
+        }
+        // No code names it: generated C does, by where it's written
+        char *name = arena_alloc(48);
+        snprintf(name, 48, "tide_out_%d_%d", arg->at.line, arg->at.col);
+        local->name = str_from(name);
+        local->discard = true;
+        local->read = true;
+        arg->name = local->name;
+    }
+    if (local) {
+        local->errors_before = diag_error_count();
+        local->type = local->type_name.len ? method_type(c, local->type_name, local->type_qual_at, false) : T_ERR;
+        if (!local->discard) {
+            check_reserved(local->name, local->name_at);
+            if (find_local(c, local->name) || find_param(c, local->name)) {
+                diag_error(local->name_at, "'" STR_FMT "' is already declared", STR_ARG(local->name));
+                diag_note("'out " STR_FMT "' assigns the variable there is; a new one takes another name", STR_ARG(local->name));
+                const str declares = up_to_name(local, local->at); // What editors offer: the name alone
+                if (declares.len > 0) suggest_replacement(declares, str_to_cstr(local->name));
+            }
+            vec_push(c->locals, local);
+        }
+        arg->bind = BIND_LOCAL;
+        arg->local = local;
+        arg->type = local->type;
+        return;
+    }
+    const expr *root = arg;
+    while (root->kind == E_MEMBER || root->kind == E_INDEX) root = root->object;
+    const expr *outer_root = c->write_root;
+    c->write_root = root->kind == E_NAME ? root : NULL;
+    c->out_arg = arg;
+    check_expr_any(c, arg);
+    c->write_root = outer_root;
+}
+
+// ...and once it is: `out var health` and `out _` take the parameter's type,
+// or none when the parameter isn't an `out` one, which is said where the
+// arguments are checked against the parameters.
+static void finish_out_arg(checker *c, expr *arg, const type want)
+{
+    if (out_untyped(arg)) {
+        arg->out_local->type = want;
+        arg->type = want;
+    }
+    if (holds_heap(arg->type)) c->prog->uses_text = true; // In the scratch area, until it goes somewhere
+}
+
+// `out` before an argument of a call that takes none: a constructor's, a
+// built-in function's, a spawn's. What it's before is still checked, so its
+// names are known.
+static type refuse_out_arg(checker *c, expr *e)
+{
+    diag_error(e->out_at, "'out' goes before an argument for an 'out' parameter, and nothing here takes one");
+    if (e->out_local && !str_eq_c(e->out_local->name, "_")) {
+        diag_note("declare the variable in a statement of its own, like 'var " STR_FMT " = ...;', and pass it as it is",
+                  STR_ARG(e->out_local->name));
+    } else {
+        diag_note(e->kind == E_NAME && str_eq_c(e->name, "_") ? "there's nothing to leave out: remove the argument" : "remove 'out'");
+    }
+    begin_out_arg(c, e);
+    if (e->out_local) { // What it declared, or the place `_` made
+        e->out_local->type = T_ERR; // Said: its uses say nothing more
+    } else {
+        const fix f = {.kind = FIX_REMOVE_OUT, .at = e->out_at, .call = e};
+        vec_push(c->prog->fixes, f);
+    }
+    return T_ERR;
+}
+
+// An argument and its parameter that disagree about `out`: the word is
+// written for an `out` parameter, as in C#, and for no other.
+static void out_mismatch(checker *c, const decl *m, const param *p, const expr *arg)
+{
+    if (p->is_out) {
+        diag_error(expr_start(arg), "'" STR_FMT "' makes its '" STR_FMT "', so the argument says 'out'", STR_ARG(m->name),
+                   STR_ARG(p->name));
+        diag_note("'out' before a variable assigns it, 'out var " STR_FMT "' declares one there, and 'out _' leaves it out",
+                  STR_ARG(p->name));
+        const fix f = {.kind = FIX_ADD_OUT, .at = expr_start(arg), .call = arg};
+        vec_push(c->prog->fixes, f);
+        return;
+    }
+    if (p->mode == PARAM_MUT) {
+        diag_error(arg->out_at, "'" STR_FMT "' changes its '" STR_FMT "', a 'mut' parameter: it takes the variable as it is, "
+                                "without 'out'", STR_ARG(m->name), STR_ARG(p->name));
+    } else {
+        diag_error(arg->out_at, "'" STR_FMT "' takes a value for '" STR_FMT "', which isn't an 'out' parameter", STR_ARG(m->name),
+                   STR_ARG(p->name));
+    }
+    if (arg->out_local && !arg->out_local->discard) {
+        diag_note("declare the variable before the call, with a value, and pass it as it is: 'var " STR_FMT " = ...;'",
+                  STR_ARG(arg->out_local->name));
+    } else {
+        diag_note("remove 'out'");
+    }
+    if (!arg->out_local) {
+        const fix f = {.kind = FIX_REMOVE_OUT, .at = arg->out_at, .call = arg};
+        vec_push(c->prog->fixes, f);
+    }
+}
+
 // Which parameter of `m` each argument of a call is for, as in C#: in order,
 // then by name. `param_of` gets a parameter for each argument as written, or
 // -1. False when the arguments can't be `m`'s, which it says why unless `quiet`.
@@ -2597,9 +2782,16 @@ static void check_method_args(checker *c, expr *e, decl *m)
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
     const bool bound = bind_args(e, m, param_of, true);
     for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        const param *p = param_of[i] >= 0 ? &m->params.items[param_of[i]] : NULL;
+        if (arg->is_out) { // The variable an `out` parameter makes
+            begin_out_arg(c, arg);
+            finish_out_arg(c, arg, p && p->is_out ? p->type : T_ERR);
+            continue;
+        }
         // Devices passed on are read where they go: the callee's reads count.
-        c->device_whole_ok = e->args.items[i];
-        check_expr_want(c, e->args.items[i], param_of[i] >= 0 ? m->params.items[param_of[i]].type : T_ERR);
+        c->device_whole_ok = arg;
+        check_expr_want(c, arg, p ? p->type : T_ERR);
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
     if (m->takes_action && !e->block) {
@@ -2614,9 +2806,63 @@ static void check_method_args(checker *c, expr *e, decl *m)
     check_arg_types(c, e, m);
 }
 
+// Whether a place goes through a swizzle of several components, `v.xy` or
+// `v.zx.y`: a vector made of them, a copy, which a call can't change where
+// it is.
+static bool through_swizzle(const expr *e)
+{
+    for (; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+        if (e->kind == E_MEMBER && e->swizzle_len > 1) return true;
+    }
+    return false;
+}
+
+// An argument against the `out` parameter `p` of `m` it's for, or against one
+// that isn't `out` when the argument says so. The call makes the variable
+// itself, so its type is the parameter's own, and it's one the code can
+// change. True when the two agree about `out`, with what's wrong said.
+static bool check_out_param(checker *c, const decl *m, const param *p, expr *arg)
+{
+    if (arg->is_out != p->is_out) {
+        out_mismatch(c, m, p, arg);
+        return false;
+    }
+    if (!p->is_out) return true;
+    if (arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
+    if (!same_type(p->type, arg->type)) {
+        diag_error(arg->out_local && arg->out_local->type_at.line ? arg->out_local->type_at : arg->at,
+                   "'" STR_FMT "' makes its '" STR_FMT "' %s, not %s", STR_ARG(m->name), STR_ARG(p->name), type_name(p->type),
+                   type_name(arg->type));
+        if (arg->out_local) {
+            const stmt *local = arg->out_local;
+            diag_note("'out var " STR_FMT "' takes the parameter's type", STR_ARG(local->discard ? str_from("_") : local->name));
+            // What editors offer: `var` where the type is written
+            str written = local->discard ? (str){NULL, 0} : up_to_name(local, local->type_qual_at);
+            written.len -= written.len > 0 ? local->name.len : 0;
+            while (written.len > 0 && written.ptr[written.len - 1] == ' ') written.len--;
+            if (written.len > 0) suggest_replacement(written, "var");
+        } else {
+            diag_note("an 'out' argument is the variable itself, so its type is the parameter's: 'out var " STR_FMT
+                      "' declares one of that type", STR_ARG(p->name));
+        }
+    } else if (arg->out_local) {
+        // Its own, made here
+    } else if (through_element(arg)) {
+        diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
+        diag_note("make a variable, and put it in: '" STR_FMT "(..., out var e); items[i] = e;'", STR_ARG(m->name));
+    } else if (through_swizzle(arg)) {
+        diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't make it", STR_ARG(m->name));
+        diag_note("make a variable, and assign the components from it: '" STR_FMT "(..., out var made); v.xy = made;'", STR_ARG(m->name));
+    } else {
+        check_writable(c, arg, m, p);
+    }
+    return true;
+}
+
 // Each argument of a call of `m` against its parameter, once they're in the
 // parameters' order. A mut parameter takes the caller's variable itself, which
-// it changes. A default was checked where it's declared.
+// it changes, and an out parameter makes it. A default was checked where it's
+// declared.
 static void check_arg_types(checker *c, expr *e, decl *m)
 {
     for (int i = 0; i < e->args.count; i++) {
@@ -2624,6 +2870,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         expr *arg = e->args.items[i];
         if (arg == p->default_value) continue;
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
+        if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
                        STR_ARG(p->name), type_name(p->type), type_name(arg->type));
@@ -2636,6 +2883,9 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             if (through_element(arg)) {
                 diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
                 diag_note("take it out, change it, and put it back: 'var e = items[i]; ...; items[i] = e;'");
+            } else if (through_swizzle(arg)) {
+                diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
+                diag_note("take it out, change it, and put it back: 'mut var part = v.xy; ...; v.xy = part;'");
             } else {
                 check_writable(c, arg, m, p);
             }
@@ -2648,12 +2898,19 @@ static void check_arg_types(checker *c, expr *e, decl *m)
 // picked without it.
 static bool untyped_arg(const expr *arg)
 {
+    if (arg->is_out) return out_untyped(arg); // `out var health`, `out _`
     return arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
 }
 
 // Whether an argument, checked unless it's untyped, can go to parameter `p`.
+// An `out` argument goes to an `out` parameter, of its own type, and nothing
+// else does.
 static bool arg_fits(const expr *arg, const param *p)
 {
+    if (arg->is_out != p->is_out) return false;
+    if (arg->is_out) {
+        return out_untyped(arg) || arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR || same_type(p->type, arg->type);
+    }
     const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
     if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
     if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
@@ -2727,7 +2984,9 @@ static void put_arg_types(sb *out, const expr *e)
         const str name = arg_name(e, i);
         if (i) sb_put(out, ", ");
         if (name.len) sb_printf(out, STR_FMT ": ", STR_ARG(name));
-        if (arg->kind == E_DEFAULT) sb_put(out, "default");
+        if (arg->is_out) sb_put(out, "out ");
+        if (out_untyped(arg)) sb_put(out, arg->out_local->discard ? "_" : "var");
+        else if (arg->kind == E_DEFAULT) sb_put(out, "default");
         else if (arg->kind == E_NULL) sb_put(out, "null");
         else if (arg->kind == E_LIST) sb_put(out, "[...]");
         else if (is_new_grid(arg)) sb_printf(out, STR_FMT "(...)", STR_ARG(arg->name));
@@ -2747,6 +3006,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     // Each argument once. What takes its type from its parameter waits for the one picked.
     for (int i = 0; i < written; i++) {
         expr *arg = e->args.items[i];
+        if (arg->is_out) { // In scope from here, whichever is picked
+            begin_out_arg(c, arg);
+            continue;
+        }
         if (untyped_arg(arg)) continue;
         c->device_whole_ok = arg;
         check_expr_any(c, arg);
@@ -2761,7 +3024,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     // A T? or a failable call's value only goes where its own type does (as check_expr_want)
     for (int i = 0; i < written; i++) {
         expr *arg = e->args.items[i];
-        if (untyped_arg(arg) || !is_wrapped(arg->type)) continue;
+        if (arg->is_out || untyped_arg(arg) || !is_wrapped(arg->type)) continue;
         bool taken = false;
         for (int k = 0; k < same.count; k++) {
             if (fits[k]) taken |= same_type(same.items[k]->params.items[param_of[k][i]].type, arg->type);
@@ -2789,7 +3052,8 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     }
     if (best < 0) {
         for (int i = 0; i < written; i++) { // What's in them is still checked
-            if (untyped_arg(e->args.items[i])) check_expr_want(c, e->args.items[i], T_ERR);
+            if (e->args.items[i]->is_out) finish_out_arg(c, e->args.items[i], T_ERR);
+            else if (untyped_arg(e->args.items[i])) check_expr_want(c, e->args.items[i], T_ERR);
         }
         sb args = {0};
         put_arg_types(&args, e);
@@ -2819,6 +3083,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     for (int i = 0; i < written; i++) {
         expr *arg = e->args.items[i];
         const type want = m->params.items[param_of[best][i]].type;
+        if (arg->is_out) {
+            finish_out_arg(c, arg, want);
+            continue;
+        }
         if (untyped_arg(arg)) {
             check_expr_want(c, arg, want);
             continue;
@@ -3008,9 +3276,15 @@ static type check_call(checker *c, expr *e)
     if (d && d == c->prog->random) return check_random_seeded(c, e);
     if (d && d->kind == DECL_ENUM) return check_enum_conversion(c, e, d); // Card(2)
 
-    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    // A function that isn't there may well have `out` parameters: what's wrong is its name, said below
+    const bool makes_value = d && (d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_EVENT);
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->is_out && !makes_value) begin_out_arg(c, arg);
+        else check_expr(c, arg);
+    }
 
-    if (d && (d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_EVENT)) {
+    if (makes_value) {
         diag_error(e->at, "write '" STR_FMT " { ... }' to make %s value", STR_ARG(e->name),
                    d->kind == DECL_STRUCT ? "a struct" : d->kind == DECL_EVENT ? "an event" : "a component");
         return T_ERR;
@@ -5910,6 +6184,7 @@ static type check_map_method(checker *c, expr *e, const type map)
     } methods[] = {
         {"Has", "Has(key)", false, false, true, false, TY_BOOL},
         {"Get", "Get(key)", false, true, true, false, TY_OPTIONAL},
+        {"TryGet", "TryGet(key, out value)", false, true, true, false, TY_BOOL},
         {"Add", "Add(key)", true, false, true, true, TY_BOOL},
         {"Remove", "Remove(key)", false, false, true, true, TY_BOOL},
         {"Clear", "Clear()", false, false, false, true, TY_VOID},
@@ -5921,10 +6196,14 @@ static type check_map_method(checker *c, expr *e, const type map)
         if (str_eq_c(e->name, methods[i].name) && !(set && methods[i].map_only) && !(!set && methods[i].set_only)) m = i;
     }
     if (m < 0) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        for (int i = 0; i < e->args.count; i++) {
+            expr *arg = e->args.items[i];
+            if (arg->is_out) begin_out_arg(c, arg); // A set's TryGet(key, out value): what's wrong is said below
+            else check_expr(c, arg);
+        }
         if (!set && str_eq_c(e->name, "Add")) {
             diag_error(e->at, "a map takes values by key: '" STR_FMT "[key] = value;'", STR_ARG(e->object->kind == E_NAME ? e->object->name : str_from("scores")));
-        } else if (set && str_eq_c(e->name, "Get")) {
+        } else if (set && (str_eq_c(e->name, "Get") || str_eq_c(e->name, "TryGet"))) {
             diag_error(e->at, "a set has no values to get: it holds keys, which Has(key) looks for");
         } else {
             diag_error(e->at, "a %s has no method '" STR_FMT "'", what, STR_ARG(e->name));
@@ -5939,14 +6218,44 @@ static type check_map_method(checker *c, expr *e, const type map)
     e->call = CALL_MAP;
     e->type_decl = map.decl;
     const type key = map_key(map);
-    const int argc = methods[m].key ? 1 : 0;
-    for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], key);
+    // TryGet(key, out value), as C#'s TryGetValue: whether the key is there, and its value, or the default
+    const bool try_get = strcmp(methods[m].name, "TryGet") == 0;
+    const int argc = try_get ? 2 : methods[m].key ? 1 : 0;
+    if (try_get && !order_named_args(e, "key, value", 0)) {
+        for (int i = 0; i < e->args.count; i++) { // What's in them is still checked
+            expr *arg = e->args.items[i];
+            if (arg->is_out) begin_out_arg(c, arg);
+            else check_expr_want(c, arg, T_ERR);
+        }
+        return T_ERR;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (try_get && i == 1 && arg->is_out) {
+            begin_out_arg(c, arg);
+            finish_out_arg(c, arg, map_value(map));
+        } else {
+            check_expr_want(c, arg, try_get && i == 1 ? map_value(map) : key);
+        }
+    }
     if (e->args.count != argc) {
         diag_error(e->at, "%s takes %d argument%s: '%s'", methods[m].name, argc, argc == 1 ? "" : "s", methods[m].form);
         return T_ERR;
     }
-    if (argc == 1 && !type_assignable(key, e->args.items[0]->type)) {
+    if (argc >= 1 && !type_assignable(key, e->args.items[0]->type)) {
         diag_error(e->args.items[0]->at, "%s is keyed by %s, not %s", type_name(map), type_name(key), type_name(e->args.items[0]->type));
+    }
+    if (try_get) {
+        decl *called = NEW(decl);
+        called->name = str_from("TryGet");
+        param value = {0};
+        value.mode = PARAM_MUT;
+        value.is_out = true;
+        value.name = str_from("value");
+        value.type = map_value(map);
+        vec_push(called->params, value);
+        check_out_param(c, called, &called->params.items[0], e->args.items[1]);
+        map.decl->tries = true;
     }
     if (methods[m].changes) {
         decl *changer = NEW(decl);
@@ -6593,6 +6902,9 @@ static type check_expr_any(checker *c, expr *e)
 {
     const bool whole_ok = c->device_whole_ok == e;
     c->device_whole_ok = NULL;
+    const bool out_ok = c->out_arg == e;
+    c->out_arg = NULL;
+    if (e->is_out && !out_ok) return e->type = refuse_out_arg(c, e);
     type t = T_ERR;
     switch (e->kind) {
     case E_INT: t = e->is_long ? T_LONG_ : T_INT_; break;
@@ -6837,7 +7149,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     expr *root = assign_root(target);
     if (root && root->bind == BIND_LOCAL && root->local->query) {
         diag_error(root->at, "query row '" STR_FMT "' is read-only", STR_ARG(root->name));
-        if (arg_of) diag_note("'" STR_FMT "' changes its '" STR_FMT "'", STR_ARG(called->name), STR_ARG(arg_of->name));
+        if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
         diag_note("copy a component binding into a 'mut var' to change the copy, or send an event to the row's entity");
         return false;
@@ -6852,9 +7164,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     note_text_write(c, world_place && (holds_heap(target->type) || target->type.kind == TY_GRID || in_list || passed_holder));
     if (!root || root->bind == BIND_NONE || root->bind == BIND_TYPE || root->bind == BIND_NAMESPACE) {
         if (arg_of) {
-            diag_error(target->at, "'" STR_FMT "' changes its '" STR_FMT "', so pass it a variable or field",
-                       STR_ARG(called->name), STR_ARG(arg_of->name));
-            diag_note("store the value in a 'mut var' first");
+            diag_error(target->at, "'" STR_FMT "' %s its '" STR_FMT "', so pass it a variable or field",
+                       STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
+            if (arg_of->is_out) diag_note("'out var " STR_FMT "' declares a variable for it there", STR_ARG(arg_of->name));
+            else diag_note("store the value in a 'mut var' first");
         } else if (called) {
             diag_error(target->at, "'" STR_FMT "' changes what it's called on, so that needs to be a variable or field",
                        STR_ARG(called->name));
@@ -6877,7 +7190,7 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
 
     if (root->bind == BIND_PARAM && root->param->mode != PARAM_MUT) {
         diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(root->name));
-        if (arg_of) diag_note("'" STR_FMT "' changes its '" STR_FMT "'", STR_ARG(called->name), STR_ARG(arg_of->name));
+        if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
         if (gpu_code(c) && root->param == &c->method->params.items[0]) {
             diag_note("a frag gets its vertex blended across the triangle, to read; a vert changes it: 'vert Name(mut "
@@ -6970,8 +7283,19 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     if (root->bind == BIND_LOCAL && !root->local->is_mut) {
         const stmt *local = root->local;
         diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(root->name));
-        if (arg_of) diag_note("'" STR_FMT "' changes its '" STR_FMT "'", STR_ARG(called->name), STR_ARG(arg_of->name));
+        if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
+        if (local->out_decl) { // F(out var name)
+            if (local->type_name.len > 0) {
+                diag_note("declare it as 'out mut " STR_FMT " " STR_FMT "' to change it after the call that makes it",
+                          STR_ARG(local->type_name), STR_ARG(local->name));
+            } else {
+                diag_note("declare it as 'out mut var " STR_FMT "' to change it after the call that makes it", STR_ARG(local->name));
+            }
+            const fix f = {.kind = FIX_MUT_LOCAL, .at = root->at, .local = local};
+            vec_push(c->prog->fixes, f);
+            return false;
+        }
         if (!local->value) { // x is int name
             diag_note("a name after 'is' is read-only; copy it into a 'mut var' to change it");
             return false;
@@ -8156,7 +8480,7 @@ static void check_stmt(checker *c, stmt *s)
         push_scope(c);
         check_stmt(c, s->then_stmt);
         pop_scope(c);
-        pop_scope(c);
+        pop_scope_keeping_out(c); // What `out` arguments declared in the condition is the enclosing block's
         if (s->else_stmt) {
             push_scope(c);
             check_stmt(c, s->else_stmt);
@@ -9264,8 +9588,8 @@ static void check_param_default(checker *c, const decl *m, const param *p)
         return;
     }
     if (p->is_out) {
-        diag_error(value->at, "an 'out' parameter is the caller's list, which a call can't leave out: it takes no default");
-        diag_note("drop the default");
+        diag_error(value->at, "an 'out' parameter is the caller's variable, which the call makes: it takes no default");
+        diag_note("drop the default; a call that doesn't want it passes 'out _'");
         return;
     }
     if (p->mode == PARAM_MUT) {
@@ -9333,22 +9657,38 @@ static void check_signature(checker *c, decl *m)
         if (p->default_value) {
             check_param_default(c, m, p);
         } else if (k > 0 && m->params.items[k - 1].default_value && !str_eq_c(p->type_name, "Action")) {
-            diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, so it needs one too", STR_ARG(p->name));
-            diag_note("the parameters a call can leave out go last: give '" STR_FMT "' a default, or move it before '" STR_FMT "'",
-                      STR_ARG(p->name), STR_ARG(m->params.items[k - 1].name));
+            if (p->is_out) {
+                diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, and an 'out' parameter takes none",
+                           STR_ARG(p->name));
+                diag_note("the parameters a call can leave out go last: move '" STR_FMT "' before '" STR_FMT "'", STR_ARG(p->name),
+                          STR_ARG(m->params.items[k - 1].name));
+            } else {
+                diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, so it needs one too", STR_ARG(p->name));
+                diag_note("the parameters a call can leave out go last: give '" STR_FMT "' a default, or move it before '" STR_FMT "'",
+                          STR_ARG(p->name), STR_ARG(m->params.items[k - 1].name));
+            }
         }
         if (p->mode == PARAM_IN && !m->is_extern) {
             diag_error(p->at, "only extern functions take 'in' parameters: C gets a read-only pointer to the value");
             diag_note("a Tide %s's parameters are read-only already; drop 'in'", m->owner ? "method" : "function");
             p->mode = PARAM_READ;
         }
-        if (p->is_out && !m->is_extern) {
-            diag_error(p->out_at, "only extern functions take 'out' parameters: C makes the list's elements, and says how many");
-            diag_note("a Tide %s changes its caller's variable as 'mut " STR_FMT " " STR_FMT "'", m->owner ? "method" : "function",
-                      STR_ARG(p->type_name), STR_ARG(p->name));
-            p->is_out = false; // A `mut` parameter, to what's checked next
+        if (p->is_out && m->is_operator) {
+            diag_error(p->out_at, "an operator gives one value, its own: its operands can't be 'out'");
+            diag_note("a method or function has 'out' parameters: 'bool TryFind(Entity target, out Health health)'");
+            p->is_out = false;
+            p->mode = PARAM_READ;
         }
-        if (p->type.kind == TY_RECORD && p->mode == PARAM_MUT && !p->is_out) {
+        if (p->is_out && (p->type.kind == TY_RECORD || p->type.kind == TY_ACTION)) {
+            if (p->type.kind == TY_RECORD) {
+                diag_error(p->out_at, "devices can only be read, so '" STR_FMT "' can't be 'out'", STR_ARG(p->name));
+            } else {
+                diag_error(p->out_at, "an Action can't be 'out'; it's code, run with '" STR_FMT "();'", STR_ARG(p->name));
+            }
+            p->is_out = false;
+            p->mode = PARAM_READ;
+        }
+        if (p->type.kind == TY_RECORD && p->mode == PARAM_MUT) {
             diag_error(p->at, "devices can only be read, so '" STR_FMT "' can't be 'mut'", STR_ARG(p->name));
         }
         if (p->type.kind == TY_DRAW_LIST && !m->is_extern) {
@@ -9638,22 +9978,16 @@ static const char *extern_c_name(const decl *fn)
 }
 
 // An extern function's parameter: plain data, by value, or by address when
-// it's `mut` or `in`; text as C text; or a list as a pointer to its elements,
-// which are plain data, or with `out`, as a tide_list_out C makes them through.
+// it's `mut`, `in` or `out` (which C writes without reading); text as C text;
+// or a list as a pointer to its elements, which are plain data, or with `out`,
+// as a tide_list_out C makes them through.
 static void check_extern_param(const checker *c, decl *fn, param *p)
 {
-    if (p->is_out && p->type.kind != TY_LIST) {
-        if (p->type.kind != TY_ERROR) {
-            diag_error(p->out_at, "only a list is an 'out' parameter, and '" STR_FMT "' is %s", STR_ARG(p->name), type_name(p->type));
-            if (p->type.kind == TY_STRING) {
-                diag_note("C returns text, as its 'const char *': 'extern string Name(...);'");
-            } else {
-                diag_note("C makes the elements of an 'out List<T>'; it changes a value through a pointer as 'mut " STR_FMT " " STR_FMT
-                          "', or returns it", STR_ARG(p->type_name), STR_ARG(p->name));
-            }
-        }
+    if (p->is_out && p->type.kind == TY_STRING) {
+        diag_error(p->out_at, "C can't make Tide's text, so a string it takes can't be 'out'");
+        diag_note("C returns text, as its 'const char *': 'extern string Name(...);'");
         p->is_out = false;
-        if (p->type.kind == TY_STRING) p->mode = PARAM_READ; // Said already: not again, of 'mut'
+        p->mode = PARAM_READ; // Said already: not again, of 'mut'
     }
     if (p->type.kind == TY_STRING) {
         c->prog->uses_text = true; // C text that isn't already can be a copy
@@ -9745,6 +10079,14 @@ static void check_async_decl(decl *fn)
     if (fn->takes_action) diag_error(fn->async_at, "a function that takes an Action can't be async yet");
     for (int i = 0; i < fn->params.count; i++) {
         param *p = &fn->params.items[i];
+        if (p->is_out) { // As in C#: its call returns before the task has made anything
+            diag_error(p->out_at, "an async function goes on after its call returns, so it can't make the caller's '" STR_FMT "'",
+                       STR_ARG(p->name));
+            diag_note("return what it makes instead: a struct, when it's more than one value");
+            p->is_out = false;
+            p->mode = PARAM_READ;
+            p->type = T_ERR; // Said: what the code does with it says nothing more
+        }
         if (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) {
             p->task_ref = true;
             const decl *d = p->type.decl;
@@ -9936,12 +10278,27 @@ static void check_shader_decl(const checker *c, decl *d)
     }
 }
 
+// Code that has `out` parameters or arguments, once it's checked with no
+// error (which would hide what it assigns): `out` parameters are assigned
+// before they're read and on every path that returns, and the locals `out`
+// arguments declare are read where the call that makes them ran.
+static void check_body_assigned(const checker *c, const decl *code, const stmt *body, const int outs, const int errors)
+{
+    if (diag_error_count() != errors) return;
+    bool makes = c->outs != outs;
+    for (int i = 0; code && !makes && i < code->params.count; i++) makes = code->params.items[i].is_out;
+    if (makes) check_assigned(c->prog, code, body);
+}
+
 static void check_method_body(checker *c, decl *m)
 {
     c->method = m;
     c->system = m; // For its parameters
     c->unit = m->unit;
+    const int outs = c->outs;
+    const int errors = diag_error_count();
     check_stmt(c, m->body);
+    check_body_assigned(c, m->kind == DECL_SHADER ? NULL : m, m->body, outs, errors);
     const type_kind ret = m->return_type.kind;
     if (ret != TY_VOID && ret != TY_ERROR && !always_returns(m->body)) {
         diag_error(m->at, "'" STR_FMT "' doesn't return a value on every path", STR_ARG(m->name));
@@ -10846,7 +11203,10 @@ static void warn_unused_locals(checker *c)
         diag_warning(s->name_at, "local '" STR_FMT "' is never used", STR_ARG(s->name));
         const expr *acts = acting_call(s->value);
         fix f = {.kind = FIX_UNUSED_LOCAL, .at = s->name_at, .local = s};
-        if (s->assigned) {
+        if (s->out_decl) { // F(out var name): the call stays, and makes nothing there
+            diag_note("nothing reads what the call makes there: write 'out _' to leave it out");
+            f.kind = FIX_DISCARD_OUT;
+        } else if (s->assigned) {
             diag_note("it's assigned, but nothing reads its value: remove it and what assigns it, or use it where it "
                       "was meant");
         } else if (acts) {
@@ -11975,7 +12335,10 @@ static void check_sample(checker *c, decl *input)
 
     c->system = input;
     c->in_input = true;
+    const int outs = c->outs;
+    const int errors = diag_error_count();
     check_stmt(c, input->body);
+    check_body_assigned(c, NULL, input->body, outs, errors);
     c->in_input = false;
     c->system = NULL;
 }
@@ -11989,7 +12352,10 @@ static void check_sanitize(checker *c, decl *input)
     c->system = input;
     c->in_input = true;
     c->in_sanitize = true;
+    const int outs = c->outs;
+    const int errors = diag_error_count();
     check_stmt(c, input->sanitize);
+    check_body_assigned(c, NULL, input->sanitize, outs, errors);
     c->in_sanitize = false;
     c->in_input = false;
     c->system = NULL;
@@ -13149,7 +13515,9 @@ bool check(program *prog)
         check_params(&c, d);
         c.system = d;
         const int errors = diag_error_count();
+        const int outs = c.outs;
         check_stmt(&c, d->body);
+        check_body_assigned(&c, NULL, d->body, outs, errors);
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
     check_shared_names(&c, DECL_SYSTEM);

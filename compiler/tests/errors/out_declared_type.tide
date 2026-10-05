@@ -1,0 +1,14 @@
+// expect: 'Split' makes its 'whole' int, not float
+// expect: 'out var whole' takes the parameter's type
+scene Main { }
+singleton Tally { float total; }
+void Split(float value, out int whole, out float rest)
+{
+    whole = int(value);
+    rest = value - float(whole);
+}
+system Run(mut Tally tally)
+{
+    Split(2.5, out float whole, out var rest);
+    tally.total = whole + rest;
+}

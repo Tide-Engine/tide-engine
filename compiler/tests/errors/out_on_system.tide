@@ -1,4 +1,4 @@
-// expect: only extern functions take 'out' parameters: C makes the list's elements, and says how many
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
 // expect: this takes what it changes as 'mut': 'mut Store store'
 scene Main { }
 singleton Store { List<byte> image; }

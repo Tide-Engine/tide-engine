@@ -1,0 +1,4 @@
+// expect: 'TryGet' makes its 'value' float, not int
+scene Main { }
+singleton Board { Map<int, float> scores; int score; bool has; }
+system Run(mut Board board) { board.has = board.scores.TryGet(3, out board.score); }

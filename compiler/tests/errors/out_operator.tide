@@ -1,0 +1,7 @@
+// expect: an operator gives one value, its own: its operands can't be 'out'
+scene Main { }
+struct Money
+{
+    int cents;
+    Money operator +(Money a, out Money b) { return Money { cents = a.cents }; }
+}

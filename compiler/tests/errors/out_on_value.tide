@@ -1,0 +1,10 @@
+// expect: 'Heal' takes a value for 'amount', which isn't an 'out' parameter
+// expect: remove 'out'
+scene Main { }
+singleton Tally { int total; }
+int Heal(int amount) { return amount * 2; }
+system Run(mut Tally tally)
+{
+    mut var amount = 3;
+    tally.total = Heal(out amount);
+}

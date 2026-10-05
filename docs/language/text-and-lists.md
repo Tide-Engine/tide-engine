@@ -262,7 +262,7 @@ Keys are `byte`, `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values 
 ### Members
 
 - `count`.
-- A map: `scores[key]` to read, which gives the value type's zero when the key isn't there, and `scores[key] = value` or `scores[key] += x` to write. `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`.
+- A map: `scores[key]` to read, which gives the value type's zero when the key isn't there, and `scores[key] = value` or `scores[key] += x` to write. `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value), `Remove(key)` (whether it was there) and `Clear()`.
 - A set: `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. The order is the same on every machine.
 
@@ -271,6 +271,15 @@ foreach (var e in board.scores)
     GUILayout.Label($"{e.key}: {e.value}");
 GUILayout.Label($"{board.scores}"); // {PlayerID(0): 30, PlayerID(1): 10}
 ```
+
+`TryGet` looks a key up once and says whether it was there, as C#'s `TryGetValue` does. Its second argument is an [`out` argument](./functions.md#out-parameters), so it can declare the variable the value goes in:
+
+```csharp
+if (board.byName.TryGet("last", out var stats))
+    GUILayout.Label($"last: {stats.wins}");
+```
+
+Where the key isn't there, the variable gets the value type's `default`.
 
 A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps. A map's values can't be lists, maps, sets or structs with one in them either, as a list's elements can't: see [Lists in structs](#lists-in-structs) for what to write instead.
 

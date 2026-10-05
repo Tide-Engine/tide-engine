@@ -2,7 +2,7 @@
 
 Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](packages.md). Across all of them, editors get:
 
-- Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
+- Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Hovers, go to definition or to a value's type, find usages, the uses of a name highlighted, and rename.
 - Go to implementation, from an event to its handlers and from the input to its `Sample` and `Sanitize`, and the call hierarchy: what calls a function, and what it calls.
 - Formatting, of a file or a selection, parameter hints and inlay hints. Parameter hints list every function that shares the name being called, with each parameter's default, and follow an argument written by name; where an argument starts, completion offers the names the other parameters go by.

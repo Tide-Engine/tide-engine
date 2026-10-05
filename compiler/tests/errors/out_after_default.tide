@@ -1,0 +1,8 @@
+// expect: 'half' comes after a parameter with a default, and an 'out' parameter takes none
+// expect: the parameters a call can leave out go last: move 'half' before 'by'
+scene Main { }
+bool TryHalf(int value, int by = 2, out int half)
+{
+    half = value / by;
+    return value % by == 0;
+}

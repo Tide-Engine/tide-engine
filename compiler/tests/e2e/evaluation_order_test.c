@@ -238,3 +238,17 @@ TIDE_TEST(evaluation_order_rolls_keep_their_turn)
     TIDE_CHECK(rolls.after == after);   // Rolled(random.NextInt(10), random.state): rolled, then read
     TIDE_CHECK(rolls.random.state == after);
 }
+
+// A call that makes a variable through `out` writes it: what's read beside
+// the call is read in its turn, before it or after it, as it's written.
+TIDE_TEST(evaluation_order_out_arguments_keep_their_turn)
+{
+    one_tick();
+    const Outs outs = world.Outs;
+    TIDE_CHECK(outs.after == 11);    // Count(t, out var first) * 10 + first: 1, then its square
+    TIDE_CHECK(outs.before == 724);  // seen * 100 + Count(t, out seen) * 10 + seen: 7, then 2, then 4
+    TIDE_CHECK(outs.pair == 365);    // Pack3(Count(out var a), Count(out var b), a + b): 3, 4, and 9 + 16
+    TIDE_CHECK(outs.same == 5636);   // Pack(Count(out seen), Count(out seen)) * 100 + seen: 5, 6, and 36
+    TIDE_CHECK(outs.passed == 3719); // Pack3(seen, Count(out seen), seen): 36, then 7, then 49
+    TIDE_CHECK(outs.looked == 1140); // score * 1000 + (TryGet(4, out score) ? 100 : 0) + score: 1, found, 40
+}

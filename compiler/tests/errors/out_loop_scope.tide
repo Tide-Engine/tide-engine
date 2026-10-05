@@ -1,0 +1,15 @@
+// expect: unknown name 'half'
+// A loop's condition's is the loop's own, as in C#
+scene Main { }
+singleton Tally { int total; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally)
+{
+    mut var n = 40;
+    while (TryHalf(n, out var half)) n = half;
+    tally.total = half;
+}

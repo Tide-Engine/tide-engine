@@ -1,0 +1,92 @@
+// A match for the package's tests: stacks of crates on a floor, balls thrown
+// at them, a capsule that tips over, a crate that's pushed around by its
+// component and a ball that goes.
+
+using Box3D;
+
+scene Main { }
+
+component Crate { }
+
+component Pushed
+{
+    int ticks;
+}
+
+component Doomed
+{
+    int ticks;
+}
+
+singleton Tally
+{
+    int touched;
+    int parted;
+}
+
+// How many crates there are to be, in stacks of 12: a host says before the
+// first tick, as tests of threads want a step worth sharing out
+singleton Size
+{
+    int crates = 12;
+    int made;
+    bool calm; // Nothing is pushed any more: what's there comes to rest
+}
+
+system Stack(mut Size size)
+{
+    while (size.made < size.crates)
+    {
+        // Stacks in rows of 16, each crate a little off the one under it
+        int stack = size.made / 12;
+        int row = size.made % 12;
+        Spawn(Body { position = float3(2.5 * (stack % 16) + 0.02 * row, 0.5 + 1.05 * row, 2.5 * (stack / 16) + 0.01 * row) }, Box, Crate);
+        size.made += 1;
+    }
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(400, 1, 400) });
+    for (int i = 0; i < 8; i++)
+    {
+        Spawn(Body { position = float3(-6 + 0.4 * i, 4 + i, 0.1 * i), velocity = float3(3, 0, 0.2), bullet = i == 0, linearDamping = 0.5,
+                     angularDamping = 0.5 },
+              Sphere { radius = 0.3, bounce = 0.4 }, Crate);
+    }
+    Spawn(Body { position = float3(-10, 0.5, 0) }, Box, Crate, Pushed);
+    Spawn(Body { position = float3(-8, 1.2, 4), rotation = quaternion.Euler(float3(0.3, 0, 0.2)), angularDamping = 0.5 },
+          Capsule { radius = 0.4 }, Crate);
+    Spawn(Body { position = float3(-14, 3, 0) }, Sphere, Crate, Doomed { ticks = 90 });
+}
+
+// Code moves a body by writing its component: a shove every so often, and
+// once, somewhere else altogether
+system Push(mut Body body, mut Pushed pushed, Size size)
+{
+    if (size.calm) return;
+    pushed.ticks += 1;
+    if (pushed.ticks % 40 == 0) body.impulse = float3(4000, 3000, 500);
+    if (pushed.ticks == 150)
+    {
+        body.position = float3(-12, 6, 0);
+        body.rotation = quaternion.Euler(float3(0, 0.5, 0));
+        body.velocity = float3(0, 0, 0);
+    }
+}
+
+system Doom(mut Doomed doomed)
+{
+    doomed.ticks -= 1;
+    if (doomed.ticks == 0) this.Destroy();
+}
+
+event(Touched touched) Meet(mut Tally tally, with Crate)
+{
+    if (touched.other != this) tally.touched += 1;
+}
+
+event(Parted) Part(mut Tally tally, with Crate)
+{
+    tally.parted += 1;
+}
