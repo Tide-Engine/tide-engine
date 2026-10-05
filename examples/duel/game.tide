@@ -22,8 +22,8 @@ struct Build
 
 component Body
 {
-    float2 position;
-    float2 previous;
+    [Position] float2 position;
+    [Position] float2 previous;
     float2 velocity;
     float radius = 18;
 }
@@ -330,6 +330,7 @@ system ResetFighters(Duel duel, mut Body body, mut Fighter fighter)
     body.position = float2(fighter.side == 0 ? -360 : 360, -192);
     body.previous = body.position;
     body.velocity = float2(0);
+    this.Snap();
 }
 
 system Drive(Controls input, Duel duel, Time time, World world, mut Body body, mut Fighter fighter,

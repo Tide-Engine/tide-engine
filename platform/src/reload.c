@@ -409,6 +409,9 @@ static bool carry_over(const tide_host_game *next)
 static void swap(const tide_host_game *next, void *library)
 {
     const tide_host_game *old = tide_run_game;
+    // Release private caches with the code that made their layout, before
+    // the new table can reinterpret an equally sized local structure.
+    if (old->correct_views) old->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
     bool retained = true;
     if (next->game->hash == old->game->hash && next->local_size == old->local_size) {
         tide_session_set_game(tide_run_session, next->game);
@@ -421,6 +424,12 @@ static void swap(const tide_host_game *next, void *library)
         tide_run_end();
         tide_run_game = next;
         tide_run_begin();
+    }
+    if (retained) {
+        // Correction caches describe the old build's tagged fields and are
+        // presentation state, so they start empty under the new table.
+        tide_run_refresh_view_corrector();
+        if (next->correct_views) next->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
     }
     if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
     fflush(stdout);

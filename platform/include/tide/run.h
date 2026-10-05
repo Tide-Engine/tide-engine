@@ -55,6 +55,13 @@ static inline void tide_run_frame_time(void *local, const float seconds)
     tide_local_frame_time(local, seconds);
 }
 
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+static inline void tide_run_local_correct(void *local, const tide_view_correction *correction)
+{
+    tide_local_correct(local, correction);
+}
+#endif
+
 static inline bool tide_run_take_request(void *local, tide_session_request *request, void *start)
 {
     return tide_local_take_request(local, request, start);
@@ -152,6 +159,9 @@ static const tide_host_game tide_host_game_api = {
     .entity_count = tide_run_entity_count,
     .unload = tide_run_unload,
     .rebind_resources = tide_run_rebind_resources,
+#ifdef TIDE_HAS_VIEW_CORRECTIONS
+    .correct_views = tide_run_local_correct,
+#endif
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)
