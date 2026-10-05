@@ -170,8 +170,8 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session, mut S
     Disc(shapes, face + float2(inward * 1.5 + 3, -1), 2.1, Color.white);
     var name = SideName(fighter.side);
     var tag = mine ? "YOU" : latest.bot ? "BOT" : "";
-    var nameWidth = TextWidth(name, 12);
-    var tagWidth = tag == "" ? 0 : TextWidth(tag, 9) + 10;
+    var nameWidth = Draw2D.MeasureText(name, 12).x;
+    var tagWidth = tag == "" ? 0 : Draw2D.MeasureText(tag, 9).x + 10;
     var nameAt = blue ? edge + 24 : edge - 24 - nameWidth;
     var tagAt = blue ? nameAt + nameWidth + 7 : nameAt - 7 - tagWidth;
     if (tag != "")
@@ -194,14 +194,14 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session, mut S
     if (narrow) return;
     var left = $"{int(Math.Ceil(Math.Max(0, latest.health)))}";
     var inner = edge + inward * width;
-    Draw2D.Text(left, float2(blue ? inner - TextWidth(left, 12) : inner, top - 1), 12, UI_INK);
+    Draw2D.Text(left, float2(blue ? inner - Draw2D.MeasureText(left, 12).x : inner, top - 1), 12, UI_INK);
 }
 
 // One hint: a key's cap, and what the key does. `pass` 0 only measures, 1 adds
 // its shapes and 2 writes its words. Returns where the next one starts.
 float Hint(mut Shapes shapes, int pass, float2 at, string key, string does, float ready, Color color)
 {
-    var cap = TextWidth(key, 11) + 14;
+    var cap = Draw2D.MeasureText(key, 11).x + 14;
     if (pass == 1)
     {
         var center = float2(at.x + cap * 0.5, at.y);
@@ -217,7 +217,7 @@ float Hint(mut Shapes shapes, int pass, float2 at, string key, string does, floa
         Write(key, float2(at.x + cap * 0.5, at.y), 11, ready >= 1 ? UI_INK : UI_MUTED);
         Draw2D.Text(does, float2(at.x + cap + 6, at.y - 6), 11, UI_MUTED);
     }
-    return at.x + cap + 6 + TextWidth(does, 11) + 18;
+    return at.x + cap + 6 + Draw2D.MeasureText(does, 11).x + 18;
 }
 
 // What the buttons do, for whichever device was used last. The key that
@@ -334,7 +334,7 @@ view PaintBanner(Duel duel, Flow flow, Session session, mut Shapes shapes)
         if (mine) return;
         var tint = FighterColor(duel.draftSide);
         var words = SideName(duel.draftSide) + " IS CHOOSING AN UPGRADE";
-        var width = Math.Min(screen.x - 24, TextWidth(words, 15) + 86);
+        var width = Math.Min(screen.x - 24, Draw2D.MeasureText(words, 15).x + 86);
         Panel(shapes, middle, float2(width, 54), 27, Color(0.05, 0.065, 0.125, 0.95), Color(0.1, 0.13, 0.22, 0.95), 1.6, Fade(tint, 0.8));
         Arc(shapes, middle + float2(-width * 0.5 + 28, 0), 10, 3, flow.age * 0.9, 0.7, tint);
         Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
