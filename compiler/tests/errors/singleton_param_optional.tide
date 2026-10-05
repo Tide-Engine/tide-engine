@@ -1,0 +1,4 @@
+// expect: a T?'s value can't be Score
+singleton Score { int value; }
+void Read(Score? score) { }
+scene Main { }

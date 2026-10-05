@@ -99,8 +99,9 @@ typedef struct tide_layout_world {
     uint32_t frames;       // With tasks, the local world: where it counts its frames, which its tasks wait for
     // The local world: what it keeps for the match's entities, the local
     // fields of the match's components (tide/attached.h). Each is a table of
-    // two columns, the entity and a value of the place's type, "<Component>
-    // local", which carries over by that name.
+    // three columns: the entity, a value of the place's type, "<Component>
+    // local", which carries over by that name, and what the entity was born
+    // as.
     uint32_t attached_count;
     const tide_layout_place *attached;
 } tide_layout_world;

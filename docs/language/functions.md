@@ -76,12 +76,37 @@ system Regenerate(mut Unit unit)
 ```
 
 - A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
-- Parameters and return values are built-in types, structs and components, and an argument's type matches exactly.
+- Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
 - A function returns a value on every path, unless it returns `void`.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A function shares its name with nothing else in its namespace. Methods can't share a name either, even with different parameters, or share one with a field.
 
 Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
+
+Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
+
+```csharp
+singleton Round
+{
+    int number;
+}
+
+void NextRound(mut Round round)
+{
+    round.number += 1;
+}
+
+system AdvanceRound(mut Round round)
+{
+    NextRound(round);
+}
+```
+
+Methods take explicit singleton parameters by the same value and `mut` rules. Singletons still have no methods of their own.
+
+A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
+
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 

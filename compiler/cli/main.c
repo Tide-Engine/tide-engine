@@ -48,7 +48,7 @@ static void usage(void)
            "\n"
            "run and build:\n"
            "  --release          optimized, the way players get it\n"
-           "  --web              a web page (WebGL 2), with clang's WebAssembly target\n"
+           "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
            "  --title <title>    the window's title (default: the game's title setting, or the folder's name)\n"
            "  --stats            show the frame rate, cpu time, ping, bandwidth, memory, draw calls and the slowest\n"

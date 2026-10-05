@@ -1,0 +1,4 @@
+// expect: C functions can't take singletons yet
+singleton Score { int value; }
+extern int Count(Score score);
+scene Main { }

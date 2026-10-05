@@ -1,5 +1,7 @@
 # The platform layer: a window, the frame loop, input devices and the renderer,
-# on OpenGL. Hosts and views link it; the simulation never does (see AGENTS.md).
+# written against src/gpu.h, with OpenGL (src/gpu_gl.c) and WebGPU
+# (web/gpu_web.c) under it. Hosts and views link it; the simulation never does
+# (see AGENTS.md).
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
 if(NOT TIDE_WEB)
     # WebRTC for rooms on desktop (src/rtc/rtc.h); the web has the browser's.

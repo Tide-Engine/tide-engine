@@ -1,0 +1,679 @@
+// This machine's side of playing: which device aims, and the menus over the
+// arena. The menus draw their own buttons and cards from shapes, and say what
+// they use of the pointer, as the GUI's own widgets would.
+local singleton Canvas
+{
+    float2 screenHalf;
+    float scale = 1;
+    float band = 78;  // Pixels above and under the arena, for the score and the keys
+    bool gamepadAim;
+    bool touchAim;
+    bool handsOn; // A mouse, a keyboard or a gamepad was used: until then, a touchscreen is all there may be
+}
+
+local singleton DuelMenu
+{
+    string code;
+    string message;
+    int pickMatch = -1;
+    int pickRound = -1;
+    int picked = -1;
+    int rematch = -1;
+    int asked = -1; // The match a button last sent a command for, so it's sent once
+    int focus = -1; // The card the keys are on
+    int frames;     // Turns a spinner where there's no match to tell the time
+}
+
+string CardName(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "VITALITY";
+        case Card.RapidFire: return "RAPID FIRE";
+        case Card.Scatter: return "SCATTER";
+        case Card.Ricochet: return "RICOCHET";
+        case Card.HeavyShot: return "HEAVY SHOT";
+        case Card.SwiftFeet: return "SWIFT FEET";
+        case Card.Featherweight: return "FEATHERWEIGHT";
+        case Card.Mortar: return "MORTAR";
+    }
+    return "UPGRADE";
+}
+
+string CardEffect(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "+35 max health";
+        case Card.RapidFire: return "22% shorter reload";
+        case Card.Scatter: return "+1 pellet a shot";
+        case Card.Ricochet: return "+1 wall bounce";
+        case Card.HeavyShot: return "30% stronger hits";
+        case Card.SwiftFeet: return "15% faster movement";
+        case Card.Featherweight: return "Shots drop 60% less";
+        case Card.Mortar: return "45% stronger hits";
+    }
+    return "";
+}
+
+string CardFlavor(Card card)
+{
+    switch (card)
+    {
+        case Card.Vitality: return "Stay in the fight.";
+        case Card.RapidFire: return "Keep the pressure on.";
+        case Card.Scatter: return "15% less damage a pellet.";
+        case Card.Ricochet: return "Find another angle.";
+        case Card.HeavyShot: return "12% longer reload.";
+        case Card.SwiftFeet: return "Be a moving target.";
+        case Card.Featherweight: return "And fly 15% faster.";
+        case Card.Mortar: return "Shots drop 60% faster.";
+    }
+    return "";
+}
+
+// A card's picture, from a few shapes, `size` across, on the screen.
+void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
+{
+    var unit = size / 100;
+    var light = Mix(color, Color.white, 0.55);
+    if (card == Card.Vitality)
+    {
+        // A heart
+        Tilted(shapes, at + float2(0, 7) * unit, float2(47, 47) * unit, 7 * unit, Math.PI * 0.25, color);
+        Disc(shapes, at + float2(-17, -12) * unit, 23.5 * unit, color);
+        Disc(shapes, at + float2(17, -12) * unit, 23.5 * unit, color);
+        Disc(shapes, at + float2(-20, -19) * unit, 7 * unit, Fade(Color.white, 0.75));
+    }
+    else if (card == Card.RapidFire)
+    {
+        // Three shots, one after another
+        for (var i = 0; i < 3; i++)
+        {
+            var row = at + float2((i == 1 ? 10 : -6), (i - 1) * 27) * unit;
+            Capsule(shapes, row + float2(-40, 0) * unit, row + float2(-14, 0) * unit, 5 * unit, Fade(color, 0.45));
+            Capsule(shapes, row + float2(-2, 0) * unit, row + float2(26, 0) * unit, 15 * unit, color);
+            Disc(shapes, row + float2(24, 0) * unit, 4.5 * unit, light);
+        }
+    }
+    else if (card == Card.Scatter)
+    {
+        // Shots that fan out
+        var from = at + float2(-34, 0) * unit;
+        for (var i = -1; i <= 1; i++)
+        {
+            var way = float2(Math.Cos(i * 0.5), Math.Sin(i * 0.5));
+            Capsule(shapes, from + way * 22 * unit, from + way * 52 * unit, 5 * unit, Fade(color, 0.45));
+            Disc(shapes, from + way * 68 * unit, 10.5 * unit, color);
+            Disc(shapes, from + way * 68 * unit, 4.5 * unit, light);
+        }
+        Disc(shapes, from, 11 * unit, color);
+    }
+    else if (card == Card.Ricochet)
+    {
+        // A shot that comes back off a wall
+        Box(shapes, at + float2(38, 0) * unit, float2(10, 84) * unit, 4 * unit, Fade(color, 0.6));
+        Capsule(shapes, at + float2(-38, 32) * unit, at + float2(28, 2) * unit, 7 * unit, Fade(color, 0.5));
+        Capsule(shapes, at + float2(28, 2) * unit, at + float2(-20, -30) * unit, 7 * unit, color);
+        Disc(shapes, at + float2(-22, -31) * unit, 12 * unit, color);
+        Disc(shapes, at + float2(-22, -31) * unit, 5 * unit, light);
+        Disc(shapes, at + float2(30, 2) * unit, 7 * unit, Color.white);
+    }
+    else if (card == Card.HeavyShot)
+    {
+        // One big shot
+        Ring(shapes, at, 42 * unit, 5 * unit, Fade(color, 0.55));
+        Disc(shapes, at, 29 * unit, color);
+        Disc(shapes, at + float2(-9, -10) * unit, 9 * unit, light);
+    }
+    else if (card == Card.SwiftFeet)
+    {
+        // Onwards
+        for (var i = 0; i < 2; i++)
+        {
+            var tip = at + float2(i * 34 - 2, 0) * unit;
+            var tint = i == 0 ? Fade(color, 0.55) : color;
+            Capsule(shapes, tip + float2(-26, -27) * unit, tip, 12 * unit, tint);
+            Capsule(shapes, tip + float2(-26, 27) * unit, tip, 12 * unit, tint);
+        }
+    }
+    else if (card == Card.Featherweight)
+    {
+        // A shot that flies straight, over the arc it would have dropped along
+        for (var i = 0; i < 5; i++)
+        {
+            var along = i / 4.0;
+            Disc(shapes, at + float2(-36 + 62 * along, 4 + 34 * along * along) * unit, 3.6 * unit, Fade(color, 0.4));
+        }
+        Capsule(shapes, at + float2(-38, -12) * unit, at + float2(8, -12) * unit, 6 * unit, Fade(color, 0.5));
+        Capsule(shapes, at + float2(12, -12) * unit, at + float2(34, -12) * unit, 16 * unit, color);
+        Disc(shapes, at + float2(32, -12) * unit, 5 * unit, light);
+    }
+    else
+    {
+        // A shell lobbed high
+        for (var i = 0; i < 5; i++)
+        {
+            var along = i / 5.0;
+            Disc(shapes, at + float2(-38 + 70 * along, 24 - 220 * along * (1 - along)) * unit, (3.5 + i * 0.8) * unit,
+                 Fade(color, 0.35 + along * 0.4));
+        }
+        Disc(shapes, at + float2(30, 22) * unit, 17 * unit, color);
+        Disc(shapes, at + float2(25, 16) * unit, 6 * unit, light);
+    }
+}
+
+float2 Middle(Rect rect)
+{
+    return float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+}
+
+// Whether the pointer is in `rect`, in the screen's pixels.
+bool Over(Devices devices, Rect rect)
+{
+    var at = float2(devices.pointer.position.x, Screen.height - devices.pointer.position.y);
+    return at.x >= rect.x && at.x < rect.x + rect.width && at.y >= rect.y && at.y < rect.y + rect.height;
+}
+
+// A button of the duel's own, as shapes: its view writes its label once it has
+// drawn them. Returns whether it was pressed.
+bool Pill(mut Shapes shapes, Devices devices, Rect rect, Color color, bool bold, bool enabled)
+{
+    GUI.ClaimPointer(rect);
+    var over = enabled && Over(devices, rect);
+    var held = over && devices.pointer.press.pressed;
+    var center = Middle(rect) + float2(0, held ? 1.5 : 0);
+    var size = float2(rect.width, rect.height);
+    var radius = Math.Min(rect.height * 0.5, 13);
+    var dim = enabled ? 1 : 0.4;
+    if (bold)
+    {
+        GlowBox(shapes, center, size, radius, over ? 22 : 12, Fade(color, (over ? 0.5 : 0.22) * dim));
+        Plate(shapes, center, size, radius, Fade(Shade(color, over ? 0.42 : 0.24), dim), Fade(Shade(color, over ? 0 : -0.14), dim),
+              1.6, Fade(Shade(color, 0.6), dim));
+    }
+    else
+    {
+        if (over) GlowBox(shapes, center, size, radius, 14, Fade(color, 0.3));
+        // One that can't be pressed is darker, and still hides what's behind it
+        Plate(shapes, center, size, radius, Color(0.15, 0.19, 0.32, 0.96) * (enabled ? 1 : 0.62),
+              Color(0.075, 0.1, 0.19, 0.96) * (enabled ? 1 : 0.62), 1.5, over ? color : Color(0.3, 0.39, 0.58) * (enabled ? 1 : 0.6));
+    }
+    return over && devices.pointer.press.down;
+}
+
+[Stage(PaintStages.Prepare, 20)]
+view RememberAimDevice(Devices devices, mut Canvas canvas)
+{
+    var pad = devices.gamepad;
+    var keys = devices.keyboard;
+    var padUsed = Math.Abs(pad.leftStick.x) > 0.15 || Math.LengthSq(pad.rightStick) > 0.04
+               || pad.buttonSouth.pressed || pad.rightTrigger > 0.4
+               || pad.leftTrigger > 0.4 || pad.leftShoulder.pressed;
+    var mouseUsed = Math.LengthSq(devices.mouse.delta) > 0
+                 || devices.mouse.left.down || devices.mouse.right.down;
+    var keyboardUsed = keys.a.down || keys.d.down || keys.leftArrow.down || keys.rightArrow.down
+                    || keys.space.down || keys.w.down || keys.upArrow.down
+                    || keys.leftShift.down || keys.rightShift.down;
+    if (padUsed || mouseUsed || keyboardUsed) canvas.handsOn = true;
+    if (padUsed)
+    {
+        canvas.gamepadAim = true;
+        canvas.touchAim = false;
+    }
+    if (mouseUsed || keyboardUsed)
+    {
+        canvas.gamepadAim = false;
+        canvas.touchAim = false;
+    }
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        canvas.gamepadAim = false;
+        canvas.touchAim = true;
+    }
+}
+
+// Where a match starts: nobody plays until someone here says how. Behind it,
+// the fighters duel by themselves.
+[Stage(PaintStages.Menu)]
+view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu menu, mut Shapes shapes)
+{
+    if (!duel.attract) return;
+    Draw2D.Screen();
+    shapes.pixel = 1;
+    var screen = float2(Screen.width, Screen.height);
+    var middle = screen * 0.5;
+    var short = screen.y < 470;
+    var wide = Math.Min(screen.x - 28, 360);
+    var left = middle.x - wide * 0.5;
+    var busy = session.state == SessionState.Connecting;
+    var hosting = session.server && session.room != "";
+    var title = short ? 44 : 88;
+    var gap = short ? 7 : 12;
+    var playHeight = short ? 38 : 54;
+    var rowHeight = short ? 32 : 42;
+    var under = short ? 6 : 34;
+    var total = title + under + playHeight + gap + rowHeight + gap + rowHeight + 26;
+    mut var y = Math.Max(6, (screen.y - total) * 0.5);
+
+    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.24));
+    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Color(0, 0.004, 0.02, 0.45));
+    GlowBox(shapes, float2(middle.x, y + total * 0.5), float2(wide - 40, total - 90), 40, 100, Color(0.012, 0.018, 0.05, 0.8));
+
+    var titleAt = float2(middle.x, y + title * 0.5);
+    y += title + under;
+    var play = Rect(left, y, wide, playHeight);
+    y += playHeight + gap;
+    var invite = Rect(left, y, wide, rowHeight);
+    y += rowHeight + gap;
+    var field = Rect(left + 3, y + 3, wide - 100, rowHeight - 6);
+    var join = Rect(left + wide - 88, y, 88, rowHeight);
+    var note = float2(middle.x, y + rowHeight + 15);
+    var copy = Rect(invite.x + invite.width - 78, invite.y + 5, 72, invite.height - 10);
+
+    var playNow = Pill(shapes, devices, play, UI_BLUE, true, !busy);
+    mut var inviteNow = false;
+    mut var copyNow = false;
+    if (hosting)
+    {
+        Plate(shapes, Middle(invite), float2(invite.width, invite.height), 13, Color(0.1, 0.085, 0.1, 0.96),
+              Color(0.07, 0.06, 0.09, 0.96), 1.5, Fade(UI_ORANGE, 0.75));
+        copyNow = Pill(shapes, devices, copy, UI_ORANGE, false, true);
+    }
+    else
+    {
+        inviteNow = Pill(shapes, devices, invite, UI_ORANGE, false, !busy && session.server && !session.open);
+    }
+    Plate(shapes, float2(left + (wide - 94) * 0.5, y + rowHeight * 0.5), float2(wide - 94, rowHeight), 7,
+          Color(0.12, 0.12, 0.15), Color(0.12, 0.12, 0.15), 1.5, Color(0.3, 0.39, 0.58));
+    var joinNow = Pill(shapes, devices, join, UI_INK, false, !busy && menu.code.Trim() != "");
+    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+    shapes.list.Clear();
+
+    // The title, with each side's color off to its side
+    var bob = Math.Sin(fx.now * 1.6) * 2;
+    WriteBold("DUEL", titleAt + float2(-4, 2 + bob), title, Fade(UI_BLUE, 0.9));
+    WriteBold("DUEL", titleAt + float2(4, -2 + bob), title, Fade(UI_ORANGE, 0.9));
+    WriteBold("DUEL", titleAt + float2(0, bob), title, Color.white);
+    if (!short) Write("FIRST TO FIVE ROUNDS WINS", titleAt + float2(0, title * 0.5 + 12), 11, UI_MUTED);
+
+    Write("PRACTICE", Middle(play) + float2(0, short ? 0 : -7), short ? 15 : 19, UI_OUTLINE);
+    if (!short) Write("against a bot", Middle(play) + float2(0, 12), 11, Fade(UI_OUTLINE, 0.72));
+    if (hosting)
+    {
+        Draw2D.Text("ROOM", float2(invite.x + 16, invite.y + invite.height * 0.5 - 5), 10, UI_MUTED);
+        Draw2D.Text(session.room, float2(invite.x + 56, invite.y + invite.height * 0.5 - 10), 20, UI_INK);
+        Write("COPY", Middle(copy), 11, UI_INK);
+    }
+    else
+    {
+        Write(session.server && session.open ? "OPENING A ROOM..." : "INVITE A FRIEND", Middle(invite), short ? 12 : 14,
+              Fade(UI_INK, busy ? 0.4 : 1));
+    }
+    GUI.Disabled(busy)
+    {
+        GUI.TextField(field, "", menu.code);
+    }
+    Write("JOIN", Middle(join), short ? 12 : 14, Fade(UI_INK, !busy && menu.code.Trim() != "" ? 1 : 0.4));
+    if (busy) Write("Connecting...", note, 11, UI_MUTED);
+    else if (menu.message != "") Write(menu.message, note, 11, UI_ORANGE);
+    else if (hosting) Write("Send the code to a friend. You duel when they join.", note, 11, UI_MUTED);
+    else Write("Got a friend's code? Type it there and join.", note, 11, UI_MUTED);
+
+    var start = devices.keyboard.enter.down || devices.gamepad.buttonSouth.down || devices.gamepad.start.down;
+    if ((playNow || start) && !busy && menu.asked != duel.match)
+    {
+        Send(Practice { match = duel.match });
+        menu.asked = duel.match;
+    }
+    if (inviteNow)
+    {
+        menu.message = "";
+        Session.Open();
+    }
+    if (copyNow) Clipboard.Copy(session.room);
+    if (joinNow)
+    {
+        menu.message = "";
+        Session.Join(menu.code.Trim().ToUpper());
+    }
+}
+
+// In a match, the way out of it: back to the menu from practice, and with two
+// players, leaving.
+[Stage(PaintStages.Menu, 5)]
+view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu, mut Shapes shapes)
+{
+    if (duel.attract || duel.phase == Phase.Draft || duel.phase == Phase.Finished) return;
+    Draw2D.Screen();
+    shapes.pixel = 1;
+    var slim = Screen.height < 640 && Screen.width >= 720;
+    var two = duel.bluePlayer != default && duel.orangePlayer != default;
+    var rect = slim ? Rect(Screen.width - 82, Screen.height - 34, 68, 26)
+                    : Rect(Screen.width - 84, Screen.width < 720 ? 6 : 11, 68, 26);
+    var pressed = Pill(shapes, devices, rect, UI_INK, false, session.state == SessionState.Connected);
+    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+    shapes.list.Clear();
+    Write(two ? "LEAVE" : "MENU", Middle(rect), 10, UI_INK);
+    if (session.room != "" && Screen.width >= 720 && !slim)
+    {
+        var room = "ROOM " + session.room;
+        Draw2D.Text(room, float2(rect.x - 12 - TextWidth(room, 11), rect.y + 7), 11, UI_MUTED);
+    }
+    if (two)
+    {
+        if (pressed) Session.Start(Main);
+    }
+    else if ((pressed || devices.keyboard.escape.down) && menu.asked != duel.match)
+    {
+        Send(ToMenu { match = duel.match });
+        menu.asked = duel.match;
+    }
+}
+
+// One of the three cards to pick from. `words` writes its text, once its
+// shapes are drawn.
+void DraftCard(mut Shapes shapes, bool words, Card card, int slot, float2 center, float2 size, bool lit, float shown, bool rows)
+{
+    var accent = CardColor(card);
+    var top = center.y - size.y * 0.5;
+    var left = center.x - size.x * 0.5;
+    if (rows)
+    {
+        // A strip: its picture, then its name and what it does
+        var spot = float2(left + size.y * 0.5 + 2, center.y);
+        var text = left + size.y + 10;
+        if (!words)
+        {
+            if (lit) GlowBox(shapes, center, size, 12, 20, Fade(accent, 0.4 * shown));
+            Plate(shapes, center, size, 12, Color(0.105, 0.135, 0.235, 0.98 * shown), Color(0.05, 0.065, 0.13, 0.98 * shown),
+                  lit ? 2.2 : 1.4, Fade(lit ? accent : Shade(accent, -0.5), shown));
+            Oval(shapes, spot, float2(size.y * 0.38), Color(0.03, 0.04, 0.09, shown), Color(0.06, 0.08, 0.15, shown), 1.5,
+                 Fade(accent, 0.7 * shown));
+            CardIcon(shapes, card, spot, size.y * 0.5, Fade(accent, shown));
+            Plate(shapes, float2(left + size.x - 22, center.y), float2(24, 24), 6, Color(0.14, 0.18, 0.3, shown),
+                  Color(0.08, 0.1, 0.19, shown), 1.3, Fade(lit ? accent : Color(0.3, 0.39, 0.58), shown));
+            return;
+        }
+        var tight = size.y < 62;
+        Draw2D.Text(CardName(card), float2(text, center.y - (tight ? 15 : 19)), tight ? 13 : 16, Fade(UI_INK, shown));
+        Draw2D.Text(CardEffect(card), float2(text, center.y + (tight ? 1 : 2)), tight ? 10 : 12,
+                    Fade(Mix(accent, Color.white, 0.45), shown));
+        Write($"{slot + 1}", float2(left + size.x - 22, center.y), 12, Fade(UI_INK, shown));
+        return;
+    }
+
+    var badge = float2(center.x, top + size.y * 0.27);
+    var badgeSize = Math.Min(54, size.y * 0.17);
+    var pick = float2(center.x, top + size.y - 34);
+    if (!words)
+    {
+        GlowBox(shapes, center + float2(0, 12), size - float2(30, 20), 18, 34, Color(0, 0.004, 0.02, 0.55 * shown));
+        if (lit) GlowBox(shapes, center, size, 18, 30, Fade(accent, 0.42 * shown));
+        Plate(shapes, center, size, 18, Color(0.11, 0.14, 0.245, 0.985 * shown), Color(0.045, 0.058, 0.118, 0.985 * shown),
+              lit ? 2.6 : 1.5, Fade(lit ? accent : Shade(accent, -0.5), shown));
+        Box(shapes, float2(center.x, top + 9), float2(size.x - 44, 4), 2, Fade(accent, (lit ? 1 : 0.7) * shown));
+        Glow(shapes, badge, badgeSize * 0.6, badgeSize * 1.1, Fade(accent, (lit ? 0.3 : 0.16) * shown));
+        Oval(shapes, badge, float2(badgeSize), Color(0.03, 0.04, 0.09, shown), Color(0.065, 0.085, 0.16, shown), 2,
+             Fade(accent, 0.8 * shown));
+        CardIcon(shapes, card, badge, badgeSize * 1.25, Fade(accent, shown));
+        Plate(shapes, pick, float2(size.x - 40, 38), 11, Fade(lit ? Shade(accent, 0.3) : Color(0.15, 0.19, 0.32), shown),
+              Fade(lit ? Shade(accent, -0.1) : Color(0.08, 0.105, 0.2), shown), 1.5,
+              Fade(lit ? Shade(accent, 0.6) : Color(0.3, 0.39, 0.58), shown));
+        Plate(shapes, pick + float2(-size.x * 0.5 + 44, 0), float2(22, 22), 6, Color(0.03, 0.04, 0.09, 0.85 * shown),
+              Color(0.03, 0.04, 0.09, 0.85 * shown), 0, Color.clear);
+        return;
+    }
+    var roomy = size.y >= 290;
+    var name = badge.y + badgeSize + (roomy ? 34 : 24);
+    Write(CardName(card), float2(center.x, name), size.x < 200 ? 16 : 20, Fade(UI_INK, shown));
+    Write(CardEffect(card), float2(center.x, name + 28), size.x < 200 ? 12 : 14, Fade(Mix(accent, Color.white, 0.45), shown));
+    if (roomy) Write(CardFlavor(card), float2(center.x, name + 50), 12, Fade(UI_MUTED, shown));
+    Write($"{slot + 1}", pick + float2(-size.x * 0.5 + 44, 0), 12, Fade(UI_INK, shown));
+    Write("PICK", pick + float2(8, 0), 13, Fade(lit ? UI_OUTLINE : UI_INK, shown));
+}
+
+// The round's loser picks an upgrade: a card by a click or a tap, by its
+// number, or with the arrows or a gamepad and Enter.
+[Stage(PaintStages.Menu, 10)]
+view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Flow flow,
+    mut DuelMenu menu, mut Fx fx, mut Shapes shapes, with ownership)
+{
+    if (duel.attract || duel.phase != Phase.Draft || fighter.side != duel.draftSide)
+    {
+        menu.pickMatch = -1;
+        menu.pickRound = -1;
+        menu.picked = -1;
+        menu.focus = -1;
+        return;
+    }
+    Draw2D.Screen();
+    shapes.pixel = 1;
+    var screen = float2(Screen.width, Screen.height);
+    var middle = screen * 0.5;
+    GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
+    // The round's result has the screen first
+    var age = flow.age - 1;
+    if (age < 0) return;
+
+    var color = FighterColor(fighter.side);
+    var online = session.state == SessionState.Connected;
+    var pending = menu.pickMatch == duel.match && menu.pickRound == duel.round;
+    var rows = screen.x < 700 || screen.y < 430;
+    var tiny = screen.y < 300;
+    var gap = rows ? (tiny ? 5 : 9) : 18;
+    mut var size = float2(0);
+    mut var first = float2(0);
+    mut var stride = float2(0);
+    if (rows)
+    {
+        var head = tiny ? 30 : 68;
+        var foot = tiny ? 6 : 26;
+        size = float2(Math.Min(screen.x - 24, 470), Math.Clamp((screen.y - head - foot - gap * 2) / 3, 38, 100));
+        first = float2(middle.x, head + (screen.y - head - foot - size.y * 3 - gap * 2) * 0.5 + size.y * 0.5);
+        stride = float2(0, size.y + gap);
+    }
+    else
+    {
+        size = float2(Math.Min(244, (screen.x - 56 - gap * 2) / 3), Math.Min(330, screen.y - 176));
+        first = float2(middle.x - size.x - gap, middle.y + 24);
+        stride = float2(size.x + gap, 0);
+    }
+
+    // The keys move between the cards, and the pointer picks the one it's on
+    var keys = devices.keyboard;
+    var pad = devices.gamepad;
+    if (keys.rightArrow.down || keys.downArrow.down || keys.d.down || keys.s.down || pad.dpad.right.down || pad.dpad.down.down)
+        menu.focus = Math.Min(2, menu.focus + 1);
+    if (keys.leftArrow.down || keys.upArrow.down || keys.a.down || keys.w.down || pad.dpad.left.down || pad.dpad.up.down)
+        menu.focus = Math.Max(0, menu.focus - 1);
+    mut var chosen = -1;
+    if (keys.digit1.down) chosen = 0;
+    if (keys.digit2.down) chosen = 1;
+    if (keys.digit3.down) chosen = 2;
+    if (menu.focus >= 0 && (keys.enter.down || keys.space.down || pad.buttonSouth.down)) chosen = menu.focus;
+    var moved = Math.LengthSq(devices.pointer.delta) > 0 || devices.pointer.press.down;
+    for (var slot = 0; slot < 3; slot++)
+    {
+        var at = first + stride * slot;
+        if (!Over(devices, Rect(at.x - size.x * 0.5, at.y - size.y * 0.5, size.x, size.y))) continue;
+        if (moved) menu.focus = slot;
+        if (devices.pointer.press.down) chosen = slot;
+    }
+    if (chosen >= 0 && online && !pending && age > 0.25)
+    {
+        this.Send(ChooseCard { round = duel.round, slot = chosen });
+        menu.pickMatch = duel.match;
+        menu.pickRound = duel.round;
+        menu.picked = chosen;
+        Confetti(fx, first + stride * chosen, 30, 520, CardColor(Offer(duel.round, duel.draftSide, chosen)));
+    }
+    var waiting = menu.pickMatch == duel.match && menu.pickRound == duel.round;
+
+    var dim = EaseOut(age / 0.25);
+    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.74 * dim));
+    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.4, Color(0, 0.004, 0.02, 0.5 * dim));
+    for (var pass = 0; pass < 2; pass++)
+    {
+        for (var slot = 0; slot < 3; slot++)
+        {
+            // Each card comes up a moment after the one before it
+            var come = (age - 0.05 - slot * 0.07) / 0.36;
+            if (come <= 0) continue;
+            var lit = waiting ? menu.picked == slot : menu.focus == slot && online;
+            var at = first + stride * slot + float2(0, (1 - EaseBack(come)) * 46 - (lit && !rows ? 9 : 0));
+            var shown = Math.Saturate(come * 2) * (waiting && menu.picked != slot ? 0.3 : 1);
+            DraftCard(shapes, pass == 1, Offer(duel.round, duel.draftSide, slot), slot, at, size, lit, shown, rows);
+        }
+        if (pass == 1) break;
+        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+        shapes.list.Clear();
+    }
+
+    var heading = rows ? first.y - size.y * 0.5 - (tiny ? 16 : 44) : first.y - size.y * 0.5 - 62;
+    Write(screen.x < 520 ? "PICK AN UPGRADE" : "CHOOSE YOUR UPGRADE", float2(middle.x, heading), rows ? (tiny ? 15 : 20) : 28,
+          Fade(color, dim));
+    if (!tiny)
+        Write(screen.x < 520 ? "It stays for the match." : "You lost the round, so you grow stronger. It stays for the match.",
+              float2(middle.x, heading + (rows ? 22 : 30)), rows ? 11 : 13, Fade(UI_MUTED, dim));
+    if (!tiny)
+    {
+        var last = first.y + stride.y * 2 + size.y * 0.5 + (rows ? 14 : 28);
+        Write(!online ? "Reconnecting. Your match will resume." : waiting ? "Locked in." : rows ? "Tap a card, or press 1, 2 or 3."
+                      : "Click a card, or press 1, 2 or 3.", float2(middle.x, last), 12, Fade(UI_MUTED, dim));
+    }
+}
+
+[Stage(PaintStages.Menu, 10)]
+view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut DuelMenu menu, mut Fx fx, mut Shapes shapes)
+{
+    if (duel.attract || duel.phase != Phase.Finished)
+    {
+        menu.rematch = -1;
+        return;
+    }
+    Draw2D.Screen();
+    shapes.pixel = 1;
+    var screen = float2(Screen.width, Screen.height);
+    var middle = screen * 0.5;
+    GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
+    var age = flow.age - 0.9;
+    if (age < 0) return;
+
+    var blueWon = duel.scoreBlue >= WINS;
+    var tint = blueWon ? UI_BLUE : UI_ORANGE;
+    var winner = blueWon ? duel.bluePlayer : duel.orangePlayer;
+    var two = duel.bluePlayer != default && duel.orangePlayer != default;
+    var online = session.state == SessionState.Connected;
+    var big = screen.x >= 620 && screen.y >= 420;
+    var enter = EaseOut(age / 0.3);
+    // Paper for the winner, now and then
+    if (Math.Floor(fx.now * 2.2) != Math.Floor((fx.now - fx.dt) * 2.2) || age < fx.dt * 1.5)
+    {
+        var place = Roll(fx);
+        Confetti(fx, float2(screen.x * (0.15 + place * 0.7), screen.y * 0.3), 26, 460, tint);
+    }
+
+    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.72 * enter));
+    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Fade(Shade(tint, -0.55), 0.42 * enter));
+    GlowBox(shapes, middle + float2(0, -10), float2(Math.Min(screen.x, 560), 150), 60, 120, Fade(tint, 0.13 * enter));
+    var wide = Math.Min(screen.x - 32, 300);
+    var again = Rect(middle.x - wide * 0.5, middle.y + (big ? 62 : 40), wide, big ? 50 : 40);
+    var leave = Rect(middle.x - wide * 0.5, again.y + again.height + 10, wide, big ? 40 : 34);
+    var waiting = menu.rematch == duel.match;
+    var againNow = Pill(shapes, devices, again, tint, true, online && !waiting);
+    var leaveNow = Pill(shapes, devices, leave, UI_INK, false, online);
+    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+    shapes.list.Clear();
+
+    var words = SideName(blueWon ? 0 : 1) + " WINS";
+    var size = Math.Round((big ? 64 : 38) * (1 + 0.4 * Math.Max(0, 1 - age * 6)) * 0.5) * 2;
+    var at = middle + float2(0, big ? -66 : -52);
+    Write(winner == session.player ? "VICTORY" : two ? "DEFEAT" : "THE BOT TAKES IT", at + float2(0, big ? -52 : -34),
+          big ? 13 : 11, Fade(UI_MUTED, enter));
+    WriteBold(words, at + float2(-4, 3), size, Fade(Shade(tint, -0.5), enter));
+    WriteBold(words, at, size, Fade(Mix(tint, Color.white, 0.3), enter));
+    Write($"{duel.scoreBlue}  -  {duel.scoreOrange}", middle + float2(0, big ? 4 : -6), big ? 26 : 20, Fade(UI_INK, enter));
+    Write(waiting ? "STARTING..." : "PLAY AGAIN", Middle(again), big ? 17 : 14, Fade(UI_OUTLINE, online && !waiting ? 1 : 0.5));
+    Write(two ? "LEAVE" : "BACK TO THE MENU", Middle(leave), big ? 13 : 12, Fade(UI_INK, online ? 1 : 0.4));
+    if (!online) Write("Reconnecting before the rematch...", float2(middle.x, leave.y + leave.height + 16), 11, UI_MUTED);
+
+    var start = devices.keyboard.enter.down || devices.keyboard.space.down || devices.gamepad.buttonSouth.down;
+    if ((againNow || start) && online && !waiting && age > 0.3)
+    {
+        Send(Rematch { match = duel.match });
+        menu.rematch = duel.match;
+    }
+    if (leaveNow && two) Session.Start(Main);
+    else if (leaveNow && menu.asked != duel.match)
+    {
+        Send(ToMenu { match = duel.match });
+        menu.asked = duel.match;
+    }
+}
+
+// Joining another machine's match, or finding this one again after its host left.
+[Stage(PaintStages.Menu, 20)]
+view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu menu, mut Shapes shapes)
+{
+    if (session.state != SessionState.Connecting) return;
+    Draw2D.Screen();
+    var screen = float2(Screen.width, Screen.height);
+    var middle = screen * 0.5;
+    menu.frames += 1;
+    if (session.player == default)
+    {
+        // No match is behind it yet, so nothing else has drawn
+        StartShapes(shapes, 1);
+        Draw2D.Clear(UI_BACKGROUND);
+        if (sky.quad.count > 0) Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
+        var wide = Math.Min(screen.x - 24, 380);
+        var back = Rect(middle.x - 95, middle.y + 22, 190, 40);
+        Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.6));
+        GlowBox(shapes, middle + float2(0, 10), float2(wide - 30, 130), 20, 40, Color(0, 0.004, 0.02, 0.6));
+        Plate(shapes, middle, float2(wide, 170), 18, Color(0.11, 0.14, 0.245, 0.98), Color(0.045, 0.058, 0.118, 0.98), 1.5,
+              Color(0.3, 0.39, 0.58));
+        Arc(shapes, middle + float2(-wide * 0.5 + 40, -42), 11, 3.2, menu.frames * 0.012, 0.7, UI_BLUE);
+        var backNow = Pill(shapes, devices, back, UI_INK, false, true);
+        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+        shapes.list.Clear();
+        Draw2D.Text("CONNECTING", float2(middle.x - wide * 0.5 + 64, middle.y - 54), 22, UI_INK);
+        Draw2D.Text(menu.code == "" ? "Waiting for the match" : "Room " + menu.code.Trim().ToUpper().Substring(0, 12),
+                    float2(middle.x - wide * 0.5 + 64, middle.y - 24), 13, UI_MUTED);
+        Write("BACK TO THE MENU", Middle(back), 12, UI_INK);
+        if (backNow) Session.Start(Main);
+    }
+    else
+    {
+        shapes.pixel = 1;
+        var back = Rect(screen.x - 166, screen.y - 37, 152, 30);
+        Plate(shapes, float2(middle.x, screen.y - 22), float2(screen.x + 4, 46), 0, Color(0.05, 0.065, 0.13, 0.96),
+              Color(0.03, 0.04, 0.09, 0.96), 1.5, Color(0.3, 0.39, 0.58));
+        Arc(shapes, float2(26, screen.y - 22), 8, 2.6, menu.frames * 0.012, 0.7, UI_BLUE);
+        var backNow = Pill(shapes, devices, back, UI_INK, false, true);
+        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
+        shapes.list.Clear();
+        Draw2D.Text("Reconnecting...", float2(44, screen.y - 29), 13, UI_MUTED);
+        Write("BACK TO THE MENU", Middle(back), 11, UI_INK);
+        if (backNow) Session.Start(Main);
+    }
+}
+
+local event(Connected) ResetSubmittedActions(mut DuelMenu menu)
+{
+    menu.pickMatch = -1;
+    menu.pickRound = -1;
+    menu.rematch = -1;
+    menu.asked = -1;
+}
+
+local event(Disconnected gone) ReturnToMenu(mut DuelMenu menu)
+{
+    if (gone.reason == DisconnectReason.Left) return;
+    menu.message = gone.reason == DisconnectReason.Refused ? "That room is full, or its build differs."
+                   : gone.reason == DisconnectReason.TimedOut ? "That room didn't answer."
+                   : gone.reason == DisconnectReason.Kicked ? gone.message
+                   : "Couldn't join that room.";
+    Session.Start(Main);
+}

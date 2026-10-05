@@ -80,6 +80,7 @@ typedef struct afile {
     const char *uri;
     token *toks;
     int tok_count;
+    bool *query_keywords; // Contextual query keywords, by token, for highlighting and formatting
     int lex_errors; // Characters the lexer skipped
     VEC(const char *) lines; // Where each line starts
     unsigned char *inactive; // Each line, from 1: LINE_DIRECTIVE, LINE_LEFT_OUT, or 0 for code
@@ -442,6 +443,21 @@ static int operator_len(const tok_kind kind)
 
 static void walk_stmt(const stmt *s);
 
+// The query that supplies this compiler-only row type, and one of its bindings.
+static const param *query_for_row(const decl *row)
+{
+    return row && row->query_row ? row->query_source : NULL;
+}
+
+static const param *query_binding(const param *query, const str name)
+{
+    for (int i = 0; query && i < query->query.count; i++) {
+        const param *p = &query->query.items[i];
+        if (p->name.len && str_eq(p->name, name)) return p;
+    }
+    return NULL;
+}
+
 static void walk_expr(const expr *e)
 {
     if (!e) return;
@@ -571,6 +587,9 @@ static void walk_expr(const expr *e)
             o.kind = OCC_CONSTANT;
             o.owner = e->object->name;
             o.c_name = e->c_constant;
+        } else if (e->field && e->object->type.decl && e->object->type.decl->query_row) {
+            o.param = query_binding(query_for_row(e->object->type.decl), e->member);
+            o.kind = o.param ? OCC_PARAM : OCC_MEMBER; // entity is built into the row
         } else if (e->field) {
             o.kind = OCC_FIELD;
             o.field = e->field;
@@ -788,21 +807,29 @@ static void walk_stmt(const stmt *s)
     }
 }
 
-static void walk_params(const decl *d)
+static void walk_param(const param *p, const decl *d)
 {
-    for (int i = 0; i < d->params.count; i++) {
-        const param *p = &d->params.items[i];
+    if (p->mode == PARAM_QUERY) {
+        const int keyword = token_at(p->at);
+        if (keyword >= 0) A.files[p->at.file].query_keywords[keyword] = true;
+        for (int i = 0; i < p->query.count; i++) walk_param(&p->query.items[i], d);
+    } else {
         if (p->ownership) { // A word of its own there, not a type's name
             add_occ((occurrence){.at = p->type_at, .len = p->type_name.len, .kind = OCC_OWNERSHIP, .param = p,
                                  .param_of = d, .name = p->type_name});
-            continue;
+            return;
         }
         type_ref(p->type_qual_at, p->type_at, p->type_name, p->type);
-        if (p->name.len > 0) {
-            add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
-                                 .param_of = d, .name = p->name, .type = p->type});
-        }
     }
+    if (p->name.len > 0) {
+        add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
+                             .param_of = d, .name = p->name, .type = p->type});
+    }
+}
+
+static void walk_params(const decl *d)
+{
+    for (int i = 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
 }
 
 // A method or function: its name, signature and body.
@@ -989,6 +1016,7 @@ void analysis_run(const analysis_file *files, const int count)
             }
         }
         while (f->toks[f->tok_count].kind != T_EOF) f->tok_count++;
+        f->query_keywords = arena_alloc(sizeof(bool) * ((size_t)f->tok_count + 1));
         parse_file(A.prog, &f->src, f->toks, true);
     }
     A.syntax_errors = diag_error_count();
@@ -1049,17 +1077,25 @@ static bool unused_local(const diagnostic *d)
 // Whether a warning is about access a system, frag or vert declares and
 // doesn't use: a parameter never used, or mut and never written. Editors fade
 // it out.
+static bool unused_param(const diagnostic *d, const param *p)
+{
+    if (p->mode == PARAM_QUERY) {
+        for (int i = 0; i < p->query.count; i++) {
+            if (unused_param(d, &p->query.items[i])) return true;
+        }
+    }
+    if (p->name.len == 0 || (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON
+                            && p->type.kind != TY_WORLD && p->type.kind != TY_QUERY)) return false;
+    if (!p->read && loc_cmp(d->at, p->name_at) == 0) return true;
+    return p->read && p->mode == PARAM_MUT && !p->written && loc_cmp(d->at, p->at) == 0;
+}
+
 static bool unused_access(const diagnostic *d)
 {
     for (int i = 0; d->severity == DIAG_WARNING && i < A.prog->decls.count; i++) {
         const decl *sys = A.prog->decls.items[i];
         for (int k = 0; (sys->kind == DECL_SYSTEM || is_shader(sys)) && k < sys->params.count; k++) {
-            const param *p = &sys->params.items[k];
-            if (p->name.len == 0 || (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && p->type.kind != TY_WORLD)) {
-                continue;
-            }
-            if (!p->read && loc_cmp(d->at, p->name_at) == 0) return true;
-            if (p->read && p->mode == PARAM_MUT && !p->written && loc_cmp(d->at, p->at) == 0) return true;
+            if (unused_param(d, &sys->params.items[k])) return true;
         }
     }
     return false;
@@ -1187,12 +1223,21 @@ static const char *decl_what(const decl *d)
 
 static void format_param(const param *p, sb *out)
 {
+    if (p->mode == PARAM_QUERY) {
+        sb_put(out, "query (");
+        for (int i = 0; i < p->query.count; i++) {
+            if (i) sb_put(out, ", ");
+            format_param(&p->query.items[i], out);
+        }
+        sb_printf(out, ") " STR_FMT, STR_ARG(p->name));
+        return;
+    }
     switch (p->mode) {
     case PARAM_MUT: sb_put(out, "mut "); break;
     case PARAM_IN: sb_put(out, "in "); break;
     case PARAM_WITH: sb_put(out, "with "); break;
     case PARAM_WITHOUT: sb_put(out, "without "); break;
-    case PARAM_READ: case PARAM_EVENT: case PARAM_SENDER: break;
+    case PARAM_READ: case PARAM_EVENT: case PARAM_QUERY: case PARAM_SENDER: break;
     }
     sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
@@ -1821,8 +1866,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     if (!fields.len && !grids.len) sb_put(out, " This code reads none of its fields, so nothing of it is sent.");
 }
 
-// What code reaches through its World, in a sentence: access to every
-// entity's component.
+// Global component access through its World or query candidate sets.
 static void describe_world(const decl *d, sb *out)
 {
     sb reads = {0};
@@ -1830,7 +1874,14 @@ static void describe_world(const decl *d, sb *out)
     const int read_count = world_use_names(d, false, "`", d, &reads);
     const int write_count = world_use_names(d, true, "`", d, &writes);
     if (read_count + write_count == 0) return;
-    sb_put(out, "\n\nThrough its `World`, it ");
+    bool world = false;
+    bool query = false;
+    for (int i = 0; i < d->params.count; i++) {
+        world |= d->params.items[i].type.kind == TY_WORLD;
+        query |= d->params.items[i].mode == PARAM_QUERY;
+    }
+    sb_put(out, world && query ? "\n\nThrough its `World` and queries, it "
+                : query ? "\n\nThrough its queries, it " : "\n\nThrough its `World`, it ");
     if (read_count) sb_printf(out, "reads any entity's %s", reads.data);
     if (read_count && write_count) sb_put(out, " and ");
     if (write_count) sb_printf(out, "writes any entity's %s", writes.data);
@@ -1946,6 +1997,16 @@ static void describe(const occurrence *o, sb *out)
         format_param(o->param, &code);
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
+        if (o->param->mode == PARAM_QUERY) {
+            sb_put(out, "\n\nA read-only second entity set, independent of the entity this system runs for. "
+                        "`foreach` yields rows with `entity` and the named component values. Traversal follows "
+                        "the ECS; it does not sort by entity ID or distance.");
+            break;
+        }
+        if (o->param->query_source) {
+            sb_put(out, "\n\nRead-only component data from this query row.");
+            break;
+        }
         if (is_shader(of)) {
             describe_shader_param(of, o->param, out);
             break;
@@ -1966,6 +2027,13 @@ static void describe(const occurrence *o, sb *out)
         break;
     }
     case OCC_LOCAL:
+        if (o->local->type.decl && o->local->type.decl->query_row) {
+            const param *query = query_for_row(o->local->type.decl);
+            if (query) format_param(query, &code);
+            code_block(out, code.data);
+            sb_put(out, "\n\nA read-only query row: `entity` and the named component values.");
+            break;
+        }
         sb_printf(&code, "%s%s " STR_FMT, o->local->is_mut ? "mut " : "", type_name(o->local->type),
                   STR_ARG(o->local->name));
         code_block(out, code.data);
@@ -2135,6 +2203,9 @@ static void describe(const occurrence *o, sb *out)
     case OCC_MEMBER:
         sb_printf(&code, "%s " STR_FMT, type_name(o->type), STR_ARG(o->name));
         code_block(out, code.data);
+        if (o->object_type.decl && o->object_type.decl->query_row) {
+            sb_put(out, "\n\nThe entity matched by this query row, read-only.");
+        }
         if (str_eq_c(o->name, "down")) sb_put(out, "\n\nTrue on the tick it became true.");
         if (str_eq_c(o->name, "up")) sb_put(out, "\n\nTrue on the tick it became false.");
         if (o->object_type.kind == TY_STRING && str_eq_c(o->name, "length")) sb_put(out, "\n\n" TEXT_LENGTH_DOC);
@@ -2280,7 +2351,13 @@ void analysis_code_lenses(jbuf *out)
         const int read_count = world_use_names(d, false, "", d, &reads);
         const int write_count = world_use_names(d, true, "", d, &writes);
         if (read_count + write_count > 0) { // Access to every entity's, which its signature doesn't say
-            sb_put(&title, " \u00B7 World: ");
+            bool world = false;
+            bool query = false;
+            for (int i = 0; i < d->params.count; i++) {
+                world |= d->params.items[i].type.kind == TY_WORLD;
+                query |= d->params.items[i].mode == PARAM_QUERY;
+            }
+            sb_put(&title, world && query ? " \u00B7 World/query: " : query ? " \u00B7 Query: " : " \u00B7 World: ");
             if (read_count) sb_printf(&title, "reads %s", reads.data);
             if (read_count && write_count) sb_put(&title, "; ");
             if (write_count) sb_printf(&title, "writes %s", writes.data);
@@ -3070,7 +3147,8 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
                      ? t.decl
                      : NULL;
     if (o && o->kind == OCC_TYPE && o->decl) d = o->decl; // A type: its own declaration
-    if (d && !d->builtin) write_location(out, d->at, d->name.len);
+    if (d && d->query_row) jb_put(out, "null"); // There is no stored or named row type
+    else if (d && !d->builtin) write_location(out, d->at, d->name.len);
     else if (!(d && d->kind == DECL_RECORD && d->c_name && cdefs_find(d->c_name, out))) jb_put(out, "null"); // Devices, in C
 }
 
@@ -3822,7 +3900,7 @@ static void classify(const occurrence *o, int *type, int *mods)
         if (o->field && o->field->is_local) *mods |= SM_LOCAL;
         break;
     case OCC_PARAM:
-        *type = ST_PARAMETER;
+        *type = o->object_type.decl && o->object_type.decl->query_row ? ST_PROPERTY : ST_PARAMETER;
         if (o->param->mode != PARAM_MUT) *mods |= SM_READONLY;
         break;
     case OCC_LOCAL:
@@ -3852,7 +3930,11 @@ static void classify(const occurrence *o, int *type, int *mods)
         }
         break;
     case OCC_ATTRIBUTE: *type = ST_DECORATOR; *mods = 0; break;
-    case OCC_MEMBER: *type = ST_PROPERTY; *mods |= SM_DEFAULT_LIBRARY; break;
+    case OCC_MEMBER:
+        *type = ST_PROPERTY;
+        *mods |= SM_DEFAULT_LIBRARY;
+        if (o->object_type.decl && o->object_type.decl->query_row) *mods |= SM_READONLY;
+        break;
     case OCC_NAMESPACE: *type = ST_NAMESPACE; break;
     case OCC_ENUM_MEMBER: *type = ST_ENUM_MEMBER; *mods |= SM_READONLY; break;
     case OCC_THIS: *type = ST_KEYWORD; *mods = 0; break;
@@ -3945,6 +4027,11 @@ void analysis_semantic_tokens(jbuf *out)
         const token *word = &DOC->toks[name - 1];
         const semantic_token t = {word->at.line - 1, utf16_col(word->at), word->text.len, ST_KEYWORD, 0};
         vec_push(toks, t);
+    }
+    for (int i = 0; i < DOC->tok_count; i++) {
+        if (!DOC->query_keywords[i]) continue;
+        const token *word = &DOC->toks[i];
+        vec_push(toks, ((semantic_token){word->at.line - 1, utf16_col(word->at), 5, ST_KEYWORD, 0}));
     }
     for (int line = 1; line <= DOC->lines.count; line++) {
         if (DOC->inactive[line]) inactive_tokens(line, &toks);
@@ -4235,6 +4322,7 @@ static type loop_variable_type(const scope *sc, const int use)
         if (of.kind == TY_LIST || of.kind == TY_SET) return of.decl->fields.items[0].type;
         if (of.kind == TY_MAP && of.decl->entry) return (type){TY_STRUCT, of.decl->entry}; // An entry: key and value
         if (of.kind == TY_GRID) return (type){of.decl->dims == 3 ? TY_INT3 : TY_INT2, NULL}; // A cell's position
+        if (of.kind == TY_QUERY) return (type){TY_STRUCT, of.decl};
         if (of.kind == TY_RECORD && of.decl->array_of) return (type){TY_RECORD, of.decl->array_of}; // touches
         return (type){TY_ERROR, NULL};
     }
@@ -4272,6 +4360,15 @@ static void add_target_member(void *user, const builtin_member *m)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.decl && t.decl->query_row) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type),
+                 str_eq_c(f->name, "entity") ? "The entity matched by this query row, read-only."
+                                            : "Read-only component data from this query row.", NULL);
+        }
+        return;
+    }
     // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
     const bool gpu = is_shader(sc->decl);
     if (t.kind == TY_RENDER_TARGET) {
@@ -4803,14 +4900,13 @@ static void complete_value_types(completion *c, const unsigned which)
 }
 
 // What a function's or method's parameter can be, as the checker takes it:
-// built-in values, text and lists, structs, enums and components; after `mut`,
-// what can change. A function's last can be its Action, and an async
-// function takes singletons too.
-static void complete_routine_param_types(completion *c, const bool after_mut, const bool function, const bool async)
+// built-in values, text and lists, structs, enums, components and singletons;
+// after `mut`, what can change. A function's last can be its Action.
+static void complete_routine_param_types(completion *c, const bool after_mut, const bool function)
 {
     complete_value_types(c, VT_LOCALS | VT_LOCAL_ENTITY);
     complete_structs(c);
-    complete_types(c, true, async, false);
+    complete_types(c, true, true, false);
     complete_namespaces(c, false);
     if (after_mut) return;
     if (function) item(c, "Action", CK_STRUCT, "Action", builtin_type_doc(TY_ACTION), NULL);
@@ -5139,6 +5235,7 @@ typedef enum header_kind {
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
     HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+    HEADER_QUERY,   // A system's second candidate set: query (Body body, with Fighter)
 } header_kind;
 
 typedef struct frame {
@@ -5478,7 +5575,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
         } else if (kind == T_LPAREN && depth < 63) {
-            const header_kind header = top == CTX_TOP ? top_header(i) : top == CTX_DATA ? member_header(i) : HEADER_NONE;
+            const bool query = top == CTX_HEADER && stack[depth].header == HEADER_SYSTEM && before == T_IDENT
+                            && str_eq_c(DOC->toks[i - 1].text, "query");
+            const header_kind header = query ? HEADER_QUERY
+                : top == CTX_TOP ? top_header(i) : top == CTX_DATA ? member_header(i) : HEADER_NONE;
             if (header != HEADER_NONE) stack[++depth] = (frame){CTX_HEADER, i, header};
         } else if (kind == T_RPAREN && top == CTX_HEADER) {
             depth--;
@@ -5592,6 +5692,19 @@ void analysis_completion(const int line, const int character, jbuf *out)
         break;
 
     case CTX_HEADER: {
+        if (f.header == HEADER_QUERY) {
+            if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT) {
+                if (pk == T_LPAREN || pk == T_COMMA) {
+                    item(&c, "with", CK_KEYWORD, "Query entities must have this component", NULL, NULL);
+                    item(&c, "without", CK_KEYWORD, "Query entities must not have this component", NULL, NULL);
+                }
+                complete_types(&c, true, false, false);
+                complete_namespaces(&c, false);
+            } else if (pk == T_IDENT) {
+                complete_param_name(&c, prev->text);
+            }
+            break;
+        }
         if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, mut Color color, Sun sun)
             complete_shader_header(&c, f.open, last);
             break;
@@ -5599,7 +5712,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // event(Hit hit): the trigger; event(Hit hit) TakeHit(...): a handler's parameters.
         const bool trigger = f.header == HEADER_TRIGGER;
         const bool sample = f.header == HEADER_SAMPLE;
-        // extern float Noise(...): what C takes; async void Load(...): a task's
+        // extern float Noise(...): what C takes; async handlers also get self
         bool is_extern = false;
         bool is_async = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
@@ -5616,7 +5729,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (pk != T_MUT && !operator_) {
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
                 }
-                complete_routine_param_types(&c, pk == T_MUT, !method, is_async);
+                complete_routine_param_types(&c, pk == T_MUT, !method);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -5671,6 +5784,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
                 item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
+                if (f.open >= 2 && DOC->toks[f.open - 2].kind == T_SYSTEM && !is_async) {
+                    item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
+                         "A read-only second entity set, traversed with foreach independently of the outer entity.",
+                         "query (${1:Component} ${2:value}) ${3:entities}");
+                }
             }
             item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
             complete_types(&c, true, true, pk != T_MUT);
@@ -6019,6 +6137,10 @@ static const decl *decl_of_param(const param *p)
         const decl *d = A.prog->decls.items[i];
         for (int k = 0; k < d->params.count; k++) {
             if (&d->params.items[k] == p) return d;
+            const param *query = &d->params.items[k];
+            for (int q = 0; query->mode == PARAM_QUERY && q < query->query.count; q++) {
+                if (&query->query.items[q] == p) return d;
+            }
         }
         for (int m = 0; m < d->methods.count; m++) {
             const decl *method = d->methods.items[m];
@@ -6124,7 +6246,9 @@ static const char *check_new_name(const occurrence *target, const str name)
         break;
     case OCC_PARAM: {
         const decl *d = decl_of_param(target->param);
-        clash = param_named(d, name) || (d && local_named(d->body, name));
+        const param *query = target->param->query_source;
+        clash = query ? str_eq_c(name, "entity") || query_binding(query, name) != NULL
+                      : param_named(d, name) || (d && local_named(d->body, name));
         break;
     }
     case OCC_LOCAL: {
@@ -6877,6 +7001,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     const bool operator_name = a->tok > 0 && DOC->toks[a->tok - 1].kind == T_IDENT
                             && str_eq_c(DOC->toks[a->tok - 1].text, "operator");
     if (y == T_LPAREN && operator_name) return false;
+    if (y == T_LPAREN && DOC->query_keywords[a->tok]) return true;
     if (y == T_LPAREN || y == T_LBRACKET) return x != T_IDENT; // Calls, but `if (` and `* (`
     return true;
 }

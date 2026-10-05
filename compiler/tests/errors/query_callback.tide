@@ -1,0 +1,11 @@
+// expect: a query foreach must run directly in its system
+component Body { float x; }
+scene Main { }
+void Twice(Action content) { content(); content(); }
+system Hits(query (Body body) bodies)
+{
+    Twice()
+    {
+        foreach (var row in bodies) Debug.Log($"{row.body.x}");
+    }
+}

@@ -1,0 +1,4 @@
+// expect: 'Field' has a grid in it, which can't be copied
+singleton Field { Grid2<int> cells; }
+void Replace(mut Field field, Field source) { field = source; }
+scene Main { }

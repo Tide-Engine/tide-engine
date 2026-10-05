@@ -1,0 +1,4 @@
+// expect: can't call Session.Leave yet; views and local handlers do
+void Leave(Session session) { if (session.server) Session.Leave(); }
+local scene Main { }
+view Change(Session session) { Leave(session); }

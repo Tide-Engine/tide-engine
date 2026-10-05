@@ -1,0 +1,5 @@
+// expect: 'PaintThrough' changes the match's fields of its 'score' and uses its local fields, so nothing could call it
+singleton Score { int value; local int paint; }
+void Paint(mut Score score) { score.paint += 1; }
+void PaintThrough(mut Score score) { Paint(score); score.value += 1; }
+scene Main { }
