@@ -41,7 +41,7 @@ The match advances in fixed **ticks**, 60 per second by default:
 
 The screen updates every **frame**, as fast as the display allows:
 
-1. Views run, drawing the match blended between its last two ticks, so motion is smooth at any tick rate.
+1. Views run, drawing the match blended between the last tick and the one that's coming, so motion is smooth at any tick rate and what you do shows at once.
 2. The GUI draws over the world.
 
 ## Where to go next
