@@ -1,0 +1,137 @@
+// Bytes: one-byte fields and elements, promoted integer arithmetic and IO payloads.
+const byte TOP = 255;
+const byte FOLDED = (1 << 7) + 3;
+const byte WRAPPED = byte(0x1234);
+const byte SIDE = 64;
+const byte ZERO = 0;
+const byte BLOCK = 1;
+
+enum BytePhases { Prepare = byte(1), Advance = SIDE }
+enum CompactCode : byte { Maximum = TOP }
+
+struct Octets
+{
+    byte a = 1;
+    byte b = FOLDED;
+    byte c = WRAPPED;
+}
+
+component Bytes
+{
+    Octets packed;
+    byte value = TOP;
+    byte fromLong;
+    byte fromFloat;
+    byte fromNaN;
+    byte fromNegative;
+    byte fromSaturated;
+    byte sent;
+    List<byte> content = [0, 128, 255, FOLDED];
+    Map<byte, int> counts;
+    int sum;
+    int negative;
+    int complement;
+    long wide;
+    float real;
+    int selected;
+    string text;
+}
+
+singleton Cells
+{
+    Grid2<byte> cells = Grid2(SIDE, SIDE);
+    List<byte> content;
+    bool ready;
+}
+
+input Controls
+{
+    byte value;
+    [Clamp(3, 200)]
+    byte bounded;
+}
+
+event Payload { byte value; }
+local event IntegerArguments { byte value; }
+local singleton IntegerResults { bool sent; int handled; }
+
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Bytes, Owner { player = PlayerID(ZERO) });
+}
+
+// These local APIs take ints too; a byte argument widens in the same way.
+view SendIntegerArguments(mut IntegerResults results)
+{
+    if (results.sent) return;
+    results.sent = true;
+    Send(IntegerArguments { value = 2 });
+}
+
+local event(IntegerArguments args) CheckIntegerArguments(mut IntegerResults results)
+{
+    var target = RenderTarget(args.value, args.value);
+    target.Resize(args.value, args.value);
+    target.Dispose();
+    Session.Connect("localhost", args.value);
+    Session.Open(args.value);
+    results.handled += args.value;
+}
+
+byte Identity(byte value) { return value; }
+byte Literal() { return 42; }
+
+system Use(Controls controls, mut Bytes bytes)
+{
+    bytes.value++;
+    bytes.value += 258;
+    bytes.value <<= 33;
+    bytes.value /= 0;
+    bytes.value--;
+    bytes.fromLong = byte(0x1234_5678_9abcL);
+    bytes.fromFloat = byte(257.75f);
+    bytes.fromNaN = byte(0.0f / 0.0f);
+    bytes.fromNegative = byte(-1);
+    bytes.fromSaturated = byte(1e30f);
+    bytes.sum = bytes.packed.b + bytes.packed.c;
+    bytes.negative = -bytes.packed.b;
+    bytes.complement = ~bytes.packed.a;
+    bytes.wide = bytes.packed.b + 3L;
+    bytes.real = bytes.packed.b;
+    bytes.content.Add(Identity(255));
+    bytes.content.Add(Literal());
+    bytes.content[0] = byte(controls.value + controls.bounded);
+    bytes.content[1] += 128;
+    bytes.counts[128] = bytes.content[1];
+    bytes.selected = 0;
+    switch (bytes.value)
+    {
+        case 255: bytes.selected = 1; break;
+        case 0: bytes.selected = 2; break;
+        default: break;
+    }
+    bytes.text = $"{bytes.value} {bytes.packed.b:X2}";
+    this.Send(Payload { value = 129 });
+}
+
+event(Payload payload) Receive(mut Bytes bytes) { bytes.sent = payload.value; }
+
+[Stage(BytePhases.Prepare, ZERO)]
+system Fill(mut Cells cells)
+{
+    if (cells.ready) return;
+    cells.ready = true;
+    for (var i = 0; i < 17000; i++) cells.content.Add(byte(i));
+    for (var y = 0; y < 64; y++)
+    {
+        for (var x = 0; x < 64; x++) cells.cells[x, y] = byte(x + y);
+    }
+}
+
+[Stage(BytePhases.Advance, ZERO)]
+system Step(mut Cells cells)
+{
+    parallel (var at in cells.cells by BLOCK offset ZERO) cells.cells[at] += 129;
+    parallel (var i in cells.content by BLOCK offset ZERO) cells.content[i] += 1;
+}

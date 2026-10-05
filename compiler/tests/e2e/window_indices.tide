@@ -1,0 +1,37 @@
+// Window addresses are task-local; the position the step sees stays global.
+scene Main { }
+
+singleton Plane { Grid2<int> cells = Grid2(133, 71); }
+singleton Volume { Grid3<int> cells = Grid3(35, 21, 19); }
+singleton Open { Grid2<int> cells; }
+
+system StepPlane(mut Plane plane)
+{
+    parallel (var at in plane.cells by int2(3, 2) offset int2(-2, -1))
+    {
+        plane.cells[at] = plane.cells[at - int2(1, 0)] + plane.cells[at + int2(3, 2)] + at.x + at.y;
+        plane.cells[at + int2(2, 1)] = plane.cells[at - int2(1, 1)] - at.x;
+    }
+}
+
+system StepVolume(mut Volume volume)
+{
+    parallel (var at in volume.cells by int3(2, 3, 2) offset int3(-1, 2, 1))
+    {
+        volume.cells[at] = volume.cells[at - int3(1, 1, 1)] + volume.cells[at + int3(2, 3, 2)]
+            + at.x + at.y * 10 + at.z * 100;
+        volume.cells[at + int3(1, 2, 1)] = volume.cells[at - int3(1, 0, 1)] - at.z;
+    }
+}
+
+system StepOpen(mut Open open)
+{
+    parallel (var at in open.cells by int2(2, 3) offset int2(1, 2))
+    {
+        if (open.cells[at] != 0)
+        {
+            open.cells[at] = open.cells[at - int2(1, 1)] + open.cells[at + int2(2, 3)] + at.x + at.y;
+            open.cells[at + int2(1, 2)] = open.cells[at - int2(1, 0)] - at.x;
+        }
+    }
+}

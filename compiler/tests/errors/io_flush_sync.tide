@@ -1,0 +1,3 @@
+// expect: Storage.Flush is awaited
+local scene Main { }
+local event(Spawned) Setup(with Main) { Storage.Flush(); }

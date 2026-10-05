@@ -10,17 +10,17 @@ bool builtin_type_named(str name, type *out);
 // Offers every built-in type name to a "did you mean" suggestion.
 void suggest_builtin_types(suggestion *s);
 
-// Number of components: 1 for int and float, 2-4 for vectors, 0 for anything else.
+// Number of components: 1 for byte, int and float, 2-4 for vectors, 0 for anything else.
 int type_dim(type t);
 
-// float or a float vector / int or an int vector.
+// float or a float vector / byte, int or an int vector.
 bool type_is_float_based(type t);
 bool type_is_int_based(type t);
 
-// int or float (dim 1) and their vectors (dim 2-4). Not long, which has no vectors.
+// byte, int or float (dim 1) and int/float vectors (dim 2-4). Not long, which has no vectors.
 bool type_is_numeric(type t);
 
-// int or long.
+// byte, int or long.
 bool type_is_integer(type t);
 
 // 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
@@ -35,7 +35,7 @@ type vector_type(bool is_float, int dim);
 type matrix_type(int dim);
 
 // Can a value of type `from` be stored where `to` is expected? Exact matches,
-// plus int -> float and intN -> floatN widening. Errors are always accepted so
+// plus byte -> int/long/float, int -> long/float and intN -> floatN widening. Errors are always accepted so
 // they don't cascade.
 bool type_assignable(type to, type from);
 

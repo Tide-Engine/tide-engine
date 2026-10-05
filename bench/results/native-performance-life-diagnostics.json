@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-04",
+  "kind": "non-production-diagnostic",
+  "benchmark": "versus_life",
+  "source_revision": "9a7576d5e1349980fe87401dca9524806424ab5e",
+  "source_state": "Tested merged dev baseline before native-performance changes; later byte-window variants additionally contain the generic relative-index implementation.",
+  "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+  "physical_cores": 12,
+  "logical_processors": 24,
+  "compiler": "Clang 23.1.2",
+  "build_type": "RelWithDebInfo",
+  "flags": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-fno-fast-math",
+    "-ffp-contract=off"
+  ],
+  "output_directory": "build/life-profile (ignored)",
+  "baseline_generated_sha256": "08dbd40709e48a33fcf4d7f6cac46ebe7a8e8d64039c32a158eef5f859867f21",
+  "instructions": "Compile a generated copy with the same release flags/includes, then link against unchanged versus_life C baseline/host objects and engine/platform/versus libraries. No phase clocks or benchmark count changes. Diagnostic executables retain default versus_life output; their filenames distinguish source variants.",
+  "variants": {
+    "baseline": "Generated source before relative-index optimization.",
+    "narrow": "Replace const int32_t around with const uint8_t around. Every disassembled instruction is identical to baseline; only the object path header differs.",
+    "compare-narrow": "Cast around to uint8_t at comparisons to 2 and 3. Every disassembled instruction is identical to baseline.",
+    "index-local": "Diagnostic 1-cell 2D stencil addressing uses size_t(k-from)+halo-offset rather than global signed at+offset-window-origin. Measured gain motivated generic 2D/3D block-aware production implementation.",
+    "no-clone": "Omit output-window initialization for this full-write workload. Did not show a useful timing gain; not retained. Unsafe for general partial/sparse writes without proof.",
+    "uint8-bool": "After production relative indices, read window bytes as uint8_t but keep Count(bool), preserving numeric conversion through bool normalization. Diagnostic only.",
+    "uint8-raw": "After production relative indices, read valid canonical 0/1 bool bytes directly into uint8_t sum, bypassing Count bool ABI. Diagnostic only; no generic production lowering/proof retained."
+  },
+  "assembly": {
+    "baseline": {
+      "paddd": 8,
+      "paddb": 12,
+      "pcmpeqd": 11,
+      "pcmpeqb": 2,
+      "lines": 4235,
+      "punpck": 24
+    },
+    "narrow": {
+      "identical_instructions": true
+    },
+    "compare-narrow": {
+      "identical_instructions": true
+    },
+    "index-local": {
+      "paddd": 5,
+      "lines": 4064,
+      "paddb": 12
+    },
+    "uint8-bool": {
+      "pcmpeqd": 5,
+      "paddd": 14,
+      "pcmpeqb": 8,
+      "lines": 4033,
+      "paddb": 0
+    },
+    "uint8-raw": {
+      "pcmpeqd": 0,
+      "paddd": 0,
+      "pcmpeqb": 4,
+      "lines": 4062,
+      "paddb": 14
+    }
+  },
+  "interpretation": "Local storage/casts cannot force narrow SIMD here. LLVM already knows bool-derived sums are 0..8 and can remove identity truncation; this is an inferred explanation, while identical instruction bytes are direct evidence. Raw byte input prevents that particular range inference and changes vector arithmetic, but timing and general semantic proof are separate requirements.",
+  "production": "Only generic task-relative grid window addresses are retained: uint32(k)-uint32(from), followed by size_t block/row/layer arithmetic. User-visible global position, all integer wrap helpers, snapshots, partial-write initialization, sparse checks, loading and ordered commit remain unchanged. Lists are untouched by this change.",
+  "validation": "Native and web release: tidec_e2e_window_indices, tidec_e2e_parallel and tidec_e2e_grids passed. The new fixture has three cases: finite 2D/3D edges and partial blocks, open negative sparse tiles, and near-int-limit origins with wrapped user-visible position arithmetic. Snapshot reads remain unchanged.",
+  "timings": "Root-controlled sequential diagnostics: index-local on one thread 0.575-0.581 ms versus baseline 0.670-0.740 ms; configured 12 cores 0.286-0.289 ms versus 0.284-0.324 ms; digests agree. No-clone 0.656-0.688 ms did not justify retention. These are reported ranges, not exact retained stdout or a fixed production percentage; final production measurements are recorded separately.",
+  "byte_diagnostic_labels": [
+    "native-grid-byte-normalized-diagnostic",
+    "native-grid-byte-direct-diagnostic"
+  ],
+  "byte_diagnostic_outcome": "Inconclusive under machine variability: normalized 1.05-1.43 ms, direct 0.58-1.08 ms; all end-state digests agree. An unchanged copied N-body baseline also inflated from 7.85 ms to 10.9-13.4 ms with builds idle, establishing uncontrolled timing drift. No byte-window production change is retained."
+}

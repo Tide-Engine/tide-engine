@@ -1,0 +1,4 @@
+// expect: 'Read' accesses the filesystem, which only local code can use
+string Read() { return File.ReadAllText("save") ?? ""; }
+struct Item { string Load() { return Read(); } }
+local scene Main { }

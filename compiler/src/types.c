@@ -9,6 +9,7 @@ static const struct {
     const char *c_name;
 } builtins[] = {
     {"bool", TY_BOOL, "b", "bool"},
+    {"byte", TY_BYTE, "i", "uint8_t"},
     {"int", TY_INT, "i", "int32_t"},
     {"long", TY_LONG, "l", "int64_t"},
     {"int2", TY_INT2, "i2", "tide_int2"},
@@ -52,6 +53,7 @@ void suggest_builtin_types(suggestion *s)
 int type_dim(const type t)
 {
     switch (t.kind) {
+    case TY_BYTE:
     case TY_INT:
     case TY_FLOAT: return 1;
     case TY_INT2:
@@ -71,7 +73,7 @@ bool type_is_float_based(const type t)
 
 bool type_is_int_based(const type t)
 {
-    return t.kind == TY_INT || t.kind == TY_INT2 || t.kind == TY_INT3 || t.kind == TY_INT4;
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_INT2 || t.kind == TY_INT3 || t.kind == TY_INT4;
 }
 
 bool type_is_numeric(const type t)
@@ -81,7 +83,7 @@ bool type_is_numeric(const type t)
 
 bool type_is_integer(const type t)
 {
-    return t.kind == TY_INT || t.kind == TY_LONG;
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG;
 }
 
 int matrix_dim(const type t)
@@ -133,6 +135,7 @@ bool type_assignable(const type to, const type from)
     if (to.kind == TY_OPTIONAL && from.kind != TY_OPTIONAL && from.kind != TY_FAILABLE) {
         return type_assignable(to.decl->fields.items[0].type, from);
     }
+    if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_LONG) return from.kind == TY_INT; // An int fits a long; floats convert explicitly, both ways
     return type_is_float_based(to) && type_is_int_based(from) && type_dim(to) == type_dim(from);
 }

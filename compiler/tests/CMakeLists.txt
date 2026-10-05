@@ -28,6 +28,8 @@ set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
+tide_e2e_test(io)
+tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
@@ -52,6 +54,8 @@ tide_e2e_test(methods)
 tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)
+tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
+tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(commands)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
@@ -79,6 +83,20 @@ tide_e2e_test(lists)
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
+tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
+tide_e2e_test(window_indices) # Task-local windows with global positions, offsets and partial writes
+tide_e2e_test(parallel_work) # Unknown nested loop work must still select the worker pool
+# These share the same behavioral check, with a different nested-loop form.
+foreach(variant IN ITEMS condition step block constant)
+    set(target tidec_e2e_parallel_work_${variant})
+    tide_add_game(${target} SOURCES e2e/parallel_work_${variant}.tide NAME game
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/parallel_work_test.c")
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    if(variant STREQUAL "constant")
+        target_compile_definitions(${target} PRIVATE EXPECTED_ROUNDS=0u EXPECTED_TOTAL=45)
+    endif()
+    add_test(NAME ${target} COMMAND ${target})
+endforeach()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates

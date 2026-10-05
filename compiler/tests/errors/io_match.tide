@@ -1,0 +1,3 @@
+// expect: File can only be used in local code
+scene Main { }
+event(Spawned) Setup(with Main) { File.Delete("save")!; }

@@ -17,6 +17,7 @@ bool builtin_draw_owner(str name);
 // The program's Anchor enum, which GUILayout.Area takes. Call before resolving
 // calls.
 void builtins_use(const decl *anchor);
+void builtins_use_io(const decl *bytes, const decl *paths);
 
 // The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such

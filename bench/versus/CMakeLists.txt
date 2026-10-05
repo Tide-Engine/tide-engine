@@ -26,6 +26,37 @@ versus_add(churn churn/churn.tide)
 versus_add(events events/events.tide)
 versus_add(nbody nbody/nbody.tide)
 
+# Opt-in diagnostics instrument a copy of generated C, leaving shipped code,
+# runtime libraries and normal versus executables untouched. A control uses
+# the same harness without any phase clocks, to expose measurement overhead.
+if(TIDE_NODE)
+    foreach(concept IN ITEMS life events)
+        set(game_dir "${CMAKE_CURRENT_BINARY_DIR}/tide/versus_${concept}")
+        set(instrumented "${game_dir}/${concept}-phases.c")
+        add_custom_command(OUTPUT "${instrumented}"
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/phases/instrument.mjs"
+                "${concept}" "${game_dir}/${concept}.c" "${instrumented}"
+            DEPENDS "${game_dir}/${concept}.c" phases/instrument.mjs phases/life.mjs phases/events.mjs
+            VERBATIM)
+        foreach(mode IN ITEMS phases control)
+            if(mode STREQUAL "phases")
+                set(source "${instrumented}")
+                set(instrument 1)
+            else()
+                set(source "${game_dir}/${concept}.c")
+                set(instrument 0)
+            endif()
+            add_executable(versus_${concept}_${mode} EXCLUDE_FROM_ALL
+                "${concept}/main.c" "${concept}/${concept}.c" phases/phases.c
+                "${source}" "${game_dir}/${concept}.h")
+            target_include_directories(versus_${concept}_${mode} PRIVATE "${game_dir}" phases)
+            target_compile_definitions(versus_${concept}_${mode} PRIVATE
+                versus_main=versus_phases_main TIDE_PHASE_INSTRUMENTED=${instrument})
+            target_link_libraries(versus_${concept}_${mode} PRIVATE tide_versus)
+        endforeach()
+    endforeach()
+endif()
+
 # Every one in turn, in full: cmake --build --preset release --target versus
 if(NOT TIDE_WEB)
     set(commands "")

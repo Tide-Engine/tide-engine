@@ -1,0 +1,7 @@
+// expect: a comparison can't access the filesystem
+local scene Main { }
+local event(Spawned) Setup(with Main)
+{
+    mut List<int> numbers = [2, 1];
+    numbers.Sort(a, b) { File.Delete("save")!; return a < b; }
+}

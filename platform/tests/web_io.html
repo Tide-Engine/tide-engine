@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tide files test</title>
+<canvas id="canvas"></canvas>
+<pre id="log"></pre>
+<script>
+  const phases = ['write', 'other', 'read', 'denied', 'read-denied', 'quota'];
+  const phase = new URLSearchParams(location.search).get('phase') || 'write';
+  let sent = Promise.resolve();
+  const post = (path, body) => sent = sent.then(() => fetch(path, { method: 'POST', body }));
+  const show = line => { document.getElementById('log').textContent += line + '\n'; post('/log', phase + ': ' + line); };
+  if (phase === 'denied') Object.defineProperty(window, 'indexedDB', {
+    get() { throw new DOMException('refused', 'SecurityError'); }, configurable: true,
+  });
+  if (phase === 'read-denied') {
+    const transaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function(names, mode, options) {
+      if (mode === 'readonly') throw new DOMException('refused', 'SecurityError');
+      return transaction.call(this, names, mode, options);
+    };
+  }
+  var Tide = {
+    canvas: document.getElementById('canvas'), backend: 'webgl', checkGL: true,
+    arguments: ['--' + phase], print: show, printErr: show,
+    onExit(code) {
+      if (code) post('/result', String(code));
+      else if (phases.indexOf(phase) + 1 < phases.length)
+        sent.then(() => location.replace('/?phase=' + phases[phases.indexOf(phase) + 1]));
+      else post('/result', '0');
+    },
+    onAbort(reason) { show('abort: ' + reason); post('/result', 'abort'); },
+  };
+</script>
+{{{ SCRIPT }}}
