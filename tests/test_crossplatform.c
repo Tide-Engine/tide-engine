@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "tide/math.h"
+#include "tide/random.h"
 #include "tide_test.h"
 
 // Cross-platform determinism. Each test hashes the exact bits of many results,
@@ -154,4 +155,37 @@ TIDE_TEST(crossplatform_geometry)
         h = hash_float(h, tide_determinant_f4x4(m));
     }
     expect_hash("geometry", h, 0xA244CB549F91E603ull);
+}
+
+// Random numbers (tide/random.h): the same sequence everywhere, from a seed,
+// from a state of zero and from what the engine seeds, through every method.
+TIDE_TEST(crossplatform_random)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    tide_random seeded = tide_random_seeded(20261005);
+    tide_random unseeded = {0};
+    tide_random placed = tide_random_place(123456789u, 600u, (tide_entity){42u, 7u}, 513u);
+    tide_random *const all[3] = {&seeded, &unseeded, &placed};
+    for (int i = 0; i < SAMPLES; i++) {
+        tide_random *r = all[i % 3];
+        h = hash_int(h, tide_random_next_int(r));
+        h = hash_int(h, tide_random_next_int_below(r, 1 + i % 1000));
+        h = hash_int(h, tide_random_next_int_between(r, -i, i * 3 + 1));
+        h = hash_float(h, tide_random_next_float(r));
+        h = hash_float(h, tide_random_next_float_below(r, 0.001f * (float)(i + 1)));
+        h = hash_float(h, tide_random_next_float_between(r, -100.0f, 0.37f * (float)i));
+        h = hash_int(h, tide_random_next_bool(r) ? 1 : 0);
+        const tide_float2 square = tide_random_next_float2(r);
+        h = hash_float(hash_float(h, square.x), square.y);
+        h = hash_f3(h, tide_random_next_float3_between(r, tide_f3(-1.0f, -2.0f, -3.0f), tide_f3(1.0f, 2.5f, 3.25f)));
+        const tide_float2 flat = tide_random_next_float2_direction(r);
+        h = hash_float(hash_float(h, flat.x), flat.y);
+        h = hash_f3(h, tide_random_next_float3_direction(r));
+        const tide_quaternion turn = tide_random_next_quaternion_rotation(r);
+        h = hash_float(hash_float(hash_float(hash_float(h, turn.value.x), turn.value.y), turn.value.z), turn.value.w);
+    }
+    h = hash_bits(hash_bits(h, (uint32_t)seeded.state), (uint32_t)((uint64_t)seeded.state >> 32));
+    h = hash_bits(hash_bits(h, (uint32_t)unseeded.state), (uint32_t)((uint64_t)unseeded.state >> 32));
+    h = hash_bits(hash_bits(h, (uint32_t)placed.state), (uint32_t)((uint64_t)placed.state >> 32));
+    expect_hash("random", h, 0xBD6BDD2B157C28BCull);
 }

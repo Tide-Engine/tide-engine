@@ -329,6 +329,7 @@ static inline tide_session *tide_run_new_session(void)
         .sample = tide_run_sample,
         .jobs = tide_run_jobs(),      // Ticks on every core
         .now_ns = tide_time_now_ns,   // To keep running predicted ticks again within a frame's budget
+        .entropy = tide_platform_entropy, // A seed for each match it starts, so no two go the same
     });
 }
 

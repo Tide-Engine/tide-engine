@@ -186,6 +186,11 @@ static bool type_fits(emit *em, const type t, const loc at)
         return true;
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
+    if (t.kind == TY_STRUCT && t.decl == em->prog->random) { // Its state is a long, and the code that steps it the CPU's
+        refuse(em, at, "a Random can't go to the GPU: it keeps its state where the CPU steps it");
+        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        return false;
+    }
     switch (t.kind) {
     case TY_BYTE: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
@@ -1086,9 +1091,18 @@ static void ex_call(emit *em, const expr *e)
     case CALL_METHOD:
         ex_user_call(em, e);
         return;
+    case CALL_RANDOM:
+        refuse(em, e->at, "the GPU can't roll random numbers: a Random keeps its state where the CPU steps it");
+        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        return;
     case CALL_BUILTIN:
         if (e->kind == E_METHOD && e->object->kind == E_NAME && str_eq_c(e->object->name, "Math")) {
             ex_math(em, e);
+            return;
+        }
+        if (e->kind == E_CALL && e->type.kind == TY_STRUCT && e->type.decl == em->prog->random) { // Random(seed)
+            refuse(em, e->at, "the GPU can't make a Random: it keeps its state where the CPU steps it");
+            diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
             return;
         }
         if (e->kind == E_METHOD && e->object->kind == E_NAME && str_eq_c(e->object->name, "Debug")) {

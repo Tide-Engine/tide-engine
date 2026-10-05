@@ -86,8 +86,8 @@ enum {
 enum { FRAME_EVENTS = 1, FRAME_INPUTS = 2, FRAME_LATE = 4, FRAME_COMMANDS = 8 };
 // What's being sent: the world, as a delta, or the hashes of its pages, to
 // learn which of them the player's world lacks. The hashes come after how the
-// match started: one of START_*, Time.dt's bits and, for START_GIVEN, the
-// game's tide_start.
+// match started: one of START_*, Time.dt's bits, the match's seed in a game
+// that has one (tide_game.seeded) and, for START_GIVEN, the game's tide_start.
 enum { SEND_WORLD = 0, SEND_HASHES = 1 };
 enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define LACKS_BYTES 512u // The most a CLIENT says about what its world lacks: past that, it lacks the rest
@@ -490,9 +490,11 @@ struct tide_server {
     double *away_since;
     uint64_t random;
     // How its match started, for players to start it too (START_*), with
-    // Time.dt and, for START_GIVEN, the game's tide_start
+    // Time.dt, the seed it picked (in a game that has one) and, for
+    // START_GIVEN, the game's tide_start
     uint8_t start_kind;
     float dt;
+    uint32_t seed;
     uint8_t *start;
     tide_player_set present; // Players in the world it went on from, who haven't joined it yet (tide_server_desc.players)
     double present_until; // ...who leave then
@@ -593,6 +595,7 @@ static uint8_t *hashes_of(const tide_server *s, const void *world, uint32_t *siz
     uint32_t dt;
     memcpy(&dt, &s->dt, 4);
     tide_write_u32(&w, dt);
+    if (g->seeded) tide_write_u32(&w, s->seed);
     tide_write_bytes(&w, s->start, start);
     tide_write_bytes(&w, list, list_size);
     free(list);
@@ -1350,8 +1353,14 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
         return NULL;
     }
     const float dt = desc->dt > 0.0f ? desc->dt : 1.0f / (float)s->desc.tick_rate;
+    // A match's seed, in a game that has one: from the system where the host
+    // has it to give, so no two matches go the same; 31 bits, as Time.seed is
+    if (!desc->world && g->seeded && desc->entropy) {
+        const uint64_t entropy = desc->entropy();
+        s->seed = (uint32_t)(entropy ^ (entropy >> 32)) & 0x7FFFFFFFu;
+    }
     if (desc->world) g->copy_world(s->world, desc->world);
-    else g->start(s->world, dt, desc->start);
+    else g->start(s->world, dt, desc->start, s->seed);
     s->dt = dt;
     s->start_kind = desc->world ? START_UNKNOWN : desc->start ? START_GIVEN : START_MAIN;
     if (s->start_kind == START_GIVEN) {
@@ -1709,9 +1718,10 @@ static bool can_start(const tide_client *c)
 
 // The world to build the one at `tick` from: the one it was given, until it
 // has its own, then its own nearest that tick; with neither, the match as it
-// started (`kind`, `dt` and `given`, see SEND_HASHES). NULL for none, after
-// one built from it came out wrong.
-static const void *base_for(tide_client *c, const uint32_t tick, const uint8_t kind, const float dt, const void *given)
+// started (`kind`, `dt`, `seed` and `given`, see SEND_HASHES). NULL for none,
+// after one built from it came out wrong.
+static const void *base_for(tide_client *c, const uint32_t tick, const uint8_t kind, const float dt, const uint32_t seed,
+                            const void *given)
 {
     const tide_game *g = c->game;
     if (c->base_failed) {
@@ -1725,7 +1735,7 @@ static const void *base_for(tide_client *c, const uint32_t tick, const uint8_t k
         const uint32_t t = tick < c->verified ? c->verified : tick > c->ahead ? c->ahead : tick;
         g->copy_world(c->base, world_at(c, t));
     } else {
-        g->start(c->base, dt, kind == START_GIVEN ? given : NULL);
+        g->start(c->base, dt, kind == START_GIVEN ? given : NULL, seed);
     }
     return c->base;
 }
@@ -1739,10 +1749,11 @@ static void answer_hashes(tide_client *c)
     tide_reader r = {c->snapshot, c->snapshot_size, 0, false};
     const uint8_t kind = tide_read_u8(&r);
     const uint32_t dt_bits = tide_read_u32(&r);
+    const uint32_t seed = g->seeded ? tide_read_u32(&r) : 0u;
     const uint8_t *given = kind == START_GIVEN ? tide_read_bytes(&r, g->start_size) : NULL;
     float dt;
     memcpy(&dt, &dt_bits, 4);
-    const void *base = r.failed || kind > START_GIVEN ? NULL : base_for(c, c->snapshot_tick, kind, dt, given);
+    const void *base = r.failed || kind > START_GIVEN ? NULL : base_for(c, c->snapshot_tick, kind, dt, seed, given);
     c->lacks_size = base && g->need_pages
                       ? g->need_pages(base, c->snapshot + r.at, c->snapshot_size - r.at, c->lacks, LACKS_BYTES)
                       : 0u;
@@ -2763,6 +2774,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         .world = world,
         .players = players,
         .jobs = s->desc.jobs,
+        .entropy = s->desc.entropy,
     };
     s->server = tide_server_create(&server, now);
     const tide_client_desc client = {

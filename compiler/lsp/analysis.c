@@ -615,6 +615,10 @@ static void walk_expr(const expr *e)
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
             o.kind = OCC_FUNCTION;
             add_occ(o);
+        } else if (e->call == CALL_BUILTIN && in_source && e->type.kind == TY_STRUCT && e->type.decl == A.prog->random) {
+            o.kind = OCC_TYPE; // Random(seed): the type it makes
+            o.decl = A.prog->random;
+            add_occ(o);
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) { // IsDead() in a method, or Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
             o.decl = e->method;
@@ -645,9 +649,10 @@ static void walk_expr(const expr *e)
         if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
             o.kind = OCC_METHOD;
             add_occ(o);
-        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
+        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT
+                   || e->call == CALL_RANDOM) {
             o.kind = OCC_FUNCTION;
-            o.owner = e->call == CALL_TEXT ? str_from("string")
+            o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM ? str_from("Random")
                       : e->targeted ? str_from(e->draw_dims == 3 ? "Draw3D" : "Draw2D") : e->object->name;
             o.c_name = e->c_callee;
             add_occ(o);
@@ -1438,6 +1443,21 @@ static const method_form session_calls[] = {
 #define GRID_SIZE_DOC                                                                                                  \
     "A grid of that size, in cells, whose cell type comes from where it goes: 0 or nothing leaves an axis open."
 #define GRID_SIZE_FIELD_DOC "The grid's size, 0 on the axes where it's open."
+// The built-in struct Random (its methods' docs are in builtins.c).
+#define RANDOM_DOC                                                                                                     \
+    "A random number generator's state, 8 bytes that live where the game puts them: a field of a component (a "       \
+    "sequence for each entity), of a singleton (one for the match) or of local state, or a local. Each `Next` call "  \
+    "steps it, so the code needs it `mut`, and its numbers are the same on every machine. One the game leaves "        \
+    "unseeded in a component or a singleton is seeded by the engine, from the match's seed and its entity; "          \
+    "`Random(seed)` is one for a seed of the game's."
+#define RANDOM_SEEDED_DOC                                                                                              \
+    "A generator for a seed: the same seed, the same numbers. Seeds next to each other (1, 2, 3) give sequences that " \
+    "have nothing to do with each other."
+#define TIME_SEED_DOC                                                                                                  \
+    "The match's seed, from 0 to 2147483647: the machine that starts the match picks it, so no two matches go the "   \
+    "same, and every player has it with the world. The engine seeds the match's `Random`s from it. 0 where no host "  \
+    "picks one, as in tests."
+
 #define LIST_COUNT_DOC "How many elements the list has."
 #define MAP_COUNT_DOC "How many keys it has."
 #define DEVICE_ARRAY_COUNT_DOC "How many fingers the touchscreen follows at once: every slot, touching or not."
@@ -1554,6 +1574,11 @@ static const char *builtin_field_doc(const decl *d, const str name)
                    "every frame. A float gets coarser as it grows: what has to be exact counts in `tick`.";
         }
         if (str_eq_c(name, "tickRate")) return "The ticks in a second: 1 / `dt` to the nearest whole number.";
+        if (str_eq_c(name, "seed")) return TIME_SEED_DOC;
+    }
+    if (d && d == A.prog->random && str_eq_c(name, "state")) {
+        return "All there is to the generator: copy it to keep where a sequence is, and set it to go on from there. 0 "
+               "is one nothing seeded yet.";
     }
     if (d && d == A.prog->pixel) {
         if (str_eq_c(name, "position")) return "Where the pixel is on the screen: its pixels, from the top left.";
@@ -1911,6 +1936,7 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, code.data);
             if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
+            else if (o->decl == A.prog->random) sb_put(out, "\n\n" RANDOM_DOC);
             else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
             else if (o->decl->is_scene) {
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
@@ -4407,6 +4433,13 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             const char *doc = button_field_doc(t.decl, f->name);
             item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : builtin_field_doc(t.decl, f->name), NULL);
         }
+        // Time.seed, which is only among Time's fields once something uses it
+        if (t.decl == A.prog->time && !A.prog->uses_seed) item(c, "seed", CK_FIELD, "int", TIME_SEED_DOC, NULL);
+        // A Random's methods: the code needs it mut, as each steps it
+        if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
+            builtin_visit v = {c, false};
+            builtin_list_members(str_from("Random"), add_builtin_member, &v);
+        }
         // Its local fields, where code has them: views, local handlers and the
         // functions they call, and the frags and verts a view draws through.
         // The match can't see them.
@@ -4750,7 +4783,7 @@ static void complete_structs(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
+        if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC : NULL, NULL);
         if (d->kind == DECL_ENUM) item(c, name_for(d), CK_ENUM, "enum", NULL, NULL);
     }
 }
@@ -6173,7 +6206,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Filter", "DrawList",
+                                           "Vertex", "Vertex3", "Filter", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -6400,6 +6433,7 @@ static const struct {
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
     {"RenderTarget", {"RenderTarget(int width, int height)"}, "Creates a local image with positive pixel dimensions. Color and depth persist until cleared; copies share it. Dispose it when finished."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
+    {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
     {"Send", {"Send(event)"}, "Sends an event to the whole world, handled at the end of the tick."},
     {"Grid2", {"Grid2(int width, int height)"}, GRID_SIZE_DOC},
@@ -6588,7 +6622,7 @@ static int call_param_names(const expr *call, str *names, const int max)
     }
     label_list list = {0};
     switch (call->call) {
-    case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: {
+    case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: {
         if (call->resource_operation) {
             if (call->object) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
@@ -6596,7 +6630,11 @@ static int call_param_names(const expr *call, str *names, const int max)
             } else vec_push(list.labels, "RenderTarget(int width, int height)");
             break;
         }
-        const str owner = call->call == CALL_TEXT ? str_from("string")
+        if (call->kind == E_CALL && call->type.kind == TY_STRUCT && call->type.decl == A.prog->random) { // Random(seed)
+            vec_push(list.labels, "Random(long seed)");
+            break;
+        }
+        const str owner = call->call == CALL_TEXT ? str_from("string") : call->call == CALL_RANDOM ? str_from("Random")
                           : call->targeted ? str_from(call->draw_dims == 3 ? "Draw3D" : "Draw2D")
                           : call->object ? call->object->name : (str){"", 0};
         builtin_signatures(owner, call->name, collect_label, &list);
@@ -6808,6 +6846,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         const method_form *form = find_form(forms, count, name);
         if (t.kind == TY_STRING) {
             builtin_signatures(str_from("string"), name, visit_signature, &s);
+        } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
+            builtin_signatures(str_from("Random"), name, visit_signature, &s);
         } else if (t.kind == TY_RENDER_TARGET && !form) {
             builtin_signatures(str_from("Draw2D"), name, visit_signature, &s);
             builtin_signatures(str_from("Draw3D"), name, visit_signature, &s);

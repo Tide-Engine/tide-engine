@@ -17,10 +17,11 @@ typedef struct command_world {
     uint64_t order;
 } command_world;
 
-static void command_start(void *world, float dt, const void *start)
+static void command_start(void *world, float dt, const void *start, uint32_t seed)
 {
     (void)dt;
     (void)start;
+    (void)seed;
     memset(world, 0, sizeof(command_world));
 }
 

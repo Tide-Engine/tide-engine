@@ -1,0 +1,7 @@
+// expect: a view can't change the match, and 'Wanderer' belongs to it
+component Wanderer { Random random; }
+scene Main { }
+view Sparkle(mut Wanderer wanderer)
+{
+    Draw2D.Circle(float2(0), wanderer.random.NextFloat(), Color.white);
+}
