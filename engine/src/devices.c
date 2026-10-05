@@ -66,6 +66,8 @@ void tide_touches_poll(tide_touchscreen *s)
         tide_touch *t = &s->touches.at[i];
         t->poll_delta = tide_f2(0.0f, 0.0f);
         t->began = 0;
+        // A finger that lifted a poll ago or more, in a slot no sample cleared
+        if (t->id != 0 && !t->press.held && t->rested < UINT8_MAX) t->rested++;
         if (t->lifted) {
             t->lifted = 0;
             tide_button_set(&t->press, false);
@@ -84,14 +86,22 @@ static tide_touch *finger(tide_touchscreen *s, const uint32_t source)
     return NULL;
 }
 
-// A slot no finger has, and no sample has yet to see lift.
+// A slot for a finger that touches: one no finger has, and no sample has yet
+// to see lift. Without one, it's the slot of the finger that lifted longest
+// ago (the older touch of two that lifted as long ago), whose lift the next
+// sample then never sees: that's where nothing samples, as in a game with no
+// input or outside a match, and where more fingers came between two samples
+// than there are slots. NULL only while every slot's finger still touches.
 static tide_touch *free_slot(tide_touchscreen *s)
 {
+    tide_touch *rested = NULL;
     for (int i = 0; i < TIDE_TOUCHES; i++) {
         tide_touch *t = &s->touches.at[i];
-        if (!t->press.held && !t->press.pressed) return t;
+        if (t->press.held) continue;
+        if (!t->press.pressed) return t;
+        if (!rested || t->rested > rested->rested || (t->rested == rested->rested && t->id < rested->id)) rested = t;
     }
-    return NULL;
+    return rested;
 }
 
 static void move_to(tide_touch *t, const tide_float2 position)

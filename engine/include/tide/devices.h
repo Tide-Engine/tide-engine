@@ -134,10 +134,15 @@ typedef struct tide_touch {
     uint32_t source;        // ...the platform's own number for the finger
     uint8_t began;          // ...it touched this poll
     uint8_t lifted;         // ...it lifted this poll, after touching in it: it lifts at the next
-    uint8_t tide_pad[2];
+    uint8_t rested;         // ...how many polls ago it lifted, up to 255, while no sample has cleared its slot
+    uint8_t tide_pad[1];
 } tide_touch;
 
-// A touchscreen's fingers: a finger keeps its slot while it touches.
+// A touchscreen's fingers: a finger keeps its slot while it touches, and once
+// it lifted, until a sample saw that (tide_devices_consume), so no tap is
+// lost between two samples. Where nothing samples, or more fingers come
+// between two samples than there are slots, a finger that touches takes the
+// slot of the one that lifted longest ago.
 typedef struct tide_touches {
     tide_touch at[TIDE_TOUCHES];
 } tide_touches;
@@ -206,7 +211,9 @@ void tide_touches_poll(tide_touchscreen *s);
 // Platform layer: a finger touched, moved or lifted at `position` (window
 // pixels from the bottom left, y up). `source` is the platform's own number for
 // the finger while it touches, which it may give the next one. A finger that
-// touches while every slot is taken is left out.
+// touches takes a slot that's free, or else the slot of the finger that lifted
+// longest ago, whose lift the next sample then doesn't see. It's only left
+// out while every slot's finger still touches.
 void tide_touch_event(tide_touchscreen *s, tide_touch_phase phase, uint32_t source, tide_float2 position);
 
 // Platform layer, once per poll, after the mouse and the touches: the pointer

@@ -2,7 +2,9 @@
 //
 // The page gets pointer events as a touchscreen sends them. Each frame checks
 // the events sent at the end of the previous one, the way real events arrive
-// between frames, then samples the devices, as a tick would.
+// between frames, then samples the devices, as a tick would. At the end,
+// nothing samples them, as in a game with no input: fingers go on touching,
+// past as many taps as a touchscreen has slots.
 
 #include <stdio.h>
 
@@ -11,6 +13,10 @@
 
 static tide_devices devices;
 static int failures;
+static bool sampling = true; // A tick samples the devices each frame, and so clears them
+static int taps;             // Taps since nothing samples
+static bool touching;        // ...the last frame sent one's finger down
+static bool every = true;    // ...and every one touched and lifted
 
 static void check(const bool ok, const char *what)
 {
@@ -76,14 +82,33 @@ static int frame(void *user, const float seconds)
                       " c.dispatchEvent(new MouseEvent('mousedown', {button: 0, clientX: r.left + 40,"
                       " clientY: r.top + 40, bubbles: true})); }");
         break;
-    default:
+    case 6:
         check(first->id == 0 && !devices.touchscreen.primaryTouch.press.held, "the mouse isn't a finger");
         check(devices.mouse.left.held && !devices.pointer.touch && devices.pointer.press.held,
               "the pointer follows the mouse once it's used");
-        code = failures == 0 ? 0 : 1;
+        // From here nothing samples: no finger that lifted is cleared from its slot
+        sampling = false;
+        pointer_event("pointerdown", "touch", 20, 30, 30);
+        touching = true;
+        break;
+    default:
+        if (touching) {
+            every = every && devices.pointer.touch && devices.pointer.press.held && devices.touchscreen.primaryTouch.press.held;
+            pointer_event("pointerup", "touch", 20 + taps, 30, 30);
+            touching = false;
+            break;
+        }
+        every = every && !devices.pointer.press.held && !devices.touchscreen.primaryTouch.press.held;
+        if (++taps == 25) {
+            check(every, "with nothing sampling the devices, fingers go on touching: 25 taps, past the 10 slots");
+            code = failures == 0 ? 0 : 1;
+            break;
+        }
+        pointer_event("pointerdown", "touch", 20 + taps, 30, 30);
+        touching = true;
         break;
     }
-    tide_devices_consume(&devices);
+    if (sampling) tide_devices_consume(&devices);
     return code;
 }
 
