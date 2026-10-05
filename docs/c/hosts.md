@@ -178,6 +178,8 @@ These names are new, and may still change.
 
 It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
 
+Where the `TIDE_HIDDEN` environment variable is set (see [Where nobody watches](../tools/cli.md#where-nobody-watches)), `tide_platform_open` shows no window either. A host that ends by itself, like a test, says so by opening its window `hidden`, and runs as ever. For any other window the program ends there, with exit code 2 and a message: only closing the window would end the run, and nobody could.
+
 ## Memory
 
 Worlds grow as they need, with no limits but memory: entities, rows of each archetype, and structural changes and events in a tick. A world's heap, which keeps its text, lists, maps and grids, is the exception: it holds 1 GiB, in blocks of 128 MiB at most, and filling it counts as running out of memory. Running out of memory ends the program, saying so. So does a chain of events that never ends, once it's `TIDE_MAX_CHAIN` deep in one tick (100,000 by default): each event sent, or entity spawned, by a handler of the one before. The message names the event. An archetype keeps its rows in chunks, and the first starts small, so archetypes with a few entities take little memory.
