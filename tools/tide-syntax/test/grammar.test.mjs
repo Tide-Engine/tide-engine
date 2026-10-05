@@ -186,6 +186,8 @@ const cases = {
         ['Draw2D.Rect(', [['Draw2D', 'support.class'], ['Rect', '!storage.type'], ['Rect', 'entity.name.function.call'], ['Color', 'storage.type.primitive']]],
         ['Vertex corner', [['Vertex', 'support.class']]],
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
+        ['Shape panel', [['Shape', 'support.class']]],
+        ['Draw2D.Shape(panel)', [['Shape', '!support.class'], ['Shape', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],

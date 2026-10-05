@@ -91,6 +91,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->run_count = 0;
     d->instance_used = 0;
     d->uniform_used = 0;
+    d->shape_count = 0;
     d->clipped = 0;
     d->target_count = d->target = d->window_clipped = 0;
     d->camera_2d = 0;
@@ -151,6 +152,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->runs);
     free(d->instances);
     free(d->uniforms);
+    free(d->shapes);
     *d = (tide_draw_list){0};
 }
 
@@ -319,6 +321,154 @@ void tide_draw_line(tide_draw_list *d, const tide_float2 from, const tide_float2
 void tide_draw_screen(tide_draw_list *d)
 {
     push(d, TIDE_DRAW_SCREEN, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+}
+
+// ---------------------------------------------------------------------------
+// Shapes with smooth edges
+
+// A shape `size` across around `center`, whose fill at its top is `color`.
+// Whatever it's drawn with fits it: its corners no rounder, and its outline
+// no wider, than half its smaller side.
+static void push_shape(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const tide_color color,
+                       tide_draw_shape_data shape)
+{
+    if (!(size.x > 0.0f) || !(size.y > 0.0f)) return; // Also NaN
+    const float most = (size.x < size.y ? size.x : size.y) * 0.5f;
+    shape.radius = shape.radius > most ? most : shape.radius > 0.0f ? shape.radius : 0.0f;
+    shape.outline = shape.outline > most ? most : shape.outline > 0.0f ? shape.outline : 0.0f;
+    d->shapes = grow(d->shapes, d->shape_count, &d->shape_capacity, 1, sizeof(tide_draw_shape_data), 256u);
+    d->shapes[d->shape_count] = shape;
+    push(d, TIDE_DRAW_SHAPE, center, size, color)->shape = d->shape_count++;
+}
+
+// A rotation's cos and sin. Most shapes aren't turned, and those are exact.
+static tide_float2 turn_by(const float rotation)
+{
+    return rotation == 0.0f ? tide_f2(1.0f, 0.0f) : tide_f2(tide_cos_f(rotation), tide_sin_f(rotation));
+}
+
+// A shape in one color, with a sharp edge.
+static void solid(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                  const float rotation, const tide_shape_form form, const tide_color color)
+{
+    push_shape(d, center, size, color,
+               (tide_draw_shape_data){.turn = turn_by(rotation), .radius = radius, .form = (uint32_t)form, .color2 = color});
+}
+
+// Its outline alone, `width` thick.
+static void wire(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                 const tide_shape_form form, const float width, const tide_color color)
+{
+    if (!(width > 0.0f)) return;
+    push_shape(d, center, size, TIDE_COLOR_CLEAR,
+               (tide_draw_shape_data){.turn = {1.0f, 0.0f}, .radius = radius, .outline = width, .form = (uint32_t)form,
+                                      .color2 = TIDE_COLOR_CLEAR, .outline_color = color});
+}
+
+// An ellipse as wide as it's tall is a circle, which is a box whose corners
+// take all of it: the same pixels, with less to work out for each.
+static tide_shape_form ellipse_form(const tide_float2 size, float *radius)
+{
+    if (size.x != size.y) return TIDE_SHAPE_ELLIPSE;
+    *radius = size.x * 0.5f;
+    return TIDE_SHAPE_BOX;
+}
+
+void tide_draw_shape(tide_draw_list *d, const tide_shape shape)
+{
+    float radius = shape.radius;
+    const tide_shape_form form = shape.ellipse ? ellipse_form(shape.size, &radius) : TIDE_SHAPE_BOX;
+    push_shape(d, shape.center, shape.size, shape.color,
+               (tide_draw_shape_data){.turn = turn_by(shape.rotation), .radius = radius, .outline = shape.outline,
+                                      .soft = shape.soft == shape.soft ? shape.soft : 0.0f, .form = (uint32_t)form,
+                                      .color2 = tide_color_is_none(shape.color2) ? shape.color : shape.color2,
+                                      .outline_color = shape.outline_color});
+}
+
+void tide_draw_thick_line(tide_draw_list *d, const tide_float2 from, const tide_float2 to, const float width,
+                          const tide_color color)
+{
+    if (!(width > 0.0f)) return;
+    // A pill as long as the line and its ends, turned along it
+    const tide_float2 along = tide_f2(to.x - from.x, to.y - from.y);
+    const float length = tide_length_f2(along);
+    const tide_float2 turn = length > 0.0f ? tide_f2(along.x / length, along.y / length) : tide_f2(1.0f, 0.0f);
+    push_shape(d, tide_f2((from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f), tide_f2(length + width, width), color,
+               (tide_draw_shape_data){.turn = turn, .radius = width * 0.5f, .form = TIDE_SHAPE_BOX, .color2 = color});
+}
+
+void tide_draw_thick_wire_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float width,
+                               const tide_color color)
+{
+    wire(d, center, size, 0.0f, TIDE_SHAPE_BOX, width, color);
+}
+
+void tide_draw_thick_wire_circle(tide_draw_list *d, const tide_float2 center, const float radius, const float width,
+                                 const tide_color color)
+{
+    wire(d, center, tide_f2(radius * 2.0f, radius * 2.0f), radius, TIDE_SHAPE_BOX, width, color);
+}
+
+void tide_draw_rect_rotated(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float rotation,
+                            const tide_color color)
+{
+    solid(d, center, size, 0.0f, rotation, TIDE_SHAPE_BOX, color);
+}
+
+void tide_draw_round_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                          const tide_color color)
+{
+    solid(d, center, size, radius, 0.0f, TIDE_SHAPE_BOX, color);
+}
+
+void tide_draw_round_rect_rotated(tide_draw_list *d, const tide_float2 center, const tide_float2 size,
+                                  const float radius, const float rotation, const tide_color color)
+{
+    solid(d, center, size, radius, rotation, TIDE_SHAPE_BOX, color);
+}
+
+void tide_draw_wire_round_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                               const float width, const tide_color color)
+{
+    wire(d, center, size, radius, TIDE_SHAPE_BOX, width, color);
+}
+
+void tide_draw_ellipse(tide_draw_list *d, const tide_float2 center, const tide_float2 radii, const tide_color color)
+{
+    tide_draw_ellipse_rotated(d, center, radii, 0.0f, color);
+}
+
+void tide_draw_ellipse_rotated(tide_draw_list *d, const tide_float2 center, const tide_float2 radii,
+                               const float rotation, const tide_color color)
+{
+    const tide_float2 size = tide_f2(radii.x * 2.0f, radii.y * 2.0f);
+    float radius = 0.0f;
+    const tide_shape_form form = ellipse_form(size, &radius);
+    solid(d, center, size, radius, rotation, form, color);
+}
+
+void tide_draw_wire_ellipse(tide_draw_list *d, const tide_float2 center, const tide_float2 radii, const float width,
+                            const tide_color color)
+{
+    const tide_float2 size = tide_f2(radii.x * 2.0f, radii.y * 2.0f);
+    float radius = 0.0f;
+    const tide_shape_form form = ellipse_form(size, &radius);
+    wire(d, center, size, radius, form, width, color);
+}
+
+void tide_draw_arc(tide_draw_list *d, const tide_float2 center, const float radius, const float start,
+                   const float sweep, const float width, const tide_color color)
+{
+    if (!(width > 0.0f) || !(sweep != 0.0f) || sweep != sweep || start != start) return;
+    if (sweep >= TIDE_TAU_F || sweep <= -TIDE_TAU_F) { // All the way round: the ring
+        tide_draw_thick_wire_circle(d, center, radius, width, color);
+        return;
+    }
+    // Turned to its middle, it's the same on both sides of it
+    const float half = (sweep < 0.0f ? -sweep : sweep) * 0.5f;
+    push_shape(d, center, tide_f2(radius * 2.0f, radius * 2.0f), color,
+               (tide_draw_shape_data){.turn = turn_by(start + sweep * 0.5f), .radius = radius, .outline = width,
+                                      .sweep = half, .form = TIDE_SHAPE_ARC, .color2 = color});
 }
 
 void tide_draw_clip(tide_draw_list *d, const tide_rect rect)
@@ -800,6 +950,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
                                        tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL,
                                        textures, r->blended, (tide_draw_kind)c->kind);
+        } else if (c->kind == TIDE_DRAW_SHAPE) {
+            if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
             if (c->kind == TIDE_DRAW_CLIP || c->kind == TIDE_DRAW_NO_CLIP) d->clipped = c->kind == TIDE_DRAW_CLIP;

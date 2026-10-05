@@ -43,6 +43,7 @@ tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order)
 tide_e2e_test(views)
+tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code

@@ -881,6 +881,7 @@ typedef struct program {
     decl *anchor;        // The built-in enum Anchor, where GUILayout.Area goes
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
+    decl *shape;         // The built-in struct Shape, what Draw2D.Shape draws
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C

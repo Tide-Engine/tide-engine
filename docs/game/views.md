@@ -123,7 +123,14 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.WireCircle(center, radius, color)` | A circle's outline |
 | `Draw2D.Rect(center, size, color)` | A filled rectangle |
 | `Draw2D.WireRect(center, size, color)` | A rectangle's outline |
-| `Draw2D.Line(from, to, color)` | A line |
+| `Draw2D.Line(from, to, color)` | A line a pixel wide |
+| `Draw2D.Line(from, to, width, color)` | A line `width` thick, with round ends: the first of the [smooth shapes](#smooth-shapes), as are the rows from here to `Draw2D.Shape` |
+| `Draw2D.WireRect(center, size, width, color)`, `Draw2D.WireCircle(center, radius, width, color)` | Outlines `width` thick |
+| `Draw2D.Rect(center, size, rotation, color)` | A rectangle turned about its center |
+| `Draw2D.RoundRect(center, size, radius, color)` | A rectangle with round corners. `RoundRect(center, size, radius, rotation, color)` turns it, and `WireRoundRect(center, size, radius, width, color)` is its outline |
+| `Draw2D.Ellipse(center, radii, color)` | An ellipse. `Ellipse(center, radii, rotation, color)` turns it, and `WireEllipse(center, radii, width, color)` is its outline |
+| `Draw2D.Arc(center, radius, start, sweep, width, color)` | Part of a ring |
+| `Draw2D.Shape(shape)` | A [`Shape`](#the-general-shape): a fill from one color to another, an outline around a fill, an edge that fades |
 | `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
@@ -144,6 +151,79 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 `Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. `Color(r, g, b)` has alpha 1, and `Color(r, g, b, a)` sets it. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`.
+
+`Color.none` is no color, for where one can be left out, like a [`Shape`](#the-general-shape)'s second color. It isn't one to draw with: nothing shows.
+
+## Smooth shapes
+
+`Circle`, `Rect`, `WireRect` and the `Line` without a width fill whole pixels: rects side by side leave no seam between them, and a line is a pixel wide wherever it lands. The other shapes have smooth edges, at any size and turned any way:
+
+```csharp
+view Bar(Health health)
+{
+    Draw2D.Screen();
+    var middle = float2(120, 40);
+    Draw2D.RoundRect(middle, float2(200, 24), 12, Color(0, 0, 0, 0.6));                 // A pill
+    Draw2D.RoundRect(float2(22 + health.left * 98, 40), float2(health.left * 196, 20), 10, Color.red);
+    Draw2D.WireRoundRect(middle, float2(200, 24), 12, 2, Color.white);                 // Its outline, 2 pixels thick
+    Draw2D.Line(float2(20, 64), float2(220, 64), 3, Color.gray);
+    Draw2D.Arc(float2(250, 40), 14, 0, Math.TAU * health.cooldown, 4, Color.yellow);   // A ring that fills up
+}
+```
+
+- Lengths are in the units the calls are in, like positions: world units under the camera, pixels after `Draw2D.Screen()`. That goes for sizes, radii and widths alike.
+- An outline is `width` thick and inside the shape's edge, so a wire shape is as big as the filled one.
+- A `radius` rounds a rectangle's corners, up to half its smaller side: that much makes a pill, or a circle of a square.
+- An ellipse takes its `radii`, half its width and half its height, as a circle takes its radius.
+- A thick line reaches half its width past both ends, which are round, so lines that meet at a point join without a gap.
+- Angles are in radians, from `+x` towards `+y`, as `Math.Atan2(y, x)` gives them: counterclockwise under the camera, where `y` goes up, and clockwise on the screen, where it goes down. A `rotation` turns a shape about its center.
+- `Arc` draws the part of a circle's outline from the angle `start` on for `sweep`, the other way round for a sweep under 0, and its ends are cut straight across. A `width` of the whole radius makes it a slice of a disc, and a sweep of a whole turn or more is the whole ring.
+- A size, radius or width that isn't above 0 draws nothing.
+
+The engine's own shaders draw these, so they take no `frag` or `vert`. For anything they don't draw, there's a [mesh](#meshes) and a [frag](./shaders.md) of your own.
+
+Shapes of every kind drawn one after another go to the GPU together, in one draw call, in the order they're written, so thousands a frame are cheap. Text or a mesh between them starts another.
+
+### The general shape
+
+Those calls are short for `Draw2D.Shape`, which takes everything a shape can have:
+
+```csharp
+struct Shape // Built in
+{
+    float2 center;
+    float2 size;                       // Its width and height
+    float rotation;
+    float radius;                      // Its corners'
+    bool ellipse;                      // The ellipse that fits `size`, rather than a box
+    Color color = Color.white;         // Its fill...
+    Color color2 = Color.none;         // ...and its fill at its bottom, when it's another
+    float outline;                     // How wide its outline is, inside its edge
+    Color outlineColor = Color.white;
+    float soft;                        // How far its edge fades
+}
+```
+
+```csharp
+view Card(Deal deal)
+{
+    Draw2D.Screen();
+    // A shadow first: a dark shape whose edge fades outwards
+    Draw2D.Shape(Shape { center = deal.at + float2(0, 6), size = float2(180, 240), radius = 16,
+                         color = Color(0, 0, 0, 0.5), soft = 18 });
+    // The card: lighter at its top than at its bottom, with an outline
+    Draw2D.Shape(Shape { center = deal.at, size = float2(180, 240), radius = 16,
+                         color = Color(0.16, 0.2, 0.34), color2 = Color(0.07, 0.09, 0.17),
+                         outline = 2, outlineColor = Color(0.5, 0.62, 0.8) });
+}
+```
+
+- **`color2`** makes the fill go from `color` at the shape's top to `color2` at its bottom. Top and bottom are the shape's own, as it is before `rotation` turns it, and the top is the upper one on the screen whether `y` goes up or down. Left at `Color.none`, the fill is `color` all over. A fill that goes to a clear color fades out without getting darker on the way.
+- **`outline`** is an outline that wide in `outlineColor`, inside the edge, over the fill.
+- **`soft`** above 0 fades the edge outwards: the shape's color goes on past its edge and is gone `soft` further out, which is a glow in a light color and a shadow in a dark one. Under 0, it fades inwards from the edge instead and leaves the middle clear, like a vignette over the whole screen. At 0 the edge is sharp, smooth over one pixel.
+- **`ellipse`** makes it the ellipse that fits `size`, whatever `radius` says.
+
+`Arc` is the one call `Shape` doesn't cover.
 
 ## Meshes
 

@@ -43,11 +43,15 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_SHADED,    // shaded: a run of instances of a mesh, through a shader of the game's
     TIDE_DRAW_TARGET,    // target: destination for subsequent commands; 0 is the window
     TIDE_DRAW_BLIT,      // shaded: a fullscreen shaded run, replacing its destination
+    TIDE_DRAW_SHAPE,     // a = center, b = size, color, shape: a shape with smooth edges
 } tide_draw_kind;
 
 typedef struct tide_draw_command {
     uint32_t kind; // tide_draw_kind
-    uint32_t text; // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
+    union {
+        uint32_t text;  // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
+        uint32_t shape; // TIDE_DRAW_SHAPE: the rest of it, its place in tide_draw_list.shapes
+    };
     union {
         uint32_t target; // TIDE_DRAW_TARGET: 1 + its place in tide_draw_list.targets, or 0
         struct {
@@ -82,6 +86,28 @@ typedef struct tide_draw_command {
 typedef struct tide_rect {
     float x, y, width, height;
 } tide_rect;
+
+// What a shape with smooth edges is: a box, whose corners can be round, the
+// ellipse that fits its size, or part of a ring.
+typedef enum tide_shape_form {
+    TIDE_SHAPE_BOX,
+    TIDE_SHAPE_ELLIPSE,
+    TIDE_SHAPE_ARC, // Its size is the ring's, and its outline's width how thick the ring is
+} tide_shape_form;
+
+// The rest of a TIDE_DRAW_SHAPE command, whose `a` is the shape's center, `b`
+// its size and `color` its fill at its top. Lengths are in the units the
+// command is in, as its size is.
+typedef struct tide_draw_shape_data {
+    tide_float2 turn;  // Its rotation's cos and sin, from +x towards +y in the units it's in; an arc's, to its middle
+    float radius;      // Its corners', no more than half its smaller side
+    float outline;     // How wide its outline is, inside its edge, or 0 for none
+    float soft;        // How far its edge fades: outwards from it, or for less than 0, inwards
+    float sweep;       // TIDE_SHAPE_ARC: half the angle it covers, in radians, under pi
+    uint32_t form;     // tide_shape_form
+    tide_color color2; // Its fill at its bottom
+    tide_color outline_color;
+} tide_draw_shape_data;
 
 // A mesh's corner: where it is, where in the texture it samples ((0, 0) is the
 // first pixel's outer corner, (1, 1) the last one's), and its color, which
@@ -387,6 +413,9 @@ typedef struct tide_draw_list {
     uint8_t *uniforms; // ...and their uniforms
     uint32_t uniform_used;
     uint32_t uniform_capacity;
+    tide_draw_shape_data *shapes; // The TIDE_DRAW_SHAPE commands' shapes
+    uint32_t shape_count;
+    uint32_t shape_capacity;
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t clipped; // Whether a clip is on for the commands to come
     uint32_t camera_2d; // 1 + the current 2D camera or screen command, or 0 for the default
@@ -443,6 +472,69 @@ void tide_draw_wire_circle(tide_draw_list *d, tide_float2 center, float radius, 
 void tide_draw_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color);
 void tide_draw_wire_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color);
 void tide_draw_line(tide_draw_list *d, tide_float2 from, tide_float2 to, tide_color color);
+
+// ---------------------------------------------------------------------------
+// Shapes with smooth edges. The shapes above fill whole pixels, so rects side
+// by side leave no seam and a line is a pixel wide wherever it is. These are
+// drawn by how far each pixel is from the shape's edge, which is smooth over
+// one pixel of the target at any size, turned any way. Lengths (sizes, radii,
+// widths) are in the units the commands are in, and angles are in radians,
+// from +x towards +y: counterclockwise under a camera, where y goes up, and
+// clockwise on the screen, where it goes down. A size, radius or width that
+// isn't positive draws nothing.
+
+// The general shape, which the functions after it are short for: a box
+// `size` wide and tall around `center`, turned by `rotation` about it.
+typedef struct tide_shape {
+    tide_float2 center;
+    tide_float2 size;
+    float rotation;
+    float radius;      // Its corners', up to half its smaller side: a pill, or a circle for a square
+    tide_color color;  // Its fill...
+    tide_color color2; // ...which goes from `color` at its top to this at its bottom, as it is before it's
+                       // turned: TIDE_COLOR_NONE for one color
+    float outline;     // An outline this wide inside its edge...
+    tide_color outline_color; // ...in this color
+    float soft;        // Its edge fades over this far. Above 0, outwards: its color goes on past its edge, as a
+                       // glow or a shadow. Under 0, inwards from its edge, leaving its middle clear.
+    bool ellipse;      // The ellipse that fits `size` instead, whatever its radius
+} tide_shape;
+
+// A white shape with one color and no size, to set the rest of. A zeroed one's
+// fill would fade to nothing, as a zeroed color2 is a color too.
+#define TIDE_SHAPE_WHITE \
+    ((tide_shape){.color = TIDE_COLOR_WHITE, .color2 = TIDE_COLOR_NONE, .outline_color = TIDE_COLOR_WHITE})
+
+void tide_draw_shape(tide_draw_list *d, tide_shape shape);
+
+// A line `width` thick, with round ends: it reaches half its width past them.
+void tide_draw_thick_line(tide_draw_list *d, tide_float2 from, tide_float2 to, float width, tide_color color);
+
+// Outlines `width` thick, inside the shape's edge.
+void tide_draw_thick_wire_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, float width, tide_color color);
+void tide_draw_thick_wire_circle(tide_draw_list *d, tide_float2 center, float radius, float width, tide_color color);
+
+void tide_draw_rect_rotated(tide_draw_list *d, tide_float2 center, tide_float2 size, float rotation, tide_color color);
+
+// A rect whose corners are round, by `radius`.
+void tide_draw_round_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, float radius, tide_color color);
+void tide_draw_round_rect_rotated(tide_draw_list *d, tide_float2 center, tide_float2 size, float radius, float rotation,
+                                  tide_color color);
+void tide_draw_wire_round_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, float radius, float width,
+                               tide_color color);
+
+// An ellipse: `radii` is half its width and half its height.
+void tide_draw_ellipse(tide_draw_list *d, tide_float2 center, tide_float2 radii, tide_color color);
+void tide_draw_ellipse_rotated(tide_draw_list *d, tide_float2 center, tide_float2 radii, float rotation,
+                               tide_color color);
+void tide_draw_wire_ellipse(tide_draw_list *d, tide_float2 center, tide_float2 radii, float width, tide_color color);
+
+// Part of a ring: of the circle outline `width` thick inside `radius`, what's
+// from the angle `start` on for `sweep` (the other way round for a sweep under
+// 0), cut straight across at both ends. A width of the radius is a slice of a
+// disc, and a sweep of a whole turn or more the whole ring.
+void tide_draw_arc(tide_draw_list *d, tide_float2 center, float radius, float start, float sweep, float width,
+                   tide_color color);
 
 // `position` is the text's top left corner and `size` its font size: the
 // height of a line of it, with its capitals in the line's middle. A newline

@@ -1,6 +1,7 @@
 #include "builtins.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,11 @@ static const type T_BOOL = {TY_BOOL, NULL};
 static const type T_ANCHOR = {TY_ENUM, NULL};
 static const decl *anchor_decl;
 
+// The Shape struct, which Draw2D.Shape takes, the same way.
+static decl shape_struct;
+static const type T_SHAPE = {TY_STRUCT, &shape_struct};
+static const decl *shape_decl;
+
 static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *transforms_decl;
 static const decl *bytes_decl, *paths_decl;
 static decl io_bytes, io_paths;
@@ -39,9 +45,10 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor)
+void builtins_use(const decl *anchor, const decl *shape)
 {
     anchor_decl = anchor;
+    shape_decl = shape;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
     bytes_decl = paths_decl = NULL;
@@ -85,6 +92,7 @@ static type real_type(const type t)
     if (t.decl == &io_bytes && bytes_decl) return (type){TY_LIST, (decl *)bytes_decl};
     if (t.decl == &io_paths && paths_decl) return (type){TY_LIST, (decl *)paths_decl};
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
+    if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
     if (t.decl == &mesh_vertices3 && vertices3_decl) return (type){TY_LIST, (decl *)vertices3_decl};
     if (t.decl == &mesh_indices && indices_decl) return (type){TY_LIST, (decl *)indices_decl};
@@ -105,6 +113,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_filter) return "Filter";
     if (t.decl == &mesh_transforms) return "List<float4x4>";
     if (t.decl == &mesh_instances) return "List<T>";
+    if (t.decl == &shape_struct) return "Shape";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
 }
 
@@ -241,6 +250,18 @@ static void describe(signature *s, const char *param_names, const char *doc)
     s->doc = doc;
 }
 
+// A Draw2D function of up to MAX_PARAMS parameters: `argc` of them, each a `const type *`.
+static void add_draw2d(const char *name, const char *c_name, const char *param_names, const char *doc, const int argc, ...)
+{
+    signature *s = add("Draw2D", name, T_NONE, c_name, 0, T_NONE, T_NONE, T_NONE);
+    va_list types;
+    va_start(types, argc);
+    for (int i = 0; i < argc; i++) s->params[i] = *va_arg(types, const type *);
+    va_end(types);
+    s->argc = argc;
+    describe(s, param_names, doc);
+}
+
 static void build_signatures(void)
 {
     if (signature_count > 0) return;
@@ -357,7 +378,49 @@ static void build_signatures(void)
     describe(add("Draw2D", "WireRect", T_NONE, "tide_draw_wire_rect", 3, T_F2, T_F2, T_COLOR),
              "center, size, color", "A rectangle outline.");
     describe(add("Draw2D", "Line", T_NONE, "tide_draw_line", 3, T_F2, T_F2, T_COLOR),
-             "from, to, color", "A line.");
+             "from, to, color", "A line a pixel wide.");
+    // The shapes with smooth edges: tide/draw.h's, under the functions above
+    add_draw2d("Line", "tide_draw_thick_line", "from, to, width, color",
+               "A line `width` thick, with round ends and smooth edges.", 4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("WireCircle", "tide_draw_thick_wire_circle", "center, radius, width, color",
+               "A circle outline `width` thick, inside its radius, with smooth edges.", 4, &T_F2, &T_F, &T_F, &T_COLOR);
+    add_draw2d("WireRect", "tide_draw_thick_wire_rect", "center, size, width, color",
+               "A rectangle outline `width` thick, inside its size, with smooth edges.", 4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("Rect", "tide_draw_rect_rotated", "center, size, rotation, color",
+               "A filled rectangle turned about its center, with smooth edges. `rotation` is in radians, from +x "
+               "towards +y: counterclockwise under a camera, clockwise on the screen.",
+               4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("RoundRect", "tide_draw_round_rect", "center, size, radius, color",
+               "A filled rectangle whose corners are round, by `radius`: up to half its smaller side, which makes a pill.",
+               4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("RoundRect", "tide_draw_round_rect_rotated", "center, size, radius, rotation, color",
+               "A filled rectangle with round corners, turned about its center. `rotation` is in radians, from +x "
+               "towards +y: counterclockwise under a camera, clockwise on the screen.",
+               5, &T_F2, &T_F2, &T_F, &T_F, &T_COLOR);
+    add_draw2d("WireRoundRect", "tide_draw_wire_round_rect", "center, size, radius, width, color",
+               "The outline of a rectangle with round corners, `width` thick, inside its size.",
+               5, &T_F2, &T_F2, &T_F, &T_F, &T_COLOR);
+    add_draw2d("Ellipse", "tide_draw_ellipse", "center, radii, color",
+               "A filled ellipse: `radii` is half its width and half its height.", 3, &T_F2, &T_F2, &T_COLOR);
+    add_draw2d("Ellipse", "tide_draw_ellipse_rotated", "center, radii, rotation, color",
+               "A filled ellipse turned about its center. `rotation` is in radians, from +x towards +y: "
+               "counterclockwise under a camera, clockwise on the screen.",
+               4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("WireEllipse", "tide_draw_wire_ellipse", "center, radii, width, color",
+               "An ellipse outline `width` thick, inside its radii, as wide all the way round.",
+               4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("Arc", "tide_draw_arc", "center, radius, start, sweep, width, color",
+               "Part of a ring: of the circle outline `width` thick inside `radius`, what's from the angle `start` on "
+               "for `sweep`, in radians from +x towards +y (counterclockwise under a camera, clockwise on the screen; "
+               "the other way round for a sweep under 0), cut straight across at both ends. A width of the radius "
+               "is a slice of a disc, and a sweep of a whole turn or more the whole ring.",
+               6, &T_F2, &T_F, &T_F, &T_F, &T_F, &T_COLOR);
+    add_draw2d("Shape", "tide_draw_shape", "shape",
+               "The general shape, which RoundRect, Ellipse, the thick outlines and the thick Line are short for: a "
+               "`Shape`'s box or ellipse, turned, with a fill that can go from `color` at its top to `color2` at its "
+               "bottom, an outline inside its edge, and an edge that can fade outwards (`soft` above 0: a glow, a "
+               "shadow) or inwards (under 0).",
+               1, &T_SHAPE);
     signature *text = add("Draw2D", "Text", T_NONE, "tide_draw_text", 3, T_STR, T_F2, T_F);
     text->argc = 4;
     text->params[3] = T_COLOR;
@@ -645,6 +708,7 @@ static const struct {
     {"Color", "magenta", TY_COLOR, "TIDE_COLOR_MAGENTA"},
     {"Color", "gray", TY_COLOR, "TIDE_COLOR_GRAY"},
     {"Color", "clear", TY_COLOR, "TIDE_COLOR_CLEAR"},
+    {"Color", "none", TY_COLOR, "TIDE_COLOR_NONE"},
     {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Draw2D", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Draw3D", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
@@ -659,6 +723,10 @@ static const struct {
 // What editors say of members[i], for the ones a type and a name don't explain; else NULL.
 static const char *member_doc(const size_t i)
 {
+    if (strcmp(members[i].owner, "Color") == 0 && strcmp(members[i].member, "none") == 0) {
+        return "No color, where one can be left out: a `Shape`'s `color2` by default, for a fill of one color. It's "
+               "not a color to draw with: its alpha is under 0, so nothing shows.";
+    }
     if (strcmp(members[i].owner, "Cursor") == 0) {
         return "Whether the window holds the mouse's cursor right now: what the system says, not what `Cursor.Lock` "
                "asked. A browser only locks it at a click or a key press, Escape gives the cursor back to the player "
@@ -916,6 +984,10 @@ type resolve_builtin_call(const str owner, expr *e)
         changes |= s->mut != 0;
     }
     if (changes) diag_note("a mut argument is the variable it changes, so its type is exactly the parameter's");
+    if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "Shape")) {
+        diag_note("a Shape is written with the fields it sets, like 'Draw2D.Shape(Shape { center = position, size = "
+                  "float2(4, 2), radius = 1, color = Color.red });'");
+    }
     return (type){TY_ERROR, NULL};
 }
 

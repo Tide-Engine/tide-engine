@@ -733,6 +733,43 @@ TIDE_TEST(lsp_meshes)
 #undef MESH_TYPES
 }
 
+// The shapes with smooth edges: their Draw2D functions, the built-in Shape and Color.none
+TIDE_TEST(lsp_shapes)
+{
+    start();
+#define SHAPE_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(SHAPE_VIEW("    Draw2D.RoundRect(float2(0, 0), float2(4, 2), 1, Color.red);\n"
+                             "    Draw2D.Line(float2(0, 0), float2(4, 2), 0.5, Color.red);\n"
+                             "    Draw2D.Arc(float2(0, 0), 4, 0, Math.PI, 1, Color.red);\n"
+                             "    Draw2D.Shape(Shape { size = float2(4, 2), color2 = Color.none, soft = 2 });"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *draw = complete(SHAPE_VIEW("    Draw2D.$"));
+    TIDE_CHECK(offers(draw, "RoundRect") && offers(draw, "WireRoundRect") && offers(draw, "Ellipse"));
+    TIDE_CHECK(offers(draw, "WireEllipse") && offers(draw, "Arc") && offers(draw, "Shape"));
+    const char *fields = complete(SHAPE_VIEW("    var s = Shape { $ };"));
+    TIDE_CHECK(offers(fields, "center") && offers(fields, "size") && offers(fields, "radius") && offers(fields, "soft"));
+    TIDE_CHECK(offers(fields, "outline") && offers(fields, "outlineColor") && offers(fields, "color2"));
+    TIDE_CHECK(offers(complete(SHAPE_VIEW("    var c = Color.$")), "none"));
+
+    // Every version of a function, the thick one too
+    open_document(SHAPE_VIEW("    Draw2D.Li$ne(float2(0, 0), float2(4, 2), 0.5, Color.red);"));
+    const char *line = request("textDocument/hover");
+    TIDE_CHECK(has(line, "Draw2D.Line(float2 from, float2 to, Color color)"));
+    TIDE_CHECK(has(line, "Draw2D.Line(float2 from, float2 to, float width, Color color)") && has(line, "round ends"));
+    open_document(SHAPE_VIEW("    Draw2D.Shape(Sh$ape { size = float2(4, 2) });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "What `Draw2D.Shape` draws"));
+    open_document(SHAPE_VIEW("    Draw2D.Shape(Shape { size = float2(4, 2), so$ft = 2 });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "How far its edge fades"));
+    open_document(SHAPE_VIEW("    var c = Color.no$ne;"));
+    TIDE_CHECK(has(request("textDocument/hover"), "No color, where one can be left out"));
+
+    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw2D.Sh$ape(Shape { size = float2(4, 2) });")), "void tide_draw_shape("));
+    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw2D.Round$Rect(float2(0, 0), float2(4, 2), 1, Color.red);")),
+                   "void tide_draw_round_rect("));
+#undef SHAPE_VIEW
+}
+
 static const char *hover_at(const int line, const int character)
 {
     return request_at("file:///test.tide", "textDocument/hover", line, character, "");
@@ -4160,7 +4197,7 @@ TIDE_TEST(lsp_files_change_on_disk)
     TIDE_CHECK(sent_count == 2 && has(sent[sent_for(uri_main)], "\"diagnostics\":[]"));
 
     // Another file changes on disk: Body is gone
-    write_file("lsp_watch/physics.tide", "component Shape { float2 position; }\n");
+    write_file("lsp_watch/physics.tide", "component Hull { float2 position; }\n");
     clear_sent();
     snprintf(message, sizeof message,
              "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\",\"params\":{\"changes\":"
@@ -4684,10 +4721,10 @@ TIDE_TEST(lsp_entity_query_symbols)
                    "Built-in names can't be renamed"));
 
     // Query types and filters resolve to ordinary components for navigation and rename.
-    request_at("file:///test.tide", "textDocument/rename", 7, 43, "\"newName\":\"Shape\"");
+    request_at("file:///test.tide", "textDocument/rename", 7, 43, "\"newName\":\"Hull\"");
     renamed = apply_reply(game, "file:///test.tide");
-    TIDE_CHECK(has(renamed, "component Shape") && has(renamed, "query (Shape body"));
-    TIDE_CHECK(has(renamed, "Shape shot") && !has(renamed, "Body"));
+    TIDE_CHECK(has(renamed, "component Hull") && has(renamed, "query (Hull body"));
+    TIDE_CHECK(has(renamed, "Hull shot") && !has(renamed, "Body"));
 
     open_document(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
                   "    foreach (var fighter in fighters) fighter.body.position.x = 1;\n}\n");

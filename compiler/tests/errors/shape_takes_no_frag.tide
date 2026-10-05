@@ -1,0 +1,12 @@
+// expect: 'Paint' is a frag: the GPU runs it, for the meshes a Draw2D.Mesh or Draw3D.Mesh names it for
+scene Main { }
+
+frag Paint(Vertex vertex, mut Color color)
+{
+    color = Color.red;
+}
+
+view Panel()
+{
+    Draw2D.RoundRect(float2(0, 0), float2(2, 2), 1, Color.red, Paint);
+}

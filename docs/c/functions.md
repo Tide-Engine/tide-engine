@@ -236,6 +236,7 @@ C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_tex
 - `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw2D.Mesh`. `texture` is NULL for none.
 - `tide_draw_vertices` and `tide_draw_triangles` are the same in two steps, for vertices several batches share: the first copies them into the list and returns where they start, and the second draws triangles of them.
 - `tide_draw_clip(list, rect)` and `tide_draw_no_clip(list)` are `Draw2D.Clip`.
+- The [smooth shapes](../game/views.md#smooth-shapes) are `tide_draw_round_rect`, `tide_draw_ellipse`, `tide_draw_arc` and the rest, with `_rotated` for the turned ones and `tide_draw_thick_line`, `tide_draw_thick_wire_rect` and `tide_draw_thick_wire_circle` for the ones that take a width. `tide_shape` is Tide's `Shape`, for `tide_draw_shape(list, shape)`, with `outline_color` for `outlineColor`. Start one from `TIDE_SHAPE_WHITE` rather than from zeros: its `color2` is `TIDE_COLOR_NONE`, Tide's `Color.none`, where a zeroed one is a clear color the fill would fade to.
 - `tide_vertex3` is Tide's `Vertex3`. `tide_draw_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_camera_matrices(list, transform, projection)` are `Draw3D.Camera`.
 - `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture and filter, are drawn at once.
 
