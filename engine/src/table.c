@@ -56,26 +56,37 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, const uint32_t row
     }
 }
 
-// Staging: this thread's memory for the lanes of shared pages while a loop
-// changes them (tide_table_lanes_begin), handed out and given back in order.
-static TIDE_THREAD_LOCAL uint8_t *staging;
-static TIDE_THREAD_LOCAL size_t staging_size;
-static TIDE_THREAD_LOCAL size_t staging_used;
+// A loop that changes a chunk's lanes writes a page a snapshot shares into a
+// page of the table's own from the start: a copy of the shared one, which the
+// loop then reads and writes as it would its own in place. If no row changed,
+// the shared page stays, with its hash, and the copy is kept by this thread
+// for the next one of its size, so a system whose rows don't change allocates
+// nothing from tick to tick. If one did, the copy is the table's page: what
+// the loop wrote is never copied again.
+#define SPARES 64u
+static TIDE_THREAD_LOCAL tide_page *spares[SPARES];
+static TIDE_THREAD_LOCAL uint32_t spare_count;
 
-// Each lane's copy starts 16 bytes aligned, as its page's data does.
-static size_t staged_size(const uint32_t bytes)
+static tide_page *spare_take(const uint32_t size)
 {
-    return ((size_t)bytes + 15u) & ~(size_t)15u;
+    for (uint32_t i = spare_count; i-- > 0;) {
+        if (spares[i]->size != size) continue;
+        tide_page *p = spares[i];
+        spares[i] = spares[--spare_count];
+        return p;
+    }
+    return tide_alloc(sizeof(tide_page) + size);
+}
+
+static void spare_give(tide_page *p)
+{
+    if (spare_count < SPARES) spares[spare_count++] = p;
+    else free(p);
 }
 
 void tide_table_lanes_reserve(const uint32_t bytes)
 {
-    const size_t need = staging_used + bytes;
-    if (need <= staging_size) return;
-    size_t size = staging_size ? staging_size : 1u << 16;
-    while (size < need) size *= 2u;
-    staging = tide_realloc(staging, staging_size, size);
-    staging_size = size;
+    (void)bytes; // The copies are pages now, each made as it's needed
 }
 
 void tide_table_lanes_begin(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first, const uint32_t lanes,
@@ -89,12 +100,10 @@ void tide_table_lanes_begin(tide_table *t, const tide_columns *c, const uint32_t
             out[k] = tide_page_data(p);
             continue;
         }
-        const uint32_t bytes = rows * c->sizes[first + k];
-        tide_table_lanes_reserve(bytes + 16u); // Reserved already, unless the caller didn't say
-        uint8_t *copy = staging + staging_used;
-        memcpy(copy, tide_page_data(p), bytes);
-        staging_used += staged_size(bytes);
-        out[k] = copy;
+        tide_page *own = spare_take(p->size);
+        *own = (tide_page){1, p->size, p->first, UINT32_MAX, 0, 0};
+        memcpy(tide_page_data(own), tide_page_data(p), (size_t)rows * c->sizes[first + k]);
+        out[k] = tide_page_data(own);
     }
 }
 
@@ -105,11 +114,13 @@ void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t c
     for (uint32_t k = lanes; k-- > 0;) {
         tide_page **p = &t->pages[chunk * c->count + first + k];
         if (out[k] == tide_page_data(*p)) continue; // Written in place
-        const uint32_t bytes = rows * c->sizes[first + k];
-        staging_used -= staged_size(bytes);
-        if (memcmp(out[k], tide_page_data(*p), bytes) == 0) continue; // No row changed: still shared, still hashed
-        tide_page *own = tide_page_new((*p)->size);
-        memcpy(tide_page_data(own), out[k], bytes);
+        tide_page *own = (tide_page *)(void *)out[k] - 1;
+        const size_t bytes = (size_t)rows * c->sizes[first + k];
+        if (memcmp(out[k], tide_page_data(*p), bytes) == 0) { // No row changed: still shared, still hashed
+            spare_give(own);
+            continue;
+        }
+        memset(out[k] + bytes, 0, own->size - bytes); // Past its rows a page is zeros, and this one was whatever it was
         tide_page_release(*p, 1);
         *p = own;
     }

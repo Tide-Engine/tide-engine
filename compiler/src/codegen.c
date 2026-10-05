@@ -9403,8 +9403,17 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
         if (change && staged) {
-            sb_printf(o, "%suint8_t *tide_col_%s[%d];\n%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, comp,
+            // The table says where each lane is written, into an array of its
+            // own, which the loop then reads from a copy: the array the table
+            // was handed could be changed by any write through a byte pointer,
+            // as far as the C compiler can tell, so a loop that read its
+            // lanes' places from it would read them again at every row, and
+            // never run as SIMD
+            sb_printf(o, "%suint8_t *tide_own_%s[%d];\n%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_own_%s);\n", pad, comp,
                       comp_lanes(d), pad, columns, arch_column(g, a, c), comp_lanes(d), comp);
+            sb_printf(o, "%suint8_t *const tide_col_%s[%d] = {", pad, comp, comp_lanes(d));
+            for (int k = 0; k < comp_lanes(d); k++) sb_printf(o, "%stide_own_%s[%d]", k ? ", " : "", comp, k);
+            sb_put(o, "};\n");
             continue;
         }
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, change ? "" : "const ", comp, comp_lanes(d));
@@ -9458,15 +9467,15 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
 
 // After a loop over a chunk's rows: the lanes it changed go back, in the
 // reverse order gen_chunk_columns took them (tide_table_lanes_end).
-static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char *pad, const bool read_only)
+static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char *pad, const bool read_only, const bool staged)
 {
     sb *o = &g->c;
     const program *prog = g->prog;
     for (int c = prog->components.count; c-- > 0;) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
         const decl *d = prog->components.items[c];
-        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_col_%s);\n", pad, arch_columns(g, a),
-                  arch_column(g, a, c), comp_lanes(d), type_cname(d));
+        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_%s_%s);\n", pad, arch_columns(g, a),
+                  arch_column(g, a, c), comp_lanes(d), staged ? "own" : "col", type_cname(d));
     }
 }
 
@@ -11239,7 +11248,7 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(o, ");%s\n", clear);
     gen_row_puts(g, sys, inner.data, read_only);
     sb_printf(o, "%s}\n", pad);
-    gen_chunk_lanes_end(g, sys, a, pad, read_only);
+    gen_chunk_lanes_end(g, sys, a, pad, read_only, !world_reads_own_writes(sys));
 }
 
 // Whether a system's spawns get temporary handles, settled once it's done
