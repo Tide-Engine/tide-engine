@@ -463,17 +463,20 @@ static bool backend_exists(void *user, const char *path, const bool directory)
     return !error && type == (directory ? 2 : 1);
 }
 
-static tide_io_error mkdir_one(const char *path)
+// made: whether this call made the directory, rather than found it there.
+static tide_io_error mkdir_one(const char *path, bool *made)
 {
+    *made = false;
 #ifdef _WIN32
     wchar_t *wide = wide_path(path);
     if (!wide) return TIDE_IO_INVALID_PATH;
-    const bool made = CreateDirectoryW(wide, NULL) != 0;
+    const bool created = CreateDirectoryW(wide, NULL) != 0;
     free(wide);
-    const tide_io_error error = made ? TIDE_IO_NONE : windows_error();
+    const tide_io_error error = created ? TIDE_IO_NONE : windows_error();
 #else
     const tide_io_error error = mkdir(path, 0700) == 0 ? TIDE_IO_NONE : errno_error();
 #endif
+    *made = !error;
     if (error != TIDE_IO_ALREADY_EXISTS) return error;
     int type = 0;
     bool link = false;
@@ -496,17 +499,23 @@ static tide_io_error mkdir_parents(io_state *io, const char *path)
         }
     }
 #endif
+    // Only a directory made here changes its parent. One that was there
+    // already is left out of the flush: nothing in it changed, and those
+    // above an app's own folders may not be this program's to open.
+    bool made = false;
     for (size_t i = start; copy[i]; i++) {
         if (copy[i] != '/' && copy[i] != '\\') continue;
         const char saved = copy[i];
         copy[i] = 0;
-        if (i && strcmp(copy + start, ".") != 0) error = mkdir_one(copy);
-        if (!error && i) dirty_parent(io, copy);
+        made = false;
+        if (i && strcmp(copy + start, ".") != 0) error = mkdir_one(copy, &made);
+        if (made) { dirty_path(io, copy, true); dirty_parent(io, copy); }
         copy[i] = saved;
         if (error) break;
     }
-    if (!error) error = mkdir_one(copy);
-    if (!error) { dirty_path(io, copy, true); dirty_parent(io, copy); }
+    made = false;
+    if (!error) error = mkdir_one(copy, &made);
+    if (made) { dirty_path(io, copy, true); dirty_parent(io, copy); }
     free(copy);
     return error;
 }

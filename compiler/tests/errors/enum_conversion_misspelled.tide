@@ -1,0 +1,5 @@
+// expect: did you mean 'Phase'?
+enum Phase { Warmup, Playing }
+singleton Match { Phase phase; }
+scene Main { }
+system S(mut Match match) { match.phase = Phaze(1); }

@@ -762,15 +762,41 @@ static bool has_fields_ptr(const param *p)
     return p->local_use && local_part_of(p->type) != NULL;
 }
 
-// Whether the match's entities remember what they were spawned as
-// (tide_entity_set_born): some component has local fields, which are kept by
-// the entity's handle, and a rollback can give a handle to another entity.
-// Other games' spawns pay nothing for it.
+static bool correction_snap(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Snap")) return true;
+    }
+    return false;
+}
+
+static bool decl_corrects(const decl *d)
+{
+    if (d->is_local || d->interpolate) return false;
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || correction_snap(f)) continue;
+        if (f->view_correction || (f->type.kind == TY_STRUCT && decl_corrects(f->type.decl))) return true;
+    }
+    return false;
+}
+
+static bool program_corrects(const program *prog)
+{
+    for (int i = 0; i < prog->components.count; i++) if (decl_corrects(prog->components.items[i])) return true;
+    for (int i = 0; i < prog->singletons.count; i++) if (decl_corrects(prog->singletons.items[i])) return true;
+    return false;
+}
+
+// Local fields and correction errors stay with what was spawned, rather than
+// its handle alone: a rollback can give the same handle to another entity.
+// Other games' spawns keep no birth metadata.
 static bool entities_born(const program *prog)
 {
     for (int i = 0; i < prog->local_parts.count; i++) {
         if (prog->local_parts.items[i]->kind == DECL_COMPONENT) return true;
     }
+    for (int i = 0; i < prog->components.count; i++) if (decl_corrects(prog->components.items[i])) return true;
     return false;
 }
 
@@ -852,6 +878,13 @@ static const char *operator_word(const decl *m)
     case T_TILDE: return "complement";
     default: return "operator";
     }
+}
+
+// A function that's handed the local state, `tide_l`, by the local code that
+// calls it: one that reaches this machine's files, or reads Frame.dt.
+static bool takes_local(const decl *m)
+{
+    return m->uses_io || m->frame_time;
 }
 
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
@@ -1684,6 +1717,12 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_put(o, ")");
         break;
 
+    case CTOR_ENUM: // Card(n): the number as the enum's own type, which keeps a byte's or a ushort's low bits
+        sb_printf(o, "((%s)(", c_type(t));
+        gen_expr(g, o, first);
+        sb_put(o, "))");
+        break;
+
     case CTOR_COLOR:
         sb_put(o, "(tide_color){");
         for (int i = 0; i < e->args.count; i++) {
@@ -1971,7 +2010,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "tide_draw, tide_ui, tide_gui_seed(tide_seed, %du)", ++g->sites);
         args++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
@@ -2422,6 +2461,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);
+        } else if (e->call == CALL_CONSTRUCT) { // Combat.Stance(2): an enum in a namespace, from its number
+            gen_construct(g, o, e);
         } else if (e->call == CALL_GUI) {
             gen_gui_call(g, o, e);
         } else if (e->call == CALL_LIST) { // items.Add(x): the list, by address if the method changes it
@@ -5123,6 +5164,7 @@ static void gen_header(gen *g)
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
+    if (program_corrects(prog)) sb_put(o, "#define TIDE_HAS_VIEW_CORRECTIONS 1\n\n");
 
     bool enums = false;
     for (int i = 0; i < prog->decls.count; i++) {
@@ -5298,10 +5340,28 @@ static void gen_header(gen *g)
     }
     sb_put(o, "    } value;\n} tide_start;\n\n");
 
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *name = type_cname(d);
+            sb_printf(o, "typedef struct tide_correction_%s { %s error; uint32_t snaps; bool valid; } tide_correction_%s;\n", name, name, name);
+        }
+    }
+    if (program_corrects(prog)) sb_put(o, "\n");
     sb_put(o, "// This machine's own state, outside every world: never sent, rolled back or hashed.\n");
     sb_put(o, "// Like a world, it starts zeroed and tide_local_free lets it go.\n\n");
     sb_put(o, "typedef struct tide_local {\n");
     sb_put(o, "    const tide_io *tide_io; // Host-owned storage provider; excluded from saved state\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_attached tide_corrections_%s; // Private presentation errors, never serialized\n", type_cname(d));
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_correction_%s tide_correction_%s;\n", type_cname(d), type_cname(d));
+    }
     for (int i = 0; i < prog->singletons.count; i++) {
         if (!prog->singletons.items[i]->is_local) continue;
         const char *name = type_cname(prog->singletons.items[i]);
@@ -5329,10 +5389,8 @@ static void gen_header(gen *g)
         sb_put(o, "    uint32_t tide_kept_verified; // ...and of the verified one: what's kept is looked over when either changes\n");
     }
     gen_task_tables(g, true);
-    if (world_has_tasks(g, true)) {
-        sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
-        sb_put(o, "    float tide_frame_seconds;  // This frame's length, which they count down (tide_local_frame_time)\n");
-    }
+    if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
+    sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
@@ -5412,6 +5470,7 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_local_rebind_resources(tide_local *local, bool same_memory);\n\n");
     sb_put(o, "// The local state's tide_world_free, tide_world_pack and tide_world_unpack.\n");
     sb_put(o, "void tide_local_free(tide_local *local);\n");
+    if (program_corrects(prog)) sb_put(o, "void tide_local_correct(tide_local *local, const tide_view_correction *correction);\n");
     sb_put(o, "uint32_t tide_local_pack(const tide_local *local, uint8_t *out, uint32_t capacity);\n");
     sb_put(o, "bool tide_local_unpack(tide_local *local, const uint8_t *data, uint32_t size);\n\n");
     sb_put(o, "// Runs every view once, in declaration order, adding their Draw calls to `draw`\n");
@@ -5445,8 +5504,8 @@ static void gen_header(gen *g)
     sb_put(o, "// and `message` a kick's, or NULL), handled at the end of the next tide_frame.\n");
     sb_put(o, "void tide_local_connected(tide_local *local);\n");
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message);\n\n");
-    sb_put(o, "// How long this frame is, in seconds, which local tasks' Wait.Seconds counts down.\n");
-    sb_put(o, "// Call it before tide_frame.\n");
+    sb_put(o, "// How long this frame is, in seconds: what Frame.dt reads, and local tasks'\n");
+    sb_put(o, "// Wait.Seconds counts down. Call it before tide_frame; until then it's 0.\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds);\n\n");
     if (prog->command_types.count) {
         sb_put(o, "#define TIDE_HAS_COMMANDS 1\n"
@@ -5636,7 +5695,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d.fields, live);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -6114,8 +6173,30 @@ static void gen_blend_fields(gen *g, const decl *d)
         char before[256];
         snprintf(v, sizeof v, "v->%s", field_cname(f));
         snprintf(before, sizeof before, "before->%s", field_cname(f));
-        gen_blend_value(g, v, before, f->type);
+        if (f->view_correction == 2 && f->type.kind == TY_FLOAT) {
+            line(g, &g->c, "%s = tide_correction_wrap(%s) + tide_correction_wrap(tide_correction_wrap(%s) - tide_correction_wrap(%s)) * t;", v, before, v, before);
+        } else {
+            gen_blend_value(g, v, before, f->type);
+        }
     }
+}
+
+static void gen_correction_math(gen *g)
+{
+    bool angles = false;
+    for (int i = 0; i < g->prog->decls.count; i++) {
+        const decl *d = g->prog->decls.items[i];
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            angles |= f->view_correction == 2 && f->type.kind == TY_FLOAT;
+        }
+    }
+    if (angles) sb_put(&g->c, "TIDE_HELPER float tide_correction_wrap(float v)\n{\n"
+                            "    if (!tide_is_finite_f(v)) return 0.0f;\n"
+                            "    if (v >= -TIDE_PI_F && v <= TIDE_PI_F) return v;\n"
+                            "    if (v > TIDE_PI_F && v <= 3.0f * TIDE_PI_F) return v - 2.0f * TIDE_PI_F;\n"
+                            "    if (v < -TIDE_PI_F && v >= -3.0f * TIDE_PI_F) return v + 2.0f * TIDE_PI_F;\n"
+                            "    return tide_atan2_f(tide_sin_f(v), tide_cos_f(v));\n}\n\n");
 }
 
 // Views see the match between its last two ticks: for each type with fields
@@ -6151,9 +6232,233 @@ static void gen_blend_helpers(gen *g)
             sb_printf(o, "TIDE_HELPER const %s *tide_prev_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n",
                       name, name, name);
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
+            if (decl_corrects(d)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
         }
     }
+    g->indent = 0;
+}
+
+enum correction_action { CORRECTION_EMPTY, CORRECTION_ACCUMULATE, CORRECTION_APPLY, CORRECTION_DECAY };
+
+// Only role-bearing primitive leaves participate. An ordinary struct is
+// traversed, but a [Snap] boundary and a custom Interpolate are never crossed.
+static void gen_correction_leaves(gen *g, const decl *d, const char *path, const int action)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || correction_snap(f)) continue;
+        sb p = {0};
+        sb_printf(&p, "%s%s%s", path, *path ? "." : "", field_cname(f));
+        if (!f->view_correction) {
+            if (f->type.kind == TY_STRUCT && decl_corrects(f->type.decl)) gen_correction_leaves(g, f->type.decl, p.data, action);
+            continue;
+        }
+        const char *at = p.data;
+        const int dim = type_dim(f->type);
+        if (f->type.kind == TY_QUATERNION) {
+            if (action == CORRECTION_EMPTY) {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f) return false;", at, at, at, at);
+            } else if (action == CORRECTION_ACCUMULATE) {
+                line(g, &g->c, "{");
+                g->indent++;
+                line(g, &g->c, "const tide_quaternion a = tide_normalize_q(before->%s), b = tide_normalize_q(after->%s);", at, at);
+                line(g, &g->c, "const bool same = (a.value.x == b.value.x && a.value.y == b.value.y && a.value.z == b.value.z && a.value.w == b.value.w)");
+                line(g, &g->c, "               || (a.value.x == -b.value.x && a.value.y == -b.value.y && a.value.z == -b.value.z && a.value.w == -b.value.w);");
+                line(g, &g->c, "if (!same) e->%s = tide_normalize_q(tide_mul_q(tide_mul_q(tide_normalize_q(e->%s), a), tide_inverse_q(b)));", at, at);
+                line(g, &g->c, "if (e->%s.value.x == 0.0f && e->%s.value.y == 0.0f && e->%s.value.z == 0.0f) e->%s = (tide_quaternion){0};", at, at, at, at);
+                g->indent--;
+                line(g, &g->c, "}");
+            } else if (action == CORRECTION_APPLY) {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f)", at, at, at, at);
+                line(g, &g->c, "    v->%s = tide_normalize_q(tide_mul_q(e->%s, v->%s));", at, at, at);
+            } else {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f) {", at, at, at, at);
+                g->indent++;
+                line(g, &g->c, "e->%s = tide_slerp_q(tide_identity_q(), e->%s, keep);", at, at);
+                line(g, &g->c, "if (e->%s.value.x == 0.0f && e->%s.value.y == 0.0f && e->%s.value.z == 0.0f) e->%s = (tide_quaternion){0};", at, at, at, at);
+                g->indent--;
+                line(g, &g->c, "}");
+            }
+            continue;
+        }
+        static const char *const axes[] = {"x", "y", "z", "w"};
+        for (int axis = 0; axis < dim; axis++) {
+            sb leaf = {0};
+            sb_printf(&leaf, "%s%s%s", at, dim > 1 ? "." : "", dim > 1 ? axes[axis] : "");
+            const char *l = leaf.data;
+            if (action == CORRECTION_EMPTY) line(g, &g->c, "if (e->%s != 0.0f) return false;", l);
+            else if (action == CORRECTION_ACCUMULATE && f->view_correction == 2)
+                line(g, &g->c, "e->%s = tide_correction_wrap(e->%s + tide_correction_wrap(tide_correction_wrap(before->%s) - tide_correction_wrap(after->%s)));", l, l, l, l);
+            else if (action == CORRECTION_ACCUMULATE) line(g, &g->c, "e->%s += before->%s - after->%s;", l, l, l);
+            else if (action == CORRECTION_APPLY && f->view_correction == 2)
+                line(g, &g->c, "if (e->%s != 0.0f) v->%s = tide_correction_wrap(v->%s) + e->%s;", l, l, l, l);
+            else if (action == CORRECTION_APPLY) line(g, &g->c, "if (e->%s != 0.0f) v->%s += e->%s;", l, l, l);
+            else line(g, &g->c, "e->%s *= keep;", l);
+        }
+    }
+}
+
+static void gen_correction_state(gen *g)
+{
+    const program *prog = g->prog;
+    if (!program_corrects(prog)) return;
+    sb *o = &g->c;
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (!side) sb_printf(o, "static const uint32_t tide_sizes_correction_%s[] = {sizeof(tide_entity), sizeof(tide_correction_%s), sizeof(uint32_t)};\n"
+                                   "static const tide_columns tide_columns_correction_%s = {3, 4, tide_sizes_correction_%s};\n\n", n, n, n, n);
+            sb_printf(o, "TIDE_HELPER bool tide_correction_empty_%s(const %s *e)\n{\n", n, n);
+            g->indent = 1;
+            gen_correction_leaves(g, d, "", CORRECTION_EMPTY);
+            sb_put(o, "    return true;\n}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_accumulate_%s(%s *e, const %s *before, const %s *after)\n{\n", n, n, n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_ACCUMULATE);
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_apply_%s(%s *v, const %s *e)\n{\n", n, n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_APPLY);
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_decay_%s(%s *e, float keep)\n{\n", n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_DECAY);
+            sb_put(o, "}\n\n");
+            if (side) {
+                sb_printf(o, "TIDE_HELPER void tide_correct_view_%s(tide_local *l, const tide_world *w, %s *v)\n{\n"
+                             "    tide_correction_%s *s = &l->tide_correction_%s;\n", n, n, n, n);
+                if (d->snapped) sb_printf(o, "    if (s->valid && s->snaps != (uint32_t)w->%s.tide_snaps) memset(s, 0, sizeof *s);\n", n);
+                else sb_put(o, "    (void)w;\n");
+                sb_printf(o, "    if (s->valid) tide_correction_apply_%s(v, &s->error);\n}\n\n", n);
+            } else {
+                sb_printf(o, "TIDE_HELPER void tide_correct_view_%s(tide_local *l, const tide_world *w, tide_entity e, %s *v)\n{\n"
+                             "    tide_attached *a = &l->tide_corrections_%s;\n"
+                             "    const uint32_t row = tide_attached_find(a, &tide_columns_correction_%s, e);\n"
+                             "    if (row == TIDE_ATTACHED_NONE) return;\n"
+                             "    tide_correction_%s *s = tide_attached_cell(a, &tide_columns_correction_%s, row);\n"
+                             "    if (s->snaps != tide_entity_snaps(&w->entities, e)\n"
+                             "        || !tide_born_same(tide_attached_born(a, &tide_columns_correction_%s, row), tide_entity_born(&w->entities, e))) {\n"
+                             "        tide_attached_remove(a, &tide_columns_correction_%s, row);\n        return;\n    }\n"
+                             "    tide_correction_apply_%s(v, &s->error);\n}\n\n", n, n, n, n, n, n, n, n, n, n);
+            }
+        }
+    }
+    sb_put(o, "static void tide_corrections_reset(tide_local *l)\n{\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_attached_free(&l->tide_corrections_%s, &tide_columns_correction_%s);\n", type_cname(d), type_cname(d));
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", type_cname(d), type_cname(d));
+    }
+    sb_put(o, "}\n\nstatic void tide_corrections_decay(tide_local *l, float seconds)\n{\n"
+              "    if (!(seconds > 0.0f) || !tide_is_finite_f(seconds)) return;\n"
+              "    const float keep = tide_exp_f(-seconds * (0.6931471805599453f / 0.075f));\n");
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (side) sb_printf(o, "    if (l->tide_correction_%s.valid) {\n        tide_correction_%s *s = &l->tide_correction_%s;\n"
+                                  "        tide_correction_decay_%s(&s->error, keep);\n"
+                                  "        if (tide_correction_empty_%s(&s->error)) memset(s, 0, sizeof *s);\n    }\n", n, n, n, n, n);
+            else sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                              "        for (uint32_t row = a->rows.count; row-- > 0;) {\n"
+                              "            tide_correction_%s *s = tide_attached_cell(a, &tide_columns_correction_%s, row);\n"
+                              "            tide_correction_decay_%s(&s->error, keep);\n"
+                              "            if (tide_correction_empty_%s(&s->error)) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                              "        }\n    }\n", n, n, n, n, n, n);
+        }
+    }
+    sb_put(o, "}\n\n");
+    sb_put(o, "static void tide_corrections_prune(tide_local *l, const tide_world *w, const tide_world *verified)\n{\n"
+              "    if (!w && !verified) { tide_corrections_reset(l); return; }\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (!decl_corrects(d)) continue;
+        const char *n = type_cname(d);
+        sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                     "        for (uint32_t row = a->rows.count; row-- > 0;) {\n"
+                     "            const tide_entity e = tide_attached_entity(a, &tide_columns_correction_%s, row);\n"
+                     "            const uint32_t born = tide_attached_born(a, &tide_columns_correction_%s, row);\n"
+                     "            const tide_correction_%s *s = tide_attached_get(a, &tide_columns_correction_%s, row);\n"
+                     "            if (w && tide_has_%s(w, e) && tide_born_same(born, tide_entity_born(&w->entities, e))) {\n"
+                     "                if (s->snaps == tide_entity_snaps(&w->entities, e)) continue;\n"
+                     "            } else if (verified && tide_has_%s(verified, e)\n"
+                     "                       && tide_born_same(born, tide_entity_born(&verified->entities, e))) continue;\n"
+                     "            tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                     "        }\n    }\n", n, n, n, n, n, n, n, n);
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!decl_corrects(d) || !d->snapped) continue;
+        const char *n = type_cname(d);
+        sb_printf(o, "    if (w && l->tide_correction_%s.valid && l->tide_correction_%s.snaps != (uint32_t)w->%s.tide_snaps)\n"
+                     "        memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", n, n, n, n, n);
+    }
+    sb_put(o, "}\n\nvoid tide_local_correct(tide_local *l, const tide_view_correction *c)\n{\n"
+              "    if (!c || c->reset || !c->before || !c->after) { tide_corrections_reset(l); return; }\n"
+              "    const tide_world *before = c->before, *after = c->after;\n"
+              "    const tide_world *before_previous = c->before_previous, *after_previous = c->after_previous;\n"
+              "    (void)before_previous; (void)after_previous;\n");
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (side) {
+                sb_printf(o, "    {\n        tide_correction_%s *s = &l->tide_correction_%s;\n", n, n);
+                if (d->snapped) sb_printf(o, "        if (before->%s.tide_snaps != after->%s.tide_snaps) { memset(s, 0, sizeof *s); } else {\n", n, n);
+                else sb_put(o, "        {\n");
+                sb_printf(o, "            %s old_value = before->%s, new_value = after->%s;\n", n, n, n);
+                sb_printf(o, "            if (c->alpha < 1.0f) {\n"
+                             "                tide_blend_%s(&old_value, before_previous ? &before_previous->%s : NULL, c->alpha);\n"
+                             "                tide_blend_%s(&new_value, after_previous ? &after_previous->%s : NULL, c->alpha);\n            }\n", n, n, n, n);
+                if (d->snapped) sb_printf(o, "            if (s->valid && s->snaps != (uint32_t)after->%s.tide_snaps) memset(s, 0, sizeof *s);\n", n);
+                sb_printf(o, "            tide_correction_accumulate_%s(&s->error, &old_value, &new_value);\n"
+                             "            s->valid = !tide_correction_empty_%s(&s->error);\n", n, n);
+                if (d->snapped) sb_printf(o, "            s->snaps = (uint32_t)after->%s.tide_snaps;\n", n);
+                sb_put(o, "        }\n    }\n");
+            } else {
+                sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                             "        for (uint32_t index = 0; index < after->entities.next_unused; index++) {\n"
+                             "            const tide_entity e = tide_entity_in_slot(&after->entities, index);\n"
+                             "            %s old_value, new_value;\n"
+                             "            if (!tide_load_%s(after, e, &new_value)) continue;\n"
+                             "            uint32_t row = tide_attached_find(a, &tide_columns_correction_%s, e);\n"
+                             "            const uint32_t snaps = tide_entity_snaps(&after->entities, e), born = tide_entity_born(&after->entities, e);\n"
+                             "            if (!tide_load_%s(before, e, &old_value)\n"
+                             "                || tide_entity_snaps(&before->entities, e) != snaps\n"
+                             "                || !tide_born_same(tide_entity_born(&before->entities, e), born)) {\n"
+                             "                if (row != TIDE_ATTACHED_NONE) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                             "                continue;\n            }\n"
+                             "            if (c->alpha < 1.0f) {\n"
+                             "                %s p;\n"
+                             "                if (before_previous) tide_blend_%s(&old_value, tide_prev_%s(before_previous, before, e, &p), c->alpha);\n"
+                             "                if (after_previous) tide_blend_%s(&new_value, tide_prev_%s(after_previous, after, e, &p), c->alpha);\n"
+                             "            }\n"
+                             "            tide_correction_%s value = {0};\n"
+                             "            if (row != TIDE_ATTACHED_NONE) {\n"
+                             "                const tide_correction_%s *s = tide_attached_get(a, &tide_columns_correction_%s, row);\n"
+                             "                if (s->snaps == snaps && tide_born_same(tide_attached_born(a, &tide_columns_correction_%s, row), born)) value = *s;\n"
+                             "                else { tide_attached_remove(a, &tide_columns_correction_%s, row); row = TIDE_ATTACHED_NONE; }\n"
+                             "            }\n"
+                             "            tide_correction_accumulate_%s(&value.error, &old_value, &new_value);\n"
+                             "            if (tide_correction_empty_%s(&value.error)) {\n"
+                             "                if (row != TIDE_ATTACHED_NONE) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                             "            } else {\n"
+                             "                if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(a, &tide_columns_correction_%s, e, born);\n"
+                             "                value.snaps = snaps; value.valid = true;\n"
+                             "                *(tide_correction_%s *)tide_attached_cell(a, &tide_columns_correction_%s, row) = value;\n"
+                             "            }\n        }\n    }\n", n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n);
+            }
+        }
+    }
+    sb_put(o, "}\n\n");
     g->indent = 0;
 }
 
@@ -7359,7 +7664,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             }
         }
     } else if (fn) {
-        if (fn->uses_io) capture(&out, "tide_local *", "tide_l");
+        if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -8368,6 +8673,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                          "&tide_p%d), tide_alpha); }\n",
                       pad, c, i, c, i, c, i);
         }
+        if (sys->is_view && decl_corrects(p->type.decl)) {
+            sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &tide_v%d);\n", pad, c, i);
+        }
         if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
     if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, pad); // Its filter got it already
@@ -8771,7 +9079,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_put(o, "tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed");
         n++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -8816,7 +9124,7 @@ static void gen_routine(gen *g, const decl *m)
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
-    if (m->uses_io) line(g, o, "(void)tide_l;");
+    if (takes_local(m)) line(g, o, "(void)tide_l;");
     for (int i = 0; i < m->params.count; i++) {
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
@@ -9509,6 +9817,7 @@ static void gen_bounds(gen *g, const decl *d, const char *in)
         const field *f = &d->fields.items[i];
         for (int k = 0; k < f->attributes.count; k++) {
             const attribute *a = &f->attributes.items[k];
+            if (!str_eq_c(a->name, "Clamp") && !str_eq_c(a->name, "Min") && !str_eq_c(a->name, "Max")) continue;
             // [Min(x)] is "at least x": the larger of the two, and [Max] the reverse.
             const char *fn = str_eq_c(a->name, "Clamp") ? "clamp" : str_eq_c(a->name, "Min") ? "max" : "min";
             indent(g, o);
@@ -10016,6 +10325,7 @@ static void gen_system_run(gen *g, const decl *sys)
             const char *s = type_cname(p->type.decl);
             sb_printf(o, "    %s tide_v%d = tide_w->%s;\n", s, i, s);
             if (param_blends(p)) sb_printf(o, "    if (tide_blend) tide_blend_%s(&tide_v%d, &tide_prev->%s, tide_alpha);\n", s, i, s);
+            if (decl_corrects(p->type.decl)) sb_printf(o, "    tide_correct_view_%s(tide_l, tide_w, &tide_v%d);\n", s, i);
         }
         // The local fields of an entity nothing was written for: their defaults
         // (gen_row_fields), made once for the view's whole run
@@ -10392,6 +10702,7 @@ static void gen_api(gen *g)
     // The local fields of entities that are gone go first: with no verified
     // world given, the one views draw is all there is
     if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_prune(local, w, verified ? verified : w);\n");
     // A host that shows where frames' time goes gave the GUI a profile
     // (tide/profile.h): each view says how long it took
     if (prog->views.count) {
@@ -10411,8 +10722,8 @@ static void gen_api(gen *g)
     }
     sb_put(o, "}\n\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds)\n{\n");
-    if (world_has_tasks(g, true)) sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
-    else sb_put(o, "    (void)local;\n    (void)seconds;\n}\n\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_decay(local, seconds);\n");
+    sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
 
     const char *joined = type_cname(prog->player_joined);
     const char *left = type_cname(prog->player_left);
@@ -10682,6 +10993,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *world = world_type(local);
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
+    if (local && program_corrects(prog)) sb_put(o, "    tide_corrections_reset(w);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    tide_table_free(&w->%s, %s);\n", arch_name(g, a), arch_columns(g, a));
     }
@@ -10743,6 +11055,16 @@ static void gen_world_bytes(gen *g, const bool local)
         sb_printf(o, "    memset(&header.%s, 0, sizeof header.%s);\n", fields_table(fields.items[i]), fields_table(fields.items[i]));
     }
     if (world_heap(prog, local)) sb_put(o, "    memset(&header.heap, 0, sizeof header.heap);\n");
+    if (local) {
+        for (int i = 0; i < prog->components.count; i++) {
+            const decl *d = prog->components.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&header.tide_corrections_%s, 0, sizeof header.tide_corrections_%s);\n", type_cname(d), type_cname(d));
+        }
+        for (int i = 0; i < prog->singletons.count; i++) {
+            const decl *d = prog->singletons.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&header.tide_correction_%s, 0, sizeof header.tide_correction_%s);\n", type_cname(d), type_cname(d));
+        }
+    }
     sb_put(o, "    tide_writer bytes = {out, capacity, 0, false, false};\n");
     sb_put(o, "    tide_write_bytes(&bytes, &header, sizeof header);\n");
     sb_put(o, "    tide_entities_pack(&w->entities, &bytes);\n");
@@ -10785,6 +11107,16 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
     if (local) sb_put(o, "    w->tide_io = io;\n");
+    if (local) {
+        for (int i = 0; i < prog->components.count; i++) {
+            const decl *d = prog->components.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&w->tide_corrections_%s, 0, sizeof w->tide_corrections_%s);\n", type_cname(d), type_cname(d));
+        }
+        for (int i = 0; i < prog->singletons.count; i++) {
+            const decl *d = prog->singletons.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&w->tide_correction_%s, 0, sizeof w->tide_correction_%s);\n", type_cname(d), type_cname(d));
+        }
+    }
     sb_put(o, "    memset(&w->entities, 0, sizeof w->entities);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    memset(&w->%s, 0, sizeof w->%s);\n", arch_name(g, a), arch_name(g, a));
@@ -11315,6 +11647,7 @@ static void gen_game_api(gen *g)
     sb_printf(o, "void tide_local_connected(tide_local *local)\n{\n    tide_cmd_send_%s(local, (tide_entity){0}, (%s){0});\n}\n\n",
               connected, connected);
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message)\n{\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_reset(local);\n");
     if (prog->command_types.count) sb_put(o, "    local->tide_outgoing_from = local->tide_outgoing_count = 0;\n"
                                            "    memset(local->tide_outgoing_sizes, 0, sizeof local->tide_outgoing_sizes);\n"
                                            "    memset(local->tide_outgoing, 0, sizeof local->tide_outgoing);\n");
@@ -12024,7 +12357,9 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_apply(&g, true);
     gen_shaders(&g);
     gen_routines(&g);
+    gen_correction_math(&g);
     gen_blend_helpers(&g); // After the routines: a type's Interpolate is one
+    gen_correction_state(&g);
     if (prog->match_devices) gen_keep_devices(&g);
     if (prog->input) gen_sample(&g);
     if (prog->input && prog->input->sanitize) gen_sanitize(&g);

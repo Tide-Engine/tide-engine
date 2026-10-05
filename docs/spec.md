@@ -713,10 +713,16 @@ system Advance(mut Match match)
 ### Provisional
 
 - `enum Name { A, B = 5, C }` declares an enum. A member without a value is one more than the one before it, and the first is 0. A value is an int known while compiling: a literal, an int constant, or operators on them, worked out as they would be at run time. A comma after the last member is fine. `enum` is only a keyword at the start of a declaration.
-- An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: values still go through `int(...)`.
+- An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: a value's number is still `int(...)`, and the value with a number `Voxel(...)`, which keeps the number's low bits (below).
 - Members are always written with their enum: `Phase.Playing`, or `Game.Phase.Playing` from another namespace. In generated C, `Phase.Playing` is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
 - Enums are values, like structs: fields, locals, inputs, and functions' parameters and return values can hold them. A field without a default starts at 0, even if no member has that value, as in C#.
-- `==` and `!=` compare two values of the same enum. `int(phase)` gives a member's value; there's no way from an int to an enum yet.
+- `==` and `!=` compare two values of the same enum.
+- An enum and its number convert both ways, and neither way by itself: `int(phase)` (or `long(phase)`) is a value's number, and `Phase(5)` the value with that number, as `float3(i)` mirrors `int3(f)`. The enum's name is all there is to it: no keyword, and no attribute. An enum in a namespace converts by its qualified name too, `Combat.Stance(2)`.
+- `Phase(...)` takes one int, or a byte, which is an int wherever one goes. A float or a long converts with `int(...)` first, and so does another enum's value: each is an error that says so. A mismatch the other way (`Phase p = 1;`, `int n = phase;`) names the conversion to write.
+- As C#'s cast does, `Phase(n)` keeps a number none of the members has: the value is that number, and `int(...)` gives it back. Nothing checks it, so the conversion costs nothing. The rest of the language takes such a value as it takes a field that started at 0 with no member there: it equals no member, a `switch` on it runs its `default` (or no section), text shows its number, an input or a command that carries one from another machine gets the field's default instead (below, and Commands), and a hot reload that changes the layout carries enums by their member's name, so it goes back to the field's default. Code that needs a member bounds the number first (`Card(hash % CARDS)`), or handles the rest in a `default`.
+- An enum stored as a byte or a ushort keeps the number's low 8 or 16 bits, as `byte(x)` keeps an int's low 8: `Voxel(300)` is `Voxel(44)`, and `Voxel(-1)` is `Voxel(255)`.
+- With a constant number it's a constant: `const Card FIRST = Card(0);`, a field's default, a `case` label.
+- It works in a frag or vert too, where an enum is an int whatever it's stored as: the number itself, cut to its low bits for a byte's or a ushort's enum, so the GPU and the CPU agree.
 - An enum in an input that isn't one of its members, which only a bad client could send, becomes the field's default before `Sanitize`, like a NaN float.
 - `switch` works on ints, longs and enums. A case is an int known while compiling (a literal, an int constant, or operators on them), or one of the enum's members, maybe through a constant of the enum. Labels in a row share a section, `default` handles the rest, and each value appears once.
 - Every section ends with `break;` or `return;` on every path, so none runs into the next, as in C#. Outside a switch, `break` ends a loop (see Loops); anywhere else it's an error.
@@ -726,7 +732,7 @@ system Advance(mut Match match)
 
 ### Open
 
-- Ordering enums (`<`), and turning an int into an enum.
+- Ordering enums (`<`).
 - A warning when a switch on an enum has no `default` and misses a member.
 
 ## Loops
@@ -759,7 +765,7 @@ system Advance(mut Match match)
 
 - Text is UTF-8. Literals can hold any UTF-8 character, and `\"`, `\\` and `\n`.
 - `$"score {score}"` puts values in text. After a value, a colon and a format, as in C#: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. Floats, vectors, quaternions, colors and rects take F, up to F9; ints, longs and int vectors take D (up to D32), X (up to X8, or X16 for a long) and F. The letter can be lowercase. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
-- Text can show numbers, bools, enums (their member's name), vectors and quaternions (`(1, 0.5)`), `Color` (`RGBA(1, 0, 0, 1)`), `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for a temporary handle: see Entities) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, plainly from 1e-7 to 1e21 and with an exponent beyond (`1.5E+21`), the same on every platform: computed exactly, never with the platform's printf.
+- Text can show numbers, bools, enums (their member's name, or their number when no member has it), vectors and quaternions (`(1, 0.5)`), `Color` (`RGBA(1, 0, 0, 1)`), `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for a temporary handle: see Entities) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, plainly from 1e-7 to 1e21 and with an exponent beyond (`1.5E+21`), the same on every platform: computed exactly, never with the platform's printf.
 - Text shows values with fields (structs, components, singletons, events and inputs) as C# shows records: `Stats { hp = 3, speed = 1.5 }`, `Nothing { }`, nested ones inside. Lists show as `[1, 2, 3]`. Text in them is in quotes, `name = "Bob"`, so `""` shows; it isn't escaped. Scenes show their own fields, not the engine's. `Session` shows its `room` last. The device records (`Devices` and the rest) don't show, nor does anything holding a matrix, which text can't show yet; the error names what's in the way.
 - `+` joins text with anything it can show: `"score " + score`, `1 + "st"`. `==` and `!=` compare text byte by byte. There's no `<` for text.
 - `length`, and the methods `Contains`, `StartsWith`, `EndsWith`, `IndexOf` (-1 if it's not there), `Substring(start)` and `Substring(start, length)`, `ToUpper` and `ToLower` (ASCII letters only, for now), `Trim` and `Replace(from, to)`.
@@ -1027,7 +1033,7 @@ Implemented, awaiting approval:
 - Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
 - A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.
-- An async function's world comes from what it does: changing the match (spawning, `mut` match components and singletons, sending match events, entity changes, `Snap`, `Wait.Ticks`) makes it match code, and local state (local components and singletons, `Session` calls, `Wait.Frames`) makes it local. What it awaits or starts decides it too. One that does neither runs in whichever world starts it, and tidec makes it for each. Doing both is an error, as is starting or awaiting one from the other world. Tasks can't draw or read this frame's `Devices`.
+- An async function's world comes from what it does: changing the match (spawning, `mut` match components and singletons, sending match events, entity changes, `Snap`, `Wait.Ticks`) makes it match code, and local state (local components and singletons, `Session` calls, `Wait.Frames`, `Frame.dt`) makes it local. What it awaits or starts decides it too. One that does neither runs in whichever world starts it, and tidec makes it for each. Doing both is an error, as is starting or awaiting one from the other world. Tasks can't draw or read this frame's `Devices`.
 - A task belongs to the entity the code that started it runs for, or with a task, to that task's entity, and ends when it's destroyed; code that runs for no entity starts tasks that belong to their world. A local task can belong to a match entity (a view of the match's entities started it), and ends with it, or when there's no match.
 - Tasks go on at the end of the tick, after its changes and events, one after another in the order they started, those whose time has come; what they change applies after them, and their handlers can start more. Local tasks do the same at the end of the frame. A world keeps its waiting tasks in a table for each async function and handler, a row each: when it started, when it looks again, its owner and its frame.
 - A system that starts tasks runs on one thread, and waits for the systems before it that start tasks, spawn or change text, as the code its tasks run until they first wait can do those. `--schedule` names it.
@@ -1158,6 +1164,36 @@ component Body
 ```
 
 - Something that jumps, like a respawn, a portal or a camera cut, says so from match code: `entity.Snap()` or `singleton.Snap()`. For the tick it happens in, views draw it as it is instead of sliding from where it was.
+
+#### Provisional correction smoothing
+
+**Provisional.** `[Position]` and `[Rotation]` describe how a match field is presented when prediction is corrected. The names and contract may change as games test them.
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    [Rotation] float heading; // Radians, for 2D
+    float2 velocity;          // Ordinary tick interpolation
+}
+
+component Pose
+{
+    [Position] float3 position;
+    [Rotation] quaternion rotation;
+}
+```
+
+- `[Position]` applies to a float or floating-point vector. Tick interpolation stays linear. A correction accumulates the additive difference needed to preserve the displayed value, and the presentation removes that error over time.
+- `[Rotation]` applies to a float in radians or a quaternion. A float interpolates and corrects through the shortest wrapped angular difference; a quaternion uses the shortest relative rotation. Its correction error decays toward zero angle or the identity rotation.
+- Error is local to presentation and decays exponentially with frame time, with a provisional half-life of 75 ms. Further corrections accumulate with the error still present. Ordinary motion follows the corrected simulation; it is not low-passed along with the correction.
+- Untagged fields keep ordinary tick interpolation. An ordinary struct can contain annotated built-in fields, including through nested ordinary structs. Correction smoothing through a type with its own `Interpolate` remains deferred; no companion custom-type method is agreed.
+- `entity.Snap()` and `singleton.Snap()` remain immediate and clear the accumulated correction error. The retained errors change neither simulation values nor collisions, the simulation hash or serialized match state. No new correction-rate setting is agreed.
+- The tags take no arguments and cannot be combined with each other or `[Snap]` on the same field. They describe match component and singleton fields, or ordinary struct fields held by them, not local state, inputs or events.
+- A new match, a hot reload or a replacement world with no comparable presentation history clears the error. Host migration retains the frozen presentation while reconnecting, then clears the error when the new network timeline begins.
+
+#### Other view rules
+
 - A view filters its entities by whether this machine's player owns them, with `with ownership` and `without ownership`, beside `with` and `without`:
 
 ```csharp
@@ -1343,7 +1379,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `source.Sample(uv[, filter])` reads a `Grid2<Color>` or `Texture` field of a component/singleton parameter, or a direct read-only `Texture` parameter. `Filter.Bilinear` is the default and blends between pixels; `Filter.Point` reads the nearest. The filter is written there: the GPU is told how the texture is read before any pixel runs. UVs go from (0, 0) at the top-left outer corner to (1, 1) past the bottom-right pixel, with edge clamping. A grid with no size samples white. Verts sample too.
   - What the GPU runs: bools, ints, floats, vectors, matrices, colors, enums, and structs of those; locals; `if`; `?:` between numbers, vectors and colors; `for` loops that count (a variable of the loop's own, compared with a bound, that only its step changes), with `break` and `continue`; `return;`; the game's functions, methods and operators; `Math`'s functions on numbers, vectors and matrices, but `Inverse` and `Hash`; constructors, constants and `default`. `Math.Normalize` gives zero for a zero vector there too; the rest of `Math` is the GPU's own.
   - Not there yet: `while`, `switch`, quaternion math, and the functions that build quaternions and matrices (`float4x4.TRS`).
-  - Never there: lists, maps and sets, text, entities and players, `byte`, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
+  - Never there: lists, maps and sets, text, entities and players, `byte`, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Frame`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
   - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
   - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 4000 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
@@ -1586,6 +1622,48 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 - Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now, but a handler of `Forgotten`, which takes the match component or singleton whose local fields are going (below).
 - The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, local, draw, gui)` every frame. `tide_frame` lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
 - The local world has its own entity table and queue, which grow as they need, as the match's do.
+- **`Frame.dt`** (the name is a pick, to confirm: `Time` is the match's, so Unity's `Time.deltaTime` can't be it) is the seconds since this machine's previous frame started, a `float`, read-only: what moves things that aren't the match's (particles, menus, a camera's shake) at the same speed whatever the display's rate.
+  - It's this machine's, and has nothing to do with the match: it's there in a local scene and while connecting, where no view that takes `Time` runs, and in a match it's the same value, whatever the tick rate and however many ticks the frame ran.
+  - Local code reads it: views, local handlers, local tasks (async functions that read it are local, as ones that use local state are), and the functions they call, in a sort's comparison and a parallel loop's steps too. A local task's `Wait.Seconds` counts the same seconds down, and one that waits a frame at a time, `await Wait.Frames(1)`, moves on by it each frame.
+  - The match can't read it, as it's another on every machine: a system or a match handler that does is an error that says to take `Time time` and read `time.dt`, a tick's length, and a function that reads it is local code, which the match can't call. The input's `Sample` and `Sanitize` can't either, as they run once per tick: a view keeps what `Sample` needs in local state. Nor can methods, which are handed nothing, or a frag or vert.
+  - It's the length the host measured, as it is: a frame after the window was dragged or the page was hidden is that long, and a game clamps it where a big step would show (`Math.Min(Frame.dt, 0.05)`). It's never negative or NaN, and it's 0 until the host has given a frame's length: in a handler that runs as the local state is made, like `Spawned` of a local `Main`.
+  - There's no clock of seconds beside it. A float of seconds loses precision as it grows (after four and a half hours its steps are 2 milliseconds, about an eighth of a frame at 60 a second), which shows in whatever is animated by it. A game adds `Frame.dt` up into a field of its own, and wraps it where what it drives repeats.
+  - `Frame` is built into the language, as `Screen` and `Cursor` are: a game can't declare the name, in a namespace or outside one.
+  - Hosts give it before each `tide_frame`: `tide_local_frame_time(local, seconds)`, which `tide/run.h` does.
+
+```csharp
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+}
+
+local singleton Sparks
+{
+    List<Spark> list;
+}
+
+view DrawSparks(mut Sparks sparks)
+{
+    mut var i = 0;
+    while (i < sparks.list.count)
+    {
+        mut var spark = sparks.list[i];
+        spark.age += Frame.dt;
+        if (spark.age >= spark.life)
+        {
+            sparks.list.RemoveAt(i);
+            continue;
+        }
+        spark.position += spark.velocity * Frame.dt;
+        sparks.list[i] = spark;
+        Draw2D.Circle(spark.position, 0.1, Color.yellow);
+        i++;
+    }
+}
+```
 
 Local fields, beyond what's decided:
 
@@ -1604,7 +1682,7 @@ Local fields, beyond what's decided:
   - Each entity is born as a number: a hash of the tick it was spawned in and what it was spawned with (which components, its scene, and each component's value). An entity is in a world, for when local fields go, when the world has its handle born as the same.
   - So a replay that spawns something else on a handle takes what was kept there, `Forgotten` first, and the other entity starts from the defaults. The same spawn again (the server had the tick as the client predicted it) keeps them.
   - A spawn that comes out with other values, like a position a wrong guess moved, is another entity. Text and lists among the values count by where the match keeps them, so a replay that changed the match's text before the spawn can make it another too. Either way the cost is the local fields starting over.
-  - The number is this machine's, beside the world and never in it: the world's hash, its bytes, its deltas and what's sent are the same with it or without, a game with no local fields on components keeps none, and it costs 4 bytes an entity where there are. An entity that came with a world the server sent (a player who joins, or one whose world the server put right) has none, and is known by its handle alone; so are local fields C set for an entity that had none.
+  - The number is this machine's, beside the world and never in it: the world's hash, its bytes, its deltas and what's sent are the same with it or without, a game with neither local fields nor correction-tagged fields on components keeps none, and it costs 4 bytes an entity where there are. An entity that came with a world the server sent (a player who joins, or one whose world the server put right) has none, and is known by its handle alone; so are local fields C set for an entity that had none.
 - **`Forgotten`** is how a local handler hears of it, to let go of what the fields hold, like a C library's handle: a built-in local event, sent to an entity as its local fields of a component go, before they do.
 
 ```csharp
@@ -1632,7 +1710,6 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 ### Open
 
 - Local handlers of match events (see Events).
-- Time for local code, such as the frame's length.
 - Saving local state, such as settings, between runs.
 - **An `Entity` local code holds, after a rollback.** A rollback can give a handle to another entity (see local fields, above), and an `Entity` in local state, like a selected unit, then names the other one: nothing tells local code yet. Local fields are told apart, but only follow what this machine spawned: after the server sends a world again, its entities are known by their handles. And a predicted entity that the server's order gave another handle is another entity to local fields, which start over there rather than move with it.
 - Local state for a component the game didn't declare, like a package's: a declaration of its own that says which component it's for, on the storage local fields have.

@@ -330,6 +330,8 @@ TIDE_TEST(lsp_field_attributes)
     const char *names = complete("input PlayerInput\n{\n    [$] float move;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(names, "Clamp") && offers(names, "Min") && offers(names, "Max"));
     TIDE_CHECK(!offers(names, "Before"));
+    const char *roles = complete("component Body\n{\n    [$] float2 position;\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(roles, "Position") && offers(roles, "Rotation"));
     const char *bounds = complete("input PlayerInput\n{\n    [Clamp(float2(0, 0), $)] float2 aim;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(bounds, "Math") && offers(bounds, "float2"));
 
@@ -1679,6 +1681,72 @@ TIDE_TEST(lsp_enums_and_switch)
     TIDE_CHECK(has(symbols, "\"name\":\"Playing\",\"detail\":\"5\",\"kind\":22"));
 }
 
+// An enum's name converts an int, Phase(5), as int(phase) gives its number:
+// there the name is the enum, as anywhere else it's written.
+TIDE_TEST(lsp_enum_conversion)
+{
+    start();
+#define PHASES "enum Phase { Warmup, Playing = 5 }\nsingleton Match { Phase phase; int n; }\nscene Main { }\n"
+    static const char game[] = PHASES "system S(mut Match match)\n{\n    match.phase = Pha$se(match.n);\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "enum Phase"));
+    TIDE_CHECK(has(hover, "`Phase(number)` is the `Phase` with that number"));
+    TIDE_CHECK(!has(hover, "low 8 bits")); // Stored as an int
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    request_with("textDocument/rename", "\"newName\":\"Stage\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "Stage phase;") && has(renamed, "match.phase = Stage(match.n);"));
+
+    // While it's written: what it takes, and what it gives
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase($\n}\n");
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "Phase(int number)"));
+    TIDE_CHECK(has(signature, "A number none of its members has stays as it is"));
+    TIDE_CHECK(offers(complete(PHASES "system S(mut Match match)\n{\n    match.phase = $\n}\n"), "Phase"));
+
+    // A literal argument says what it is
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase(5);\n}\n");
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":30,\"character\":0}}");
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":5,\"character\":24},\"label\":\"number:\",\"kind\":2"));
+
+    // An argument it refuses: the name is still the enum's
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Pha$se(1.5);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Phase(...) converts an int, not float"));
+    TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
+
+    // One stored as a byte says what becomes of a number that doesn't fit it
+    open_document("enum Voxel : byte { Air, Stone }\nsingleton Terrain { Voxel under; int n; }\nscene Main { }\n"
+                  "system S(mut Terrain terrain)\n{\n    terrain.under = Vox$el(terrain.n);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "its low 8 bits"));
+
+    // By its qualified name: the namespace, then the enum
+    static const char qualified[] = "namespace Combat;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                                 "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Pha$se(match.n);\n}\n";
+    open_document(qualified);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
+    request_with("textDocument/rename", "\"newName\":\"Stage\"");
+    renamed = apply_reply(qualified, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "match.phase = Combat.Stage(match.n);"));
+    open_document("namespace Combat;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                  "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Phase($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Phase(int number)"));
+
+    // Another call that names an enum, which the checker refuses, isn't one: its name stays its own
+    open_document(PHASES "system S(World world, mut Match match)\n{\n    match.n = int(world.Ge$t<Phase>(default));\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Phase' is an enum"));
+    TIDE_CHECK(!has(request("textDocument/hover"), "`Phase(number)`"));
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Stage\""), "\"error\""));
+#undef PHASES
+}
+
 TIDE_TEST(lsp_scheduling_phases)
 {
     start();
@@ -1748,12 +1816,12 @@ TIDE_TEST(lsp_scheduling_phases)
     TIDE_CHECK(has(signature, "\"activeParameter\":1"));
 
     // A fully qualified phase indexes its namespace, enum type, and member separately.
-    open_document("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
-                  "[Stage(Frame.Pha$ses.Objects)]\nview V() { }\n");
+    open_document("namespace Paint;\nenum Phases { Objects }\nscene Main { }\n"
+                  "[Stage(Paint.Pha$ses.Objects)]\nview V() { }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
-    completion = complete("namespace Frame;\nenum Phases { Objects }\nscene Main { }\n"
-                          "[Stage(Frame.$)]\nview V() { }\n");
+    completion = complete("namespace Paint;\nenum Phases { Objects }\nscene Main { }\n"
+                          "[Stage(Paint.$)]\nview V() { }\n");
     TIDE_CHECK(offers(completion, "Phases") && !offers(completion, "Main") && !offers(completion, "V"));
 }
 
@@ -1993,6 +2061,26 @@ TIDE_TEST(lsp_gui)
     // ...and a signature, as the GUI's calls have
     open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cursor.Lock()"));
+
+    // A frame's length: local code reads it, and the functions it calls; the
+    // match has Time's instead.
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal event E { }\nlocal event(E) H()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "Frame"));
+    TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    var dt = Frame.$;\n}\n"), "dt"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    var dt = Frame.$;\n}\n"), "dt"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Frame.d$t; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *frame = request("textDocument/hover");
+    TIDE_CHECK(has(frame, "Frame.dt: float"));
+    TIDE_CHECK(has(frame, "The seconds since this machine's previous frame started"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Fra$me.dt; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "This machine's frame"));
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
+    open_document("singleton Clock { float age; }\nscene Main { }\nsystem S(mut Clock clock)\n{\n    clock.age += Frame.dt;\n}\n");
+    TIDE_CHECK(has(last_sent(), "so it can't read Frame.dt"));
+    TIDE_CHECK(has(last_sent(), "time.dt"));
 
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"

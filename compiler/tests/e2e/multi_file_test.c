@@ -42,3 +42,14 @@ TIDE_TEST(multi_file_qualified_names)
     TIDE_CHECK(world.Trace.hit.amount == 5); // Set by Combat.Damage...
     TIDE_CHECK(world.Trace.hit_seen == 10);  // ...then read by Items.Heal, through Combat.Strength
 }
+
+// An enum of a namespace converts from its number by its name there, Stance(4),
+// and by its qualified name elsewhere, Combat.Stance(4).
+TIDE_TEST(multi_file_qualified_enum_conversion)
+{
+    tide_world_init(&world, 1.0f);
+    TIDE_CHECK(world.Trace.high == Combat_Stance_High); // Its default, Combat.Stance(4)
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Trace.stance == Combat_Stance_High); // Stance(5 - 1), in Combat
+    TIDE_CHECK(world.Trace.healed == Combat_Stance_High); // Combat.Stance(4), in Items: its Health was 3, healed to 4
+}
