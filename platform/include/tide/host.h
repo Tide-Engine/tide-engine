@@ -137,6 +137,10 @@ static tide_run_desc tide_run_settings;
 // --frames or --script: what it asked (tide_platform_open_headless)
 static bool tide_run_headless;
 static tide_headless_desc tide_run_headless_desc;
+// --seed <n> on the command line: the seed of every match this machine starts
+// (Time.seed), in place of one from the system
+static bool tide_run_seeded;
+static uint32_t tide_run_seed;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
 // The server went away or turned this machine away: not because it left,
@@ -308,9 +312,21 @@ static inline double tide_run_number(int *i, const char *flag, const double leas
     exit(2);
 }
 
+// ...as a whole number from 0 to `most`, or the program ends the same way.
+static inline uint32_t tide_run_whole(int *i, const char *flag, const uint32_t most, const char *takes)
+{
+    const char *text = tide_run_value(i, flag, takes);
+    const char *c = text;
+    uint64_t value = 0;
+    for (; *c >= '0' && *c <= '9' && value <= most; c++) value = value * 10u + (uint64_t)(*c - '0');
+    if (c != text && !*c && value <= most) return (uint32_t)value;
+    fprintf(stderr, "tide: %s takes %s, not '%s'\n", flag, takes, text);
+    exit(2);
+}
+
 // How tide_run_game runs: what `desc` says, with the defaults for what it and
 // the game's settings leave out, and what its command line says: --debug-views,
-// the window's size, and a run with no window.
+// the window's size, its matches' seed, and a run with no window.
 static inline void tide_run_configure(const tide_run_desc *desc)
 {
     tide_run_settings = *desc;
@@ -322,6 +338,8 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     if (tide_run_settings.tick_rate < 0) tide_run_settings.tick_rate = 0; // The game's
     tide_run_headless = false;
     tide_run_headless_desc = (tide_headless_desc){0};
+    tide_run_seeded = false;
+    tide_run_seed = 0;
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
@@ -331,6 +349,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             const char *takes = "the window's width and height in pixels, like --size 1280 720";
             tide_run_settings.width = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
             tide_run_settings.height = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
+        } else if (strcmp(arg, "--seed") == 0) {
+            const char *takes = "the seed of the matches this machine starts, a whole number from 0 to 2147483647, like --seed 7";
+            tide_run_seed = tide_run_whole(&i, arg, 2147483647u, takes);
+            tide_run_seeded = true;
         } else if (strcmp(arg, "--scale") == 0) {
             const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
             tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
@@ -430,9 +452,11 @@ static inline tide_session *tide_run_new_session(void)
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
         .correct_views = tide_run_game->correct_views ? tide_run_correct_views : NULL,
-        // A seed for each match it starts, so no two go the same: but in a run
-        // with no window, whose matches start with seed 0, so it repeats.
-        .entropy = tide_run_headless ? NULL : tide_platform_entropy,
+        // A seed for each match it starts, so no two go the same: but the one
+        // --seed says, and in a run with no window, whose matches start with
+        // seed 0 without one, so it repeats.
+        .entropy = tide_run_headless || tide_run_seeded ? NULL : tide_platform_entropy,
+        .seed = tide_run_seed,
     });
 }
 

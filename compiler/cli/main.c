@@ -70,6 +70,8 @@ static void usage(void)
            "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
            "  --scale <s>           as on a display scaled this much: 1.5, 2 (1 without it)\n"
            "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
+           "  --seed <n>            the seed of the matches the game starts, from 0 to 2147483647, for any run: without\n"
+           "                        it, 0 with no window, and another one every match with one\n"
            "With TIDE_HIDDEN set (an agent's shell, a build server), games show no window: run takes one of\n"
            "these or says so, and run --web opens no browser.\n"
            "\n"
@@ -191,8 +193,8 @@ int main(const int argc, char **argv)
 
     build_options opts = {.folder = "."};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, and a run with no window
-    const char *game_args[16] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, and a run with no window
+    const char *game_args[24] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
     bool once = false;     // run with no window: the game runs once, as it was built, and its exit code is tide's
@@ -200,7 +202,7 @@ int main(const int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 12) { // Room for the longest of them yet
+        if (run && game_arg_count > 20) { // Room for the longest of them yet
             fprintf(stderr, "tide: run takes each of its options once\n");
             return 2;
         }
@@ -236,6 +238,19 @@ int main(const int argc, char **argv)
             game_args[game_arg_count++] = argv[++i];
             game_args[game_arg_count++] = argv[++i];
             sized = true;
+        } else if (run && strcmp(a, "--seed") == 0) {
+            // Said before anything is built: the game would refuse it too
+            const char *seed = left >= 1 ? argv[i + 1] : "";
+            uint64_t value = 0;
+            const char *c = seed;
+            for (; *c >= '0' && *c <= '9' && value <= 2147483647u; c++) value = value * 10u + (uint64_t)(*c - '0');
+            if (c == seed || *c || value > 2147483647u) {
+                fprintf(stderr, "tide: --seed takes the seed of the matches the game starts, a whole number from 0 to 2147483647, "
+                                "like `--seed 7`\n");
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
