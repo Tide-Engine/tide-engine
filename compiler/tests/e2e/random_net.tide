@@ -1,0 +1,74 @@
+// A match on a network whose rolls depend on what players do. Every fighter
+// has a generator, and so does the table; a player's input says whether its
+// fighter rolls this tick, and how much the table rolls for. A client guesses
+// the other players' inputs, so it rolls wrong whenever one changes, and runs
+// those ticks again once the server says how they went.
+
+component Fighter
+{
+    Random random;
+    int rolls;
+    int total;
+}
+
+// Spawned by a fighter's rolls: seeded as it spawns, on every machine alike
+component Crate
+{
+    Random random;
+    int value;
+}
+
+// A lot of generators nothing touches, so the match is big from its start:
+// a player joining starts the match itself, with the server's seed, and is
+// only sent what changed since
+component Stone
+{
+    Random random;
+}
+
+singleton Table
+{
+    Random random;
+    int pot;
+    int seed;
+    int crates;
+}
+
+input Controls
+{
+    bool roll;
+    [Clamp(0, 100)]
+    int bet;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Table table, Time time)
+{
+    table.seed = time.seed;
+    for (var i = 0; i < 20000; i++) Spawn(Stone { });
+}
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Fighter { }, Owner { player = joined.player });
+}
+
+system Play(Controls controls, mut Fighter fighter, mut Table table)
+{
+    if (!controls.roll) return;
+    fighter.total += fighter.random.NextInt(1, 7);
+    fighter.rolls += 1;
+    table.pot += table.random.NextInt(controls.bet + 1);
+    if (fighter.random.NextInt(8) == 0)
+    {
+        Spawn(Crate { });
+        table.crates += 1;
+    }
+}
+
+system Open(mut Crate crate)
+{
+    if (crate.value == 0) crate.value = 1 + crate.random.NextInt(1000);
+    else if (crate.random.NextInt(120) == 0) this.Destroy();
+}

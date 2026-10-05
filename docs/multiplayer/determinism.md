@@ -24,11 +24,22 @@ NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. T
 - Inputs come from other machines, so NaN and infinite floats in them become the field's default before the game sees them (see [Input](../game/input.md)).
 - `Math.Clamp` always returns a value in range, `Math.Min` and `Math.Max` with one NaN return the other argument, and `Math.Normalize` gives zero for a zero vector, where dividing by its length would give NaN.
 
+## Random numbers
+
+A match that rolls dice still has to roll the same ones on every machine. In Tide a random number generator is data, a [`Random`](../language/math.md#random-numbers), and its state is in the world like any other field:
+
+- **The same numbers everywhere.** The generator is integer arithmetic (PCG32), and its floats are made from integers with exact operations, so every platform gives the same bits.
+- **In every snapshot.** A generator in a component or a singleton is part of the world's state and of its hash. A client that predicted a tick wrong goes back to the last world the server confirmed and runs the ticks again: the generators are back where they were then, and roll the same numbers.
+- **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
+- **Seeded by the match.** The machine that starts a match picks its seed, `Time.seed`, from the system's random number generator, so no two matches go the same. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
+
+Where nothing picks a seed (tests, benchmarks, a world a C host starts itself) it's 0, so a run repeats exactly.
+
 ## Order
 
 Everything that could run in a different order does so in a fixed one:
 
-- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere, and so does what a function changes through a `mut` parameter and what's read beside it.
+- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere, and so does what a function changes through a `mut` parameter and what's read beside it. A generator's rolls are such calls: in `float2(random.NextFloat(), random.NextFloat())`, x is rolled first on every platform.
 - Systems run in one order (see [Systems](../game/systems.md#order)), and structural changes and events apply in the order they were made.
 - Running systems in parallel will never change results: thread timing never decides the order of anything that can be seen.
 

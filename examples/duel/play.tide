@@ -492,7 +492,7 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
         menu.pickMatch = duel.match;
         menu.pickRound = duel.round;
         menu.picked = chosen;
-        Confetti(fx, first + stride * chosen, 30, 520, CardColor(Offer(duel.round, duel.draftSide, chosen)));
+        Confetti(fx, first + stride * chosen, 30, 520, CardColor(Offer(duel, chosen)));
     }
     var waiting = menu.pickMatch == duel.match && menu.pickRound == duel.round;
 
@@ -507,7 +507,7 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
         var lit = waiting ? menu.picked == slot : menu.focus == slot && online;
         var at = first + stride * slot + float2(0, (1 - EaseBack(come)) * 46 - (lit && !rows ? 9 : 0));
         var shown = Math.Saturate(come * 2) * (waiting && menu.picked != slot ? 0.3 : 1);
-        DraftCard(Offer(duel.round, duel.draftSide, slot), slot, at, size, lit, shown, rows);
+        DraftCard(Offer(duel, slot), slot, at, size, lit, shown, rows);
     }
 
     var heading = rows ? first.y - size.y * 0.5 - (tiny ? 16 : 44) : first.y - size.y * 0.5 - 62;
@@ -549,7 +549,7 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
     // Paper for the winner, now and then
     if (Math.Floor(fx.now * 2.2) != Math.Floor((fx.now - fx.dt) * 2.2) || age < fx.dt * 1.5)
     {
-        var place = Roll(fx);
+        var place = fx.random.NextFloat();
         Confetti(fx, float2(screen.x * (0.15 + place * 0.7), screen.y * 0.3), 26, 460, tint);
     }
 

@@ -1,0 +1,8 @@
+// expect: declare it as 'mut var random = ...' to change it
+scene Main { }
+component Die { int last; }
+system Roll(mut Die die)
+{
+    var random = Random(5);
+    die.last = random.NextInt(6);
+}

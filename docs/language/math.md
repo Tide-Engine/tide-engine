@@ -83,7 +83,119 @@ And these build values:
 if (Math.Hash(int2(x, y)) % 4 == 0) field.cells[x, y] = Material.Sand;
 ```
 
-Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value changes every bit of the result.
+Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value changes every bit of the result. With the match's seed, [`Time.seed`](#the-match-s-seed), no two matches get the same: `Math.Hash(int3(x, y, time.seed))`.
+
+## Random numbers
+
+`Math.Hash` keeps no state. A `Random` does: it's a random number generator whose state is 8 bytes of data, which live wherever the game puts them. Each `Next` call gives a number and steps the state.
+
+```csharp
+component Wanderer
+{
+    Random random;
+    float2 heading;
+}
+
+system Wander(mut Wanderer wanderer, mut Body body)
+{
+    // About twice a second, another way to go.
+    if (wanderer.random.NextInt(30) == 0) wanderer.heading = wanderer.random.NextFloat2Direction();
+    body.velocity = wanderer.heading * 3;
+}
+```
+
+| Method | What it gives |
+|---|---|
+| `NextInt()` | An int from 0 to 2147483647, like `Math.Hash`'s, so `%` never goes negative |
+| `NextInt(max)` | From 0 up to `max`, `max` excluded: `NextInt(6)` is 0 to 5 |
+| `NextInt(min, max)` | From `min` up to `max`, `max` excluded: `NextInt(1, 7)` is a die |
+| `NextFloat()` | A float from 0 up to 1, 1 excluded |
+| `NextFloat(max)` | From 0 up to `max`, `max` excluded |
+| `NextFloat(min, max)` | From `min` up to `max`, `max` excluded |
+| `NextBool()` | True or false, each as likely |
+| `NextFloat2()`, `NextFloat3()` | A vector with each component from 0 up to 1 |
+| `NextFloat2(min, max)`, `NextFloat3(min, max)` | Each component from `min`'s up to `max`'s: a point in a rectangle or a box |
+| `NextFloat2Direction()`, `NextFloat3Direction()` | A vector of length 1, every direction as likely |
+| `NextQuaternionRotation()` | A rotation, every one as likely |
+
+They follow Unity.Mathematics' `Random`. A range with nothing in it gives its start: `NextInt(0)` is 0, and `NextFloat(2, 1)` is 2.
+
+### Where a generator lives
+
+A `Random` is a value, like a `float3`: it goes in a field or a local, and where it is decides whose numbers they are.
+
+- **In a component**, every entity has a sequence of its own. A system that rolls for its entities still runs them on several threads at once, each from its own generator, with the same results.
+- **In a singleton**, it's the match's: one sequence, for what the whole match shares, like a deck.
+- **In [local state](../game/local-state.md)**, it's this machine's, for effects: sparks, shakes, anything the match doesn't see.
+- **In a local**, it lasts as long as the code that made it: `mut var random = Random(seed);`.
+
+```csharp
+singleton Deck
+{
+    Random random;
+    List<int> cards;
+}
+
+system Shuffle(mut Deck deck)
+{
+    // Each card trades places with one before it, or stays.
+    for (var i = deck.cards.count - 1; i > 0; i--)
+    {
+        var other = deck.random.NextInt(i + 1);
+        var card = deck.cards[i];
+        deck.cards[i] = deck.cards[other];
+        deck.cards[other] = card;
+    }
+}
+```
+
+A `Next` call changes the generator, so the code that rolls needs it `mut`: `mut Wanderer wanderer`, `mut Deck deck`, a `mut var`. That's all a system says, and the rest follows as for any other data: two systems that roll with the same component run one after the other, a generator in the match is in every snapshot, and a tick a client runs again after a wrong prediction rolls the same numbers again.
+
+A function that rolls takes the generator as `mut`:
+
+```csharp
+float2 Scatter(mut Random random, float spread)
+{
+    return random.NextFloat2Direction() * random.NextFloat(spread);
+}
+```
+
+Rolls run in the order they're written, left to right: in `float2(random.NextFloat(), random.NextFloat())`, x is rolled first, on every platform.
+
+### Seeds
+
+A generator the game leaves alone is seeded by the engine, so there's nothing to do for the common case:
+
+- A `Random` field of a component is seeded as its entity spawns (or as the component is added), from the match's seed and the entity. Two entities spawned alike in the same tick still get sequences of their own.
+- A `Random` field of a singleton is seeded as the match starts, from the match's seed.
+- In local state, each gets a sequence of its own too, the same every run: a local component's, a local singleton's, and a `local Random` field of a match component, which is the entity's own on this machine.
+
+`Random(seed)` makes one for a seed of the game's, an `int` or a `long`: the same seed, the same numbers. Seeds next to each other (1, 2, 3) give sequences that have nothing to do with each other.
+
+```csharp
+Spawn(Wanderer { random = Random(7) }); // Every match, the same wanderer
+```
+
+A `Random` has one field, `long state`, which is all there is to it: copy it to keep where a sequence is, and set it to go on from there. A state of 0 is a generator nothing seeded yet. It still rolls, but the same numbers as every other one at 0: what a `Random` in a list starts as, since the engine seeds the fields of components and singletons, and no further.
+
+### The match's seed
+
+`Time.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so no two matches go the same. It's part of the match, like everything in `Time`: a player who joins gets it with the world, and nobody sends it. The engine seeds the match's generators from it, and a game reads it where it wants numbers that keep no state:
+
+```csharp
+// The same cave on every machine, and another one every match.
+if (Math.Hash(int3(x, y, time.seed)) % 4 == 0) field.cells[x, y] = Material.Rock;
+```
+
+It's 0 where nothing picks one: tests, benchmarks, and a world a C host starts with `tide_world_init`. A run there repeats exactly.
+
+::: warning Every player can read it
+The seed is in the world, and every player's machine has the whole world for now. A game whose players mustn't know what comes next, like the order of a deck, can't keep that from someone who reads their own machine's memory yet. Scenes only some players see are coming (see [Networking](../multiplayer/networking.md)).
+:::
+
+### Not on the GPU
+
+A [frag or vert](../game/shaders.md) can't roll: a generator's state is the CPU's. Roll in the view and keep the number in a field the shader reads.
 
 ## Forgiving with bad values
 

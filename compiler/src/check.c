@@ -244,7 +244,10 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), name.ptr, (size_t)name.len);
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
-        if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) return d;
+        if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
+            if (d == prog->random) d->named = true; // Generated C only has it in games that name it
+            return d;
+        }
     }
     return NULL;
 }
@@ -1276,6 +1279,7 @@ static void check_default_args(checker *c, expr *e)
 
 static bool check_component_side(const checker *c, const expr *arg, const decl *d);
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of);
+static type check_random_seeded(checker *c, expr *e);
 
 static comp_mask bit(const decl *component)
 {
@@ -2248,6 +2252,7 @@ static type check_call(checker *c, expr *e)
     if (fn) return check_function_call(c, e, fn);
 
     decl *const d = find_type(c, e->name, e->at);
+    if (d && d == c->prog->random) return check_random_seeded(c, e);
     if (d && d->kind == DECL_ENUM) return check_enum_conversion(c, e, d); // Card(2)
 
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -2281,6 +2286,31 @@ static type check_call(checker *c, expr *e)
         suggest_note(&s);
     }
     return T_ERR;
+}
+
+// Random(seed): a generator for a seed, an int or a long.
+static type check_random_seeded(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (gpu_refuses(c, e->at, "make a Random", "the view rolls what it needs and keeps it in a field the GPU reads")) return T_ERR;
+    const type result = decl_type(c->prog->random);
+    if (e->args.count != 1) {
+        diag_error(e->at, "Random takes a seed, like 'Random(42)', not %d arguments", e->args.count);
+        diag_note("'Random { }' is one nothing seeded yet, which the engine seeds as its entity spawns");
+        return result;
+    }
+    const type seed = e->args.items[0]->type;
+    if (seed.kind != TY_ERROR && !type_assignable(T_LONG_, seed)) {
+        diag_error(e->args.items[0]->at, "a Random's seed is an int or a long, not %s", type_name(seed));
+        if (seed.kind == TY_FLOAT) diag_note("'int(x)' makes a float an int");
+        else diag_note("'Math.Hash(value)' makes an int of an int2, int3 or int4");
+        return result;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = "tide_random_seeded";
+    e->arg_want.count = 0;
+    vec_push(e->arg_want, T_LONG_);
+    return result;
 }
 
 // Does `e` name a built-in owner like Math or quaternion, rather than a variable?
@@ -3640,6 +3670,29 @@ static type check_method(checker *c, expr *e)
         }
         return result;
     }
+    // random.NextInt(6): a Random's methods. Each steps the generator, so it's
+    // called on one the code can change, as a struct's mut methods are.
+    if (obj.kind == TY_STRUCT && obj.decl == c->prog->random) {
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+        }
+        if (gpu_refuses(c, e->at, "roll random numbers", "the view rolls what it needs and keeps it in a field the GPU reads")) {
+            return T_ERR;
+        }
+        const type result = resolve_builtin_call(str_from("Random"), e);
+        if (result.kind == TY_ERROR) return result;
+        check_default_args(c, e);
+        e->call = CALL_RANDOM;
+        decl called = {0}; // For what the messages call it
+        called.name = e->name;
+        if (through_element(e->object)) {
+            diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't step it", STR_ARG(e->name));
+            diag_note("take it out, roll, and put it back: 'var r = items[i]; r." STR_FMT "(...); items[i] = r;'", STR_ARG(e->name));
+        } else {
+            check_writable(c, e->object, &called, NULL);
+        }
+        return result;
+    }
     // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
     // stats.IsDead(), unit.Heal(5): a struct's or component's method.
@@ -3840,7 +3893,10 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 {
     const type t = l.kind == TY_STRUCT ? l : r;
     const bool comparison = op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
-    if (unary) {
+    if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
+        diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
+                  type_name(t), STR_ARG(t.decl->fields.items[0].name), op_symbol(op), STR_ARG(t.decl->fields.items[0].name));
+    } else if (unary) {
         diag_note("declare it in the struct, like '%s operator %s(%s value)'", type_name(t), op_symbol(op), type_name(t));
     } else if (op == T_EQ || op == T_NE) {
         diag_note("compare their fields instead, or declare 'bool operator %s(%s a, %s b)' in %s", op_symbol(op),
@@ -4486,6 +4542,7 @@ static type check_member(checker *c, expr *e)
                     return T_ERR;
                 }
                 e->field = f;
+                if (f == c->prog->seed) c->prog->uses_seed = true; // Time.seed: the world has it for the code that reads it
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
                     param *query = e->object->local->query;
                     for (int k = 0; k < query->query.count; k++) {
@@ -4625,6 +4682,10 @@ static type check_name(checker *c, expr *e)
             snprintf(lower, sizeof lower, STR_FMT, STR_ARG(d->name));
             lower[0] = (char)(lower[0] >= 'A' && lower[0] <= 'Z' ? lower[0] - 'A' + 'a' : lower[0]);
             diag_note("singletons are parameters: '(" STR_FMT " %s)'", STR_ARG(d->name), lower);
+        }
+        if (d == c->prog->random) { // Random.NextInt(6), as an engine with one generator for everything has it
+            diag_note("a Random is a generator's state, which lives where the game puts it: keep one in a component "
+                      "or a singleton, 'Random random;', and roll with it, 'dice.random.NextInt(6)'");
         }
         return T_ERR;
     }
@@ -7279,8 +7340,10 @@ static bool is_constant(const checker *c, const expr *e)
         return is_constant(c, e->lhs) && is_constant(c, e->rhs);
     case E_CONDITIONAL:
         return is_constant(c, e->cond) && is_constant(c, e->lhs) && is_constant(c, e->rhs);
-    case E_CALL: // A built-in type's constructor, an enum's conversion, and a grid's size
-        return (builtin_type_named(e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)) && all_constant(c, e);
+    case E_CALL: // A built-in type's constructor, an enum's conversion, a grid's size, and a Random's seed
+        return (builtin_type_named(e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
+                || lookup(c->prog, c->unit, e->name, NAME_TYPE, &other) == c->prog->random)
+            && all_constant(c, e);
     case E_METHOD: // Math.Max(...), and Combat.Stance(2)
         return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
@@ -9272,7 +9335,7 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID:
+    case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw2D.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
@@ -9394,7 +9457,29 @@ static void add_builtins(program *prog)
     const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
+    // int seed: the match's seed, from 0 to 2147483647, which the machine that
+    // starts the match picks. Last, as it's only there in games that use it
+    // (see drop_unused_seed).
+    field seed_field = {0};
+    seed_field.name = str_from("seed");
+    seed_field.type_name = str_from("int");
+    vec_push(time->fields, seed_field);
+    prog->seed = &time->fields.items[time->fields.count - 1];
     prog->time = time;
+
+    // struct Random { long state; }: a random number generator's state, as
+    // tide/random.h's tide_random, which generated C uses for it. Its methods
+    // are built in (builtins.h), and so is Random(seed).
+    decl *random = NEW(decl);
+    random->kind = DECL_STRUCT;
+    random->name = str_from("Random");
+    random->builtin = true;
+    random->c_name = "tide_random";
+    field state_field = {0};
+    state_field.name = str_from("state");
+    state_field.type_name = str_from("long");
+    vec_push(random->fields, state_field);
+    prog->random = random;
 
     // What a frag and a vert take beside the game's state, as parameters:
     // Pixel { float2 position; float depth; float3 world; }, where a frag's
@@ -9614,6 +9699,7 @@ static void add_builtins(program *prog)
 
     VEC(decl *) decls = {0};
     vec_push(decls, time);
+    vec_push(decls, random);
     vec_push(decls, owner);
     vec_push(decls, visibility);
     vec_push(decls, prediction);
@@ -11405,6 +11491,33 @@ static void schedule(decl **list, const int n)
     }
 }
 
+// Whether a value of type `t` is a Random or has one in it, in its own fields
+// or its structs': a generator the engine seeds where it's the match's or an
+// entity's (see gen_seeding in codegen.c). One in a list is the game's to seed.
+static bool holds_random(const program *prog, const type t)
+{
+    if (t.kind != TY_STRUCT) return false;
+    if (t.decl == prog->random) return true;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_random(prog, t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+// Time.seed is in the world only when something uses it: code that reads it,
+// or a Random in the match's components or singletons, which the engine seeds
+// from it. Every other game's world, hash and header are what they'd be
+// without it. It's Time's last field, so the others stay where they are.
+static void drop_unused_seed(program *prog)
+{
+    for (int i = 0; i < prog->decls.count && !prog->uses_seed; i++) {
+        const decl *d = prog->decls.items[i];
+        if ((d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) || d->is_local) continue;
+        for (int k = 0; k < d->fields.count; k++) prog->uses_seed |= holds_random(prog, d->fields.items[k].type);
+    }
+    if (!prog->uses_seed) prog->time->fields.count--;
+}
+
 // The players who see a scene are bits of its hidden tide_players, 32 a word:
 // a game that takes more players than a word has gets the words after it,
 // tide_players1 and on, once its maxPlayers is known.
@@ -11455,7 +11568,8 @@ bool check(program *prog)
     add_scene_player_words(prog);
     diag_phase("declarations");
     for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_STRUCT) order_struct(prog, prog->decls.items[i]);
+        // Random is among the program's structs once something names it (below), or a struct holds one
+        if (prog->decls.items[i]->kind == DECL_STRUCT && prog->decls.items[i] != prog->random) order_struct(prog, prog->decls.items[i]);
         if (prog->decls.items[i]->kind == DECL_ENUM) {
             c.unit = prog->decls.items[i]->unit;
             check_enum(&c, prog->decls.items[i]);
@@ -11511,6 +11625,8 @@ bool check(program *prog)
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
     diag_phase("checking code");
+    drop_unused_seed(prog);
+    if (prog->random->named) order_struct(prog, prog->random);
     check_sends(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);

@@ -42,6 +42,7 @@ tide_e2e_test(math)
 tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
+tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
@@ -114,6 +115,7 @@ tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
+tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
 tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
 tide_e2e_test(big_world)
