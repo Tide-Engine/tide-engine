@@ -70,6 +70,8 @@ static void usage(void)
            "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
            "  --scale <s>           as on a display scaled this much: 1.5, 2 (1 without it)\n"
            "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
+           "With TIDE_HIDDEN set (an agent's shell, a build server), games show no window: run takes one of\n"
+           "these or says so, and run --web opens no browser.\n"
            "\n"
            "add: a package from git is github.com/owner/repo (or its URL), at the newest commit of\n"
            "its default branch; @branch after it follows a branch, @v1 the newest v1.x.y tag, and\n"
@@ -257,6 +259,15 @@ int main(const int argc, char **argv)
         fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
                 once ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
         return 2;
+    }
+    if (run && sys_hidden()) {
+        // Nobody watches: the game shows no window, so its run has to end by itself, and no browser opens
+        if (!once && !opts.web && !opts.android) {
+            fprintf(stderr, "tide: TIDE_HIDDEN is set, so the game shows no window, and nothing else would end its run: give run "
+                            "--frames <n> (and --capture <file.png> for a picture of the last one), or --script <file>\n");
+            return 2;
+        }
+        open_page = false;
     }
     int code = 0;
     if (schedule) {
