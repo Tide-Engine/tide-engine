@@ -103,20 +103,6 @@ typedef struct tide_textref tide_textref;
 #define TIDE_GUI_MAX_CLAIM_RECTS 256 // Places views claim the pointer at, per frame
 #endif
 
-// Where GUILayout.Area puts an area, named as Unity's TextAnchor. Tide's
-// Anchor enum has the same values.
-typedef enum tide_anchor {
-    TIDE_ANCHOR_UPPER_LEFT,
-    TIDE_ANCHOR_UPPER_CENTER,
-    TIDE_ANCHOR_UPPER_RIGHT,
-    TIDE_ANCHOR_MIDDLE_LEFT,
-    TIDE_ANCHOR_MIDDLE_CENTER,
-    TIDE_ANCHOR_MIDDLE_RIGHT,
-    TIDE_ANCHOR_LOWER_LEFT,
-    TIDE_ANCHOR_LOWER_CENTER,
-    TIDE_ANCHOR_LOWER_RIGHT,
-} tide_anchor;
-
 // How the GUI's own widgets look: their colors, and how round their corners
 // are. Tide's GUITheme has the same fields. Every frame starts with the
 // default (tide_gui_theme_default), and a theme is that with what it changes.

@@ -33,6 +33,11 @@ static decl shape_struct;
 static const type T_SHAPE = {TY_STRUCT, &shape_struct};
 static const decl *shape_decl;
 
+// And the Font enum, which Draw2D.Text and Draw2D.MeasureText take.
+static decl text_font;
+static const type T_FONT = {TY_ENUM, &text_font};
+static const decl *font_decl;
+
 // The GUITheme and GUIControl structs, which the GUI takes and gives, the same way.
 static decl theme_struct, control_struct;
 static const type T_THEME = {TY_STRUCT, &theme_struct};
@@ -57,10 +62,11 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape)
+void builtins_use(const decl *anchor, const decl *shape, const decl *font)
 {
     anchor_decl = anchor;
     shape_decl = shape;
+    font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
     bytes_decl = paths_decl = NULL;
@@ -105,6 +111,7 @@ static type real_type(const type t)
     if (t.decl == &io_paths && paths_decl) return (type){TY_LIST, (decl *)paths_decl};
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
+    if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
     if (t.decl == &mesh_vertices && vertices_decl) return (type){TY_LIST, (decl *)vertices_decl};
@@ -128,6 +135,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_transforms) return "List<float4x4>";
     if (t.decl == &mesh_instances) return "List<T>";
     if (t.decl == &shape_struct) return "Shape";
+    if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
     return t.kind == TY_ENUM && !t.decl ? "Anchor" : type_name(t);
@@ -470,16 +478,28 @@ static void build_signatures(void)
                "bottom, an outline inside its edge, and an edge that can fade outwards (`soft` above 0: a glow, a "
                "shadow) or inwards (under 0).",
                1, &T_SHAPE);
-    signature *text = add("Draw2D", "Text", T_NONE, "tide_draw_text", 3, T_STR, T_F2, T_F);
-    text->argc = 4;
-    text->params[3] = T_COLOR;
-    describe(text, "text, position, size, color", "Text: `position` is its top left corner and `size` its height.");
-    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 2, T_STR, T_F, T_NONE),
-             "text, size",
-             "How big `Draw2D.Text` would draw `text` at `size` now: the width of its widest line in x and the height "
-             "of its lines in y, in the units the Draw2D calls are in. One line is `size` high. Center a line at "
-             "`center` with `Draw2D.Text(text, center - Draw2D.MeasureText(text, size) * 0.5, size, color)` on the "
-             "screen, where y goes down.");
+    static const char text_doc[] =
+        "Text, `size` high: a line's height, with its capitals in the line's middle. `position` is its top left "
+        "corner, or with an `anchor`, that place of its box: `Anchor.MiddleCenter` centers it there, "
+        "`Anchor.UpperRight` ends its first line there. Upper is towards the top of the screen, under a camera too, "
+        "and each line of several is against the anchor's side. `font` is its weight: `Font.Regular` (the "
+        "default) or `Font.Bold`.";
+    add_draw2d("Text", "tide_draw_text", "text, position, size, color", text_doc, 4, &T_STR, &T_F2, &T_F, &T_COLOR);
+    add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, anchor", text_doc,
+               5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_ANCHOR);
+    add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, font", text_doc,
+               5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_FONT);
+    add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, anchor, font", text_doc,
+               6, &T_STR, &T_F2, &T_F, &T_COLOR, &T_ANCHOR, &T_FONT);
+    static const char measure_doc[] =
+        "How big `Draw2D.Text` would draw `text` at `size` now, in the weight `font` (`Font.Regular` without "
+        "one): the width of its widest line in x and the height of its lines in y, in the units the Draw2D calls are "
+        "in. One line is `size` high. It's the box an anchor names a place of: "
+        "`Draw2D.Text(text, center, size, color, Anchor.MiddleCenter)` centers it.";
+    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 2, T_STR, T_F, T_NONE), "text, size",
+             measure_doc);
+    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 3, T_STR, T_F, T_FONT), "text, size, font",
+             measure_doc);
     static const char mesh_doc[] =
         "Triangles: three of `indices` each, places in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
@@ -1074,6 +1094,25 @@ type resolve_builtin_call(const str owner, expr *e)
         changes |= s->mut != 0;
     }
     if (changes) diag_note("a mut argument is the variable it changes, so its type is exactly the parameter's");
+    // A text's anchor and its weight: which comes first, and what measuring takes of them
+    int anchor_at = -1, font_at = -1;
+    for (int i = 0; i < e->args.count; i++) {
+        const type t = e->args.items[i]->type;
+        if (t.kind == TY_ENUM && t.decl == anchor_decl && anchor_at < 0) anchor_at = i;
+        if (t.kind == TY_ENUM && t.decl == font_decl && font_at < 0) font_at = i;
+    }
+    if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "Text") && font_at >= 0 && anchor_at > font_at) {
+        diag_note("the anchor comes before the font: 'Draw2D.Text(text, position, size, color, Anchor.MiddleCenter, "
+                  "Font.Bold);'");
+    } else if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "Text") && (anchor_at >= 0 || font_at >= 0)
+               && (anchor_at >= 0 ? anchor_at : font_at) < 4) {
+        diag_note("an anchor and a font come after the color: 'Draw2D.Text(text, position, size, Color.white, "
+                  "Anchor.MiddleCenter);'");
+    }
+    if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "MeasureText") && anchor_at >= 0) {
+        diag_note("a text is as big at every anchor: MeasureText gives its box, which an anchor names a place of, so "
+                  "leave the anchor out");
+    }
     if (str_eq_c(owner, "Draw2D") && str_eq_c(e->name, "Shape")) {
         diag_note("a Shape is written with the fields it sets, like 'Draw2D.Shape(Shape { center = position, size = "
                   "float2(4, 2), radius = 1, color = Color.red });'");
