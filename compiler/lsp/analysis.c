@@ -458,6 +458,13 @@ static const param *query_binding(const param *query, const str name)
     return NULL;
 }
 
+// Card(2) or Combat.Stance(2): a call that names an enum, converting an int
+// to it. The checker says which enum even where it refused the argument.
+static bool converts_enum(const expr *e)
+{
+    return e->ctor == CTOR_ENUM && (e->call == CALL_NONE || e->call == CALL_CONSTRUCT) && e->type_decl;
+}
+
 static void walk_expr(const expr *e)
 {
     if (!e) return;
@@ -609,7 +616,11 @@ static void walk_expr(const expr *e)
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
-        if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
+        if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
+            o.kind = OCC_TYPE;
+            o.decl = e->type_decl;
+            add_occ(o);
+        } else if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
             o.kind = OCC_TYPE;
             add_occ(o);
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
@@ -642,7 +653,12 @@ static void walk_expr(const expr *e)
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>
         if (e->type_arg.len > 0) type_ref(e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
-        if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
+        if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
+            o.kind = OCC_TYPE;
+            o.decl = e->type_decl;
+            o.object_type = (type){TY_ERROR, NULL};
+            add_occ(o);
+        } else if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
@@ -1888,6 +1904,21 @@ static void describe_world(const decl *d, sb *out)
     sb_put(out, ".");
 }
 
+static const char *name_for(const decl *d);
+
+// What Card(number) gives, for its hover and its signature.
+static void describe_enum_conversion(const decl *d, sb *out)
+{
+    const char *name = name_for(d);
+    sb_printf(out, "`%s(number)` is the `%s` with that number, as `int(value)` is a value's number. A number none of its "
+                   "members has stays as it is", name, name);
+    if (d->width == 1 || d->width == 2) {
+        sb_printf(out, ", cut to the %s the enum is stored in: its low %d bits, as `byte(x)` keeps an int's low 8",
+                  d->width == 1 ? "byte" : "ushort", d->width * 8);
+    }
+    sb_put(out, ".");
+}
+
 // Markdown for a hover over `o`.
 static void describe(const occurrence *o, sb *out)
 {
@@ -1924,6 +1955,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, "\n\nSent with `Send`, and handled by `event(...)` handlers at the end of the tick.");
             } else if (o->decl->is_local) {
                 sb_put(out, "\n\nLocal: this machine's own, never sent, rolled back or hashed. Views change it; the match can't see it.");
+            }
+            if (o->decl->kind == DECL_ENUM && o->call == CALL_CONSTRUCT) { // Card(2)
+                sb_put(out, "\n\n");
+                describe_enum_conversion(o->decl, out);
             }
         } else {
             code_block(out, type_name(o->type));
@@ -2080,6 +2115,10 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
                       : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
+                                                         "previous one started, for what isn't the match's: particles, "
+                                                         "menus, a camera's shake. Local code reads it, and the "
+                                                         "functions it calls. The match's is `Time.dt`."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
@@ -2237,6 +2276,8 @@ static void describe(const occurrence *o, sb *out)
             {"Max", "[Max(x)]", "Keeps this input field at most x, before Sanitize runs."},
             {"Snap", "[Snap]", "Views see this field as it is at the latest tick, not blended between the last two: "
                                "for angles that wrap and values that jump."},
+            {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
+            {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, when its name isn't the function's own."},
         };
@@ -2896,6 +2937,7 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
     }
     case OCC_OWNER:
         if (str_eq_c(o->owner, "Devices")) return cdefs_find("tide_devices", out);
+        if (str_eq_c(o->owner, "Frame")) return false; // The game's own local state keeps it: no engine header does
         return cdefs_find_header(builtin_draw_owner(o->owner)                                         ? "draw.h"
                                  : str_eq_c(o->owner, "File") || str_eq_c(o->owner, "Directory")
                                        || str_eq_c(o->owner, "Path") || str_eq_c(o->owner, "Application")
@@ -4638,9 +4680,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             return;
         }
         if (n == 1 && builtin_owner(base)) {
-            const bool io_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
-                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage");
-            if (io_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
+            // This machine's files and its frame's length: local code's, and its functions'
+            const bool local_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
+                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Frame");
+            if (local_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
             const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
@@ -4751,7 +4794,14 @@ static void complete_structs(completion *c)
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
-        if (d->kind == DECL_ENUM) item(c, name_for(d), CK_ENUM, "enum", NULL, NULL);
+        if (d->kind == DECL_ENUM) { // With how a value of it is written: a member, or from its number
+            sb doc = {0};
+            if (d->members.count > 0) {
+                sb_printf(&doc, "A member is written `%s." STR_FMT "`. ", name_for(d), STR_ARG(d->members.items[0].name));
+            }
+            describe_enum_conversion(d, &doc);
+            item(c, name_for(d), CK_ENUM, "enum", doc.data, NULL);
+        }
     }
 }
 
@@ -5058,6 +5108,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "File", CK_MODULE, "Reads and writes this machine's files", NULL, NULL);
         item(c, "Directory", CK_MODULE, "Lists and manages this machine's directories", NULL, NULL);
         item(c, "Application", CK_MODULE, "Persistent save and temporary cache paths", NULL, NULL);
+        item(c, "Frame", CK_MODULE, "This machine's frame: how long it is, for what isn't the match's", NULL, NULL);
         if (sc.decl->is_async) item(c, "Storage", CK_MODULE, "Await persistent storage commits", NULL, NULL);
     }
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
@@ -5669,6 +5720,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Min", CK_FUNCTION, "[Min(x)]", "Keeps the field at least x, before Sanitize runs.", "Min($1)");
             item(&c, "Max", CK_FUNCTION, "[Max(x)]", "Keeps the field at most x, before Sanitize runs.", "Max($1)");
             item(&c, "Snap", CK_FUNCTION, "[Snap]", "Views see the field as it is, not blended between ticks.", "Snap");
+            item(&c, "Position", CK_FUNCTION, "[Position]", "Provisional: linear tick interpolation with smooth visual correction error.", "Position");
+            item(&c, "Rotation", CK_FUNCTION, "[Rotation]", "Provisional: shortest rotation interpolation and smooth correction error: float radians or quaternion.", "Rotation");
         }
         break;
 
@@ -6172,7 +6225,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     enum { DECL_WORDS = 14 };
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
-                                           "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
+                                           "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
@@ -6586,6 +6639,10 @@ static int call_param_names(const expr *call, str *names, const int max)
         }
         return count;
     }
+    if (call->call == CALL_CONSTRUCT && call->ctor == CTOR_ENUM) { // Card(number)
+        if (max > 0) names[count++] = str_from("number");
+        return count;
+    }
     label_list list = {0};
     switch (call->call) {
     case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: {
@@ -6824,6 +6881,28 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(name, call_forms[i].name)) continue;
             for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
+        }
+    }
+    if (s.shown == 0) {
+        // An enum's name converts an int: the enum the call resolved to, or
+        // while it's half written, the one the names before the parenthesis say.
+        const occurrence *o = occurrence_at(DOC->toks[callee].at);
+        const decl *converted = o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_ENUM ? o->decl : NULL;
+        int first = callee;
+        while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
+        const str written = {DOC->toks[first].text.ptr,
+                             (int)(DOC->toks[callee].text.ptr + DOC->toks[callee].text.len - DOC->toks[first].text.ptr)};
+        for (int i = 0; !converted && i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind != DECL_ENUM || d->builtin) continue;
+            if (first == callee ? str_eq(d->name, name) && visible_by_name(d) : str_eq(d->qualified, written)) converted = d;
+        }
+        if (converted) {
+            sb label = {0};
+            sb doc = {0};
+            sb_printf(&label, "%s(int number)", name_for(converted));
+            describe_enum_conversion(converted, &doc);
+            add_signature(&s, label.data, doc.data);
         }
     }
     if (s.shown == 0) {

@@ -107,11 +107,13 @@ tide_e2e_test(devices)
 tide_e2e_test(pause)
 tide_e2e_test(claims) # Widgets a view draws itself: what's typed, and claiming the pointer and the keyboard
 tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which the window says
+tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
 tide_e2e_test(blend)
+tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
 tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out

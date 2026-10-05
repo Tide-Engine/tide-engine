@@ -50,6 +50,7 @@ struct Batch2
 }
 
 enum Mode { Plain, Bright }
+enum Shade : byte { Light, Mid, Dark }
 
 struct Finish
 {
@@ -386,6 +387,11 @@ frag Sink(Corner3 vertex, mut Color color, Marks marks)
     float pick = mode == Mode.Bright ? 1 : 0;
     Pair usual = default;
     if (!Near(pick, 1) || !Near(usual.b, 2)) ok = false;
+
+    // An enum from its number, and one stored as a byte, which keeps the number's low 8 bits here as on the CPU
+    int number = int(mode);
+    if (Mode(number) != Mode.Bright || Mode(number - 1) != Mode.Plain) ok = false;
+    if (Shade(number + 257) != Shade.Dark || int(Shade(number + 511)) != 0 || int(Shade(number - 2)) != 255) ok = false;
 
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;

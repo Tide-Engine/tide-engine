@@ -81,6 +81,9 @@ typedef struct tide_host_game {
     // Graphics references in retained local state: native targets transfer to
     // the new build; a new address space recreates them. Optional for C hosts.
     void (*rebind_resources)(void *local, bool same_memory);
+    // Optional: accumulated visual errors for tagged match fields. The context
+    // belongs to this synchronous call; it never changes simulation state.
+    void (*correct_views)(void *local, const tide_view_correction *correction);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -163,6 +166,18 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     tide_gui_hide(&tide_run_gui, &sampled); // A click on a button isn't the game's
     tide_run_game->sample_input(&sampled, tide_run_local, input);
     tide_devices_consume(&tide_run_devices);
+}
+
+static inline void tide_run_correct_views(void *user, const tide_view_correction *correction)
+{
+    (void)user;
+    if (tide_run_game->correct_views) tide_run_game->correct_views(tide_run_local, correction);
+}
+
+static inline void tide_run_refresh_view_corrector(void)
+{
+    tide_session_set_view_corrector(tide_run_session,
+                                   tide_run_game->correct_views ? tide_run_correct_views : NULL);
 }
 
 // Local commands waiting for transport capacity belong to the match whose
@@ -400,6 +415,7 @@ static inline tide_session *tide_run_new_session(void)
         // To keep running predicted ticks again within a frame's budget. A run
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
+        .correct_views = tide_run_game->correct_views ? tide_run_correct_views : NULL,
     });
 }
 
@@ -516,6 +532,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
 
     tide_session *s = tide_run_session;
+    // Existing visual errors age before this update adds fresh corrections.
+    game->frame_time(tide_run_local, seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
     if (tide_platform_room_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -541,8 +559,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
-    game->frame_time(tide_run_local, seconds);
     game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
+    tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
