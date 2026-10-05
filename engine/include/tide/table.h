@@ -76,16 +76,22 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, uint32_t row, uint
                         const void *value);
 
 // A chunk's lanes of a component (columns `first` on, `lanes` of them), for a
-// loop over its rows to change: where to write each lane's rows, into `out`.
-// A page this table alone has is written in place. One its snapshots share is
-// copied into memory of this thread's first, so that a loop which changes
-// nothing leaves the page shared, with its hash good: tide_table_lanes_end
-// puts each copy whose rows changed into a page of the table's own, and lets
-// the rest go. Ends come in the reverse order of their begins, and
-// tide_table_lanes_reserve comes before a chunk's begins with the most bytes
-// they'll copy, so the memory never moves under them.
-void tide_table_lanes_reserve(uint32_t bytes);
-void tide_table_lanes_begin(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes, uint8_t **out);
+// loop over its rows to change: where each lane's rows are read, into `in`,
+// and where they're written, into `out`.
+//
+// With `apart`, which a loop that writes every row of the chunk can ask for,
+// they're two places: each lane is read where it is and written into a page
+// of its own, with nothing copied first, which is all a page a snapshot shares
+// costs then. Without it they're one place: a page this table alone has, in
+// place, or a copy of one its snapshots share.
+//
+// Either way a loop which changes nothing leaves the page as it was, shared
+// and with its hash good: tide_table_lanes_end makes each page whose rows
+// changed the table's, and lets the rest go. tide_table_lanes_shared says
+// whether any of the lanes' pages is shared, which is when apart pays.
+bool tide_table_lanes_shared(const tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes);
+void tide_table_lanes_begin(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes, bool apart,
+                            const uint8_t **in, uint8_t **out);
 void tide_table_lanes_end(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
                           uint8_t *const *out);
 

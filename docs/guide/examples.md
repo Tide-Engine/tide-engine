@@ -2,6 +2,8 @@
 
 Many pages of these docs have a small game beside the code they explain. The source shown is the whole program, built for the web as it is, and it runs in the page. An example starts when you scroll to it and stops once it's well off screen, so only what you're looking at runs. **Restart** starts it over, and **Stop** ends it until you press **Run** again.
 
+The page scrolls over an example: the wheel always does, and on a touchscreen so does a swipe that starts on one. Click or tap an example to play it. It then has the keyboard, and on a touchscreen your swipes too, until you click or tap the page somewhere else; its frame is outlined meanwhile.
+
 Some examples put two players side by side. Each frame is a machine of its own, and the two meet in a [room](../multiplayer/matches.md#rooms), as two browsers anywhere would.
 
 ## Two machines
