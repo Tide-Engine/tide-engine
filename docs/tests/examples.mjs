@@ -63,14 +63,18 @@ const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '-
 let socket;
 let closeBrowser;
 try {
+    // Chrome says where its debugger listens once it's up. On a machine that
+    // never ran it, or a busy one, that can take most of a minute, so there's
+    // no deadline of ours: one would only measure the machine. If Chrome ends
+    // first, it never will say, and what it did say is the error.
     const endpoint = await new Promise((done, fail) => {
-        const timeout = setTimeout(() => fail(new Error('Chrome did not start')), 20000);
         let log = '';
         child.on('error', fail);
+        child.on('exit', (code) => fail(new Error(`Chrome ended before it started (${code}):\n${log}`)));
         child.stderr.on('data', (data) => {
             log += data;
             const match = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(log);
-            if (match) { clearTimeout(timeout); done(`http://127.0.0.1:${match[1]}`); }
+            if (match) done(`http://127.0.0.1:${match[1]}`);
         });
     });
     const target = await (await fetch(`${endpoint}/json/new?about:blank`, { method: 'PUT' })).json();

@@ -16,7 +16,8 @@
 //
 // Each step sets what it's about, lets the pings settle, then checks what they
 // are on the whole over the second after. The page's time is made up
-// (cmake/WebTest.cmake), so none of it rests on how fast the machine is.
+// (cmake/WebTest.cmake), and a step's starts at its first answer, so none of
+// it rests on how fast the machine is.
 
 #include <stdio.h>
 
@@ -151,7 +152,8 @@ static const char *const names[DONE] = {"no lag", "a lag of 200, untold", "told"
                                         "a lag of 50", "hosting"};
 
 static int step;
-static double began;   // When the step did
+static bool live;      // The step heard an answer: its time counts from then
+static double began;
 static double pings;   // Its pings, added up
 static double answers; // ...and what its answers took
 static int count;
@@ -161,17 +163,22 @@ static int frame(void *user, const float seconds)
     (void)user;
     now += seconds;
     const bool heard = exchange();
+    // A step's time starts at its first answer, and it checks 20 pings at
+    // least: the page's made-up time can leap while the browser is busy (as
+    // it starts, on a slow machine), and a step timed from before that would
+    // be over with nothing measured.
+    if (!live) {
+        if (!heard) return TIDE_KEEP_RUNNING;
+        live = true;
+        began = now;
+    }
     if (now - began < settle[step]) return TIDE_KEEP_RUNNING;
     if (heard) {
         pings += ping_ms;
         answers += (double)answer_ms;
         count++;
     }
-    if (now - began < settle[step] + WINDOW) return TIDE_KEEP_RUNNING;
-    if (count == 0) {
-        printf("FAIL: %s: nothing came back\n", names[step]);
-        return 1;
-    }
+    if (now - began < settle[step] + WINDOW || count < 20) return TIDE_KEEP_RUNNING;
     const double ping = pings / count;
     printf("%s: a ping of %.1f ms, answers read after %.1f\n", names[step], ping, answers / count);
 
@@ -223,7 +230,7 @@ static int frame(void *user, const float seconds)
         break;
     }
     step++;
-    began = now;
+    live = false;
     pings = answers = 0.0;
     count = 0;
     if (step == DONE) return failures == 0 ? 0 : 1;
