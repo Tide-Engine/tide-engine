@@ -105,3 +105,30 @@ TIDE_TEST(list_snapshots_share_until_changed)
     tide_text_use(&world.heap, NULL);
     tide_heap_free(&snapshot.heap);
 }
+
+// The copy C gets of a list in chunks comes from memory kept between calls. Two can be out at once, as a mesh's
+// vertices and indices are, and the one that's kept says how much room it has itself.
+TIDE_TEST(list_flat_copies_keep_their_own_room)
+{
+    start();
+    const uint32_t size = sizeof(int32_t);
+    tide_list small = {0};
+    tide_list big = {0};
+    tide_list between = {0};
+    for (int32_t i = 0; i < 6000; i++) add(&small, 0, TIDE_IN_MATCH);
+    for (int32_t i = 0; i < 40000; i++) add(&big, 0, TIDE_IN_MATCH);
+    for (int32_t i = 0; i < 20000; i++) add(&between, 0, TIDE_IN_MATCH);
+    bool small_copied, big_copied, between_copied;
+    int32_t *a = tide_list_flatten(small, size, false, &small_copied);
+    int32_t *b = tide_list_flatten(big, size, false, &big_copied);
+    TIDE_REQUIRE(small_copied && big_copied);
+    tide_list_unflatten(big, b, size, false, big_copied);
+    tide_list_unflatten(small, a, size, false, small_copied); // The small one is the one kept
+    int32_t *c = tide_list_flatten(between, size, true, &between_copied);
+    TIDE_REQUIRE(between_copied);
+    for (int32_t i = 0; i < 20000; i++) c[i] = i; // All of it is its own
+    tide_list_unflatten(between, c, size, true, between_copied);
+    bool right = true;
+    for (int32_t i = 0; i < 20000; i++) right &= at(between, i) == i;
+    TIDE_CHECK(right);
+}

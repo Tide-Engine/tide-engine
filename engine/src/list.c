@@ -363,26 +363,36 @@ void tide_list_sort(tide_list *l, const uint32_t size, bool (*before)(const void
 // The copy C gets of a list in chunks is megabytes, and a list that goes to C
 // every tick would have them allocated, and their pages faulted in, every
 // tick. So the last one is kept for the next call, whichever thread makes it:
-// taken out while it's in use, so two calls at once each have their own.
+// taken out while it's in use, so two calls at once each have their own. Each
+// says how much room it has in the bytes before it, as the one that's kept
+// isn't always the last one made.
+#define FLAT_HEAD 16u // As malloc aligns: what follows is aligned for any element
+
 static _Atomic(char *) flat_kept;
-static _Atomic size_t flat_kept_room;
+
+static void flat_free(char *flat)
+{
+    if (flat) free(flat - FLAT_HEAD);
+}
 
 static char *flat_take(const size_t room)
 {
     char *kept = atomic_exchange(&flat_kept, NULL);
-    if (kept && atomic_load(&flat_kept_room) >= room) {
+    if (kept) {
         tide_memory_sync(); // Another thread may have made it
-        return kept;
+        size_t has;
+        memcpy(&has, kept - FLAT_HEAD, sizeof has);
+        if (has >= room) return kept;
+        flat_free(kept);
     }
-    free(kept);
-    char *flat = tide_alloc(room);
-    atomic_store(&flat_kept_room, room);
-    return flat;
+    char *made = tide_alloc(FLAT_HEAD + room);
+    memcpy(made, &room, sizeof room);
+    return made + FLAT_HEAD;
 }
 
 static void flat_give(char *flat)
 {
-    free(atomic_exchange(&flat_kept, flat));
+    flat_free(atomic_exchange(&flat_kept, flat));
 }
 
 void *tide_list_flatten(const tide_list l, const uint32_t size, const bool changes, bool *copied)
