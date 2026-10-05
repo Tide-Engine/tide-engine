@@ -232,9 +232,9 @@ system Step(Time time, mut Physics physics)
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
-    physics.size = WriteImage(physics.image);
+    physics.size = WriteImage(out physics.image);
     // A hull the image names for the first time: a box of a new size
-    if (GeometrySize() != physics.geometry.count) WriteGeometry(physics.geometry);
+    if (GeometrySize() != physics.geometry.count) WriteGeometry(out physics.geometry);
 }
 
 // Where the step left each body that it moved.
