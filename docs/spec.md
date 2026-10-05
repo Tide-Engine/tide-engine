@@ -42,6 +42,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `local` in front of a declaration makes it belong to the machine instead of the match, and in front of a field of a match component or singleton, that field alone (see Local state).
 - A function, `ReturnType Name(parameters) { ... }` with no keyword, declares code that other code calls (see Functions).
 - `extern` declares a function written in C (see C functions).
+- `virtual` in front of a declaration with code says another package can replace it, and `override` in front of one replaces it (see Mods).
 - `const` declares a constant (see Constants).
 - `settings` sets the engine's settings for the game (see Settings).
 
@@ -2520,7 +2521,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ## Mods
 
-Not built yet. **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**.
+`virtual` and `override` are built, as the language has them for any package; nothing else here is. **Decided** is what the owner agreed (2026-10-05), **Provisional** what was picked to build the two words, and the design proposed for the rest is under **Open**.
 
 ### Decided
 
@@ -2538,15 +2539,15 @@ Not built yet. **Decided** is what the owner agreed (2026-10-05); the design pro
 
 ```csharp
 // The game
-virtual system Move(mut Position position, Velocity velocity)
+virtual system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt;
+    position.value += velocity.value * time.dt;
 }
 
 // A mod
-override system Move(mut Position position, Velocity velocity)
+override system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt * 2;
+    position.value += velocity.value * time.dt * 2;
 }
 ```
 
@@ -2559,17 +2560,37 @@ override system Move(mut Position position, Velocity velocity)
 - That no Tide code can corrupt memory is the language's promise to every game, and mods rest on it: it isn't a rule for mods.
 - Where a store forbids code downloaded after installing (iOS, consoles), a game has the mods its developer built into it and no others.
 
+### Provisional
+
+`virtual` and `override`, implemented for every package, a mod's or not, awaiting approval:
+
+- **Where the words go.** Where `local` and `async` do, in any order with them, before a declaration with code: a system, a view, a handler (an event's, a command's, a local one), a function, a method, a frag or a vert. They're words of their own only there, and names like any other everywhere else, a function's type too (`virtual Make()` is a function that returns a `virtual`).
+  - On data (a component, singleton, struct, event, command, enum, scene or the input), a constant, the settings or an `extern` function, each is an error that says what the words are for, and why this isn't it. Editors offer to remove the word.
+  - Operators, `Interpolate` and the input's `Sample` and `Sanitize` aren't replaced either: an error on each.
+  - `virtual override` together is an error: a declaration is replaced once, so nothing could replace an override.
+- **The name an override writes.** It's the name of what it replaces, looked up as any reference is from the override's file: with its namespace (`override system Combat.Move(...)`), or alone in that namespace, in one inside it, or after `using Combat;`. Two `using` namespaces that both have it are ambiguous, as for any name.
+  - A method's override is written outside its type, since it's in another package, with the type before the method's name: `override bool Stats.IsDead()`, or `override bool Combat.Stats.IsDead()`. The type's fields and methods are in scope, as in the type's body. Where a type and a namespace have the same name, it's the type.
+  - An override's code reads names as its own file does: its namespace and its `using` lines.
+  - It declares no name of its own: nothing in its own namespace is named after it, and it clashes with nothing there.
+- **What it has to match.** An override that names nothing is an error that says what there is: the name in another namespace, with how to write it, a declaration of another kind under that name, or the closest name. One whose parameters are no declaration's lists the declarations the name has, as a wrong reference to a shared name does. One that matches a declaration that isn't `virtual` says so, and that marking it is its developer's choice; editors offer to mark it where it's the game's own.
+  - Beyond its parameters' types, an override is what it replaces: a view's is a view, a handler's handles the same event (a command's the same command), `local` and `verified` on its event as the other has them, and `async` as the other is. A function's or a method's returns the same type, `fails` with the same error, and has `out` where the other has it. Each is an error that says what the replaced declaration has, with the override's start as it should be written.
+  - It can differ in its parameters' names, in `mut` (a parameter's, and a method's own), and in a function's default values. Calls are checked against the override, since it's what's built: its defaults, its names for arguments passed by name, and its `mut`.
+- **Where it runs.** It writes no attribute of its own: `[Stage]`, `[Before]` or `[After]` on an override is an error that says it keeps the replaced declaration's. Those are read as the replaced declaration's file wrote them. Its place in the default order is the replaced declaration's, among that one's file's declarations.
+- **Another package.** An override is in another package than what it replaces, the game counting as one: a package replaces the game's code or another package's, and a game a package's. One in the same package is an error that says to change the declaration itself. A package can mark its own declarations `virtual`.
+  - `tide` and the language server say which package each file is in. `tidec` by itself is told with `--package <Name>` before a package's files, on its command line or as a line of a list of files, which is how this repo's tests build games with packages (`tide_add_game(... PACKAGES <Name> <files>...)`).
+- **What was replaced.** It's still checked for errors, as the code it is: its names, types, what it may write, what it returns and assigns. It isn't checked for what depends on the code that calls it or that it calls (a match system that calls a function that draws, say), as those rules are worked out over the program that's built, which it isn't in.
+  - Nothing of it is built or counted: its spawns, Adds and Removes make no archetype, what it sends counts as sent by nobody, its calls make nothing wait, and it's in no schedule. It warns about nothing.
+- **Parameters nothing uses.** A virtual declaration's parameters are what its overrides get, and an override's are those of what it replaces, so neither is warned about a parameter it never uses: a virtual system with an empty body is a hook. `mut` is each one's own, and one that's never written is still warned about.
+- **The same declaration again, without `override`.** It's the error it always was (`is already declared with these parameters`). Where the first one is `virtual` and in another package, a note says `override` is what replaces it, and editors offer the word.
+- **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
+- **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
+
 ### Open
 
 Proposed, awaiting the owner. None of it is built.
 
 The language:
 
-- `virtual` and `override` go where `local` and `async` do, on declarations with a body: systems, views, handlers, functions, methods, frags and verts. They're keywords only there.
-- An override that matches nothing `virtual` is an error that lists what the name has.
-- An override writes no `[Stage]`, `[Before]` or `[After]` of its own. It can differ in `mut`, and the schedule is worked out from what's built.
-- The two words aren't only for mods: an override is in another package than what it replaces, and a game's own packages can use both, as an expansion would. A mod can mark its own declarations `virtual`, for the mods that need it.
-- Declarations of data aren't replaced: components, singletons, events, enums, scenes, the input, the settings. A mod adds components of its own to the game's entities, as any code does.
 - A mod sees every declaration of the game's, as a package does (see Open, Access control). It declares what a package can, less `extern`. The packages it needs are mods too, or come with tide, or are ones the game lists itself: only those last two can have C.
 
 What a mod's code reaches:
@@ -2608,7 +2629,7 @@ The sandbox:
 
 The order to do the work in, proposed:
 
-1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in.
+1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in. Built (see Provisional).
 2. Memory safety as a tested promise (see Open, at the end).
 3. tidec's rules for mods: Tide alone, and files of their own.
 4. Games that load signed builds, and the service, with listed mods only.

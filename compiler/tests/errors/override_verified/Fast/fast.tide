@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override local event(verified Hit hit) ShowHit(mut Flash flash)
+{
+    flash.count += 1;
+}

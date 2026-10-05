@@ -1,0 +1,5 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: a constant is a value, the same on every machine, with no code to replace
+virtual const int MAX_HEALTH = 100;
+
+scene Main { }

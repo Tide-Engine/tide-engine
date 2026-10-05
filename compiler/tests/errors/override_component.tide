@@ -1,0 +1,5 @@
+// expect: 'override' goes before a declaration with code, which replaces the virtual one it names
+// expect: a component is data, and data isn't replaced
+override component Health { int value; }
+
+scene Main { }

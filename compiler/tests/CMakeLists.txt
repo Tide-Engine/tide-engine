@@ -1,14 +1,15 @@
 # End-to-end tests: e2e/<name>.tide (or the SOURCES given) is transpiled and
 # compiled together with e2e/<name>_test.c and the shared test harness, then run.
-# WARNINGS are the ones tidec has to give, as for tide_add_game.
+# WARNINGS are the ones tidec has to give, and PACKAGES the files of packages
+# the game builds with, each after its package's name, as for tide_add_game.
 function(tide_e2e_test name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS;PACKAGES" ${ARGN})
     set(sources "e2e/${name}.tide")
     if(ARG_SOURCES)
         set(sources ${ARG_SOURCES})
     endif()
     set(target tidec_e2e_${name})
-    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS}
+    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES}
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}_test.c")
     target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     add_test(NAME ${target} COMMAND ${target})
@@ -58,6 +59,10 @@ tide_e2e_test(structs)
 tide_e2e_test(methods)
 tide_e2e_test(overloads) # Default values, named arguments, and functions, methods and systems that share a name
 tide_e2e_test(overloads_extern SOURCES e2e/overloads_extern.tide e2e/overloads_extern_c.c) # ...and C functions, which have neither
+# virtual and override: a package's overrides of the game's code, and the game's of the package's. What only
+# replaced code spawned is in no archetype, so the system that needs it matches nothing
+tide_e2e_test(overrides SOURCES e2e/overrides/game.tide PACKAGES Expansion e2e/overrides/Expansion/expansion.tide
+    WARNINGS "system 'Haunt' never runs")
 tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)

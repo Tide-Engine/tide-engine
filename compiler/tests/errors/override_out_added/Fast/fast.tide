@@ -1,0 +1,7 @@
+namespace Fast;
+
+override float Combat.Damage(float base, out float multiplier)
+{
+    multiplier = 2;
+    return base;
+}

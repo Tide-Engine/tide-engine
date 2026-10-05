@@ -169,6 +169,8 @@ system Aim(mut Turret turret, Body body) { ... }
 
 A name alone is fine while only one system has it. When several share it, `[After(Move)]` is an error that lists them as they're written, and so is a parameter list that isn't exactly one's. Views and event handlers work the same way, and the schedule and the profiler show a shared name with its parameters.
 
+A system marked `virtual` can be replaced by another package's `override`, which runs where it would have: at its place in this order, with its attributes, and under its name where others name it (see [Virtual and override](../language/overrides.md)).
+
 ### Named phases
 
 An enum gives shared names to parts of the tick. Assign systems to its phases with `Stage`:

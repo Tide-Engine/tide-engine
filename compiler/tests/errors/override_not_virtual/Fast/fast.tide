@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override system Fall(mut Velocity velocity)
+{
+    velocity.value -= 2;
+}

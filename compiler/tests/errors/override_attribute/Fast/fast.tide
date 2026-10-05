@@ -1,0 +1,9 @@
+namespace Fast;
+
+using Combat;
+
+[After(Fall)]
+override system Move(mut Position position, Velocity velocity)
+{
+    position.value += velocity.value * 2;
+}

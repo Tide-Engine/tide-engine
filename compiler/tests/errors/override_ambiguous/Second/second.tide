@@ -1,0 +1,6 @@
+namespace Second;
+
+virtual system Tick(mut Position position)
+{
+    position.value += 2;
+}
