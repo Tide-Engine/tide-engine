@@ -313,11 +313,12 @@ static void build_signatures(void)
         describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
                  "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: random numbers "
                  "from cells, indices and seeds, like `Math.Hash(int3(x, y, seed)) % 6`. It's xxHash32 of the "
-                 "value's bytes, without the top bit.");
+                 "value's bytes, without the top bit. A frag or vert gets the same number on every GPU.");
     }
     describe(add("Math", "Hash", (type){TY_INT, NULL}, "tide_hash_l", 1, (type){TY_LONG, NULL}, T_NONE, T_NONE), "value",
              "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: xxHash32 of the "
-             "long's 8 bytes, without the top bit.");
+             "long's 8 bytes, without the top bit. A GPU has no long: a frag or vert hashes its halves, "
+             "`Math.Hash(int2(int(x), int(x >> 32)))`, which is the same number.");
 
     // A Random's methods: tide/random.h, with the generator first, by address,
     // as each steps it. Formulas follow Unity.Mathematics' Random.

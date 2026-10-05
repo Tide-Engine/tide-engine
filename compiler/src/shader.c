@@ -14,10 +14,16 @@
 // generated C as tide_shaders (tide/draw.h).
 //
 // The GPU runs less than the CPU does: bools, ints, floats, vectors,
-// matrices, colors and structs of those, locals, `if`, loops that count,
-// `Math`, and sampling a grid of colors. The same code that writes a shader
-// checks that: a first pass over each frag and vert, and the functions they
-// reach, writes nothing and reports what doesn't fit (`checking`). What's
+// quaternions, matrices, colors and structs of those, locals, `if`, loops
+// that count, and sampling a grid of colors. `Math` is all there, and what
+// builds its types: what a shader language has no function for, or has one
+// that does otherwise than tide/math.h's, is written out (helper_text).
+// Nothing of it is left out but for a reason, which its error says: a long's
+// hash, as these GPUs have no 64-bit integers.
+//
+// The same code that writes a shader checks it: a first pass over each frag
+// and vert, and the functions they reach, writes nothing and reports what
+// doesn't fit (`checking`). What's
 // written afterwards always compiles, so nobody sees a shader compiler's
 // error: every name of the game's gets a prefix no keyword has, conversions
 // are written out, WGSL's rules for pointers, swizzles and constant
@@ -32,11 +38,24 @@ typedef enum lang { GLSL, WGSL } lang;
 
 enum { STAGE_VERT, STAGE_FRAG };
 
-// Functions a shader may need defined before its own.
+// Functions of the engine's own a shader may need defined before the game's:
+// what Math does that the shader languages don't, or don't do as the CPU
+// does (helper_text). Each comes after the ones it calls.
 enum {
-    HELP_F = 1,         // tide_f(x): x, a float the compiler can't fold
-    HELP_I = 2,         // tide_i(x): the same for an int
-    HELP_NORMALIZE = 4, // tide_normalize<n>(v), for n = 2, 3, 4: three bits from here
+    FAMILY_MIN, FAMILY_MAX, FAMILY_CLAMP, FAMILY_SATURATE, FAMILY_SMOOTHSTEP, FAMILY_POW, FAMILY_ATAN2, FAMILY_COUNT
+};
+
+enum {
+    H_F,   // tide_f(x): x, a float the compiler can't fold
+    H_I,   // tide_i(x): the same for an int
+    H_NAN, // tide_nan(x): whether x is no number
+    H_FAMILIES, // tide_min<n> and the other families, for n = 1 to 4, a family after another: family_helper
+    H_NORMALIZE2 = H_FAMILIES + 4 * FAMILY_COUNT, H_NORMALIZE3, H_NORMALIZE4,
+    H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
+    H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
+    H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
+    H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_COUNT
 };
 
 typedef struct emit {
@@ -56,7 +75,7 @@ typedef struct emit {
     VEC(const decl *) structs; // The structs the code names, each after the ones it holds
     VEC(const decl *) done;    // The functions written, callees first
     sb functions;
-    unsigned helpers;
+    bool helpers[H_COUNT];
 } emit;
 
 static void ex(emit *em, const expr *e);
@@ -267,7 +286,7 @@ static void put_float(emit *em, const double value)
     snprintf(text, sizeof text, "%.9g", v);
     if (!strpbrk(text, ".e")) strcat(text, ".0");
     if (em->defuse > 0) {
-        em->helpers |= HELP_F;
+        em->helpers[H_F] = true;
         sb_printf(em->o, "tide_f(%s)", text);
     } else {
         sb_put(em->o, text);
@@ -277,7 +296,7 @@ static void put_float(emit *em, const double value)
 static void put_int(emit *em, const long long value)
 {
     if (em->defuse > 0) {
-        em->helpers |= HELP_I;
+        em->helpers[H_I] = true;
         sb_printf(em->o, "tide_i(%lld)", value);
     } else {
         sb_printf(em->o, "%lld", value);
@@ -336,6 +355,463 @@ static void put_zero(emit *em, const type t)
     else if (t.kind == TY_FLOAT) sb_put(em->o, "0.0");
     else if (type_is_int_based(t)) sb_printf(em->o, "%s(0)", ty(em, t));
     else sb_printf(em->o, "%s(0.0)", ty(em, t));
+}
+
+// ---------------------------------------------------------------------------
+// The engine's own functions
+//
+// What Math does that a shader language doesn't, or doesn't do as the CPU
+// does: tide/math.h's formulas, in its order, so the same code gives the same
+// answer on the CPU and on the GPU up to the GPU's rounding, and Math.Hash,
+// which is integers, the same number. Each is written once, in the GLSL both
+// languages can say, which put_helper turns into WGSL: a function's head on a
+// line of its own, a statement a line, a local declared with its type and a
+// value, no '?:', no parameter assigned to, and atan2 for the atan of two.
+
+static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "saturate", "smoothstep", "pow", "atan2_"};
+static const int family_args[FAMILY_COUNT] = {2, 2, 3, 1, 3, 2, 2};
+
+// A family's function of one number: its vectors go component by component.
+static const char *const family_scalars[FAMILY_COUNT] = {
+    // With one NaN, the other. Each is asked, as a compiler that reckons without NaN may make the comparison its own
+    // min or max, which says nothing of which it gives then
+    "float tide_min1(float a, float b) {\n"
+    "    if (tide_nan(b)) { return a; }\n"
+    "    if (tide_nan(a)) { return b; }\n"
+    "    if (a < b) { return a; }\n"
+    "    return b;\n"
+    "}\n",
+    "float tide_max1(float a, float b) {\n"
+    "    if (tide_nan(b)) { return a; }\n"
+    "    if (tide_nan(a)) { return b; }\n"
+    "    if (a > b) { return a; }\n"
+    "    return b;\n"
+    "}\n",
+    // Always within its bounds: the lower one for NaN, and for bounds the wrong way around
+    "float tide_clamp1(float a, float b, float c) {\n"
+    "    if (tide_nan(a)) { return b; }\n"
+    "    return tide_max1(b, tide_min1(c, a));\n"
+    "}\n",
+    // 0 for NaN. Past that the languages' own clamp says what it does, between bounds the right way around
+    "float tide_saturate1(float a) {\n"
+    "    if (tide_nan(a)) { return 0.0; }\n"
+    "    return clamp(a, 0.0, 1.0);\n"
+    "}\n",
+    // The languages' own is undefined from an edge down to a lower one
+    "float tide_smoothstep1(float a, float b, float c) {\n"
+    "    float t = tide_saturate1((c - a) / (b - a));\n"
+    "    return t * t * (3.0 - 2.0 * t);\n"
+    "}\n",
+    // The languages' own is undefined under 0: a whole power of a number under 0 is that of the number over 0, with its sign
+    "float tide_pow1(float a, float b) {\n"
+    "    if (b == 0.0) { return 1.0; }\n"
+    "    bool w = a < 0.0 && floor(b) == b;\n"
+    "    float x = a;\n"
+    "    if (w) { x = -a; }\n"
+    "    float p = pow(x, b);\n"
+    "    if (w && floor(b * 0.5) * 2.0 != b) { return -p; }\n"
+    "    return p;\n"
+    "}\n",
+    // The languages' own is undefined at (0, 0)
+    "float tide_atan2_1(float a, float b) {\n"
+    "    if (a == 0.0 && b == 0.0) { return 0.0; }\n"
+    "    return atan2(a, b);\n"
+    "}\n",
+};
+
+static const char *const helper_texts[H_COUNT] = {
+    [H_F] = "float tide_f(float x) {\n"
+            "    return x;\n"
+            "}\n",
+    [H_I] = "int tide_i(int x) {\n"
+            "    return x;\n"
+            "}\n",
+    // By its bits: a compiler may take x != x for false, as the languages let it reckon without NaN
+    [H_NAN] = "bool tide_nan(float x) {\n"
+              "    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;\n"
+              "}\n",
+    // xxHash32 (tide/math.h): a word of an input under 16 bytes, a lane of a 16 byte stripe, and the end
+    [H_XXH] = "uint tide_xxh_word(uint h, int w) {\n"
+              "    uint k = h + uint(w) * 0xC2B2AE3Du;\n"
+              "    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;\n"
+              "}\n"
+              "uint tide_xxh_lane(uint h, int w) {\n"
+              "    uint k = h + uint(w) * 0x85EBCA77u;\n"
+              "    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;\n"
+              "}\n"
+              "int tide_xxh_end(uint h) {\n"
+              "    uint k = h ^ (h >> 15);\n"
+              "    k = k * 0x85EBCA77u;\n"
+              "    k = k ^ (k >> 13);\n"
+              "    k = k * 0xC2B2AE3Du;\n"
+              "    k = k ^ (k >> 16);\n"
+              "    return int(k & 0x7FFFFFFFu);\n"
+              "}\n",
+    [H_HASH1] = "int tide_hash1(int v) {\n"
+                "    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));\n"
+                "}\n",
+    [H_HASH2] = "int tide_hash2(ivec2 v) {\n"
+                "    return tide_xxh_end(tide_xxh_word(tide_xxh_word(0x165667B9u, v.x), v.y));\n"
+                "}\n",
+    [H_HASH3] = "int tide_hash3(ivec3 v) {\n"
+                "    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));\n"
+                "}\n",
+    [H_HASH4] = "int tide_hash4(ivec4 v) {\n"
+                "    uint a = tide_xxh_lane(0x24234428u, v.x);\n"
+                "    uint b = tide_xxh_lane(0x85EBCA77u, v.y);\n"
+                "    uint c = tide_xxh_lane(0u, v.z);\n"
+                "    uint d = tide_xxh_lane(0x61C8864Fu, v.w);\n"
+                "    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + "
+                "((d << 18) | (d >> 14)) + 16u);\n"
+                "}\n",
+    // The identity for one too short, as a zeroed one is no rotation
+    [H_NORMALIZE_Q] = "vec4 tide_normalize_q(vec4 q) {\n"
+                      "    float l = dot(q, q);\n"
+                      "    if (l > 1.17549435e-38) { return q * inversesqrt(l); }\n"
+                      "    return vec4(0.0, 0.0, 0.0, 1.0);\n"
+                      "}\n",
+    [H_MUL_Q] = "vec4 tide_mul_q(vec4 a, vec4 b) {\n"
+                "    return vec4(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y + a.y * b.w + a.z * b.x - a.x * b.z, "
+                "a.w * b.z + a.z * b.w + a.x * b.y - a.y * b.x, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);\n"
+                "}\n",
+    [H_ROTATE_Q] = "vec3 tide_rotate_q(vec4 q, vec3 v) {\n"
+                   "    vec3 t = 2.0 * cross(q.xyz, v);\n"
+                   "    return v + q.w * t + cross(q.xyz, t);\n"
+                   "}\n",
+    [H_INVERSE_Q] = "vec4 tide_inverse_q(vec4 q) {\n"
+                    "    return vec4(-q.xyz, q.w) * (1.0 / dot(q, q));\n"
+                    "}\n",
+    [H_CONJUGATE_Q] = "vec4 tide_conjugate_q(vec4 q) {\n"
+                      "    return vec4(-q.xyz, q.w);\n"
+                      "}\n",
+    [H_NLERP_Q] = "vec4 tide_nlerp_q(vec4 a, vec4 b, float t) {\n"
+                  "    vec4 c = b;\n"
+                  "    if (dot(a, b) < 0.0) { c = -b; }\n"
+                  "    return tide_normalize_q(a + t * (c - a));\n"
+                  "}\n",
+    [H_SLERP_Q] = "vec4 tide_slerp_q(vec4 a, vec4 b, float t) {\n"
+                  "    float d = dot(a, b);\n"
+                  "    vec4 c = b;\n"
+                  "    if (d < 0.0) {\n"
+                  "        d = -d;\n"
+                  "        c = -b;\n"
+                  "    }\n"
+                  "    if (d < 0.9995) {\n"
+                  "        float w = acos(d);\n"
+                  "        float s = inversesqrt(1.0 - d * d);\n"
+                  "        return a * (sin(w * (1.0 - t)) * s) + c * (sin(w * t) * s);\n"
+                  "    }\n"
+                  "    return tide_nlerp_q(a, c, t);\n"
+                  "}\n",
+    // The length is 1 at most but for the GPU's rounding, which mustn't take asin out of its range
+    [H_ANGLE_Q] = "float tide_angle_q(vec4 a, vec4 b) {\n"
+                  "    vec4 d = tide_normalize_q(tide_mul_q(vec4(-a.xyz, a.w), b));\n"
+                  "    float w = asin(min(length(d.xyz), 1.0));\n"
+                  "    return w + w;\n"
+                  "}\n",
+    [H_AXISANGLE_Q] = "vec4 tide_axisangle_q(vec3 v, float w) {\n"
+                      "    return vec4(v * sin(0.5 * w), cos(0.5 * w));\n"
+                      "}\n",
+    // Z first, then X, then Y
+    [H_EULER_Q] = "vec4 tide_euler_q(vec3 v) {\n"
+                  "    vec3 s = sin(0.5 * v);\n"
+                  "    vec3 c = cos(0.5 * v);\n"
+                  "    return tide_mul_q(tide_mul_q(vec4(0.0, s.y, 0.0, c.y), vec4(s.x, 0.0, 0.0, c.x)), vec4(0.0, 0.0, s.z, c.z));\n"
+                  "}\n",
+    // Shepperd's method: by the largest term
+    [H_Q_FROM_M3] = "vec4 tide_q_from_m3(mat3 m) {\n"
+                    "    float x = m[0].x;\n"
+                    "    float y = m[1].y;\n"
+                    "    float z = m[2].z;\n"
+                    "    float t = x + y + z;\n"
+                    "    if (t > 0.0) {\n"
+                    "        float s = sqrt(t + 1.0) * 2.0;\n"
+                    "        return vec4((m[1].z - m[2].y) / s, (m[2].x - m[0].z) / s, (m[0].y - m[1].x) / s, 0.25 * s);\n"
+                    "    }\n"
+                    "    if (x > y && x > z) {\n"
+                    "        float s = sqrt(1.0 + x - y - z) * 2.0;\n"
+                    "        return vec4(0.25 * s, (m[1].x + m[0].y) / s, (m[2].x + m[0].z) / s, (m[1].z - m[2].y) / s);\n"
+                    "    }\n"
+                    "    if (y > z) {\n"
+                    "        float s = sqrt(1.0 + y - x - z) * 2.0;\n"
+                    "        return vec4((m[1].x + m[0].y) / s, 0.25 * s, (m[2].y + m[1].z) / s, (m[2].x - m[0].z) / s);\n"
+                    "    }\n"
+                    "    float s = sqrt(1.0 + z - x - y) * 2.0;\n"
+                    "    return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);\n"
+                    "}\n",
+    [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
+                         "    vec3 t = tide_normalize3(cross(u, f));\n"
+                         "    return tide_q_from_m3(mat3(t, cross(f, t), f));\n"
+                         "}\n",
+    [H_M3_FROM_Q] = "mat3 tide_m3_from_q(vec4 q) {\n"
+                    "    float x = q.x + q.x;\n"
+                    "    float y = q.y + q.y;\n"
+                    "    float z = q.z + q.z;\n"
+                    "    float xx = q.x * x;\n"
+                    "    float yy = q.y * y;\n"
+                    "    float zz = q.z * z;\n"
+                    "    float xy = q.x * y;\n"
+                    "    float xz = q.x * z;\n"
+                    "    float yz = q.y * z;\n"
+                    "    float wx = q.w * x;\n"
+                    "    float wy = q.w * y;\n"
+                    "    float wz = q.w * z;\n"
+                    "    return mat3(1.0 - (yy + zz), xy + wz, xz - wy, xy - wz, 1.0 - (xx + zz), yz + wx, xz + wy, yz - wx, "
+                    "1.0 - (xx + yy));\n"
+                    "}\n",
+    [H_M4_FROM_M3] = "mat4 tide_m4_from_m3(mat3 m, vec3 t) {\n"
+                     "    return mat4(vec4(m[0], 0.0), vec4(m[1], 0.0), vec4(m[2], 0.0), vec4(t, 1.0));\n"
+                     "}\n",
+    [H_TRS] = "mat4 tide_trs(vec3 t, vec4 q, vec3 s) {\n"
+              "    mat3 m = tide_m3_from_q(q);\n"
+              "    return mat4(vec4(m[0] * s.x, 0.0), vec4(m[1] * s.y, 0.0), vec4(m[2] * s.z, 0.0), vec4(t, 1.0));\n"
+              "}\n",
+    // From a view down -z to OpenGL's clip space, as Unity.Mathematics': the field of view, the aspect, near and far
+    [H_PERSPECTIVE] = "mat4 tide_perspective(float v, float a, float n, float f) {\n"
+                      "    float c = 1.0 / tan(v * 0.5);\n"
+                      "    float r = 1.0 / (n - f);\n"
+                      "    return mat4(vec4(c / a, 0.0, 0.0, 0.0), vec4(0.0, c, 0.0, 0.0), vec4(0.0, 0.0, (f + n) * r, -1.0), "
+                      "vec4(0.0, 0.0, 2.0 * n * f * r, 0.0));\n"
+                      "}\n",
+    [H_ORTHO] = "mat4 tide_ortho(float w, float h, float n, float f) {\n"
+                "    float r = 1.0 / (f - n);\n"
+                "    return mat4(vec4(2.0 / w, 0.0, 0.0, 0.0), vec4(0.0, 2.0 / h, 0.0, 0.0), vec4(0.0, 0.0, -2.0 * r, 0.0), "
+                "vec4(0.0, 0.0, -(f + n) * r, 1.0));\n"
+                "}\n",
+    [H_INVERSE2] = "mat2 tide_inverse2(mat2 m) {\n"
+                   "    float s = 1.0 / (m[0].x * m[1].y - m[1].x * m[0].y);\n"
+                   "    return mat2(m[1].y * s, -m[0].y * s, -m[1].x * s, m[0].x * s);\n"
+                   "}\n",
+    // Its rows are the cross products of pairs of columns, over the determinant
+    [H_INVERSE3] = "mat3 tide_inverse3(mat3 m) {\n"
+                   "    vec3 a = cross(m[1], m[2]);\n"
+                   "    vec3 b = cross(m[2], m[0]);\n"
+                   "    vec3 c = cross(m[0], m[1]);\n"
+                   "    return transpose(mat3(a, b, c)) * (1.0 / dot(m[0], a));\n"
+                   "}\n",
+    // By Laplace expansion over 2 by 2 determinants: a<row><column> of the matrix, and the inverse column by column
+    [H_INVERSE4] = "mat4 tide_inverse4(mat4 m) {\n"
+                   "    float a00 = m[0].x;\n"
+                   "    float a01 = m[1].x;\n"
+                   "    float a02 = m[2].x;\n"
+                   "    float a03 = m[3].x;\n"
+                   "    float a10 = m[0].y;\n"
+                   "    float a11 = m[1].y;\n"
+                   "    float a12 = m[2].y;\n"
+                   "    float a13 = m[3].y;\n"
+                   "    float a20 = m[0].z;\n"
+                   "    float a21 = m[1].z;\n"
+                   "    float a22 = m[2].z;\n"
+                   "    float a23 = m[3].z;\n"
+                   "    float a30 = m[0].w;\n"
+                   "    float a31 = m[1].w;\n"
+                   "    float a32 = m[2].w;\n"
+                   "    float a33 = m[3].w;\n"
+                   "    float s0 = a00 * a11 - a10 * a01;\n"
+                   "    float s1 = a00 * a12 - a10 * a02;\n"
+                   "    float s2 = a00 * a13 - a10 * a03;\n"
+                   "    float s3 = a01 * a12 - a11 * a02;\n"
+                   "    float s4 = a01 * a13 - a11 * a03;\n"
+                   "    float s5 = a02 * a13 - a12 * a03;\n"
+                   "    float k5 = a22 * a33 - a32 * a23;\n"
+                   "    float k4 = a21 * a33 - a31 * a23;\n"
+                   "    float k3 = a21 * a32 - a31 * a22;\n"
+                   "    float k2 = a20 * a33 - a30 * a23;\n"
+                   "    float k1 = a20 * a32 - a30 * a22;\n"
+                   "    float k0 = a20 * a31 - a30 * a21;\n"
+                   "    float d = 1.0 / (s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);\n"
+                   "    return mat4((a11 * k5 - a12 * k4 + a13 * k3) * d, (-a10 * k5 + a12 * k2 - a13 * k1) * d, "
+                   "(a10 * k4 - a11 * k2 + a13 * k0) * d, (-a10 * k3 + a11 * k1 - a12 * k0) * d, "
+                   "(-a01 * k5 + a02 * k4 - a03 * k3) * d, (a00 * k5 - a02 * k2 + a03 * k1) * d, "
+                   "(-a00 * k4 + a01 * k2 - a03 * k0) * d, (a00 * k3 - a01 * k1 + a02 * k0) * d, "
+                   "(a31 * s5 - a32 * s4 + a33 * s3) * d, (-a30 * s5 + a32 * s2 - a33 * s1) * d, "
+                   "(a30 * s4 - a31 * s2 + a33 * s0) * d, (-a30 * s3 + a31 * s1 - a32 * s0) * d, "
+                   "(-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, "
+                   "(-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);\n"
+                   "}\n",
+};
+
+static int family_helper(const int family, const int dim)
+{
+    return H_FAMILIES + 4 * family + dim - 1;
+}
+
+// Helper `h`, as it's written once for both languages.
+static void helper_text(const int h, sb *o)
+{
+    if (h >= H_FAMILIES && h < H_NORMALIZE2) {
+        const int family = (h - H_FAMILIES) / 4, dim = (h - H_FAMILIES) % 4 + 1, args = family_args[family];
+        const char *name = family_names[family];
+        if (dim == 1) {
+            sb_put(o, family_scalars[family]);
+            return;
+        }
+        sb_printf(o, "vec%d tide_%s%d(", dim, name, dim);
+        for (int a = 0; a < args; a++) sb_printf(o, "%svec%d %c", a ? ", " : "", dim, 'a' + a);
+        sb_printf(o, ") {\n    return vec%d(", dim);
+        for (int c = 0; c < dim; c++) {
+            sb_printf(o, "%stide_%s1(", c ? ", " : "", name);
+            for (int a = 0; a < args; a++) sb_printf(o, "%s%c.%c", a ? ", " : "", 'a' + a, "xyzw"[c]);
+            sb_put(o, ")");
+        }
+        sb_put(o, ");\n}\n");
+    } else if (h >= H_NORMALIZE2 && h <= H_NORMALIZE4) { // Zero for a vector too short, where the languages' own gives nothing sure
+        const int dim = h - H_NORMALIZE2 + 2;
+        sb_printf(o, "vec%d tide_normalize%d(vec%d v) {\n    float l = dot(v, v);\n    if (l > 1.17549435e-38) { return v * "
+                     "inversesqrt(l); }\n    return vec%d(0.0);\n}\n", dim, dim, dim, dim);
+    } else {
+        sb_put(o, helper_texts[h]);
+    }
+}
+
+// Notes that the shader calls helper `h`, and the helpers it calls.
+static void need(emit *em, const int h)
+{
+    if (em->helpers[h]) return;
+    em->helpers[h] = true;
+    if (h >= H_FAMILIES && h < H_NORMALIZE2) {
+        const int family = (h - H_FAMILIES) / 4;
+        if ((h - H_FAMILIES) % 4 > 0) {
+            need(em, family_helper(family, 1));
+        } else if (family == FAMILY_MIN || family == FAMILY_MAX) {
+            need(em, H_NAN);
+        } else if (family == FAMILY_CLAMP) {
+            need(em, family_helper(FAMILY_MIN, 1));
+            need(em, family_helper(FAMILY_MAX, 1));
+        } else if (family == FAMILY_SATURATE) {
+            need(em, H_NAN);
+        } else if (family == FAMILY_SMOOTHSTEP) {
+            need(em, family_helper(FAMILY_SATURATE, 1));
+        }
+        return;
+    }
+    switch (h) {
+    case H_HASH1:
+    case H_HASH2:
+    case H_HASH3:
+    case H_HASH4:
+        need(em, H_XXH);
+        break;
+    case H_NLERP_Q:
+        need(em, H_NORMALIZE_Q);
+        break;
+    case H_SLERP_Q:
+        need(em, H_NLERP_Q);
+        break;
+    case H_ANGLE_Q:
+        need(em, H_NORMALIZE_Q);
+        need(em, H_MUL_Q);
+        break;
+    case H_EULER_Q:
+        need(em, H_MUL_Q);
+        break;
+    case H_LOOKROTATION_Q:
+        need(em, H_NORMALIZE3);
+        need(em, H_Q_FROM_M3);
+        break;
+    case H_TRS:
+        need(em, H_M3_FROM_Q);
+        break;
+    default:
+        break;
+    }
+}
+
+static bool word_char(const char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+static bool word_is(const char *word, const size_t len, const char *other)
+{
+    return strlen(other) == len && memcmp(word, other, len) == 0;
+}
+
+// The type the word of `len` chars at `word` names, as WGSL spells it; NULL when it names none.
+static const char *wgsl_type(const char *word, const size_t len)
+{
+    static const char *const types[][2] = {
+        {"float", "f32"}, {"int", "i32"}, {"uint", "u32"}, {"bool", "bool"}, {"vec2", "vec2f"}, {"vec3", "vec3f"},
+        {"vec4", "vec4f"}, {"ivec2", "vec2i"}, {"ivec3", "vec3i"}, {"ivec4", "vec4i"}, {"mat2", "mat2x2f"},
+        {"mat3", "mat3x3f"}, {"mat4", "mat4x4f"},
+    };
+    for (size_t i = 0; i < sizeof types / sizeof types[0]; i++) {
+        if (word_is(word, len, types[i][0])) return types[i][1];
+    }
+    return NULL;
+}
+
+// `len` chars of a helper, word by word, as `l` spells them.
+static void put_spelled(sb *o, const lang l, const char *text, const size_t len)
+{
+    for (size_t i = 0; i < len;) {
+        size_t n = 1;
+        while (word_char(text[i]) && i + n < len && word_char(text[i + n])) n++;
+        const char *as = NULL;
+        if (l == GLSL) {
+            if (word_is(text + i, n, "atan2")) as = "atan";
+        } else if (word_is(text + i, n, "inversesqrt")) {
+            as = "inverseSqrt";
+        } else if (word_is(text + i, n, "floatBitsToInt")) {
+            as = "bitcast<i32>";
+        } else {
+            as = wgsl_type(text + i, n);
+        }
+        if (as) sb_put(o, as);
+        else sb_putn(o, text + i, n);
+        i += n;
+    }
+}
+
+// A helper as `l` writes it. WGSL declares the other way around: a
+// function's head is `fn name(a: T) -> T`, and a local `var name: T = value`.
+static void put_helper(sb *o, const lang l, const char *text)
+{
+    for (const char *line = text; *line;) {
+        const char *end = strchr(line, '\n');
+        size_t indent = 0, type_len = 0, name_len = 0;
+        while (line[indent] == ' ') indent++;
+        while (word_char(line[indent + type_len])) type_len++;
+        // What the line declares, if it starts with a type and a name
+        const char *type = l == WGSL && line[indent + type_len] == ' ' ? wgsl_type(line + indent, type_len) : NULL;
+        const char *name = line + indent + type_len + 1;
+        while (type && word_char(name[name_len])) name_len++;
+        if (type && name_len && name[name_len] == '(') {
+            sb_printf(o, "fn %.*s(", (int)name_len, name);
+            for (const char *p = name + name_len + 1; *p != ')';) {
+                size_t of = 0, called = 0;
+                while (word_char(p[of])) of++;
+                const char *param = p + of + 1;
+                while (word_char(param[called])) called++;
+                sb_printf(o, "%.*s: %s", (int)called, param, wgsl_type(p, of));
+                p = param + called;
+                if (*p == ',') {
+                    sb_put(o, ", ");
+                    p += 2;
+                }
+            }
+            sb_printf(o, ") -> %s {\n", type);
+        } else if (type && name_len && strncmp(name + name_len, " = ", 3) == 0) {
+            const char *value = name + name_len + 3;
+            sb_printf(o, "%.*svar %.*s: %s = ", (int)indent, line, (int)name_len, name, type);
+            put_spelled(o, l, value, (size_t)(end - value));
+            sb_put(o, "\n");
+        } else {
+            put_spelled(o, l, line, (size_t)(end - line));
+            sb_put(o, "\n");
+        }
+        line = end + 1;
+    }
+}
+
+static void put_helpers(const emit *em, sb *o)
+{
+    for (int h = 0; h < H_COUNT; h++) {
+        if (!em->helpers[h]) continue;
+        sb text = {0};
+        helper_text(h, &text);
+        put_helper(o, em->l, text.data);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -820,16 +1296,39 @@ static const struct {
     const char *glsl;
     const char *wgsl;
 } same_math[] = {
-    {"Abs", "abs", "abs"}, {"Sign", "sign", "sign"}, {"Min", "min", "min"}, {"Max", "max", "max"}, {"Clamp", "clamp", "clamp"},
+    {"Abs", "abs", "abs"}, {"Sign", "sign", "sign"}, {"Min", "min", "min"}, {"Max", "max", "max"},
     {"Floor", "floor", "floor"}, {"Ceil", "ceil", "ceil"}, {"Round", "roundEven", "round"}, {"Trunc", "trunc", "trunc"},
     {"Frac", "fract", "fract"}, {"Sqrt", "sqrt", "sqrt"}, {"Rsqrt", "inversesqrt", "inverseSqrt"},
     {"Radians", "radians", "radians"}, {"Degrees", "degrees", "degrees"}, {"Sin", "sin", "sin"}, {"Cos", "cos", "cos"},
     {"Tan", "tan", "tan"}, {"Asin", "asin", "asin"}, {"Acos", "acos", "acos"}, {"Atan", "atan", "atan"},
-    {"Atan2", "atan", "atan2"}, {"Exp", "exp", "exp"}, {"Exp2", "exp2", "exp2"}, {"Log", "log", "log"}, {"Log2", "log2", "log2"},
-    {"Pow", "pow", "pow"}, {"Step", "step", "step"}, {"Lerp", "mix", "mix"}, {"SmoothStep", "smoothstep", "smoothstep"},
+    {"Exp", "exp", "exp"}, {"Exp2", "exp2", "exp2"}, {"Log", "log", "log"}, {"Log2", "log2", "log2"},
+    {"Step", "step", "step"}, {"Lerp", "mix", "mix"},
     {"Dot", "dot", "dot"}, {"Length", "length", "length"}, {"Distance", "distance", "distance"},
     {"Reflect", "reflect", "reflect"}, {"Cross", "cross", "cross"},
     {"Transpose", "transpose", "transpose"}, {"Determinant", "determinant", "determinant"},
+};
+
+// Math's functions on a quaternion that are a function of the engine's own, of the same arguments.
+static const struct {
+    const char *name;
+    int helper;
+    const char *call;
+} quaternion_math[] = {
+    {"Normalize", H_NORMALIZE_Q, "tide_normalize_q"}, {"Rotate", H_ROTATE_Q, "tide_rotate_q"},
+    {"Inverse", H_INVERSE_Q, "tide_inverse_q"}, {"Conjugate", H_CONJUGATE_Q, "tide_conjugate_q"},
+    {"Slerp", H_SLERP_Q, "tide_slerp_q"}, {"Nlerp", H_NLERP_Q, "tide_nlerp_q"}, {"Angle", H_ANGLE_Q, "tide_angle_q"},
+};
+
+// What builds a rotation or a matrix from numbers, the same way.
+static const struct {
+    const char *owner;
+    const char *name;
+    int helper;
+    const char *call;
+} builders[] = {
+    {"quaternion", "AxisAngle", H_AXISANGLE_Q, "tide_axisangle_q"}, {"quaternion", "Euler", H_EULER_Q, "tide_euler_q"},
+    {"quaternion", "LookRotation", H_LOOKROTATION_Q, "tide_lookrotation_q"}, {"float4x4", "TRS", H_TRS, "tide_trs"},
+    {"float4x4", "PerspectiveFov", H_PERSPECTIVE, "tide_perspective"}, {"float4x4", "Ortho", H_ORTHO, "tide_ortho"},
 };
 
 static void put_arg(emit *em, const expr *e, const int i)
@@ -837,26 +1336,75 @@ static void put_arg(emit *em, const expr *e, const int i)
     ex_as(em, e->args.items[i], i < e->arg_want.count ? e->arg_want.items[i] : e->args.items[i]->type);
 }
 
+// Component `k` of the call's first argument.
+static void put_component(emit *em, const expr *e, const int k)
+{
+    put_arg(em, e, 0);
+    sb_printf(em->o, ".%c", "xyzw"[k]);
+}
+
+// name(the call's arguments)
+static void put_call(emit *em, const expr *e, const char *name)
+{
+    sb_printf(em->o, "%s(", name);
+    for (int i = 0; i < e->args.count; i++) {
+        if (i) sb_put(em->o, ", ");
+        put_arg(em, e, i);
+    }
+    sb_put(em->o, ")");
+}
+
+// The same through a function of the engine's own.
+static void put_helper_call(emit *em, const expr *e, const int helper, const char *name)
+{
+    need(em, helper);
+    put_call(em, e, name);
+}
+
+static void put_family_call(emit *em, const expr *e, const int family, const int dim)
+{
+    char name[32];
+    snprintf(name, sizeof name, "tide_%s%d", family_names[family], dim);
+    put_helper_call(em, e, family_helper(family, dim), name);
+}
+
+// Everything in Math is here, as on the CPU up to the GPU's rounding, but
+// what the GPU has no way to do: a long's hash.
 static void ex_math(emit *em, const expr *e)
 {
     const bool wgsl = em->l == WGSL;
     const type first = e->arg_want.count ? e->arg_want.items[0] : (type){TY_ERROR, NULL};
-    for (int i = 0; i < e->arg_want.count; i++) {
-        if (e->arg_want.items[i].kind == TY_QUATERNION && !str_eq_c(e->name, "Dot") && !str_eq_c(e->name, "Normalize")) {
-            refuse(em, e->at, "Math." STR_FMT " on a quaternion isn't on the GPU yet", STR_ARG(e->name));
-            diag_note("turn the rotation into a float3x3 on the CPU, 'float3x3(rotation)', keep it in a component or a "
-                      "singleton, and multiply with Math.Mul there");
-            return;
-        }
+    const bool floats = type_is_float_based(first);
+    const bool quaternion = first.kind == TY_QUATERNION;
+    const int dim = type_dim(first) ? type_dim(first) : 4;
+    if (str_eq_c(e->name, "Hash") && first.kind == TY_LONG) {
+        refuse(em, e->at, "Math.Hash of a long isn't on the GPU, whose ints are 32 bits");
+        diag_note("split it on the CPU, into fields the GPU reads: 'Math.Hash(int2(low, high))' is the same number for "
+                  "'low = int(x)' and 'high = int(x >> 32)'");
+        return;
     }
     // The compiler folds nothing here: a constant out of a function's range is an error to WGSL, not a value
     em->defuse++;
-    const int dim = type_dim(first) ? type_dim(first) : 4;
-    if (str_eq_c(e->name, "Saturate")) {
-        if (wgsl) sb_put(em->o, "saturate(");
-        else sb_put(em->o, "clamp(");
+    if ((str_eq_c(e->name, "Min") || str_eq_c(e->name, "Max")) && floats) { // With one NaN, the other, as on the CPU
+        put_family_call(em, e, str_eq_c(e->name, "Min") ? FAMILY_MIN : FAMILY_MAX, dim);
+    } else if (str_eq_c(e->name, "Clamp") && floats) {
+        put_family_call(em, e, FAMILY_CLAMP, dim);
+    } else if (str_eq_c(e->name, "Clamp")) { // Ints: the lower bound when they're the wrong way around, as on the CPU
+        sb_put(em->o, "max(");
+        put_arg(em, e, 1);
+        sb_put(em->o, ", min(");
+        put_arg(em, e, 2);
+        sb_put(em->o, ", ");
         put_arg(em, e, 0);
-        sb_put(em->o, wgsl ? ")" : ", 0.0, 1.0)");
+        sb_put(em->o, "))");
+    } else if (str_eq_c(e->name, "Saturate")) {
+        put_family_call(em, e, FAMILY_SATURATE, dim);
+    } else if (str_eq_c(e->name, "SmoothStep")) {
+        put_family_call(em, e, FAMILY_SMOOTHSTEP, dim);
+    } else if (str_eq_c(e->name, "Pow")) {
+        put_family_call(em, e, FAMILY_POW, dim);
+    } else if (str_eq_c(e->name, "Atan2")) {
+        put_family_call(em, e, FAMILY_ATAN2, dim);
     } else if (str_eq_c(e->name, "Log10")) {
         sb_put(em->o, "(log(");
         put_arg(em, e, 0);
@@ -886,28 +1434,57 @@ static void ex_math(emit *em, const expr *e)
             put_arg(em, e, 1);
         }
         sb_put(em->o, ")");
-    } else if (str_eq_c(e->name, "Normalize")) { // Zero for a zero vector, as on the CPU: the GPU's own gives nothing sure
-        em->helpers |= (unsigned)HELP_NORMALIZE << (dim - 2);
-        sb_printf(em->o, "tide_normalize%d(", dim);
-        put_arg(em, e, 0);
-        sb_put(em->o, ")");
+    } else if (str_eq_c(e->name, "Normalize") && !quaternion) { // Zero for a zero vector, as on the CPU
+        char name[32];
+        snprintf(name, sizeof name, "tide_normalize%d", dim);
+        put_helper_call(em, e, H_NORMALIZE2 + dim - 2, name);
     } else if (str_eq_c(e->name, "Csum")) {
         sb_put(em->o, "dot(");
         put_arg(em, e, 0);
         sb_printf(em->o, ", %s(1.0))", float_ty(em, dim));
-    } else if (str_eq_c(e->name, "Cmin") || str_eq_c(e->name, "Cmax")) {
-        const char *fn = str_eq_c(e->name, "Cmin") ? "min" : "max";
-        for (int k = 0; k + 1 < dim; k++) sb_printf(em->o, "%s(", fn);
-        for (int k = 0; k < dim; k++) {
-            put_arg(em, e, 0);
-            sb_printf(em->o, ".%c%s", "xyzw"[k], k == 0 ? ", " : k + 1 < dim ? "), " : ")");
+    } else if (str_eq_c(e->name, "Cmin") || str_eq_c(e->name, "Cmax")) { // In the CPU's order, a pair at a time
+        const char *fn = str_eq_c(e->name, "Cmin") ? "tide_min1" : "tide_max1";
+        need(em, family_helper(str_eq_c(e->name, "Cmin") ? FAMILY_MIN : FAMILY_MAX, 1));
+        sb_printf(em->o, dim > 2 ? "%s(%s(" : "%s(", fn, fn);
+        put_component(em, e, 0);
+        sb_put(em->o, ", ");
+        put_component(em, e, 1);
+        sb_put(em->o, ")");
+        if (dim == 3) {
+            sb_put(em->o, ", ");
+            put_component(em, e, 2);
+            sb_put(em->o, ")");
+        } else if (dim == 4) {
+            sb_printf(em->o, ", %s(", fn);
+            put_component(em, e, 2);
+            sb_put(em->o, ", ");
+            put_component(em, e, 3);
+            sb_put(em->o, "))");
         }
+    } else if (str_eq_c(e->name, "Hash")) { // Integers: the CPU's number
+        char name[32];
+        snprintf(name, sizeof name, "tide_hash%d", type_dim(first));
+        put_helper_call(em, e, H_HASH1 + type_dim(first) - 1, name);
+    } else if (quaternion && str_eq_c(e->name, "Mul")) { // Two rotations, or one and the vector it turns
+        const bool turns = e->arg_want.items[1].kind != TY_QUATERNION;
+        put_helper_call(em, e, turns ? H_ROTATE_Q : H_MUL_Q, turns ? "tide_rotate_q" : "tide_mul_q");
+    } else if (str_eq_c(e->name, "Forward") || str_eq_c(e->name, "Up") || str_eq_c(e->name, "Right")) {
+        need(em, H_ROTATE_Q);
+        sb_put(em->o, "tide_rotate_q(");
+        put_arg(em, e, 0);
+        sb_printf(em->o, ", %s(%s))", float_ty(em, 3), str_eq_c(e->name, "Forward") ? "0.0, 0.0, 1.0"
+                                                      : str_eq_c(e->name, "Up")    ? "0.0, 1.0, 0.0"
+                                                                                   : "1.0, 0.0, 0.0");
     } else if (str_eq_c(e->name, "Mul")) {
         sb_put(em->o, "(");
         put_arg(em, e, 0);
         sb_put(em->o, " * ");
         put_arg(em, e, 1);
         sb_put(em->o, ")");
+    } else if (str_eq_c(e->name, "Inverse") && !quaternion) { // WGSL has none, and GLSL's says nothing of its order
+        char name[32];
+        snprintf(name, sizeof name, "tide_inverse%d", matrix_dim(first));
+        put_helper_call(em, e, H_INVERSE2 + matrix_dim(first) - 2, name);
     } else if ((str_eq_c(e->name, "Transform") || str_eq_c(e->name, "Rotate")) && first.kind == TY_FLOAT4X4) {
         sb_put(em->o, "(");
         put_arg(em, e, 0);
@@ -916,34 +1493,52 @@ static void ex_math(emit *em, const expr *e)
         sb_printf(em->o, ", %s)).xyz", str_eq_c(e->name, "Transform") ? "1.0" : "0.0");
     } else {
         const char *fn = NULL;
-        for (size_t i = 0; i < sizeof same_math / sizeof same_math[0]; i++) {
+        int helper = -1;
+        for (size_t i = 0; quaternion && i < sizeof quaternion_math / sizeof quaternion_math[0]; i++) {
+            if (!str_eq_c(e->name, quaternion_math[i].name)) continue;
+            fn = quaternion_math[i].call;
+            helper = quaternion_math[i].helper;
+        }
+        for (size_t i = 0; !fn && i < sizeof same_math / sizeof same_math[0]; i++) {
             if (str_eq_c(e->name, same_math[i].name)) fn = wgsl ? same_math[i].wgsl : same_math[i].glsl;
         }
-        if (!fn || (str_eq_c(e->name, "Inverse"))) {
+        if (!fn) { // A function Math gains goes here too, or says why it can't
             em->defuse--;
             refuse(em, e->at, "Math." STR_FMT " isn't on the GPU yet", STR_ARG(e->name));
-            if (str_eq_c(e->name, "Inverse")) {
-                diag_note("invert it on the CPU, in the view, and keep the result in a component or a singleton it reads");
-            } else if (str_eq_c(e->name, "Hash")) {
-                diag_note("work it out on the CPU and keep it in a component, or sample a grid of noise");
-            }
+            diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
             return;
         }
-        sb_printf(em->o, "%s(", fn);
-        for (int i = 0; i < e->args.count; i++) {
-            if (i) sb_put(em->o, ", ");
-            put_arg(em, e, i);
-        }
-        sb_put(em->o, ")");
+        if (helper >= 0) need(em, helper);
+        put_call(em, e, fn);
     }
     em->defuse--;
+}
+
+// quaternion.AxisAngle, float4x4.TRS and the others: tide/math.h's, written out.
+static bool ex_builder(emit *em, const expr *e)
+{
+    const str owner = e->object->name;
+    if (str_eq_c(owner, "float4x4") && str_eq_c(e->name, "Translate")) {
+        const char *f4 = float_ty(em, 4);
+        sb_printf(em->o, "%s(%s(1.0, 0.0, 0.0, 0.0), %s(0.0, 1.0, 0.0, 0.0), %s(0.0, 0.0, 1.0, 0.0), %s(",
+                  ty(em, e->type), f4, f4, f4, f4);
+        put_arg(em, e, 0);
+        sb_put(em->o, ", 1.0))");
+        return true;
+    }
+    for (size_t i = 0; i < sizeof builders / sizeof builders[0]; i++) {
+        if (!str_eq_c(owner, builders[i].owner) || !str_eq_c(e->name, builders[i].name)) continue;
+        put_helper_call(em, e, builders[i].helper, builders[i].call);
+        return true;
+    }
+    return false;
 }
 
 // float3(1, 2, 3), int(x), Color(r, g, b)
 static void ex_construct(emit *em, const expr *e)
 {
     const type t = e->type;
-    const bool floats = type_is_float_based(t) || matrix_dim(t) || t.kind == TY_COLOR;
+    const bool floats = type_is_float_based(t) || matrix_dim(t) || t.kind == TY_COLOR || t.kind == TY_QUATERNION;
     const int n = matrix_dim(t);
     switch (e->ctor) {
     case CTOR_SCALAR:
@@ -997,9 +1592,25 @@ static void ex_construct(emit *em, const expr *e)
         }
         sb_put(em->o, ")");
         return;
-    default:
-        refuse(em, e->at, "%s isn't built this way on the GPU yet", type_name(t));
-        diag_note("build it on the CPU, in the view, and keep it in a component or a singleton the code reads");
+    case CTOR_QUAT_FROM_F4: // A quaternion is its float4 here
+        ex(em, e->args.items[0]);
+        return;
+    case CTOR_QUAT_FROM_MAT:
+        put_helper_call(em, e, H_Q_FROM_M3, "tide_q_from_m3");
+        return;
+    case CTOR_MAT_FROM_QUAT:
+        put_helper_call(em, e, H_M3_FROM_Q, "tide_m3_from_q");
+        return;
+    case CTOR_MAT_FROM_ROT_T:
+        need(em, H_M4_FROM_M3);
+        sb_put(em->o, "tide_m4_from_m3(");
+        ex(em, e->args.items[0]);
+        sb_put(em->o, ", ");
+        ex_as(em, e->args.items[1], (type){TY_FLOAT3, NULL});
+        sb_put(em->o, ")");
+        return;
+    default: // A PlayerID or a Rect, which the GPU has none of: refused as a type before it gets here
+        refuse(em, e->at, "%s isn't something the GPU has", type_name(t));
     }
 }
 
@@ -1125,6 +1736,7 @@ static void ex_call(emit *em, const expr *e)
             diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
             return;
         }
+        if (e->kind == E_METHOD && e->object->kind == E_NAME && ex_builder(em, e)) return;
         if (e->kind == E_METHOD && e->object->kind == E_NAME && str_eq_c(e->object->name, "Debug")) {
             refuse(em, e->at, "Debug." STR_FMT " speaks from the CPU: code the GPU runs has nowhere to print", STR_ARG(e->name));
             diag_note("to look at a value, write it to the pixel's color");
@@ -1770,23 +2382,6 @@ static void need_function(emit *em, decl *fn, const loc at)
 static int packs(const int words)
 {
     return (words + 3) / 4;
-}
-
-static void put_helpers(const emit *em, sb *o)
-{
-    const bool wgsl = em->l == WGSL;
-    if (em->helpers & HELP_F) sb_put(o, wgsl ? "fn tide_f(x: f32) -> f32 { return x; }\n" : "float tide_f(float x) { return x; }\n");
-    if (em->helpers & HELP_I) sb_put(o, wgsl ? "fn tide_i(x: i32) -> i32 { return x; }\n" : "int tide_i(int x) { return x; }\n");
-    for (int n = 2; n <= 4; n++) {
-        if (!(em->helpers & ((unsigned)HELP_NORMALIZE << (n - 2)))) continue;
-        if (wgsl) {
-            sb_printf(o, "fn tide_normalize%d(v: vec%df) -> vec%df {\n    let l = dot(v, v);\n    if (l > 1.17549435e-38) { return v * "
-                         "inverseSqrt(l); }\n    return vec%df();\n}\n", n, n, n, n);
-        } else {
-            sb_printf(o, "vec%d tide_normalize%d(vec%d v) {\n    float l = dot(v, v);\n    if (l > 1.17549435e-38) { return v * "
-                         "inversesqrt(l); }\n    return vec%d(0.0);\n}\n", n, n, n, n);
-        }
-    }
 }
 
 static void put_structs(emit *em, sb *o)
