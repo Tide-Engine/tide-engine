@@ -778,6 +778,40 @@ TIDE_TEST(lsp_shapes)
 #undef SHAPE_VIEW
 }
 
+// Text at an anchor and in a weight: every version of Draw2D.Text, and the built-in Font
+TIDE_TEST(lsp_text_anchor_and_font)
+{
+    start();
+#define TEXT_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anchor.MiddleCenter, Font.Bold);\n"
+                            "    Font weight = Font.Regular;\n"
+                            "    var size = Draw2D.MeasureText(\"DUEL\", 88, weight);\n"
+                            "    Draw2D.Text(\"DUEL\", size, 88, Color.white, weight);"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *weights = complete(TEXT_VIEW("    var weight = Font.$"));
+    TIDE_CHECK(offers(weights, "Regular") && offers(weights, "Bold"));
+
+    open_document(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
+    const char *text = request("textDocument/hover");
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Font font)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font)"));
+    TIDE_CHECK(has(text, "Anchor.MiddleCenter") && has(text, "Font.Bold"));
+    open_document(TEXT_VIEW("    var size = Draw2D.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw2D.Rect(size, size, Color.white);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font) -> float2"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
+
+    // Its C, which takes both
+    TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
+                   "void tide_draw_text_at("));
+#undef TEXT_VIEW
+}
+
 static const char *hover_at(const int line, const int character)
 {
     return request_at("file:///test.tide", "textDocument/hover", line, character, "");

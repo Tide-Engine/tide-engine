@@ -2693,11 +2693,29 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
             if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
             else if (e->resource_operation) gen_expr(g, o, e->object);
+            // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
+            const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
+            const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
+            bool anchored = false, weighted = false;
             for (int i = 0; i < e->args.count; i++) {
                 if (i || e->call == CALL_DRAW || e->resource_operation) sb_put(o, ", ");
-                if (e->arg_want.items[i].kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
-                else gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                const type want = e->arg_want.items[i];
+                if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
+                    if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
+                    sb_put(o, "tide_font_file(");
+                    gen_as(g, o, e->args.items[i], want);
+                    sb_put(o, ")");
+                    weighted = true;
+                    continue;
+                }
+                if (text_at && want.kind == TY_ENUM && want.decl == g->prog->anchor) {
+                    sb_put(o, "(tide_anchor)");
+                    anchored = true;
+                }
+                if (want.kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
+                else gen_as(g, o, e->args.items[i], want);
             }
+            if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
             if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
                                         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
                 sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
@@ -6671,6 +6689,20 @@ static void gen_prelude(gen *g)
                  "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked};\n"
                  "}\n\n",
               control, control);
+
+    // C names a weight by its file. The bold's is in the platform layer's library, and the linker only
+    // takes it from there for a program that names it: so this does only for a game that says Font.Bold.
+    if (g->prog->names_bold) {
+        sb_put(o, "// Font: a weight as tide/draw.h takes it, its file.\n"
+                  "TIDE_HELPER const unsigned char *tide_font_file(const int32_t font)\n{\n"
+                  "    return font == 1 ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;\n}\n\n");
+    } else {
+        sb_put(o, "// Font: a weight as tide/draw.h takes it, its file. This game never says Font.Bold, so nothing here\n"
+                  "// names the bold's, and the game doesn't carry it.\n"
+                  "TIDE_HELPER const unsigned char *tide_font_file(const int32_t font)\n{\n"
+                  "    (void)font;\n"
+                  "    return TIDE_FONT_REGULAR;\n}\n\n");
+    }
 
     sb_put(o, "// Arithmetic on ints, vectors, quaternions and matrices comes from tide/math.h.\n\n");
 
@@ -12983,6 +13015,7 @@ bool codegen(program *prog, const codegen_options *opts)
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);
         setting_text(opts->info->version, sizeof opts->info->version, prog->version);
+        opts->info->bold = prog->names_bold;
     }
     gen g = {0};
     g.prog = prog;

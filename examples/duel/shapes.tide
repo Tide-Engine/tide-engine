@@ -65,25 +65,3 @@ void Inset(float2 center, float2 size, float radius, float spread, Color color)
 {
     Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = -spread });
 }
-
-// Text with its middle at `center`, on the screen, where y goes down.
-void Write(string text, float2 center, float size, Color color)
-{
-    Draw2D.Text(text, center - Draw2D.MeasureText(text, size) * 0.5, size, color);
-}
-
-// The same, drawn twice a little apart: the engine's font is a light one,
-// and a title wants weight.
-void WriteBold(string text, float2 center, float size, Color color)
-{
-    var apart = Math.Max(0.5, size * 0.012);
-    Write(text, center + float2(-apart, 0), size, color);
-    Write(text, center + float2(apart, 0), size, color);
-}
-
-// The same in the arena, where y goes up.
-void WriteUp(string text, float2 center, float size, Color color)
-{
-    var half = Draw2D.MeasureText(text, size) * 0.5;
-    Draw2D.Text(text, center + float2(-half.x, half.y), size, color);
-}

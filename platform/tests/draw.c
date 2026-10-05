@@ -8,8 +8,8 @@
 // that 3D meshes draw through their cameras, nearest in front, that meshes
 // draw through shaders of the game's, with what those read, that the shapes
 // with smooth edges are where they should be, edge by edge, that the GUI's
-// widgets have their theme's colors and corners, and that text is as big as
-// it measures.
+// widgets have their theme's colors and corners, that text is as big as it
+// measures, in both its weights, and that it's where its anchor puts it.
 // `--bench` (or `?bench` on the web) times frames of many shapes instead.
 
 #include <math.h>
@@ -1480,10 +1480,10 @@ static int dump(const char *path)
 // Pixels are read back from a target of the window's size, which is in its
 // own pixels whatever the display's scale is: text measures as it's fitted
 // there.
-static tide_float2 measure_read_back(const char *text, const float size, const bool target)
+static tide_float2 measure_read_back(const char *text, const float size, const bool target, const unsigned char *font)
 {
     (void)target;
-    return tide_platform_measure_text(text, size, true);
+    return tide_platform_measure_text(text, size, true, font);
 }
 
 enum { TEXT_AREA_W = 200, TEXT_AREA_H = 84 };
@@ -1514,12 +1514,13 @@ static void text_area(uint32_t *out)
 // to, and their ink ends where the measure says. One size is halfway between
 // two whole numbers of pixels, where measuring and drawing have to round the
 // same way.
-static void text_measures_as_drawn(void)
+static void text_measures_as_drawn(const unsigned char *font, const char *weight)
 {
     static const float scales[] = {0.0f, 1.0f, 2.75f, 0.4f, 7.3f};
     static const tide_float2 centers[] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.3f, 0.7f}, {-40.0f, 12.5f}, {3.0f, -2.0f}};
     static const float heights[] = {16.0f, 19.0f, 13.3f, 22.6f, 30.5f}; // The text's size, in pixels
     const tide_float2 corner = {6.25f, 5.25f};                          // Its top left corner, in pixels
+    const tide_anchor corner_anchor = TIDE_ANCHOR_UPPER_LEFT;
     for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
         const float s = scales[k], unit = s > 0.0f ? s : 1.0f;
         const float size = heights[k] / unit;
@@ -1530,16 +1531,17 @@ static void text_measures_as_drawn(void)
 
         static uint32_t together[TEXT_AREA_W * TEXT_AREA_H], apart[TEXT_AREA_W * TEXT_AREA_H];
         text_frame(s, centers[k]);
-        const tide_float2 both = tide_draw_measure_text(&list, "Tide fits\nits texts", size, screen, measure_read_back);
-        const tide_float2 start = tide_draw_measure_text(&list, "Tide ", size, screen, measure_read_back);
-        const tide_float2 line = tide_draw_measure_text(&list, "Tide fits", size, screen, measure_read_back);
-        tide_draw_text(&list, "Tide fits\nits texts", at, size, white);
+        const tide_float2 both = tide_draw_measure_text(&list, "Tide fits\nits texts", size, font, screen, measure_read_back);
+        const tide_float2 start = tide_draw_measure_text(&list, "Tide ", size, font, screen, measure_read_back);
+        const tide_float2 line = tide_draw_measure_text(&list, "Tide fits", size, font, screen, measure_read_back);
+        tide_draw_text_at(&list, "Tide fits\nits texts", at, size, white, corner_anchor, font);
         text_area(together);
 
         text_frame(s, centers[k]);
-        tide_draw_text(&list, "Tide ", at, size, white);
-        tide_draw_text(&list, "fits", tide_f2(at.x + start.x, at.y), size, white);
-        tide_draw_text(&list, "its texts", tide_f2(at.x, at.y + down * (both.y - line.y)), size, white);
+        tide_draw_text_at(&list, "Tide ", at, size, white, corner_anchor, font);
+        tide_draw_text_at(&list, "fits", tide_f2(at.x + start.x, at.y), size, white, corner_anchor, font);
+        tide_draw_text_at(&list, "its texts", tide_f2(at.x, at.y + down * (both.y - line.y)), size, white, corner_anchor,
+                          font);
         text_area(apart);
 
         int different = 0, ink = 0, right = -1, bottom = -1;
@@ -1550,9 +1552,9 @@ static void text_measures_as_drawn(void)
             if (i % TEXT_AREA_W > right) right = i % TEXT_AREA_W;
             bottom = i / TEXT_AREA_W;
         }
-        char what[128];
-        snprintf(what, sizeof what, "text drawn in parts, each where the last measures to, is the text drawn at once "
-                                    "(%.1f pixels high, %d pixels differ)", (double)heights[k], different);
+        char what[160];
+        snprintf(what, sizeof what, "%s text drawn in parts, each where the last measures to, is the text drawn at once "
+                                    "(%.1f pixels high, %d pixels differ)", weight, (double)heights[k], different);
         expect(different == 0 && ink > 100, what);
 
         // Its last letters' ink, within a third of a letter's height of the measured corner
@@ -1564,6 +1566,151 @@ static void text_measures_as_drawn(void)
                && (float)(right + 1) <= measured_right + 1.0f && (float)(right + 1) > measured_right - slack
                && (float)(bottom + 1) <= measured_bottom + 1.0f && (float)(bottom + 1) > measured_bottom - slack, what);
     }
+}
+
+// Bold is the bold weight's own glyphs, not the regular ones drawn again: the
+// same text has more ink, in wider letters, and measures wider, as it's drawn.
+static void text_bold_is_heavier(void)
+{
+    static uint32_t pixels[TEXT_AREA_W * TEXT_AREA_H];
+    int ink[2] = {0, 0}, right[2] = {-1, -1};
+    float width[2];
+    for (int bold = 0; bold < 2; bold++) {
+        const unsigned char *font = bold ? TIDE_FONT_BOLD : TIDE_FONT_REGULAR;
+        text_frame(0.0f, tide_f2(0.0f, 0.0f));
+        width[bold] = tide_draw_measure_text(&list, "Hill time", 24.0f, font, screen, measure_read_back).x;
+        tide_draw_text_at(&list, "Hill time", tide_f2(6.0f, 6.0f), 24.0f, white, TIDE_ANCHOR_UPPER_LEFT, font);
+        text_area(pixels);
+        for (int i = 0; i < TEXT_AREA_W * TEXT_AREA_H; i++) {
+            if (near(pixels[i], rgba(background), 0)) continue;
+            ink[bold]++;
+            if (i % TEXT_AREA_W > right[bold]) right[bold] = i % TEXT_AREA_W;
+        }
+    }
+    char what[160];
+    snprintf(what, sizeof what, "bold text has more ink than regular (%d pixels to %d), and is wider (%.0f to %.0f, "
+                                "ending at %d and %d)", ink[1], ink[0], (double)width[1], (double)width[0], right[1], right[0]);
+    expect(ink[1] > ink[0] + ink[0] / 5 && width[1] > width[0] && right[1] > right[0]
+           && (float)(right[1] + 1) <= 6.0f + width[1] + 1.0f, what);
+}
+
+// A text's anchor is the place of its box that's at its position: the box
+// tide_draw_measure_text says, as wide as its widest line and as tall as its
+// lines, with each line against the anchor's side. So text at an anchor is,
+// to the pixel, its lines drawn one by one from the top left corners that box
+// puts them at; and upper is towards the top of the screen under a camera
+// too, where y goes up.
+static void text_anchors(const unsigned char *font, const char *weight)
+{
+    static const char *const names[] = {"upper left", "upper center", "upper right", "middle left", "middle center",
+                                        "middle right", "lower left", "lower center", "lower right"};
+    static const float scales[] = {0.0f, 2.75f}; // The screen, and a camera whose pixels to a unit aren't whole
+    static const char *const texts[][2] = {{"Tide fits", NULL}, {"MMMMMM", "ii"}}; // Lines far from as wide as each other
+    const tide_float2 place = {100.25f, 42.25f}; // In pixels: where the anchor is
+    const float height = 14.0f;                  // The text's size, in pixels
+    for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
+        const float s = scales[k], unit = s > 0.0f ? s : 1.0f;
+        const float size = height / unit;
+        const float down = s > 0.0f ? -1.0f : 1.0f; // The way lines go: y is up in the world
+        const tide_float2 center = s > 0.0f ? tide_f2(0.3f, 0.7f) : tide_f2(0.0f, 0.0f);
+        const tide_float2 at = s > 0.0f ? tide_f2(center.x + (place.x - screen.x * 0.5f) / s,
+                                                  center.y - (place.y - screen.y * 0.5f) / s)
+                                        : place;
+        for (size_t t = 0; t < sizeof texts / sizeof texts[0]; t++) {
+            // The whole text, and what its box and its lines measure, in the units it's drawn in
+            char whole[64] = "";
+            int lines = 0;
+            for (; lines < 2 && texts[t][lines]; lines++) {
+                if (lines) strcat(whole, "\n");
+                strcat(whole, texts[t][lines]);
+            }
+            text_frame(s, center);
+            const tide_float2 box = tide_draw_measure_text(&list, whole, size, font, screen, measure_read_back);
+            float widths[2] = {0.0f, 0.0f}, widest = 0.0f;
+            for (int i = 0; i < lines; i++) {
+                widths[i] = tide_draw_measure_text(&list, texts[t][i], size, font, screen, measure_read_back).x;
+                if (widths[i] > widest) widest = widths[i];
+            }
+            const float pitch = lines > 1 ? (box.y - size) / (float)(lines - 1) : 0.0f;
+            expect(box.x == widest, "a text's box is as wide as its widest line");
+
+            for (int anchor = 0; anchor < 9; anchor++) {
+                const float side = (float)(anchor % 3) * 0.5f, row = (float)(anchor / 3) * 0.5f;
+                static uint32_t anchored[TEXT_AREA_W * TEXT_AREA_H], by_hand[TEXT_AREA_W * TEXT_AREA_H];
+                text_frame(s, center);
+                tide_draw_text_at(&list, whole, at, size, white, (tide_anchor)anchor, font);
+                text_area(anchored);
+
+                text_frame(s, center);
+                for (int i = 0; i < lines; i++) {
+                    const tide_float2 corner = {at.x - side * widths[i], at.y + down * ((float)i * pitch - row * box.y)};
+                    tide_draw_text_at(&list, texts[t][i], corner, size, white, TIDE_ANCHOR_UPPER_LEFT, font);
+                }
+                text_area(by_hand);
+
+                // Where its ink is, and each line's: a line's rows are from its top to the next one's
+                int different = 0, ink = 0, left = TEXT_AREA_W, right = -1, top = TEXT_AREA_H, bottom = -1;
+                int line_left[2] = {TEXT_AREA_W, TEXT_AREA_W}, line_right[2] = {-1, -1};
+                const float box_top = place.y - row * box.y * unit;
+                for (int i = 0; i < TEXT_AREA_W * TEXT_AREA_H; i++) {
+                    different += anchored[i] != by_hand[i];
+                    if (near(anchored[i], rgba(background), 0)) continue;
+                    const int x = i % TEXT_AREA_W, y = i / TEXT_AREA_W;
+                    ink++;
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                    if (y < top) top = y;
+                    if (y > bottom) bottom = y;
+                    int in = pitch > 0.0f ? (int)floorf(((float)y + 0.5f - box_top) / (pitch * unit)) : 0;
+                    in = in < 0 ? 0 : in >= lines ? lines - 1 : in;
+                    if (x < line_left[in]) line_left[in] = x;
+                    if (x > line_right[in]) line_right[in] = x;
+                }
+                char what[200];
+                snprintf(what, sizeof what, "%s text of %d line%s at its %s is its lines drawn from their corners, %s "
+                                            "(%d pixels differ)", weight, lines, lines == 1 ? "" : "s", names[anchor],
+                         s > 0.0f ? "under a camera" : "on the screen", different);
+                expect(different == 0 && ink > 60, what);
+
+                // The box around the anchor holds the ink, which reaches its
+                // sides: within a third of a letter's height, as letters
+                // don't fill their lines or what they advance by
+                const float box_left = place.x - side * box.x * unit, slack = height / 3.0f + 1.0f;
+                const float box_right = box_left + box.x * unit, box_bottom = box_top + box.y * unit;
+                snprintf(what, sizeof what, "its ink is in its box about the anchor (%d to %d by %d to %d, in %.1f to %.1f "
+                                            "by %.1f to %.1f)", left, right + 1, top, bottom + 1, (double)box_left,
+                         (double)box_right, (double)box_top, (double)box_bottom);
+                expect((float)left >= box_left - 1.0f && (float)left < box_left + slack
+                       && (float)(right + 1) <= box_right + 1.0f && (float)(right + 1) > box_right - slack
+                       && (float)top >= box_top - 1.0f && (float)top < box_top + slack
+                       && (float)(bottom + 1) <= box_bottom + 1.0f && (float)(bottom + 1) > box_bottom - slack, what);
+
+                // Lines against the anchor's side: they start together at a
+                // left one, end together at a right one, and are centered on
+                // one between, to the pixel their widths leave
+                if (lines > 1) {
+                    const int starts = abs(line_left[1] - line_left[0]), ends = abs(line_right[1] - line_right[0]);
+                    const int middles = abs(line_left[1] + line_right[1] - line_left[0] - line_right[0]);
+                    const bool aligned = anchor % 3 == 0   ? starts <= 2 && ends > 8
+                                         : anchor % 3 == 2 ? ends <= 2 && starts > 8
+                                                           : middles <= 4 && starts > 8 && ends > 8;
+                    snprintf(what, sizeof what, "its lines are against the anchor's side (from %d and %d to %d and %d)",
+                             line_left[0], line_left[1], line_right[0] + 1, line_right[1] + 1);
+                    expect(aligned, what);
+                }
+            }
+        }
+    }
+}
+
+// Text, in each weight and at each anchor.
+static void text_checks(void)
+{
+    text_measures_as_drawn(TIDE_FONT_REGULAR, "regular");
+    text_measures_as_drawn(TIDE_FONT_BOLD, "bold");
+    text_bold_is_heavier();
+    text_anchors(TIDE_FONT_REGULAR, "regular");
+    text_anchors(TIDE_FONT_BOLD, "bold");
 }
 
 // ---------------------------------------------------------------------------
@@ -1789,7 +1936,7 @@ static int frame(void *user, const float seconds)
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
-        text_measures_as_drawn();
+        text_checks();
         return run_checks();
     }
 #endif
@@ -1800,7 +1947,7 @@ static int frame(void *user, const float seconds)
     smooth_shapes();
     themed_gui();
     tiles_leave_no_gaps();
-    text_measures_as_drawn();
+    text_checks();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
