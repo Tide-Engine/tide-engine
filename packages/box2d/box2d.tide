@@ -33,6 +33,12 @@ component Body
     float gravityScale = 1;
     float linearDamping;
     float angularDamping;
+    // The package's own: where the last step left the body, which is how
+    // what's written since is told, without asking Box2D
+    float2 stepPosition;
+    float stepAngle;
+    float2 stepVelocity;
+    float stepSpin;
     bool fixedRotation;
     bool bullet;
 }
@@ -78,7 +84,7 @@ singleton Physics
     int substeps = 4;
     int bodies; // Made so far
     int shapes;
-    long stamp; // Which state `image` is: what C's world is told apart by
+    long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
     int size; // The image's bytes; the list keeps what room it had
     List<byte> image; // Box2D's whole state after the last step
     List<long> gone; // Bodies whose entities were destroyed, until the next step
@@ -113,11 +119,8 @@ extern int AttachCircle(long body, mut Circle circle);
 [NativeName("b2t_step")]
 extern long StepWorld(float dt, int substeps, float2 gravity);
 
-[NativeName("b2t_size")]
-extern int ImageSize();
-
 [NativeName("b2t_image")]
-extern void CopyImage(mut List<byte> image, int count);
+extern int WriteImage(mut List<byte> image, int count);
 
 [NativeName("b2t_pull")]
 extern void ReadBody(mut Body body, long stamp);
@@ -144,33 +147,45 @@ system Begin(mut Physics physics)
 // goes to Box2D.
 system Enter(mut Body body, mut Physics physics)
 {
-    if (SyncBody(body) != 0)
+    // A body nothing wrote to since the last step costs these comparisons, and no call
+    bool moved = body.position.x != body.stepPosition.x || body.position.y != body.stepPosition.y || body.angle != body.stepAngle;
+    bool pushed = body.velocity.x != body.stepVelocity.x || body.velocity.y != body.stepVelocity.y || body.spin != body.stepSpin;
+    bool nudged = body.impulse.x != 0 || body.impulse.y != 0 || body.turn != 0;
+    if (body.id == 0 || moved || pushed || nudged)
     {
-        physics.bodies += 1;
-        physics.owners[body.id] = this;
+        if (SyncBody(body) != 0)
+        {
+            physics.bodies += 1;
+            physics.owners[body.id] = this;
+        }
     }
 }
 
 system AttachBoxes(Body body, mut Box box, mut Physics physics)
 {
-    physics.shapes += AttachBox(body.id, box);
+    if (box.id == 0) physics.shapes += AttachBox(body.id, box);
 }
 
 system AttachCircles(Body body, mut Circle circle, mut Physics physics)
 {
-    physics.shapes += AttachCircle(body.id, circle);
+    if (circle.id == 0) physics.shapes += AttachCircle(body.id, circle);
 }
 
 // The step, and Box2D's state after it into the match.
 system Step(Time time, mut Physics physics)
 {
     physics.stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
-    physics.size = ImageSize();
-    while (physics.image.count < physics.size)
+    physics.size = WriteImage(physics.image, physics.image.count);
+    if (physics.size > physics.image.count)
     {
-        physics.image.Add(0);
+        // It didn't fit: room for it and a quarter more, so that's seldom
+        int room = physics.size + physics.size / 4;
+        while (physics.image.count < room)
+        {
+            physics.image.Add(0);
+        }
+        physics.size = WriteImage(physics.image, physics.image.count);
     }
-    CopyImage(physics.image, physics.image.count);
 }
 
 // Where the step left each body.

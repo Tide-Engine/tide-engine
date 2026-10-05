@@ -1,5 +1,6 @@
 #include "tide/list.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -359,13 +360,38 @@ void tide_list_sort(tide_list *l, const uint32_t size, bool (*before)(const void
     tide_list_unflatten(*l, flat, size, true, copied);
 }
 
+// The copy C gets of a list in chunks is megabytes, and a list that goes to C
+// every tick would have them allocated, and their pages faulted in, every
+// tick. So the last one is kept for the next call, whichever thread makes it:
+// taken out while it's in use, so two calls at once each have their own.
+static _Atomic(char *) flat_kept;
+static _Atomic size_t flat_kept_room;
+
+static char *flat_take(const size_t room)
+{
+    char *kept = atomic_exchange(&flat_kept, NULL);
+    if (kept && atomic_load(&flat_kept_room) >= room) {
+        tide_memory_sync(); // Another thread may have made it
+        return kept;
+    }
+    free(kept);
+    char *flat = tide_alloc(room);
+    atomic_store(&flat_kept_room, room);
+    return flat;
+}
+
+static void flat_give(char *flat)
+{
+    free(atomic_exchange(&flat_kept, flat));
+}
+
 void *tide_list_flatten(const tide_list l, const uint32_t size, const bool changes, bool *copied)
 {
     *copied = false;
     const tide_block *b = tide_block_at(l.at);
     if (!b || !b->a) return NULL;
     if (!(b->b & TIDE_LIST_CHUNKED)) return changes ? tide_list_at_mut(l, 0, size) : tide_list_at(l, 0, size);
-    char *flat = tide_alloc((size_t)b->a * size);
+    char *flat = flat_take((size_t)b->a * size);
     for (uint32_t i = 0; i < b->a;) {
         uint32_t n;
         const char *at = run(l, i, size, false, &n);
@@ -380,15 +406,22 @@ void tide_list_unflatten(const tide_list l, void *flat, const uint32_t size, con
 {
     if (!copied) return;
     if (changes) {
+        // Chunk by chunk, and only the ones C changed: a chunk that's written
+        // becomes the world's own and is hashed again, which one that's as it
+        // was needn't be, so what a snapshot shares of the list stays shared
         const uint32_t count = (uint32_t)tide_list_count(l);
         for (uint32_t i = 0; i < count;) {
             uint32_t n;
-            char *at = run(l, i, size, true, &n);
-            memcpy(at, (const char *)flat + (size_t)i * size, (size_t)n * size);
+            const char *from = (const char *)flat + (size_t)i * size;
+            const char *as_it_was = run(l, i, size, false, &n); // First: it says how many
+            if (memcmp(as_it_was, from, (size_t)n * size) != 0) {
+                char *to = run(l, i, size, true, &n);
+                memcpy(to, from, (size_t)n * size);
+            }
             i += n;
         }
     }
-    free(flat);
+    flat_give(flat);
 }
 
 // Parallel loops (see tide/list.h)

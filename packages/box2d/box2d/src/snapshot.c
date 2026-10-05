@@ -976,17 +976,15 @@ int b2World_GetSnapshot( b2WorldId worldId, uint8_t* image, int capacity )
 		return counter.size;
 	}
 
+	// Tide: straight into the caller's memory, once. Upstream writes the image into memory of its own,
+	// which grows as it goes, and copies it over: three times the work for an image taken every step.
+	// An image that doesn't fit is partly written, and its whole size is what's returned, as before.
 	b2RecBuffer buf = { 0 };
+	buf.data = image;
+	buf.capacity = capacity;
+	buf.fixed = true;
 	b2SerializeWorld( world, &buf );
-	int size = buf.size;
-
-	if ( size <= capacity )
-	{
-		memcpy( image, buf.data, size );
-	}
-
-	b2RecBufFree( &buf );
-	return size;
+	return buf.size;
 }
 
 static uint64_t b2FnvMixBytes( uint64_t hash, const void* data, int n )

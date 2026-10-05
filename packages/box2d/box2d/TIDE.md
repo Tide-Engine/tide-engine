@@ -35,6 +35,14 @@ state, and one machine's has to load on another.
   field kept a value or didn't by what shared its block: the same simulation,
   and other bytes on an AVX2 machine than on the web.
 
+One more is for speed, as an image is taken every step:
+
+- **`recording.h`, `recording.c`, `snapshot.c`: `b2World_GetSnapshot` writes
+  straight into the caller's memory**, once (`b2RecBuffer.fixed`). Upstream
+  writes the image into memory of its own, which grows as it goes, and copies
+  it over. An image that doesn't fit is now partly written; its whole size is
+  still what's returned.
+
 ## Updating it
 
 Copy the two folders over, apply the changes again, and run `tide_box2d_stack`
