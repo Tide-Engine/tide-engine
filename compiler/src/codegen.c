@@ -2548,7 +2548,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 && (str_eq_c(e->name, "GetFiles") || str_eq_c(e->name, "GetDirectories") || str_eq_c(e->name, "Delete"))) sb_put(o, ", false");
             sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW) {
-            sb_printf(o, "%s(", e->c_callee);
+            // Draw2D.Shape goes through the helper that turns a Shape into a tide_shape
+            const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
+            sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
             if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
             else if (e->resource_operation) gen_expr(g, o, e->object);
             for (int i = 0; i < e->args.count; i++) {
@@ -5789,6 +5791,15 @@ static void gen_prelude(gen *g)
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
     sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+
+    // Tide's Shape and tide/draw.h's tide_shape have the same fields, and are two types in C
+    sb_printf(o, "// Draw2D.Shape: a Shape as tide/draw.h takes it.\n"
+                 "TIDE_HELPER void tide_draw_shape_value(tide_draw_list *d, const %s s)\n{\n"
+                 "    tide_draw_shape(d, (tide_shape){.center = s.center, .size = s.size, .rotation = s.rotation,\n"
+                 "                                    .radius = s.radius, .color = s.color, .color2 = s.color2,\n"
+                 "                                    .outline = s.outline, .outline_color = s.outlineColor,\n"
+                 "                                    .soft = s.soft, .ellipse = s.ellipse});\n}\n\n",
+              type_cname(g->prog->shape));
 
     sb_put(o, "// Arithmetic on ints, vectors, quaternions and matrices comes from tide/math.h.\n\n");
 

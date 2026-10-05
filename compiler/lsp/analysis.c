@@ -1565,6 +1565,29 @@ static const char *builtin_field_doc(const decl *d, const str name)
     if (d && d == A.prog->instance && str_eq_c(name, "transform")) {
         return "The transform `Draw3D.Mesh` was given, which places the mesh in the world.";
     }
+    if (d && d == A.prog->shape) {
+        if (str_eq_c(name, "center")) return "Its middle, in the units `Draw2D` is in: the world's under a camera, pixels on the screen.";
+        if (str_eq_c(name, "size")) return "Its width and height. A shape with none draws nothing.";
+        if (str_eq_c(name, "rotation")) {
+            return "How far it's turned about its center, in radians, from +x towards +y: counterclockwise under a "
+                   "camera, clockwise on the screen.";
+        }
+        if (str_eq_c(name, "radius")) {
+            return "Its corners' radius, up to half its smaller side: that much makes a pill, or a circle of a square.";
+        }
+        if (str_eq_c(name, "ellipse")) return "Whether it's the ellipse that fits `size`, rather than a box.";
+        if (str_eq_c(name, "color")) return "Its fill: at its top, when `color2` is another.";
+        if (str_eq_c(name, "color2")) {
+            return "Its fill at its bottom, for a fill that goes from `color` at its top to this one, as it is before "
+                   "it's turned. `Color.none`, its default, is one color all over.";
+        }
+        if (str_eq_c(name, "outline")) return "How wide its outline is, inside its edge. 0 is none.";
+        if (str_eq_c(name, "outlineColor")) return "Its outline's color.";
+        if (str_eq_c(name, "soft")) {
+            return "How far its edge fades. Above 0, outwards: its color goes on past its edge, as a glow or a shadow. "
+                   "Under 0, inwards from its edge, leaving its middle clear. 0 is a sharp edge, smooth over a pixel.";
+        }
+    }
     return NULL;
 }
 
@@ -1911,7 +1934,11 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, code.data);
             if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
-            else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
+            else if (o->decl == A.prog->shape) {
+                sb_put(out, "\n\nWhat `Draw2D.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
+                            "of one color or from one to another, an outline, and an edge that's sharp or fades. "
+                            "`Draw2D.RoundRect`, `Ellipse` and the thick outlines and lines are short for it.");
+            } else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
             else if (o->decl->is_scene) {
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
                                               : "\n\nA scene: its entities load and unload together. Load it with `Scene.Load`; "
@@ -6173,7 +6200,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Filter", "DrawList",
+                                           "Vertex", "Vertex3", "Shape", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];

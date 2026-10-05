@@ -1,0 +1,75 @@
+// The shapes with smooth edges: each Draw2D call, the general Shape, and the
+// same calls on a render target.
+
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+    Shape kept = Shape { size = float2(4, 2), radius = 1 };
+}
+
+// A shape goes through functions like any struct.
+Shape Badge(float2 center, Color color)
+{
+    return Shape { center = center, size = float2(6, 6), ellipse = true, color = color, outline = 1, outlineColor = Color.black };
+}
+
+void Stamp(Shape shape, float2 at)
+{
+    mut var moved = shape;
+    moved.center = at;
+    Draw2D.Shape(moved);
+}
+
+view Direct()
+{
+    Draw2D.Camera(float2(0, 0), 50);
+    Draw2D.Line(float2(0, 0), float2(3, 4), 2, Color.red);
+    Draw2D.WireRect(float2(1, 1), float2(8, 6), 1.5, Color.green);
+    Draw2D.WireCircle(float2(2, 2), 5, 2, Color.blue);
+    Draw2D.Rect(float2(3, 3), float2(8, 4), 0.5, Color.yellow);
+    Draw2D.RoundRect(float2(4, 4), float2(8, 4), 1, Color.cyan);
+    Draw2D.RoundRect(float2(5, 5), float2(8, 4), 9, Math.PI, Color.magenta);
+    Draw2D.WireRoundRect(float2(6, 6), float2(8, 4), 1, 0.5, Color.white);
+    Draw2D.Ellipse(float2(7, 7), float2(4, 2), Color.gray);
+    Draw2D.Ellipse(float2(8, 8), float2(3, 3), 1, Color.gray);
+    Draw2D.WireEllipse(float2(9, 9), float2(4, 2), 0.5, Color.black);
+    Draw2D.Arc(float2(10, 10), 5, 0, Math.PI, 2, Color.red);
+    Draw2D.Arc(float2(11, 11), 5, 1, -Math.TAU, 9, Color.red);
+}
+
+view General(Canvas canvas)
+{
+    // What's left out is its default: white, one color, a sharp edge
+    Draw2D.Shape(Shape { center = float2(1, 2), size = float2(3, 4) });
+    Draw2D.Shape(Shape { center = float2(5, 6), size = float2(8, 2), radius = 0.5, rotation = Math.PI * 0.5,
+                         color = Color.red, color2 = Color.clear, outline = 0.25, outlineColor = Color.blue, soft = 3 });
+    Draw2D.Shape(Badge(float2(9, 9), Color.green));
+    Stamp(canvas.kept, float2(-3, -4));
+    mut var glow = canvas.kept;
+    glow.soft = -2;
+    glow.color2 = Color.none;
+    Draw2D.Shape(glow);
+    // What has no size draws nothing
+    Draw2D.Shape(Shape { size = float2(0, 5) });
+    Draw2D.RoundRect(float2(0, 0), float2(-1, 2), 1, Color.white);
+    Draw2D.Line(float2(0, 0), float2(1, 1), 0, Color.white);
+    Draw2D.Arc(float2(0, 0), 5, 0, 0, 1, Color.white);
+}
+
+view Targeted(Canvas canvas)
+{
+    canvas.target.Line(float2(0, 0), float2(1, 0), 2, Color.red);
+    canvas.target.WireRect(float2(0, 0), float2(2, 2), 0.5, Color.red);
+    canvas.target.WireCircle(float2(0, 0), 2, 0.5, Color.red);
+    canvas.target.Rect(float2(0, 0), float2(2, 2), 1, Color.red);
+    canvas.target.RoundRect(float2(0, 0), float2(2, 2), 0.5, Color.red);
+    canvas.target.RoundRect(float2(0, 0), float2(2, 2), 0.5, 1, Color.red);
+    canvas.target.WireRoundRect(float2(0, 0), float2(2, 2), 0.5, 0.25, Color.red);
+    canvas.target.Ellipse(float2(0, 0), float2(2, 1), Color.red);
+    canvas.target.Ellipse(float2(0, 0), float2(2, 1), 1, Color.red);
+    canvas.target.WireEllipse(float2(0, 0), float2(2, 1), 0.25, Color.red);
+    canvas.target.Arc(float2(0, 0), 2, 0, 1, 0.5, Color.red);
+    canvas.target.Shape(canvas.kept);
+}

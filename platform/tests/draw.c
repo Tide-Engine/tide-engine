@@ -5,8 +5,9 @@
 // the order they were recorded whatever the renderer batches together, that
 // a frame can draw far more than a list used to hold, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
-// that 3D meshes draw through their cameras, nearest in front, and that
-// meshes draw through shaders of the game's, with what those read.
+// that 3D meshes draw through their cameras, nearest in front, that meshes
+// draw through shaders of the game's, with what those read, and that the
+// shapes with smooth edges are where they should be, edge by edge.
 // `--bench` (or `?bench` on the web) times frames of many shapes instead.
 
 #include <math.h>
@@ -252,8 +253,8 @@ static void mesh_scene(void)
 
 static void check_pixels(const check *checks, const int count)
 {
-    static tide_float2 points[64];
-    static uint32_t got[64];
+    static tide_float2 points[128];
+    static uint32_t got[128];
     for (int i = 0; i < count; i++) points[i] = tide_f2(checks[i].x, checks[i].y);
     tide_platform_read_pixels(&list, points, count, got);
     for (int i = 0; i < count; i++) {
@@ -1225,6 +1226,196 @@ static void tiles_leave_no_gaps(void)
 }
 
 // ---------------------------------------------------------------------------
+// Shapes with smooth edges: round rects, turned ones, ellipses, thick lines
+// and outlines, parts of rings, and the general shape's fills, outlines and
+// fading edges
+
+// `color` over the background, as much of it as `cover` says.
+static tide_color over(const tide_color color, const float cover)
+{
+    const float a = color.a * cover;
+    return (tide_color){background.r + (color.r - background.r) * a, background.g + (color.g - background.g) * a,
+                        background.b + (color.b - background.b) * a, 1.0f};
+}
+
+// A fill from `top` to `bottom`, `down` of the way.
+static tide_color between(const tide_color top, const tide_color bottom, const float down)
+{
+    return (tide_color){top.r + (bottom.r - top.r) * down, top.g + (bottom.g - top.g) * down,
+                        top.b + (bottom.b - top.b) * down, 1.0f};
+}
+
+static void smooth_scene(void)
+{
+    const float quarter = TIDE_PI_F * 0.5f;
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+
+    // A round rect over a plain rect, and a plain one over it: all one run
+    tide_draw_rect(&list, at(22, 40), tide_f2(10, 10), yellow);
+    tide_draw_round_rect(&list, at(40, 40), tide_f2(60, 40), 12, red);
+    tide_draw_rect(&list, at(60, 40), tide_f2(8, 8), white);
+    // Turned an eighth of a turn: counterclockwise under a camera
+    tide_draw_rect_rotated(&list, at(128, 40), tide_f2(50, 20), TIDE_PI_F * 0.25f, blue);
+    tide_draw_ellipse(&list, at(208, 40), tide_f2(36, 14), green);
+
+    tide_draw_thick_line(&list, at(20, 100), at(80, 120), 8, cyan);
+    tide_draw_thick_wire_rect(&list, at(128, 110), tide_f2(60, 30), 5, white);
+    tide_draw_thick_wire_circle(&list, at(208, 110), 20, 6, yellow);
+
+    tide_draw_wire_round_rect(&list, at(40, 170), tide_f2(60, 40), 14, 4, magenta);
+    // A quarter of a ring, from the right up, and one from the left up, the other way round
+    tide_draw_arc(&list, at(100, 170), 24, 0, quarter, 8, orange);
+    tide_draw_arc(&list, at(152, 170), 24, TIDE_PI_F, -quarter, 8, orange);
+    tide_draw_wire_ellipse(&list, at(208, 170), tide_f2(36, 14), 4, purple);
+
+    // The general shape: a fill from one color to another, an outline, and edges that fade
+    tide_shape shape = TIDE_SHAPE_WHITE;
+    shape.center = at(30, 240), shape.size = tide_f2(40, 40), shape.color = red, shape.color2 = blue;
+    tide_draw_shape(&list, shape);
+    shape = TIDE_SHAPE_WHITE;
+    shape.center = at(80, 240), shape.size = tide_f2(40, 40), shape.radius = 8, shape.color = green;
+    shape.outline = 4, shape.outline_color = white;
+    tide_draw_shape(&list, shape);
+    shape = TIDE_SHAPE_WHITE;
+    shape.center = at(132.5f, 240.5f), shape.size = tide_f2(20, 20), shape.radius = 10, shape.soft = 20;
+    tide_draw_shape(&list, shape);
+    shape = TIDE_SHAPE_WHITE;
+    shape.center = at(208, 240), shape.size = tide_f2(60, 60), shape.soft = -20;
+    tide_draw_shape(&list, shape);
+
+    // On the screen, where y goes down: angles go clockwise, and a fill's first color is still its top's
+    tide_draw_screen(&list);
+    shape = TIDE_SHAPE_WHITE;
+    shape.center = tide_f2(20, 285), shape.size = tide_f2(20, 20), shape.color2 = TIDE_COLOR_CLEAR;
+    tide_draw_shape(&list, shape);
+    tide_draw_rect_rotated(&list, tide_f2(236.5f, 285), tide_f2(20, 10), 0, white); // An edge through pixels' middles
+    tide_draw_rect_rotated(&list, tide_f2(40, 316), tide_f2(50, 20), TIDE_PI_F * 0.25f, blue);
+    shape = TIDE_SHAPE_WHITE;
+    shape.center = tide_f2(100, 316), shape.size = tide_f2(30, 40), shape.color = red, shape.color2 = blue;
+    tide_draw_shape(&list, shape);
+    tide_draw_arc(&list, tide_f2(150, 316), 18, 1.0f, 7.0f, 5, cyan);   // More than a turn: the whole ring
+    tide_draw_arc(&list, tide_f2(200, 316), 20, 0, quarter, 20, magenta); // As thick as its radius: a slice
+    // The plain kinds in a run of smooth ones
+    tide_draw_rect(&list, tide_f2(236, 304), tide_f2(16, 16), yellow);
+    tide_draw_circle(&list, tide_f2(236, 332), 8, green);
+    // What draws nothing: no size, no width, no sweep
+    tide_draw_round_rect(&list, tide_f2(128, 176), tide_f2(0, 40), 4, white);
+    tide_draw_thick_line(&list, tide_f2(0, 0), tide_f2(256, 352), 0, white);
+    tide_draw_arc(&list, tide_f2(128, 176), 100, 0, 0, 10, white);
+}
+
+static void smooth_shapes(void)
+{
+    smooth_scene();
+    const check checks[] = {
+        {40.5f, 40.5f, red, "a round rect's middle"},
+        {10.5f, 40.5f, red, "its edge's last pixel"},
+        {9.5f, 40.5f, background, "and the one past it"},
+        {14.5f, 24.5f, red, "inside its round corner"},
+        {11.5f, 21.5f, background, "and outside it, where a rect's corner would be"},
+        {22.5f, 40.5f, red, "a smooth shape drawn after a rect covers it"},
+        {60.5f, 40.5f, white, "and a rect drawn after it shows over it"},
+        {142.5f, 26.5f, blue, "a turned rect reaches up and right, counterclockwise under a camera"},
+        {142.5f, 54.5f, background, "and not down and right"},
+        {208.5f, 40.5f, green, "an ellipse's middle"},
+        {238.5f, 40.5f, green, "towards its long end"},
+        {238.5f, 50.5f, background, "and outside it, inside its box"},
+        {50.5f, 110.5f, cyan, "a thick line's middle"},
+        {49.5f, 112.5f, cyan, "inside its width"},
+        {48.5f, 115.5f, background, "and past it"},
+        {82.5f, 120.5f, cyan, "its round end reaches past where it ends"},
+        {85.5f, 121.5f, background, "by half its width"},
+        {82.5f, 124.5f, background, "and it's round: a square end's corner is clear"},
+        {100.5f, 110.5f, white, "a thick wire rect's side"},
+        {128.5f, 97.5f, white, "and its top"},
+        {105.5f, 110.5f, background, "inside it, past its width"},
+        {128.5f, 110.5f, background, "and its middle"},
+        {225.5f, 110.5f, yellow, "a thick wire circle"},
+        {218.5f, 110.5f, background, "inside it"},
+        {230.5f, 110.5f, background, "and outside it"},
+        {12.5f, 170.5f, magenta, "a wire round rect's side"},
+        {16.5f, 170.5f, background, "inside it"},
+        {14.5f, 154.5f, magenta, "its round corner"},
+        {13.5f, 153.5f, background, "and outside that"},
+        {114.5f, 155.5f, orange, "a quarter of a ring, counterclockwise from the right: up and right"},
+        {114.5f, 184.5f, background, "and not down and right"},
+        {107.5f, 162.5f, background, "nor inside the ring"},
+        {120.5f, 167.5f, orange, "its end"},
+        {120.5f, 172.5f, background, "which is cut straight across, not round"},
+        {102.5f, 150.5f, orange, "its other end"},
+        {97.5f, 150.5f, background, "cut the same"},
+        {137.5f, 155.5f, orange, "a sweep under 0 goes the other way: from the left, up"},
+        {166.5f, 155.5f, background, "and not to the right"},
+        {242.5f, 170.5f, purple, "a wire ellipse's long end"},
+        {237.5f, 170.5f, background, "which is no wider there than its width"},
+        {208.5f, 157.5f, purple, "its top"},
+        {208.5f, 161.5f, background, "and inside it"},
+        {30.5f, 220.5f, between(red, blue, 0.0125f), "a fill from one color to another: its top"},
+        {30.5f, 240.5f, between(red, blue, 0.5125f), "its middle"},
+        {30.5f, 259.5f, between(red, blue, 0.9875f), "and its bottom"},
+        {61.5f, 240.5f, white, "an outline, inside the shape's edge"},
+        {66.5f, 240.5f, green, "and the fill inside it"},
+        {80.5f, 258.5f, white, "the outline at its bottom"},
+        {80.5f, 253.5f, green, "and a fill with no second color is one color"},
+        {141.5f, 240.5f, white, "a shape whose edge fades outwards: inside it"},
+        {152.5f, 240.5f, over(white, 0.25f), "halfway out, a quarter of it"},
+        {163.5f, 240.5f, background, "and nothing past how far it fades"},
+        {178.5f, 240.5f, over(white, 0.907f), "a shape whose edge fades inwards: at its edge"},
+        {188.5f, 240.5f, over(white, 0.2268f), "halfway in"},
+        {208.5f, 240.5f, background, "its middle is clear"},
+        {177.5f, 240.5f, background, "and so is what's outside it"},
+        {20.5f, 285.5f, over(white, 0.4875f), "a fill to a clear color fades, and doesn't darken on the way"},
+        {226.5f, 285.5f, over(white, 0.5f), "an edge through a pixel's middle covers half of it"},
+        {227.5f, 285.5f, white, "all of the next one"},
+        {225.5f, 285.5f, background, "and none of the one before"},
+        {54.5f, 330.5f, blue, "on the screen, a turned rect reaches down and right: clockwise"},
+        {54.5f, 302.5f, background, "and not up and right"},
+        {100.5f, 296.5f, between(red, blue, 0.0125f), "on the screen, a fill's first color is its top's too"},
+        {100.5f, 335.5f, between(red, blue, 0.9875f), "and its second its bottom's"},
+        {165.5f, 316.5f, cyan, "a sweep of more than a turn is the whole ring: its right"},
+        {134.5f, 316.5f, cyan, "its left"},
+        {150.5f, 300.5f, cyan, "its top"},
+        {153.5f, 331.5f, cyan, "and where its ends would meet"},
+        {150.5f, 316.5f, background, "but not its middle"},
+        {208.5f, 324.5f, magenta, "a slice of a disc: down and right on the screen"},
+        {201.5f, 317.5f, magenta, "all the way to its middle"},
+        {208.5f, 307.5f, background, "and not up and right"},
+        {191.5f, 324.5f, background, "nor down and left"},
+        {236.5f, 304.5f, yellow, "a rect in a run of smooth shapes"},
+        {236.5f, 332.5f, green, "and a circle"},
+        {128.5f, 176.5f, background, "a shape with no size, a line with no width and an arc with no sweep draw nothing"},
+    };
+    check_pixels(checks, sizeof checks / sizeof checks[0]);
+    const uint32_t calls = tide_platform_draw_calls();
+    printf("%u draw calls\n", (unsigned)calls);
+    expect(calls == 2, "shapes of every kind, one after another, are one draw call");
+}
+
+// The smooth shapes' scene as an image (a PPM), to look at.
+static int dump(const char *path)
+{
+    smooth_scene();
+    static tide_float2 points[WIDTH * HEIGHT];
+    static uint32_t got[WIDTH * HEIGHT];
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) points[y * WIDTH + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    tide_platform_read_pixels(&list, points, WIDTH * HEIGHT, got);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "draw: couldn't write '%s'\n", path);
+        return 1;
+    }
+    fprintf(f, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        const uint8_t rgb[3] = {(uint8_t)(got[i] >> 24), (uint8_t)(got[i] >> 16), (uint8_t)(got[i] >> 8)};
+        fwrite(rgb, 1, 3, f);
+    }
+    return fclose(f) == 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
 // --bench: frames of many shapes, rendered offscreen and read back, so it
 // works in a hidden window or page, where tide_platform_draw draws nothing.
 // Recording is timed separately. Rendering includes CPU submission, the GPU
@@ -1234,10 +1425,13 @@ static void tiles_leave_no_gaps(void)
 #define BENCH_WARMUP 20
 
 static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "65536 rects, text every 1024",
-                                   "65536 textured quads", "65536 instances of a cube"};
+                                   "65536 textured quads", "65536 instances of a cube", "65536 round rects",
+                                   "65536 rects, a round rect every 1024"};
+enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
-// 5: instances of a 3D cube
+// 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
+// through the smooth shapes' pipeline then
 static int bench_kind;
 static int bench_frame;
 static const char *bench_label;
@@ -1369,7 +1563,9 @@ static void bench_scene(void)
             continue;
         }
         if (bench_kind == 2) tide_draw_circle(&list, p, 0.6f, c);
-        else tide_draw_rect(&list, p, tide_f2(1, 1), c);
+        else if (bench_kind == 6 || (bench_kind == 7 && i % 1024u == 0)) {
+            tide_draw_round_rect(&list, p, tide_f2(1, 1), 0.3f, c);
+        } else tide_draw_rect(&list, p, tide_f2(1, 1), c);
         if (bench_kind == 3 && i % 1024u == 0) tide_draw_text(&list, "x", p, 10, white);
     }
 }
@@ -1398,7 +1594,7 @@ static int bench(void)
            total.median_ms, total.p95_ms);
     if (bench_label) bench_write_record(recording, rendering, total);
     bench_frame = 0;
-    if (++bench_kind < 6) return TIDE_KEEP_RUNNING;
+    if (++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
     if (bench_output) {
         const bool failed = ferror(bench_output) != 0;
         const int closed = fclose(bench_output);
@@ -1413,6 +1609,7 @@ static int bench(void)
 }
 
 static bool benching;
+static const char *dump_path;
 
 static int frame(void *user, const float seconds)
 {
@@ -1422,6 +1619,7 @@ static int frame(void *user, const float seconds)
     said = true;
     screen = tide_platform_screen_size();
     if (benching) return bench();
+    if (dump_path) return dump(dump_path);
 #ifdef __wasm__
     // WebGPU's device can go away (a driver that starts over), taking what the
     // renderer made on it. Once everything checked out, the page loses it as
@@ -1437,6 +1635,7 @@ static int frame(void *user, const float seconds)
         meshes_3d();
         primitives();
         shaded();
+        smooth_shapes();
         tiles_leave_no_gaps();
         return run_checks();
     }
@@ -1445,6 +1644,7 @@ static int frame(void *user, const float seconds)
     meshes_3d();
     primitives();
     shaded();
+    smooth_shapes();
     tiles_leave_no_gaps();
     const int code = run_checks();
 #ifdef __wasm__
@@ -1462,11 +1662,13 @@ int main(const int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bench") == 0) benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
+        else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>]] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
+                   "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
                    "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
             return 0;

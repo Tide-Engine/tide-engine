@@ -9329,6 +9329,32 @@ static void add_builtins(program *prog)
     }
     vertex3->fields.items[2].default_value = white;
     prog->vertex3 = vertex3;
+    // struct Shape { float2 center; float2 size; float rotation; float radius;
+    // bool ellipse; Color color = Color.white; Color color2 = Color.none; float
+    // outline; Color outlineColor = Color.white; float soft; }: what
+    // Draw2D.Shape draws, which generated C hands tide/draw.h as a tide_shape.
+    decl *shape = NEW(decl);
+    shape->kind = DECL_STRUCT;
+    shape->name = str_from("Shape");
+    shape->builtin = true;
+    static const char *const shape_fields[][2] = {
+        {"center", "float2"}, {"size", "float2"}, {"rotation", "float"}, {"radius", "float"}, {"ellipse", "bool"},
+        {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
+    for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
+        const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
+                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+        vec_push(shape->fields, f);
+    }
+    expr *none = NEW(expr);
+    none->kind = E_MEMBER;
+    none->member = str_from("none");
+    none->object = NEW(expr);
+    none->object->kind = E_NAME;
+    none->object->name = str_from("Color");
+    shape->fields.items[5].default_value = white;
+    shape->fields.items[6].default_value = none;
+    shape->fields.items[8].default_value = white;
+    prog->shape = shape;
     static const char *const filters[] = {"Point", "Bilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
@@ -9397,6 +9423,7 @@ static void add_builtins(program *prog)
     vec_push(decls, anchor);
     vec_push(decls, vertex);
     vec_push(decls, vertex3);
+    vec_push(decls, shape);
     vec_push(decls, filter);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -11175,7 +11202,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor);
+    builtins_use(prog->anchor, prog->shape);
     add_device_records(prog);
     collect_decls(prog);
     check_units(prog);

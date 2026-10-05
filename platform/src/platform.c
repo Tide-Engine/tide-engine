@@ -338,18 +338,37 @@ static rgba to_rgba(const tide_color c)
     return (rgba){color_channel(c.r), color_channel(c.g), color_channel(c.b), color_channel(c.a)};
 }
 
-// Shapes (rects, circles, their outlines and lines) go to the GPU as instances
-// of one quad, each its shape in window pixels, so a run of them between
-// other commands is one draw call, however many there are.
+// Shapes go to the GPU as instances of one quad, each its shape in window
+// pixels, so a run of them between other commands is one draw call, however
+// many there are. The first kinds fill whole pixels (rects, their outlines and
+// lines) or are plain circles; the ones from SHAPE_BOX on are the shapes with
+// smooth edges (TIDE_DRAW_SHAPE), which a pixel is in by how far it is from
+// their edge.
 
-enum { SHAPE_RECT, SHAPE_WIRE_RECT, SHAPE_CIRCLE, SHAPE_WIRE_CIRCLE, SHAPE_LINE };
+enum { SHAPE_RECT, SHAPE_WIRE_RECT, SHAPE_CIRCLE, SHAPE_WIRE_CIRCLE, SHAPE_LINE,
+       SHAPE_BOX, SHAPE_ELLIPSE, SHAPE_ARC };
 
 typedef struct shape {
     float a[2];       // Its middle, or a line's start
     float b[2];       // Half its size (a circle's radius, twice), or a line's end
-    uint8_t color[4]; // RGBA
+    uint8_t color[4]; // RGBA: a smooth shape's fill at its top
     float kind;       // SHAPE_*
 } shape;
+
+// What a smooth shape is drawn with besides. Few shapes are smooth ones, and
+// these are more than a shape again, so only a run that has some has them:
+// one for each of its shapes, in a buffer of their own, which a pipeline of
+// its own reads (see STEP_SHAPES). A run of the plain kinds alone, however
+// long, goes to the GPU as it always did.
+typedef struct shape_extra {
+    float turn[2];     // Its rotation's cos and sin, on the screen; an arc's, to its middle
+    float radius;      // Its corners'
+    float outline;     // How wide its outline is, inside its edge
+    float soft;        // How far its edge fades: outwards, or under 0, inwards
+    float sweep;       // SHAPE_ARC: half the angle it covers
+    uint8_t color2[4]; // Its fill at its bottom
+    uint8_t rim[4];    // Its outline's color
+} shape_extra;
 
 // A mesh's corner, in window pixels. Meshes go to the GPU as triangles, three
 // of these each: a run of them with one texture is one draw call. Text goes
@@ -379,6 +398,7 @@ typedef struct draw_step {
     uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
                       // a STEP_SHADED's too, for a 3D shader
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
+    uint32_t smooth;  // STEP_SHAPES: for a run with smooth shapes, 1 + where its shapes' extras start; else 0
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // ...and its shader's pipeline, once it's found
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
@@ -388,6 +408,8 @@ typedef struct draw_step {
 
 static shape *shapes;
 static uint32_t shape_count, shape_capacity;
+static shape_extra *shape_extras;
+static uint32_t shape_extra_count, shape_extra_capacity;
 static mesh_vertex *mesh_vertices;
 static uint32_t mesh_vertex_count, mesh_vertex_capacity;
 static draw_step *steps;
@@ -434,7 +456,26 @@ static draw_step *add_step(const uint32_t kind)
     return s;
 }
 
-static void add_shape(const int kind, const float ax, const float ay, const float bx, const float by, const rgba color)
+// Room for `count` more extras after the ones there.
+static shape_extra *extra_room(const uint32_t count)
+{
+    if (count > shape_extra_capacity - shape_extra_count) {
+        uint64_t capacity = shape_extra_capacity ? shape_extra_capacity : 256u;
+        while (capacity < (uint64_t)shape_extra_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(shape_extra)) tide_out_of_memory();
+        shape_extras = tide_realloc(shape_extras, shape_extra_capacity * sizeof(shape_extra),
+                                    (size_t)capacity * sizeof(shape_extra));
+        shape_extra_capacity = (uint32_t)capacity;
+    }
+    return shape_extras + shape_extra_count;
+}
+
+// A shape, after the ones before it when nothing came between them. `extra`
+// is a smooth shape's, and NULL for the plain kinds. The first smooth shape of
+// a run makes it a run of them: the shapes before it get an extra each, which
+// nothing reads, and the ones after it as they come.
+static void add_shape(const int kind, const float ax, const float ay, const float bx, const float by, const rgba color,
+                      const shape_extra *extra)
 {
     if (shape_count == shape_capacity) {
         const uint32_t capacity = shape_capacity ? shape_capacity * 2u : 1024u;
@@ -443,8 +484,40 @@ static void add_shape(const int kind, const float ax, const float ay, const floa
         shape_capacity = capacity;
     }
     if (step_count == 0 || steps[step_count - 1].kind != STEP_SHAPES) add_step(STEP_SHAPES)->first = shape_count;
-    steps[step_count - 1].count++;
+    draw_step *s = &steps[step_count - 1];
+    if (extra && !s->smooth) {
+        if (s->count) memset(extra_room(s->count), 0, (size_t)s->count * sizeof(shape_extra));
+        s->smooth = shape_extra_count + 1u;
+        shape_extra_count += s->count;
+    }
+    if (s->smooth) {
+        *extra_room(1) = extra ? *extra : (shape_extra){0};
+        shape_extra_count++;
+    }
+    s->count++;
     shapes[shape_count++] = (shape){{ax, ay}, {bx, by}, {color.r, color.g, color.b, color.a}, (float)kind};
+}
+
+// A TIDE_DRAW_SHAPE command's shape, through the camera: its lengths in window
+// pixels, and its angles as the screen has them, where y goes down.
+static void add_smooth_shape(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+{
+    if (c->shape >= list->shape_count) return;
+    static const int kinds[] = {[TIDE_SHAPE_BOX] = SHAPE_BOX, [TIDE_SHAPE_ELLIPSE] = SHAPE_ELLIPSE,
+                                [TIDE_SHAPE_ARC] = SHAPE_ARC};
+    const tide_draw_shape_data *s = &list->shapes[c->shape];
+    if (s->form > TIDE_SHAPE_ARC) return;
+    const tide_float2 center = to_screen(cam, c->a);
+    const float scale = cam->scale;
+    const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+    add_shape(kinds[s->form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, color,
+              &(shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
+                             .radius = s->radius * scale,
+                             .outline = s->outline * scale,
+                             .soft = s->soft * scale,
+                             .sweep = s->sweep,
+                             .color2 = {color2.r, color2.g, color2.b, color2.a},
+                             .rim = {rim.r, rim.g, rim.b, rim.a}});
 }
 
 // Room for `count` more vertices after the ones there.
@@ -535,10 +608,12 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
 // shaders are in shaders.h, and the buffers and textures a list's steps draw
 // from, made the first time they're needed.
 static struct {
-    tide_gpu_id shapes, meshes, text, meshes_3d, clear; // Pipelines
-    tide_gpu_id corners;                                // The shapes' quad
+    tide_gpu_id shapes, smooth_shapes, meshes, text, meshes_3d, clear; // Pipelines
+    tide_gpu_id corners;                                               // The shapes' quad
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
+    tide_gpu_id shape_extras;
+    uint32_t shape_extra_capacity; // Extras theirs holds
     tide_gpu_id mesh_vertices;
     uint32_t mesh_capacity; // Vertices the buffer holds
     tide_gpu_id matrices;
@@ -556,11 +631,13 @@ static struct {
 
 // The shapes', meshes' and text's uniforms, as their shaders have them: from
 // the target's logical pixels (from its top left, y down) to clip space, as
-// OpenGL's matrices go, column by column, and for text, 1 over the atlas's size.
+// OpenGL's matrices go, column by column; for text, 1 over the atlas's size;
+// and for shapes, the target's own pixels in a logical one, across and down,
+// which is how they know where a pixel ends.
 typedef struct screen_uniforms {
     float screen[16];
     float texel[2];
-    float unused[2];
+    float scale[2];
 } screen_uniforms;
 
 // What the uniforms of a shader of the game's start with (see tide_shader),
@@ -732,6 +809,19 @@ static bool gpu_ready(void)
     return true;
 }
 
+// A shader that shaders.h has in two pieces, as one: made once, and kept. NULL
+// where it has none (WGSL is only the web's).
+static const char *joined(const char *first, const char *second)
+{
+    static char *whole;
+    if (!first || !second || whole) return whole;
+    const size_t length = strlen(first);
+    whole = tide_alloc(length + strlen(second) + 1u);
+    memcpy(whole, first, length);
+    strcpy(whole + length, second);
+    return whole;
+}
+
 // The pipelines, the quad and the white pixel, the first time a list is drawn.
 static void renderer_start(void)
 {
@@ -748,7 +838,28 @@ static void renderer_start(void)
                        {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
                        {1, TIDE_GPU_FLOAT, offsetof(shape, kind)}},
         .attribute_count = 4,
-        .uniform_size = 16 * sizeof(float),
+        .uniform_size = sizeof(screen_uniforms),
+        .blend = TIDE_GPU_BLEND_ALPHA,
+        .depth = TIDE_GPU_DEPTH_NONE,
+    });
+    gpu_state.smooth_shapes = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "smooth shapes",
+        .glsl_vertex = smooth_shape_glsl_vertex,
+        .glsl_fragment = smooth_shape_glsl_fragment,
+        .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+        // The quad's corners, an instance a shape, and an extra for each
+        .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(shape_extra), true}},
+        .slot_count = 3,
+        .attributes = {{0, TIDE_GPU_FLOAT2, 0},
+                       {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
+                       {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
+                       {1, TIDE_GPU_FLOAT, offsetof(shape, kind)},
+                       {2, TIDE_GPU_FLOAT4, offsetof(shape_extra, turn)},
+                       {2, TIDE_GPU_FLOAT2, offsetof(shape_extra, soft)},
+                       {2, TIDE_GPU_BYTES4, offsetof(shape_extra, color2)},
+                       {2, TIDE_GPU_BYTES4, offsetof(shape_extra, rim)}},
+        .attribute_count = 8,
+        .uniform_size = sizeof(screen_uniforms),
         .blend = TIDE_GPU_BLEND_ALPHA,
         .depth = TIDE_GPU_DEPTH_NONE,
     });
@@ -1065,6 +1176,11 @@ static void upload_shapes_and_meshes(void)
         buffer_room(&gpu_state.shape_instances, &gpu_state.shape_capacity, shape_count, sizeof(shape), 1024u);
         gpu->buffer_write(gpu_state.shape_instances, 0, shapes, (size_t)shape_count * sizeof(shape));
     }
+    if (shape_extra_count) {
+        buffer_room(&gpu_state.shape_extras, &gpu_state.shape_extra_capacity, shape_extra_count, sizeof(shape_extra),
+                    256u);
+        gpu->buffer_write(gpu_state.shape_extras, 0, shape_extras, (size_t)shape_extra_count * sizeof(shape_extra));
+    }
     if (mesh_vertex_count) {
         buffer_room(&gpu_state.mesh_vertices, &gpu_state.mesh_capacity, mesh_vertex_count, sizeof(mesh_vertex), 4096u);
         gpu->buffer_write(gpu_state.mesh_vertices, 0, mesh_vertices, (size_t)mesh_vertex_count * sizeof(mesh_vertex));
@@ -1339,8 +1455,10 @@ static void select_target(const uint32_t at, const tide_gpu_id window)
 
 static screen_uniforms target_uniforms(void)
 {
+    const tide_float2 scale = pixel_scale();
     screen_uniforms u = {.screen = {[0] = 2.0f / (float)draw_width, [5] = -2.0f / (float)draw_height,
-                                    [10] = 1.0f, [12] = -1.0f, [13] = 1.0f, [15] = 1.0f}};
+                                    [10] = 1.0f, [12] = -1.0f, [13] = 1.0f, [15] = 1.0f},
+                         .scale = {scale.x, scale.y}};
     if (gpu_state.atlas) {
         u.texel[0] = 1.0f / (float)gpu_state.atlas_width;
         u.texel[1] = 1.0f / (float)gpu_state.atlas_height;
@@ -1390,6 +1508,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     select_target(0, target);
     tide_font_frame();
     shape_count = 0;
+    shape_extra_count = 0;
     mesh_vertex_count = 0;
     step_count = 0;
     for (uint32_t i = 0; i < list->count; i++) {
@@ -1463,22 +1582,25 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         case TIDE_DRAW_WIRE_CIRCLE: {
             const tide_float2 p = to_screen(cam, c->a);
             const float r = c->b.x * cam->scale;
-            add_shape(c->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE, p.x, p.y, r, r, color);
+            add_shape(c->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE, p.x, p.y, r, r, color, NULL);
             break;
         }
+        case TIDE_DRAW_SHAPE:
+            add_smooth_shape(list, c, cam);
+            break;
         case TIDE_DRAW_RECT:
         case TIDE_DRAW_WIRE_RECT: {
             const tide_float2 top_left = rect_corner(cam, c);
             const float hw = c->b.x * cam->scale * 0.5f;
             const float hh = c->b.y * cam->scale * 0.5f;
             add_shape(c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT, top_left.x + hw, top_left.y + hh, hw,
-                      hh, color);
+                      hh, color, NULL);
             break;
         }
         case TIDE_DRAW_LINE: {
             const tide_float2 from = to_screen(cam, c->a);
             const tide_float2 to = to_screen(cam, c->b);
-            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color);
+            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color, NULL);
             break;
         }
         case TIDE_DRAW_TEXT:
@@ -1539,10 +1661,12 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         case STEP_TARGET:
             break;
         case STEP_SHAPES:
-            gpu->use(gpu_state.shapes);
-            gpu->uniforms(uniforms.screen, sizeof uniforms.screen);
+            // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
+            gpu->use(s->smooth ? gpu_state.smooth_shapes : gpu_state.shapes);
+            gpu->uniforms(&uniforms, sizeof uniforms);
             gpu->vertices(0, gpu_state.corners, 0);
             gpu->vertices(1, gpu_state.shape_instances, (size_t)s->first * sizeof(shape));
+            if (s->smooth) gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
             gpu->draw(0, 6, s->count);
             calls++;
             break;

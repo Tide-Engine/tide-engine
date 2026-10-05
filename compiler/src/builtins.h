@@ -14,9 +14,9 @@ bool builtin_owner(str name);
 // The two frame drawing APIs: Draw2D and Draw3D.
 bool builtin_draw_owner(str name);
 
-// The program's Anchor enum, which GUILayout.Area takes. Call before resolving
-// calls.
-void builtins_use(const decl *anchor);
+// The program's Anchor enum, which GUILayout.Area takes, and its Shape struct,
+// which Draw2D.Shape does. Call before resolving calls.
+void builtins_use(const decl *anchor, const decl *shape);
 void builtins_use_io(const decl *bytes, const decl *paths);
 
 // The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
