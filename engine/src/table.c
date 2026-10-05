@@ -52,7 +52,13 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, const uint32_t row
     const size_t at = (size_t)(row & (full_room(c) - 1u)) * width;
     const uint8_t *in = value;
     for (uint32_t k = 0; k < lanes; k++) {
-        memcpy((uint8_t *)tide_table_column_mut(t, c, chunk, first + k) + at, in + (size_t)k * width, width);
+        // A lane that's that already stays as it is: its page isn't made the
+        // table's own for it, nor hashed again, and code that puts back a
+        // component it changed a field of writes that field's lanes
+        const uint8_t *now = (const uint8_t *)tide_table_column(t, c, chunk, first + k) + at;
+        const uint8_t *next = in + (size_t)k * width;
+        if (width == 4 ? memcmp(now, next, 4) == 0 : memcmp(now, next, width) == 0) continue;
+        memcpy((uint8_t *)tide_table_column_mut(t, c, chunk, first + k) + at, next, width);
     }
 }
 
