@@ -17,8 +17,7 @@ static const char vertex[] =
     "layout(std140) uniform uniforms { vec4 settings; };\n"
     "out vec2 uv;\n"
     "void main() {\n"
-    "    vec2 points[3] = vec2[3](vec2(-1, -1), vec2(3, -1), vec2(-1, 3));\n"
-    "    vec2 at = points[gl_VertexID];\n"
+    "    vec2 at = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;\n" // (-1, -1), (3, -1), (-1, 3)
     "    uv = at * vec2(0.5, -0.5) + vec2(0.5);\n"
     "    gl_Position = vec4(at, settings.z, 1);\n"
     "}\n";
@@ -785,6 +784,15 @@ static void check_targets(void)
     gpu->pipeline_free(pipeline);
 }
 
+// Only the first failures say which pixels were wrong: this says which group
+// of checks any were in, and how many.
+static void checked(const char *what)
+{
+    static int before;
+    if (failures != before) fprintf(stderr, "%s: %d checks failed\n", what, failures - before);
+    before = failures;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -795,15 +803,19 @@ static int frame(void *user, const float seconds)
     printf("renderer: %s\n", tide_platform_renderer());
     check_targets();
     check_targets(); // Reused backend ids must not find a freed texture's bind group.
+    checked("the backend's targets");
     check_render_list();
     check_render_depth_alpha();
     check_owned_targets();
+    checked("the renderer's targets");
     static const float scales[] = {1.0f, 2.0f, 1.5f, 3.0f, 1.25f};
     for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
         check_full_resolution(scales[i]);
         check_same_as_window(scales[i]);
     }
+    checked("targets on scaled displays");
     check_scales_and_window();
+    checked("targets under a window and a display that change");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

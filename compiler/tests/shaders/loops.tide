@@ -1,0 +1,43 @@
+// A loop's own line has only numbers and variables in what tidec writes: what
+// it starts at, and what it goes to and steps by when those are constants,
+// are worked out before the loop when they're anything more. A number with a
+// minus before it is written as that number.
+scene Main { }
+
+const int REACH = 2;
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> quad;
+    List<int> faces;
+    Grid2<Color> four = Grid2(2, 2);
+    int taps = 3;
+}
+
+int Twice(int n)
+{
+    return n * 2;
+}
+
+frag Spread(Corner corner, mut Color color, Art art)
+{
+    mut var sum = Color(0, 0, 0, 0);
+    // Numbers, one of them under 0: as they are
+    for (var x = -1; x <= 1; x++) sum = sum + art.four.Sample(corner.uv + float2(x, 0) * 0.25);
+    // Constants that are worked out: before the loop, each once
+    for (var y = -REACH; y < 6 / 2; y += 4 / 2) sum = sum + art.four.Sample(corner.uv + float2(0, y) * 0.25);
+    // A start that's a call is worked out before the loop; a bound that's no constant stays on the line
+    for (var i = Twice(1); i < art.taps; i++) sum = sum + art.four.Sample(corner.uv);
+    color = sum * 0.125;
+}
+
+view Show(Art art)
+{
+    Draw2D.Mesh(art.quad, art.faces, Spread);
+}
