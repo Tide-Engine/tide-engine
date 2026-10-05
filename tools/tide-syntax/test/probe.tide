@@ -233,6 +233,11 @@ system QueriesAcrossLines(
 {
     foreach (var fighter in fighters) { var target = fighter.body; }
 }
+// Views and local handlers take queries too, with verified in a view's.
+view ShadowsOfFighters(Body body, query (Platform box, without Ghost) platforms) { }
+view SureOfFighters(query (Body mine, verified Health sure, with verified Fighter) both) { }
+local event(Hit hit) ShowHitNear(Body body, query (Body other, with Fighter) fighters) { }
+local event(verified Died) ShowDeathNear(mut Toast toast, query (Spark spark) sparks) { }
 int query(int value) { return value; }
 int QueryName(int query) { return query; }
 void CallQuery() { var answer = query(1); }

@@ -2013,6 +2013,19 @@ static void describe_verified(const param *p, const decl *of, sb *out)
         sb_printf(out, "\n\nThe handler hears each `" STR_FMT "` once, when the server confirmed the tick that sent it: "
                        "never one this machine only predicted. What it takes of the match is as that tick left it.",
                   STR_ARG(type));
+    } else if (p->query_source && p->mode == PARAM_WITH) { // In a view's query, the same of the entities it goes through
+        sb_printf(out, "\n\nFilter: the query goes through the entities that have `" STR_FMT "` in the world the server "
+                       "has confirmed, whatever this machine predicts.", STR_ARG(type));
+    } else if (p->query_source && p->mode == PARAM_WITHOUT) {
+        sb_printf(out, "\n\nFilter: the query goes through the entities that are in the world the server has confirmed "
+                       "and don't have `" STR_FMT "` there, whatever this machine predicts.", STR_ARG(type));
+    } else if (p->query_source) {
+        sb_printf(out, "\n\nThe entity's `" STR_FMT "` as the last tick the server confirmed has it: not as this machine "
+                       "predicts it, and not blended between ticks. %s", STR_ARG(type),
+                  p->query_source->query_verified_entities
+                      ? "Everything in the query is `verified`, so it goes through the confirmed world's entities."
+                      : "The query goes through the entities the view draws that are the same entity in the confirmed "
+                        "world too.");
     } else if (p->mode == PARAM_WITH) {
         sb_printf(out, "\n\nFilter: the view runs for the entities that have `" STR_FMT "` in the world the server has "
                        "confirmed, whatever this machine predicts.", STR_ARG(type));
@@ -2183,13 +2196,33 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
-            sb_put(out, "\n\nA read-only second entity set, independent of the entity this system runs for. "
-                        "`foreach` yields rows with `entity` and the named component values. Traversal follows "
-                        "the ECS; it does not sort by entity ID or distance.");
+            sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
+                           "`foreach` yields rows with `entity` and the named component values. Traversal follows "
+                           "the ECS; it does not sort by entity ID or distance.",
+                      of && of->is_view ? "view" : of && of->is_handler ? "handler" : "system");
+            // Local code reads the match as it sees it, or this machine's own entities as they are
+            if (o->param->query_local && of && (of->is_view || of->is_local)) {
+                sb_put(out, " These are this machine's own entities, as they are.");
+            } else if (of && of->is_view && o->param->query_verified_entities) {
+                sb_put(out, " Everything in it is `verified`: it goes through the entities of the world the server has "
+                            "confirmed, as its last tick has them.");
+            } else if (of && of->is_view && o->param->query_verified_join) {
+                sb_put(out, " It goes through the entities the view draws that are the same entity in the world the "
+                            "server has confirmed: what's `verified` is as the last confirmed tick has it, and the rest "
+                            "blended between ticks, like the view's own parameters.");
+            } else if (of && of->is_view) {
+                sb_put(out, " Its rows are the match as the view draws it: blended between the last two ticks, like the "
+                            "view's own parameters, once a frame however often the view runs. Outside a match the view "
+                            "doesn't run.");
+            } else if (of && of->listens) {
+                sb_printf(out, " Its rows are the match as the tick that sent the event left it%s.",
+                          of->listens_verified ? ", once the server confirmed that tick" : "");
+            }
             break;
         }
         if (o->param->query_source) {
             sb_put(out, "\n\nRead-only component data from this query row.");
+            if (o->param->verified) sb_put(out, " As the last tick the server confirmed has it.");
             break;
         }
         if (is_shader(of)) {
@@ -2544,6 +2577,29 @@ static void write_lens(jbuf *out, int *written, const decl *d, const char *title
     jb_put(out, ",\"command\":\"\"}}");
 }
 
+// What code reads and writes of every entity's through its World and its
+// queries, for the line above it: "World/query: reads Body; writes Health",
+// after `before`. False, with nothing written, when it reaches none.
+static bool put_world_lens(sb *title, const decl *d, const char *before)
+{
+    sb reads = {0};
+    sb writes = {0};
+    const int read_count = world_use_names(d, false, "", d, &reads);
+    const int write_count = world_use_names(d, true, "", d, &writes);
+    if (read_count + write_count == 0) return false;
+    bool world = false;
+    bool query = false;
+    for (int i = 0; i < d->params.count; i++) {
+        world |= d->params.items[i].type.kind == TY_WORLD;
+        query |= d->params.items[i].mode == PARAM_QUERY;
+    }
+    sb_printf(title, "%s%s", before, world && query ? "World/query: " : query ? "Query: " : "World: ");
+    if (read_count) sb_printf(title, "reads %s", reads.data);
+    if (read_count && write_count) sb_put(title, "; ");
+    if (write_count) sb_printf(title, "writes %s", writes.data);
+    return true;
+}
+
 void analysis_code_lenses(jbuf *out)
 {
     jb_put(out, "[");
@@ -2553,22 +2609,7 @@ void analysis_code_lenses(jbuf *out)
         if (d->at.file != A.doc || d->stage == 0) continue;
         sb title = {0};
         sb_printf(&title, "stage %d", d->stage);
-        sb reads = {0};
-        sb writes = {0};
-        const int read_count = world_use_names(d, false, "", d, &reads);
-        const int write_count = world_use_names(d, true, "", d, &writes);
-        if (read_count + write_count > 0) { // Access to every entity's, which its signature doesn't say
-            bool world = false;
-            bool query = false;
-            for (int i = 0; i < d->params.count; i++) {
-                world |= d->params.items[i].type.kind == TY_WORLD;
-                query |= d->params.items[i].mode == PARAM_QUERY;
-            }
-            sb_put(&title, world && query ? " \u00B7 World/query: " : query ? " \u00B7 Query: " : " \u00B7 World: ");
-            if (read_count) sb_printf(&title, "reads %s", reads.data);
-            if (read_count && write_count) sb_put(&title, "; ");
-            if (write_count) sb_printf(&title, "writes %s", writes.data);
-        }
+        put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
             if (w->through) continue; // Shown on the system it goes through
@@ -2590,6 +2631,12 @@ void analysis_code_lenses(jbuf *out)
         }
         write_lens(out, &written, d, title.data);
     }
+    // A view's access to every entity's, which its signature doesn't say either
+    for (int i = 0; i < A.prog->views.count; i++) {
+        const decl *d = A.prog->views.items[i];
+        sb title = {0};
+        if (d->at.file == A.doc && put_world_lens(&title, d, "")) write_lens(out, &written, d, title.data);
+    }
     // The program's handlers rather than each event's listeners, which the
     // checker only lists once the game has no errors
     for (int i = 0; i < A.prog->handlers.count; i++) {
@@ -2599,6 +2646,7 @@ void analysis_code_lenses(jbuf *out)
         sb_put(&title, "hears ");
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
+        put_world_lens(&title, h, " \u00B7 ");
         write_lens(out, &written, h, title.data);
     }
     jb_put(out, "]");
@@ -5531,6 +5579,19 @@ static bool local_trigger(const int open)
     return false;
 }
 
+// Whether the handler whose parameters open at token `open` is local:
+// `local event(Hit hit) ShowHit(`.
+static bool local_handler(const int open)
+{
+    if (open < 2 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 0;
+    for (int k = open - 2; k >= 0; k--) {
+        if (DOC->toks[k].kind == T_RPAREN) depth++;
+        else if (DOC->toks[k].kind == T_LPAREN && --depth == 0) return local_trigger(k);
+    }
+    return false;
+}
+
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
 // Sanitize, or a method's (`bool IsDead(`, `Money operator +(`). None for a
 // value, like a field's default.
@@ -5967,10 +6028,25 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     case CTX_HEADER: {
         if (f.header == HEADER_QUERY) {
-            if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT) {
+            // view Bars(query (Health health, verified Health sure) both): a view's query reads the confirmed world too
+            const frame outer = depth >= 1 ? stack[depth - 1] : f;
+            const bool in_view = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_IDENT
+                              && str_eq_c(DOC->toks[outer.open - 2].text, "view");
+            const bool confirmed = in_view && pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
+            const tok_kind marked = confirmed ? DOC->toks[last - 1].kind : T_EOF;
+            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT) {
+                complete_match_types(&c, false);
+                complete_namespaces(&c, false);
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT) {
                 if (pk == T_LPAREN || pk == T_COMMA) {
                     item(&c, "with", CK_KEYWORD, "Query entities must have this component", NULL, NULL);
                     item(&c, "without", CK_KEYWORD, "Query entities must not have this component", NULL, NULL);
+                }
+                if (in_view) {
+                    item(&c, "verified", CK_KEYWORD,
+                         pk == T_WITH ? "Entities that have it in the world the server has confirmed"
+                         : pk == T_WITHOUT ? "Entities that don't have it in the world the server has confirmed"
+                                           : "As the server confirmed it, not as this machine predicts it", NULL, NULL);
                 }
                 complete_types(&c, true, false, false);
                 complete_namespaces(&c, false);
@@ -6083,7 +6159,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
                 item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
-                if (f.open >= 2 && DOC->toks[f.open - 2].kind == T_SYSTEM && !is_async) {
+                // Systems, views and local handlers take a second set of entities to go through
+                if (f.open >= 2 && !is_async && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");
