@@ -1,5 +1,6 @@
 #include "tide/platform.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -11,6 +12,8 @@
 #include "tide/time.h"
 #include "font.h"
 #include "gpu.h"
+#include "png.h"
+#include "script.h"
 #include "shaders.h"
 #include "window.h"
 
@@ -59,6 +62,14 @@ static const tide_gpu *gpu;
 static float frame_seconds[32];
 static unsigned frames_counted;
 
+// A headless window (tide_platform_open_headless): frames draw into pixels of
+// the platform's own, at the size and scale it was asked for, in made-up time,
+// with made-up devices (script.h). The window under it is never shown, and
+// only there for its graphics context.
+static bool headless;
+static tide_headless_desc headless_run;
+static uint32_t headless_frame; // The frame running, or the last one, counted from 1
+
 // Seconds since the window opened.
 static double now(void)
 {
@@ -67,6 +78,15 @@ static double now(void)
 
 static void follow_window(void)
 {
+    if (headless) { // As it was asked for, whatever the display and the window under it are
+        screen_width = headless_run.width;
+        screen_height = headless_run.height;
+        pixel_width = (int)((float)screen_width * headless_run.scale + 0.5f);
+        pixel_height = (int)((float)screen_height * headless_run.scale + 0.5f);
+        if (pixel_width < 1) pixel_width = 1;
+        if (pixel_height < 1) pixel_height = 1;
+        return;
+    }
     tide_window_size(&screen_width, &screen_height);
     tide_window_pixel_size(&pixel_width, &pixel_height);
 }
@@ -80,6 +100,49 @@ void tide_platform_open(const tide_window_desc *desc)
 #ifdef __wasm__
     web_timer_frames = desc->hidden;
 #endif
+}
+
+void tide_platform_open_headless(const tide_headless_desc *desc)
+{
+#if defined(__wasm__) || defined(__ANDROID__)
+    (void)desc;
+    fprintf(stderr, "tide: a game runs without a window on desktop only\n");
+    exit(2);
+#else
+    headless_run = *desc;
+    if (headless_run.width <= 0) headless_run.width = 960;
+    if (headless_run.height <= 0) headless_run.height = 540;
+    if (!(headless_run.scale > 0.0f)) headless_run.scale = 1.0f;
+    const float wide = (float)headless_run.width * headless_run.scale, high = (float)headless_run.height * headless_run.scale;
+    if (wide > (float)TIDE_PNG_MAX_SIDE || high > (float)TIDE_PNG_MAX_SIDE) {
+        fprintf(stderr, "tide: %d by %d at scale %g is more than a capture's %d pixels a side\n", headless_run.width,
+                headless_run.height, (double)headless_run.scale, TIDE_PNG_MAX_SIDE);
+        exit(2);
+    }
+    // The script first: a line that's wrong needs no window to say so
+    if (headless_run.script && !tide_script_load(headless_run.script)) exit(2);
+    if (!headless_run.frames && !tide_script_quits()) {
+        fprintf(stderr, "tide: nothing ends this run, and it has no window to close: give it --frames <n>, or its script a "
+                        "`quit` line\n");
+        exit(2);
+    }
+    if (!tide_window_open(&(tide_window_desc){.title = "", .width = 64, .height = 64, .hidden = true})) exit(1); // It said why
+    headless = true;
+    gpu = tide_window_gpu();
+    opened = tide_time_now_ns();
+    follow_window();
+#endif
+}
+
+// A headless run's frame, once it drew: the pictures its script and its desc
+// ask of it. TIDE_KEEP_RUNNING, or the run's exit code.
+static int headless_drawn(void)
+{
+    const int code = tide_script_drawn(headless_frame);
+    if (code != 0 && code != TIDE_KEEP_RUNNING) return code;
+    const bool last = code == 0 || (headless_run.frames && headless_frame >= headless_run.frames);
+    if (last && headless_run.capture && !tide_platform_capture(headless_run.capture)) return 1;
+    return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
 _Noreturn static void finish(const int code)
@@ -101,13 +164,16 @@ void tide_platform_next_frame(const double seconds)
 static int step(void)
 {
     const double start = now();
-    const float seconds = (float)(start - frame_start);
+    // A headless window's time is made up: the same on every machine, every run
+    const float seconds = headless ? 1.0f / 60.0f : (float)(start - frame_start);
     frame_start = start;
     frame_due = start + 1.0 / 60.0;
     due_asked = false;
     frame_seconds[frames_counted++ % COUNT_OF(frame_seconds)] = seconds;
     follow_window();
-    const int code = run_frame(run_user, seconds);
+    if (headless) tide_script_input(++headless_frame); // In the devices at this frame's poll
+    int code = run_frame(run_user, seconds);
+    if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
     tide_window_present(); // Also takes the system's input
 #ifndef __wasm__
     // A window nobody sees (minimized, or an app in the background) has no
@@ -163,10 +229,14 @@ int tide_platform_fps(void)
 // ---------------------------------------------------------------------------
 // Devices
 
+// What the devices say comes from the window, or for a headless one from
+// what was made up for it (script.h), which says it the same way.
+
 static void poll_keyboard(tide_keyboard *k)
 {
     for (size_t i = 0; i < COUNT_OF(key_offsets); i++) {
-        tide_button_set(BUTTON_AT(k, key_offsets[i]), tide_window_key_held((tide_key)i));
+        const bool held = headless ? tide_script_key_held((tide_key)i) : tide_window_key_held((tide_key)i);
+        tide_button_set(BUTTON_AT(k, key_offsets[i]), held);
     }
 }
 
@@ -177,7 +247,8 @@ static bool poll_mouse(tide_mouse *m)
     static float last_x, last_y;
     static bool polled;
     tide_window_mouse mouse;
-    tide_window_mouse_state(&mouse);
+    if (headless) tide_script_mouse_state(&mouse);
+    else tide_window_mouse_state(&mouse);
     // How it moved: where the cursor went or, while the window holds the
     // cursor (Cursor.Lock), what the mouse says it moved, as the cursor stays.
     const float dx = mouse.locked ? mouse.moved_x : polled ? mouse.x - last_x : 0.0f;
@@ -208,9 +279,9 @@ static bool poll_mouse(tide_mouse *m)
 static void poll_touches(tide_touchscreen *s)
 {
     tide_touches_poll(s);
-    s->connected = tide_window_touchscreen();
+    s->connected = headless ? tide_script_touchscreen() : tide_window_touchscreen();
     tide_touch_report r;
-    while (tide_window_take_touch(&r)) {
+    while (headless ? tide_script_take_touch(&r) : tide_window_take_touch(&r)) {
         tide_touch_event(s, r.phase, r.source, tide_f2(r.x, (float)screen_height - r.y));
     }
 }
@@ -218,7 +289,8 @@ static void poll_touches(tide_touchscreen *s)
 static void poll_gamepad(tide_gamepad *g)
 {
     tide_window_gamepad pad;
-    tide_window_gamepad_state(&pad);
+    if (headless) tide_script_gamepad_state(&pad);
+    else tide_window_gamepad_state(&pad);
     g->connected = pad.connected;
     if (pad.connected) {
         g->leftStick = tide_f2(pad.left_x, -pad.left_y);
@@ -241,7 +313,7 @@ static uint32_t pasted_count, pasted_at;
 
 static void paste(void)
 {
-    const char *text = tide_window_take_paste();
+    const char *text = headless ? NULL : tide_window_take_paste(); // Never the system's clipboard into a headless run
     if (!text) return;
     for (uint32_t c; pasted_count < COUNT_OF(pasted) && (c = tide_utf8_next(&text)) != 0;) {
         if (c >= 32 && c != 127) pasted[pasted_count++] = c; // Not newlines or tabs
@@ -257,7 +329,7 @@ static void poll_text(tide_typed *text)
     while (pasted_at < pasted_count && text->count < TIDE_TEXT_MAX) text->chars[text->count++] = pasted[pasted_at++];
     if (pasted_at == pasted_count) pasted_at = pasted_count = 0;
     while (text->count < TIDE_TEXT_MAX) {
-        const uint32_t c = tide_window_take_char();
+        const uint32_t c = headless ? tide_script_take_char() : tide_window_take_char();
         if (c == 0) break;
         text->chars[text->count++] = c;
     }
@@ -266,19 +338,33 @@ static void poll_text(tide_typed *text)
 void tide_platform_typing(const bool typing)
 {
     static bool was;
-    if (typing == was) return;
+    if (typing == was || headless) return;
     was = typing;
     tide_window_typing(typing);
 }
 
 void tide_platform_cursor_lock(const bool lock)
 {
+    if (headless) {
+        tide_script_cursor_lock(lock);
+        return;
+    }
     tide_window_cursor_lock(lock); // Every frame: what holds the cursor changes under it (the focus, the browser)
 }
 
 void tide_platform_copy(const char *text)
 {
+    if (headless) return; // A run nobody watches leaves the clipboard of whoever is at the machine alone
     tide_window_copy(text);
+}
+
+bool tide_platform_input(const char *event)
+{
+    char error[512] = "";
+    if (!headless) snprintf(error, sizeof error, "only a headless window's input is made up (tide_platform_open_headless)");
+    else if (tide_script_event(event, error, sizeof error)) return true;
+    fprintf(stderr, "tide: input '%s': %s\n", event, error);
+    return false;
 }
 
 void tide_platform_poll(tide_devices *devices)
@@ -412,7 +498,8 @@ static frame_target *frame_targets;
 static uint32_t frame_target_capacity;
 
 // Whether the selected destination uses its own pixels rather than the
-// window's logical pixels: a render target or the readback target does.
+// window's logical pixels: a render target or the readback target does. A
+// headless window's frame doesn't: it's drawn as a window's is, scale and all.
 static bool offscreen;
 
 // The target's pixels per logical pixel.
@@ -552,6 +639,9 @@ static struct {
     tide_gpu_id target; // What tide_platform_read_pixels draws into, kept while the window keeps its size
     int target_width, target_height;
     uint8_t *target_pixels; // ...read back: RGBA, rows from the top
+    tide_gpu_id frame; // What a headless window's frames draw into, in its window's place
+    int frame_width, frame_height;
+    uint8_t *frame_pixels; // ...read back (tide_platform_frame_pixels)
 } gpu_state;
 
 // The shapes', meshes' and text's uniforms, as their shaders have them: from
@@ -722,6 +812,7 @@ static bool gpu_ready(void)
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     free(gpu_state.target_pixels);
+    free(gpu_state.frame_pixels);
     memset(&gpu_state, 0, sizeof gpu_state);
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
@@ -1334,7 +1425,7 @@ static void select_target(const uint32_t at, const tide_gpu_id window)
     draw_target = at;
     draw_width = frame_targets[at].width;
     draw_height = frame_targets[at].height;
-    offscreen = at != 0 || window != 0;
+    offscreen = at != 0 || window != gpu_state.frame;
 }
 
 static screen_uniforms target_uniforms(void)
@@ -1611,11 +1702,25 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
     }
 }
 
+// What frames draw into: the window (0), or a headless one's own pixels, made
+// the first time and again when the device is another.
+static tide_gpu_id frame_destination(void)
+{
+    if (!headless || !gpu_ready()) return 0;
+    if (!gpu_state.frame) {
+        gpu_state.frame = gpu->target(pixel_width, pixel_height);
+        gpu_state.frame_width = pixel_width;
+        gpu_state.frame_height = pixel_height;
+    }
+    return gpu_state.frame;
+}
+
 void tide_platform_draw(const tide_draw_list *list)
 {
     // Nobody sees it while the window is minimized or, on the web, the page
-    // is hidden, and frames go on meanwhile.
-    if (!tide_window_unseen()) draw_list(list, 0, false);
+    // is hidden, and frames go on meanwhile. A headless window's are for
+    // whoever reads them.
+    if (headless || !tide_window_unseen()) draw_list(list, frame_destination(), false);
 }
 
 tide_float2 tide_platform_world_to_screen(const tide_float2 world)
@@ -1651,7 +1756,7 @@ uint32_t tide_platform_draw_calls(void)
 
 void tide_platform_draw_overlay(const char *text)
 {
-    if (tide_window_unseen()) return;
+    if (!headless && tide_window_unseen()) return;
     static tide_draw_list overlay;
     const float size = 16.0f;
     const float pitch = 20.0f; // From one line to the next
@@ -1681,7 +1786,45 @@ void tide_platform_draw_overlay(const char *text)
         tide_draw_text(&overlay, lines[i], tide_f2(right - widths[i], top + (float)i * pitch), size,
                        (tide_color){200.0f / 255.0f, 200.0f / 255.0f, 200.0f / 255.0f, 1.0f});
     }
-    draw_list(&overlay, 0, true);
+    draw_list(&overlay, frame_destination(), true);
+}
+
+const uint8_t *tide_platform_frame_pixels(int *width, int *height)
+{
+    *width = *height = 0;
+    if (!headless || !gpu_ready() || !gpu_state.frame) return NULL;
+    if (!gpu_state.frame_pixels) {
+        gpu_state.frame_pixels = tide_alloc((size_t)gpu_state.frame_width * (size_t)gpu_state.frame_height * 4u);
+    }
+    gpu->target_read(gpu_state.frame, gpu_state.frame_pixels);
+    *width = gpu_state.frame_width;
+    *height = gpu_state.frame_height;
+    return gpu_state.frame_pixels;
+}
+
+bool tide_platform_capture(const char *path)
+{
+    int width, height;
+    const uint8_t *pixels = tide_platform_frame_pixels(&width, &height);
+    if (!pixels) {
+        fprintf(stderr, "tide: no frame to capture: a headless window's are, once one drew (tide_platform_open_headless)\n");
+        return false;
+    }
+    size_t size = 0;
+    uint8_t *png = tide_png_encode(pixels, width, height, &size);
+    errno = 0;
+    FILE *file = png ? fopen(path, "wb") : NULL;
+    bool written = file && fwrite(png, 1, size, file) == size;
+    const int error = errno; // Before fclose says something else
+    if (file && fclose(file) != 0) written = false;
+    free(png);
+    if (!written) {
+        fprintf(stderr, "tide: can't write %s: %s\n", path, error ? strerror(error) : "the file isn't whole");
+        return false;
+    }
+    printf("tide: captured %s, %d by %d pixels\n", path, width, height);
+    fflush(stdout);
+    return true;
 }
 
 void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *points, const int count, uint32_t *out)

@@ -1539,7 +1539,7 @@ static bool typed_restart(void)
     return restart;
 }
 
-int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args)
+int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args, const bool once)
 {
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
@@ -1559,13 +1559,18 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
         fprintf(stderr, "tide: couldn't start %s\n", program);
         return 1;
     }
+    int code = 0;
+    if (once) { // A run with no window: it ends by itself, as it was built, and its exit code is tide's
+        while (!sys_wait(game, 250, &code)) { }
+        sys_remove_tree(r.dir);
+        return code;
+    }
     printf("tide: saving a .tide or C file reloads the game; type r and press Enter to start it over\n");
     fflush(stdout);
     sys_read_lines();
 
     uint64_t stamp = game_stamp(&r.b);
     int64_t changed_at = -1;
-    int code = 0;
     while (!sys_wait(game, 250, &code)) {
         if (typed_restart()) {
             char *restart = path_join(r.dir, "restart");

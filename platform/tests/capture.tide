@@ -1,0 +1,78 @@
+// A game for the standard host to run with no window (platform/tests/capture.mjs):
+// it draws a block for each thing a script's input did, each in a color and a
+// place of its own, in the screen's pixels, so the test reads them off the
+// pictures the run takes.
+
+component Mover
+{
+    int steps;
+}
+
+input Keys
+{
+    bool right;
+
+    Sample(Devices devices)
+    {
+        right = devices.keyboard.d.pressed;
+    }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Mover, Owner { player = PlayerID(0) });
+}
+
+// The match's side: the D key, through the input, moves the mover 50 steps at most.
+system Step(Keys keys, mut Mover mover)
+{
+    if (keys.right && mover.steps < 50) mover.steps += 1;
+}
+
+local singleton Seen
+{
+    bool pressed;   // The button was
+    string typed;   // What was typed
+    float scrolled; // How far the wheel turned
+    bool look;      // The cursor is asked for: L asks, and stops asking
+    float turned;   // How far the mouse moved while the cursor was locked
+}
+
+view Background()
+{
+    Draw2D.Clear(Color(0, 0, 1));
+}
+
+view Movers(Mover mover)
+{
+    Draw2D.Screen();
+    Draw2D.Rect(float2(20 + mover.steps * 4, 180), float2(20, 20), Color(1, 0, 0));
+}
+
+view Panel(Devices devices, mut Seen seen)
+{
+    if (GUI.Button(Rect(20, 20, 120, 40), "Go")) seen.pressed = true;
+    seen.typed += devices.keyboard.text;
+    seen.scrolled += devices.mouse.scroll.y;
+    if (devices.keyboard.l.down) seen.look = !seen.look;
+    if (seen.look) Cursor.Lock();
+    if (Cursor.locked) seen.turned += devices.mouse.delta.x;
+
+    Draw2D.Screen();
+    if (seen.pressed) Draw2D.Rect(float2(200, 40), float2(40, 40), Color(0, 1, 0));
+    if (seen.typed == "K7QF2M") Draw2D.Rect(float2(280, 40), float2(40, 40), Color(1, 1, 1));
+
+    var pad = devices.gamepad;
+    if (pad.buttonNorth.pressed) Draw2D.Rect(float2(40, 100), float2(20, 20), Color(1, 0, 1));
+    if (pad.rightStick.y > 0.5) Draw2D.Rect(float2(80, 100), float2(20, 20), Color(0, 1, 1));
+    if (pad.rightTrigger > 0.5) Draw2D.Rect(float2(120, 100), float2(20, 20), Color(1, 1, 1));
+    if (seen.scrolled <= -3) Draw2D.Rect(float2(160, 100), float2(20, 20), Color(0, 1, 0));
+    if (seen.turned >= 50) Draw2D.Rect(float2(200, 100), float2(20, 20), Color(1, 0, 0));
+    if (Cursor.locked) Draw2D.Rect(float2(240, 100), float2(20, 20), Color(1, 1, 0));
+
+    // A finger, where it is: the devices count from the bottom left
+    var finger = devices.touchscreen.primaryTouch;
+    if (finger.press.pressed) Draw2D.Rect(float2(finger.position.x, Screen.height - finger.position.y), float2(20, 20), Color(1, 1, 0));
+}
