@@ -1480,10 +1480,13 @@ static int dump(const char *path)
 // Pixels are read back from a target of the window's size, which is in its
 // own pixels whatever the display's scale is: text measures as it's fitted
 // there.
-static tide_float2 measure_read_back(const char *text, const float size, const bool target, const unsigned char *font)
+static tide_float2 measure_read_back(const char *text, const float size, const tide_target_size *target,
+                                     const unsigned char *font)
 {
     (void)target;
-    return tide_platform_measure_text(text, size, true, font);
+    // As a target of the window's size with one pixel of its own to a logical one, which is what's read back
+    const tide_target_size read = {.width = screen.x, .height = screen.y, .scale = 1.0f};
+    return tide_platform_measure_text(text, size, &read, font);
 }
 
 enum { TEXT_AREA_W = 200, TEXT_AREA_H = 84 };

@@ -156,7 +156,7 @@ tide run --frames 300 --capture menu.png
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
-| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there |
+| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/views.md#targets-and-post-processing) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
 | `--seed <n>` | The seed of the run's matches, 0 without it |
 

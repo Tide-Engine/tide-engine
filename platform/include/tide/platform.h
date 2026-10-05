@@ -211,16 +211,30 @@ uint64_t tide_platform_entropy(void);
 tide_float2 tide_platform_screen_size(void);
 
 // How big `text` is drawn `size` tall with the platform's font, in the same
-// units: its widest line's width and its lines' height, on the window's
-// pixels or (`target`) on a render target's own, in the weight `font` is the
-// file of: TIDE_FONT_REGULAR or TIDE_FONT_BOLD. It's the tide_measure_fn that
-// tide_gui_begin takes (tide/draw.h), and needs no window open.
-tide_float2 tide_platform_measure_text(const char *text, float size, bool target, const unsigned char *font);
+// units, logical pixels: its widest line's width and its lines' height, on
+// the window's pixels (NULL) or on those of a render target of the size
+// `target` says, as the window's display has them, in the weight `font` is
+// the file of: TIDE_FONT_REGULAR or TIDE_FONT_BOLD. It's the tide_measure_fn
+// that tide_gui_begin takes (tide/draw.h), and needs no window open.
+tide_float2 tide_platform_measure_text(const char *text, float size, const tide_target_size *target,
+                                       const unsigned char *font);
 
 // Renders `list` offscreen at the window's size, then reads the pixels at
 // `points` (window pixels from the top left) as 0xRRGGBBAA. For tests: proves
-// the whole drawing path works without a visible window.
+// the whole drawing path works without a visible window. Its scale is its
+// own, 1, whatever the display's: a logical pixel is one of its pixels, and
+// so it is in the list's render targets that are at the display's scale.
 void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *points, int count, uint32_t *rgba);
+
+// The same, as a window of `width` by `height` logical pixels would draw the
+// list on a display scaled `scale`: into that many pixels times the scale,
+// which `points` are in, from the top left. The list's render targets take
+// that window's size and that display's scale, so tests see what a scaled
+// display or a window of another size does on any machine, with no window
+// resized. Text measures as it's drawn there through
+// tide_platform_measure_text with a target of that size and scale.
+void tide_platform_read_pixels_as(const tide_draw_list *list, int width, int height, float scale,
+                                  const tide_float2 *points, int count, uint32_t *rgba);
 
 // Networking for sessions (tide/session.h): a UDP transport, taking datagrams
 // on `port` (0: any free one). False where there's no network, like the web

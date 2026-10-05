@@ -115,6 +115,7 @@ typedef struct tide_gpu {
     // texture; only target_free frees it. It can't be sampled in a pass that
     // draws into it, or written with texture_write.
     tide_gpu_id (*target)(int width, int height);
+    int (*target_limit)(void); // The most pixels a side one has, on this device
     tide_gpu_id (*target_texture)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
     // The browser's synchronous canvas readback reports opaque alpha; the

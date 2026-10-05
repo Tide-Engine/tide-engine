@@ -4145,10 +4145,20 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter]]"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(int width, int height)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(float width, float height)"));
     snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget(16, $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(int width, int height)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height)"));
+    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit)"));
+    // RenderTarget.Screen: the one that follows the window, after the type's name
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Screen"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Screen($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "always the window's size"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Scr$een(0.5);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "always the window's size"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Dis$pose();\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
