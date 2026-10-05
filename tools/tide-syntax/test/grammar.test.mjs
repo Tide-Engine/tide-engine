@@ -191,6 +191,7 @@ const cases = {
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw2D.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
