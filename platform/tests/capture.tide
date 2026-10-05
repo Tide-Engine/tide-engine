@@ -45,6 +45,14 @@ view Background()
     Draw2D.Clear(Color(0, 0, 1));
 }
 
+// The match's seed, which is 0 in a run with no window, so that it repeats: a
+// block that's elsewhere for any other.
+view Seed(Time time)
+{
+    Draw2D.Screen();
+    Draw2D.Rect(float2(20 + time.seed % 128 * 2, 140), float2(20, 20), Color(1, 0, 1));
+}
+
 view Movers(Mover mover)
 {
     Draw2D.Screen();

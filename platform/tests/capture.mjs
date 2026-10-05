@@ -147,6 +147,7 @@ const { 'start.png': start, 'locked.png': locked, 'played.png': played, 'last.pn
 check(same(start.at(2, 2), blue) && same(start.at(637, 397), blue), 'the view cleared the frame, corner to corner');
 check(block(start, 20, 180, 10, red), 'before any input, the mover is at its start');
 check(none(start, 200, 40) && none(start, 280, 40) && none(start, 40, 100), 'and nothing else happened yet');
+check(block(start, 20, 140, 10, magenta), "the match's seed is 0, as the run has to repeat: nothing of it is the system's");
 check(!same(start.at(80 * 2, 40 * 2), blue), 'the GUI drew its button, over the world');
 
 check(block(locked, 240, 100, 10, yellow), 'the cursor is locked while the game asks for it');
