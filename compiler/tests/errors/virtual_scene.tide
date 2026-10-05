@@ -1,0 +1,5 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: a scene is data, and data isn't replaced
+virtual scene Arena { int round; }
+
+scene Main { }

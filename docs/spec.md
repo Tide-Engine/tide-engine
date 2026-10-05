@@ -42,6 +42,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `local` in front of a declaration makes it belong to the machine instead of the match, and in front of a field of a match component or singleton, that field alone (see Local state).
 - A function, `ReturnType Name(parameters) { ... }` with no keyword, declares code that other code calls (see Functions).
 - `extern` declares a function written in C (see C functions).
+- `virtual` in front of a declaration with code says another package can replace it, and `override` in front of one replaces it (see Mods).
 - `const` declares a constant (see Constants).
 - `settings` sets the engine's settings for the game (see Settings).
 
@@ -1426,8 +1427,9 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
-- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between two ticks, so motion is smooth even at 20 ticks per second.
+- They draw this moment: the two ticks are the last one that ran and the one that's coming, which the engine runs early with this machine's input as `Sample` would give it now, and runs again when that changes before the tick's time comes. What a player does shows in the frame that reads it, at any tick rate. No code takes part: nothing in the language says it, and a game is written as if views read the match as it is. A key counts for the whole tick it's read in, as ever, so what it moves starts as far along as that tick has gone by.
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as the later of the two ticks has them. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
@@ -2570,7 +2572,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ## Mods
 
-Not built yet. **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**.
+**Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, two parts are built (**Provisional**, below): `virtual` and `override`, as the language has them for any package, and the service's first slice, for web games, with `tide publish`. What a mod may be, games that load builds, and the sandbox aren't.
 
 ### Decided
 
@@ -2588,15 +2590,15 @@ Not built yet. **Decided** is what the owner agreed (2026-10-05); the design pro
 
 ```csharp
 // The game
-virtual system Move(mut Position position, Velocity velocity)
+virtual system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt;
+    position.value += velocity.value * time.dt;
 }
 
 // A mod
-override system Move(mut Position position, Velocity velocity)
+override system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt * 2;
+    position.value += velocity.value * time.dt * 2;
 }
 ```
 
@@ -2609,17 +2611,52 @@ override system Move(mut Position position, Velocity velocity)
 - That no Tide code can corrupt memory is the language's promise to every game, and mods rest on it: it isn't a rule for mods.
 - Where a store forbids code downloaded after installing (iOS, consoles), a game has the mods its developer built into it and no others.
 
+### Provisional
+
+`virtual` and `override`, implemented for every package, a mod's or not, awaiting approval:
+
+- **Where the words go.** Where `local` and `async` do, in any order with them, before a declaration with code: a system, a view, a handler (an event's, a command's, a local one), a function, a method, a frag or a vert. They're words of their own only there, and names like any other everywhere else, a function's type too (`virtual Make()` is a function that returns a `virtual`).
+  - On data (a component, singleton, struct, event, command, enum, scene or the input), a constant, the settings or an `extern` function, each is an error that says what the words are for, and why this isn't it. Editors offer to remove the word.
+  - Operators, `Interpolate` and the input's `Sample` and `Sanitize` aren't replaced either: an error on each.
+  - `virtual override` together is an error: a declaration is replaced once, so nothing could replace an override.
+- **The name an override writes.** It's the name of what it replaces, looked up as any reference is from the override's file: with its namespace (`override system Combat.Move(...)`), or alone in that namespace, in one inside it, or after `using Combat;`. Two `using` namespaces that both have it are ambiguous, as for any name.
+  - A method's override is written outside its type, since it's in another package, with the type before the method's name: `override bool Stats.IsDead()`, or `override bool Combat.Stats.IsDead()`. The type's fields and methods are in scope, as in the type's body. Where a type and a namespace have the same name, it's the type.
+  - An override's code reads names as its own file does: its namespace and its `using` lines.
+  - It declares no name of its own: nothing in its own namespace is named after it, and it clashes with nothing there.
+- **What it has to match.** An override that names nothing is an error that says what there is: the name in another namespace, with how to write it, a declaration of another kind under that name, or the closest name. One whose parameters are no declaration's lists the declarations the name has, as a wrong reference to a shared name does. One that matches a declaration that isn't `virtual` says so, and that marking it is its developer's choice; editors offer to mark it where it's the game's own.
+  - Beyond its parameters' types, an override is what it replaces: a view's is a view, a handler's handles the same event (a command's the same command), `local` and `verified` on its event as the other has them, and `async` as the other is. A function's or a method's returns the same type, `fails` with the same error, and has `out` where the other has it. Each is an error that says what the replaced declaration has, with the override's start as it should be written.
+  - It can differ in its parameters' names, in `mut` (a parameter's, and a method's own), and in a function's default values. Calls are checked against the override, since it's what's built: its defaults, its names for arguments passed by name, and its `mut`.
+- **Where it runs.** It writes no attribute of its own: `[Stage]`, `[Before]` or `[After]` on an override is an error that says it keeps the replaced declaration's. Those are read as the replaced declaration's file wrote them. Its place in the default order is the replaced declaration's, among that one's file's declarations.
+- **Another package.** An override is in another package than what it replaces, the game counting as one: a package replaces the game's code or another package's, and a game a package's. One in the same package is an error that says to change the declaration itself. A package can mark its own declarations `virtual`.
+  - `tide` and the language server say which package each file is in. `tidec` by itself is told with `--package <Name>` before a package's files, on its command line or as a line of a list of files, which is how this repo's tests build games with packages (`tide_add_game(... PACKAGES <Name> <files>...)`).
+- **What was replaced.** It's still checked for errors, as the code it is: its names, types, what it may write, what it returns and assigns. It isn't checked for what depends on the code that calls it or that it calls (a match system that calls a function that draws, say), as those rules are worked out over the program that's built, which it isn't in.
+  - Nothing of it is built or counted: its spawns, Adds and Removes make no archetype, what it sends counts as sent by nobody, its calls make nothing wait, and it's in no schedule. It warns about nothing.
+- **Parameters nothing uses.** A virtual declaration's parameters are what its overrides get, and an override's are those of what it replaces, so neither is warned about a parameter it never uses: a virtual system with an empty body is a hook. `mut` is each one's own, and one that's never written is still warned about.
+- **The same declaration again, without `override`.** It's the error it always was (`is already declared with these parameters`). Where the first one is `virtual` and in another package, a note says `override` is what replaces it, and editors offer the word.
+- **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
+- **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
+
+The service's first slice. Implemented, awaiting approval: the service's first slice, at `builds.tide-engine.dev` (`builds/` in the repository). A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+
+- Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
+- Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.
+- Provisional: a version is named by the SHA-256 of what was sent, and `tide` writes that archive itself (a tar, with no times, owners or modes, its files in one order) rather than with the system's `tar`, so the same files are the same version from any machine. `tide publish` says one line, with the version.
+- Provisional: asking for a build is an HTTP call, not a command: `POST /games/<id>/builds` with `{"version": ..., "mods": [...]}` and the key as `Authorization: Bearer`. `GET /games/<id>/builds/<build>` says how it went, with what `tide` said, and `DELETE` there revokes it. The page is at `/b/<build>/`.
+- Provisional: a mod's line is a package from git with its commit, as `tide.packages` writes it, from the hosts `tide` downloads from. What `tide update` follows (`@v1`) is no part of a build's name, a repository listed twice is an error, and a build takes 32 at most. Folders and the packages that come with tide aren't mods. Nothing checks yet that a mod is Tide alone.
+- Provisional: the mods' lines go at the end of the game's `tide.packages`, and the lines of what they need after them, as `tide add` adds them. A mod the game already lists, or two packages of one name, is the error a build of that file gives.
+- Provisional: `tide fetch [folder]`, a new command: it downloads the packages from git that the game lists and the machine doesn't have, each at its commit, adds the lines of what they need, and builds nothing. The service fetches with it, then builds with no network.
+- Provisional: what's signed is a manifest, a line of JSON: `{"build", "target", "sha256", "size"}`, the SHA-256 being the page's. It's at `/b/<build>/manifest.json`, its signature (r then s) at `/b/<build>/manifest.sig`, and the game's public key, 65 bytes uncompressed, at `/games/<id>/key`. Nothing checks them yet: a game that loads builds will.
+- Provisional: a build that failed is built again when it's asked for again. A revoked one never is: what it built is deleted, and its link answers 410.
+- Provisional: a page is fetched again each time it's opened (`Cache-Control: no-cache`, with an `ETag`), so a revoked build is gone from caches too.
+- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 2 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
+- Provisional: whoever asks for a build gets all that `tide` said of it. That's the game's own developer for now, as asking takes the game's key; a modder of a closed game will get what it says of the mod's own files.
+
 ### Open
 
-Proposed, awaiting the owner. None of it is built.
+Proposed, awaiting the owner. None of it is built, but for the service's first slice (Provisional, above).
 
 The language:
 
-- `virtual` and `override` go where `local` and `async` do, on declarations with a body: systems, views, handlers, functions, methods, frags and verts. They're keywords only there.
-- An override that matches nothing `virtual` is an error that lists what the name has.
-- An override writes no `[Stage]`, `[Before]` or `[After]` of its own. It can differ in `mut`, and the schedule is worked out from what's built.
-- The two words aren't only for mods: an override is in another package than what it replaces, and a game's own packages can use both, as an expansion would. A mod can mark its own declarations `virtual`, for the mods that need it.
-- Declarations of data aren't replaced: components, singletons, events, enums, scenes, the input, the settings. A mod adds components of its own to the game's entities, as any code does.
 - A mod sees every declaration of the game's, as a package does (see Open, Access control). It declares what a package can, less `extern`. The packages it needs are mods too, or come with tide, or are ones the game lists itself: only those last two can have C.
 
 What a mod's code reaches:
@@ -2658,7 +2695,7 @@ The sandbox:
 
 The order to do the work in, proposed:
 
-1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in.
+1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in. Built (see Provisional).
 2. Memory safety as a tested promise (see Open, at the end).
 3. tidec's rules for mods: Tide alone, and files of their own.
 4. Games that load signed builds, and the service, with listed mods only.

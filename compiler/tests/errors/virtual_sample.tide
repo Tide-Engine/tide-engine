@@ -1,0 +1,13 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: an input's Sample and Sanitize are the game's own, as its input is
+input PlayerInput
+{
+    float move;
+
+    virtual Sample(Devices devices)
+    {
+        move = devices.keyboard.d.pressed ? 1 : 0;
+    }
+}
+
+scene Main { }

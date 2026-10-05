@@ -8,6 +8,11 @@
 // or version, at that ref's newest commit), or a folder on this machine.
 int tide_add(const char *folder, const char *what);
 
+// Downloads the packages from git that the game lists and this machine
+// doesn't have yet, each at its commit, with nothing built: what a build would
+// download as it starts, so one after it needs no network.
+int tide_fetch(const char *folder);
+
 // Moves each named package (by its name, its repository's, or its source),
 // or with none every package from git, to the newest commit of what it
 // follows.

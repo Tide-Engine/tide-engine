@@ -1,0 +1,5 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: an enum is data, and data isn't replaced
+virtual enum Page { Title, Options }
+
+scene Main { }
