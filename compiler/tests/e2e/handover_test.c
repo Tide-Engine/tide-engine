@@ -109,7 +109,8 @@ static void play_three(void)
     wrapped = tide_loopback_endpoint(net, 1);
     ends = 0;
     tide_session_start(machines[0], NULL, now);
-    tide_session_open(machines[0], (tide_transport){NULL, counted_send, counted_receive, counted_close, counted_end});
+    tide_session_open(machines[0], (tide_transport){.send = counted_send, .receive = counted_receive, .close = counted_close,
+                                                    .end = counted_end});
     tide_session_set_room(machines[0], "ABCDEF", "key1");
     tide_session_join(machines[1], tide_loopback_endpoint(net, 2), tide_loopback_address(1), now);
     tide_session_join(machines[2], tide_loopback_endpoint(net, 3), tide_loopback_address(1), now);
@@ -260,7 +261,7 @@ TIDE_TEST(handover_not_for_a_kicked_player_who_didnt_hear_it)
     tide_session_start(machines[0], NULL, now);
     tide_session_open(machines[0], tide_loopback_endpoint(net, 1));
     tide_session_set_room(machines[0], "ABCDEF", "key1");
-    tide_session_join(machines[1], (tide_transport){NULL, deaf_send, deaf_receive, deaf_close, NULL},
+    tide_session_join(machines[1], (tide_transport){.send = deaf_send, .receive = deaf_receive, .close = deaf_close},
                       tide_loopback_address(1), now);
     run(2.0);
     TIDE_REQUIRE(status(1).client.state == TIDE_SESSION_CONNECTED);

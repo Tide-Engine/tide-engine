@@ -10,6 +10,8 @@
 
 #include "rtc.h"
 
+#include "arrivals.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +86,12 @@ bool rtc_ice_start(rtc_ice *ice, const bool controlling, const rtc_ice_config *c
     random_text(ice->pwd, 24);
     ice->socket = rtc_udp_open();
     if (ice->socket == RTC_NO_SOCKET) return false;
+    // Up to 64 KiB of datagrams between two frames: as much as a socket holds by itself
+    ice->arrivals = tide_arrivals_start((uintptr_t)ice->socket, 65536u);
+    if (!ice->arrivals) {
+        rtc_ice_close(ice);
+        return false;
+    }
     uint32_t ip;
     if (rtc_local_ip(&ip)) add_local(ice, RTC_HOST, (rtc_addr){ip, rtc_socket_port(ice->socket)});
     ice->started = rtc_now();
@@ -94,6 +102,8 @@ bool rtc_ice_start(rtc_ice *ice, const bool controlling, const rtc_ice_config *c
 
 void rtc_ice_close(rtc_ice *ice)
 {
+    tide_arrivals_stop(ice->arrivals);
+    ice->arrivals = NULL;
     rtc_socket_close(ice->socket);
     ice->socket = RTC_NO_SOCKET;
     ice->state = RTC_ICE_FAILED;
@@ -493,7 +503,7 @@ size_t rtc_ice_receive(rtc_ice *ice, const double now, uint8_t *out, const size_
     uint8_t buffer[2048];
     for (;;) {
         rtc_addr from;
-        const size_t size = rtc_udp_receive(ice->socket, &from, buffer, sizeof buffer);
+        const size_t size = tide_arrivals_next(ice->arrivals, &from.ip, &from.port, buffer, sizeof buffer, &ice->arrived);
         if (!size) return 0;
         size_t got = 0;
         if (ice->config.has_turn && rtc_addr_equal(from, ice->config.turn) && rtc_stun_is(buffer, size)) {

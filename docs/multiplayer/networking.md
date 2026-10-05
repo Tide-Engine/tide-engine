@@ -33,7 +33,9 @@ A client keeps a snapshot of every tick from the last one the server confirmed, 
 
 Below are two machines in one match: the first runs the server, and the second joined its room. Move the pointer over a frame to steer that machine's player. A disc is where the machine drawing it predicts the body is, and the ring of its color is where the server has confirmed it, which a view reads [`verified`](#predicted-and-confirmed).
 
-Both machines are at one desk here, so their packets arrive at once. The slider is player 2's ping, the round trip between its machine and the server, there and back: its page holds back what it sends and what it receives, half the trip each, as a slow connection would. It's the number player 2's frame shows. Beside the slider is the least it can be, with nothing held back: about two frames' time, since a packet that arrives waits for its page's next frame to be read, once on the way there and once on the way back.
+Both machines are at one desk here, so their packets arrive at once. The slider is player 2's ping, the network's round trip between its machine and the server, there and back: its page holds back what it sends and what it receives, half the trip each, as a slow connection would. It's the number player 2's frame shows. Beside the slider is the least it can be, with nothing held back, which at one desk is next to nothing.
+
+A ping is the network's time alone. A packet that arrives still waits for its machine's next frame to be read, on the way there and on the way back, so an answer takes up to two frames longer than the ping says, on any connection.
 
 - **Player 2's own disc still answers at once**, however late its packets are. Its ring trails behind: that's the server's answer, a round trip old.
 - **Player 1 sees player 2 late**, by the way there, half the round trip, and guesses in between: steer player 2 in a circle, and its disc in player 1's frame cuts the corners, walking to where it last heard player 2 point.

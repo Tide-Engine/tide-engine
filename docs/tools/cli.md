@@ -62,7 +62,7 @@ They're a drawer. Closed, it's one line: the frame rate, and in a match another 
 |---|---|
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu 2.1 ms` | What a frame's work takes on its thread: the ticks it runs, the views and the drawing, without the wait for the display |
-| `ping`, `delay` | The round trip to the machine running the match (in the list when it's this machine), and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
+| `ping`, `delay` | The network's round trip to the machine running the match (in the list when it's this machine), and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `up`, `down` | What goes over the network each second |
 | `tick`, `entities` | The match's tick, and how many entities it has |
 | `threads` | The threads ticks run on |
@@ -168,7 +168,7 @@ A game's web page takes the same from its address, so a link can say which match
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
 
-A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. Its `Tide.minLag` is the least a lag can make the ping: the round trip the game measured while its page added nothing, `0` until it has measured a few so. A page that wants it starts with no lag, as these docs do. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
+A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. Its `Tide.minLag` is the least a lag can make the ping: the ping the game measured while its page added nothing, `undefined` until it has measured a few so. A page that wants it starts with no lag, as these docs do. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
 
 Such a page starts a game that waits by calling the frame's `Tide.start()`. With `?wait` or without, it gives a promise that's kept once the game has drawn its first frame, so the page can keep the frame out of sight until there's something in it. These docs load an example as you scroll near it, and start it when it's in view.
 

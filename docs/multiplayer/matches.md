@@ -108,7 +108,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 |---|---|
 | `state` | `SessionState.Offline`, `Connecting` or `Connected` |
 | `player` | This machine's `PlayerID`, once connected |
-| `ping` | The round trip to the server, in milliseconds |
+| `ping` | The network's round trip to the server, in milliseconds: what the machines wait for their next frame to read a packet isn't in it |
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
 | `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed |

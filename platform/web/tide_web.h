@@ -147,8 +147,11 @@ TIDE_WEB_IMPORT(room_send) void tide_web_room_send(uint32_t room, uint32_t to, c
 // The next datagram that arrived: its size, or 0 when there's none.
 TIDE_WEB_IMPORT(room_receive) uint32_t tide_web_room_receive(uint32_t room, uint32_t *from, void *data,
                                                              uint32_t capacity);
-// The round trip the session measures to the room's host (see tide_platform_room_ping).
-TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(uint32_t ping_ms);
+// When the datagram room_receive last gave arrived in the page: milliseconds,
+// by the clock the program's own goes by (performance.now).
+TIDE_WEB_IMPORT(room_arrived) double tide_web_room_arrived(void);
+// What the session measures to the room's host (see tide_platform_room_ping).
+TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(int32_t ping_ms, uint32_t answer_ms);
 
 // Hot reloading, under tide run --web: what the page's last program left this
 // one (tide_reload_save in platform/src/reload.c), 0 bytes if nothing, and a
