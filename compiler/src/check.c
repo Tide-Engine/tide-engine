@@ -1508,16 +1508,20 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_note("leave the field at default and create its target in a view or local handler");
             return T_ERR;
         }
-        if (argc != 2 || !type_assignable(T_INT_, first) || !type_assignable(T_INT_, e->args.items[1]->type)) {
-            diag_error(e->at, "RenderTarget takes its width and height in pixels, two ints: 'RenderTarget(width, height)'");
+        // Its size in logical pixels, like the window's, and its image's pixels in each: the display's when left out
+        bool numbers = argc == 2 || argc == 3;
+        for (int i = 0; numbers && i < argc; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
+        if (!numbers) {
+            diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
+                              "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
+            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = "tide_render_target_make";
+        e->c_callee = argc == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make";
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
-        vec_push(e->arg_want, T_INT_);
-        vec_push(e->arg_want, T_INT_);
+        for (int i = 0; i < argc; i++) vec_push(e->arg_want, T_FLOAT_);
         return target;
     }
     if (target.kind == TY_TEXTURE) {
@@ -3505,6 +3509,41 @@ static str target_draw_owner(const expr *e)
     return str_from(three ? "Draw3D" : "Draw2D");
 }
 
+// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// window's size, or that part of it. Made where the constructor's are.
+static type check_screen_target(checker *c, expr *e)
+{
+    bool any_error = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
+    }
+    if (!str_eq_c(e->name, "Screen")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
+        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+                  "one of a size of its own");
+        return T_ERR;
+    }
+    if (any_error) return T_ERR;
+    if (gpu_refuses(c, e->at, "create a RenderTarget", "the view creates it and supplies its color image as a Texture")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a RenderTarget is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its target in a view or local handler");
+        return T_ERR;
+    }
+    if (e->args.count > 1 || (e->args.count == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
+        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
+        diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = e->args.count ? "tide_render_target_screen" : "tide_render_target_window";
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    for (int i = 0; i < e->args.count; i++) vec_push(e->arg_want, T_FLOAT_);
+    return (type){TY_RENDER_TARGET, NULL};
+}
+
 static type check_method(checker *c, expr *e)
 {
     // world.Get<Health>(e): the World parameter's methods
@@ -3554,6 +3593,7 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
+        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         if (str_eq_c(owner, "Draw")) {
             diag_error(e->object->at, "unknown name 'Draw'");
@@ -3672,23 +3712,24 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_RENDER_TARGET) {
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
-            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_INT_);
+            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "Draw.window is owned by the platform: it can't be resized or disposed");
                 return T_ERR;
             }
             if (gpu_refuses(c, e->at, resize ? "resize a RenderTarget" : "dispose a RenderTarget", "the view owns the target")) return T_ERR;
             if (e->args.count != (resize ? 2 : 0)) {
-                diag_error(e->at, resize ? "Resize takes width and height in pixels: 'target.Resize(width, height)'"
+                diag_error(e->at, resize ? "Resize takes width and height in logical pixels: 'target.Resize(width, height)'"
                                        : "Dispose takes no arguments: 'target.Dispose()'");
+                if (resize) diag_note("the target keeps the pixels per unit it was made with");
                 return T_ERR;
             }
             for (int i = 0; i < e->args.count; i++) {
                 const type t = e->args.items[i]->type;
-                if (!type_assignable(T_INT_, t)) {
-                    diag_error(e->args.items[i]->at, "a render target's size is in pixels, an int, not %s", type_name(t));
+                if (!type_assignable(T_FLOAT_, t)) {
+                    diag_error(e->args.items[i]->at, "a render target's size is in logical pixels, a number, not %s", type_name(t));
                 }
-                vec_push(e->arg_want, T_INT_);
+                vec_push(e->arg_want, T_FLOAT_);
             }
             e->call = CALL_BUILTIN;
             e->c_callee = resize ? "tide_render_target_resize" : "tide_render_target_dispose";

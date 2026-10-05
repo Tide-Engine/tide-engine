@@ -41,13 +41,30 @@ An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects
 
 `RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
 
-Create a target with `RenderTarget(width, height)`, using positive pixel dimensions. Its color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+There are three ways to make one:
 
 ```csharp
-local singleton RenderState { RenderTarget scene; bool initialized; }
+render.scene = RenderTarget.Screen();      // Always the window's size, at full resolution
+render.blur  = RenderTarget.Screen(0.5);   // Always half of it, each way
+render.card  = RenderTarget(200, 300);     // A size of its own, in logical pixels, at the display's resolution
+render.small = RenderTarget(320, 180, 1);  // A size of its own, in exactly these pixels
+```
+
+A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Screen()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
+
+- `RenderTarget.Screen()` is for exactly that: a target that's always the window's size. `RenderTarget.Screen(factor)` is always that part of it, for the smaller targets a blur or a glow goes through. The engine makes them again when the window's size changes, so there's nothing to resize and nothing to forget. What was drawn in one is lost then, which doesn't matter for a target a view draws again every frame. `Resize` on one is refused.
+- `RenderTarget(width, height)` is a target of a size of its own. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size.
+- A third argument is the target's pixels per unit, where the display's isn't wanted: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels on every display, for pixel art and anything else that must not depend on the display.
+
+When the display's scale changes (the window moves to another monitor, a browser zooms), the targets at the display's scale are made again, empty. One with pixels per unit of its own is left alone. There's no way to read the display's scale, and nothing here needs it.
+
+Otherwise a target's color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+
+```csharp
+local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
 
-frag Blur(Vertex vertex, mut Color color, Texture source)
+frag Present(Vertex vertex, mut Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }
@@ -55,10 +72,10 @@ frag Blur(Vertex vertex, mut Color color, Texture source)
 [Stage(RenderStages.Prepare)]
 view Prepare(mut RenderState render)
 {
-    if (!render.initialized)
+    if (!render.made)
     {
-        render.scene = RenderTarget(1280, 720);
-        render.initialized = true;
+        render.scene = RenderTarget.Screen();
+        render.made = true;
     }
     render.scene.Clear(Color.black);
     render.scene.Camera(float2(0), 10);
@@ -71,15 +88,19 @@ view Objects(Body body, RenderState render)
 }
 
 [Stage(RenderStages.Effects)]
-view Present(RenderState render)
+view Show(RenderState render)
 {
-    Draw.Blit(render.scene.color, Draw.window, Blur);
+    Draw.Blit(render.scene.color, Draw.window, Present);
 }
 ```
 
 `Draw.Blit(source, destination, frag)` runs the frag on a fixed `Vertex` quad over the entire destination. It supplies the frag's read-only `Texture` parameter from `source`, replaces color and alpha, and preserves depth. It temporarily ignores camera and clip, then restores them. Its source can also be a `Grid2<Color>`, uploaded from CPU cells. Sampling the image being written is an error; use a second target between effects.
 
-Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, dimensions and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
+A Blit replaces what's in its destination, and nothing blends two images for you yet, so an effect that adds to the picture, like a glow, ends in a frag that reads both and writes their sum: the scene as the Blit's source, and the other image as a `Texture` field of a singleton the frag takes. The [Duel](../guide/duel.md) example does it: its arena goes into a `RenderTarget.Screen()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
+
+A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
+
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
@@ -484,7 +505,7 @@ That's the message in the middle of the screen, on a panel that fits it. Bold te
 
 The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera.
 
-It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own pixels and camera, and `target.MeasureText(text, size)` measures for it.
+It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own camera, and pixels of its own to fit text to, so `target.MeasureText(text, size)` measures for it.
 
 ## 3D
 

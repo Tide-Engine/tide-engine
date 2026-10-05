@@ -2707,14 +2707,16 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // Draw2D.Shape goes through the helper that turns a Shape into a tide_shape
             const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
             sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
+            // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
+            const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
             if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
-            else if (e->resource_operation) gen_expr(g, o, e->object);
+            else if (receiver) gen_expr(g, o, e->object);
             // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
             const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
             const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
             bool anchored = false, weighted = false;
             for (int i = 0; i < e->args.count; i++) {
-                if (i || e->call == CALL_DRAW || e->resource_operation) sb_put(o, ", ");
+                if (i || e->call == CALL_DRAW || receiver) sb_put(o, ", ");
                 const type want = e->arg_want.items[i];
                 if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
                     if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
@@ -3626,7 +3628,9 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_DESTROY:
         case CALL_SEND: take(ops, e->object); break;
         default:
-            if (e->targeted || e->resource_operation) take(ops, e->object); // A render target
+            if (e->targeted || (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET)) {
+                take(ops, e->object); // A render target
+            }
             break; // Math, Scene, GUI and the like: a name, no value
         }
     }
@@ -5097,8 +5101,8 @@ static layout type_layout(const type t)
     if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) return decl_layout(t.decl);
     if (t.kind == TY_RECORD) return (layout){(int)sizeof(tide_devices), 4}; // The input's devices
     if (t.kind == TY_LONG) return (layout){8, 8};
-    if (t.kind == TY_RENDER_TARGET) return (layout){16, 8};
-    if (t.kind == TY_TEXTURE) return (layout){32, 8};
+    if (t.kind == TY_RENDER_TARGET) return (layout){24, 8}; // tide_render_target: its id, then its size, four floats
+    if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (type_dim(t) > 0) return (layout){4 * type_dim(t), 4};
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
@@ -12709,10 +12713,10 @@ static void gen_resource_fields(gen *g, const decl *d, const char *path, const c
         sb_printf(&at, "%s.%s", path, field_cname(f));
         if (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
             const bool texture = f->type.kind == TY_TEXTURE;
-            sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target" : "id");
+            sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target.id" : "id");
             if (texture) {
-                sb_printf(o, "%s    tide_render_target target = {.id = %s.target, .width = %s.image.width, .height = %s.image.height};\n",
-                          pad, at.data, at.data, at.data);
+                // Its size, its scale and whether it follows the window come with it
+                sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at.data);
                 sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
                 sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
                 sb_printf(o, "%s    %s = tide_render_target_color(target);\n", pad, at.data);

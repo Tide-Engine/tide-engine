@@ -978,6 +978,14 @@ static bool is_const(const expr *e)
     }
 }
 
+// -1, -0.5: a literal with a minus before it, which is in an int's range.
+static bool negated_literal(const expr *e)
+{
+    if (e->kind != E_UNARY || e->op != T_MINUS || e->method || !e->lhs) return false;
+    if (e->lhs->kind == E_FLOAT) return true;
+    return e->lhs->kind == E_INT && e->lhs->type.kind != TY_LONG && int_literal(e->lhs) <= 2147483647ll;
+}
+
 // Whether a mut argument can be handed over as it is in WGSL, which takes a
 // pointer to a whole variable: a local, or a parameter that's one already.
 static bool is_whole_variable(const expr *e)
@@ -1809,7 +1817,9 @@ static void ex(emit *em, const expr *e)
                                      .args = {(expr *[]){e->lhs}, 1, 1}});
             return;
         }
-        if (is_const(e->lhs)) em->defuse++;
+        // A number with a minus before it is that number, which no compiler folds into an error
+        const bool folds = is_const(e->lhs) && !negated_literal(e);
+        if (folds) em->defuse++;
         if (e->op == T_MINUS && matrix_dim(e->type) && em->l == WGSL) { // WGSL negates no matrix
             sb_put(em->o, "(");
             ex(em, e->lhs);
@@ -1819,7 +1829,7 @@ static void ex(emit *em, const expr *e)
             ex(em, e->lhs);
             sb_put(em->o, ")");
         }
-        if (is_const(e->lhs)) em->defuse--;
+        if (folds) em->defuse--;
         return;
     case E_CONDITIONAL:
         if (!type_fits(em, e->type, e->at)) return;
@@ -2106,6 +2116,81 @@ static bool counts(const stmt *s)
         && step->target->local == v && step->op != T_ASSIGN;
 }
 
+// What a loop's own line says as it is: a number, or a variable.
+static bool plain_operand(const expr *e)
+{
+    if (e->kind == E_INT || e->kind == E_FLOAT || negated_literal(e)) return true;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && type_is_numeric(e->type)));
+}
+
+// A variable of the loop's own for `value`, worked out before the loop: its
+// declaration, and `name` to stand for the value on the loop's line. A Tide
+// name starts with no digit, so it's no local of the game's.
+static void put_before_loop(emit *em, const expr *value, const type t, const char *what, char *text, stmt *local, expr *name)
+{
+    const int n = snprintf(text, 32, "0%s%d", what, em->temps++);
+    *local = (stmt){.kind = S_VAR, .at = value->at, .name = {text, n}, .type = t};
+    *name = (expr){.kind = E_NAME, .at = value->at, .name = local->name, .bind = BIND_LOCAL, .local = local, .type = t};
+    line(em);
+    if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", local_name(local->name), ty(em, t));
+    else sb_printf(em->o, "%s %s = ", ty(em, t), local_name(local->name));
+    ex_as(em, value, t);
+    sb_put(em->o, ";\n");
+}
+
+// A loop that counts. Its own line has only numbers and variables: what it
+// starts at, and what it goes to and steps by when those are constants, are
+// worked out before it when they're anything more (a sum, a call, a constant
+// of the game's), each once, as the line would. Shader compilers read how far
+// a loop goes off that line, and one of them (the Android emulator's, for a
+// loop that samples a texture) loses a function that only that line calls.
+static void st_for(emit *em, const stmt *s)
+{
+    const stmt *v = s->init;
+    const expr *c = s->cond;
+    const bool left = c->lhs->kind == E_NAME && c->lhs->bind == BIND_LOCAL && c->lhs->local == v;
+    const expr *bound = left ? c->rhs : c->lhs;
+    const expr *by = s->step->value;
+    const bool from_before = !plain_operand(v->value);
+    const bool to_before = !plain_operand(bound) && is_const(bound); // What isn't a constant is worked out at each turn
+    const bool by_before = by && !plain_operand(by) && is_const(by);
+    stmt init = *v, step = *s->step, locals[3];
+    expr cond = *c, names[3];
+    char texts[3][32];
+    if (from_before || to_before || by_before) {
+        sb_put(em->o, "{\n");
+        em->indent++;
+        if (from_before) {
+            put_before_loop(em, v->value, v->type, "from", texts[0], &locals[0], &names[0]);
+            init.value = &names[0];
+        }
+        if (to_before) {
+            put_before_loop(em, bound, bound->type, "to", texts[1], &locals[1], &names[1]);
+            if (left) cond.rhs = &names[1];
+            else cond.lhs = &names[1];
+        }
+        if (by_before) {
+            put_before_loop(em, by, by->type, "by", texts[2], &locals[2], &names[2]);
+            step.value = &names[2];
+        }
+        line(em);
+    }
+    sb_put(em->o, "for (");
+    st_var(em, &init);
+    sb_put(em->o, "; ");
+    ex(em, &cond);
+    sb_put(em->o, "; ");
+    st_assign(em, &step, false);
+    sb_put(em->o, ") ");
+    st_body(em, s->then_stmt);
+    sb_put(em->o, "\n");
+    if (from_before || to_before || by_before) {
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+    }
+}
+
 static void st(emit *em, const stmt *s)
 {
     if (s->kind == S_BLOCK) {
@@ -2162,15 +2247,7 @@ static void st(emit *em, const stmt *s)
             diag_note("like 'for (int i = 0; i < 8; i++) { ... }'");
             break;
         }
-        sb_put(em->o, "for (");
-        st_var(em, s->init);
-        sb_put(em->o, "; ");
-        ex(em, s->cond);
-        sb_put(em->o, "; ");
-        st_assign(em, s->step, false);
-        sb_put(em->o, ") ");
-        st_body(em, s->then_stmt);
-        sb_put(em->o, "\n");
+        st_for(em, s);
         break;
     case S_BREAK:
         sb_put(em->o, "break;\n");

@@ -106,7 +106,7 @@ TIDE_TEST(draw_owned_target_aliases_capture_resize_and_disposal)
     TIDE_CHECK(d.textures[before - 1u].version == 1 && d.textures[resized - 1u].version == 2);
     tide_render_target_resize(target, 16, 12);
     const uint32_t larger = tide_draw_texture_source(&d, color);
-    TIDE_CHECK(d.textures[larger - 1u].width == 16 && d.textures[larger - 1u].height == 12);
+    TIDE_CHECK(d.textures[larger - 1u].target.width == 16.0f && d.textures[larger - 1u].target.height == 12.0f);
     tide_draw_append(&appended, &d);
     TIDE_REQUIRE(appended.target_count == 2);
     TIDE_CHECK(appended.targets[0].version == 1 && appended.targets[1].version == 2);
@@ -115,7 +115,7 @@ TIDE_TEST(draw_owned_target_aliases_capture_resize_and_disposal)
     TIDE_CHECK(!tide_render_target_live(target.id));
     tide_draw_render_target(&d, target);
     TIDE_REQUIRE(d.target && d.target <= d.target_count);
-    TIDE_CHECK(d.targets[d.target - 1u].id == target.id && d.targets[d.target - 1u].width == 0);
+    TIDE_CHECK(d.targets[d.target - 1u].id == target.id && !tide_target_size_valid(d.targets[d.target - 1u].size));
     tide_draw_render_target(&d, (tide_render_target){0});
     TIDE_CHECK(d.target && d.targets[d.target - 1u].id == TIDE_RENDER_INVALID);
     tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
@@ -140,7 +140,7 @@ TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
     tide_render_target_state *disposed = calloc(1, sizeof *disposed);
     TIDE_REQUIRE(foreign && disposed);
     *foreign = (tide_render_target_state){.next = disposed, .owner = &foreign,
-                                         .width = 12, .height = 9, .version = 2, .alive = true};
+                                         .size = {.width = 12, .height = 9}, .version = 2, .alive = true};
     *disposed = (tide_render_target_state){.owner = &foreign, .version = 1};
     const tide_render_target live_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)foreign};
     const tide_render_target dead_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)disposed};
@@ -151,14 +151,72 @@ TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
 
     // Tokens here are deliberately not pointers; recreation cannot dereference
     // the previous program's address space and must retain shared identity.
-    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 123u, .width = 24, .height = 18};
+    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 123u, .size = {.width = 24, .height = 18, .scale = 2}};
     const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
-    TIDE_CHECK(first.id == second.id && first.width == 24 && first.height == 18);
+    TIDE_CHECK(first.id == second.id && first.size.width == 24.0f && first.size.height == 18.0f && first.size.scale == 2.0f);
     TIDE_CHECK(tide_render_target_recreate((tide_render_target){.id = packed.id}).id == 0);
     tide_render_targets_recreated();
     const tide_render_target another_restore = tide_render_target_recreate(packed);
     TIDE_CHECK(another_restore.id != first.id);
+    // One that followed the window follows it again
+    const tide_render_target following = {.id = TIDE_RENDER_MANAGED | 124u, .size = {.window = 0.5f}};
+    const tide_render_target restored = tide_render_target_recreate(following);
+    TIDE_CHECK(restored.id && restored.id != another_restore.id && restored.size.window == 0.5f);
+    TIDE_CHECK(tide_render_target_live(restored.id));
     tide_render_targets_recreated();
+    tide_render_targets_free();
+}
+
+// A target's size is in logical pixels, at the display's scale or one of its
+// own, and one made for the screen follows the window: the list records which.
+TIDE_TEST(draw_targets_record_their_scale_and_whether_they_follow_the_window)
+{
+    tide_draw_list d = {0}, appended = {0};
+    const tide_render_target card = tide_render_target_make(200.5f, 300.0f);
+    const tide_render_target exact = tide_render_target_make_scaled(320.0f, 180.0f, 1.0f);
+    const tide_render_target screen = tide_render_target_window(), half = tide_render_target_screen(0.5f);
+    TIDE_CHECK(card.size.width == 200.5f && card.size.height == 300.0f && card.size.scale == 0.0f && card.size.window == 0.0f);
+    TIDE_CHECK(exact.size.scale == 1.0f && screen.size.window == 1.0f && half.size.window == 0.5f);
+    TIDE_CHECK(tide_render_target_live(card.id) && tide_render_target_live(exact.id));
+    TIDE_CHECK(tide_render_target_live(screen.id) && tide_render_target_live(half.id));
+
+    tide_draw_render_target(&d, exact);
+    TIDE_REQUIRE(d.target == 1 && d.targets[0].size.scale == 1.0f && d.targets[0].size.width == 320.0f);
+    tide_draw_render_target(&d, half);
+    TIDE_REQUIRE(d.target == 2 && d.targets[1].size.window == 0.5f);
+    const uint32_t color = tide_draw_texture_source(&d, tide_render_target_color(screen));
+    TIDE_REQUIRE(color && d.textures[color - 1u].space == TIDE_PIXELS_TARGET);
+    TIDE_CHECK(d.textures[color - 1u].target.window == 1.0f && d.textures[color - 1u].id == screen.id);
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.target_count == 2);
+    TIDE_CHECK(appended.targets[0].size.scale == 1.0f && appended.targets[1].size.window == 0.5f);
+
+    // In logical pixels: a fixed size is its own, and the window's is the window's, times the factor
+    const tide_float2 window = tide_f2(1280.0f, 720.0f);
+    const tide_float2 fixed = tide_target_size_logical(exact.size, window);
+    const tide_float2 followed = tide_target_size_logical(half.size, window);
+    TIDE_CHECK(fixed.x == 320.0f && fixed.y == 180.0f && followed.x == 640.0f && followed.y == 360.0f);
+
+    // A window's target keeps the window's size: Resize is refused, and it isn't made again
+    tide_render_target_resize(half, 64.0f, 64.0f);
+    const tide_render_target after = tide_render_target_resolve(half);
+    TIDE_CHECK(after.size.window == 0.5f && tide_render_target_version(half.id) == 1);
+    // A fixed one keeps its scale through a Resize
+    tide_render_target_resize(exact, 64.0f, 32.0f);
+    const tide_render_target resized = tide_render_target_resolve(exact);
+    TIDE_CHECK(resized.size.width == 64.0f && resized.size.height == 32.0f && resized.size.scale == 1.0f);
+    TIDE_CHECK(tide_render_target_version(exact.id) == 2);
+
+    // Sizes there's no image of: nothing, less than nothing, and not a number
+    const float nothing = 0.0f;
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_make(0.0f, 4.0f).id));
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_make(4.0f, nothing / nothing).id));
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_make_scaled(4.0f, 4.0f, 0.0f).id));
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_make_scaled(4.0f, 4.0f, -1.0f).id));
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_screen(0.0f).id));
+    TIDE_CHECK(!tide_render_target_live(tide_render_target_screen(-2.0f).id));
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
     tide_render_targets_free();
 }
 
