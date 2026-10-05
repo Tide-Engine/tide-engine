@@ -35,6 +35,9 @@ function(tide_package_order_test name namespace source folder)
     add_test(NAME ${name}
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DGAME=${folder}/order.tide" "-DPACKAGE=${namespace}"
             "-DSOURCE=${source}" "-DEXPECTED=${folder}/order.txt" -P "${TIDE_PACKAGE_ORDER}")
+    # The game is nothing's to build, so tide_add_game doesn't list it: for editors, it's a game of these two
+    # files (see tide_write_games_manifest in cmake/Tide.cmake)
+    set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${name}\t${folder}/order.tide" "${name}\t${source}\t${namespace}")
 endfunction()
 
 # Box2D's own sources, as they came: a library the tests share, with its
