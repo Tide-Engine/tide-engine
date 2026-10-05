@@ -1,4 +1,4 @@
-// expect: Math.Rotate on a quaternion isn't on the GPU yet
+// expect: Math.Hash of a long isn't on the GPU, whose ints are 32 bits
 scene Main { }
 
 struct V
@@ -12,17 +12,10 @@ component Box
     Color tint = Color.white;
 }
 
-singleton Sun
-{
-    float3 direction = float3(0, -1, 0);
-    quaternion turn = quaternion.identity;
-}
-
 local singleton Models
 {
     List<V> crate;
     List<int> faces;
-    Grid2<Color> wood = Grid2(4, 4);
 }
 
 event(Spawned) Setup(with Main)
@@ -30,9 +23,10 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, Sun sun)
+// All of Math is on the GPU but this: it has no 64-bit integers to hash.
+frag Shade(V vertex, mut Color color)
 {
-    color = Color.white * Math.Rotate(sun.turn, sun.direction).x;
+    color = Color.white * (Math.Hash(5L) % 2);
 }
 
 view Show(Box box, Models models)

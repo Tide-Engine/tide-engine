@@ -528,6 +528,392 @@ frag More(Corner3 vertex, mut Color color)
     color = ok ? Color(0, 1, 0, 1) : Color.red;
 }
 
+// ---------------------------------------------------------------------------
+// Math, on the GPU: green where it's what the CPU worked out
+//
+// Each function below works a part of Math out from a `Given`. The view runs
+// it on the CPU and keeps its answers in `Probe`; a frag and a vert run it
+// again on the GPU, and compare theirs with those. What's integers has to be
+// the same number, and floats as near as a GPU rounds.
+
+struct Given
+{
+    int one = 1;
+    int big = -1640531527;
+    int2 pair = int2(3, -4);
+    int3 cell = int3(17, -250, 2147483647);
+    int4 quad = int4(-2147483647, 65536, -1, 99);
+    int low;                  // A long's halves, which the view splits
+    int high;
+    quaternion turn;          // Rotations the view makes
+    quaternion other;
+    quaternion none;          // What a field nothing set holds: zero
+    float3 point = float3(1, -2, 0.5);
+    float3 angles = float3(0.3, -1.1, 2);
+    float amount = 0.3;
+    float wide = 3;           // Nearly half a turn, in radians
+    float2x2 two = float2x2(2, 1, -1, 3);
+    float3x3 three = float3x3(2, 0, 1, -1, 3, 0.5, 0, 1, 4);
+    float4x4 four = float4x4.identity; // The view's: a place, a turn and a size
+    float zero;
+    float nan;                // 0 / 0, which the view works out
+}
+
+struct Hashes
+{
+    int one;
+    int two;
+    int three;
+    int four;
+    int chained;
+    int constant;
+    int halves;
+}
+
+struct Turns
+{
+    quaternion product;
+    quaternion inverse;
+    quaternion conjugate;
+    quaternion unit;
+    quaternion idle;
+    quaternion slerp;
+    quaternion slerpNear;
+    quaternion slerpFar;
+    quaternion nlerp;
+    quaternion nlerpFar;
+    quaternion nlerpNone;
+    quaternion axisAngle;
+    quaternion euler;
+    quaternion look;
+    quaternion fromSmall;
+    quaternion fromX;
+    quaternion fromY;
+    quaternion fromZ;
+    quaternion made;
+    quaternion constant;
+    float3 rotated;
+    float3 multiplied;
+    float3 forward;
+    float3 up;
+    float3 right;
+    float dot;
+    float angle;
+    float angleNone;
+}
+
+struct Matrices
+{
+    float2x2 inverse2;
+    float3x3 inverse3;
+    float4x4 inverse4;
+    float3 determinants;
+    float2x2 product2;
+    float3x3 product3;
+    float4x4 product4;
+    float2 through2;
+    float3 through3;
+    float4 through4;
+    float3x3 transposed;
+    float3 moved;
+    float3 turned;
+    float3x3 fromTurn;
+    float4x4 fromParts;
+    float4x4 trs;
+    float4x4 translate;
+    float4x4 perspective;
+    float4x4 ortho;
+    float4x4 constant;
+    float2x2 flat; // Of a matrix with no inverse: no numbers, so nothing compares it
+}
+
+struct Rest
+{
+    float4 mins;      // Of a number, then of each size of vector, summed
+    float4 maxes;
+    float4 clamps;
+    float4 smooths;
+    float4 powers;
+    float4 arcs;
+    float4 units;
+    float4 ends;
+    float4 saturated;
+    float2 capped;
+    float4 bad;       // Of NaN: what math.h says of it
+    float4 bad2;
+    float3 badVector;
+    float4 none;      // Of vectors with no direction
+    float4 turnedPowers;
+    float4 corners;
+    float4 edges;
+    float2 wrong;     // Bounds the wrong way around
+    int2 wrongInts;
+}
+
+local singleton Probe
+{
+    Given given;
+    Hashes hashes;
+    Turns turns;
+    Matrices matrices;
+    Rest rest;
+}
+
+Hashes HashesOf(Given given)
+{
+    mut Hashes hashes = Hashes { };
+    hashes.one = Math.Hash(given.big);
+    hashes.two = Math.Hash(given.pair);
+    hashes.three = Math.Hash(given.cell);
+    hashes.four = Math.Hash(given.quad);
+    // Hashes of hashes, and of vectors made along the way
+    hashes.chained = Math.Hash(int2(Math.Hash(given.one), Math.Hash(int4(given.cell, given.big))));
+    // Of constants, which no shader compiler may refuse to work out ahead
+    hashes.constant = Math.Hash(7) ^ Math.Hash(int2(1, 2)) ^ Math.Hash(int3(-1, 0, 1)) ^ Math.Hash(int4(1, 2, 3, 2147483647));
+    // A long's hash is its halves', as an int2: the GPU has no long
+    hashes.halves = Math.Hash(int2(given.low, given.high));
+    return hashes;
+}
+
+bool SameHashes(Hashes a, Hashes b)
+{
+    return a.one == b.one && a.two == b.two && a.three == b.three && a.four == b.four && a.chained == b.chained
+        && a.constant == b.constant && a.halves == b.halves && a.one != a.two;
+}
+
+Turns TurnsOf(Given given)
+{
+    mut Turns turns = Turns { };
+    quaternion a = given.turn;
+    quaternion b = given.other;
+    turns.product = Math.Mul(a, b);
+    turns.inverse = Math.Inverse(quaternion(a.value * 2));
+    turns.conjugate = Math.Conjugate(a);
+    turns.unit = Math.Normalize(quaternion(b.value * 3));
+    turns.idle = Math.Normalize(given.none); // The identity
+    turns.slerp = Math.Slerp(a, b, given.amount);
+    turns.slerpNear = Math.Slerp(a, Math.Nlerp(a, b, 0.001), given.amount); // So near that it goes straight
+    turns.slerpFar = Math.Slerp(a, quaternion(-b.value), given.amount);     // The same rotation, the long way around
+    turns.nlerp = Math.Nlerp(a, b, given.amount);
+    turns.nlerpFar = Math.Nlerp(a, quaternion(-b.value), given.amount);
+    turns.nlerpNone = Math.Nlerp(given.none, given.none, given.amount);
+    turns.axisAngle = quaternion.AxisAngle(Math.Normalize(given.point), given.wide);
+    turns.euler = quaternion.Euler(given.angles);
+    turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
+    // From a matrix, each of the four ways there are: by its trace, and by each axis it turns nearly half around
+    turns.fromSmall = quaternion(float3x3(a));
+    turns.fromX = quaternion(float3x3(quaternion.AxisAngle(float3(1, 0, 0), given.wide)));
+    turns.fromY = quaternion(float3x3(quaternion.AxisAngle(float3(0, 1, 0), given.wide)));
+    turns.fromZ = quaternion(float3x3(quaternion.AxisAngle(float3(0, 0, 1), given.wide)));
+    turns.made = quaternion(given.one, 0.5, given.amount, 2);
+    turns.constant = Math.Mul(quaternion.Euler(float3(0.5, 1, 1.5)),
+                              Math.Slerp(quaternion.identity, quaternion.AxisAngle(float3(0, 1, 0), 2), 0.25));
+    turns.rotated = Math.Rotate(a, given.point);
+    turns.multiplied = Math.Mul(b, given.point);
+    turns.forward = Math.Forward(a);
+    turns.up = Math.Up(a);
+    turns.right = Math.Right(a);
+    turns.dot = Math.Dot(a, b);
+    turns.angle = Math.Angle(a, b);
+    turns.angleNone = Math.Angle(given.none, b);
+    return turns;
+}
+
+bool Close(float a, float b)
+{
+    return Math.Abs(a - b) <= 0.002 * (1 + Math.Abs(b));
+}
+
+bool Close2(float2 a, float2 b)
+{
+    return Close(a.x, b.x) && Close(a.y, b.y);
+}
+
+bool Close3(float3 a, float3 b)
+{
+    return Close(a.x, b.x) && Close(a.y, b.y) && Close(a.z, b.z);
+}
+
+bool Close4(float4 a, float4 b)
+{
+    return Close(a.x, b.x) && Close(a.y, b.y) && Close(a.z, b.z) && Close(a.w, b.w);
+}
+
+bool CloseTurn(quaternion a, quaternion b)
+{
+    return Close4(a.value, b.value);
+}
+
+bool Close3x3(float3x3 a, float3x3 b)
+{
+    return Close3(a.c0, b.c0) && Close3(a.c1, b.c1) && Close3(a.c2, b.c2);
+}
+
+bool Close4x4(float4x4 a, float4x4 b)
+{
+    return Close4(a.c0, b.c0) && Close4(a.c1, b.c1) && Close4(a.c2, b.c2) && Close4(a.c3, b.c3);
+}
+
+bool SameTurns(Turns a, Turns b)
+{
+    mut bool same = CloseTurn(a.product, b.product) && CloseTurn(a.inverse, b.inverse) && CloseTurn(a.conjugate, b.conjugate);
+    same = same && CloseTurn(a.unit, b.unit) && CloseTurn(a.idle, b.idle) && a.idle.value.w == 1;
+    same = same && CloseTurn(a.slerp, b.slerp) && CloseTurn(a.slerpNear, b.slerpNear) && CloseTurn(a.slerpFar, b.slerpFar);
+    same = same && CloseTurn(a.nlerp, b.nlerp) && CloseTurn(a.nlerpFar, b.nlerpFar) && CloseTurn(a.nlerpNone, b.nlerpNone);
+    same = same && CloseTurn(a.axisAngle, b.axisAngle) && CloseTurn(a.euler, b.euler) && CloseTurn(a.look, b.look);
+    same = same && CloseTurn(a.fromSmall, b.fromSmall) && CloseTurn(a.fromX, b.fromX) && CloseTurn(a.fromY, b.fromY);
+    same = same && CloseTurn(a.fromZ, b.fromZ) && CloseTurn(a.made, b.made) && CloseTurn(a.constant, b.constant);
+    same = same && Close3(a.rotated, b.rotated) && Close3(a.multiplied, b.multiplied);
+    same = same && Close3(a.forward, b.forward) && Close3(a.up, b.up) && Close3(a.right, b.right);
+    return same && Close(a.dot, b.dot) && Close(a.angle, b.angle) && Close(a.angleNone, b.angleNone);
+}
+
+Matrices MatricesOf(Given given)
+{
+    mut Matrices made = Matrices { };
+    made.inverse2 = Math.Inverse(given.two);
+    made.inverse3 = Math.Inverse(given.three);
+    made.inverse4 = Math.Inverse(given.four);
+    made.determinants = float3(Math.Determinant(given.two), Math.Determinant(given.three), Math.Determinant(given.four));
+    made.product2 = Math.Mul(given.two, made.inverse2 + given.two);
+    made.product3 = Math.Mul(given.three, Math.Transpose(given.three));
+    made.product4 = Math.Mul(given.four, given.four);
+    made.through2 = Math.Mul(given.two, given.point.xy);
+    made.through3 = Math.Mul(given.three, given.point);
+    made.through4 = Math.Mul(given.four, float4(given.point, 1));
+    made.transposed = Math.Transpose(given.three);
+    made.moved = Math.Transform(given.four, given.point);
+    made.turned = Math.Rotate(given.four, given.point);
+    made.fromTurn = float3x3(given.turn);
+    made.fromParts = float4x4(made.fromTurn, given.point);
+    made.trs = float4x4.TRS(given.point, given.other, given.angles);
+    made.translate = float4x4.Translate(given.angles);
+    made.perspective = float4x4.PerspectiveFov(given.wide / 3, 1.5, given.amount, 100);
+    made.ortho = float4x4.Ortho(8, given.wide, given.amount, 50);
+    // Of constants, and of a matrix with no inverse: neither may be a shader a compiler refuses
+    made.constant = Math.Inverse(float4x4.TRS(float3(1, 2, 3), quaternion.Euler(float3(0.5, 1, 1.5)), float3(2, 1, 0.5)));
+    made.flat = Math.Inverse(float2x2(1, 2, 2, 4));
+    return made;
+}
+
+bool SameMatrices(Matrices a, Matrices b)
+{
+    mut bool same = Close2(a.inverse2.c0, b.inverse2.c0) && Close2(a.inverse2.c1, b.inverse2.c1);
+    same = same && Close3x3(a.inverse3, b.inverse3) && Close4x4(a.inverse4, b.inverse4) && Close3(a.determinants, b.determinants);
+    same = same && Close2(a.product2.c0, b.product2.c0) && Close2(a.product2.c1, b.product2.c1);
+    same = same && Close3x3(a.product3, b.product3) && Close4x4(a.product4, b.product4);
+    same = same && Close2(a.through2, b.through2) && Close3(a.through3, b.through3) && Close4(a.through4, b.through4);
+    same = same && Close3x3(a.transposed, b.transposed) && Close3(a.moved, b.moved) && Close3(a.turned, b.turned);
+    same = same && Close3x3(a.fromTurn, b.fromTurn) && Close4x4(a.fromParts, b.fromParts) && Close4x4(a.trs, b.trs);
+    same = same && Close4x4(a.translate, b.translate) && Close4x4(a.perspective, b.perspective) && Close4x4(a.ortho, b.ortho);
+    return same && Close4x4(a.constant, b.constant);
+}
+
+// What Math does on the GPU as tide/math.h does it, where a shader language's
+// own function would do otherwise, or says it may do anything
+Rest RestOf(Given given)
+{
+    mut Rest rest = Rest { };
+    float a = given.amount;
+    float2 p2 = given.point.xy;
+    float3 p3 = given.point;
+    float4 p4 = float4(given.point, given.wide);
+    float3 q3 = given.angles;
+    float4 q4 = float4(given.angles, -1);
+
+    // Every size of each
+    rest.mins = float4(Math.Min(a, given.wide), Math.Csum(Math.Min(p2, q3.xy)), Math.Csum(Math.Min(p3, q3)), Math.Csum(Math.Min(p4, q4)));
+    rest.maxes = float4(Math.Max(a, given.wide), Math.Csum(Math.Max(p2, q3.xy)), Math.Csum(Math.Max(p3, q3)), Math.Csum(Math.Max(p4, q4)));
+    rest.clamps = float4(Math.Clamp(given.wide, a, 1), Math.Csum(Math.Clamp(p2, -1, a)), Math.Csum(Math.Clamp(p3, q3 - 1, q3 + 1)),
+                         Math.Csum(Math.Clamp(p4, 0, 2)));
+    rest.smooths = float4(Math.SmoothStep(0, 1, a), Math.Csum(Math.SmoothStep(-3, 3, p2)), Math.Csum(Math.SmoothStep(-3, 3, p3)),
+                          Math.Csum(Math.SmoothStep(-3, 3, p4)));
+    rest.powers = float4(Math.Pow(given.wide, a), Math.Csum(Math.Pow(Math.Abs(p2), 1.5)), Math.Csum(Math.Pow(p3, 2)),
+                         Math.Csum(Math.Pow(p4, 3)));
+    rest.arcs = float4(Math.Atan2(a, given.wide), Math.Csum(Math.Atan2(p2, q3.xy)), Math.Csum(Math.Atan2(p3, q3)),
+                       Math.Csum(Math.Atan2(p4, q4)));
+    rest.units = float4(Math.Normalize(p2).x, Math.Normalize(p3).y, Math.Normalize(p4).z, Math.Normalize(p4).w);
+    rest.ends = float4(Math.Cmin(p2), Math.Cmax(p3), Math.Cmin(p4), Math.Cmax(p4));
+    rest.saturated = Math.Saturate(p4);
+    rest.capped = float2(Math.Saturate(given.wide), Math.Saturate(-given.wide));
+
+    // With one NaN, Min and Max give the other, and Clamp its lower bound
+    float nan = given.nan;
+    float3 holed = float3(1, nan, 3);
+    rest.bad = float4(Math.Min(nan, 2), Math.Max(nan, 2), Math.Clamp(nan, 1, 3), Math.Saturate(nan));
+    rest.bad2 = float4(Math.Min(2, nan), Math.Max(2, nan), Math.SmoothStep(0, 1, nan), Math.Cmin(float3(4, nan, 5)));
+    rest.badVector = Math.Min(holed, float3(2)) + Math.Max(holed, float3(2)) + Math.Clamp(holed, float3(0), float3(1.5));
+
+    // A vector with no direction normalizes to zero, and a quaternion to the identity
+    float3 still = float3(given.zero);
+    rest.none = float4(Math.Csum(Math.Normalize(still.xy)), Math.Csum(Math.Normalize(still)),
+                       Math.Csum(Math.Normalize(float4(still, given.zero))), Math.Normalize(given.none).value.w);
+
+    // A whole power of a number under 0, and anything to the power of 0
+    float two = given.wide - 1;
+    rest.turnedPowers = float4(Math.Pow(-two, 3), Math.Pow(-two, two), Math.Pow(given.zero, given.zero), Math.Pow(-0.5, -3));
+    // Atan2 where there's no direction, and along each axis
+    rest.corners = float4(Math.Atan2(given.zero, given.zero), Math.Atan2(two, given.zero), Math.Atan2(given.zero, -two),
+                          Math.Atan2(-two, -two));
+    // SmoothStep from an edge down to a lower one, and between two at the same place
+    rest.edges = float4(Math.SmoothStep(1, 0, 0.25), Math.SmoothStep(two, two, 1), Math.SmoothStep(two, two, 3),
+                        Math.SmoothStep(two, two, two));
+    // Clamp with its bounds the wrong way around gives the lower one
+    rest.wrong = float2(Math.Clamp(5.0, 3, 1), Math.Clamp(given.wide, two, 1));
+    rest.wrongInts = int2(Math.Clamp(5, 3, 1), Math.Clamp(given.one, 7, given.one));
+    return rest;
+}
+
+bool SameRest(Rest a, Rest b)
+{
+    mut bool same = Close4(a.mins, b.mins) && Close4(a.maxes, b.maxes) && Close4(a.clamps, b.clamps) && Close4(a.smooths, b.smooths);
+    same = same && Close4(a.powers, b.powers) && Close4(a.arcs, b.arcs) && Close4(a.units, b.units) && Close4(a.ends, b.ends);
+    same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);
+    same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
+    same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
+    return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
+}
+
+frag HashFrag(Corner3 vertex, mut Color color, Probe probe)
+{
+    color = SameHashes(HashesOf(probe.given), probe.hashes) ? Color.green : Color.red;
+}
+
+frag TurnFrag(Corner3 vertex, mut Color color, Probe probe)
+{
+    color = SameTurns(TurnsOf(probe.given), probe.turns) ? Color.green : Color.red;
+}
+
+frag MatrixFrag(Corner3 vertex, mut Color color, Probe probe)
+{
+    color = SameMatrices(MatricesOf(probe.given), probe.matrices) ? Color.green : Color.red;
+}
+
+frag RestFrag(Corner3 vertex, mut Color color, Probe probe)
+{
+    color = SameRest(RestOf(probe.given), probe.rest) ? Color.green : Color.red;
+}
+
+vert HashVert(mut Corner3 vertex, Probe probe)
+{
+    vertex.color = SameHashes(HashesOf(probe.given), probe.hashes) ? Color.green : Color.red;
+}
+
+vert TurnVert(mut Corner3 vertex, Probe probe)
+{
+    vertex.color = SameTurns(TurnsOf(probe.given), probe.turns) ? Color.green : Color.red;
+}
+
+vert MatrixVert(mut Corner3 vertex, Probe probe)
+{
+    vertex.color = SameMatrices(MatricesOf(probe.given), probe.matrices) ? Color.green : Color.red;
+}
+
+vert RestVert(mut Corner3 vertex, Probe probe)
+{
+    vertex.color = SameRest(RestOf(probe.given), probe.rest) ? Color.green : Color.red;
+}
+
 // A vert reads its vertex's ints, and samples too
 vert Checks(mut Corner3 vertex, Art art)
 {
@@ -581,11 +967,28 @@ event(Spawned) Setup(with Main)
     Spawn(Lamp { pos = Cell(2, 3), at = Spot(2, 6), glow = Color.blue });
 }
 
-view Start(mut Art art)
+view Start(mut Art art, mut Probe probe)
 {
     art.frames += 1;
     if (art.frames == 1)
     {
+        // What Math is worked out from, and what the CPU makes of it
+        long whole = 81985529216486895L;
+        probe.given.low = int(whole);
+        probe.given.high = int(whole >> 32);
+        probe.given.turn = quaternion.Euler(float3(0.2, 0.4, -0.3));
+        probe.given.other = quaternion.Euler(float3(1, -0.5, 0.8));
+        probe.given.four = float4x4.TRS(float3(3, -4, 5), probe.given.turn, float3(2, 0.5, 1.5));
+        probe.given.nan = probe.given.zero / probe.given.zero;
+        probe.hashes = HashesOf(probe.given);
+        probe.turns = TurnsOf(probe.given);
+        probe.matrices = MatricesOf(probe.given);
+        probe.rest = RestOf(probe.given);
+        Debug.Assert(probe.given.nan != probe.given.nan, "0 / 0 is no number");
+        Debug.Assert(probe.hashes.halves == Math.Hash(whole), "a long's hash is its halves', as an int2");
+        Debug.Assert(probe.rest.bad.x == 2 && probe.rest.bad.y == 2 && probe.rest.bad.z == 1 && probe.rest.bad.w == 0,
+                     "Min and Max of a NaN and a number are the number, and Clamp of a NaN its lower bound");
+
         // A square around the origin, its uv (0, 0) at its top left corner
         art.quad = [Corner3 { position = float3(-12, 12, 0), normal = float3(1, 0, 0), color = Color.yellow, kind = 3 },
                     Corner3 { position = float3(12, 12, 0), normal = float3(1, 0, 0), uv = float2(1, 0), color = Color.yellow, kind = 3 },
@@ -661,6 +1064,19 @@ view Singles(Art art)
 view Lamps(Lamp lamp, Art art)
 {
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(lamp.pos), Lit);
+}
+
+// Math, in a frag each, and below them in a vert
+view Sums(Art art)
+{
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 3)), HashFrag);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 3)), TurnFrag);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 3)), MatrixFrag);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 3)), RestFrag);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 5)), HashVert);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 5)), TurnVert);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 5)), MatrixVert);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 5)), RestVert);
 }
 
 // 2D meshes go through the 2D camera, in order with the other 2D calls
