@@ -7578,6 +7578,16 @@ static decl_list heard_data(const decl *event, const type_kind kind)
     return out;
 }
 
+// Whether a view or handler has queries over the match, whose rows it's handed
+// (param.query_rows).
+static bool takes_query_rows(const decl *sys)
+{
+    for (int i = 0; i < sys->params.count; i++) {
+        if (sys->params.items[i].type.kind == TY_QUERY && sys->params.items[i].query_rows) return true;
+    }
+    return false;
+}
+
 // Whether two local handlers' queries over the match have the same rows: the
 // same entities (their filters), with the same components bound, in order.
 static bool same_rows(const param *a, const param *b)
@@ -7607,6 +7617,15 @@ static void collect_heard_rows(gen *g)
             if (!have) vec_push(g->heard_rows, q);
         }
     }
+}
+
+// Whether some listener of `event` has a query whose rows the tick records.
+static bool event_reads_rows(const decl *event)
+{
+    for (int i = 0; i < event->listeners.count; i++) {
+        if (takes_query_rows(event->listeners.items[i])) return true;
+    }
+    return false;
 }
 
 // Which of them a listener's query reads.
@@ -8862,15 +8881,6 @@ static void gen_query_row_types(gen *g, const decl *sys)
     }
 }
 
-// Whether a view or handler has queries whose rows it's handed.
-static bool takes_query_rows(const decl *sys)
-{
-    for (int i = 0; i < sys->params.count; i++) {
-        if (sys->params.items[i].type.kind == TY_QUERY && sys->params.items[i].query_rows) return true;
-    }
-    return false;
-}
-
 // A query is code over a second set of archetypes, never a stored collection.
 // Its rows are copies from the current world's lanes, in normal ECS order.
 static bool query_changes_binding(const gen *g, const param *p)
@@ -9801,9 +9811,11 @@ static void gen_heard(gen *g)
         if (!event->listeners.count) continue;
         const char *name = type_cname(event);
         sb_printf(o, "// " STR_FMT "'s local handlers, in the order they run, for one a tick recorded\n", STR_ARG(event->qualified));
+        // With a handler that queries the match: the log, and where the event ends in it, to find its tick's rows from
         sb_printf(o, "static void tide_heard_%s_run(tide_local *tide_l, const tide_heard *tide_r, const bool tide_predicted, "
-                     "const bool tide_verified, const tide_event_log *tide_log, const uint32_t tide_at)\n{\n", name);
-        sb_put(o, "    (void)tide_predicted;\n    (void)tide_verified;\n    (void)tide_log;\n    (void)tide_at;\n");
+                     "const bool tide_verified%s)\n{\n", name,
+                  event_reads_rows(event) ? ", const tide_event_log *tide_log, const uint32_t tide_at" : "");
+        sb_put(o, "    (void)tide_predicted;\n    (void)tide_verified;\n");
         sb_printf(o, "    tide_heard_%s tide_h;\n    memcpy(&tide_h, tide_r + 1, sizeof tide_h);\n", name);
         // As a view's rows name their entity (gen_row_fields)
         sb_put(o, "    const tide_entity tide_ent[1] = {tide_r->target};\n    const uint32_t tide_i = 0;\n"
@@ -9880,8 +9892,9 @@ static void gen_heard(gen *g)
     for (int i = 0; i < prog->events.count; i++) {
         const decl *event = prog->events.items[i];
         if (!event->listeners.count) continue;
-        sb_printf(o, "        case %d: if (r->size >= sizeof *r + sizeof(tide_heard_%s)) tide_heard_%s_run(l, r, predicted, verified, "
-                     "&l->tide_heard, at); break;\n", event->index, type_cname(event), type_cname(event));
+        sb_printf(o, "        case %d: if (r->size >= sizeof *r + sizeof(tide_heard_%s)) tide_heard_%s_run(l, r, predicted, verified%s); "
+                     "break;\n", event->index, type_cname(event), type_cname(event),
+                  event_reads_rows(event) ? ", &l->tide_heard, at" : "");
     }
     sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n}\n\n");
 }
