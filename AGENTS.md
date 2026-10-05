@@ -162,6 +162,22 @@ Every native build also copies the language server to `build/tools/tidels`, the 
 
 A desktop build's first configure downloads GLFW, pinned (see `cmake/GLFW.cmake`); on Linux it builds for X11, whose development headers it needs (libx11, libxrandr, libxinerama, libxcursor, libxi), and loads X11 and OpenGL at run time, so games link neither. Web and Android builds download nothing for the platform layer. Configure with `-DTIDE_PLATFORM=OFF` to build without the platform layer and what needs it (the demo, the sandbox and the benchmarks), for example offline.
 
+### Testing and merging
+
+Tests are for finding what a change broke, not a ritual before every push. With several sessions working at once, `dev` moves while suites run, and running everything again after each merge takes hours for nothing (agreed).
+
+- A change is tested on this machine once, before it's merged, with what it can reach:
+  - The compiler, the engine, the platform layer or the build: the native suite (`ctest --preset debug`) and the web suite (`ctest --preset web-debug`). Everything depends on them.
+  - A game of the repo (`examples/`, `demo/`, `sandbox/`, a benchmark's): its own targets and tests, native and web.
+  - `docs/` alone: the site's build (`npm run build` in `docs/`). `relay/` alone: `node --test relay/relay.test.mjs`. `tools/` alone: that tool's tests. A text file nothing builds, like this one: nothing.
+- Android isn't tested on this machine. Its tests need the emulator, and they're CI's job, as Linux, macOS and MinGW are: nobody boots the emulator to merge. The exception is work on Android itself, when the owner asks for it.
+- Merging is: fetch, merge `origin/dev` into the branch, push `HEAD:dev`. What's tested again after that merge depends on what came in (`git diff --stat ORIG_HEAD HEAD`), and it's never "everything again" by default:
+  - It merged cleanly and touches nothing the change touches or leans on: nothing is run again. Push.
+  - It changed something the change is built on (a header it includes, tidec under a game, a function it calls): build what the change touches, run its own tests, push.
+  - It touches the same files or the same subsystem, or there were conflicts: run the tests for that overlap (`ctest --preset debug -R <pattern>`, or a label), on native or the web as the overlap calls for. Both suites whole only when the overlap is that wide.
+  - One round. When `dev` moved again meanwhile and what came in is unrelated again, merge and push; don't start over.
+- CI is the net under this. Every push to `dev` runs every platform (see Packaging and releases), a failure there publishes nothing, and that's where it's reported. A session that pushed looks at its push's run when it has finished (`gh run list --branch dev`), and whoever's change broke `dev` fixes it there first, ahead of anything else.
+
 ### Web builds
 
 - The `web-debug` and `web-release` presets build everything as WebAssembly with clang's own wasm target and wasi-libc, not Emscripten: `cmake --workflow --preset web-debug` (see `cmake/wasi-toolchain.cmake`). They need clang with `wasm-ld` (LLVM's releases have it; on Linux, the distribution's `lld`) and Node. wasi-sdk's C library is downloaded once into `build/wasi-sdk-<version>`, pinned.
@@ -179,7 +195,7 @@ A desktop build's first configure downloads GLFW, pinned (see `cmake/GLFW.cmake`
   - A browser's `--user-data-dir` (or Firefox's `--profile`) must be an absolute folder that exists, or the browser shows a dialog, even headless. Firefox needs `--wait-for-browser`, or stopping it leaves the browser running, and `MOZ_DISABLE_SAFE_MODE_KEY`: on Windows, Shift held as it starts (anyone typing on the machine) puts it in safe mode, whose prompt nobody answers headless, so it never opens the page.
   - Chrome is stopped by asking it to close (`Browser.close` on `--remote-debugging-pipe`): killing its processes from outside can miss one it starts again meanwhile, which keeps the browser from going. Each case starts once the last browser is gone, and its deadlines start once the page says it loaded, since a browser's first start on a fresh machine (CI) can take most of a minute.
   - What a desktop player waits for, it's told on stdin once it happened, never given a time: the handover's host leaves once both players say they're in, and a host ends its match once it says the relay has its room (`TIDE_RTC_DEBUG`).
-- Before finishing a change, the native and web test suites must both pass.
+- What's tested before a change goes to `dev`, and what isn't tested again after a merge, is in Testing and merging.
 
 ### MinGW builds
 
