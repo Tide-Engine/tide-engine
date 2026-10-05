@@ -154,7 +154,7 @@ tide run --frames 300 --capture menu.png
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
-| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there |
+| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/views.md#targets-and-post-processing) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
 
 ::: info Provisional
@@ -168,6 +168,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
 - **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
 - **The window's size and scale are what you asked for,** whatever the display is.
+- **Matches start from seed 0.** A game that [rolls](../language/math.md#random-numbers) gets the same rolls every run, where a window's matches each start from a seed of the machine's.
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
 
