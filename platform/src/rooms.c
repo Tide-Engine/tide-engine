@@ -27,6 +27,7 @@ static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1]);
 static bool backend_failed(void);
 static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_t size);
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
+static void backend_ping(uint32_t ping_ms);
 
 #if defined(__wasm__)
 
@@ -85,6 +86,11 @@ static void backend_send(const uint32_t number, const uint32_t to, const void *d
 static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *data, const uint32_t capacity)
 {
     return tide_web_room_receive(number, from, data, capacity);
+}
+
+static void backend_ping(const uint32_t ping_ms)
+{
+    tide_web_room_ping(ping_ms);
 }
 
 #else
@@ -581,6 +587,12 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
     return 0;
 }
 
+// Only a page plays at a slow connection.
+static void backend_ping(const uint32_t ping_ms)
+{
+    (void)ping_ms;
+}
+
 #endif
 
 // ---------------------------------------------------------------------------
@@ -676,6 +688,11 @@ void tide_platform_room_code(char *out, const size_t size)
 bool tide_platform_room_failed(void)
 {
     return backend_failed();
+}
+
+void tide_platform_room_ping(const uint32_t ping_ms)
+{
+    backend_ping(ping_ms);
 }
 
 void tide_platform_room_key(char *out, const size_t size)
