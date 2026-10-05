@@ -9217,10 +9217,33 @@ static void check_snap_attribute(const decl *d, const field *f, const attribute 
     }
 }
 
+// [Absolute] on an input's field. A machine guesses another player's input
+// by their last one for a while, and then as if they'd let go: every field
+// back to its default, which for what a player is doing is rest. A field whose
+// default isn't rest, as it says where something is, like an aim or a
+// pointer's place, says so, and a guess keeps it.
+static void check_absolute_attribute(const decl *d, const field *f, const attribute *a)
+{
+    bool again = false;
+    for (int i = 0; i < f->attributes.count && &f->attributes.items[i] != a; i++) {
+        again |= str_eq_c(f->attributes.items[i].name, "Absolute");
+    }
+    if (a->values.count > 0 || a->args.count > 0) {
+        diag_error(a->at, "[Absolute] takes nothing: '[Absolute] float2 aim;'");
+    } else if (d->kind != DECL_INPUT) {
+        diag_error(a->at, "[Absolute] goes on an input's own fields");
+        diag_note("a machine guesses another player's input by their last one for a while, then as if they'd let go, "
+                  "each field back to its default; [Absolute] says a field's default isn't rest, like an aim's, so a guess keeps it");
+    } else if (again) {
+        diag_error(a->at, "field '" STR_FMT "' already has [Absolute]", STR_ARG(f->name));
+    }
+}
+
 // [Clamp(lo, hi)], [Min(x)] and [Max(x)] on input and struct fields. The
 // engine applies them to every input before Sanitize, the fields of structs in
 // it included, so they're a quick way to bound what players send. Elsewhere,
-// a struct field's bounds only describe it. And [Snap] (see check_snap).
+// a struct field's bounds only describe it. And [Snap] (see check_snap), and
+// [Absolute] (see check_absolute_attribute).
 static void check_field_attributes(checker *c, const decl *d, field *f)
 {
     if (f->attributes.count == 0) return;
@@ -9260,12 +9283,17 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_snap_attribute(d, f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Absolute")) {
+            check_absolute_attribute(d, f, a);
+            continue;
+        }
         if (!clamp && !min && !max) {
             diag_error(a->at, "unknown field attribute '" STR_FMT "'", STR_ARG(a->name));
             suggestion s = suggest_start(a->name);
             suggest_consider_c(&s, "Clamp");
             suggest_consider_c(&s, "Min");
             suggest_consider_c(&s, "Max");
+            suggest_consider_c(&s, "Absolute");
             suggest_consider_c(&s, "Snap");
             suggest_consider_c(&s, "Position");
             suggest_consider_c(&s, "Rotation");

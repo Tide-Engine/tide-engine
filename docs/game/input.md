@@ -67,6 +67,31 @@ Players are `PlayerID`s, not ints or connections. Like `Entity`, a `PlayerID` is
 
 Input carries whether buttons are held, not whether they just went down: when a player's input is late, the other machines guess it by repeating their last one, and a repeated "just went down" would press twice. In the match, `bool` fields of the input get `.down` and `.up`, worked out against the previous tick, inside structs too: `input.aim.fire.down`.
 
+## What other machines guess
+
+A machine runs ahead of the last tick the server confirmed to it, by about its round trip (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). For those ticks it has to guess what the other players do, and its guess is their last input, repeated. A guess that turns out wrong is put right when the server's answer comes, and the further ahead a machine runs, the more there is to put right: at a ping of 500 ms, a player who stopped running is shown running for half a second more, and then moved back all of it.
+
+So a guess only repeats an input for 0.15 seconds past what the machine knows. After that it takes the player to have let go: every field of their input is back at its default. However slow the connection, a guess that was wrong moves things by what a player does in 0.15 seconds, at most. A machine with a round trip under about a tenth of a second never runs that far ahead, and nothing changes for it.
+
+That suits what a player is **doing**: an axis that's pushed, a button that's held. A field that says **where something is**, like an aim or the cell under a pointer, has no rest to go back to: its default is only another place. Mark those `[Absolute]`, and a guess keeps them for as long as it goes on:
+
+```csharp
+input Controls
+{
+    [Clamp(-1, 1)] float move;   // Doing: back to 0
+    bool fire;                   // Doing: let go
+    [Absolute] float2 aim;       // Where: kept
+    [Absolute] int weapon;       // Which: kept
+}
+```
+
+- **Letting go presses nothing.** No field's `.up` is true for it, so a shot that fires when a button is let go doesn't fire on a guess.
+- **The devices match code reads** (see [Devices in the match](#devices-in-the-match)) are let go the same way: keys up, sticks centered.
+- **Only guesses change.** What the server runs, and what it confirms, is the input each player sent. A player whose input arrives late still keeps their last one for that tick, on every machine.
+- **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. Both only happen on a machine further ahead than 0.15 seconds, and only while someone is doing something.
+
+`[Absolute]` takes no arguments, and goes on the input's own fields. Its name and the 0.15 seconds are provisional.
+
 ## Devices
 
 `Devices` has a keyboard, a mouse, a gamepad, a touchscreen and the pointer. Every button has `.pressed` (held), `.down` (went down since the last sample) and `.up` (went up). On a device, `.pressed` means held at any point since the last sample, so a quick tap between ticks is never lost. A match that starts from a menu doesn't read what was pressed there: its first tick gets what's held as it starts.
