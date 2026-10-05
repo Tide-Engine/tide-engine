@@ -20,7 +20,7 @@ local singleton Trail
 // Views change local state: this one spawns local entities.
 view Emit(Devices devices, mut Trail trail)
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetScreen();
     var at = Screen.Flip(devices.pointer.position);
     if (Math.Distance(at, trail.last) > 6)
@@ -52,6 +52,7 @@ view Sparks(mut Spark spark, mut Trail trail)
 view Hud(mut Trail trail)
 {
     Draw2D.Text($"{trail.sparks} local entities", float2(16, 14), 18, Color.white);
-    Draw2D.Text("Move the pointer, or drag a finger", float2(16, 40), 13, Color(0.6, 0.68, 0.78));
+    Draw2D.Text("Move the pointer, or drag a finger", float2(16, 40), 13, Color(0.64, 0.64, 0.68));
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Life", trail.life, 0.2, 2);
 }

@@ -56,13 +56,13 @@ view Show(mut Swarm swarm)
     {
         swarm.motes.Add(Mote { center = swarm.random.NextFloat2(float2(-1.8, -1.6), float2(1.8, 1.9)),
                                size = swarm.random.NextFloat(0.05, 0.16), phase = swarm.random.NextFloat(Math.TAU),
-                               tint = Color(swarm.random.NextFloat(0.3, 1), swarm.random.NextFloat(0.5, 1), 1) });
+                               tint = Color(1, swarm.random.NextFloat(0.45, 0.85), swarm.random.NextFloat(0.1, 0.4)) });
     }
     while (swarm.motes.count > swarm.count) swarm.motes.RemoveAt(swarm.motes.count - 1);
     swarm.clock += Math.Min(Frame.dt, 0.05);
     if (swarm.clock > Math.TAU * 10) swarm.clock -= Math.TAU * 10;
 
-    Draw2D.Clear(Color(0.03, 0.04, 0.08));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
     Draw2D.SetCamera(float2(0), 2.2);
     // One draw, however many. Its colors add to what's there, as light does.
     Draw.Blend(Blend.Add)
@@ -72,5 +72,6 @@ view Show(mut Swarm swarm)
 
     Draw2D.SetScreen();
     Draw2D.Text($"{swarm.motes.count} motes, in one draw", float2(16, 14), 16, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUI.IntSlider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Motes", swarm.count, 1, 5000);
 }
