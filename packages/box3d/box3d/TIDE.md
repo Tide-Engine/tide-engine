@@ -153,6 +153,107 @@ match has no recording, and a player who joins has only the match's bytes.
   then what only mesh contacts have (their other manifolds and their triangle
   caches).
 
+### An image as what changed of the last one
+
+A match takes an image after every step, and most steps change little of a
+world: a few bodies are awake. Writing all of it, and comparing all of it with
+the last one, goes by how big the world is. Here a world can say what changed
+instead, and the image the parts make is, byte for byte, the image written
+whole: `tide_box3d_stack`'s pinned hashes are of both, and `tide_box3d_parts`
+compares the two after every step.
+
+- **`world_snapshot.c`, `box3d.h`: `b3World_GetSnapshotParts`,
+  `b3SnapshotPart`, `b3World_SetSnapshotAwakeShare`,
+  `b3World_CheckSnapshotAt`.** The parts to write over the world's last image,
+  which the caller has: the world keeps no copy. It says there's no telling
+  (the caller takes the image whole) for a world with no image yet, a world
+  that was restored, one with more bodies, shapes or contacts than its last
+  image had room for, one that had something done to it that isn't followed
+  (below), and one with more than half of its bodies awake, where writing it
+  whole costs no more. The last image is the one `b3World_GetSnapshotAt` or
+  this last gave, whole and at the same bases. `b3World_CheckSnapshotAt` is the
+  image written whole that isn't taken for the last one, for a test to compare
+  the parts with; `b3World_SetSnapshotAwakeShare` has a test's world say what
+  changed whatever is awake. `physics_world.c` frees what follows the images
+  with the world (`b3DestroySnapshotTrack`).
+- **`recording.h`, `recording.c`, `world_snapshot.c`: the writer is the one
+  that writes an image whole** (`b3RecBuffer.parts`, `b3SnapParts`). What it
+  appends goes into memory of the world's own as parts that each say where in
+  the image they are, and what it leaves out is what the last image has
+  already. So there's one piece of code that says what a body's bytes are in
+  an image, for both:
+  - Bodies, shapes and contacts each take the same room, so one is written at
+    its own place: `b3SerBodyRun`, `b3SerShapeRun`, `b3SerContactRun` and
+    `b3SerContactManifoldRun` write a run of them, which is all of them for an
+    image written whole and each stretch that may have changed for one in
+    parts. What's written over a struct's bytes after they're appended (zeros
+    for its pointers and holes, a shape's geometry) goes through `b3SnapAt`,
+    which finds them in the image or in the part.
+  - The other sections are written whole. What goes into an image as it is in
+    the world (a solver set's bodies, a tree's nodes, the fat bounds) isn't
+    copied: the part points at it (`b3SnapW_Ref`), and whoever reads the parts
+    compares it where it is. So the parts are good until the world is next
+    stepped or changed.
+  - A section that's smaller than it was has zeros after it, where the last
+    image had its end (`b3SnapSection`).
+  - The sleeping sets and the pairs are left out when nothing was done to them
+    since the last image (`b3SnapKeepSection`): nothing writes a sleeping set
+    but what says so, and a pair comes and goes with its contact.
+  - A world with no mesh, height field or compound, and no shape with a
+    material array of its own, isn't searched for the contacts and shapes that
+    have more in an image than their room (`b3SnapTrack.oddShapeCount`): making
+    one writes the next image whole, which counts them.
+- **`recording.c`: `b3RecBufReserve`**, which `b3RecBufAppend` now is, with a
+  copy after: where the next bytes go, for a caller that writes them itself.
+  **`world_snapshot.c`: `b3SerIslands`** asks once for all the islands and
+  writes them there, where upstream appends each number of each island: the
+  same bytes, and a tenth of the time, in every image. There are as many
+  islands as stacks, and they were most of what an image in parts cost.
+- **`physics_world.h`: `b3SnapTrack`, which bodies, shapes and contacts may
+  have changed since the last image**, a bit each. Between two images, one has
+  changed only if
+  - its body (or one of a contact's two) was awake at the first image, at the
+    second, or between: the step writes those on its worker threads, and
+    nothing says which. So everything awake goes into the sets when an image
+    is taken, for the next one (`b3SnapCommit`), and again when that one is
+    (`b3SnapSeed`): a body, its shapes and the contacts in its list;
+  - or it was written from outside the step's workers, on one thread, which is
+    said where it's done. Each of these is marked `Tide:` and names
+    `b3SnapTrack`:
+    - `contact.c`, `b3CreateContact` and `b3DestroyContact`: the contact, both
+      its bodies (their lists' heads and counts), and its neighbors in both
+      lists, whose links change. Any of them may be asleep or static: the floor
+      is in a list with every crate on it.
+    - An element taken out of an array moves the last one into its place, and
+      the moved one's index is written: a contact of a solver set
+      (`b3DestroyContact`, `b3WakeSolverSet`, `b3TrySleepIsland`,
+      `b3RemoveNonTouchingContact`), of a graph color
+      (`b3RemoveContactFromGraph`, `b3TrySleepIsland`) or of an island
+      (`b3UnlinkContact`); a body of a solver set (`b3DestroyBody`,
+      `b3TrySleepIsland`) or of an island (`b3RemoveBodyFromIsland`); a
+      sensor's shape (`b3DestroySensor`). The one from the disabled set is any
+      contact between two sleeping bodies, anywhere in the world.
+    - `body.c`, `b3RefreshBodyContactIndices`: every contact of a body that
+      moved in its set, which may be the static one.
+    - `solver_set.c`, `b3WakeSolverSet` and `b3TrySleepIsland`: each body that
+      wakes or falls asleep, with its shapes and contacts, so that one that's
+      awake between two images and at neither is written.
+    - `body.c`: `b3CreateBody`, `b3DestroyBody`, `b3Body_SetTransform` (which
+      doesn't wake) and `b3UpdateBodyMassData`. `shape.c`,
+      `b3CreateShapeInternal`: the shape, its body, and the shape that headed
+      the body's list.
+  - **Any other call writes the next image whole.** `recording.h`: `B3_REC`
+    and `B3_REC_CREATE`, which every call that changes a world goes through,
+    say which call it is (`b3SnapNoteOp`), and only the ones looked at for the
+    list above are followed: the step, making and destroying a body, its
+    transform, its speeds, forces and impulses, and making a sphere, a capsule
+    or a hull. A body's type, enabling and disabling, sleep, mass, shapes'
+    settings and destruction, joints, and whatever upstream adds: all of it is
+    right, at the cost of one whole image. The calls recorded by hand say so
+    themselves (`b3Shape_SetHull`, `b3Shape_SetMesh`), as do
+    `b3MergeSolverSets`, `b3TransferBody`, the joints' making and destroying,
+    a shape with a mesh, a height field or a material array, and a restore.
+
 ## What isn't changed
 
 - On the web Box3D takes its scalar path, as it only knows Emscripten's
@@ -161,10 +262,21 @@ match has no recording, and a player who joins has only the match's bytes.
   (`b3AbsW4` of -0, and `b3NegV`), whose results only feed comparisons. A new
   use that keeps one would show in the test.
 - Joints, sensors, meshes and height fields go into an image as upstream
-  writes them, with the changes above. The package's tests don't reach them;
-  a check outside the tests (a mesh, a height field, a sensor and a joint,
+  writes them, with the changes above. The package itself makes none;
+  `tide_box3d_parts` makes them all in Box3D by itself, to compare an image in
+  parts with the image written whole, which says nothing of other machines.
+  A check outside the tests (a mesh, a height field, a sensor and a joint,
   restored before every step, on x64 and for the web) had the same bytes
   everywhere.
+- A restore clears the last step's events, and a body in the image still says
+  which of them was its own (`b3Body.bodyMoveIndex`). `b3Body_SetAwake( false )`
+  right after a restore, before a step, looks the event up and finds none:
+  an assert in a debug build (seen in `tide_box3d_parts`), and otherwise a
+  write to an event that isn't one. The package never puts a body to sleep,
+  and `tide_box3d_parts` doesn't right after a restore.
+- `b3Body_SetType` returns with the world still locked for a body with a
+  height field or a compound that's made other than static: upstream's, and
+  the package never sets a body's type.
 
 ## Updating it
 
@@ -172,6 +284,22 @@ Copy the two folders over, apply the changes again, and run `tide_box3d_stack`
 natively and for the web: its pinned hashes are of the simulation and of every
 image, so a field that isn't the same everywhere shows there. A new version
 steps differently, so the hashes change with it, and so do games' matches.
+
+Then `tide_box3d_parts`, for the image in parts. Whatever upstream added that
+writes a body, a shape or a contact of a body that isn't awake has to say so
+(`b3SnapTouchBody` and the like), or be a call the next image is written whole
+after, which every recorded call is until `b3SnapNoteOp` names it. The test
+does what a game might to a world at random and compares the two images after
+every step, and it says where the first byte apart is. Taking each of those
+lines out in turn and running it says which of them the test would notice the
+lack of: 36 of the 60 by themselves when this was written. The other 24 are
+second sayings of what another line says, or of what being awake says: a body
+that wakes is also awake at the next image, an element moved within the awake
+set is an awake body's, a sleeping set that loses a contact is destroyed when
+it wakes right after. Four such pairs were taken out together, and noticed:
+the two times everything awake goes into the sets, waking with the second of
+them, falling asleep with the first, and the two places a sleeping body's mass
+says its set changed. The rest weren't tried together.
 
 When two builds disagree, print the world's hash after every tick on both to
 find the first tick that differs, and there the bytes of `Physics.image` on

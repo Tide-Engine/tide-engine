@@ -14,6 +14,9 @@
 
 void b3DestroySolverSet( b3World* world, int setIndex )
 {
+	// Tide: (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, setIndex );
+
 	b3SolverSet* set = b3Array_Get( world->solverSets, setIndex );
 
 	b3Array_Destroy( set->bodySims );
@@ -49,6 +52,11 @@ void b3WakeSolverSet( b3World* world, int setIndex )
 
 		b3Body* body = bodies + simSrc->bodyId;
 		B3_ASSERT( body->setIndex == setIndex );
+
+		// Tide: a body that wakes, with its shapes and its contacts. It's awake at the next image unless it
+		// goes before then, and either way it was written here (see b3SnapTrack)
+		b3SnapTouchBodyDeep( world, body );
+
 		body->setIndex = b3_awakeSet;
 		body->localIndex = awakeSet->bodySims.count;
 
@@ -122,6 +130,8 @@ void b3WakeSolverSet( b3World* world, int setIndex )
 				b3Contact* movedContact = b3Array_Get( world->contacts, movedContactIndex );
 				B3_ASSERT( movedContact->localIndex == movedLocalIndex );
 				movedContact->localIndex = localIndex;
+				// Tide: any contact between two sleeping bodies, anywhere in the world
+				b3SnapTouchContact( world, movedContactIndex );
 			}
 		}
 	}
@@ -203,6 +213,9 @@ void b3TrySleepIsland( b3World* world, int islandId )
 	b3SolverSet* sleepSet = b3Array_Get( world->solverSets, sleepSetId );
 	*sleepSet = (b3SolverSet){ 0 };
 
+	// Tide: a new sleeping set (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, sleepSetId );
+
 	// grab awake set after creating the sleep set because the solver set array may have been resized
 	b3SolverSet* awakeSet = b3Array_Get( world->solverSets, b3_awakeSet );
 	b3SolverSet* disabledSet = b3Array_Get( world->solverSets, b3_disabledSet );
@@ -223,6 +236,10 @@ void b3TrySleepIsland( b3World* world, int islandId )
 			B3_ASSERT( body->setIndex == b3_awakeSet );
 			B3_ASSERT( body->islandId == islandId );
 			B3_ASSERT( body->islandIndex == i );
+
+			// Tide: a body that falls asleep, with its shapes and its contacts: it isn't awake at the next
+			// image, and it's written here (see b3SnapTrack)
+			b3SnapTouchBodyDeep( world, body );
 
 			// Update the body move event to indicate this body fell asleep
 			// It could happen the body is forced asleep before it ever moves.
@@ -252,6 +269,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 				b3Body* movedBody = b3Array_Get( world->bodies, movedId );
 				B3_ASSERT( movedBody->localIndex == movedIndex );
 				movedBody->localIndex = awakeBodyIndex;
+				// Tide: another awake body (see b3SnapTrack)
+				b3SnapTouchBody( world, movedId );
 
 				if ( movedBody->islandId != islandId )
 				{
@@ -326,6 +345,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 					b3Contact* movedContact = b3Array_Get( world->contacts, movedContactIndex );
 					B3_ASSERT( movedContact->localIndex == movedLocalIndex );
 					movedContact->localIndex = localIndex;
+					// Tide: another contact of the awake set (see b3SnapTrack)
+					b3SnapTouchContact( world, movedContactIndex );
 				}
 			}
 		}
@@ -368,6 +389,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 					b3Contact* movedContact = b3Array_Get( world->contacts, movedContactId );
 					B3_ASSERT( movedContact->localIndex == movedLocalIndex );
 					movedContact->localIndex = localIndex;
+					// Tide: another contact of the color (see b3SnapTrack)
+					b3SnapTouchContact( world, movedContactId );
 				}
 			}
 			else
@@ -380,6 +403,8 @@ void b3TrySleepIsland( b3World* world, int islandId )
 					b3Contact* movedContact = b3Array_Get( world->contacts, movedContactId );
 					B3_ASSERT( movedContact->localIndex == movedLocalIndex );
 					movedContact->localIndex = localIndex;
+					// Tide: another contact of the color (see b3SnapTrack)
+					b3SnapTouchContact( world, movedContactId );
 				}
 			}
 
@@ -474,6 +499,9 @@ void b3TrySleepIsland( b3World* world, int islandId )
 // Islands will get merge when the set is woke.
 void b3MergeSolverSets( b3World* world, int setId1, int setId2 )
 {
+	// Tide: sleeping bodies and contacts change sets, which nothing follows one by one (see b3SnapTrack)
+	b3SnapTouchAll( world );
+
 	B3_ASSERT( setId1 >= b3_firstSleepingSet );
 	B3_ASSERT( setId2 >= b3_firstSleepingSet );
 	b3SolverSet* set1 = b3Array_Get( world->solverSets, setId1 );
@@ -566,6 +594,10 @@ void b3MergeSolverSets( b3World* world, int setId1, int setId2 )
 
 void b3TransferBody( b3World* world, b3SolverSet* targetSet, b3SolverSet* sourceSet, b3Body* body )
 {
+	// Tide: a body changes sets, and another of its old set moves, which nothing follows one by one
+	// (see b3SnapTrack)
+	b3SnapTouchAll( world );
+
 	B3_ASSERT( body->headContactKey == B3_NULL_INDEX );
 
 	if ( targetSet == sourceSet )

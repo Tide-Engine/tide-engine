@@ -95,6 +95,10 @@ typedef struct b3RecBuffer
 	bool overran;
 	// Tide: a shape whose geometry an image can't name was met, so what's written is no image
 	bool failed;
+	// Tide: an image as what changed of the one before it (b3SnapParts in world_snapshot.c). What's appended
+	// goes there, as parts that each say where in the image they are, and `size` is where in the image the
+	// next bytes go. `data` isn't written.
+	void* parts;
 } b3RecBuffer;
 
 // Geometry kinds for the trailing registry section
@@ -231,6 +235,8 @@ enum
 
 // Low-level buffer helpers
 void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size );
+// Tide: where the next `size` bytes go, for the caller to write: NULL when they're only counted
+uint8_t* b3RecBufReserve( b3RecBuffer* buf, int size );
 void b3RecBufFree( b3RecBuffer* buf );
 
 // Write primitives
@@ -304,9 +310,14 @@ void b3RecEndRecord( b3Recording* rec );
 #undef B3_REC_RETDECL_RET_JOINTID
 
 // Record a void op. The branch is free when recording is off.
+// Tide: and say which call it is to what follows a world's images (b3SnapNoteOp in physics_world.h): every
+// call that changes a world is recorded, most of them through these two, so nearly every one is said here.
+// The few recorded by hand say what they write themselves (the shapes made of a hull, a mesh, a height field
+// or a compound, in b3CreateShapeInternal; b3Shape_SetHull and b3Shape_SetMesh).
 #define B3_REC( world, Name, ... )                                                                                               \
 	do                                                                                                                           \
 	{                                                                                                                            \
+		b3SnapNoteOp( ( world ), b3_recOp##Name );                                                                               \
 		if ( ( world )->recording != NULL )                                                                                      \
 		{                                                                                                                        \
 			b3RecArgs_##Name recArgs = { __VA_ARGS__ };                                                                          \
@@ -319,6 +330,7 @@ void b3RecEndRecord( b3Recording* rec );
 #define B3_REC_CREATE( world, Name, id, ... )                                                                                    \
 	do                                                                                                                           \
 	{                                                                                                                            \
+		b3SnapNoteOp( ( world ), b3_recOp##Name );                                                                               \
 		if ( ( world )->recording != NULL )                                                                                      \
 		{                                                                                                                        \
 			b3RecArgs_##Name recCreateArgs = { __VA_ARGS__ };                                                                    \
