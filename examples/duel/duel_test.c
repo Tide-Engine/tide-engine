@@ -114,21 +114,15 @@ static float rendered_blue_x(tide_local *local, tide_draw_list *draw, tide_gui *
     tide_gui_end(gui, draw);
     for (uint32_t i = 0; i < draw->count; i++) {
         const tide_draw_command *command = &draw->commands[i];
-        if (command->kind != TIDE_DRAW_SHADED) continue;
-        const tide_draw_run *run = &draw->runs[command->shaded.run];
-        // The SDF art sends Shape's six float4 fields to the renderer. Find
-        // blue's outlined body ellipse in that recorded instance data, so
-        // this checks what draws even while its arrival and squash animate.
-        if (strcmp(run->shader->name, "PlaceShape and PaintShape on Corner") != 0
-            || tide_shader_instance_size(run->shader) != sizeof(Shape)) continue;
-        for (uint32_t instance = 0; instance < run->count; instance++) {
-            Shape shape;
-            memcpy(&shape, draw->instances + run->first + instance * sizeof shape, sizeof shape);
-            if (shape.form.z < 0 && shape.line.x == 2.5f
-                && fabsf(shape.fill.r - 0.4598f) < 0.0001f && shape.fill.b == 1
-                && shape.edge.r == 0.02f && shape.edge.g == 0.028f && shape.edge.b == 0.065f)
-                return shape.box.x;
-        }
+        if (command->kind != TIDE_DRAW_SHAPE) continue;
+        // The light around blue's body is there from the frame it arrives,
+        // while the body itself still grows from nothing: find it among the
+        // frame's shapes by how far it fades and its color, so this checks
+        // what draws.
+        const tide_draw_shape_data *shape = &draw->shapes[command->shape];
+        if (shape->soft == 34 && command->color.r == 0.27f && command->color.g == 0.72f && command->color.b == 1
+            && fabsf(command->color.a - 0.2f) < 0.0001f)
+            return command->a.x;
     }
     return NAN;
 }

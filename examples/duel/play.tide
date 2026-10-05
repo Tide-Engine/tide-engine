@@ -73,17 +73,17 @@ string CardFlavor(Card card)
 }
 
 // A card's picture, from a few shapes, `size` across, on the screen.
-void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
+void CardIcon(Card card, float2 at, float size, Color color)
 {
     var unit = size / 100;
     var light = Mix(color, Color.white, 0.55);
     if (card == Card.Vitality)
     {
         // A heart
-        Tilted(shapes, at + float2(0, 7) * unit, float2(47, 47) * unit, 7 * unit, Math.PI * 0.25, color);
-        Disc(shapes, at + float2(-17, -12) * unit, 23.5 * unit, color);
-        Disc(shapes, at + float2(17, -12) * unit, 23.5 * unit, color);
-        Disc(shapes, at + float2(-20, -19) * unit, 7 * unit, Fade(Color.white, 0.75));
+        Draw2D.RoundRect(at + float2(0, 7) * unit, float2(47, 47) * unit, 7 * unit, Math.PI * 0.25, color);
+        Draw2D.Circle(at + float2(-17, -12) * unit, 23.5 * unit, color);
+        Draw2D.Circle(at + float2(17, -12) * unit, 23.5 * unit, color);
+        Draw2D.Circle(at + float2(-20, -19) * unit, 7 * unit, Fade(Color.white, 0.75));
     }
     else if (card == Card.RapidFire)
     {
@@ -91,9 +91,9 @@ void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
         for (var i = 0; i < 3; i++)
         {
             var row = at + float2((i == 1 ? 10 : -6), (i - 1) * 27) * unit;
-            Capsule(shapes, row + float2(-40, 0) * unit, row + float2(-14, 0) * unit, 5 * unit, Fade(color, 0.45));
-            Capsule(shapes, row + float2(-2, 0) * unit, row + float2(26, 0) * unit, 15 * unit, color);
-            Disc(shapes, row + float2(24, 0) * unit, 4.5 * unit, light);
+            Draw2D.Line(row + float2(-40, 0) * unit, row + float2(-14, 0) * unit, 5 * unit, Fade(color, 0.45));
+            Draw2D.Line(row + float2(-2, 0) * unit, row + float2(26, 0) * unit, 15 * unit, color);
+            Draw2D.Circle(row + float2(24, 0) * unit, 4.5 * unit, light);
         }
     }
     else if (card == Card.Scatter)
@@ -103,28 +103,28 @@ void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
         for (var i = -1; i <= 1; i++)
         {
             var way = float2(Math.Cos(i * 0.5), Math.Sin(i * 0.5));
-            Capsule(shapes, from + way * 22 * unit, from + way * 52 * unit, 5 * unit, Fade(color, 0.45));
-            Disc(shapes, from + way * 68 * unit, 10.5 * unit, color);
-            Disc(shapes, from + way * 68 * unit, 4.5 * unit, light);
+            Draw2D.Line(from + way * 22 * unit, from + way * 52 * unit, 5 * unit, Fade(color, 0.45));
+            Draw2D.Circle(from + way * 68 * unit, 10.5 * unit, color);
+            Draw2D.Circle(from + way * 68 * unit, 4.5 * unit, light);
         }
-        Disc(shapes, from, 11 * unit, color);
+        Draw2D.Circle(from, 11 * unit, color);
     }
     else if (card == Card.Ricochet)
     {
         // A shot that comes back off a wall
-        Box(shapes, at + float2(38, 0) * unit, float2(10, 84) * unit, 4 * unit, Fade(color, 0.6));
-        Capsule(shapes, at + float2(-38, 32) * unit, at + float2(28, 2) * unit, 7 * unit, Fade(color, 0.5));
-        Capsule(shapes, at + float2(28, 2) * unit, at + float2(-20, -30) * unit, 7 * unit, color);
-        Disc(shapes, at + float2(-22, -31) * unit, 12 * unit, color);
-        Disc(shapes, at + float2(-22, -31) * unit, 5 * unit, light);
-        Disc(shapes, at + float2(30, 2) * unit, 7 * unit, Color.white);
+        Draw2D.RoundRect(at + float2(38, 0) * unit, float2(10, 84) * unit, 4 * unit, Fade(color, 0.6));
+        Draw2D.Line(at + float2(-38, 32) * unit, at + float2(28, 2) * unit, 7 * unit, Fade(color, 0.5));
+        Draw2D.Line(at + float2(28, 2) * unit, at + float2(-20, -30) * unit, 7 * unit, color);
+        Draw2D.Circle(at + float2(-22, -31) * unit, 12 * unit, color);
+        Draw2D.Circle(at + float2(-22, -31) * unit, 5 * unit, light);
+        Draw2D.Circle(at + float2(30, 2) * unit, 7 * unit, Color.white);
     }
     else if (card == Card.HeavyShot)
     {
         // One big shot
-        Ring(shapes, at, 42 * unit, 5 * unit, Fade(color, 0.55));
-        Disc(shapes, at, 29 * unit, color);
-        Disc(shapes, at + float2(-9, -10) * unit, 9 * unit, light);
+        Draw2D.WireCircle(at, 42 * unit, 5 * unit, Fade(color, 0.55));
+        Draw2D.Circle(at, 29 * unit, color);
+        Draw2D.Circle(at + float2(-9, -10) * unit, 9 * unit, light);
     }
     else if (card == Card.SwiftFeet)
     {
@@ -133,8 +133,8 @@ void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
         {
             var tip = at + float2(i * 34 - 2, 0) * unit;
             var tint = i == 0 ? Fade(color, 0.55) : color;
-            Capsule(shapes, tip + float2(-26, -27) * unit, tip, 12 * unit, tint);
-            Capsule(shapes, tip + float2(-26, 27) * unit, tip, 12 * unit, tint);
+            Draw2D.Line(tip + float2(-26, -27) * unit, tip, 12 * unit, tint);
+            Draw2D.Line(tip + float2(-26, 27) * unit, tip, 12 * unit, tint);
         }
     }
     else if (card == Card.Featherweight)
@@ -143,11 +143,11 @@ void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
         for (var i = 0; i < 5; i++)
         {
             var along = i / 4.0;
-            Disc(shapes, at + float2(-36 + 62 * along, 4 + 34 * along * along) * unit, 3.6 * unit, Fade(color, 0.4));
+            Draw2D.Circle(at + float2(-36 + 62 * along, 4 + 34 * along * along) * unit, 3.6 * unit, Fade(color, 0.4));
         }
-        Capsule(shapes, at + float2(-38, -12) * unit, at + float2(8, -12) * unit, 6 * unit, Fade(color, 0.5));
-        Capsule(shapes, at + float2(12, -12) * unit, at + float2(34, -12) * unit, 16 * unit, color);
-        Disc(shapes, at + float2(32, -12) * unit, 5 * unit, light);
+        Draw2D.Line(at + float2(-38, -12) * unit, at + float2(8, -12) * unit, 6 * unit, Fade(color, 0.5));
+        Draw2D.Line(at + float2(12, -12) * unit, at + float2(34, -12) * unit, 16 * unit, color);
+        Draw2D.Circle(at + float2(32, -12) * unit, 5 * unit, light);
     }
     else
     {
@@ -155,11 +155,11 @@ void CardIcon(mut Shapes shapes, Card card, float2 at, float size, Color color)
         for (var i = 0; i < 5; i++)
         {
             var along = i / 5.0;
-            Disc(shapes, at + float2(-38 + 70 * along, 24 - 220 * along * (1 - along)) * unit, (3.5 + i * 0.8) * unit,
+            Draw2D.Circle(at + float2(-38 + 70 * along, 24 - 220 * along * (1 - along)) * unit, (3.5 + i * 0.8) * unit,
                  Fade(color, 0.35 + along * 0.4));
         }
-        Disc(shapes, at + float2(30, 22) * unit, 17 * unit, color);
-        Disc(shapes, at + float2(25, 16) * unit, 6 * unit, light);
+        Draw2D.Circle(at + float2(30, 22) * unit, 17 * unit, color);
+        Draw2D.Circle(at + float2(25, 16) * unit, 6 * unit, light);
     }
 }
 
@@ -175,9 +175,9 @@ bool Over(Devices devices, Rect rect)
     return at.x >= rect.x && at.x < rect.x + rect.width && at.y >= rect.y && at.y < rect.y + rect.height;
 }
 
-// A button of the duel's own, as shapes: its view writes its label once it has
-// drawn them. Returns whether it was pressed.
-bool Pill(mut Shapes shapes, Devices devices, Rect rect, Color color, bool bold, bool enabled)
+// A button of the duel's own, which its view writes its label over. Returns
+// whether it was pressed.
+bool Pill(Devices devices, Rect rect, Color color, bool bold, bool enabled)
 {
     GUI.ClaimPointer(rect);
     var over = enabled && Over(devices, rect);
@@ -188,15 +188,15 @@ bool Pill(mut Shapes shapes, Devices devices, Rect rect, Color color, bool bold,
     var dim = enabled ? 1 : 0.4;
     if (bold)
     {
-        GlowBox(shapes, center, size, radius, over ? 22 : 12, Fade(color, (over ? 0.5 : 0.22) * dim));
-        Plate(shapes, center, size, radius, Fade(Shade(color, over ? 0.42 : 0.24), dim), Fade(Shade(color, over ? 0 : -0.14), dim),
+        GlowBox(center, size, radius, over ? 22 : 12, Fade(color, (over ? 0.5 : 0.22) * dim));
+        Panel(center, size, radius, Fade(Shade(color, over ? 0.42 : 0.24), dim), Fade(Shade(color, over ? 0 : -0.14), dim),
               1.6, Fade(Shade(color, 0.6), dim));
     }
     else
     {
-        if (over) GlowBox(shapes, center, size, radius, 14, Fade(color, 0.3));
+        if (over) GlowBox(center, size, radius, 14, Fade(color, 0.3));
         // One that can't be pressed is darker, and still hides what's behind it
-        Plate(shapes, center, size, radius, Color(0.15, 0.19, 0.32, 0.96) * (enabled ? 1 : 0.62),
+        Panel(center, size, radius, Color(0.15, 0.19, 0.32, 0.96) * (enabled ? 1 : 0.62),
               Color(0.075, 0.1, 0.19, 0.96) * (enabled ? 1 : 0.62), 1.5, over ? color : Color(0.3, 0.39, 0.58) * (enabled ? 1 : 0.6));
     }
     return over && devices.pointer.press.down;
@@ -237,11 +237,10 @@ view RememberAimDevice(Devices devices, mut Canvas canvas)
 // Where a match starts: nobody plays until someone here says how. Behind it,
 // the fighters duel by themselves.
 [Stage(PaintStages.Menu)]
-view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu menu, mut Shapes shapes)
+view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu menu)
 {
     if (!duel.attract) return;
     Draw2D.Screen();
-    shapes.pixel = 1;
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     var short = screen.y < 470;
@@ -257,9 +256,9 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
     var total = title + under + playHeight + gap + rowHeight + gap + rowHeight + 26;
     mut var y = Math.Max(6, (screen.y - total) * 0.5);
 
-    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.24));
-    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Color(0, 0.004, 0.02, 0.45));
-    GlowBox(shapes, float2(middle.x, y + total * 0.5), float2(wide - 40, total - 90), 40, 100, Color(0.012, 0.018, 0.05, 0.8));
+    Draw2D.Rect(middle, screen, Color(0.012, 0.018, 0.05, 0.24));
+    Inset(middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Color(0, 0.004, 0.02, 0.45));
+    GlowBox(float2(middle.x, y + total * 0.5), float2(wide - 40, total - 90), 40, 100, Color(0.012, 0.018, 0.05, 0.8));
 
     var titleAt = float2(middle.x, y + title * 0.5);
     y += title + under;
@@ -272,24 +271,22 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
     var note = float2(middle.x, y + rowHeight + 15);
     var copy = Rect(invite.x + invite.width - 78, invite.y + 5, 72, invite.height - 10);
 
-    var playNow = Pill(shapes, devices, play, UI_BLUE, true, !busy);
+    var playNow = Pill(devices, play, UI_BLUE, true, !busy);
     mut var inviteNow = false;
     mut var copyNow = false;
     if (hosting)
     {
-        Plate(shapes, Middle(invite), float2(invite.width, invite.height), 13, Color(0.1, 0.085, 0.1, 0.96),
+        Panel(Middle(invite), float2(invite.width, invite.height), 13, Color(0.1, 0.085, 0.1, 0.96),
               Color(0.07, 0.06, 0.09, 0.96), 1.5, Fade(UI_ORANGE, 0.75));
-        copyNow = Pill(shapes, devices, copy, UI_ORANGE, false, true);
+        copyNow = Pill(devices, copy, UI_ORANGE, false, true);
     }
     else
     {
-        inviteNow = Pill(shapes, devices, invite, UI_ORANGE, false, !busy && session.server && !session.open);
+        inviteNow = Pill(devices, invite, UI_ORANGE, false, !busy && session.server && !session.open);
     }
-    Plate(shapes, float2(left + (wide - 94) * 0.5, y + rowHeight * 0.5), float2(wide - 94, rowHeight), 7,
+    Panel(float2(left + (wide - 94) * 0.5, y + rowHeight * 0.5), float2(wide - 94, rowHeight), 7,
           Color(0.12, 0.12, 0.15), Color(0.12, 0.12, 0.15), 1.5, Color(0.3, 0.39, 0.58));
-    var joinNow = Pill(shapes, devices, join, UI_INK, false, !busy && menu.code.Trim() != "");
-    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-    shapes.list.Clear();
+    var joinNow = Pill(devices, join, UI_INK, false, !busy && menu.code.Trim() != "");
 
     // The title, with each side's color off to its side
     var bob = Math.Sin(fx.now * 1.6) * 2;
@@ -343,18 +340,15 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
 // In a match, the way out of it: back to the menu from practice, and with two
 // players, leaving.
 [Stage(PaintStages.Menu, 5)]
-view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu, mut Shapes shapes)
+view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu)
 {
     if (duel.attract || duel.phase == Phase.Draft || duel.phase == Phase.Finished) return;
     Draw2D.Screen();
-    shapes.pixel = 1;
     var slim = Screen.height < 640 && Screen.width >= 720;
     var two = duel.bluePlayer != default && duel.orangePlayer != default;
     var rect = slim ? Rect(Screen.width - 82, Screen.height - 34, 68, 26)
                     : Rect(Screen.width - 84, Screen.width < 720 ? 6 : 11, 68, 26);
-    var pressed = Pill(shapes, devices, rect, UI_INK, false, session.state == SessionState.Connected);
-    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-    shapes.list.Clear();
+    var pressed = Pill(devices, rect, UI_INK, false, session.state == SessionState.Connected);
     Write(two ? "LEAVE" : "MENU", Middle(rect), 10, UI_INK);
     if (session.room != "" && Screen.width >= 720 && !slim)
     {
@@ -372,9 +366,8 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu,
     }
 }
 
-// One of the three cards to pick from. `words` writes its text, once its
-// shapes are drawn.
-void DraftCard(mut Shapes shapes, bool words, Card card, int slot, float2 center, float2 size, bool lit, float shown, bool rows)
+// One of the three cards to pick from.
+void DraftCard(Card card, int slot, float2 center, float2 size, bool lit, float shown, bool rows)
 {
     var accent = CardColor(card);
     var top = center.y - size.y * 0.5;
@@ -384,22 +377,18 @@ void DraftCard(mut Shapes shapes, bool words, Card card, int slot, float2 center
         // A strip: its picture, then its name and what it does
         var spot = float2(left + size.y * 0.5 + 2, center.y);
         var text = left + size.y + 10;
-        if (!words)
-        {
-            if (lit) GlowBox(shapes, center, size, 12, 20, Fade(accent, 0.4 * shown));
-            Plate(shapes, center, size, 12, Color(0.105, 0.135, 0.235, 0.98 * shown), Color(0.05, 0.065, 0.13, 0.98 * shown),
-                  lit ? 2.2 : 1.4, Fade(lit ? accent : Shade(accent, -0.5), shown));
-            Oval(shapes, spot, float2(size.y * 0.38), Color(0.03, 0.04, 0.09, shown), Color(0.06, 0.08, 0.15, shown), 1.5,
-                 Fade(accent, 0.7 * shown));
-            CardIcon(shapes, card, spot, size.y * 0.5, Fade(accent, shown));
-            Plate(shapes, float2(left + size.x - 22, center.y), float2(24, 24), 6, Color(0.14, 0.18, 0.3, shown),
-                  Color(0.08, 0.1, 0.19, shown), 1.3, Fade(lit ? accent : Color(0.3, 0.39, 0.58), shown));
-            return;
-        }
         var tight = size.y < 62;
+        if (lit) GlowBox(center, size, 12, 20, Fade(accent, 0.4 * shown));
+        Panel(center, size, 12, Color(0.105, 0.135, 0.235, 0.98 * shown), Color(0.05, 0.065, 0.13, 0.98 * shown),
+              lit ? 2.2 : 1.4, Fade(lit ? accent : Shade(accent, -0.5), shown));
+        Oval(spot, float2(size.y * 0.38), Color(0.06, 0.08, 0.15, shown), Color(0.03, 0.04, 0.09, shown), 1.5,
+             Fade(accent, 0.7 * shown));
+        CardIcon(card, spot, size.y * 0.5, Fade(accent, shown));
         Draw2D.Text(CardName(card), float2(text, center.y - (tight ? 15 : 19)), tight ? 13 : 16, Fade(UI_INK, shown));
         Draw2D.Text(CardEffect(card), float2(text, center.y + (tight ? 1 : 2)), tight ? 10 : 12,
                     Fade(Mix(accent, Color.white, 0.45), shown));
+        Panel(float2(left + size.x - 22, center.y), float2(24, 24), 6, Color(0.14, 0.18, 0.3, shown),
+              Color(0.08, 0.1, 0.19, shown), 1.3, Fade(lit ? accent : Color(0.3, 0.39, 0.58), shown));
         Write($"{slot + 1}", float2(left + size.x - 22, center.y), 12, Fade(UI_INK, shown));
         return;
     }
@@ -407,29 +396,26 @@ void DraftCard(mut Shapes shapes, bool words, Card card, int slot, float2 center
     var badge = float2(center.x, top + size.y * 0.27);
     var badgeSize = Math.Min(54, size.y * 0.17);
     var pick = float2(center.x, top + size.y - 34);
-    if (!words)
-    {
-        GlowBox(shapes, center + float2(0, 12), size - float2(30, 20), 18, 34, Color(0, 0.004, 0.02, 0.55 * shown));
-        if (lit) GlowBox(shapes, center, size, 18, 30, Fade(accent, 0.42 * shown));
-        Plate(shapes, center, size, 18, Color(0.11, 0.14, 0.245, 0.985 * shown), Color(0.045, 0.058, 0.118, 0.985 * shown),
-              lit ? 2.6 : 1.5, Fade(lit ? accent : Shade(accent, -0.5), shown));
-        Box(shapes, float2(center.x, top + 9), float2(size.x - 44, 4), 2, Fade(accent, (lit ? 1 : 0.7) * shown));
-        Glow(shapes, badge, badgeSize * 0.6, badgeSize * 1.1, Fade(accent, (lit ? 0.3 : 0.16) * shown));
-        Oval(shapes, badge, float2(badgeSize), Color(0.03, 0.04, 0.09, shown), Color(0.065, 0.085, 0.16, shown), 2,
-             Fade(accent, 0.8 * shown));
-        CardIcon(shapes, card, badge, badgeSize * 1.25, Fade(accent, shown));
-        Plate(shapes, pick, float2(size.x - 40, 38), 11, Fade(lit ? Shade(accent, 0.3) : Color(0.15, 0.19, 0.32), shown),
-              Fade(lit ? Shade(accent, -0.1) : Color(0.08, 0.105, 0.2), shown), 1.5,
-              Fade(lit ? Shade(accent, 0.6) : Color(0.3, 0.39, 0.58), shown));
-        Plate(shapes, pick + float2(-size.x * 0.5 + 44, 0), float2(22, 22), 6, Color(0.03, 0.04, 0.09, 0.85 * shown),
-              Color(0.03, 0.04, 0.09, 0.85 * shown), 0, Color.clear);
-        return;
-    }
     var roomy = size.y >= 290;
     var name = badge.y + badgeSize + (roomy ? 34 : 24);
+    GlowBox(center + float2(0, 12), size - float2(30, 20), 18, 34, Color(0, 0.004, 0.02, 0.55 * shown));
+    if (lit) GlowBox(center, size, 18, 30, Fade(accent, 0.42 * shown));
+    Panel(center, size, 18, Color(0.11, 0.14, 0.245, 0.985 * shown), Color(0.045, 0.058, 0.118, 0.985 * shown),
+          lit ? 2.6 : 1.5, Fade(lit ? accent : Shade(accent, -0.5), shown));
+    Draw2D.RoundRect(float2(center.x, top + 9), float2(size.x - 44, 4), 2, Fade(accent, (lit ? 1 : 0.7) * shown));
+    Glow(badge, badgeSize * 0.6, badgeSize * 1.1, Fade(accent, (lit ? 0.3 : 0.16) * shown));
+    Oval(badge, float2(badgeSize), Color(0.065, 0.085, 0.16, shown), Color(0.03, 0.04, 0.09, shown), 2,
+         Fade(accent, 0.8 * shown));
+    CardIcon(card, badge, badgeSize * 1.25, Fade(accent, shown));
     Write(CardName(card), float2(center.x, name), size.x < 200 ? 16 : 20, Fade(UI_INK, shown));
     Write(CardEffect(card), float2(center.x, name + 28), size.x < 200 ? 12 : 14, Fade(Mix(accent, Color.white, 0.45), shown));
     if (roomy) Write(CardFlavor(card), float2(center.x, name + 50), 12, Fade(UI_MUTED, shown));
+
+    // Its button, with the key that picks it
+    Panel(pick, float2(size.x - 40, 38), 11, Fade(lit ? Shade(accent, 0.3) : Color(0.15, 0.19, 0.32), shown),
+          Fade(lit ? Shade(accent, -0.1) : Color(0.08, 0.105, 0.2), shown), 1.5,
+          Fade(lit ? Shade(accent, 0.6) : Color(0.3, 0.39, 0.58), shown));
+    Draw2D.RoundRect(pick + float2(-size.x * 0.5 + 44, 0), float2(22, 22), 6, Color(0.03, 0.04, 0.09, 0.85 * shown));
     Write($"{slot + 1}", pick + float2(-size.x * 0.5 + 44, 0), 12, Fade(UI_INK, shown));
     Write("PICK", pick + float2(8, 0), 13, Fade(lit ? UI_OUTLINE : UI_INK, shown));
 }
@@ -438,7 +424,7 @@ void DraftCard(mut Shapes shapes, bool words, Card card, int slot, float2 center
 // number, or with the arrows or a gamepad and Enter.
 [Stage(PaintStages.Menu, 10)]
 view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Flow flow,
-    mut DuelMenu menu, mut Fx fx, mut Shapes shapes, with ownership)
+    mut DuelMenu menu, mut Fx fx, with ownership)
 {
     if (duel.attract || duel.phase != Phase.Draft || fighter.side != duel.draftSide)
     {
@@ -449,7 +435,6 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
         return;
     }
     Draw2D.Screen();
-    shapes.pixel = 1;
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
@@ -512,23 +497,17 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
     var waiting = menu.pickMatch == duel.match && menu.pickRound == duel.round;
 
     var dim = EaseOut(age / 0.25);
-    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.74 * dim));
-    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.4, Color(0, 0.004, 0.02, 0.5 * dim));
-    for (var pass = 0; pass < 2; pass++)
+    Draw2D.Rect(middle, screen, Color(0.012, 0.018, 0.05, 0.74 * dim));
+    Inset(middle, screen, 0, Math.Max(screen.x, screen.y) * 0.4, Color(0, 0.004, 0.02, 0.5 * dim));
+    for (var slot = 0; slot < 3; slot++)
     {
-        for (var slot = 0; slot < 3; slot++)
-        {
-            // Each card comes up a moment after the one before it
-            var come = (age - 0.05 - slot * 0.07) / 0.36;
-            if (come <= 0) continue;
-            var lit = waiting ? menu.picked == slot : menu.focus == slot && online;
-            var at = first + stride * slot + float2(0, (1 - EaseBack(come)) * 46 - (lit && !rows ? 9 : 0));
-            var shown = Math.Saturate(come * 2) * (waiting && menu.picked != slot ? 0.3 : 1);
-            DraftCard(shapes, pass == 1, Offer(duel.round, duel.draftSide, slot), slot, at, size, lit, shown, rows);
-        }
-        if (pass == 1) break;
-        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-        shapes.list.Clear();
+        // Each card comes up a moment after the one before it
+        var come = (age - 0.05 - slot * 0.07) / 0.36;
+        if (come <= 0) continue;
+        var lit = waiting ? menu.picked == slot : menu.focus == slot && online;
+        var at = first + stride * slot + float2(0, (1 - EaseBack(come)) * 46 - (lit && !rows ? 9 : 0));
+        var shown = Math.Saturate(come * 2) * (waiting && menu.picked != slot ? 0.3 : 1);
+        DraftCard(Offer(duel.round, duel.draftSide, slot), slot, at, size, lit, shown, rows);
     }
 
     var heading = rows ? first.y - size.y * 0.5 - (tiny ? 16 : 44) : first.y - size.y * 0.5 - 62;
@@ -546,7 +525,7 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
 }
 
 [Stage(PaintStages.Menu, 10)]
-view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut DuelMenu menu, mut Fx fx, mut Shapes shapes)
+view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut DuelMenu menu, mut Fx fx)
 {
     if (duel.attract || duel.phase != Phase.Finished)
     {
@@ -554,7 +533,6 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
         return;
     }
     Draw2D.Screen();
-    shapes.pixel = 1;
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
@@ -575,17 +553,15 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
         Confetti(fx, float2(screen.x * (0.15 + place * 0.7), screen.y * 0.3), 26, 460, tint);
     }
 
-    Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.72 * enter));
-    Inset(shapes, middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Fade(Shade(tint, -0.55), 0.42 * enter));
-    GlowBox(shapes, middle + float2(0, -10), float2(Math.Min(screen.x, 560), 150), 60, 120, Fade(tint, 0.13 * enter));
+    Draw2D.Rect(middle, screen, Color(0.012, 0.018, 0.05, 0.72 * enter));
+    Inset(middle, screen, 0, Math.Max(screen.x, screen.y) * 0.3, Fade(Shade(tint, -0.55), 0.42 * enter));
+    GlowBox(middle + float2(0, -10), float2(Math.Min(screen.x, 560), 150), 60, 120, Fade(tint, 0.13 * enter));
     var wide = Math.Min(screen.x - 32, 300);
     var again = Rect(middle.x - wide * 0.5, middle.y + (big ? 62 : 40), wide, big ? 50 : 40);
     var leave = Rect(middle.x - wide * 0.5, again.y + again.height + 10, wide, big ? 40 : 34);
     var waiting = menu.rematch == duel.match;
-    var againNow = Pill(shapes, devices, again, tint, true, online && !waiting);
-    var leaveNow = Pill(shapes, devices, leave, UI_INK, false, online);
-    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-    shapes.list.Clear();
+    var againNow = Pill(devices, again, tint, true, online && !waiting);
+    var leaveNow = Pill(devices, leave, UI_INK, false, online);
 
     var words = SideName(blueWon ? 0 : 1) + " WINS";
     var size = Math.Round((big ? 64 : 38) * (1 + 0.4 * Math.Max(0, 1 - age * 6)) * 0.5) * 2;
@@ -615,7 +591,7 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
 
 // Joining another machine's match, or finding this one again after its host left.
 [Stage(PaintStages.Menu, 20)]
-view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu menu, mut Shapes shapes)
+view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu menu)
 {
     if (session.state != SessionState.Connecting) return;
     Draw2D.Screen();
@@ -625,19 +601,16 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
     if (session.player == default)
     {
         // No match is behind it yet: only the backdrop, and what the last one's effects left
-        StartShapes(shapes, 1);
         Draw2D.Clear(UI_BACKGROUND);
         if (sky.quad.count > 0) Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
         var wide = Math.Min(screen.x - 24, 380);
         var back = Rect(middle.x - 95, middle.y + 22, 190, 40);
-        Box(shapes, middle, screen, 0, Color(0.012, 0.018, 0.05, 0.6));
-        GlowBox(shapes, middle + float2(0, 10), float2(wide - 30, 130), 20, 40, Color(0, 0.004, 0.02, 0.6));
-        Plate(shapes, middle, float2(wide, 170), 18, Color(0.11, 0.14, 0.245, 0.98), Color(0.045, 0.058, 0.118, 0.98), 1.5,
+        Draw2D.Rect(middle, screen, Color(0.012, 0.018, 0.05, 0.6));
+        GlowBox(middle + float2(0, 10), float2(wide - 30, 130), 20, 40, Color(0, 0.004, 0.02, 0.6));
+        Panel(middle, float2(wide, 170), 18, Color(0.11, 0.14, 0.245, 0.98), Color(0.045, 0.058, 0.118, 0.98), 1.5,
               Color(0.3, 0.39, 0.58));
-        Arc(shapes, middle + float2(-wide * 0.5 + 40, -42), 11, 3.2, menu.turn, 0.7, UI_BLUE);
-        var backNow = Pill(shapes, devices, back, UI_INK, false, true);
-        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-        shapes.list.Clear();
+        Draw2D.Arc(middle + float2(-wide * 0.5 + 40, -42), 11, menu.turn * Math.TAU, Math.TAU * 0.7, 3.2, UI_BLUE);
+        var backNow = Pill(devices, back, UI_INK, false, true);
         Draw2D.Text("CONNECTING", float2(middle.x - wide * 0.5 + 64, middle.y - 54), 22, UI_INK);
         Draw2D.Text(menu.code == "" ? "Waiting for the match" : "Room " + menu.code.Trim().ToUpper().Substring(0, 12),
                     float2(middle.x - wide * 0.5 + 64, middle.y - 24), 13, UI_MUTED);
@@ -646,14 +619,11 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
     }
     else
     {
-        shapes.pixel = 1;
         var back = Rect(screen.x - 166, screen.y - 37, 152, 30);
-        Plate(shapes, float2(middle.x, screen.y - 22), float2(screen.x + 4, 46), 0, Color(0.05, 0.065, 0.13, 0.96),
+        Panel(float2(middle.x, screen.y - 22), float2(screen.x + 4, 46), 0, Color(0.05, 0.065, 0.13, 0.96),
               Color(0.03, 0.04, 0.09, 0.96), 1.5, Color(0.3, 0.39, 0.58));
-        Arc(shapes, float2(26, screen.y - 22), 8, 2.6, menu.turn, 0.7, UI_BLUE);
-        var backNow = Pill(shapes, devices, back, UI_INK, false, true);
-        Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-        shapes.list.Clear();
+        Draw2D.Arc(float2(26, screen.y - 22), 8, menu.turn * Math.TAU, Math.TAU * 0.7, 2.6, UI_BLUE);
+        var backNow = Pill(devices, back, UI_INK, false, true);
         Draw2D.Text("Reconnecting...", float2(44, screen.y - 29), 13, UI_MUTED);
         Write("BACK TO THE MENU", Middle(back), 11, UI_INK);
         if (backNow) Session.Start(Main);
