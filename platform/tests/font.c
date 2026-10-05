@@ -102,3 +102,42 @@ TIDE_TEST(font_text_is_as_wide_as_its_glyphs_go)
         TIDE_CHECK(tide_font_measure("Right button erases", 16.0f, scales[i]) == (float)advance / scales[i]);
     }
 }
+
+// What a game measures to lay text out (Draw2D.MeasureText): a line is as
+// high as its size, each newline adds the whole pixels lines are apart, and
+// the width is the widest line's.
+TIDE_TEST(font_text_is_as_high_as_its_lines_go)
+{
+    static const float scales[] = {1.0f, 1.25f, 1.5f, 2.0f, 2.625f};
+    for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
+        const float scale = scales[i];
+        float stretch = 0.0f, width = 0.0f, height = 0.0f;
+        const int pixels = tide_font_pixels(16.0f, scale, &stretch);
+        const float pitch = tide_font_pitch(pixels, stretch);
+        TIDE_CHECK(pitch == (float)(int)pitch && pitch >= (float)pixels);
+
+        tide_font_size("Right button erases", 16.0f, scale, scale, &width, &height);
+        TIDE_CHECK(width == tide_font_measure("Right button erases", 16.0f, scale) && height == 16.0f);
+        tide_font_size("Right\nbutton erases\n", 16.0f, scale, scale, &width, &height);
+        TIDE_CHECK(width == tide_font_measure("button erases", 16.0f, scale));
+        TIDE_CHECK(height == 16.0f + 2.0f * pitch / scale);
+        tide_font_size("", 16.0f, scale, scale, &width, &height);
+        TIDE_CHECK(width == 0.0f && height == 16.0f);
+
+        // Pixels that aren't square: the size in pixels is from their height
+        int advance = 0;
+        for (const char *c = "Right"; *c; c++) advance += glyph(*c, pixels).advance;
+        tide_font_size("Right", 16.0f, scale * 2.0f, scale, &width, &height);
+        TIDE_CHECK(width == (float)advance / (scale * 2.0f) && height == 16.0f);
+    }
+    // Past the biggest glyphs, text is stretched, and so is what's between its lines
+    float stretch = 0.0f, width = 0.0f, height = 0.0f;
+    const int pixels = tide_font_pixels(400.0f, 1.0f, &stretch);
+    TIDE_CHECK(pixels == TIDE_FONT_MAX_PIXELS && stretch == 400.0f / (float)TIDE_FONT_MAX_PIXELS);
+    tide_font_size("A\nB", 400.0f, 1.0f, 1.0f, &width, &height);
+    TIDE_CHECK(width == (float)glyph('A', pixels).advance * stretch || width == (float)glyph('B', pixels).advance * stretch);
+    TIDE_CHECK(height == 400.0f + tide_font_pitch(pixels, stretch));
+    // Nothing is drawn at no size
+    tide_font_size("Right", 0.0f, 1.0f, 1.0f, &width, &height);
+    TIDE_CHECK(width == 0.0f && height == 0.0f);
+}

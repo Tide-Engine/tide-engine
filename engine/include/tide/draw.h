@@ -632,3 +632,27 @@ tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, tide_float2 
 // All coordinate helpers return a zero vector when an input is non-finite,
 // screen size is non-positive, the camera is singular, or a homogeneous
 // projection has no finite point. A point outside the view is still mapped.
+
+// How big a renderer draws text: of `text` drawn `size` tall, the width of
+// its widest line and the height of its lines, in the units `size` is in. One
+// line is `size` high, and each newline adds what's from one line to the
+// next. Text is fitted to the pixels it's drawn on, so where it's drawn is
+// part of the answer: in the window, whose units are its logical pixels, or
+// (`target`) in a render target, whose units are its own pixels. The platform
+// measures with its font (tide_platform_measure_text).
+typedef tide_float2 (*tide_measure_fn)(const char *text, float size, bool target);
+
+// What stands in for a host's tide_measure_fn when it has none (NULL), as
+// tests and servers do: a guess, on the wide side.
+tide_float2 tide_draw_guess_text(const char *text, float size, bool target);
+
+// The size of `text` as tide_draw_text would draw it now, at `size`, in the
+// units the commands recorded next are in: the screen's pixels after
+// tide_draw_screen, and world units through the current 2D camera, which
+// draws text as many times bigger as it has pixels to a unit. `x` is its
+// widest line's width and `y` the height of its lines, both from the
+// position tide_draw_text takes, its top left corner. `screen_size` is as for
+// the coordinate helpers above, and `measure` the renderer's, or NULL to
+// guess. Nothing for a size that isn't above 0, as nothing is drawn.
+tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, tide_float2 screen_size,
+                                   tide_measure_fn measure);

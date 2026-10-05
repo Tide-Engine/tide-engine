@@ -114,15 +114,9 @@ static float clamp_f(const float v, const float lo, const float hi)
     return v < lo ? lo : v > hi ? hi : v;
 }
 
-// Without the platform's font: a guess, on the wide side.
-static float guess_width(const char *text, const float size)
-{
-    return (float)strlen(text) * size * 0.6f;
-}
-
 static float text_width(const tide_gui *g, const char *text)
 {
-    return g->measure(text, FONT);
+    return g->measure(text, FONT, false).x;
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +432,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     if (g->frame == 0) g->frame = 1; // Stamps of 0 mean never
     g->width = screen.x;
     g->height = screen.y;
-    g->measure = measure ? measure : guess_width;
+    g->measure = measure ? measure : tide_draw_guess_text; // Without the platform's font
 
     // The pointer: the mouse, or a finger. The devices count from the bottom
     // left, y up; the GUI from the top left, y down. A finger that's off the

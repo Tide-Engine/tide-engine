@@ -359,7 +359,7 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu,
     if (session.room != "" && Screen.width >= 720 && !slim)
     {
         var room = "ROOM " + session.room;
-        Draw2D.Text(room, float2(rect.x - 12 - TextWidth(room, 11), rect.y + 7), 11, UI_MUTED);
+        Draw2D.Text(room, float2(rect.x - 12 - Draw2D.MeasureText(room, 11).x, rect.y + 7), 11, UI_MUTED);
     }
     if (two)
     {

@@ -30,14 +30,22 @@ uint32_t tide_utf8_next(const char **text);
 // shown: 1, but for text past TIDE_FONT_MAX_PIXELS.
 int tide_font_pixels(float size, float scale, float *stretch);
 
-// From a line's top to its baseline, and to the next line's top, for text of
-// size 1.
+// From a line's top to its baseline, for text of size 1.
 float tide_font_baseline(void);
-float tide_font_line(void);
+
+// From one line's top to the next's, in pixels, for text drawn at `pixels`
+// and shown `stretch` times bigger: a whole number of them.
+float tide_font_pitch(int pixels, float stretch);
 
 // The width of `text` drawn at `size`, in the units `size` is in, where
 // `scale` pixels make one: its widest line's, as it's drawn.
 float tide_font_measure(const char *text, float size, float scale);
+
+// The same, and the height of its lines, the first's top to the last's
+// bottom: a line is `size` high, and each newline adds the lines' pitch.
+// `scale_x` by `scale_y` pixels make a unit: text is fitted to a line's
+// height, so to `scale_y`.
+void tide_font_size(const char *text, float size, float scale_x, float scale_y, float *width, float *height);
 
 // A glyph drawn for text `pixels` in size: where its pixels are in the atlas,
 // where they go from the pen on the baseline (`top` is less than 0 above it),
