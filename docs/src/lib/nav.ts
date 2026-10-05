@@ -20,8 +20,8 @@ export const docs: Link = { text: 'Docs', link: '/guide' };
 
 // A group is one subject, and its pages are in a folder of that subject:
 // `game/` is what a game is made of, the match (Simulation) and what one
-// machine shows of it (Presentation), and `language/` is the language those
-// are written in.
+// machine shows of it (Presentation), `physics/` is the physics packages that
+// come with tide, and `language/` is the language those are written in.
 export const sidebar: Group[] = [
     {
         text: 'Get started',
@@ -55,6 +55,13 @@ export const sidebar: Group[] = [
             { text: 'Local state', link: '/game/local-state' },
             { text: 'Files and directories', link: '/game/files' },
             { text: 'GUI', link: '/game/gui' },
+        ],
+    },
+    {
+        text: 'Physics',
+        items: [
+            { text: '2D physics (Box2D)', link: '/physics/box2d' },
+            { text: '3D physics (Box3D)', link: '/physics/box3d' },
         ],
     },
     {

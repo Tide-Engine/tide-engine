@@ -25,7 +25,7 @@ features:
   - title: Deterministic floats
     details: The same build and the same inputs give the same bits on every platform, the web included. Plain floats, no fixed point.
   - title: A language for the ECS
-    details: A C#-like language built around the ECS. Systems say what they read and write, and the compiler works out the rest. It compiles to C, then to native code or WebAssembly.
+    details: Games are written in Tide, a language of its own, built around the ECS. Systems say what they read and write, and the compiler works out the rest. It compiles to C, then to native code or WebAssembly.
   - title: A schedule you can read
     details: The compiler knows every system's data, so it plans which ones can run at the same time, and tells you why the others wait.
   - title: The web is a real platform
