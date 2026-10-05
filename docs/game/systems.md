@@ -94,6 +94,7 @@ system Attack(Attacker attacker, World world, mut Stats stats)
 - `world.Get<Health>(e)` is a copy of that entity's `Health`, or its zero value when it has none.
 - `world.Has<Health>(e)` tells whether it has one.
 - `world.Set<Health>(e, value)` puts one back, and needs `mut World`. It does nothing for an entity without one.
+- A system that takes `Health` itself can't `Set<Health>`: its own entity's goes through its parameter. The exception is a parameter it only reads, beside which `world.Set<Health>(this, value)` sets this entity's own. That's for a system that looks at every entity and changes a few: the parameter stays as the system came to the entity.
 
 What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
 

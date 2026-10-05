@@ -157,9 +157,8 @@ system Begin(mut Physics physics)
 // `mut` is copied and compared for every entity a system runs for, whatever it
 // does, once a snapshot shares the world's pages, as a client's do every tick:
 // most bodies, most ticks, have nothing written.
-system Enter(mut Physics physics, mut World world, with Body)
+system Enter(Body body, mut Physics physics, mut World world)
 {
-    var body = world.Get<Body>(this);
     // A body nothing wrote to since the last step costs these comparisons, and no call
     bool moved = body.position.x != body.stepPosition.x || body.position.y != body.stepPosition.y || body.angle != body.stepAngle;
     bool pushed = body.velocity.x != body.stepVelocity.x || body.velocity.y != body.stepVelocity.y || body.spin != body.stepSpin;
@@ -209,11 +208,11 @@ system Step(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved.
-system Leave(Physics physics, mut World world, with Body)
+system Leave(Body body, Physics physics, mut World world)
 {
     if (physics.moved)
     {
-        mut var next = world.Get<Body>(this);
+        mut var next = body;
         if (ReadBody(next, physics.stamp)) world.Set<Body>(this, next);
     }
 }

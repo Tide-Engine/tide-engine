@@ -19,6 +19,7 @@ tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(world) # Other entities' components through the World
+tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
