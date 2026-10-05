@@ -9526,6 +9526,10 @@ static void warn_unused_params(checker *c, const decl *sys)
         }
         if (!p->read && kind == TY_COMPONENT) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
+            if (p->verified) {
+                diag_note("to only require the component in the confirmed world, write 'with verified " STR_FMT "'", STR_ARG(type));
+                continue; // The quick fix writes 'with', which would ask the drawn world instead
+            }
             if (sys->is_handler || sys->is_view) {
                 diag_note("to only require the component, write 'with " STR_FMT "'", STR_ARG(type));
             } else {
