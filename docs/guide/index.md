@@ -54,3 +54,4 @@ The screen updates every **frame**, as fast as the display allows:
 - [Play falling sand](./sand.md) in your browser, alone or with friends.
 - [Play Duel](./duel.md), a small 2D arena game against a practice bot or a friend.
 - [Play Siege](./siege.md), a physics toy for up to four: towers of crates, cannons, and gravity that turns over.
+- [Play Alley](./alley.md), bowling in 3D with far too many pins, for up to eight at once.

@@ -60,11 +60,12 @@ jobs:
       - name: Build the examples
         run: |
           cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
-          cmake --build --preset web-release --target sand duel siege docs_examples
-          mkdir -p docs/static/sand docs/static/duel docs/static/siege
+          cmake --build --preset web-release --target sand duel siege alley docs_examples
+          mkdir -p docs/static/sand docs/static/duel docs/static/siege docs/static/alley
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html
           cp build/web-release/bin/siege.html docs/static/siege/index.html
+          cp build/web-release/bin/alley.html docs/static/alley/index.html
       - name: Build the site
         working-directory: docs
         run: |
