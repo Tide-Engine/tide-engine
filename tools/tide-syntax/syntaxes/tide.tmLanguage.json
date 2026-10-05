@@ -235,17 +235,18 @@
           }
         },
         {
-          "comment": "event(Hit hit) TakeHit: an event handler, with the event it handles",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(event)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "comment": "event(Hit hit) TakeHit: an event handler, with the event it handles. local event(verified Died died) ShowDeath: 'verified' is a word of its own where an event follows it, and an event's name where none does",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async)\\s+)?(?:(local|async)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
             "3": { "name": "storage.type.tide" },
             "4": { "name": "punctuation.parenthesis.open.tide" },
-            "5": { "patterns": [{ "include": "#type-name" }] },
-            "6": { "name": "variable.parameter.tide" },
-            "7": { "name": "punctuation.parenthesis.close.tide" },
-            "8": { "name": "entity.name.function.tide" }
+            "5": { "name": "storage.modifier.verified.tide" },
+            "6": { "patterns": [{ "include": "#type-name" }] },
+            "7": { "name": "variable.parameter.tide" },
+            "8": { "name": "punctuation.parenthesis.close.tide" },
+            "9": { "name": "entity.name.function.tide" }
           }
         },
         {
@@ -442,6 +443,22 @@
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "keyword.other.ownership.tide" }
+          }
+        },
+        {
+          "comment": "view HealthBar(Health health, verified Health confirmed), mut verified Target target: a view's parameter from the world the server has confirmed. A word of its own where a parameter starts, before its type and its name. A name anywhere else: verified score, verified is Stats checked",
+          "match": "(?:(?<=[(,])|^)\\s*(?:(mut)\\s+)?(verified)(?=\\s+(?!(?:is|in)\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.verified.tide" }
+          }
+        },
+        {
+          "comment": "with verified Dead, without verified Dead: a view's filter by the world the server has confirmed. A component's name where none follows it: with verified",
+          "match": "\\b(with|without)\\s+(verified)(?=\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "storage.modifier.verified.tide" }
           }
         },
         {
