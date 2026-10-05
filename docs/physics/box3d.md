@@ -70,6 +70,8 @@ component Body
 
 After each step, `position`, `rotation`, `velocity` and `angularVelocity` are where Box3D left the body. Code reads them like any component's fields, and [writing them moves the body](#moving-a-body). A rotation that code writes is made of length 1 if it isn't.
 
+[Views](../game/views.md) see a body between its last two ticks, as they see any component. The package says what two of the fields are, for that: `position` is a `[Position]` and `rotation` a `[Rotation]` (see [correction smoothing](../game/views.md#provisional-correction-smoothing)). So when the server corrects where this machine had predicted a body, a view sees it get there over a few frames, turning the short way, where it would jump. It changes nothing of the match.
+
 `type` and the fields from `gravityScale` down are read when the body is made, so they're set where the entity is spawned. Changing them later does nothing yet.
 
 The rest of the component is the package's own, and not for a game to write: `id` is Box3D's handle to the body, 0 until its first step, and `stepPosition`, `stepRotation`, `stepVelocity` and `stepAngularVelocity` are where the last step left it, which is how the package tells what code wrote since.
@@ -94,7 +96,7 @@ component Box
     float density = 1000;          // Kilograms a cubic meter: water's
     float friction = 0.6;          // How much it grips: 0 for ice
     float bounce;                  // 0 for no bounce, 1 for all of it
-    bool sensor;                   // Bodies pass through it
+    bool sensor;                   // Bodies pass through it, and it says which
 }
 
 component Sphere
@@ -116,6 +118,8 @@ A capsule stands along its body's `y`. Sizes are in meters, so with the default 
 An entity has one of each shape at most, and they can all be on the same body, each at its `offset`. A shape can be added to a body that's already there: `this.Add(Sphere { radius = 0.3 });`.
 
 A shape is read once, when it's put on its body, the tick after it's spawned or added. Changing its component later does nothing yet.
+
+A shape with `sensor` touches nothing and reports what's in it: see [Sensors](#sensors).
 
 `Draw3D` has a cube and a sphere to draw the first two with, as the example does. A capsule is a cylinder and a sphere at each end:
 
@@ -141,6 +145,12 @@ system Jump(PlayerInput input, mut Body body, with Player)
 {
     if (input.jump.down) body.impulse = float3(0, 5000, 0);
 }
+```
+
+An entity can be spawned with one, which pushes it at its first step, as soon as its shapes are on it:
+
+```csharp
+Spawn(Body { position = muzzle, impulse = aim * 40 }, Sphere { radius = 0.1 }, Shot);
 ```
 
 A speed that code decides is written every tick. The rest of the vector stays Box3D's:
@@ -183,10 +193,14 @@ system Sweep(mut Body body, with Lift)
 }
 ```
 
-Two things to know:
+### Bodies at rest
 
-- **A new body's `impulse` is lost.** A body is made before its shapes are on it, when it weighs nothing, so an `impulse` or an `angularImpulse` in the `Spawn` itself does nothing. Give a new body a `velocity` instead, as the example's balls have, or its impulse a tick later.
-- **A body at rest is asleep.** Box3D stops moving a body that has come to rest, until something touches it or pushes it. Writing its `velocity`, its `angularVelocity`, an `impulse` or an `angularImpulse` wakes it. Writing its `position` or its `rotation` moves it and leaves it asleep, so a crate at rest that's put in the air hangs there until it's woken: give it a small `impulse` along with its new place.
+Box3D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or pushes it. Whatever code writes into a sleeping body wakes it:
+
+- A `velocity` or an `angularVelocity` that isn't zero, an `impulse` or an `angularImpulse`.
+- A `position` or a `rotation`: the body is moved and wakes, so a crate at rest that's put in the air falls. What was touching it wakes too: a platform that's moved away, a static one as well, drops what stood on it.
+
+A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)).
 
 ## When things happen in a tick
 
@@ -199,9 +213,26 @@ The package's systems run before the game's, as every [package's](../tools/packa
 
 So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's or a command's handler writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
 
-::: warning Leave the package's systems where they are
-`tide schedule` lists them as `Box3D.Enter`, `Box3D.Step`, `Box3D.Leave` and the rest. Don't name one in a `[Before]` of a system of the game's, to get in ahead of the step: they keep their order among themselves only by where they're declared, and `[Before(Step)]` moves `Step` itself to after the systems that follow it.
-:::
+### Before the step
+
+A system that has to write into this tick's step says so. The package's systems are one [named phase](../game/systems.md#named-phases), `PhysicsStages.Step`, and a system that's `Before` it runs before everything in the list above:
+
+```csharp
+[Before(PhysicsStages.Step)]
+system Walk(PlayerInput input, mut Body body, with Player)
+{
+    body.velocity.x = input.move.x * 4;
+    body.velocity.z = input.move.y * 4;
+}
+```
+
+What `Walk` writes is the speed this tick steps with, a tick sooner than without the attribute. What it reads of a body is where the last tick's step left it.
+
+That's the one way to get in ahead of the step, and a few things follow from how [systems are ordered](../game/systems.md#order):
+
+- **A system that doesn't say runs after the step**, in a game where none says `Before`. Once one does, the systems written above it in the game's files run before the step too, as the package now waits for a system that comes after them. `[After(PhysicsStages.Step)]` on a system holds it after the step whatever the others say: write it on one that has to read where this tick's step left things.
+- **`[Before(Step)]` is an error**, as no system has that name: the phase is what to name.
+- **The package's own systems aren't for a game to name.** `tide schedule` lists them, `Box3D.Enter`, `Box3D.Simulate`, `Box3D.Leave` and the rest, and they keep their order whatever a game orders its systems by. But a system that's put among them, with `[Before(Box3D.Simulate)]` say, runs after what code wrote has gone to Box3D and before the bodies come back: where it writes a body's place or its speed, the step's own is written over it.
 
 A tick is one step, so a match at the default 60 ticks a second steps a 60th of a second at a time. A lower `tickRate` makes each step longer and the world less steady.
 
@@ -228,7 +259,34 @@ event(Touched touched) Land(World world, with Ball)
 
 They're [events](../game/events.md) like any other: a handler runs for the entity the event was sent to, when that entity has the components the handler takes, at the end of the tick whose step found the touch. A [local handler](../game/events.md#local-handlers) hears them too, on each machine, for a sound or a spark.
 
-When the other entity was destroyed while they touched, `Parted` still comes, and its `other` is no entity: `parted.other == default`.
+They're sent once for each pair of shapes that touch, so a body whose `Box` and `Sphere` are both on the floor hears `Touched` twice.
+
+When the other entity was destroyed while they touched, `Parted` still comes, and its `other` is no entity: `parted.other == default`. Which entity it was isn't said.
+
+### Sensors
+
+A shape with `sensor = true` stops nothing: bodies pass through it. It sends the same two events, `Touched` when a body's shape comes into it and `Parted` when it leaves, to its own entity and to the other's:
+
+```csharp
+component Goal { int score; }
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float3(8, 1, 0) }, Box { size = float3(1, 2, 4), sensor = true }, Goal);
+}
+
+// Runs for the goal: what came in is `touched.other`.
+event(Touched touched) Score(mut Goal goal, World world)
+{
+    if (world.Has<Ball>(touched.other)) goal.score += 1;
+}
+```
+
+- A sensor reports every body's shape that's in it: one on a body that never moves too, so a sensor under a character's feet says when it stands on the ground. A body that's in it from the start is reported at its first step.
+- It can be on a body that moves, alone or beside the shapes the body touches with. It reports nothing of its own body's shapes.
+- A sensor doesn't report another sensor.
+- It has a weight like any shape, by its `density`: give it 0 where it's beside the shapes its body touches with, and shouldn't add to them.
+- What's in a sensor is looked at once a step, where things are after it. A small body that's fast enough to cross a thin sensor between two steps may come and go unreported: make such a sensor thick.
 
 ## The world
 
@@ -253,7 +311,7 @@ event(Spawned) Setup(mut Physics physics, with Main)
 }
 ```
 
-A new gravity doesn't wake bodies that are [asleep](#moving-a-body): they stay where they are until something wakes them.
+A new gravity wakes every body that's [asleep](#bodies-at-rest), so that what was at rest feels it. A game that changes it every tick has nothing at rest.
 
 The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `geometry`, `gone` and `owners` are how the package keeps Box3D's state in the match.
 
@@ -293,8 +351,7 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 ## Not there yet
 
 - Hulls other than boxes, meshes, height fields, compounds, joints, ray casts and overlap tests.
-- A sensor reports nothing: no `Touched` or `Parted` is sent for a shape with `sensor`.
+- `Touched` and `Parted` don't say which shape of an entity's it was, and a parting from an entity that was destroyed doesn't say which entity.
 - A body's `type` and the fields read when it's made don't follow later changes, and a shape's fields don't either.
 - Removing `Body` from an entity that stays leaves its body in the world.
 - Box3D keeps what a box of each size is made of, in `Physics`, and never lets one go: a game that makes boxes of ever new sizes keeps them all.
-- Views see a `Body` blended between ticks like any component, with nothing more: its fields have no [correction smoothing](../game/views.md#provisional-correction-smoothing).

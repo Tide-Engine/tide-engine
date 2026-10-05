@@ -2,6 +2,44 @@
 # games get one by listing it in their tide.packages, and tide compiles it
 # with them. Here, each one's tests build it the way tide would.
 
+# A package keeps its systems in their order whatever a game orders its own
+# by: `tidec --schedule` on <package>/test/order.tide, with the package as
+# tide builds a game that lists it, puts every system in the order
+# <package>/test/order.txt lists, a name a line. The order alone is compared,
+# and not what tidec says of each wait.
+set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
+file(WRITE "${TIDE_PACKAGE_ORDER}" [=[
+execute_process(
+    COMMAND "${TIDEC}" "${GAME}" --package "${PACKAGE}" "${SOURCE}" --schedule
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "tidec --schedule failed:\n${stderr}")
+endif()
+string(REPLACE "\r\n" "\n" stdout "${stdout}")
+string(REGEX MATCHALL "(^|\n)stage +[0-9]+ +[^ \n]+" lines "${stdout}")
+set(order "")
+foreach(line IN LISTS lines)
+    string(REGEX REPLACE "^\n?stage +[0-9]+ +" "" name "${line}")
+    string(APPEND order "${name}\n")
+endforeach()
+file(READ "${EXPECTED}" expected)
+string(REPLACE "\r\n" "\n" expected "${expected}")
+if(NOT order STREQUAL expected)
+    message(FATAL_ERROR "the order of the systems changed. Expected (${EXPECTED}):\n${expected}\nGot:\n${order}")
+endif()
+]=])
+
+function(tide_package_order_test name namespace source folder)
+    add_test(NAME ${name}
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DGAME=${folder}/order.tide" "-DPACKAGE=${namespace}"
+            "-DSOURCE=${source}" "-DEXPECTED=${folder}/order.txt" -P "${TIDE_PACKAGE_ORDER}")
+    # The game is nothing's to build, so tide_add_game doesn't list it: for editors, it's a game of these two
+    # files (see tide_write_games_manifest in cmake/Tide.cmake)
+    set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${name}\t${folder}/order.tide" "${name}\t${source}\t${namespace}")
+endfunction()
+
 # Box2D's own sources, as they came: a library the tests share, with its
 # warnings off. The package's bridge is ours, and compiles with each test.
 file(GLOB box2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d/src/*.c")
@@ -30,6 +68,18 @@ endif()
 add_test(NAME tide_box2d_stack COMMAND tide_box2d_stack)
 set_tests_properties(tide_box2d_stack PROPERTIES TIMEOUT 120)
 
+tide_package_order_test(tide_box2d_order Box2D "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box2d/test")
+
+# What a game does with it: systems ordered against the step, views, impulses,
+# bodies at rest that code moves, and sensors. A game that's built with the
+# package as tide builds one that lists it, the package's files before its own.
+tide_add_game(tide_box2d_course SOURCES box2d/bridge.c box2d/test/course.tide NAME course PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/course_test.c)
+target_include_directories(tide_box2d_course PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_course PRIVATE tide_box2d)
+add_test(NAME tide_box2d_course COMMAND tide_box2d_course)
+set_tests_properties(tide_box2d_course PROPERTIES TIMEOUT 120)
+
 # Box3D's, the same way, and with the same flags for the same reason.
 file(GLOB box3d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d/src/*.c")
 add_library(tide_box3d STATIC ${box3d_sources})
@@ -51,6 +101,16 @@ endif()
 add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
 # A step in 3D is several of Box2D's, and a web build has no SIMD for it
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
+
+tide_package_order_test(tide_box3d_order Box3D "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test")
+
+# What a game does with it, as tide_box2d_course is for Box2D.
+tide_add_game(tide_box3d_course SOURCES box3d/bridge.c box3d/test/course.tide NAME course PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/course_test.c)
+target_include_directories(tide_box3d_course PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_course PRIVATE tide_box3d)
+add_test(NAME tide_box3d_course COMMAND tide_box3d_course)
+set_tests_properties(tide_box3d_course PROPERTIES TIMEOUT 300)
 
 # Its image written as what changed of the last one, against the image written
 # whole: a match of its own, so that the one above keeps its pinned hashes, and

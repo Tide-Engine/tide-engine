@@ -13,8 +13,9 @@ local singleton Brush
 
 input Paint
 {
-    [Clamp(0, 39)] int x;
-    [Clamp(0, 39)] int y;
+    // A cell, not something a player does: what another machine guesses of it stays
+    [Absolute, Clamp(0, 39)] int x;
+    [Absolute, Clamp(0, 39)] int y;
     bool down;
 
     Sample(Devices devices, Brush brush)
