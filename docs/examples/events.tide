@@ -1,0 +1,121 @@
+settings { title = "Events"; tickRate = 30; maxPlayers = 1; }
+
+component Ball
+{
+    float2 position;
+    float2 velocity;
+    int health = 3;
+    local float flash; // This machine's: how long a hit still shows
+}
+
+event Hit { int damage; }    // Sent to a ball
+event Bounced { float2 at; } // Sent to the world, only for what's shown
+command Poke { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Ball { position = float2(-1, 0.5), velocity = float2(1.6, 1.1) });
+    Spawn(Ball { position = float2(0.8, -0.4), velocity = float2(-1.2, 1.5) });
+    Spawn(Ball { position = float2(0, 1), velocity = float2(0.9, -1.7) });
+}
+
+system Fly(mut Ball ball, Time time)
+{
+    ball.position += ball.velocity * time.dt;
+    if (Math.Abs(ball.position.x) > 1.5)
+    {
+        ball.position.x = Math.Sign(ball.position.x) * 1.5;
+        ball.velocity.x = -ball.velocity.x;
+        Send(Bounced { at = ball.position });
+    }
+    if (Math.Abs(ball.position.y) > 1.5)
+    {
+        ball.position.y = Math.Sign(ball.position.y) * 1.5;
+        ball.velocity.y = -ball.velocity.y;
+        Send(Bounced { at = ball.position });
+    }
+}
+
+// A tap pokes a ball, and the match answers with an event sent to it.
+command(Poke poke, PlayerID sender) PokeBall(with Ball)
+{
+    this.Send(Hit { damage = 1 });
+}
+
+// The match's handler changes the match, at the end of the tick...
+event(Hit hit) TakeHit(mut Ball ball)
+{
+    ball.health -= hit.damage;
+    if (ball.health <= 0) this.Destroy();
+}
+
+// ...and another ball takes the place of one that's gone.
+event(Destroyed) Replace(Ball ball)
+{
+    Spawn(Ball { velocity = float2(-ball.velocity.y, ball.velocity.x) });
+}
+
+// Local handlers show what happened, on each machine, and never change the match.
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+}
+local singleton Fx { List<Spark> sparks; }
+
+local event(Hit) ShowHit(mut Ball ball)
+{
+    ball.flash = 0.25; // A local field of the ball that was hit
+}
+
+local event(Bounced bounced) ShowBounce(mut Fx fx)
+{
+    for (var i = 0; i < 6; i++)
+        fx.sparks.Add(Spark { position = bounced.at, velocity = float2(Math.Cos(i * 1.05), Math.Sin(i * 1.05)) });
+}
+
+// The ball as it was when it went, though it's gone by the frame.
+local event(Destroyed) Burst(Ball ball, mut Fx fx)
+{
+    for (var i = 0; i < 24; i++)
+        fx.sparks.Add(Spark { position = ball.position, velocity = float2(Math.Cos(i * 0.26), Math.Sin(i * 0.26)) * (1 + i % 3) });
+}
+
+view Arena()
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Camera(float2(0, 0.15), 2.3);
+    Draw2D.WireRect(float2(0), float2(3.8, 3.8), 0.03, Color(0.18, 0.24, 0.32));
+}
+
+view Balls(mut Ball ball, Devices devices)
+{
+    ball.flash = Math.Max(0, ball.flash - Frame.dt);
+    var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (devices.pointer.press.down && Math.Distance(pointer, ball.position) < 0.45) this.Send(Poke { });
+    Draw2D.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(1, 0.65, 0.3));
+}
+
+view Sparks(mut Fx fx)
+{
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        spark.age += Frame.dt;
+        if (spark.age >= 0.5)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.position += spark.velocity * Frame.dt;
+        fx.sparks[i] = spark;
+        Draw2D.Circle(spark.position, 0.04, Color(1, 0.9, 0.5, 1 - spark.age * 2));
+        i++;
+    }
+    Draw2D.Screen();
+    Draw2D.Text("Tap a ball three times", float2(16, 14), 18, Color.white);
+}

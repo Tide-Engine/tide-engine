@@ -1,0 +1,78 @@
+settings { title = "Commands"; tickRate = 30; maxPlayers = 4; }
+
+scene Main { }
+
+component Badge
+{
+    string name = "Player";
+    int seat;
+}
+singleton Roster
+{
+    Map<PlayerID, Entity> badges;
+    int arrivals;
+    int refused;
+}
+
+// An action a player submits. It holds what the player says, never who they are.
+command Rename { string name; }
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    roster.badges[joined.player] = Spawn(Badge { seat = roster.arrivals % 2 }, Owner { player = joined.player });
+    roster.arrivals += 1;
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.badges[left.player].Destroy();
+    roster.badges.Remove(left.player);
+}
+
+// The badge is the one the command was sent to, and `sender` comes from the
+// player's connection. Being sent a badge isn't permission to change it.
+command(Rename rename, PlayerID sender) RenameBadge(Owner owner, mut Badge badge, mut Roster roster)
+{
+    if (sender != owner.player)
+    {
+        roster.refused += 1;
+        return;
+    }
+    if (rename.name.length == 0 || rename.name.length > 12) return;
+    badge.name = rename.name;
+}
+
+// What's typed stays on this machine until it's sent.
+local singleton Draft { string name = "Ada"; }
+
+float2 Seat(int seat)
+{
+    return float2(Screen.width * (0.27 + seat * 0.46), 190);
+}
+
+view Backdrop(Roster roster)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Screen();
+    Draw2D.Text($"Commands the match refused: {roster.refused}", float2(16, Screen.height - 30), 14, Color(0.6, 0.68, 0.78));
+}
+
+view Mine(Badge badge, mut Draft draft, with ownership)
+{
+    var at = Seat(badge.seat);
+    Draw2D.RoundRect(at, float2(150, 64), 12, Color(0.13, 0.26, 0.45));
+    Draw2D.WireRoundRect(at, float2(150, 64), 12, 2, Color.white);
+    Draw2D.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
+    Draw2D.Text("yours", at + float2(0, 48), 13, Color(0.6, 0.68, 0.78), Anchor.MiddleCenter);
+    GUI.TextField(Rect(12, 12, Screen.width - 24, 32), "Name", draft.name);
+    if (GUI.Button(Rect(12, 52, Screen.width - 24, 32), "Rename my badge")) this.Send(Rename { name = draft.name });
+}
+
+view Theirs(Badge badge, without ownership)
+{
+    var at = Seat(badge.seat);
+    Draw2D.RoundRect(at, float2(150, 64), 12, Color(0.32, 0.2, 0.1));
+    Draw2D.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
+    // Nothing stops a machine from sending this. The handler does.
+    if (GUI.Button(Rect(at.x - 75, at.y + 42, 150, 30), "Rename theirs")) this.Send(Rename { name = "Mine now" });
+}

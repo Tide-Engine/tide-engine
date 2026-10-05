@@ -1,0 +1,84 @@
+settings { title = "Predicted and confirmed"; tickRate = 30; maxPlayers = 4; }
+
+scene Main { } // The match's own scene: one machine hosts it, the others join
+
+component Body
+{
+    float2 position;
+    Color color;
+}
+singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }
+
+// Where this machine's pointer is in the arena, which its input sends.
+local singleton Aim { float2 world; bool moved; }
+
+input Steer
+{
+    [Clamp(-3, 3)] float2 target;
+    bool steering;
+
+    Sample(Devices devices, Aim aim)
+    {
+        target = aim.world;
+        steering = aim.moved; // Not before the pointer was ever on this window
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    var first = roster.arrivals % 2 == 0;
+    roster.arrivals += 1;
+    roster.bodies[joined.player] = Spawn(
+        Body { position = float2(first ? -1 : 1, 0), color = first ? Color(0.3, 0.8, 1) : Color(1, 0.65, 0.3) },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+// Each body walks to where its owner points, on every machine alike.
+system Follow(Steer steer, mut Body body, Time time)
+{
+    if (!steer.steering) return;
+    var way = steer.target - body.position;
+    var step = 2.5 * time.dt;
+    body.position += Math.Length(way) > step ? Math.Normalize(way) * step : way;
+}
+
+view Point(Devices devices, mut Aim aim)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Camera(float2(0, 0.3), 2.4);
+    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
+}
+
+// The ring: where the server has confirmed the body is. It trails what this
+// machine predicts by as far as the machine runs ahead of the server.
+view Confirmed(verified Body body)
+{
+    Draw2D.WireCircle(body.position, 0.34, 0.035, body.color);
+}
+
+// The disc: the world as this machine predicts it. Its own input applies at
+// once, and the other player's is guessed from the last one that arrived.
+view Predicted(Body body)
+{
+    Draw2D.Circle(body.position, 0.2, body.color);
+}
+
+view Mine(Body body, with ownership)
+{
+    Draw2D.Text("you", body.position + float2(0, 0.42), 0.2, Color.white, Anchor.LowerCenter);
+}
+
+view Hud(Session session)
+{
+    Draw2D.Screen();
+    Draw2D.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
+                float2(12, 10), 15, Color.white);
+    Draw2D.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.6, 0.68, 0.78));
+}

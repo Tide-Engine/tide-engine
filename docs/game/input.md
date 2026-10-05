@@ -25,6 +25,14 @@ system Jump(PlayerInput input, mut Velocity velocity)
 }
 ```
 
+Click the game below so it has the keyboard, then walk with `A` and `D` or the arrows and jump with space. A drag works too: sideways to walk, up to jump. `Sample` turns what the devices say into the input's two fields, a system moves the hero by them, and the line at the top shows what the match got.
+
+::: tide-example input An input, sampled and read
+
+<<< @/examples/input.tide
+
+:::
+
 ## Sampling
 
 The engine calls the input's `Sample` method on the player's own machine, once per tick. Its fields start at their defaults, and `Sample` assigns them by name, without `mut`.
@@ -42,6 +50,14 @@ Spawn(Body, Owner { player = joined.player });
 It's a normal component: it can be read, written, added and removed, and writing it hands control over.
 
 Entities without an `Owner`, or whose owner isn't a known player, get the **server's input**, and so do systems that run once per tick. That's how the server controls what no player owns. An input parameter doesn't pick entities: add `with Owner` to only run on owned ones.
+
+Below are two machines in one match. Move the pointer over a frame to steer that machine's player. One system moves every body, and for each it reads the input of whoever owns that body. The gray body has no `Owner`, so it reads the server's input, which here is player 1's machine's: it follows player 1's pointer, slowly. **Trade bodies** writes the two `Owner`s the other way round, and from then on each player steers the other's body.
+
+::: tide-match owners Whose input a system reads
+
+<<< @/examples/owners.tide
+
+:::
 
 A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
 
