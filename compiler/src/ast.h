@@ -1084,6 +1084,9 @@ typedef enum fix_kind {
     // A return, or a function's end, that leaves an `out` parameter (`param`) of `method` unassigned:
     // `x = default;` before it. At the function's name for its end
     FIX_ASSIGN_OUT,
+    // An `out` parameter (`param`) of `method` read before it's assigned: `x = default;` as the function
+    // starts, or the parameter as `mut`, with the word gone from its calls
+    FIX_ASSIGN_FIRST,
 } fix_kind;
 
 typedef struct fix {
