@@ -1,0 +1,5 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: a struct is data, and data isn't replaced: its methods can be
+virtual struct Stats { float health; }
+
+scene Main { }

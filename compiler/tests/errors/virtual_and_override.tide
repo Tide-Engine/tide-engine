@@ -1,0 +1,10 @@
+// expect: an override can't be virtual too: a declaration is replaced once
+// expect: two overrides of one declaration are an error, so nothing could replace this one: drop 'virtual'
+component Position { float value; }
+
+virtual override system Move(mut Position position)
+{
+    position.value += 1;
+}
+
+scene Main { }

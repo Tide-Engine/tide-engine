@@ -40,6 +40,7 @@ extern float Noise(float x, float y);
 extern void Fill(in Stats stats, mut List<float> values);
 extern int Write(out List<byte> bytes, Buffer out);
 extern void DrawUI(DrawList list);
+extern system MoveInC(mut Stats stats, Time time, without Frozen);
 RenderTarget scene; Texture image;
 Draw.Blit(scene.color, Draw.window, Blur);
 const List<int> NONE = [];
@@ -325,4 +326,29 @@ void Halving(
     var either = on ? 1 : out;
     if (out is Stats made) return;
     Write(count: out);
+}
+
+// virtual and override, with local and async, and the name an override is
+// written with: a namespace's, or a method's type.
+virtual system Drift(mut Toast toast) { }
+virtual local async event(Shown) Blink(mut Toast toast) { }
+override system Combat.Drive(mut Toast toast) { }
+override view Combat.Hud.Bar(Toast toast) { }
+override local event(Shown) Combat.Flash(mut Toast toast) { }
+virtual command(Rename rename, PlayerID sender) Renamed(mut Name name) { }
+override command(Rename rename, PlayerID sender) Combat.OnRename(mut Name name) { }
+virtual float Hurt(float base) { return base; }
+override float Combat.Harm(float base) { return base; }
+override mut void Stats.Wound(float amount) { }
+override frag Effects.Glow(Corner vertex, mut Color color) { }
+struct Probed
+{
+    float health;
+    virtual bool IsGone() { return health <= 0; }
+    virtual mut void Drain(float amount) { health -= amount; }
+}
+system Words(mut Toast toast)
+{
+    var virtual = 1;
+    var override = virtual + 1;
 }

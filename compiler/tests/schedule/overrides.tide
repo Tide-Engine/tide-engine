@@ -1,0 +1,67 @@
+// An override in the place of what it replaces (package Fast, in
+// overrides/Fast/fast.tide): where it is in the order, its Stage and its
+// [After], and under the name others wait for. What it reads and writes is
+// its own, so the schedule is worked out from what's built: Move's override
+// writes Velocity too, and Rest's override only reads Health.
+namespace Combat;
+
+enum Phase { Early, Late }
+
+scene Main { }
+
+component Position { float value; }
+component Velocity { float value; }
+component Health { float value; }
+component Player { }
+
+singleton Log { int ticks; }
+
+system Gravity(mut Velocity velocity)
+{
+    velocity.value -= 1;
+}
+
+[After(Gravity)]
+virtual system Move(mut Position position, Velocity velocity)
+{
+    position.value += velocity.value;
+}
+
+// It names Move, and waits for what's built in its place
+[After(Move)]
+system Clamp(mut Position position)
+{
+    if (position.value < 0) position.value = 0;
+}
+
+// Two that share a name: the second is replaced, in its phase and at its offset
+[Stage(Phase.Late)]
+virtual system Rest(mut Health health, mut Log log, with Player)
+{
+    health.value += 1;
+    log.ticks += 1;
+}
+
+[Stage(Phase.Late, 1)]
+virtual system Rest(mut Health health, mut Log log, without Player)
+{
+    health.value += 2;
+    log.ticks += 1;
+}
+
+[Stage(Phase.Early)]
+system Count(mut Log log)
+{
+    log.ticks += 1;
+}
+
+virtual view Show(Position position)
+{
+    Draw2D.Circle(float2(position.value, 0), 1, Color.white);
+}
+
+virtual event(Spawned) Setup(with Main)
+{
+    Spawn(Position, Velocity, Health, Player);
+    Spawn(Health);
+}

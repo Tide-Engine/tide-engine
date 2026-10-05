@@ -1,0 +1,4 @@
+# A mod for the build service's example game (../game): a package, which the
+# service adds to the game's tide.packages by this folder's repository and a
+# commit of it.
+package Sparkle

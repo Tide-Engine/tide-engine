@@ -1,0 +1,10 @@
+// expect: 'virtual' goes before a declaration with code, which another package can then replace
+// expect: operators aren't replaced: an operator can call a virtual method, which can be
+struct Money
+{
+    int cents;
+
+    virtual Money operator +(Money a, Money b) { return Money { cents = a.cents + b.cents }; }
+}
+
+scene Main { }

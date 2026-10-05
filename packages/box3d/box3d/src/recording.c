@@ -20,17 +20,26 @@
 
 // Buffer helpers
 
-void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size )
+// Tide: where the next `size` bytes of the buffer go, for the caller to write, with the buffer past them: what
+// b3RecBufAppend did before it copied. NULL when they're only counted. A writer of many small things asks
+// once for all of them (b3SerIslands in world_snapshot.c).
+uint8_t* b3RecBufReserve( b3RecBuffer* buf, int size )
 {
 	if ( size <= 0 )
 	{
-		return;
+		return NULL;
 	}
 
 	if ( buf->countOnly )
 	{
 		buf->size += size;
-		return;
+		return NULL;
+	}
+
+	// Tide: an image as its parts keeps them itself
+	if ( buf->parts != NULL )
+	{
+		return b3SnapPartsReserve( buf, size );
 	}
 
 	// Tide: the caller's memory doesn't grow. From here on the bytes are only counted
@@ -38,7 +47,7 @@ void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size )
 	{
 		buf->countOnly = true;
 		buf->size += size;
-		return;
+		return NULL;
 	}
 
 	if ( buf->size + size > buf->capacity )
@@ -59,8 +68,18 @@ void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size )
 		buf->capacity = newCap;
 	}
 
-	memcpy( buf->data + buf->size, data, (size_t)size );
+	uint8_t* at = buf->data + buf->size;
 	buf->size += size;
+	return at;
+}
+
+void b3RecBufAppend( b3RecBuffer* buf, const void* data, int size )
+{
+	uint8_t* at = b3RecBufReserve( buf, size );
+	if ( at != NULL )
+	{
+		memcpy( at, data, (size_t)size );
+	}
 }
 
 void b3RecBufFree( b3RecBuffer* buf )

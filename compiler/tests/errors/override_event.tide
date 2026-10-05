@@ -1,0 +1,5 @@
+// expect: 'override' goes before a declaration with code, which replaces the virtual one it names
+// expect: an event is data, and data isn't replaced: its handlers can be
+override event Hit { int damage; }
+
+scene Main { }

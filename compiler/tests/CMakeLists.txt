@@ -1,14 +1,15 @@
 # End-to-end tests: e2e/<name>.tide (or the SOURCES given) is transpiled and
 # compiled together with e2e/<name>_test.c and the shared test harness, then run.
-# WARNINGS are the ones tidec has to give, as for tide_add_game.
+# WARNINGS are the ones tidec has to give, and PACKAGES the files of packages
+# the game builds with, each after its package's name, as for tide_add_game.
 function(tide_e2e_test name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS;PACKAGES" ${ARGN})
     set(sources "e2e/${name}.tide")
     if(ARG_SOURCES)
         set(sources ${ARG_SOURCES})
     endif()
     set(target tidec_e2e_${name})
-    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS}
+    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES}
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}_test.c")
     target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     add_test(NAME ${target} COMMAND ${target})
@@ -58,6 +59,10 @@ tide_e2e_test(structs)
 tide_e2e_test(methods)
 tide_e2e_test(overloads) # Default values, named arguments, and functions, methods and systems that share a name
 tide_e2e_test(overloads_extern SOURCES e2e/overloads_extern.tide e2e/overloads_extern_c.c) # ...and C functions, which have neither
+# virtual and override: a package's overrides of the game's code, and the game's of the package's. What only
+# replaced code spawned is in no archetype, so the system that needs it matches nothing
+tide_e2e_test(overrides SOURCES e2e/overrides/game.tide PACKAGES Expansion e2e/overrides/Expansion/expansion.tide
+    WARNINGS "system 'Haunt' never runs")
 tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)
@@ -131,6 +136,7 @@ tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
+tide_e2e_test(coming) # The tick that's coming: what a player does shows in the frame that reads it
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
 tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
@@ -140,6 +146,11 @@ tide_e2e_test(directives) # #if and the rest: what other versions of tide read i
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
 tide_e2e_test(extern SOURCES e2e/extern.tide e2e/extern_noise.tide e2e/extern_c.c) # C functions, from the game's C file
+tide_e2e_test(extern_system SOURCES e2e/extern_system.tide e2e/extern_system_c.c) # Systems written in C, and their rows
+if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
+    target_link_libraries(tidec_e2e_extern_system PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_extern_system PRIVATE TIDE_EXTERN_SYSTEM_THREADS=1)
+endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)

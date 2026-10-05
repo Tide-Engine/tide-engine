@@ -1,0 +1,10 @@
+// expect: 'Tick' is ambiguous: both First and Second have it
+// expect: write which one you mean, like 'First.Tick'
+component Position { float value; }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position);
+}
+
+scene Main { }

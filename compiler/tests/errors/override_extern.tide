@@ -1,0 +1,5 @@
+// expect: 'override' goes before a declaration with code, which replaces the virtual one it names
+// expect: an extern function's code is C, which Tide can't replace
+override extern float Noise(float x);
+
+scene Main { }

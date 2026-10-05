@@ -116,6 +116,10 @@ const cases = {
         ['extern float Noise(', [['extern', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Noise', 'entity.name.function']]],
         ['extern void Fill(', [['in', 'storage.modifier'], ['in', '!keyword.control'], ['Stats', 'entity.name.type'], ['mut', 'storage.modifier']]],
         ['extern int Write(', [['out', 'storage.modifier'], ['List', 'support.class'], ['byte', 'storage.type.primitive'], ['out', '!storage.modifier', 2]]],
+        ['extern system MoveInC(', [
+            ['extern', 'storage.modifier'], ['system', 'storage.type'], ['system', '!entity.name.type'], ['MoveInC', 'entity.name.function'],
+            ['mut', 'storage.modifier'], ['without', 'storage.modifier'],
+        ]],
         ['const List<int> NONE', [['const', 'storage.modifier'], ['List', 'support.class'], ['NONE', 'variable.other.constant']]],
         ['const int MAX_HEALTH', [['const', 'storage.modifier'], ['MAX_HEALTH', 'variable.other.constant']]],
         ['Grid2<int> cells;', [['Grid2', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end']]],
@@ -147,6 +151,41 @@ const cases = {
         ]],
         ['local async event(Shown) Glow(', [['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'], ['Glow', 'entity.name.function']]],
         ['async void Countdown()', [['async', 'storage.modifier'], ['void', 'storage.type.primitive'], ['Countdown', 'entity.name.function'], ['Wait', 'support.class'], ['await', 'keyword.control']]],
+    ],
+    'virtual and override, where a declaration starts': [
+        ['virtual system Drift(', [['virtual', 'storage.modifier'], ['system', 'storage.type'], ['Drift', 'entity.name.function'], ['Drift', '!entity.name.function.call']]],
+        ['virtual local async event(Shown) Blink(', [
+            ['virtual', 'storage.modifier'], ['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'],
+            ['Shown', 'entity.name.type'], ['Blink', 'entity.name.function'], ['Blink', '!entity.name.function.call'],
+        ]],
+        ['override system Combat.Drive(', [
+            ['override', 'storage.modifier'], ['system', 'storage.type'], ['Combat', 'entity.name.namespace'], ['.', 'punctuation.accessor'],
+            ['Drive', 'entity.name.function'], ['Drive', '!entity.name.function.call'], ['mut', 'storage.modifier'],
+        ]],
+        ['override view Combat.Hud.Bar(', [['view', 'storage.type'], ['Combat', 'entity.name.namespace'], ['Hud', 'entity.name.namespace'], ['Bar', 'entity.name.function']]],
+        ['override local event(Shown) Combat.Flash(', [
+            ['override', 'storage.modifier'], ['local', 'storage.modifier'], ['event', 'storage.type'], ['Combat', 'entity.name.namespace'],
+            ['Flash', 'entity.name.function'], ['Flash', '!entity.name.function.call'],
+        ]],
+        ['virtual command(Rename rename, PlayerID sender) Renamed(', [
+            ['virtual', 'storage.modifier'], ['command', 'storage.type'], ['Rename', 'entity.name.type'], ['rename', 'variable.parameter'],
+            ['PlayerID', 'storage.type.primitive'], ['sender', 'variable.parameter'], ['Renamed', 'entity.name.function'],
+        ]],
+        ['override command(Rename rename, PlayerID sender) Combat.OnRename(', [
+            ['override', 'storage.modifier'], ['command', 'storage.type'], ['Combat', 'entity.name.namespace'], ['OnRename', 'entity.name.function'],
+            ['OnRename', '!entity.name.function.call'],
+        ]],
+        ['virtual float Hurt(', [['virtual', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Hurt', 'entity.name.function'], ['Hurt', '!entity.name.function.call']]],
+        ['override float Combat.Harm(', [
+            ['override', 'storage.modifier'], ['float', 'storage.type.primitive'], ['Combat', 'entity.name.type'], ['Harm', 'entity.name.function'],
+            ['Harm', '!entity.name.function.call'],
+        ]],
+        ['override mut void Stats.Wound(', [['override', 'storage.modifier'], ['mut', 'storage.modifier'], ['Stats', 'entity.name.type'], ['Wound', 'entity.name.function']]],
+        ['override frag Effects.Glow(', [['override', 'storage.modifier'], ['frag', 'storage.type'], ['Effects', 'entity.name.namespace'], ['Glow', 'entity.name.function']]],
+        ['virtual bool IsGone()', [['virtual', 'storage.modifier'], ['bool', 'storage.type.primitive'], ['IsGone', 'entity.name.function']]],
+        ['virtual mut void Drain(', [['virtual', 'storage.modifier'], ['mut', 'storage.modifier'], ['Drain', 'entity.name.function']]],
+        ['var virtual = 1;', [['virtual', '!storage']]],
+        ['var override = virtual + 1;', [['override', '!storage'], ['virtual', '!storage']]],
     ],
     'fails after the parameters or on a line of its own': [
         ['int Parse(string text) fails', [['fails', 'storage.modifier.fails'], ['ParseError', 'entity.name.type']]],
@@ -451,22 +490,24 @@ test('indenting ignores braces in text and comments', () => {
 // Every program in compiler/tests/e2e, with its declarations found without the
 // grammar: data declarations, systems, views, frags, verts, handlers,
 // functions, constants and externs at the start of a line, and methods in a
-// type's body, which the formatter indents by four spaces.
+// type's body, which the formatter indents by four spaces. An override's name
+// can be written with what it's in (Combat.Move, Stats.Hurt): its last part
+// is the name.
 const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true }).filter(f => f.endsWith('.tide')).sort();
 
-const modifiers = String.raw`(?:(?:local|async)\s+)*`;
+const modifiers = String.raw`(?:(?:local|async|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
     [new RegExp(String.raw`^${modifiers}(?:component|singleton|struct|input|event|command|enum|scene)\s+(\w+)`), 'entity.name.type'],
-    [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+(\w+)`), 'entity.name.function'],
-    [new RegExp(String.raw`^${modifiers}(?:event|command)\s*\([^)]*\)\s*(\w+)`), 'entity.name.function'],
+    [new RegExp(String.raw`^${modifiers}(?:system|view|frag|vert)\s+([\w.]+)`), 'entity.name.function'],
+    [new RegExp(String.raw`^${modifiers}(?:event|command)\s*\([^)]*\)\s*([\w.]+)`), 'entity.name.function'],
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
     [new RegExp(String.raw`^extern\s+${type}\s+(\w+)\s*\(`), 'entity.name.function'],
-    [new RegExp(String.raw`^${modifiers}(?:mut\s+)?(${type})\s+(\w+)\s*\(`), 'entity.name.function'],
+    [new RegExp(String.raw`^${modifiers}(?:mut\s+)?(${type})\s+([\w.]+)\s*\(`), 'entity.name.function'],
 ];
-const method = new RegExp(String.raw`^    (?:mut\s+)?(${type})\s+(\w+)\s*\(`);
+const method = new RegExp(String.raw`^    (?:virtual\s+)?(?:mut\s+)?(${type})\s+(\w+)\s*\(`);
 
 for (const program of programs) {
     test(`e2e/${program.replaceAll('\\', '/')}`, () => {
@@ -488,7 +529,7 @@ for (const program of programs) {
                 if (!match) continue;
                 const last = match[match.length - 1];
                 if (pattern === declarations[5][0] && keywords.has(match[1])) break;
-                name = last;
+                name = last.split('.').pop();
                 scope = wanted;
                 break;
             }

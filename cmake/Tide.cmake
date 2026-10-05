@@ -1,5 +1,6 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...])
+#               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
+#               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -7,6 +8,13 @@
 # define its extern functions, compile with it: every .c file in the folder
 # but the HOST ones, or the .c files listed after SOURCES. So do its C++
 # files (.cpp, .cc and .cxx), with no C++ runtime (TIDE_CPP_FLAGS).
+#
+# PACKAGES lists files of packages the game builds with, each package's after
+# its name (which is its namespace): what isn't a .tide file is a name. They
+# compile before the game's, in the order the packages are named, as tide
+# builds a game with what its tide.packages lists. It's for tests of what
+# packages do to a game: this doesn't read tide.packages, and a game with real
+# packages builds with tide.
 #
 # Without HOST, the game is the whole program: it opens a window titled TITLE,
 # or the game's title setting, or <target>, and runs (see
@@ -60,7 +68,7 @@ set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
 set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-threadsafe-statics)
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES" ${ARGN})
     if("SOURCES" IN_LIST ARG_KEYWORDS_MISSING_VALUES)
         message(FATAL_ERROR "tide_add_game(${target}): list the game's .tide files after SOURCES, or leave "
                             "SOURCES out to use every .tide file in ${CMAKE_CURRENT_SOURCE_DIR} and its subfolders")
@@ -114,6 +122,26 @@ function(tide_add_game target)
         set(manifest_paths "${CMAKE_CURRENT_SOURCE_DIR}/")
     endif()
 
+    # The packages' files, as tidec's list says them: `--package <Name>`, then its files
+    set(package_lines "")
+    set(package_sources "")
+    set(manifest_packages "")
+    set(package "")
+    foreach(item IN LISTS ARG_PACKAGES)
+        if(item MATCHES "\\.tide$")
+            if(package STREQUAL "")
+                message(FATAL_ERROR "tide_add_game(${target}): name the package before its files, after PACKAGES")
+            endif()
+            get_filename_component(path "${item}" ABSOLUTE)
+            list(APPEND package_lines "${path}")
+            list(APPEND package_sources "${path}")
+            list(APPEND manifest_packages "${path}\t${package}")
+        else()
+            set(package "${item}")
+            list(APPEND package_lines "--package ${item}")
+        endif()
+    endforeach()
+
     foreach(path IN LISTS c_sources)
         if(path MATCHES "\\.(cpp|cc|cxx)$")
             set_source_files_properties("${path}" PROPERTIES LANGUAGE C COMPILE_OPTIONS "${TIDE_CPP_FLAGS}")
@@ -144,6 +172,10 @@ function(tide_add_game target)
     # (32,767 characters on Windows).
     set(listed "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.sources")
     list(JOIN sources "\n" source_lines)
+    if(package_lines)
+        list(JOIN package_lines "\n" more_lines)
+        string(APPEND source_lines "\n${more_lines}")
+    endif()
     set(written "-")
     if(EXISTS "${listed}")
         file(READ "${listed}" written)
@@ -156,7 +188,7 @@ function(tide_add_game target)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout}
-        DEPENDS ${TIDEC_DEPENDS} ${sources} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
@@ -210,6 +242,9 @@ int main(int argc, char **argv)
     foreach(path IN LISTS manifest_paths)
         set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${target}\t${path}")
     endforeach()
+    foreach(line IN LISTS manifest_packages)
+        set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${target}\t${line}")
+    endforeach()
     get_property(scheduled GLOBAL PROPERTY TIDE_GAMES_MANIFEST_SCHEDULED)
     if(NOT scheduled)
         set_property(GLOBAL PROPERTY TIDE_GAMES_MANIFEST_SCHEDULED TRUE)
@@ -219,7 +254,9 @@ endfunction()
 
 # Lists every game and its files, one "<game>\t<path>" per line, once all the
 # games are known. A path ending in '/' is a folder: every .tide file in it and
-# its subfolders. tidels reads it to analyze a game's files together.
+# its subfolders. A file of a package the game is built with (PACKAGES) has the
+# package's name after it: "<game>\t<path>\t<package>". tidels reads it to
+# analyze a game's files together.
 function(tide_write_games_manifest)
     get_property(lines GLOBAL PROPERTY TIDE_GAME_LINES)
     list(JOIN lines "\n" content)

@@ -507,10 +507,43 @@ B3_API int b3GetSnapshotHead( void );
 
 /// Write a snapshot with each section at its base, and each section's size into @p sizes. With no bases, the
 /// image is one run of bytes.
+/// An image with bases that's written whole, all of it within @p capacity, is the world's last image: what
+/// b3World_GetSnapshotParts says changed next is what changed of it.
 /// @return The image's size, with nothing past @p capacity written. Or -1 when a section ran past the next
 ///         one's base: the sizes are right, the image isn't one, and the caller places the sections again.
 ///         Or 0 for a world that has no image.
 B3_API int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// As b3World_GetSnapshotAt, for a check of b3World_GetSnapshotParts: the image written whole, which the
+/// world doesn't take for its last one, so that what it says changed next is what it would have said.
+B3_API int b3World_CheckSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// Bytes of an image: `size` of them, which go at `offset` in it.
+typedef struct b3SnapshotPart
+{
+	int offset;
+	int size;
+	const uint8_t* bytes;
+} b3SnapshotPart;
+
+/// What changed of a world's image since its last one, as parts to write over that one: the image is then,
+/// byte for byte, what b3World_GetSnapshotAt writes. The last image is the one this or b3World_GetSnapshotAt
+/// last returned the size of, at the same bases, and the caller has it: the world keeps no copy. What's
+/// between its end and the new size is zeros before the parts are written.
+/// The parts and their bytes are the world's, some of them the world's own arrays: they're good until the
+/// world is next stepped, changed or asked for an image.
+/// @return The image's size. Or 0 when there's no saying what changed, and the caller takes the image whole
+///         (b3World_GetSnapshotAt): a world that had no image yet, was restored, has most of its bodies awake,
+///         has more bodies, shapes or contacts than its last image had room for, or had something done to it
+///         that isn't followed one body at a time. Or -1 when a section ran past the next one's base, as
+///         b3World_GetSnapshotAt returns it, with the sizes right.
+B3_API int b3World_GetSnapshotParts( b3WorldId worldId, const int* bases, int* sizes, const b3SnapshotPart** parts,
+									 int* partCount );
+
+/// How much of a world can be awake for b3World_GetSnapshotParts to say what changed: one body in @p share,
+/// or the usual share for 0. With more awake it returns 0, as an image written whole costs less then. 1 is
+/// every body, which is for tests of the parts.
+B3_API void b3World_SetSnapshotAwakeShare( b3WorldId worldId, int share );
 
 /// Where an image's sections start. False for an image that has none.
 B3_API bool b3GetSnapshotBases( const uint8_t* image, int size, int* bases );

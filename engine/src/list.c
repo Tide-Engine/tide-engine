@@ -465,14 +465,18 @@ static void flat_give(char *flat)
     flat_free(atomic_exchange(&flat_kept, flat));
 }
 
-// Writes `count` elements side by side over a list's first ones, run by run.
-// Of a world's list, only the runs that differ: a chunk that's written
-// becomes the world's own and is hashed again, which one that's as it was
-// needn't be, so what a snapshot shares of the list stays shared.
-// Where the `n` elements from `i` on go, which are a run (see `run`) about to
-// be written over, all of them. A chunk a snapshot shares is made the list's
-// own without them: megabytes a tick, for a big list C fills, that would be
-// copied only to be replaced.
+// How many bytes one of them has room for.
+static size_t flat_room(const char *flat)
+{
+    size_t has;
+    memcpy(&has, flat - FLAT_HEAD, sizeof has);
+    return has;
+}
+
+// Where the `n` elements from `i` on go, which are side by side (see `run`)
+// and about to be written over, all of them. A chunk a snapshot shares is
+// made the list's own without the ones at its start: megabytes a tick, for a
+// big list C fills, that would be copied only to be replaced.
 static char *run_over(const tide_list l, const uint32_t i, const uint32_t n, const uint32_t size)
 {
     tide_heap *heap = l.at >> 30 == TIDE_IN_SCRATCH ? NULL : tide_heap_of(l.at >> 30);
@@ -483,17 +487,29 @@ static char *run_over(const tide_list l, const uint32_t i, const uint32_t n, con
     return (char *)(tide_heap_write_over(heap, chunk, n * size) + 1);
 }
 
-static void put_elements(const tide_list l, const char *from, const uint32_t count, const uint32_t size)
+// Writes `count` elements side by side over a list's from `first` on, which it
+// has, run by run. Of a world's list, only the runs that differ: a chunk
+// that's written becomes the world's own and is hashed again, which one
+// that's as it was needn't be, so what a snapshot shares of the list stays
+// shared.
+static void put_elements_at(const tide_list l, const uint32_t first, const char *from, const uint32_t count, const uint32_t size)
 {
     const bool compare = l.at >> 30 != TIDE_IN_SCRATCH;
     for (uint32_t i = 0; i < count;) {
         uint32_t n;
-        const char *as_it_was = run(l, i, size, false, &n); // First: it says how many
+        const char *as_it_was = run(l, first + i, size, false, &n); // First: it says how many
         if (n > count - i) n = count - i;
         const char *mine = from + (size_t)i * size;
-        if (!compare || memcmp(as_it_was, mine, (size_t)n * size) != 0) memcpy(run_over(l, i, n, size), mine, (size_t)n * size);
+        if (!compare || memcmp(as_it_was, mine, (size_t)n * size) != 0) {
+            memcpy(run_over(l, first + i, n, size), mine, (size_t)n * size);
+        }
         i += n;
     }
+}
+
+static void put_elements(const tide_list l, const char *from, const uint32_t count, const uint32_t size)
+{
+    put_elements_at(l, 0, from, count, size);
 }
 
 void *tide_list_flatten(const tide_list l, const uint32_t size, const bool changes, bool *copied)
@@ -533,6 +549,8 @@ void *tide_list_out_room(tide_list_out *out, const uint32_t count)
     out->room = NULL;
     out->asked = 0;
     out->count = 0; // What was said of the room before isn't of this one
+    out->keeps = false; // ...nor what was said of a list that keeps what it holds
+    out->parts_count = 0;
     const uint64_t bytes = (uint64_t)count * out->size;
     if (!count || bytes > 0x40000000u) return NULL;
     out->room = flat_take((size_t)bytes);
@@ -542,21 +560,71 @@ void *tide_list_out_room(tide_list_out *out, const uint32_t count)
 
 void tide_list_out_count(tide_list_out *out, const uint32_t count)
 {
-    out->count = count < out->asked ? count : out->asked;
+    if (out->keeps) out->count = count; // No room it would be within
+    else out->count = count < out->asked ? count : out->asked;
+}
+
+void tide_list_out_keep(tide_list_out *out, const uint32_t count)
+{
+    if (out->room) flat_give(out->room);
+    out->room = NULL;
+    out->asked = 0;
+    out->count = count;
+    out->keeps = true;
+    out->parts_count = 0; // The parts said before were of another keeping
+}
+
+void tide_list_out_part(tide_list_out *out, const uint32_t first, const void *elements, const uint32_t count)
+{
+    if (!out->keeps || !elements || !count) return;
+    const size_t room = out->parts ? flat_room((const char *)out->parts) / sizeof *out->parts : 0u;
+    if (out->parts_count == room) { // As the room C fills: memory kept from one call to the next
+        const size_t more = room ? 2u * room : 64u;
+        tide_list_part *grown = (tide_list_part *)(void *)flat_take(more * sizeof *grown);
+        if (out->parts) {
+            memcpy(grown, out->parts, (size_t)out->parts_count * sizeof *grown);
+            flat_give((char *)out->parts);
+        }
+        out->parts = grown;
+    }
+    out->parts[out->parts_count++] = (tide_list_part){first, count, elements};
+}
+
+// A list that keeps what it holds: as long as C said, with C's parts written
+// over it, each compared with the elements it goes over.
+static void keep_with_parts(const tide_list_out *out, tide_list *l, const uint32_t where)
+{
+    const uint32_t size = out->size;
+    // More than a list holds: it stays as long as it is
+    if ((uint64_t)out->count * size <= 0x40000000u) tide_list_resize(l, (int32_t)out->count, size, where);
+    // Another's block, which stays as it is: one of its own, with what that one holds
+    if (l->at && !own_block(*l, where) && !reserve(l, 0, size, where)) return;
+    const uint32_t has = (uint32_t)tide_list_count(*l);
+    for (uint32_t k = 0; k < out->parts_count; k++) {
+        const tide_list_part *part = &out->parts[k];
+        if (part->first >= has) continue;
+        const uint32_t n = part->count < has - part->first ? part->count : has - part->first;
+        put_elements_at(*l, part->first, part->elements, n, size);
+    }
 }
 
 void tide_list_out_end(tide_list_out *out, tide_list *l, const uint32_t where)
 {
-    if (l->at && !own_block(*l, where)) l->at = 0; // Another's block, which stays as it is: none of it is kept
-    const uint32_t had = (uint32_t)tide_list_count(*l);
-    uint32_t count = out->count;
-    if (count < had) {
-        cut(l, count, out->size, where);
-    } else if (count > had) {
-        if (reserve(l, count - had, out->size, where)) tide_block_write(l->at)->a = count;
-        else count = had;
+    if (out->keeps) {
+        keep_with_parts(out, l, where);
+    } else {
+        if (l->at && !own_block(*l, where)) l->at = 0; // Another's block, which stays as it is: none of it is kept
+        const uint32_t had = (uint32_t)tide_list_count(*l);
+        uint32_t count = out->count;
+        if (count < had) {
+            cut(l, count, out->size, where);
+        } else if (count > had) {
+            if (reserve(l, count - had, out->size, where)) tide_block_write(l->at)->a = count;
+            else count = had;
+        }
+        if (count) put_elements(*l, out->room, count, out->size);
     }
-    if (count) put_elements(*l, out->room, count, out->size);
+    if (out->parts) flat_give((char *)out->parts);
     if (out->room) flat_give(out->room);
     *out = (tide_list_out){0};
 }

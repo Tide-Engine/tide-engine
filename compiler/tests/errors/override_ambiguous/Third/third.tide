@@ -1,0 +1,9 @@
+namespace Third;
+
+using First;
+using Second;
+
+override system Tick(mut Position position)
+{
+    position.value += 3;
+}

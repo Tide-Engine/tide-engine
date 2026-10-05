@@ -14,8 +14,17 @@
 // since, hashed: Box3D's next state is its last and what's done to it, and
 // nothing else. So it costs what was done, and the image is never read to
 // name it.
+//
+// After a step, the image goes into the match as what changed of the last
+// one, where Box3D can say (b3t_image): the match's list keeps the rest, and
+// no copy of the image is kept here. What a world says changed is of the last
+// image it wrote, which was of the state its stamp names. The match that has
+// the world for a tick is at that stamp, so its list holds that image, byte
+// for byte, whichever match's list it was written into. A world made from an
+// image writes its next one whole.
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,9 +32,11 @@
 
 #include "tide/jobs.h"
 #include "tide/list.h"
+#include "tide/map.h"
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/page.h"
+#include "tide/rows.h"
 #include "tide/time.h"
 
 // Box3D's headers are its own, as its sources are: what they'd be warned for
@@ -89,8 +100,41 @@ typedef struct touch {
     bool began;
 } touch;
 
-_Static_assert(sizeof(body) == 160 && sizeof(box) == 40 && sizeof(sphere) == 32 && sizeof(capsule) == 36 && sizeof(touch) == 24,
+// Physics, with the padding it writes out. Its lists and its map are the
+// match's to read and write: C leaves them as they are.
+typedef struct physics {
+    tide_float3 gravity;
+    int32_t substeps;
+    int32_t bodies;
+    int32_t shapes;
+    int64_t stamp;
+    int32_t size;
+    bool moved;
+    uint8_t unused[3];
+    tide_list image;
+    tide_list geometry;
+    tide_list gone;
+    tide_map owners;
+} physics;
+
+_Static_assert(sizeof(body) == 160 && sizeof(box) == 40 && sizeof(sphere) == 32 && sizeof(capsule) == 36 && sizeof(touch) == 24
+                   && sizeof(physics) == 64 && offsetof(physics, moved) == 36,
                "box3d.tide's types changed: these are theirs");
+
+// A body's place and speeds are 13 floats side by side in its component: its
+// position, its rotation, its velocity and its angular velocity. Where the
+// last step left it is the same 13 again, in the same order, and the impulses
+// it's to be given are 6 between them. The systems written in C go through
+// them as that many arrays (tide/rows.h), each named by where it starts.
+enum { PLACE = 13, STILL = 7, PUSH = 6 }; // ...of which the 6 from STILL on are the speeds
+#define NOW offsetof(body, position)
+#define STEP offsetof(body, step_position)
+#define PUSHES offsetof(body, impulse)
+
+_Static_assert(offsetof(body, impulse) - NOW == PLACE * sizeof(float) && offsetof(body, bullet) - STEP == PLACE * sizeof(float)
+                   && offsetof(body, gravity_scale) - PUSHES == PUSH * sizeof(float)
+                   && offsetof(body, velocity) - NOW == STILL * sizeof(float),
+               "a Body's place and speeds, and where the last step left them, aren't the same floats in the same order any more");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
 // out would cost more than it saves. The step itself is quicker shared from a
@@ -109,18 +153,75 @@ typedef struct world {
     uint64_t used;  // When a tick last had it
     int bases[B3_SNAPSHOT_SECTIONS]; // Where each section of its image goes: part of its state, as the image says them
     int image_size;                  // Its last image's, which is about the next one's: how much room to ask for
-    uint8_t *before; // Measuring: the last image, to count what changed of it
+    // Measuring and checking only: a copy of the last image, to count what changed of it and to see that
+    // what Box3D said changed is all that did. A match keeps none: its image is in its list.
+    uint8_t *before;
     int before_size;
+    bool before_good; // It's the world's last image
+    uint8_t *whole;   // Checking: the image written whole, to compare
+    int whole_size;
 } world;
 
 static world worlds[WORLDS];
 static uint64_t uses;
 static world *active; // The running tick's
 static bool shared;   // The running step's tasks go to other threads
+
+// The bodies the running tick's Enter made, in the order it made them, each
+// with its entity, for the system after it to take (b3t_made): the match keeps
+// whose each body is in a map, which is Tide's to write.
+typedef struct new_body {
+    int64_t body;
+    tide_entity entity;
+} new_body;
+
+static new_body *made;
+static int32_t made_count;
+static int32_t made_room;
+static int32_t made_taken;
+
+// The bodies the running tick's Enter told Box3D something of: the step notes
+// the ones it then left alone (note_left).
+static int64_t *synced;
+static int32_t synced_count;
+static int32_t synced_room;
+
+// What the running tick's step says of a body, found by the body's index: the
+// bodies b3t_leave has something to write for, and no others.
+//
+// A body the step moved, and left awake, has where it left it: Leave writes
+// that into the body's component and asks Box3D nothing. One that fell asleep
+// in the step, or that Enter told Box3D something of and the step then left
+// alone (a static body that code moved), is only marked: Leave asks Box3D
+// where it is, if its component doesn't say so already.
+//
+// Any other body wasn't awake for the step, and nothing was done to it this
+// tick: it's as the last step that noted it left it, which its component says
+// since that tick's Leave. Every body that's awake for a step is in the step's
+// move events, the ones that fall asleep in it too, and nothing code writes
+// reaches Box3D but through Enter.
+typedef struct left {
+    int64_t id;         // The body, with its generation
+    float place[PLACE]; // Its place and speeds, as its component keeps them, if it's awake
+    bool awake;         // Still awake after the step
+} left;
+
+static left *lefts;
+// Which step noted each body in `lefts`: `stepped`'s, or it's an older one's
+// and the last step says nothing of the body. Apart from `lefts`, as it's all
+// Leave reads of such a body, which is most of them.
+static uint32_t *left_steps;
+static uint32_t left_room;
+static uint32_t stepped; // Steps taken, by any world: the last one's number
+static int share_from = SHARED_BODIES; // A step with this many bodies awake is shared out
 static bool narrow;   // Worlds solve 4 contacts at a time, though the CPU can 8
 static int32_t shared_steps;
 static int32_t restores;
 static bool measuring; // No clock is read otherwise
+static bool checking;  // Every image written in parts is compared with the image written whole
+static bool always;    // ...and images are written in parts whatever is awake
+static int32_t images_whole;
+static int32_t images_in_parts;
 static uint64_t step_ns;
 static uint64_t image_ns;
 static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
@@ -204,12 +305,14 @@ static void make(world *w, const int workers)
     def.finishTask = finish;
     w->id = b3CreateWorld(&def);
     if (narrow) b3World_EnableSSE2Fallback(w->id, true);
+    if (always) b3World_SetSnapshotAwakeShare(w->id, 1);
     w->made = true;
     w->workers = workers;
     w->stamp = 0;
     w->chain = 0;
     memset(w->bases, 0, sizeof w->bases);
     w->image_size = 0;
+    w->before_good = false;
 }
 
 static void unmake(world *w)
@@ -276,6 +379,13 @@ static b3Quat quat(const tide_quaternion q)
 
 bool b3t_open(const int64_t stamp)
 {
+    // A tick starts here. The last one's new bodies each have their entity: Own goes through the bodies as Enter did
+    if (made_taken != made_count) {
+        fprintf(stderr, "Box3D: %d bodies were made last tick that no entity was given\n", (int)(made_count - made_taken));
+        abort();
+    }
+    made_count = made_taken = 0;
+    synced_count = 0;
     const int workers = workers_now();
     for (int i = 0; i < WORLDS; i++) {
         world *w = &worlds[i];
@@ -314,6 +424,7 @@ void b3t_restore(const uint8_t *image, const int32_t size, const uint8_t *geomet
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b3GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
     w->image_size = size;
+    w->before_good = false; // Its next image is written whole
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
@@ -337,9 +448,12 @@ void b3t_forget(void)
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
         free(worlds[i].before);
+        free(worlds[i].whole);
         worlds[i] = (world){0};
     }
     active = NULL;
+    made_count = made_taken = 0;
+    synced_count = 0;
 }
 
 // For tests: the worlds made from here on solve 4 contacts at a time, as a CPU
@@ -347,6 +461,33 @@ void b3t_forget(void)
 void b3t_narrow(const bool on)
 {
     narrow = on;
+}
+
+// For tests: every image that's written as what changed of the last one is
+// also taken whole, and the two compared. One byte apart ends the program,
+// saying where: the image is in the match's hash, and a player who joins makes
+// their world from it. With `whenever`, the worlds made from here on write
+// their images in parts whenever they can, where they'd write them whole
+// while most of their bodies are awake: more for the check to see.
+void b3t_check(const bool on, const bool whenever)
+{
+    checking = on;
+    always = on && whenever;
+}
+
+// For tests: a step is shared out over the tick's threads from this many
+// bodies awake, where it takes hundreds for that to pay. None is the usual.
+void b3t_share_from(const int32_t bodies)
+{
+    share_from = bodies > 0 ? bodies : SHARED_BODIES;
+}
+
+// How many images were written whole, and how many as what changed of the
+// last one, since the program started: tests read it to see they test both.
+void b3t_images(int32_t *whole, int32_t *in_parts)
+{
+    *whole = images_whole;
+    *in_parts = images_in_parts;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -392,7 +533,9 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
-int32_t b3t_body(body *b)
+// A body's component into Box3D: made, if it's new, or else what code wrote
+// into it since the last step. Whether it was made.
+static bool sync_body(body *b)
 {
     const world *w = active;
     const body was = *b;
@@ -445,6 +588,101 @@ int32_t b3t_body(body *b)
         note('d', &did, sizeof did);
     }
     return did & 1u;
+}
+
+// A run of bodies' fields, as the match keeps them: an array a field, a value
+// a body (tide/rows.h).
+typedef struct body_fields {
+    const int32_t *id; // A long is two fields: its low half, then its high
+    const int32_t *id_high;
+    const float *now[PLACE];  // Where its component says it is, and how fast
+    const float *step[PLACE]; // ...and where the last step left it
+    const float *push[PUSH];  // The impulses it's to be given
+} body_fields;
+
+static body_fields fields_of(const tide_rows *rows)
+{
+    body_fields f;
+    f.id = tide_rows_ints(rows, 0, offsetof(body, id));
+    f.id_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    for (size_t k = 0; k < PLACE; k++) {
+        f.now[k] = tide_rows_floats(rows, 0, NOW + k * sizeof(float));
+        f.step[k] = tide_rows_floats(rows, 0, STEP + k * sizeof(float));
+    }
+    for (size_t k = 0; k < PUSH; k++) f.push[k] = tide_rows_floats(rows, 0, PUSHES + k * sizeof(float));
+    return f;
+}
+
+// The bodies of a run are looked at this many at a time, a field after
+// another, so that each comparison runs down one array and the C compiler does
+// it for several bodies at once: a chunk's worth, which is what a run has.
+enum { AT_ONCE = 2048 };
+
+// Whether each of `count` bodies from `first` on is one code wrote to since
+// the last step, or a new one: what Enter has something to do for.
+static void written(const body_fields *f, const uint32_t first, const uint32_t count, uint8_t *restrict wrote)
+{
+    const int32_t *restrict id = f->id + first;
+    const int32_t *restrict id_high = f->id_high + first;
+    for (uint32_t i = 0; i < count; i++) wrote[i] = (id[i] | id_high[i]) == 0; // New
+    for (int k = 0; k < PLACE; k++) { // Moved, turned, pushed or spun
+        const float *restrict now = f->now[k] + first;
+        const float *restrict step = f->step[k] + first;
+        for (uint32_t i = 0; i < count; i++) wrote[i] |= now[i] != step[i];
+    }
+    for (int k = 0; k < PUSH; k++) { // Nudged
+        const float *restrict push = f->push[k] + first;
+        for (uint32_t i = 0; i < count; i++) wrote[i] |= push[i] != 0;
+    }
+}
+
+// The system Enter: new bodies are made, and what code wrote into a body since
+// the last step goes to Box3D. A body nothing wrote to costs these
+// comparisons, and nothing else. It runs on one thread, its rows in order
+// (it takes Physics to write), as what's done to the world is noted in order.
+//
+// The arrays are asked for once, before any body is written, though writing
+// one may give the match other memory for a field than what was read: a body
+// is looked at before it's written and never after, and the ones not yet
+// written are the same in both.
+void b3t_enter(tide_rows *rows, physics *p)
+{
+    (void)p;
+    const uint32_t count = tide_rows_count(rows);
+    const tide_entity *entities = tide_rows_entities(rows);
+    const body_fields f = fields_of(rows);
+    uint8_t wrote[AT_ONCE];
+    for (uint32_t i = 0; i < count; i++) {
+        if (i % AT_ONCE == 0) written(&f, i, count - i < AT_ONCE ? count - i : AT_ONCE, wrote);
+        if (!wrote[i % AT_ONCE]) continue;
+        body b;
+        tide_rows_get(rows, 0, i, &b);
+        if (sync_body(&b)) {
+            if (made_count == made_room) {
+                const int32_t room = made_room ? made_room * 2 : 64;
+                made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
+                made_room = room;
+            }
+            made[made_count++] = (new_body){b.id, entities[i]};
+        }
+        if (synced_count == synced_room) {
+            const int32_t room = synced_room ? synced_room * 2 : 64;
+            synced = tide_realloc(synced, (size_t)synced_room * sizeof *synced, (size_t)room * sizeof *synced);
+            synced_room = room;
+        }
+        synced[synced_count++] = b.id; // For the step to note, if it leaves the body alone
+        tide_rows_set(rows, 0, i, &b); // Its id, and the impulses it was given, which are gone
+    }
+}
+
+// The body the tick's Enter made for `entity`, once, or 0 for an entity whose
+// body it didn't make. Asked for each body in the order Enter went through
+// them, which is the order it made them in, so the next one made is the only
+// one to look at.
+int64_t b3t_made(const tide_entity entity)
+{
+    if (made_taken == made_count || !tide_entity_equal(made[made_taken].entity, entity)) return 0;
+    return made[made_taken++].body;
 }
 
 static b3ShapeDef shape_def(const float density, const float friction, const float bounce, const bool sensor)
@@ -505,6 +743,66 @@ int32_t b3t_capsule(const int64_t on, const capsule *s)
 // ---------------------------------------------------------------------------
 // The step
 
+// A body's place and speeds as its component keeps them, from Box3D's own.
+static void place_of(float *place, const b3Pos at, const b3Quat rotation, const b3Vec3 velocity, const b3Vec3 angular)
+{
+    const tide_float3 position = float3(b3ToVec3(at));
+    const tide_quaternion turned = turn(rotation);
+    const float as_kept[PLACE] = {position.x,       position.y, position.z, turned.value.x, turned.value.y, turned.value.z, turned.value.w,
+                                  velocity.x,       velocity.y, velocity.z, angular.x,      angular.y,      angular.z};
+    memcpy(place, as_kept, sizeof as_kept);
+}
+
+// The body of this index, noted by the step that just ran.
+static left *left_at(const uint32_t index)
+{
+    if (index >= left_room) {
+        uint32_t room = left_room ? left_room : 1024u;
+        while (room <= index) room *= 2u;
+        lefts = tide_realloc(lefts, (size_t)left_room * sizeof *lefts, (size_t)room * sizeof *lefts);
+        left_steps = tide_realloc(left_steps, (size_t)left_room * sizeof *left_steps, (size_t)room * sizeof *left_steps);
+        memset(&left_steps[left_room], 0, (size_t)(room - left_room) * sizeof *left_steps);
+        left_room = room;
+    }
+    left_steps[index] = stepped;
+    return &lefts[index];
+}
+
+// What the step that just ran says of the bodies b3t_leave has something to
+// write for, each found by its index. Box3D says which were awake for it (its
+// move events), with where each is now and, here, how fast, and which of them
+// fell asleep in it. And Enter says which it told Box3D something of: the ones
+// of those the step left alone are noted as the ones that fell asleep are, for
+// Leave to ask about. Nothing here changes the world: these are all Box3D's
+// own answers.
+static void note_left(const world *w)
+{
+    if (++stepped == 0) { // Wrapped: no older step's is this one's
+        if (left_steps) memset(left_steps, 0, (size_t)left_room * sizeof *left_steps);
+        stepped = 1;
+    }
+    const b3BodyEvents events = b3World_GetBodyEvents(w->id);
+    for (int i = 0; i < events.moveCount; i++) {
+        const b3BodyMoveEvent *event = &events.moveEvents[i];
+        left *l = left_at((uint32_t)event->bodyId.index1);
+        l->id = handle(event->bodyId.index1, event->bodyId.generation);
+        l->awake = !event->fellAsleep;
+        if (!l->awake) continue;
+        place_of(l->place, event->transform.p, event->transform.q, b3Body_GetLinearVelocity(event->bodyId),
+                 b3Body_GetAngularVelocity(event->bodyId));
+    }
+    for (int32_t i = 0; i < synced_count; i++) {
+        const int64_t id = synced[i];
+        const uint32_t index = (uint32_t)id;
+        if (index < left_room && left_steps[index] == stepped && lefts[index].id == id) continue; // The step moved it
+        if (!b3Body_IsValid(body_of(w, id))) continue;
+        left *l = left_at(index);
+        l->id = id;
+        l->awake = false;
+    }
+    synced_count = 0;
+}
+
 int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravity)
 {
     world *w = active;
@@ -515,12 +813,13 @@ int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravi
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
     b3World_SetGravity(w->id, vec(gravity));
-    shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= SHARED_BODIES;
+    shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     b3World_Step(w->id, dt, substeps);
     shared = false;
     if (measuring) step_ns += tide_time_now_ns() - began;
+    note_left(w);
 
     const uint64_t stamp = tide_hash_end(w->chain);
     w->stamp = stamp ? (int64_t)stamp : 1; // 0 is a match nothing stepped
@@ -549,48 +848,166 @@ static int place(world *w, const int *sizes, bool *moved)
     return end;
 }
 
-// The world's state into the match's list, which is then exactly it, and how
-// many bytes that is. Box3D writes it once, into room for a little more than
-// the last one took; a second time when it's more than that, or when a section
-// has to move.
+enum { BLOCK = 16384 }; // What a measured run counts the image's changes by
+
+// Which part of an image a byte is in, for what a failed check says: Box3D's
+// sections, in its order (world_snapshot.c).
+static const char *const sections[B3_SNAPSHOT_SECTIONS] = {
+    "settings and ids", "static and disabled sets", "awake set",   "sleeping sets", "bodies",       "shapes",
+    "fat bounds",       "contacts",                 "joints",      "sensors",       "islands",      "static tree",
+    "kinematic tree",   "dynamic tree",             "pairs",       "graph",         "names",
+};
+
+// A copy of the image a match's list is about to hold, which measuring and
+// checking go by.
+static void remember(world *w, const uint8_t *image, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    memcpy(w->before, image, (size_t)size);
+    w->before_size = size;
+    w->before_good = true;
+}
+
+// The parts Box3D says changed, over the copy of the last image: what the
+// match's list becomes. While measuring, the image's blocks that a part made
+// otherwise are counted.
+static void remember_parts(world *w, const b3SnapshotPart *parts, const int count, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    if (size > w->before_size) memset(w->before + w->before_size, 0, (size_t)(size - w->before_size)); // As a list grows
+    const int blocks = (size + BLOCK - 1) / BLOCK;
+    uint8_t *changed = measuring ? tide_alloc_zeroed((size_t)blocks, 1) : NULL;
+    if (changed) {
+        for (int at = w->before_size / BLOCK; at < blocks; at++) changed[at] = at * BLOCK + BLOCK > w->before_size;
+    }
+    for (int i = 0; i < count; i++) {
+        const b3SnapshotPart *part = &parts[i];
+        if (part->offset < 0 || part->offset + part->size > size) {
+            fprintf(stderr, "Box3D gave a part of its image that's outside it: %d bytes at %d of %d\n", part->size, part->offset, size);
+            abort();
+        }
+        for (int at = part->offset; changed && at < part->offset + part->size;) {
+            const int end = (at / BLOCK + 1) * BLOCK < part->offset + part->size ? (at / BLOCK + 1) * BLOCK : part->offset + part->size;
+            if (memcmp(w->before + at, part->bytes + (at - part->offset), (size_t)(end - at)) != 0) changed[at / BLOCK] = 1;
+            at = end;
+        }
+        memcpy(w->before + part->offset, part->bytes, (size_t)part->size);
+    }
+    for (int at = 0; changed && at < blocks; at++) blocks_changed += changed[at];
+    if (changed) blocks_in_all += (uint64_t)blocks;
+    free(changed);
+    w->before_size = size;
+}
+
+// The image written whole, against the one its parts made: the same bytes, or
+// the program ends, saying where the first one that isn't is.
+static void check(world *w, const int size)
+{
+    w->whole = tide_realloc(w->whole, (size_t)w->whole_size, (size_t)size);
+    w->whole_size = size;
+    int sizes[B3_SNAPSHOT_SECTIONS];
+    const int whole = b3World_CheckSnapshotAt(w->id, w->whole, size, w->bases, sizes);
+    if (whole == size && memcmp(w->whole, w->before, (size_t)size) == 0) return;
+    if (whole != size) {
+        fprintf(stderr, "Box3D's image in parts is %d bytes, and its image written whole %d\n", size, whole);
+        abort();
+    }
+    int first = 0;
+    int apart = 0;
+    for (int at = size - 1; at >= 0; at--) {
+        if (w->whole[at] == w->before[at]) continue;
+        first = at;
+        apart++;
+    }
+    int section = -1;
+    for (int i = 0; i < B3_SNAPSHOT_SECTIONS; i++) {
+        if (w->bases[i] <= first) section = i;
+    }
+    const int in = section < 0 ? first : first - w->bases[section];
+    fprintf(stderr, "Box3D's image in parts isn't its image written whole: %d bytes apart, the first at %d, which is byte %d of %s", apart,
+            first, in, section < 0 ? "its header" : sections[section]);
+    // The sections of things that each take the same room start with how many there are
+    int32_t count = 0;
+    if (section >= 0) memcpy(&count, w->whole + w->bases[section], sizeof count);
+    const int record = section == 4 ? 136 : section == 5 ? 208 : section == 7 ? 216 : 0; // A body, a shape, a contact
+    if (record && in >= 4 && in < 4 + count * record) {
+        fprintf(stderr, ": byte %d of %s %d", (in - 4) % record, section == 4 ? "body" : section == 5 ? "shape" : "contact", (in - 4) / record);
+    } else if (section == 7 && in >= 4 + count * 216 && in < 4 + count * (216 + 268)) {
+        fprintf(stderr, ": byte %d of the manifold of contact %d", (in - 4 - count * 216) % 268, (in - 4 - count * 216) / 268);
+    }
+    fprintf(stderr, " (%d of them). Written whole it's %02x, and in parts %02x\n", (int)count, w->whole[first], w->before[first]);
+    abort();
+}
+
+// The world's state into the match's list, and how many bytes that is.
+//
+// Where Box3D can say what changed of its last image, which the list holds,
+// the list keeps the rest: only what changed is written, and nothing is
+// compared but that (b3World_GetSnapshotParts, tide_list_out_keep). The image
+// is, byte for byte, the one written whole.
+//
+// Otherwise Box3D writes all of it into room for a little more than the last
+// one took, and the list is then exactly it; a second time when it's more
+// than that, or when a section has to move.
 int32_t b3t_image(tide_list_out *out)
 {
-    world *placed = active;
+    world *w = active;
     int sizes[B3_SNAPSHOT_SECTIONS] = {0};
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
-    int room = placed->image_size ? placed->image_size + placed->image_size / 16 + 4096 : 0;
+    const bool remembers = measuring || checking;
+    // The copy a measured or checked run goes by has to be the last image
+    if (w->image_size > 0 && (!remembers || w->before_good)) {
+        const b3SnapshotPart *parts;
+        int count;
+        const int size = b3World_GetSnapshotParts(w->id, w->bases, sizes, &parts, &count);
+        bool moved = false;
+        if (size != 0) place(w, sizes, &moved); // A section outgrew its place, or left too much of it: all of it again
+        if (size > 0 && !moved) {
+            tide_list_out_keep(out, (uint32_t)size);
+            for (int i = 0; i < count; i++) tide_list_out_part(out, (uint32_t)parts[i].offset, parts[i].bytes, (uint32_t)parts[i].size);
+            w->image_size = size;
+            images_in_parts++;
+            const uint64_t counting = measuring ? tide_time_now_ns() : 0;
+            if (measuring) image_ns += counting - began;
+            if (remembers) remember_parts(w, parts, count, size);
+            if (checking) check(w, size);
+            if (measuring) counting_ns += tide_time_now_ns() - counting;
+            return size;
+        }
+    }
+
+    int room = w->image_size ? w->image_size + w->image_size / 16 + 4096 : 0;
     uint8_t *image = room ? tide_list_out_room(out, (uint32_t)room) : NULL;
-    int size = b3World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+    int size = b3World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     bool moved;
-    const int after = place(placed, sizes, &moved);
+    const int after = place(w, sizes, &moved);
     if (moved || size > room) { // A section outgrew its place or left too much of it, or the image its room
         if (moved) size = after;
         if (size > room) {
             room = size;
             image = tide_list_out_room(out, (uint32_t)room);
         }
-        size = b3World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+        size = b3World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     }
     if (size <= 0) { // A shape the bridge never makes: Box3D has no image of a world with a compound
         fprintf(stderr, "Box3D has no image of this world\n");
         abort();
     }
     tide_list_out_count(out, (uint32_t)size);
-    placed->image_size = size;
+    w->image_size = size;
+    images_whole++;
     if (measuring) {
         const uint64_t counting = tide_time_now_ns();
         image_ns += counting - began;
-        world *w = active;
-        enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {
             const int n = size - at < BLOCK ? size - at : BLOCK;
             blocks_changed += at + n > w->before_size || memcmp(w->before + at, image + at, (size_t)n) != 0;
             blocks_in_all++;
         }
-        w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
-        memcpy(w->before, image, (size_t)size);
-        w->before_size = size;
+        remember(w, image, size);
         counting_ns += tide_time_now_ns() - counting;
+    } else if (checking) {
+        remember(w, image, size);
     }
     return size;
 }
@@ -610,30 +1027,78 @@ void b3t_geometry(tide_list_out *out)
     tide_list_out_count(out, (uint32_t)size);
 }
 
-// Where the step left the body, into its component. False when that's where
-// the component has it already.
-bool b3t_pull(body *b, const int64_t stamp)
+// The fields the step leaves a body's place and speeds in, to write: the ones
+// code reads and writes, and the package's own, which say where the last step
+// left it.
+typedef struct body_places {
+    float *now[PLACE];
+    float *step[PLACE];
+} body_places;
+
+static body_places places_of(tide_rows *rows)
 {
-    (void)stamp;
-    if (b->id == 0) return false;
-    const b3BodyId id = body_of(active, b->id);
-    if (!b3Body_IsValid(id)) return false;
-    // Asleep, and the component says so already: where it is, and that it's still
-    const tide_float3 none = {0, 0, 0};
-    const bool still = same(b->velocity, none) && same(b->angular_velocity, none) && same(b->step_velocity, none)
-                       && same(b->step_angular_velocity, none);
-    const bool there = same(b->position, b->step_position) && same_turn(b->rotation, b->step_rotation);
-    if (still && there && !b3Body_IsAwake(id)) return false;
-    const body was = *b;
-    b->position = float3(b3ToVec3(b3Body_GetPosition(id)));
-    b->rotation = turn(b3Body_GetRotation(id));
-    b->velocity = float3(b3Body_GetLinearVelocity(id));
-    b->angular_velocity = float3(b3Body_GetAngularVelocity(id));
-    b->step_position = b->position;
-    b->step_rotation = b->rotation;
-    b->step_velocity = b->velocity;
-    b->step_angular_velocity = b->angular_velocity;
-    return memcmp(&was, b, sizeof was) != 0;
+    body_places to;
+    for (size_t k = 0; k < PLACE; k++) {
+        to.now[k] = tide_rows_floats_mut(rows, 0, NOW + k * sizeof(float));
+        to.step[k] = tide_rows_floats_mut(rows, 0, STEP + k * sizeof(float));
+    }
+    return to;
+}
+
+// The system Leave: where the step left each body, into its component, for the
+// bodies the step says something of (note_left). Of any other, a field is read
+// to find that out, and nothing else: a world with little moving costs it
+// little.
+//
+// A body the step moved, and left awake, is written from where the step left
+// it. One that fell asleep in it, or that code wrote to and the step then left
+// alone, is asked for, unless its component says it's where the last step left
+// it, and still: its component gets what Box3D has, so that the next tick's
+// Enter finds nothing written.
+//
+// The fields are only asked for to write once a body has something to write,
+// so a run of bodies at rest leaves every one of them shared with the match's
+// snapshots. Runs go to several threads at once: each reads what the step
+// says, and writes its own rows.
+void b3t_leave(tide_rows *rows, const physics *p)
+{
+    if (!p->moved) return; // Nothing stepped: every body is where its component says
+    const uint32_t count = tide_rows_count(rows);
+    // Which body each is: all that's read of most. Nothing here writes these, so they stay where they are
+    const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
+    const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    const uint32_t *steps = left_steps;
+    const uint32_t room = left_room;
+    const uint32_t step = stepped;
+    body_places to = {0};
+    bool writing = false;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint32_t index = (uint32_t)ids[i];
+        if (index >= room || steps[index] != step) continue; // The step says nothing of it
+        const left *l = &lefts[index];
+        const int64_t id = (int64_t)((uint64_t)index | (uint64_t)(uint32_t)ids_high[i] << 32);
+        if (l->id != id) continue; // Another body's, which has the index now: this one is gone
+        float asked[PLACE];
+        const float *where = l->place;
+        if (!l->awake) {
+            // Its fields as they are now, the ones this run wrote to among them: asked for here, as it's rare
+            const body_fields f = fields_of(rows);
+            bool rests = true; // Where the last step left it, and still, by what its component says
+            for (int k = 0; k < PLACE; k++) rests &= f.now[k][i] == f.step[k][i];
+            for (int k = STILL; k < PLACE; k++) rests &= f.now[k][i] == 0;
+            if (rests) continue;
+            const b3BodyId body_id = body_of(active, id);
+            if (!b3Body_IsValid(body_id)) continue;
+            place_of(asked, b3Body_GetPosition(body_id), b3Body_GetRotation(body_id), b3Body_GetLinearVelocity(body_id),
+                     b3Body_GetAngularVelocity(body_id));
+            where = asked;
+        }
+        if (!writing) {
+            to = places_of(rows);
+            writing = true;
+        }
+        for (int k = 0; k < PLACE; k++) to.now[k][i] = to.step[k][i] = where[k];
+    }
 }
 
 int32_t b3t_touches(const int64_t stamp)

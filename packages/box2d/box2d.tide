@@ -113,8 +113,8 @@ extern void RestoreWorld(List<byte> image, int size, long stamp);
 [NativeName("b2t_gone")]
 extern void RemoveBodies(List<long> bodies, int count);
 
-[NativeName("b2t_body")]
-extern int SyncBody(mut Body body);
+[NativeName("b2t_made")]
+extern long TakeMade(Entity entity);
 
 [NativeName("b2t_box")]
 extern int AttachBox(long body, in Box box);
@@ -127,9 +127,6 @@ extern long StepWorld(float dt, int substeps, float2 gravity);
 
 [NativeName("b2t_image")]
 extern int WriteImage(out List<byte> image);
-
-[NativeName("b2t_pull")]
-extern bool ReadBody(mut Body body, long stamp);
 
 [NativeName("b2t_touches")]
 extern int CountTouches(long stamp);
@@ -152,26 +149,26 @@ system Begin(mut Physics physics)
 // New bodies are made, and what code wrote into a body since the last step
 // goes to Box2D.
 //
-// These systems read their components and write them back through the World,
-// for the few entities there's something to write for. A component taken as
-// `mut` is copied and compared for every entity a system runs for, whatever it
-// does, once a snapshot shares the world's pages, as a client's do every tick:
-// most bodies, most ticks, have nothing written.
-system Enter(Body body, mut Physics physics, mut World world)
+// Every body is looked at every tick, and most ticks most have nothing
+// written, so this and Leave are systems written in C: they go through the
+// bodies' fields as the arrays the match keeps them in, and write the fields
+// of the ones there's something to write for. A system written in Tide would
+// copy each body out to look at it. It takes Physics to write, which keeps it
+// on one thread: what it does to the world is noted in the order of its rows.
+[NativeName("b2t_enter")]
+extern system Enter(mut Body body, mut Physics physics);
+
+// The bodies Enter made are their entities' from here on: whose each body is,
+// the match keeps in a map, which is Tide's to write. It runs for the bodies
+// Enter ran for, in its order, and asks C of each whether it was made. It
+// takes no component, so nothing is copied to ask.
+system Own(mut Physics physics, with Body)
 {
-    // A body nothing wrote to since the last step costs these comparisons, and no call
-    bool moved = body.position.x != body.stepPosition.x || body.position.y != body.stepPosition.y || body.angle != body.stepAngle;
-    bool pushed = body.velocity.x != body.stepVelocity.x || body.velocity.y != body.stepVelocity.y || body.spin != body.stepSpin;
-    bool nudged = body.impulse.x != 0 || body.impulse.y != 0 || body.turn != 0;
-    if (body.id == 0 || moved || pushed || nudged)
+    long made = TakeMade(this);
+    if (made != 0)
     {
-        mut var next = body;
-        if (SyncBody(next) != 0)
-        {
-            physics.bodies += 1;
-            physics.owners[next.id] = this;
-        }
-        world.Set<Body>(this, next);
+        physics.bodies += 1;
+        physics.owners[made] = this;
     }
 }
 
@@ -197,15 +194,9 @@ system Step(Time time, mut Physics physics)
     physics.size = WriteImage(out physics.image);
 }
 
-// Where the step left each body that it moved.
-system Leave(Body body, Physics physics, mut World world)
-{
-    if (physics.moved)
-    {
-        mut var next = body;
-        if (ReadBody(next, physics.stamp)) world.Set<Body>(this, next);
-    }
-}
+// Where the step left each body that it moved, into the fields that say so.
+[NativeName("b2t_leave")]
+extern system Leave(mut Body body, Physics physics);
 
 system Report(Physics physics)
 {

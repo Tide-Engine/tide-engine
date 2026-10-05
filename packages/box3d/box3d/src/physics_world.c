@@ -491,6 +491,9 @@ void b3DestroyWorld( b3WorldId worldId )
 	// Tide: the geometry its images named, which the shapes of a restored world were using
 	b3DestroySnapshotGeometry( world );
 
+	// Tide: and what followed its images
+	b3DestroySnapshotTrack( world );
+
 	b3Array_Destroy( world->shapes );
 	b3Array_Destroy( world->fatAABBs );
 	b3Array_Destroy( world->contacts );
@@ -818,6 +821,8 @@ static void b3RemoveNonTouchingContact( b3World* world, int setIndex, int localI
 		B3_ASSERT( movedContact->colorIndex == B3_NULL_INDEX );
 		B3_ASSERT( movedContact->localIndex == movedIndex );
 		movedContact->localIndex = localIndex;
+		// Tide: another contact of the set (see b3SnapTrack)
+		b3SnapTouchContact( world, movedContactIndex );
 	}
 }
 

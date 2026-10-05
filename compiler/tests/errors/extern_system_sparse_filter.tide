@@ -1,0 +1,10 @@
+// expect: a system written in C can't filter by a sparse component yet, and 'Done' is one
+scene Main { }
+component Body { float x; }
+component Done { }
+extern system Move(mut Body body, without Done);
+system Finish(Body body, without Done)
+{
+    if (body.x > 3) this.Add(Done);
+}
+event(Spawned) Setup(with Main) { Spawn(Body { x = 1 }); }
