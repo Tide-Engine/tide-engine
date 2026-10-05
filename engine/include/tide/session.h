@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "tide/events.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
 #include "tide/player.h"
@@ -73,6 +74,12 @@ typedef struct tide_game {
     void (*start)(void *world, float dt, const void *start, uint32_t seed);
     // Runs a tick, on `jobs`' threads (tide/jobs.h), or NULL for this one's.
     void (*tick)(void *world, const tide_jobs *jobs);
+    // The same, recording into `events` what the tick sent that the game's
+    // local handlers hear (tide/events.h): the events, each with what its
+    // handlers read, beside the world and never in it. The world comes out
+    // the same as from `tick`. NULL: the game has no local handlers of the
+    // match's events, and nothing is recorded for it.
+    void (*tick_events)(void *world, const tide_jobs *jobs, tide_event_log *events);
     // A snapshot: `to` becomes `from`, sharing its pages until one of them
     // changes. The hash covers what's in use, and only reads what changed since
     // it was last taken.
@@ -275,6 +282,12 @@ typedef struct tide_client_desc {
     uint64_t (*now_ns)(void);
     double resim_budget; // Seconds a frame may spend running predicted ticks again; 0 for 0.004
     tide_view_correct_fn correct_views; // Optional: coalesced replay corrections, using `user`
+    // Where what the match sends goes for this machine's local handlers
+    // (tide/events.h), once its host takes it from there (`taken`): each event
+    // once, however often its tick ran again, and again, as verified, once the
+    // server confirmed the tick. The host hands it to the game's local state
+    // before each frame (tide_local_events). NULL: nobody listens.
+    tide_event_log *events;
 } tide_client_desc;
 
 typedef struct tide_client_status {
@@ -436,6 +449,13 @@ double tide_session_until_tick(const tide_session *s);
 const void *tide_session_world(const tide_session *s);
 // What views draw, blended between ticks (see tide_view_worlds).
 tide_view_worlds tide_session_view(const tide_session *s);
+// What the match sent since the host last took it, for the game's local
+// handlers (tide/events.h): the host hands it to the game's local state before
+// each frame (tide_local_events, tide_host_game.events), which empties it.
+// It's the same log for every match the session is in, empty outside one. A
+// session records nothing until this is first called, and nothing more for a
+// host that stopped taking what's in it.
+tide_event_log *tide_session_events(tide_session *s);
 void tide_session_mark_presented(tide_session *s);
 // The server's world, on the machine that runs it; NULL elsewhere.
 const void *tide_session_server_world(const tide_session *s);

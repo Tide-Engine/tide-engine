@@ -1,0 +1,11 @@
+// expect: 'Blink' is a local event: it's this machine's own, and no server confirms it
+local event Blink { }
+local singleton Log { int count; }
+scene Main { }
+
+view Show() { Send(Blink); }
+
+local event(verified Blink) Count(mut Log log)
+{
+    log.count += 1;
+}

@@ -83,7 +83,82 @@ inventory.slots[i] = slot;
 
 Changing a list needs something that can change: a `mut` component or singleton, or a `mut` local.
 
-Elements are built-in types, text, enums and structs. Lists of lists, and structs holding lists, aren't supported yet. ECS data doesn't go in lists either: keep an `Entity` instead.
+Elements are built-in types, text, enums and structs. ECS data doesn't go in lists: keep an `Entity` instead.
+
+### Lists in structs
+
+A struct can hold a list, a map or text, and it's still a value like any other: a field of a component or a singleton, a local, a parameter. Copying the struct copies what it holds.
+
+```csharp
+enum Card { Vitality, RapidFire, Scatter }
+
+struct Build
+{
+    float maxHealth = 100;
+    List<Card> cards; // The upgrades picked so far, in order
+}
+
+component Fighter
+{
+    Build build;
+    float health = 100;
+}
+
+system Upgrade(mut Fighter fighter, Draft draft)
+{
+    if (!draft.picked) return;
+    fighter.build.cards.Add(draft.card);
+    if (draft.card == Card.Vitality) fighter.build.maxHealth += 35;
+}
+```
+
+What isn't supported yet is a list inside a list's elements:
+
+- A list can't hold lists, maps or sets: `List<List<int>>`.
+- A list can't hold a struct that has a list, a map or a set in it: `List<Build>`, with the `Build` above. A list of structs that hold text is fine.
+
+tidec says which field is in the way, and what to write instead. Either keep everything in one list, with where each part starts and how many it has:
+
+```csharp
+struct Row
+{
+    int first; // Where its cells start in Table.cells
+    int count;
+}
+
+singleton Table
+{
+    List<int> cells;
+    List<Row> rows;
+}
+
+int Cell(Table table, int row, int column)
+{
+    return table.cells[table.rows[row].first + column];
+}
+```
+
+Or give each inner list an entity of its own, in a component, and hold the entities. Each list then grows on its own:
+
+```csharp
+component Bag
+{
+    List<int> items;
+}
+
+component Backpack
+{
+    List<Entity> bags;
+}
+
+system Count(Backpack pack, World world, mut Load load)
+{
+    load.items = 0;
+    foreach (var bag in pack.bags) load.items += world.Get<Bag>(bag).items.count;
+}
+```
+
+Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 
 ### Sorting
 
@@ -188,7 +263,7 @@ foreach (var e in board.scores)
 GUILayout.Label($"{board.scores}"); // {PlayerID(0): 30, PlayerID(1): 10}
 ```
 
-A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps.
+A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps. A map's values can't be lists, maps, sets or structs with one in them either, as a list's elements can't: see [Lists in structs](#lists-in-structs) for what to write instead.
 
 ## Where they live
 

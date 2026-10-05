@@ -8,6 +8,10 @@ local singleton Probe
     float3 world3;
     float3 rayOrigin;
     float3 rayDirection;
+    float2 pointer;
+    float2 pointerWorld;
+    float2 corner;
+    float2 flippedTwice;
 }
 
 struct Corner2 { float2 position; }
@@ -21,14 +25,20 @@ scene Main { }
 extern bool SameList(DrawList a, DrawList b);
 float2 Project2(float2 position) { return Draw2D.WorldToScreen(position); }
 float3 Project3(float3 position) { return Draw3D.WorldToScreen(position); }
+float2 OnScreen(Devices devices) { return Screen.Flip(devices.pointer.position); }
 
-view Show(mut Probe probe)
+view Show(mut Probe probe, Devices devices)
 {
     probe.sameList = SameList(Draw2D.list, Draw3D.list);
     Draw2D.Clear(Color.black);
     Draw2D.Camera(float2(2, 3), 5);
     probe.screen2 = Project2(float2(2, 3));
     probe.world2 = Draw2D.ScreenToWorld(probe.screen2);
+    // Devices count from the bottom left, the screen from the top left: Screen.Flip goes either way
+    probe.pointer = OnScreen(devices);
+    probe.pointerWorld = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    probe.corner = Screen.Flip(float2(0, 0));
+    probe.flippedTwice = Screen.Flip(Screen.Flip(devices.pointer.position));
     Draw2D.Mesh([], []);
     Draw2D.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
     Draw2D.Screen();
