@@ -1,0 +1,7 @@
+// expect: the match is the same on every machine, so a query has nothing 'verified' to read
+component Body { float x; }
+scene Main { }
+system Hits(query (verified Body body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x}");
+}
