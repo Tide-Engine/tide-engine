@@ -27,9 +27,8 @@ view PaintArena(Session session)
 }
 
 [Stage(PaintStages.Platforms)]
-view PaintPlatforms(Platform platform, mut Fx fx)
+view PaintPlatforms(Platform platform)
 {
-    fx.slabs.Add(Slab { center = platform.center, half = platform.half });
     var size = platform.half * 2;
     var wall = platform.half.y > platform.half.x;
     var frame = wall || platform.half.x > 300;
@@ -65,7 +64,7 @@ float SureHealth(Fighter fighter, Fighter sure)
 
 [Stage(PaintStages.Fighters)]
 view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel duel, Session session, Devices devices,
-    Canvas canvas, mut Fx fx)
+    Canvas canvas, mut Fx fx, query (Platform box) platforms, query (Body body, Fighter fighter, verified Fighter sure) fighters)
 {
     var color = FighterColor(fighter.side);
     var who = fighter.side == 0 ? duel.bluePlayer : duel.orangePlayer;
@@ -75,7 +74,6 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
     var solid = SureHealth(fighter, sure);
     if (solid <= 0) return;
 
-    fx.marks.Add(Mark { position = body.position, radius = body.radius, shield = fighter.blockLeft > 0 });
     var feet = body.position - float2(0, body.radius);
 
     // What happened to it set these off (heard.tide): it springs back from a
@@ -109,10 +107,10 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
 
     // Its shadow, on the highest platform under it
     mut var ground = -10000.0;
-    foreach (var slab in fx.slabs)
+    foreach (var entry in platforms)
     {
-        var top = slab.center.y + slab.half.y;
-        if (Math.Abs(body.position.x - slab.center.x) < slab.half.x + 6 && top <= feet.y + 8 && top > ground) ground = top;
+        var top = entry.box.center.y + entry.box.half.y;
+        if (Math.Abs(body.position.x - entry.box.center.x) < entry.box.half.x + 6 && top <= feet.y + 8 && top > ground) ground = top;
     }
     if (ground > -9000)
     {
@@ -123,7 +121,9 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
 
     Glow(center, body.radius * 0.75, 34, Fade(color, 0.2));
 
-    // Shots drop, so this machine's fighter is shown where its next one goes
+    // Shots drop, so this machine's fighter is shown where its next one goes:
+    // up to the first platform in its way, or the first fighter still up, as
+    // a shot ends on them
     if (mine && (duel.phase == Phase.Fight || duel.phase == Phase.Countdown) && !canvas.touchAim)
     {
         mut var at = body.position + aim * (body.radius + 7);
@@ -131,8 +131,20 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
         for (var i = 0; i < 9; i++)
         {
             speed.y -= fighter.build.gravity * 0.04;
-            var hit = Strike(fx, at, speed * 0.04, 3);
-            if (hit.fraction <= 1) break;
+            mut var ends = false;
+            foreach (var entry in platforms)
+            {
+                var hit = SweepBox(at, speed * 0.04, entry.box.center, entry.box.half + 3);
+                if (hit.fraction <= 1) ends = true;
+            }
+            foreach (var other in fighters)
+            {
+                if (other.entity == this || SureHealth(other.fighter, other.sure) <= 0) continue;
+                var hit = SweepCircle(at, speed * 0.04, other.body.position,
+                                      other.body.radius + 3 + (other.fighter.blockLeft > 0 ? 10 : 0));
+                if (hit.fraction <= 1) ends = true;
+            }
+            if (ends) break;
             at += speed * 0.04;
             Draw2D.Circle(at, 2.4 - i * 0.14, Fade(Mix(color, Color.white, 0.5), 0.5 - i * 0.05));
         }
