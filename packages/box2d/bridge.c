@@ -446,6 +446,12 @@ static bool sync_body(body *b)
         const b2Pos at = b2Body_GetPosition(id);
         if ((float)at.x != b->position.x || (float)at.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(id)) != b->angle) {
             b2Body_SetTransform(id, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
+            // Box2D moves a sleeping body and leaves it asleep, hanging where it was put, and leaves asleep
+            // what rested on a body that's moved from under it. Code has no other way to say a body should
+            // wake than to move it, so a body that's moved is awake, and so is what it touched. It follows
+            // from the move, which is what's noted.
+            b2Body_SetAwake(id, true);
+            b2Body_WakeTouching(id);
             did |= 2u;
         }
         const b2Vec2 velocity = b2Body_GetLinearVelocity(id);
@@ -664,14 +670,25 @@ static void push_new(const world *w)
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
-    // Nothing awake, and nothing done to the world since its last step: a step
-    // would leave it as it is. The stamp stays, which says so.
-    if (w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
+    // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
+    // last step's wherever the world came from
+    const b2Vec2 pulled = b2World_GetGravity(w->id);
+    const bool turned = pulled.x != gravity.x || pulled.y != gravity.y;
+    // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
+    // step would leave it as it is. The stamp stays, which says so.
+    if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
     push_new(w);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
+    if (turned) {
+        // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box2D
+        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
+        // gravity, which every step notes.
+        b2World_EnableSleeping(w->id, false);
+        b2World_EnableSleeping(w->id, true);
+    }
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
