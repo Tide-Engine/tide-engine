@@ -25,8 +25,8 @@ void b2t_measure(uint64_t *step, uint64_t *image);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xb95319d46c7e2b07)
-#define IMAGES_HASH UINT64_C(0xb314e1c85bf3050e)
+#define SETTLED_HASH UINT64_C(0x67b258d8e593363c)
+#define IMAGES_HASH UINT64_C(0xa7297934073a507c)
 
 static tide_world a;
 static tide_world b;
@@ -52,7 +52,8 @@ TIDE_TEST(box2d_steps_a_match)
     uint64_t images = 0;
     for (int t = 0; t < 300; t++) {
         tide_world_tick(&a);
-        images = tide_hash_more(images, &a.Box2D_Physics.stamp, sizeof a.Box2D_Physics.stamp);
+        const uint64_t hash = tide_world_hash(&a); // The image is in it
+        images = tide_hash_more(images, &hash, sizeof hash);
     }
     int crates = 0;
     int resting = 0;
@@ -196,6 +197,16 @@ TIDE_TEST(box2d_threads_change_nothing)
     }
     printf("    %d steps were shared out; the image is %d bytes\n", (int)(b2t_shared_steps() - before), (int)a.Box2D_Physics.size);
     TIDE_CHECK(b2t_shared_steps() - before > TICKS / 2);
+
+    // What a rollback pays once: C's world made from the match's image
+    b2t_forget();
+    b2t_measure(&step, &image);
+    const uint64_t t = tide_time_now_ns();
+    tide_world_tick(&a);
+    const uint64_t ticked = tide_time_now_ns() - t;
+    b2t_measure(&step, &image);
+    printf("    a tick that makes Box2D's world from the image first takes %.2f ms, %.2f more than one that has it\n",
+           (double)ticked / 1e6, ((double)ticked - (double)ticks[0] / TICKS) / 1e6);
     tide_world_free(&a);
     tide_world_free(&b);
 }

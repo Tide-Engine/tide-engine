@@ -76,6 +76,8 @@ typedef struct b2RecBuffer
 	int capacity;
 	int size;
 	bool countOnly;
+	// Tide: `data` is the caller's, as big as it is. What doesn't fit is counted and not written (see ../TIDE.md)
+	bool fixed;
 } b2RecBuffer;
 
 // User-owned recording buffer. The world appends into it while recording; the user saves and

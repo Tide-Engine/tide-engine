@@ -2,12 +2,17 @@
 // of them.
 //
 // A match's Box2D state is in the match, as an image (Physics.image) and a
-// stamp that names it: a hash of the image. C's worlds here are only where
-// that state is stepped. Each is at a stamp, a tick finds the one at its
-// match's stamp or has one made from the image, and the step leaves it at the
-// next. So a rollback, a join, a reload or another match in the same program
-// each just find no world at their stamp, and get one. Two matches at the same
-// stamp are at the same state, and either's world serves both.
+// stamp that names it. C's worlds here are only where that state is stepped.
+// Each is at a stamp, a tick finds the one at its match's stamp or has one
+// made from the image, and the step leaves it at the next. So a rollback, a
+// join, a reload or another match in the same program each just find no world
+// at their stamp, and get one. Two matches at the same stamp are at the same
+// state, and either's world serves both.
+//
+// A stamp is the stamp before it and everything that was done to the world
+// since, hashed: Box2D's next state is its last and what's done to it, and
+// nothing else. So it costs what was done, and the image is never read to
+// name it.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -36,6 +41,10 @@ typedef struct body {
     float gravity_scale;
     float linear_damping;
     float angular_damping;
+    tide_float2 step_position;
+    float step_angle;
+    tide_float2 step_velocity;
+    float step_spin;
     bool fixed_rotation;
     bool bullet;
 } body;
@@ -66,7 +75,7 @@ typedef struct touch {
     bool began;
 } touch;
 
-_Static_assert(sizeof(body) == 64 && sizeof(box) == 40 && sizeof(circle) == 40 && sizeof(touch) == 24,
+_Static_assert(sizeof(body) == 88 && sizeof(box) == 40 && sizeof(circle) == 40 && sizeof(touch) == 24,
                "box2d.tide's types changed: these are theirs");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
@@ -80,10 +89,8 @@ typedef struct world {
     bool made;
     int workers;
     int64_t stamp;  // The state it's at: 0 for an empty one nothing stepped
+    uint64_t chain; // The stamp, and what the running tick did to the world since
     uint64_t used;  // When a tick last had it
-    uint8_t *image; // Its state after its last step
-    int size;
-    int room;
 } world;
 
 static world worlds[WORLDS];
@@ -160,7 +167,7 @@ static void make(world *w, const int workers)
     w->made = true;
     w->workers = workers;
     w->stamp = 0;
-    w->size = 0;
+    w->chain = 0;
 }
 
 static void unmake(world *w)
@@ -181,6 +188,14 @@ static int64_t handle(const int32_t index1, const uint16_t generation)
     return (int64_t)((uint64_t)(uint32_t)index1 | (uint64_t)generation << 32);
 }
 
+// Something done to the tick's world, into its stamp: what, and with what.
+// Everything that changes the world says so here, or two worlds that differ
+// would go by one stamp.
+static void note(const char what, const void *with, const size_t size)
+{
+    active->chain = tide_hash_more(tide_hash_more(active->chain, &what, 1), with, size);
+}
+
 // ---------------------------------------------------------------------------
 // The tick's world
 
@@ -191,6 +206,7 @@ bool b2t_open(const int64_t stamp)
         world *w = &worlds[i];
         if (!w->made || w->stamp != stamp || w->workers != workers) continue;
         w->used = ++uses;
+        w->chain = (uint64_t)stamp;
         active = w;
         return true;
     }
@@ -212,13 +228,16 @@ void b2t_restore(const uint8_t *image, const int32_t size, const int64_t stamp)
     // An empty one for a match that starts, and for other workers than it has
     if (w->made && (size == 0 || w->workers != workers)) unmake(w);
     if (!w->made) make(w, workers);
+    const uint64_t began = measuring ? tide_time_now_ns() : 0;
     restores += size > 0;
     if (size > 0 && !b2World_Restore(w->id, image, size)) {
         fprintf(stderr, "Box2D can't read the match's image of its world (%d bytes): it was made by another build of the game\n",
                 (int)size);
         abort();
     }
+    if (measuring) image_ns += tide_time_now_ns() - began;
     w->stamp = stamp;
+    w->chain = (uint64_t)stamp;
     w->used = ++uses;
     active = w;
 }
@@ -227,7 +246,9 @@ void b2t_gone(const int64_t *bodies, const int32_t count)
 {
     for (int32_t i = 0; i < count; i++) {
         const b2BodyId id = body_of(active, bodies[i]);
-        if (b2Body_IsValid(id)) b2DestroyBody(id);
+        if (!b2Body_IsValid(id)) continue;
+        b2DestroyBody(id);
+        note('g', &bodies[i], sizeof bodies[i]);
     }
 }
 
@@ -237,7 +258,6 @@ void b2t_forget(void)
 {
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
-        free(worlds[i].image);
         worlds[i] = (world){0};
     }
     active = NULL;
@@ -255,9 +275,9 @@ int32_t b2t_restores(void)
     return restores;
 }
 
-// Where a step's time goes, for a benchmark that asks: Box2D's own step, and
-// its state into an image (with the image's hash). Nanoseconds since the last
-// call; the first starts the measuring.
+// Where a tick's time goes, for a benchmark that asks: Box2D's own step, and
+// its state into an image or back out of one. Nanoseconds since the last call;
+// the first starts the measuring.
 void b2t_measure(uint64_t *step, uint64_t *image)
 {
     measuring = true;
@@ -273,7 +293,8 @@ void b2t_measure(uint64_t *step, uint64_t *image)
 int32_t b2t_body(body *b)
 {
     const world *w = active;
-    int32_t made = 0;
+    const body was = *b;
+    uint8_t did = 0; // What was done, a bit each
     b2BodyId id;
     if (b->id == 0) {
         b2BodyDef def = b2DefaultBodyDef();
@@ -289,7 +310,7 @@ int32_t b2t_body(body *b)
         def.isBullet = b->bullet;
         id = b2CreateBody(w->id, &def);
         b->id = handle(id.index1, id.generation);
-        made = 1;
+        did |= 1u;
     } else {
         // What code wrote since the last step, and only that: a body nothing
         // touched stays as Box2D has it, asleep if it was
@@ -298,22 +319,33 @@ int32_t b2t_body(body *b)
         const b2Pos at = b2Body_GetPosition(id);
         if ((float)at.x != b->position.x || (float)at.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(id)) != b->angle) {
             b2Body_SetTransform(id, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
+            did |= 2u;
         }
         const b2Vec2 velocity = b2Body_GetLinearVelocity(id);
         if (velocity.x != b->velocity.x || velocity.y != b->velocity.y) {
             b2Body_SetLinearVelocity(id, (b2Vec2){b->velocity.x, b->velocity.y});
+            did |= 4u;
         }
-        if (b2Body_GetAngularVelocity(id) != b->spin) b2Body_SetAngularVelocity(id, b->spin);
+        if (b2Body_GetAngularVelocity(id) != b->spin) {
+            b2Body_SetAngularVelocity(id, b->spin);
+            did |= 8u;
+        }
     }
     if (b->impulse.x != 0 || b->impulse.y != 0) {
         b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){b->impulse.x, b->impulse.y}, true);
         b->impulse = (tide_float2){0, 0};
+        did |= 16u;
     }
     if (b->turn != 0) {
         b2Body_ApplyAngularImpulse(id, b->turn, true);
         b->turn = 0;
+        did |= 32u;
     }
-    return made;
+    if (did) {
+        note('b', &was, sizeof was);
+        note('d', &did, sizeof did);
+    }
+    return did & 1u;
 }
 
 static b2ShapeDef shape_def(const float density, const float friction, const float bounce, const bool sensor)
@@ -332,6 +364,8 @@ int32_t b2t_box(const int64_t on, box *s)
     if (s->id != 0 || on == 0) return 0;
     const b2BodyId owner = body_of(active, on);
     if (!b2Body_IsValid(owner)) return 0;
+    note('x', &on, sizeof on);
+    note('x', s, sizeof *s);
     const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
     const b2Polygon polygon = b2MakeOffsetBox(0.5f * s->size.x, 0.5f * s->size.y, (b2Vec2){s->offset.x, s->offset.y}, b2Rot_identity);
     const b2ShapeId id = b2CreatePolygonShape(owner, &def, &polygon);
@@ -344,6 +378,8 @@ int32_t b2t_circle(const int64_t on, circle *s)
     if (s->id != 0 || on == 0) return 0;
     const b2BodyId owner = body_of(active, on);
     if (!b2Body_IsValid(owner)) return 0;
+    note('c', &on, sizeof on);
+    note('c', s, sizeof *s);
     const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
     const b2Circle round = {{s->offset.x, s->offset.y}, s->radius};
     const b2ShapeId id = b2CreateCircleShape(owner, &def, &round);
@@ -354,79 +390,35 @@ int32_t b2t_circle(const int64_t on, circle *s)
 // ---------------------------------------------------------------------------
 // The step
 
-// An image's stamp: megabytes, every tick, so four streams of 8 bytes at a
-// time, which a CPU runs side by side. The same on every machine: whole
-// numbers, read as bytes in order.
-static uint64_t word_at(const uint8_t *p)
-{
-    uint64_t word;
-    memcpy(&word, p, sizeof word);
-    return word;
-}
-
-static uint64_t mix(const uint64_t h, const uint64_t word)
-{
-    const uint64_t x = (h ^ word) * UINT64_C(0x9e3779b97f4a7c15);
-    return x << 29 | x >> 35;
-}
-
-static int64_t stamp_of(const uint8_t *image, const size_t size)
-{
-    uint64_t a = UINT64_C(0x243f6a8885a308d3);
-    uint64_t b = UINT64_C(0x13198a2e03707344);
-    uint64_t c = UINT64_C(0xa4093822299f31d0);
-    uint64_t d = UINT64_C(0x082efa98ec4e6c89);
-    size_t at = 0;
-    for (; at + 32 <= size; at += 32) {
-        a = mix(a, word_at(image + at));
-        b = mix(b, word_at(image + at + 8));
-        c = mix(c, word_at(image + at + 16));
-        d = mix(d, word_at(image + at + 24));
-    }
-    const uint64_t bytes = size; // As wide on every machine
-    uint64_t h = tide_hash_more(tide_hash_more(tide_hash_more(a, &b, sizeof b), &c, sizeof c), &d, sizeof d);
-    h = tide_hash_end(tide_hash_more(tide_hash_more(h, image + at, size - at), &bytes, sizeof bytes));
-    return h ? (int64_t)h : 1; // 0 is a match nothing stepped
-}
-
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
+    note('s', &dt, sizeof dt);
+    note('s', &substeps, sizeof substeps);
+    note('s', &gravity, sizeof gravity);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= SHARED_BODIES;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     b2World_Step(w->id, dt, substeps);
     shared = false;
-    const uint64_t stepped = measuring ? tide_time_now_ns() : 0;
+    if (measuring) step_ns += tide_time_now_ns() - began;
 
-    // Into the room there is: asking for the size first would go through the
-    // world once more, and it only fails to fit when the world grew a lot
-    w->size = w->room ? b2World_GetSnapshot(w->id, w->image, w->room) : b2World_GetSnapshot(w->id, NULL, 0);
-    if (w->size > w->room) {
-        free(w->image);
-        w->room = w->size + w->size / 2;
-        w->image = tide_alloc((size_t)w->room);
-        w->size = b2World_GetSnapshot(w->id, w->image, w->room);
-    }
-    w->stamp = stamp_of(w->image, (size_t)w->size);
-    if (measuring) {
-        step_ns += stepped - began;
-        image_ns += tide_time_now_ns() - stepped;
-    }
+    const uint64_t stamp = tide_hash_end(w->chain);
+    w->stamp = stamp ? (int64_t)stamp : 1; // 0 is a match nothing stepped
+    w->chain = (uint64_t)w->stamp;
     return w->stamp;
 }
 
-int32_t b2t_size(void)
+// The world's state into `image`, the match's own memory, and how many bytes
+// it is: more than `count` when it didn't all fit, and then what's there is
+// no image.
+int32_t b2t_image(uint8_t *image, const int32_t count)
 {
-    return active->size;
-}
-
-void b2t_image(uint8_t *image, const int32_t count)
-{
-    const world *w = active;
-    memcpy(image, w->image, (size_t)w->size);
-    memset(image + w->size, 0, (size_t)(count - w->size));
+    const uint64_t began = measuring ? tide_time_now_ns() : 0;
+    const int size = b2World_GetSnapshot(active->id, count > 0 ? image : NULL, count);
+    if (measuring) image_ns += tide_time_now_ns() - began;
+    return size;
 }
 
 void b2t_pull(body *b, const int64_t stamp)
@@ -441,6 +433,10 @@ void b2t_pull(body *b, const int64_t stamp)
     b->angle = b2Rot_GetAngle(b2Body_GetRotation(id));
     b->velocity = (tide_float2){velocity.x, velocity.y};
     b->spin = b2Body_GetAngularVelocity(id);
+    b->step_position = b->position;
+    b->step_angle = b->angle;
+    b->step_velocity = b->velocity;
+    b->step_spin = b->spin;
 }
 
 int32_t b2t_touches(const int64_t stamp)
