@@ -144,9 +144,14 @@ try {
                 window.__draws++; return original.apply(this, args);
             };
         }
-        if (window.GPUQueue) {
-            const submit = GPUQueue.prototype.submit;
-            GPUQueue.prototype.submit = function (...args) { window.__draws++; return submit.apply(this, args); };
+        // WebGPU's draws, not its submits: a frame that draws nothing still submits its pass
+        if (window.GPURenderPassEncoder) {
+            for (const name of ['draw', 'drawIndexed']) {
+                const original = GPURenderPassEncoder.prototype[name];
+                GPURenderPassEncoder.prototype[name] = function (...args) {
+                    window.__draws++; return original.apply(this, args);
+                };
+            }
         }
         // What a game hears from the other players of its room
         window.__heard = 0;
@@ -156,9 +161,17 @@ try {
                 message.set.call(this, handler && (event => { window.__heard++; return handler.call(this, event); }));
             } });
         }
+        // How many draws a game had made when it said it had something to
+        // show: asked of every game, where a look at its frame as it starts
+        // would only see one that shows too soon by luck.
         let config;
-        Object.defineProperty(window, 'Tide', { configurable: true, get: () => config,
-            set: value => { config = value; config.checkGL = true; config.relay = ${JSON.stringify(relayUrl)}; } });
+        Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
+            config = value; config.checkGL = true; config.relay = ${JSON.stringify(relayUrl)};
+            let start;
+            Object.defineProperty(config, 'start', { configurable: true, get: () => start, set: begin => {
+                start = () => begin().then(() => { window.__drawnAsShown ??= window.__draws; });
+            } });
+        } });
     ` });
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     const only = process.env.TIDE_EXAMPLES ? new Set(process.env.TIDE_EXAMPLES.split(',')) : null;
@@ -218,11 +231,13 @@ try {
             // and its frame shows once its game has drawn.
             await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
             await until('example.querySelector("iframe")', `${id}: loads`);
-            assert.equal(await evaluate(`${frame(0)}.classList.contains('shown') && !(${frame(0)}.contentWindow.__draws > 0)`), false, `${id}: unseen before it draws`);
             await until('example.querySelector("iframe.shown")', `${id}: starts in view`);
             assert.ok((await evaluate(`${frame(0)}.src`)).includes(`backend=${backend}`), `${id}: the page's backend`);
             await until(rendering(players), `${id}: actual rendering`);
             await until(`example.querySelectorAll("iframe.shown").length === ${players}`, `${id}: every frame shows`);
+            for (let player = 0; player < players; player++) {
+                assert.ok(await evaluate(`${frame(player)}.contentWindow.__drawnAsShown`) > 0, `${id}: unseen before it draws`);
+            }
             if (downloaded && index === ids.length - 1) {
                 ahead = true;
                 const shown = loads.find((load) => !load.ahead && load.url === downloaded.url);
