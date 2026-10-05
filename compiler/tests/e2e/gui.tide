@@ -146,6 +146,8 @@ view Look(mut Menu menu)
         if (GUI.Button(Rect(700, 700, 120, 30), "Themed")) menu.themed += 1;
     }
     GUI.Button(Rect(830, 700, 120, 30), "Plain"); // As it was before the block
+    // A control nobody draws, asked in passing
+    if (GUI.Control(Rect(960, 700, 30, 30)).clicked) menu.themed += 10;
 }
 
 // ...and from here on, in this view and the ones after it.
