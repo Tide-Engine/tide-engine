@@ -1,6 +1,6 @@
 # Live examples
 
-Many pages of these docs have a small game beside the code they explain. The source shown is the whole program, built for the web as it is, and it runs in the page: **Run example** starts it, **Restart** starts it over, and **Stop** ends it. Nothing runs until you ask.
+Many pages of these docs have a small game beside the code they explain. The source shown is the whole program, built for the web as it is, and it runs in the page. An example starts when you scroll to it and stops once it's well off screen, so only what you're looking at runs. **Restart** starts it over, and **Stop** ends it until you press **Run** again.
 
 Some examples put two players side by side. Each frame is a machine of its own, and the two meet in a [room](../multiplayer/matches.md#rooms), as two browsers anywhere would.
 

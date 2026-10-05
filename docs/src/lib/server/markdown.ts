@@ -157,7 +157,7 @@ block('details', (tokens, idx) => {
 });
 
 // The code is included from the same .tide file CMake builds for the frame.
-// Frames start only when requested, so reading a page starts no games.
+// A frame starts once it's in view, or when its button says (lib/examples.ts).
 block('tide-example', (tokens, idx) => {
     const token = tokens[idx];
     if (token.nesting !== 1) {

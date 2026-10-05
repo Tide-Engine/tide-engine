@@ -14,6 +14,14 @@ function game(frame: HTMLIFrameElement): GamePage | undefined {
     }
 }
 
+// An example starts by itself once it's in view, and stops once it's well out
+// of it, so a page runs what its reader is looking at and nothing else. A
+// reader who asked for less motion or less data starts each one themselves.
+function eager() {
+    const saving = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+    return !saving && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 /** Attach controls to the live examples rendered from Markdown. */
 export function liveExamples(article: HTMLElement) {
     const cleanups = [...article.querySelectorAll<HTMLElement>('.tide-example')].map((example) => {
@@ -29,6 +37,8 @@ export function liveExamples(article: HTMLElement) {
         const begin = viewports.length > 1 ? 'Run both' : 'Run example';
         let request: AbortController | undefined;
         let frames: HTMLIFrameElement[] = [];
+        // The reader stopped it, or it can't run: it waits for the button.
+        let held = false;
 
         function reset(message: string) {
             request?.abort();
@@ -48,8 +58,11 @@ export function liveExamples(article: HTMLElement) {
         }
 
         // A game's page, with what this player's frame says in its address.
+        // `backend=` in this page's own address goes on to its games.
         function page(options: Record<string, string>) {
             const url = new URL(example.dataset.exampleSrc!, location.href);
+            const backend = new URLSearchParams(location.search).get('backend');
+            if (backend) url.searchParams.set('backend', backend);
             for (const [name, value] of Object.entries(options)) url.searchParams.set(name, value);
             if (latency()) url.searchParams.set('lag', String(latency()));
             return url.href;
@@ -85,6 +98,7 @@ export function liveExamples(article: HTMLElement) {
         }
 
         async function start() {
+            held = false;
             reset(viewports.length > 1 ? 'Loading both players…' : 'Loading example…');
             const current = new AbortController();
             request = current;
@@ -112,6 +126,7 @@ export function liveExamples(article: HTMLElement) {
                 run.disabled = false;
             } catch {
                 if (current.signal.aborted) return;
+                held = true; // Not one to try again each time it scrolls by
                 reset('This example is unavailable in this build of the docs. You can still read and copy its source.');
             }
         }
@@ -125,11 +140,39 @@ export function liveExamples(article: HTMLElement) {
             }
         }
 
-        const halt = () => reset('Example stopped. Run it again to start over.');
+        function halt() {
+            held = true;
+            reset('Example stopped. Run it again to start over.');
+        }
+
+        // In view: half of where it draws is on screen, and still is a moment
+        // later, so scrolling past starts nothing. Out of it: more than a
+        // screen away, so reading the code beside it doesn't end it.
+        const where = viewports[0].parentElement!;
+        let seen = false;
+        let dwell: ReturnType<typeof setTimeout> | undefined;
+        const arrive = new IntersectionObserver(([entry]) => {
+            seen = entry.isIntersecting;
+            clearTimeout(dwell);
+            if (seen && !request && !held && eager()) {
+                dwell = setTimeout(() => {
+                    if (seen && !request && !held) start();
+                }, 300);
+            }
+        }, { threshold: 0.5 });
+        const leave = new IntersectionObserver(([entry]) => {
+            if (!entry.isIntersecting && request) reset('It stopped while it was off screen, and starts again here.');
+        }, { rootMargin: '100% 0px' });
+        arrive.observe(where);
+        leave.observe(where);
+
         run.addEventListener('click', start);
         stop.addEventListener('click', halt);
         lag?.addEventListener('input', delay);
         return () => {
+            arrive.disconnect();
+            leave.disconnect();
+            clearTimeout(dwell);
             reset('');
             run.removeEventListener('click', start);
             stop.removeEventListener('click', halt);

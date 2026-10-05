@@ -151,14 +151,17 @@ try {
     const frame = (player) => `example.querySelectorAll('.example-viewport')[${player}].querySelector('iframe')`;
     const rendering = (count) => Array.from({ length: count }, (_, i) => `${frame(i)}?.contentWindow.__draws > 5`).join(' && ');
     const visited = new Set();
+    let held = false;  // Whether one was checked to stay stopped...
+    let scrolled = false; // ...and one to stop off screen and start again in view
     for (const page of pages) {
-        await command('Page.navigate', { url: origin + page });
+        // The page's `backend=` goes on to its games.
+        await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
         await until(`location.pathname === '${page}' && document.querySelector('.tide-example')`, `${page} page`);
         const ids = await evaluate(`Array.from(document.querySelectorAll('.tide-example'), e => e.dataset.exampleSrc.split('/')[2])`);
         const sourced = new Set(); // The examples whose source this page shows
         for (const [index, id] of ids.entries()) {
             visited.add(id);
-            await evaluate(`window.example = document.querySelectorAll('.tide-example')[${index}]; example.scrollIntoView({block:'center'});`);
+            await evaluate(`window.example = document.querySelectorAll('.tide-example')[${index}];`);
             const source = readFileSync(join(docs, 'examples', `${id}.tide`), 'utf8').replace(/\r\n/g, '\n').trimEnd();
             // The code a frame runs is on its page: beside it, or beside
             // another frame of the same example.
@@ -167,13 +170,12 @@ try {
                 sourced.add(id);
             }
             if (only && !only.has(id)) continue;
-            assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: starts on demand`);
             const players = await evaluate('example.querySelectorAll(".example-viewport").length');
             const match = await evaluate('example.dataset.exampleMatch !== undefined');
-            await evaluate(`example.dataset.exampleSrc += '?backend=${backend}'; example.querySelector('[data-example-run]').click();`);
-            // A freshly navigated page may still be hydrating. Keep trying
-            // the button until its attachment starts the first frame.
-            await until('example.querySelector("iframe") || (example.querySelector("[data-example-run]").click(), false)', `${id}: start`);
+            // It starts by itself once it's in view, with no button pressed.
+            await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
+            await until('example.querySelector("iframe")', `${id}: starts in view`);
+            assert.ok((await evaluate(`${frame(0)}.src`)).includes(`backend=${backend}`), `${id}: the page's backend`);
             await until(rendering(players), `${id}: actual rendering`);
             for (let i = 0; i < players; i++) {
                 assert.equal(await evaluate(`${frame(i)}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
@@ -262,8 +264,22 @@ try {
             }
             await evaluate('window.previousFrame = example.querySelector("iframe"); example.querySelector("[data-example-run]").click();');
             await until(`example.querySelector("iframe") && example.querySelector("iframe") !== previousFrame && ${rendering(players)}`, `${id}: restart`);
+            if (!scrolled && await evaluate('example.getBoundingClientRect().top + scrollY > 3 * innerHeight')) {
+                // More than a screen away, it stops, and it starts again in view.
+                scrolled = true;
+                await evaluate('scrollTo(0, 0)');
+                await until('example.querySelectorAll("iframe").length === 0 && example.querySelector(".example-status").textContent.includes("off screen")', `${id}: stops off screen`);
+                await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
+                await until(`example.querySelector("iframe") && ${rendering(players)}`, `${id}: starts again in view`);
+            }
             await evaluate('example.querySelector("[data-example-stop]").click();');
             assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: stop`);
+            if (!held) {
+                // One the reader stopped waits for the button, in view or not.
+                held = true;
+                await evaluate('new Promise(done => setTimeout(done, 1000))');
+                assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: stays stopped`);
+            }
             console.log(`${id}: source, rendering, ${match ? 'a match of two, ' : ''}restart and stop passed (${backend})`);
         }
         assert.deepEqual([...sourced].sort(), [...new Set(ids)].sort(), `${page} shows the source of every example it runs`);
@@ -271,6 +287,7 @@ try {
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');
     assert.deepEqual([...written].sort(), built);
+    if (!only) assert.ok(held && scrolled, 'Stopping, and leaving the screen, were checked');
     await command('Page.navigate', { url: `${origin}/game/shaders` });
     await until(`location.pathname === '/game/shaders' && document.querySelector('.tide-example')`, 'shaders page');
     await evaluate(`window.example = document.querySelector('.tide-example'); example.dataset.exampleSrc = '/examples/missing/'; example.querySelector('[data-example-run]').click();`);
@@ -285,7 +302,7 @@ try {
     await evaluate(`window.previousFrame = example.querySelector('iframe'); document.querySelector('a[href="/game/gui"]').click();`);
     await until('location.pathname === "/game/gui" && document.querySelectorAll(".tide-example").length > 1', 'client navigation');
     assert.equal(await evaluate('previousFrame.isConnected'), false, 'navigation disposes frame');
-    assert.equal(await evaluate('document.querySelectorAll(".tide-example iframe").length'), 0, 'new page starts idle');
+    assert.equal(await evaluate('document.querySelectorAll(".tide-example iframe").length'), 0, 'nothing out of view runs on the new page');
     // Two players stack on a phone too.
     await command('Page.navigate', { url: `${origin}/multiplayer/matches` });
     await until(`location.pathname === '/multiplayer/matches' && document.querySelector('.tide-pair')`, 'matches page');
