@@ -1,0 +1,359 @@
+// The arena as this machine shows it: platforms, fighters and shots, each a
+// handful of shapes (shapes.tide), and the effects they set off (effects.tide).
+// Views can't change the match. What they keep of a fighter or a shot between
+// frames is in its local fields.
+const Color UI_BACKGROUND = Color(0.027, 0.035, 0.07);
+const Color UI_PANEL = Color(0.075, 0.1, 0.17);
+const Color UI_INK = Color(0.93, 0.96, 1);
+const Color UI_MUTED = Color(0.52, 0.62, 0.78);
+const Color UI_BLUE = Color(0.27, 0.72, 1);
+const Color UI_ORANGE = Color(1, 0.55, 0.26);
+const Color UI_OUTLINE = Color(0.02, 0.028, 0.065);
+
+Color FighterColor(int side)
+{
+    return side == 0 ? UI_BLUE : UI_ORANGE;
+}
+
+[Stage(PaintStages.Arena)]
+view PaintArena(mut Shapes shapes)
+{
+    // Shade where the room meets its walls
+    Inset(shapes, float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
+}
+
+[Stage(PaintStages.Platforms)]
+view PaintPlatforms(Platform platform, mut Fx fx, mut Shapes shapes)
+{
+    fx.slabs.Add(Slab { center = platform.center, half = platform.half });
+    var size = platform.half * 2;
+    var wall = platform.half.y > platform.half.x;
+    var frame = wall || platform.half.x > 300;
+    if (!frame)
+        GlowBox(shapes, platform.center + float2(0, -9), size - float2(14, 6), 6, 26, Color(0, 0.005, 0.02, 0.5));
+    Panel(shapes, platform.center, size, frame ? 4 : 7, Color(0.19, 0.26, 0.42), Color(0.085, 0.115, 0.215),
+          1.6, Color(0.3, 0.41, 0.62));
+
+    // The side that faces the room is lit
+    mut var from = platform.center + float2(-platform.half.x + 7, platform.half.y - 2.4);
+    mut var to = platform.center + float2(platform.half.x - 7, platform.half.y - 2.4);
+    if (wall)
+    {
+        var inner = platform.center.x > 0 ? -platform.half.x + 2.4 : platform.half.x - 2.4;
+        from = platform.center + float2(inner, -platform.half.y + 7);
+        to = platform.center + float2(inner, platform.half.y - 7);
+    }
+    else if (platform.center.y > 200)
+    {
+        from.y = platform.center.y - platform.half.y + 2.4;
+        to.y = from.y;
+    }
+    GlowLine(shapes, from, to, 2, 15, Color(0.45, 0.68, 1, 0.2));
+    Capsule(shapes, from, to, 2.2, Color(0.66, 0.83, 1, 0.92));
+}
+
+[Stage(PaintStages.Fighters)]
+view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Session session, Devices devices,
+    Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
+{
+    // The latest tick's, where health drops at once. What a view reads of the
+    // match slides between ticks, which is right for drawing and late for a hit.
+    var latest = world.Get<Fighter>(this);
+    var color = FighterColor(fighter.side);
+    var who = fighter.side == 0 ? duel.bluePlayer : duel.orangePlayer;
+    var mine = !latest.bot && !duel.attract && who == session.player;
+    var step = Math.Min(fx.dt, 0.033);
+
+    if (fighter.seenRound != latest.round)
+    {
+        // A new round: back at its start, and whole
+        fighter.seenRound = latest.round;
+        fighter.shownHealth = latest.health;
+        fighter.chip = 0;
+        fighter.hit = 0;
+        fighter.arrive = 0;
+        fighter.squash = 0;
+        fighter.squashSpeed = 0;
+        fighter.air = 0;
+        fighter.seenCooldown = latest.fireCooldown;
+        Ripple(fx, body.position, 8, 52, 4, 0.42, color);
+    }
+
+    if (latest.health < fighter.shownHealth - 0.01)
+    {
+        var damage = fighter.shownHealth - latest.health;
+        var push = Math.Normalize(world.Get<Body>(this).velocity);
+        fighter.chip += damage;
+        fighter.hit = 1;
+        fighter.squashSpeed -= 3;
+        fx.labels.Add(Label { position = body.position + float2(0, body.radius + 24), color = Mix(color, Color.white, 0.6),
+                              amount = int(Math.Ceil(damage)) });
+        Burst(fx, body.position, push, 1.5, 9, 430, Color.white);
+        Ripple(fx, body.position, body.radius, body.radius + 24 + damage * 0.3, 4, 0.24, Color.white);
+        if (mine) fx.hurt = 1;
+        if (latest.health > 0)
+        {
+            Chunks(fx, body.position, push * 170, 4 + int(damage * 0.1), 180, color);
+            Shake(fx, 0.2 + damage * 0.005);
+            fx.kick += 0.5;
+        }
+        else
+        {
+            // Knocked out: it bursts, and the whole arena feels it
+            Chunks(fx, body.position, push * 230, 36, 430, color);
+            Burst(fx, body.position, float2(0, 1), Math.TAU, 28, 660, Mix(color, Color.white, 0.5));
+            Dust(fx, body.position, float2(0, 30), 9, 24, Fade(color, 0.3));
+            Ripple(fx, body.position, 10, 170, 10, 0.55, Color.white);
+            Ripple(fx, body.position, 6, 100, 6, 0.4, color);
+            Shock(sky, body.position, 1);
+            Shake(fx, 0.9);
+            Flash(fx, Mix(color, Color.white, 0.65), 0.26);
+            fx.kick = 1.7;
+        }
+    }
+    fighter.shownHealth = latest.health;
+    if (latest.health <= 0) return;
+
+    fx.marks.Add(Mark { position = body.position, radius = body.radius, shield = latest.blockLeft > 0 });
+    var feet = body.position - float2(0, body.radius);
+
+    // It squashes as it lands and stretches as it jumps, and springs back
+    if (latest.grounded)
+    {
+        if (fighter.air > 0.09)
+        {
+            fighter.squashSpeed = 5 + Math.Min(4, fighter.air * 5);
+            Dust(fx, feet, float2(0, 12), 5, 9, Color(0.72, 0.82, 1, 0.26));
+        }
+        fighter.air = 0;
+    }
+    else
+    {
+        if (fighter.air == 0 && body.velocity.y > 120)
+        {
+            fighter.squashSpeed = -6.5;
+            Dust(fx, feet, float2(0, -10), 3, 8, Color(0.72, 0.82, 1, 0.22));
+        }
+        fighter.air += step;
+    }
+    fighter.squashSpeed += (-fighter.squash * 330 - fighter.squashSpeed * 15) * step;
+    fighter.squash = Math.Clamp(fighter.squash + fighter.squashSpeed * step, -0.4, 0.45);
+    fighter.arrive = Math.Min(1, fighter.arrive + step / 0.42);
+    fighter.hit = Math.Max(0, fighter.hit - step * 4.5);
+    fighter.recoil = Math.Max(0, fighter.recoil - step * 8);
+    if (fighter.hit <= 0) fighter.chip = Math.Max(0, fighter.chip - (14 + fighter.chip * 2.5) * step);
+
+    if (latest.fireCooldown > fighter.seenCooldown + 0.02)
+    {
+        fighter.recoil = 1;
+        fighter.squashSpeed += 1.6;
+    }
+    fighter.seenCooldown = latest.fireCooldown;
+    if (latest.blockLeft > 0 && fighter.seenBlock <= 0)
+    {
+        Ripple(fx, body.position, body.radius, body.radius + 40, 5, 0.3, Color.white);
+        Ripple(fx, body.position, body.radius, body.radius + 26, 3, 0.22, color);
+    }
+    fighter.seenBlock = latest.blockLeft;
+
+    if (latest.grounded && Math.Abs(body.velocity.x) > 150 && duel.phase == Phase.Fight)
+    {
+        fighter.puff -= step;
+        if (fighter.puff <= 0)
+        {
+            fighter.puff = 0.085;
+            Dust(fx, feet, float2(body.velocity.x * -0.12, 6), 1, 6.5, Color(0.72, 0.82, 1, 0.2));
+        }
+    }
+
+    var grow = EaseBack(fighter.arrive);
+    var fly = latest.grounded ? 0 : Math.Clamp(Math.Abs(body.velocity.y) / 2600, 0, 0.14);
+    // It breathes while it stands
+    var squash = fighter.squash + (latest.grounded ? Math.Sin(fx.now * 3.2 + fighter.side * 1.7) * 0.022 : 0);
+    var wide = body.radius * (1 + squash * 0.7) * (1 - fly * 0.8) * grow;
+    var tall = body.radius * (1 - squash * 0.7) * (1 + fly) * grow;
+    var center = body.position + float2(0, tall - body.radius * grow);
+    var aim = fighter.aim;
+    var perpendicular = float2(-aim.y, aim.x);
+
+    // Its shadow, on the highest platform under it
+    mut var ground = -10000.0;
+    foreach (var slab in fx.slabs)
+    {
+        var top = slab.center.y + slab.half.y;
+        if (Math.Abs(body.position.x - slab.center.x) < slab.half.x + 6 && top <= feet.y + 8 && top > ground) ground = top;
+    }
+    if (ground > -9000)
+    {
+        var near = Math.Saturate(1 - (feet.y - ground) / 240);
+        GlowOval(shapes, float2(body.position.x, ground + 1), float2(wide * (0.5 + near * 0.45), 2.2 + near), 5,
+                 Color(0, 0.005, 0.02, 0.5 * near));
+    }
+
+    Glow(shapes, center, body.radius * 0.75, 34, Fade(color, 0.2));
+
+    // Shots drop, so this machine's fighter is shown where its next one goes
+    if (mine && (duel.phase == Phase.Fight || duel.phase == Phase.Countdown) && !canvas.touchAim)
+    {
+        mut var at = body.position + aim * (body.radius + 7);
+        mut var speed = aim * fighter.build.bulletSpeed;
+        for (var i = 0; i < 9; i++)
+        {
+            speed.y -= fighter.build.gravity * 0.04;
+            var hit = Strike(fx, at, speed * 0.04, 3);
+            if (hit.fraction <= 1) break;
+            at += speed * 0.04;
+            Disc(shapes, at, 2.4 - i * 0.14, Fade(Mix(color, Color.white, 0.5), 0.5 - i * 0.05));
+        }
+        if (!canvas.gamepadAim)
+        {
+            // Devices count pixels from the bottom, and the screen from the top
+            var pointer = Draw2D.ScreenToWorld(float2(devices.pointer.position.x, Screen.height - devices.pointer.position.y));
+            Ring(shapes, pointer, 8, 3.4, Fade(UI_OUTLINE, 0.6));
+            Ring(shapes, pointer, 7.6, 1.7, Fade(Color.white, 0.9));
+            Disc(shapes, pointer, 1.6, Color.white);
+        }
+    }
+
+    // The gun, which kicks back as it fires
+    var grip = center + aim * (body.radius * 0.4 - fighter.recoil * 6);
+    var tip = center + aim * ((body.radius + 15) * grow - fighter.recoil * 7);
+    Capsule(shapes, grip, tip, 10, UI_OUTLINE);
+    Capsule(shapes, grip, tip, 5.6, Color(0.82, 0.87, 0.96));
+    Capsule(shapes, tip - aim * 5, tip, 5.6, Color.white);
+    if (fighter.recoil > 0.55)
+    {
+        var bright = (fighter.recoil - 0.55) / 0.45;
+        Glow(shapes, tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
+    }
+
+    Oval(shapes, center, float2(wide, tall), Shade(color, 0.26), Shade(color, -0.3), 2.5, UI_OUTLINE);
+    Oval(shapes, center + float2(-wide * 0.3, tall * 0.44), float2(wide * 0.34, tall * 0.2),
+         Fade(Color.white, 0.36), Fade(Color.white, 0.08), 0, Color.clear);
+
+    // Its eyes follow its aim, and shut when it's hit
+    var blink = Math.Frac(fx.now * 0.27 + fighter.side * 0.41) > 0.965;
+    var open = fighter.hit > 0.3 ? 0.4 : blink ? 0.12 : 1;
+    var face = center + aim * (wide * 0.34) + float2(0, tall * 0.1);
+    for (var eye = -1; eye <= 1; eye += 2)
+    {
+        var at = face + perpendicular * (eye * 5.7 * grow);
+        Oval(shapes, at, float2(4.5, 4.5 * open) * grow, Color.white, Color(0.82, 0.87, 0.96), 0, Color.clear);
+        if (open > 0.5) Disc(shapes, at + aim * 1.6, 2.2 * grow, UI_OUTLINE);
+    }
+    var hand = center + aim * (wide * 0.92 - fighter.recoil * 4);
+    Oval(shapes, hand, float2(4.8, 4.8) * grow, Shade(color, 0.1), Shade(color, -0.35), 1.7, UI_OUTLINE);
+    if (fighter.hit > 0) Oval(shapes, center, float2(wide, tall), Fade(Color.white, fighter.hit * 0.85),
+                              Fade(Color.white, fighter.hit * 0.85), 0, Color.clear);
+
+    // Its shield: up for a moment, then an arc that fills as it comes back
+    if (fighter.blockLeft > 0)
+    {
+        var spent = 1 - Math.Saturate(fighter.blockLeft / 0.22);
+        var reach = body.radius + 9 + 4 * EaseOut(spent * 2);
+        Glow(shapes, center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
+        Oval(shapes, center, float2(reach), Fade(Color.white, 0.2), Fade(color, 0.1), 2.6, Fade(Color.white, 0.95));
+        Ring(shapes, center, reach + 4.5, 1.6, Fade(color, 0.85));
+    }
+    else if (fighter.blockCooldown > 0)
+    {
+        Arc(shapes, center, body.radius + 8.5, 1.9, 0, 1 - fighter.blockCooldown / 2, Fade(color, 0.5));
+    }
+
+    // Its health, over its head: what a hit took lingers in white
+    var bar = center + float2(0, tall + 16);
+    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
+    var before = Math.Saturate((latest.health + fighter.chip) / fighter.build.maxHealth);
+    Panel(shapes, bar, float2(52, 10), 5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.2, Fade(UI_OUTLINE, 0.9));
+    if (before > health)
+        Box(shapes, bar + float2((before - 1) * 23, 0), float2(46 * before, 5), 2.5, Fade(Color.white, 0.92));
+    if (health > 0.01)
+        Panel(shapes, bar + float2((health - 1) * 23, 0), float2(46 * health, 5), 2.5, Shade(color, 0.42), Shade(color, -0.08),
+              0, Color.clear);
+    if (fighter.fireCooldown > 0.04 && duel.phase == Phase.Fight)
+    {
+        var ready = 1 - Math.Saturate(fighter.fireCooldown / fighter.build.reload);
+        Box(shapes, bar + float2((ready - 1) * 23, -7.5), float2(46 * ready, 2), 1, Fade(UI_INK, 0.5));
+    }
+
+    // Which one is this machine's, while there's time to look
+    if (mine && duel.phase == Phase.Countdown)
+    {
+        var mark = bar + float2(0, 13 + Math.Sin(fx.now * 7) * 2.5);
+        Capsule(shapes, mark + float2(-7, 8), mark, 4.2, UI_OUTLINE);
+        Capsule(shapes, mark + float2(7, 8), mark, 4.2, UI_OUTLINE);
+        Capsule(shapes, mark + float2(-7, 8), mark, 2.4, Color.white);
+        Capsule(shapes, mark + float2(7, 8), mark, 2.4, Color.white);
+    }
+}
+
+[Stage(PaintStages.Bullets)]
+view PaintBullets(Body body, mut Bullet bullet, mut Fx fx, mut Shapes shapes)
+{
+    var color = FighterColor(bullet.side);
+    var speed = Math.Length(body.velocity);
+    var direction = speed > 1 ? body.velocity / speed : float2(1, 0);
+    if (!bullet.seen)
+    {
+        // Just fired: a flash at the muzzle, sparks, and a shell that drops
+        bullet.seen = true;
+        bullet.seenBounces = bullet.bounces;
+        bullet.seenSide = bullet.side;
+        bullet.trail = body.position;
+        var up = Roll(fx);
+        var spin = Roll(fx);
+        fx.bits.Add(Bit { position = body.position + direction * 3, color = Color(1, 0.95, 0.8), life = 0.075, size = 30,
+                          kind = BitKind.Dot });
+        Burst(fx, body.position, direction, 0.75, 4, 400, Mix(color, Color.white, 0.6));
+        fx.bits.Add(Bit { position = body.position - direction * 16,
+                          velocity = float2(-direction.x * 90, 190 + up * 110), color = Color(1, 0.8, 0.36),
+                          life = 1.1, size = 2.6, gravity = 1150, drag = 0.5, spin = (spin - 0.5) * 50, kind = BitKind.Shell });
+        Shake(fx, 0.045);
+    }
+    else if (bullet.seenBounces != bullet.bounces || bullet.seenSide != bullet.side)
+    {
+        // It turned, off a wall or off a shield: its trail turns where it did
+        var blocked = bullet.seenSide != bullet.side;
+        var reach = bullet.seenVelocity * (2.0 / 60);
+        var hit = Strike(fx, bullet.seenAt, reach, body.radius);
+        var corner = hit.fraction <= 1 ? bullet.seenAt + reach * hit.fraction : body.position;
+        fx.streaks.Add(Streak { from = bullet.trail, to = corner, color = FighterColor(bullet.seenSide) });
+        bullet.trail = corner;
+        bullet.seenBounces = bullet.bounces;
+        bullet.seenSide = bullet.side;
+        Burst(fx, corner, direction, 2.2, blocked ? 14 : 7, blocked ? 460 : 300, Mix(color, Color.white, 0.5));
+        Ripple(fx, corner, 3, blocked ? 44 : 22, blocked ? 5 : 3, 0.24, Color.white);
+        if (blocked)
+        {
+            fx.bits.Add(Bit { position = corner, color = Color.white, life = 0.09, size = 34, kind = BitKind.Dot });
+            Shake(fx, 0.16);
+        }
+    }
+    if (Math.DistanceSq(body.position, bullet.trail) > 49)
+    {
+        fx.streaks.Add(Streak { from = bullet.trail, to = body.position, color = color,
+                                width = 7 * Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7) });
+        bullet.trail = body.position;
+    }
+    bullet.seenAt = body.position;
+    bullet.seenVelocity = body.velocity;
+
+    // The frame's effects end the shots it doesn't see again
+    mut var known = false;
+    for (var i = 0; i < fx.shots.count; i++)
+    {
+        if (fx.shots[i].entity != this) continue;
+        fx.shots[i] = Shot { entity = this, position = body.position, velocity = body.velocity, side = bullet.side, frame = fx.frame };
+        known = true;
+        break;
+    }
+    if (!known)
+        fx.shots.Add(Shot { entity = this, position = body.position, velocity = body.velocity, side = bullet.side, frame = fx.frame });
+
+    // A shot that hits harder looks it
+    var heft = Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7);
+    Capsule(shapes, bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
+    Glow(shapes, body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
+    Capsule(shapes, body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
+    Capsule(shapes, body.position - direction * 5 * heft, body.position, (body.radius + 0.5) * heft, Mix(color, Color.white, 0.85));
+}
