@@ -524,6 +524,10 @@ static uint32_t frame_target_capacity;
 // headless window's frame doesn't: it's drawn as a window's is, scale and all.
 static bool offscreen;
 
+// Whether the selected destination's pixels aren't logical ones: a window's on
+// a scaled display. Circles are drawn as smooth shapes there (see add_circle).
+static bool scaled;
+
 // The window's pixels in a logical one, which its text is fitted to (see font.h).
 static tide_float2 window_scale(void)
 {
@@ -534,18 +538,6 @@ static tide_float2 window_scale(void)
 static tide_float2 pixel_scale(void)
 {
     return offscreen ? tide_f2(1.0f, 1.0f) : window_scale();
-}
-
-static draw_step *add_step(const uint32_t kind)
-{
-    if (step_count == step_capacity) {
-        const uint32_t capacity = step_capacity ? step_capacity * 2u : 64u;
-        steps = tide_realloc(steps, step_capacity * sizeof(draw_step), capacity * sizeof(draw_step));
-        step_capacity = capacity;
-    }
-    draw_step *s = &steps[step_count++];
-    *s = (draw_step){.kind = kind, .target = draw_target};
-    return s;
 }
 
 // Room for `count` more extras after the ones there.
@@ -562,12 +554,38 @@ static shape_extra *extra_room(const uint32_t count)
     return shape_extras + shape_extra_count;
 }
 
-// A shape, after the ones before it when nothing came between them. `extra`
-// is a smooth shape's, and NULL for the plain kinds. The first smooth shape of
-// a run makes it a run of them: the shapes before it get an extra each, which
-// nothing reads, and the ones after it as they come.
-static void add_shape(const int kind, const float ax, const float ay, const float bx, const float by, const rgba color,
-                      const shape_extra *extra)
+// Every shape of a run that has smooth ones has an extra, in the run's order.
+// Plain shapes don't say so as they're added, which keeps adding one as cheap
+// as it was: the ones added since the run's last smooth shape get theirs
+// here, zeroed, as nothing reads them. Called before the run's next smooth
+// shape, and once the run is over.
+static void settle_extras(void)
+{
+    if (step_count == 0) return;
+    const draw_step *run = &steps[step_count - 1];
+    if (run->kind != STEP_SHAPES || !run->smooth) return;
+    const uint32_t missing = run->count - (shape_extra_count - (run->smooth - 1u));
+    if (missing == 0) return;
+    memset(extra_room(missing), 0, (size_t)missing * sizeof(shape_extra));
+    shape_extra_count += missing;
+}
+
+static draw_step *add_step(const uint32_t kind)
+{
+    settle_extras(); // The run before it, if it was one of shapes, is over
+    if (step_count == step_capacity) {
+        const uint32_t capacity = step_capacity ? step_capacity * 2u : 64u;
+        steps = tide_realloc(steps, step_capacity * sizeof(draw_step), capacity * sizeof(draw_step));
+        step_capacity = capacity;
+    }
+    draw_step *s = &steps[step_count++];
+    *s = (draw_step){.kind = kind, .target = draw_target};
+    return s;
+}
+
+// A shape, after the ones before it when nothing came between them. A frame
+// of plain shapes spends its time here.
+static void add_shape(const int kind, const float ax, const float ay, const float bx, const float by, const rgba color)
 {
     if (shape_count == shape_capacity) {
         const uint32_t capacity = shape_capacity ? shape_capacity * 2u : 1024u;
@@ -576,18 +594,21 @@ static void add_shape(const int kind, const float ax, const float ay, const floa
         shape_capacity = capacity;
     }
     if (step_count == 0 || steps[step_count - 1].kind != STEP_SHAPES) add_step(STEP_SHAPES)->first = shape_count;
-    draw_step *s = &steps[step_count - 1];
-    if (extra && !s->smooth) {
-        if (s->count) memset(extra_room(s->count), 0, (size_t)s->count * sizeof(shape_extra));
-        s->smooth = shape_extra_count + 1u;
-        shape_extra_count += s->count;
-    }
-    if (s->smooth) {
-        *extra_room(1) = extra ? *extra : (shape_extra){0};
-        shape_extra_count++;
-    }
-    s->count++;
+    steps[step_count - 1].count++;
     shapes[shape_count++] = (shape){{ax, ay}, {bx, by}, {color.r, color.g, color.b, color.a}, (float)kind};
+}
+
+// A smooth shape in window pixels, with its extra. The first one of a run
+// makes it a run of smooth shapes, whose every shape has an extra.
+static void add_smooth(const int kind, const float x, const float y, const float half_width, const float half_height,
+                       const rgba color, const shape_extra extra)
+{
+    if (step_count == 0 || steps[step_count - 1].kind != STEP_SHAPES) add_step(STEP_SHAPES)->first = shape_count;
+    if (!steps[step_count - 1].smooth) steps[step_count - 1].smooth = shape_extra_count + 1u;
+    settle_extras(); // The plain shapes before it in the run
+    add_shape(kind, x, y, half_width, half_height, color);
+    *extra_room(1) = extra;
+    shape_extra_count++;
 }
 
 // A TIDE_DRAW_SHAPE command's shape, through the camera: its lengths in window
@@ -601,15 +622,37 @@ static void add_smooth_shape(const tide_draw_list *list, const tide_draw_command
     if (s->form > TIDE_SHAPE_ARC) return;
     const tide_float2 center = to_screen(cam, c->a);
     const float scale = cam->scale;
-    const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
-    add_shape(kinds[s->form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, color,
-              &(shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
+    const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+    add_smooth(kinds[s->form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, to_rgba(c->color),
+               (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
                              .radius = s->radius * scale,
                              .outline = s->outline * scale,
                              .soft = s->soft * scale,
                              .sweep = s->sweep,
                              .color2 = {color2.r, color2.g, color2.b, color2.a},
                              .rim = {rim.r, rim.g, rim.b, rim.a}});
+}
+
+// A circle or its outline, `radius` window pixels around (x, y). The plain
+// kind's edge is smooth over a logical pixel, which is one of the target's
+// where the display isn't scaled. Where it is, that would be soft: there a
+// circle goes as the smooth shape it also is, a box that's all corners, whose
+// edge is smooth over one of the target's own pixels. Its outline is a
+// logical pixel wide either way.
+static void add_circle(const bool wire, const float x, const float y, const float radius, const rgba color)
+{
+    if (!scaled) {
+        add_shape(wire ? SHAPE_WIRE_CIRCLE : SHAPE_CIRCLE, x, y, radius, radius, color);
+        return;
+    }
+    const float r = fabsf(radius);
+    const rgba fill = wire ? (rgba){0} : color;
+    add_smooth(SHAPE_BOX, x, y, r, r, fill,
+               (shape_extra){.turn = {1.0f, 0.0f},
+                             .radius = r,
+                             .outline = wire ? fminf(r, 1.0f) : 0.0f,
+                             .color2 = {fill.r, fill.g, fill.b, fill.a},
+                             .rim = {color.r, color.g, color.b, color.a}});
 }
 
 // Room for `count` more vertices after the ones there.
@@ -934,7 +977,7 @@ static void renderer_start(void)
                        {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
                        {1, TIDE_GPU_FLOAT, offsetof(shape, kind)}},
         .attribute_count = 4,
-        .uniform_size = sizeof(screen_uniforms),
+        .uniform_size = 16 * sizeof(float),
         .blend = TIDE_GPU_BLEND_ALPHA,
         .depth = TIDE_GPU_DEPTH_NONE,
     });
@@ -1547,6 +1590,7 @@ static void select_target(const uint32_t at, const tide_gpu_id window)
     draw_width = frame_targets[at].width;
     draw_height = frame_targets[at].height;
     offscreen = at != 0 || window != gpu_state.frame;
+    scaled = !offscreen && (pixel_width != screen_width || pixel_height != screen_height);
 }
 
 static screen_uniforms target_uniforms(void)
@@ -1678,7 +1722,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         case TIDE_DRAW_WIRE_CIRCLE: {
             const tide_float2 p = to_screen(cam, c->a);
             const float r = c->b.x * cam->scale;
-            add_shape(c->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE, p.x, p.y, r, r, color, NULL);
+            add_circle(c->kind == TIDE_DRAW_WIRE_CIRCLE, p.x, p.y, r, color);
             break;
         }
         case TIDE_DRAW_SHAPE:
@@ -1690,13 +1734,13 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             const float hw = c->b.x * cam->scale * 0.5f;
             const float hh = c->b.y * cam->scale * 0.5f;
             add_shape(c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT, top_left.x + hw, top_left.y + hh, hw,
-                      hh, color, NULL);
+                      hh, color);
             break;
         }
         case TIDE_DRAW_LINE: {
             const tide_float2 from = to_screen(cam, c->a);
             const tide_float2 to = to_screen(cam, c->b);
-            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color, NULL);
+            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color);
             break;
         }
         case TIDE_DRAW_TEXT:
@@ -1704,6 +1748,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         }
     }
+    settle_extras();
     if (!over) last_camera = frame_targets[0].world;
 
     // What the steps draw from goes to the GPU first
@@ -1758,11 +1803,16 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         case STEP_SHAPES:
             // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
-            gpu->use(s->smooth ? gpu_state.smooth_shapes : gpu_state.shapes);
-            gpu->uniforms(&uniforms, sizeof uniforms);
+            if (s->smooth) {
+                gpu->use(gpu_state.smooth_shapes);
+                gpu->uniforms(&uniforms, sizeof uniforms);
+                gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
+            } else {
+                gpu->use(gpu_state.shapes);
+                gpu->uniforms(uniforms.screen, sizeof uniforms.screen);
+            }
             gpu->vertices(0, gpu_state.corners, 0);
             gpu->vertices(1, gpu_state.shape_instances, (size_t)s->first * sizeof(shape));
-            if (s->smooth) gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
             gpu->draw(0, 6, s->count);
             calls++;
             break;
