@@ -1,0 +1,7 @@
+// expect: the match runs the same on every machine, so it can't read Frame.dt
+scene Main { }
+component Body { float2 position; float2 velocity; }
+system Move(mut Body body)
+{
+    body.position += body.velocity * Frame.dt;
+}

@@ -193,6 +193,18 @@ target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tes
 target_link_libraries(tide_platform_font PRIVATE tide_platform)
 add_test(NAME tide_platform_font COMMAND tide_platform_font)
 
+# The PNG writer (src/png.c), which captures are written with: pictures made
+# up from numbers, read back with Node's zlib. No window or GPU, so every
+# platform's tests run it.
+add_executable(tide_platform_png tests/png.c)
+target_include_directories(tide_platform_png PRIVATE src)
+target_link_libraries(tide_platform_png PRIVATE tide_platform)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_png
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/png.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
+            $<TARGET_FILE:tide_platform_png>)
+endif()
+
 if(NOT TIDE_WEB)
     # Files and directories, with no window or GPU, including Unicode names
     # and recursive operations that do not enter directory symlinks.
@@ -309,6 +321,22 @@ if(NOT TIDE_ANDROID)
 endif()
 
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # A game with no window (tide/run.h's --capture, --frames and --script): a
+    # run with a script of every kind of input, whose pictures are read back
+    # and checked. Nothing shows, but it needs a desktop session with OpenGL,
+    # as tide_platform_draw does. What a run refuses before it opens anything,
+    # a flag or a script's line that's wrong, needs none.
+    tide_add_game(tide_platform_capture SOURCES tests/capture.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_capture
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capture.mjs" $<TARGET_FILE:tide_platform_capture>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-run")
+        set_tests_properties(tide_platform_capture PROPERTIES LABELS gpu TIMEOUT 120)
+        add_test(NAME tide_platform_capture_refused
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capture.mjs" $<TARGET_FILE:tide_platform_capture>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-refused" refused)
+    endif()
+
     # The cursor's lock on desktop: only a window with the focus holds it, and
     # a test's window, hidden, never has it. It needs a desktop session, as
     # tide_platform_draw does.

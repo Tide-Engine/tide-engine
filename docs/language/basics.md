@@ -163,7 +163,7 @@ Operators and their precedence follow C#, including compound assignments (`+=`, 
 
 `??`, `is`, `!` after a value and `try` unwrap what a function that can fail gives, and `T?` values (see [Errors](./errors.md)).
 
-Expressions run left to right: operands, arguments and field values in the order they're written. That's part of what makes every machine spawn the same entities with the same IDs.
+Expressions run left to right: operands, arguments and field values in the order they're written, on every platform. That's part of what makes every machine spawn the same entities with the same IDs, and it holds for calls that change what they're given too: in `Pack(Next(counter), Next(counter))` the first `Next` runs first, and in `Pack(counter.n, Next(counter))` `counter.n` is read before `Next` changes it (see [Functions](./functions.md#order)).
 
 So what happens in order, `Spawn`, `Scene.Load` and the GUI's widgets, can't go where it would only run sometimes, or again and again: on the right of `&&` or `||`, in a side of `?:`, or in a loop's condition or a `for`'s step. Spawn into a local first, or use `if` and `else`.
 
@@ -219,9 +219,30 @@ system Advance(mut Match match)
 
 - A member without a value is one more than the one before it, and the first is 0. A value is an int, which can come from constants: `Playing = FIRST_LEVEL + 1`.
 - Members are always written with their enum: `Phase.Playing`.
-- `==` and `!=` compare two values of the same enum, and `int(phase)` gives a member's value. There's no way from an int to an enum yet.
+- `==` and `!=` compare two values of the same enum.
+- An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
 - `switch` works on ints, longs and enums. A case is an int (or a long, for a long), an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
+
+### From a number
+
+`Phase(number)` is the enum's value with that number, the other way from `int(phase)`:
+
+```csharp
+enum Card { Vitality, RapidFire, Scatter, Ricochet }
+const int CARDS = 4;
+
+// One of the cards, picked by a hash: the same on every machine
+Card Offer(int round, int slot)
+{
+    return Card(Math.Hash(int2(round, slot)) % CARDS);
+}
+```
+
+- It takes an `int` (or a `byte`). A `float` or a `long` goes through `int(...)` first, `Phase(int(x))`, and so does another enum's value. The compiler says which when it's something else.
+- A number none of the members has is kept as it is, as C#'s cast keeps it: with the `Phase` at the top of this section, `Phase(3)` is a `Phase` whose number is 3. It equals no member, a `switch` on it runs its `default`, and text shows `3`. So bound the number first when it comes from somewhere that can be wrong, as the `% CARDS` does, or handle the rest in a `default`.
+- An enum stored as a `byte` or a `ushort` keeps the number's low 8 or 16 bits, as `byte(x)` does: `Voxel(300)` is `Voxel(44)`.
+- With a constant number it's a constant, so it works in a `const`, a field's default and a `case`.
 
 ## Comments and attributes
 

@@ -105,6 +105,105 @@ static bool match_command(uint32_t id, int sender, int match)
         tide_game_api.command_sequence(&world, player(sender)) + 1, bytes, size);
 }
 
+static float rendered_blue_x(tide_local *local, tide_draw_list *draw, tide_gui *gui)
+{
+    const tide_devices devices = {0};
+    tide_draw_reset(draw);
+    tide_gui_begin(gui, &devices, tide_f2(960, 540), NULL);
+    tide_frame(&world, NULL, 1, &world, local, draw, gui);
+    tide_gui_end(gui, draw);
+    for (uint32_t i = 0; i < draw->count; i++) {
+        const tide_draw_command *command = &draw->commands[i];
+        if (command->kind != TIDE_DRAW_SHADED) continue;
+        const tide_draw_run *run = &draw->runs[command->shaded.run];
+        // The SDF art sends Shape's six float4 fields to the renderer. Find
+        // blue's outlined body ellipse in that recorded instance data, so
+        // this checks what draws even while its arrival and squash animate.
+        if (strcmp(run->shader->name, "PlaceShape and PaintShape on Corner") != 0
+            || tide_shader_instance_size(run->shader) != sizeof(Shape)) continue;
+        for (uint32_t instance = 0; instance < run->count; instance++) {
+            Shape shape;
+            memcpy(&shape, draw->instances + run->first + instance * sizeof shape, sizeof shape);
+            if (shape.form.z < 0 && shape.line.x == 2.5f
+                && fabsf(shape.fill.r - 0.4598f) < 0.0001f && shape.fill.b == 1
+                && shape.edge.r == 0.02f && shape.edge.g == 0.028f && shape.edge.b == 0.065f)
+                return shape.box.x;
+        }
+    }
+    return NAN;
+}
+
+TIDE_TEST(duel_client_corrections_preserve_display_and_follow_normal_movement)
+{
+    start();
+    place(world.Duel.blue, -200, 0);
+    tide_local local = {0};
+    tide_draw_list draw = {0};
+    tide_gui gui = {0};
+    tide_local_init(&local);
+    TIDE_CHECK(rendered_blue_x(&local, &draw, &gui) == -200);
+
+    tide_world before = {0};
+    tide_world_copy(&before, &world);
+    place(world.Duel.blue, -180, 0);
+    tide_view_correction correction = {
+        .before = &before, .after = &world, .tick = (uint32_t)world.Time.tick, .alpha = 1,
+    };
+    const uint64_t hash = tide_world_hash(&world);
+    tide_local_correct(&local, &correction);
+    TIDE_CHECK(rendered_blue_x(&local, &draw, &gui) == -200);
+    TIDE_CHECK(tide_get_Body(&world, world.Duel.blue).position.x == -180);
+    TIDE_CHECK(tide_world_hash(&world) == hash);
+
+    tide_local_frame_time(&local, 0.075f);
+    TIDE_CHECK(fabsf(rendered_blue_x(&local, &draw, &gui) - -190) < 0.001f);
+
+    // A second correction preserves what the player sees, including the
+    // remaining first error. Then normal motion advances by its full amount.
+    tide_world_copy(&before, &world);
+    place(world.Duel.blue, -160, 0);
+    tide_local_correct(&local, &correction);
+    TIDE_CHECK(fabsf(rendered_blue_x(&local, &draw, &gui) - -190) < 0.001f);
+    place(world.Duel.blue, -130, 0);
+    TIDE_CHECK(fabsf(rendered_blue_x(&local, &draw, &gui) - -160) < 0.001f);
+
+    tide_world_free(&before);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_round_respawn_clears_visual_correction)
+{
+    start();
+    place(world.Duel.blue, -200, 0);
+    tide_local local = {0};
+    tide_draw_list draw = {0};
+    tide_gui gui = {0};
+    tide_local_init(&local);
+    TIDE_CHECK(rendered_blue_x(&local, &draw, &gui) == -200);
+
+    tide_world before = {0};
+    tide_world_copy(&before, &world);
+    place(world.Duel.blue, -150, 0);
+    const tide_view_correction correction = {
+        .before = &before, .after = &world, .tick = (uint32_t)world.Time.tick, .alpha = 1,
+    };
+    tide_local_correct(&local, &correction);
+    TIDE_CHECK(rendered_blue_x(&local, &draw, &gui) == -200);
+
+    world.Duel.round++;
+    world.Duel.phase = Phase_Countdown;
+    world.Duel.timer = 1.5f;
+    tide_world_tick(&world);
+    TIDE_CHECK(rendered_blue_x(&local, &draw, &gui) == -360);
+
+    tide_world_free(&before);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_world_free(&world);
+}
+
 static bool rematch(int sender, int match)
 {
     return match_command(TIDE_COMMAND_ID_Rematch, sender, match);
@@ -677,5 +776,50 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 1));
     tide_world_tick(&world);
     TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
+    tide_world_free(&world);
+}
+
+// What a machine shows of the duel, as a host runs a frame: its length first,
+// then the views. `w` is NULL where there's no match.
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+
+static void frame(const tide_world *w, const float seconds)
+{
+    static tide_devices devices;
+    tide_local_frame_time(&local, seconds);
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(1280, 720), NULL);
+    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+}
+
+TIDE_TEST(duel_effects_move_by_the_frames_length_with_a_match_and_with_none)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_tick(&world);
+    tide_local_init(&local);
+    frame(&world, 0.25f);
+    TIDE_CHECK(local.Fx.dt == 0.05f); // A stall is a step, not a leap
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.dt == 0.008f);
+    for (int tick = 0; tick < 5; tick++) tide_world_tick(&world); // However many ticks a frame saw
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.dt == 0.008f);
+
+    // Joining another machine's match: there's none here meanwhile, and the
+    // frames go on, with the backdrop's clock and the spinner
+    const float now = local.Fx.now;
+    const int32_t frames = local.Fx.frame;
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTING, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL, 0.25f);
+    TIDE_CHECK(local.Fx.frame == frames + 1 && local.Fx.now == now + 0.05f);
+    TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.18f) < 1e-5f); // 0.72 turns a second
+    for (int i = 0; i < 5; i++) frame(NULL, 0.25f);
+    TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.08f) < 1e-5f); // Past a turn, it starts over
+    TIDE_CHECK(draw.count > 0);
+    tide_local_free(&local);
     tide_world_free(&world);
 }

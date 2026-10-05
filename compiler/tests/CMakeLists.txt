@@ -41,7 +41,7 @@ tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(input)
 tide_e2e_test(crossplatform)
-tide_e2e_test(evaluation_order)
+tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
@@ -101,6 +101,7 @@ endforeach()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
+tide_e2e_test(measure_text) # Draw2D.MeasureText: on the screen, under a camera and in a render target
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)
@@ -108,11 +109,13 @@ tide_e2e_test(devices)
 tide_e2e_test(pause)
 tide_e2e_test(claims) # Widgets a view draws itself: what's typed, and claiming the pointer and the keyboard
 tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which the window says
+tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
 tide_e2e_test(blend)
+tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
 tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out

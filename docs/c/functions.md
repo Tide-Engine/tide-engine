@@ -266,6 +266,8 @@ Nothing is created or uploaded, and C holds no handle. A mesh names its pixels, 
 
 C can keep state, so calling it is a side effect, and Tide keeps its order: in `Pick(Roll(), Roll())`, the first `Roll` runs first on every platform, though C itself would let each compiler pick. The same goes for functions, methods and operators that call C, and for calls inside `&&`, `||` and `?:`, whose parts still only run when they would.
 
+A C function that changes what it's given as `mut` keeps its turn among what's read beside it too, like any [function that does](../language/functions.md#order): in `Pack(counter.n, c_next(counter))`, `counter.n` is read first.
+
 ## What C is trusted with
 
 The compiler doesn't look inside C. It takes each call as touching nothing it tracks, so C never makes systems wait for each other, and anything C does is the game's to get right:

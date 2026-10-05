@@ -1,5 +1,7 @@
 // Tide evaluates left to right, like C#. Spawns inside one statement get
-// entity IDs in source order, the same on every platform.
+// entity IDs in source order, and a call that changes what it's passed as
+// `mut` runs in its turn among what's called and read beside it: the same on
+// every platform, whatever order C would pick.
 
 component Pair
 {
@@ -29,4 +31,548 @@ event(Spawned) Setup(with Main)
 
     // A method call: the entity on the left spawns before the one in the arguments.
     Spawn(Thing { id = 5 }).Add(Link { target = Spawn(Thing { id = 6 }) });
+
+    // For the systems and the view below
+    Spawn(Walker { steps = 3 });
+    Spawn(Box { });
+}
+
+// ---------------------------------------------------------------------------
+// Calls that write
+//
+// A Tally counts the calls that change it: Next gives 1, then 2, so a result
+// says which call ran first. Pack(Next(t), Next(t)) is 12 left to right, and
+// 21 the other way.
+
+struct Tally
+{
+    int n;
+    int trace; // A digit for each Check that ran, in order
+
+    // What it is now, then a digit.
+    int Plus(int digit) { return n * 10 + digit; }
+
+    mut int Bump()
+    {
+        n += 1;
+        return n;
+    }
+
+    mut int Add(int amount)
+    {
+        n += amount;
+        return n;
+    }
+
+    // Its own methods: Plus reads the value Bump just changed.
+    mut int BumpThenPlus() { return Plus(Bump()); }
+}
+
+struct Slots
+{
+    int a;
+    int b;
+}
+
+struct Bag
+{
+    List<int> items;
+
+    // Changes its own list, then reads the one it was given.
+    mut int Absorb(List<int> other)
+    {
+        items[0] = 5;
+        return other[0];
+    }
+}
+
+struct Money
+{
+    int cents;
+
+    Money operator +(Money a, Money b) { return Money { cents = a.cents * 10 + b.cents }; }
+}
+
+enum Oops
+{
+    Odd,
+}
+
+int Next(mut Tally t)
+{
+    t.n += 1;
+    return t.n;
+}
+
+bool Check(mut Tally t, int digit, bool result)
+{
+    t.trace = t.trace * 10 + digit;
+    return result;
+}
+
+int Pack(int first, int second) { return first * 10 + second; }
+int Pack3(int first, int second, int third) { return first * 100 + second * 10 + third; }
+
+// Through another function, and in a return.
+int Twice(mut Tally t) { return Pack(Next(t), Next(t)); }
+int Returned(mut Tally t) { return Pack3(t.n, Next(t), t.n); }
+
+// A copy of the whole value.
+int Peek(Tally t) { return t.n; }
+
+Money Coin(mut Tally t) { return Money { cents = Next(t) }; }
+
+float2 Corner(mut Tally t)
+{
+    t.n += 1;
+    return float2(t.n, t.n * 2);
+}
+
+int Raise(mut int value)
+{
+    value += 1;
+    return value;
+}
+
+// Fails on odd counts.
+int Even(mut Tally t) fails Oops
+{
+    t.n += 1;
+    if (t.n % 2 == 1) fail Oops.Odd;
+    return t.n;
+}
+
+int Push(mut List<int> items, int item)
+{
+    items.Add(item);
+    return items.count;
+}
+
+int Total(List<int> items, int scale)
+{
+    mut var sum = 0;
+    foreach (var item in items) sum += item;
+    return sum * scale;
+}
+
+int Put(mut Map<int, int> scores, int key, int score)
+{
+    scores[key] = score;
+    return score;
+}
+
+string Join(string first, string second) { return first + second; }
+
+string Rename(mut Named named, string to)
+{
+    var was = named.name;
+    named.name = to;
+    return was;
+}
+
+int Paint(mut Board board, int2 at)
+{
+    board.cells[at] += 1;
+    return board.cells[at];
+}
+
+int Walk(mut Walker walker)
+{
+    walker.steps += 1;
+    return walker.steps;
+}
+
+int Touch(mut Box box)
+{
+    box.hits += 1;
+    return box.hits;
+}
+
+// C, which changes what it's passed too (evaluation_order_c.c).
+extern int c_next(mut Tally t);
+extern float2 c_corner(mut Tally t);
+
+// Calls beside calls.
+singleton Calls
+{
+    Tally t;
+    int arguments;
+    int operators;
+    int3 vector;
+    Slots fields;
+    int nested;
+    int helper;
+    int mixed;
+    int list;
+    int operatorCalls;
+    int methods;
+    int external;
+}
+
+system CallsInOrder(mut Calls c)
+{
+    c.t = Tally { };
+    c.arguments = Pack(Next(c.t), Next(c.t));
+    c.t = Tally { };
+    c.operators = Next(c.t) - Next(c.t) * Next(c.t);
+    c.t = Tally { };
+    c.vector = int3(Next(c.t), Next(c.t), Next(c.t));
+    c.t = Tally { };
+    c.fields = Slots { b = Next(c.t), a = Next(c.t) }; // Source order, not field order
+    c.t = Tally { };
+    c.nested = Pack(Pack(Next(c.t), Next(c.t)), Pack(Next(c.t), Next(c.t)));
+    c.t = Tally { };
+    c.helper = Pack(Twice(c.t), Twice(c.t));
+    c.t = Tally { };
+    c.mixed = Pack(Next(c.t), Next(c.t)) + Next(c.t) * Next(c.t);
+    c.t = Tally { };
+    List<int> made = [Next(c.t), Next(c.t), Next(c.t)];
+    c.list = Pack3(made[0], made[1], made[2]);
+    c.t = Tally { };
+    c.operatorCalls = (Coin(c.t) + Coin(c.t)).cents;
+    c.t = Tally { };
+    c.methods = c.t.Bump() * 10 + c.t.Bump();
+    c.t = Tally { };
+    c.external = Pack(c_next(c.t), c_next(c.t));
+}
+
+// What's read beside a call that writes it.
+singleton Reads
+{
+    Tally t;
+    int before;
+    int after;
+    int between;
+    int operandBefore;
+    int operandAfter;
+    int whole;
+    int returned;
+    int compound;
+    int localBefore;
+    int localAfter;
+    int localCompound;
+    int receiver;
+    int mutReceiver;
+    int ownMethods;
+    int methodBefore;
+    int operatorRead;
+    int external;
+    int orElse;
+    int orValue;
+    int defaulted;
+}
+
+system ReadsInOrder(mut Reads r)
+{
+    r.t = Tally { };
+    r.before = Pack(r.t.n, Next(r.t));
+    r.t = Tally { };
+    r.after = Pack(Next(r.t), r.t.n);
+    r.t = Tally { };
+    r.between = Pack3(Next(r.t), r.t.n, Next(r.t));
+    r.t = Tally { };
+    r.operandBefore = r.t.n * 10 + Next(r.t);
+    r.t = Tally { };
+    r.operandAfter = Next(r.t) * 10 + r.t.n;
+    r.t = Tally { };
+    r.whole = Pack(Peek(r.t), Next(r.t));
+    r.t = Tally { };
+    r.returned = Returned(r.t);
+
+    // A compound assignment reads its target first.
+    r.t = Tally { n = 5 };
+    r.t.n += Next(r.t);
+    r.compound = r.t.n;
+
+    mut var x = 1;
+    r.localBefore = Pack(x, Raise(x));
+    x = 1;
+    r.localAfter = Pack(Raise(x), x);
+    x = 1;
+    x += Raise(x);
+    r.localCompound = x;
+
+    // A method reads the value it's called on as it runs, once its arguments are worked out.
+    r.t = Tally { };
+    r.receiver = r.t.Plus(r.t.Bump());
+    r.t = Tally { };
+    r.mutReceiver = r.t.Add(r.t.Bump());
+    r.t = Tally { };
+    r.ownMethods = r.t.BumpThenPlus();
+    r.t = Tally { };
+    r.methodBefore = Pack(r.t.Plus(0), r.t.Bump());
+
+    r.t = Tally { };
+    r.operatorRead = (Money { cents = r.t.n } + Coin(r.t)).cents;
+    r.t = Tally { };
+    r.external = Pack(r.t.n, c_next(r.t));
+
+    // A call that fails, and what stands in for it.
+    r.t = Tally { };
+    r.orElse = Pack(r.t.n, Even(r.t) ?? 7);
+    r.orValue = Pack(r.t.n, Even(r.t) ?? 7);
+    r.t = Tally { };
+    r.defaulted = Pack3(Next(r.t), Even(r.t)!, r.t.n);
+}
+
+// The parts of && and ||, and the sides of ?:, which only run sometimes.
+singleton Parts
+{
+    Tally t;
+    bool andStops;
+    int andStopsTrace;
+    bool andRuns;
+    int andRunsTrace;
+    bool orStops;
+    int orStopsTrace;
+    int pick;
+    int pickOne;
+    int pickOneCount;
+    int beside;
+    int besideTrace;
+    bool inside;
+    bool afterAnd;
+    int sides;
+    int converted;
+    int rounds;
+    int roundsCount;
+    int branch;
+    int section;
+}
+
+system PartsInOrder(mut Parts p)
+{
+    p.t = Tally { };
+    p.andStops = Check(p.t, 1, false) && Check(p.t, 2, true);
+    p.andStopsTrace = p.t.trace;
+    p.t = Tally { };
+    p.andRuns = Check(p.t, 1, true) && Check(p.t, 2, true);
+    p.andRunsTrace = p.t.trace;
+    p.t = Tally { };
+    p.orStops = Check(p.t, 1, true) || Check(p.t, 2, false);
+    p.orStopsTrace = p.t.trace;
+
+    // The condition reads what the call before it wrote; only the side it picks runs.
+    p.t = Tally { };
+    p.pick = Pack(Next(p.t), p.t.n > 0 ? Next(p.t) : 9);
+    p.t = Tally { };
+    p.pickOne = p.t.n == 0 ? Next(p.t) : Next(p.t) + 5;
+    p.pickOneCount = p.t.n;
+    p.t = Tally { };
+    p.sides = Pack(Next(p.t) > 5 ? Next(p.t) : Next(p.t) + 2, Next(p.t));
+
+    // A side that converts, an int where a float goes, still runs once.
+    p.t = Tally { };
+    float half = (Next(p.t) > 0 ? Next(p.t) : 5) * 0.5;
+    p.converted = Pack(p.t.n, int(half * 2));
+
+    // A read before a part that writes, and one inside it.
+    p.t = Tally { };
+    p.beside = Pack(p.t.n, Check(p.t, 1, true) && Next(p.t) > 0 ? 1 : 0);
+    p.besideTrace = Pack(p.t.trace, p.t.n);
+    p.t = Tally { };
+    p.inside = Check(p.t, 1, true) && Pack(p.t.trace, Next(p.t)) == 11;
+    p.t = Tally { };
+    p.afterAnd = Next(p.t) > 0 && p.t.n == 1;
+
+    // Conditions: each round's, an if's and a switch's.
+    p.t = Tally { };
+    mut var rounds = 0;
+    while (Pack(p.t.n, Next(p.t)) < 30) rounds += 1;
+    p.rounds = rounds;
+    p.roundsCount = p.t.n;
+    p.t = Tally { };
+    if (Pack(p.t.n, Next(p.t)) == 1) p.branch = 1;
+    else p.branch = 2;
+    p.t = Tally { };
+    switch (Pack(p.t.n, Next(p.t)))
+    {
+        case 1:
+            p.section = 1;
+            break;
+        default:
+            p.section = 2;
+            break;
+    }
+}
+
+// Lists, maps, sets, grids and text.
+singleton Named
+{
+    string name;
+}
+
+singleton Board
+{
+    Grid2<int> cells = Grid2(8, 8);
+}
+
+singleton Bags
+{
+    Tally t;
+    List<int> items;
+    Map<int, int> scores;
+    Set<int> seen;
+    Bag bag;
+    int listRead;
+    int listCopy;
+    int listElement;
+    int listRemove;
+    int indexed;
+    int indexedCount;
+    int listCompound;
+    int ownList;
+    int setAdd;
+    int setCount;
+    int mapRead;
+    int mapRemove;
+    int gridBefore;
+    int gridAfter;
+    bool interpolated;
+    bool joined;
+    bool textRead;
+    int once;
+    int swizzled;
+    int externalOnce;
+}
+
+system BagsInOrder(mut Bags b, mut Named named, mut Board board)
+{
+    // A list read before it grows, and one given as a copy.
+    b.items = [1, 2];
+    b.listRead = Pack(b.items.count, Push(b.items, 4));
+    b.items = [1, 2];
+    b.listCopy = Total(b.items, Push(b.items, 4));
+    // An element is read once its index is worked out.
+    b.items = [1, 2];
+    b.listElement = b.items[Push(b.items, 7) - 1];
+    b.items = [1, 2, 3];
+    b.listRemove = Pack(b.items.Remove(2) ? 1 : 0, b.items.count);
+
+    // An index runs once, before the value; a compound assignment reads the element first.
+    b.items = [0, 0, 0];
+    b.t = Tally { };
+    b.items[Next(b.t)] = b.t.n;
+    b.items[Next(b.t)] += 5;
+    b.indexed = Pack3(b.items[0], b.items[1], b.items[2]);
+    b.indexedCount = b.t.n;
+    b.items = [1, 2];
+    b.items[0] += Push(b.items, 9);
+    b.listCompound = b.items[0];
+    // A method given its own list gets a copy, as any parameter is.
+    b.bag.items = [1, 2];
+    b.ownList = Pack(b.bag.Absorb(b.bag.items), b.bag.items[0]);
+
+    b.seen.Clear();
+    b.setAdd = Pack(b.seen.Add(3) ? 1 : 0, b.seen.Add(3) ? 1 : 0);
+    b.setCount = Pack(b.seen.count, b.seen.Add(4) ? 1 : 0);
+    b.scores.Clear();
+    b.scores[1] = 5;
+    b.mapRead = Pack(b.scores[1], Put(b.scores, 1, 9));
+    b.mapRemove = Pack(b.scores.Remove(1) ? 1 : 0, b.scores.count);
+
+    var at = int2(1, 1);
+    board.cells[at] = 0;
+    b.gridBefore = Pack(board.cells[at], Paint(board, at));
+    b.gridAfter = Pack(Paint(board, at), board.cells[at]);
+
+    b.t = Tally { };
+    b.interpolated = $"{b.t.n}{Next(b.t)}{b.t.n}" == "011";
+    b.t = Tally { };
+    b.joined = "" + Next(b.t) + b.t.n + Next(b.t) == "112";
+    named.name = "a";
+    b.textRead = Join(named.name, Rename(named, "b")) == "aa";
+
+    // A vector's parts are read from one call, which runs once.
+    b.t = Tally { };
+    var corners = float4(Corner(b.t), 0, 1);
+    b.once = Pack(b.t.n, int(corners.y));
+    b.t = Tally { };
+    var turned = Corner(b.t).yx;
+    b.swizzled = Pack(b.t.n, int(turned.x));
+    b.t = Tally { };
+    var outside = float4(c_corner(b.t), 0, 1);
+    b.externalOnce = Pack(b.t.n, int(outside.y));
+}
+
+// Components, and what a spawn, an Add and a Send are given.
+component Walker
+{
+    int steps;
+    int seen;
+}
+
+component Mark
+{
+    int first;
+    int second;
+    int third;
+}
+
+component Extra
+{
+    int first;
+    int second;
+}
+
+event Noted
+{
+    int first;
+    int second;
+}
+
+singleton Marks
+{
+    Tally t;
+    bool made;
+    Entity marked;
+    int heardFirst;
+    int heardSecond;
+    int started;
+}
+
+system WalkInOrder(mut Walker walker)
+{
+    walker.seen = Pack(walker.steps, Walk(walker));
+}
+
+system MarksInOrder(mut Marks m)
+{
+    if (m.made) return;
+    m.made = true;
+    m.t = Tally { };
+    var marked = Spawn(Mark { first = Next(m.t), second = m.t.n, third = Next(m.t) });
+    m.marked = marked;
+    m.t = Tally { };
+    marked.Add(Extra { first = m.t.n, second = Next(m.t) });
+    m.t = Tally { };
+    Send(Noted { first = m.t.n, second = Next(m.t) });
+    // A task's arguments go into its frame one by one.
+    m.t = Tally { };
+    Report(m, m.t.n, Next(m.t));
+}
+
+event(Noted noted) Hear(mut Marks m)
+{
+    m.heardFirst = noted.first;
+    m.heardSecond = noted.second;
+}
+
+async void Report(mut Marks m, int first, int second)
+{
+    await Wait.Ticks(1);
+    m.started = Pack(first, second);
+}
+
+// Local fields, which a view changes through a function.
+component Box
+{
+    int sides = 4;
+    local int hits;
+    local int seen;
+}
+
+view Touches(mut Box box)
+{
+    box.seen = Pack(box.hits, Touch(box));
 }

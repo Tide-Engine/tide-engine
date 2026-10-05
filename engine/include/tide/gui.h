@@ -107,10 +107,6 @@ typedef enum tide_anchor {
     TIDE_ANCHOR_LOWER_RIGHT,
 } tide_anchor;
 
-// The width of `text` drawn `size` tall, in the same units. The platform
-// measures with its font (tide_platform_measure_text); NULL guesses.
-typedef float (*tide_measure_fn)(const char *text, float size);
-
 typedef struct tide_gui_group {
     uint32_t id;
     uint32_t kind;            // Vertical, horizontal or area
@@ -242,8 +238,9 @@ typedef struct tide_gui {
     tide_draw_list list; // This frame's commands, drawn over the world at the end
 } tide_gui;
 
-// Starts a frame. `screen` is the window's size in pixels. A zeroed tide_gui
-// is ready to use.
+// Starts a frame. `screen` is the window's size in pixels, and `measure` how
+// big the renderer draws text (tide/draw.h: tide_platform_measure_text), or
+// NULL to guess. A zeroed tide_gui is ready to use.
 void tide_gui_begin(tide_gui *g, const tide_devices *devices, tide_float2 screen, tide_measure_fn measure);
 
 // Ends the frame: closes what's still open and adds the GUI's commands to the
