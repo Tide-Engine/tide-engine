@@ -994,6 +994,7 @@
         glBindTexture: (target, t) => gl.bindTexture(target, get('texture', t)),
         glBindVertexArray: v => gl.bindVertexArray(get('vertexArray', v)),
         glBlendFunc: (s, d) => gl.blendFunc(s, d),
+        glBlendFuncSeparate: (s, d, sa, da) => gl.blendFuncSeparate(s, d, sa, da),
         glBufferData(target, size, ptr, usage) {
             if (ptr) gl.bufferData(target, u8(), usage, ptr, size);
             else gl.bufferData(target, size, usage);
@@ -1047,6 +1048,7 @@
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
+        glGetIntegerv: (pname, ptr) => writeParameter(gl.getParameter(pname), ptr),
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
         glGetProgramiv: (p, pname, ptr) => writeParameter(gl.getProgramParameter(get('program', p), pname), ptr),
         glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
@@ -1292,7 +1294,16 @@
     }
     let reader = null; // A 2D canvas, which a target is drawn into to read it back without waiting
 
+    // tide_gpu_blend: by its alpha, added, what's there times it, or in its place (none)
     const alphaBlend = { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' };
+    const blends = [
+        { color: alphaBlend, alpha: alphaBlend },
+        { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } },
+        { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' },
+          alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
+        undefined,
+    ];
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1381,7 +1392,7 @@
                 layout: pipelineLayouts[b.textures],
                 vertex: { module, entryPoint: 'vertex', buffers },
                 fragment: { module, entryPoint: 'fragment', targets: [{ format: gpuFormat,
-                    blend: b.blend === 0 ? { color: alphaBlend, alpha: alphaBlend } : undefined }] },
+                    blend: blends[b.blend] }] },
                 primitive: { topology: 'triangle-list', cullMode: 'none' }, // Either side of a triangle draws
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: b.depth !== 0,
                     depthCompare: b.depth === 1 ? 'less-equal' : 'always' },
@@ -1396,6 +1407,7 @@
                 groups: new Set() });
             return gpuAdd('target', { color, depth: depthFor(width, height), width, height, canvas: null, context: null });
         },
+        gpu_target_limit: () => device.limits.maxTextureDimension2D,
         gpu_target_texture: id => gpuTables.target[id].color,
         gpu_target_free(id) {
             const t = gpuTables.target[id];

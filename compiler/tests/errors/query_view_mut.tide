@@ -1,0 +1,7 @@
+// expect: query component bindings are read-only and can't be 'mut'
+component Body { float x; local float shown; }
+scene Main { }
+view Hits(query (mut Body body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x}");
+}

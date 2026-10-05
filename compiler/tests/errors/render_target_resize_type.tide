@@ -1,4 +1,4 @@
-// expect: a render target's size is in pixels, an int
+// expect: a render target's size is in logical pixels, a number, not bool
 scene Main { }
 local singleton Buffers { RenderTarget scene; }
-view Show(Buffers buffers) { buffers.scene.Resize(64.0, 64); }
+view Show(Buffers buffers) { buffers.scene.Resize(true, 64); }

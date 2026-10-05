@@ -34,7 +34,7 @@ An event is a value, so a local can hold one, and a handler can send its event o
 
 ## Handling
 
-A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's, except query parameters.
+A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's. A match handler takes no [query](./systems.md#another-set-of-entities) yet; a [local handler](#other-entities) does.
 
 ```csharp
 // Health and this come from the entity the Hit was sent to.
@@ -165,6 +165,7 @@ Tap a ball below, three times. Each tap reaches the match as a command, whose ha
 - **The components of the entity the event was sent to**, to read. `mut` on one reaches only its local fields, as in a view: `fighter.flash` above. `with` and `without` filter as they do for a match handler.
 - **The match's singletons**, to read. `Time` is the tick the event was sent in.
 - **Local singletons**, which it changes.
+- **Queries**, to go through other entities than the one the event was sent to ([below](#other-entities)).
 
 A handler that takes no components runs once per event, as a match handler does, and one that takes components needs every `Send` of its event to name an entity.
 
@@ -179,6 +180,34 @@ local event(Destroyed) ShotEnded(Body body, mut Fx fx, with Bullet)
 ```
 
 An event sent to an entity that's gone by its turn isn't heard, as it isn't handled. Local fields are the entity's whether or not it's still there: what a handler writes for an entity that's gone goes with the rest of its local fields, at that frame.
+
+### Other entities
+
+A local handler takes `query` parameters, as a [view](./views.md#other-entities) does, to go through entities other than the one its event was sent to:
+
+```csharp
+event Blast
+{
+    float2 at;
+    float radius;
+}
+
+// Every fighter the blast reached throws a spark
+local event(Blast blast) ShowBlast(mut Fx fx, query (Body body, with Fighter) fighters)
+{
+    foreach (var fighter in fighters)
+    {
+        if (Math.DistanceSq(fighter.body.position, blast.at) > blast.radius * blast.radius) continue;
+        fx.sparks.Add(Spark { position = fighter.body.position, velocity = float2(0, 3) });
+    }
+}
+```
+
+- **Rows are from the tick that sent the event**, like what the handler takes of the entity the event was sent to: the match as that tick left it, whatever it is by the frame the handler runs in. They aren't blended. A handler of a [`verified`](#verified-handlers) event gets the confirmed tick's.
+- **They're the tick's once it's done**, after all its events and changes. An entity the tick destroyed is in no row, the one the event was sent to included, and an entity it spawned is in them. The handler's own components are still as the event's turn left them.
+- **Nothing in it says `verified`**: the handler's event says which tick. A binding can't be `mut`, and rows have the match's fields, without its text, lists, maps, sets and grids, which aren't heard yet.
+- **A query of this machine's entities**, `query (Spark spark) sparks`, is the local world as it is when the handler runs. It's the only kind a handler of a local event takes.
+- **The entities are recorded once for a tick**, however many of its events have a handler that goes through them, and only for ticks that sent one.
 
 ### At the start of a frame
 

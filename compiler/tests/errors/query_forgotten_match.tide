@@ -1,0 +1,12 @@
+// expect: 'Body' belongs to the match, and a handler of a local event only queries local entities
+component Body { float x; }
+component Box
+{
+    float3 pos;
+    local int bakes;
+}
+scene Main { }
+local event(Forgotten) Free(Box box, query (Body body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x + box.bakes}");
+}

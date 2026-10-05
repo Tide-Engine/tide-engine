@@ -73,15 +73,15 @@ view Effects(Buffers buffers)
 [Stage(RenderPhases.Prepare)]
 view Prepare(mut Buffers buffers)
 {
-    Draw2D.Camera(float2(0), 4);
+    Draw2D.SetCamera(float2(0), 4);
     buffers.scene.Clear(Color.black);
-    buffers.scene.Camera(float2(0), 4);
+    buffers.scene.SetCamera(float2(0), 4);
     buffers.targetThenWindow = Draw2D.WorldToScreen(buffers.scene.WorldToScreen(float2(0)));
     buffers.windowThenTarget = buffers.scene.WorldToScreen(Draw2D.WorldToScreen(float2(0)));
-    buffers.scene.Camera(float3(0, 0, -5), quaternion.identity, 60);
+    buffers.scene.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
     buffers.projected3 = buffers.scene.WorldToScreen(float3(0, 0, 5));
     buffers.scene.Cube(float3(0, 0, 5), float3(2), Color.green);
-    buffers.scene.Clip(Rect(-2, -2, 4, 4));
+    buffers.scene.SetClip(Rect(-2, -2, 4, 4));
     buffers.scratch.Clear(Color.blue);
     WindowMark(Draw2D.list);
 }

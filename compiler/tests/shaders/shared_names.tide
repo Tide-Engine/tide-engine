@@ -1,0 +1,45 @@
+// Frags that share a name, which a mesh names with their parameters' types,
+// and the functions they call: ones that share a name, defaults, and
+// arguments by name. Each gets a name of its own in GLSL and WGSL, and a
+// default is written where the call leaves it out.
+
+scene Main { }
+
+singleton Sun
+{
+    float strength = 0.5;
+}
+
+local singleton Art
+{
+    List<Vertex> quad;
+    List<int> faces;
+}
+
+float Dim(float value, float by = 0.5)
+{
+    return value * by;
+}
+
+float3 Dim(float3 value)
+{
+    return value * 0.25;
+}
+
+frag Tint(Vertex vertex, mut Color color)
+{
+    color.r = Dim(vertex.color.r);
+    color.g = Dim(by: 0.75, value: vertex.color.g);
+    color.b = Dim(float3(vertex.color.b)).x;
+}
+
+frag Tint(Vertex vertex, mut Color color, Sun sun)
+{
+    color = vertex.color * sun.strength;
+}
+
+view Show(Art art)
+{
+    Draw2D.Mesh(art.quad, art.faces, Tint(Vertex, Color));
+    Draw2D.Mesh(art.quad, art.faces, Tint(Vertex, Color, Sun));
+}

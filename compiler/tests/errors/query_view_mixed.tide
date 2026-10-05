@@ -1,0 +1,8 @@
+// expect: a query can't mix local and match components: no entity has both
+component Body { float x; }
+local component Spark { float x; }
+scene Main { }
+view Hits(query (Body body, Spark spark) both)
+{
+    foreach (var row in both) Debug.Log($"{row.body.x + row.spark.x}");
+}

@@ -193,6 +193,10 @@ const cases = {
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw.Blend(Blend.Add),', [['Draw', 'support.class'], ['Blend', 'entity.name.function.call'], ['Blend', '!support.class'],
+                                    ['Blend', 'support.class', 2]]],
+        ['Draw2D.Clip(Rect(0, 0, 4, 4))', [['Clip', 'entity.name.function.call'], ['Rect', 'storage.type.primitive']]],
+        ['Draw.SetTint(Color.red);', [['SetTint', 'entity.name.function.call']]],
         ['Draw2D.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
@@ -242,6 +246,23 @@ const cases = {
             ['Fighter', 'entity.name.type'], ['Ghost', 'entity.name.type'], ['Time', 'support.class'],
         ]],
         ['query (', [['query', 'storage.modifier.query']]],
+        ['view ShadowsOfFighters(', [
+            ['view', 'storage.type'], ['ShadowsOfFighters', 'entity.name.function'], ['query', 'storage.modifier.query'],
+            ['Platform', 'entity.name.type'], ['without', 'storage.modifier'], ['Ghost', 'entity.name.type'],
+        ]],
+        ['view SureOfFighters(', [
+            ['query', 'storage.modifier.query'], ['verified', 'storage.modifier.verified', 2], ['with', 'storage.modifier'],
+            ['Health', 'entity.name.type'], ['Fighter', 'entity.name.type'],
+        ]],
+        ['local event(Hit hit) ShowHitNear(', [
+            ['local', 'storage.modifier'], ['event', 'storage.type'], ['Hit', 'entity.name.type'], ['hit', 'variable.parameter'],
+            ['ShowHitNear', 'entity.name.function'], ['query', 'storage.modifier.query'], ['with', 'storage.modifier'],
+            ['Fighter', 'entity.name.type'],
+        ]],
+        ['local event(verified Died) ShowDeathNear(', [
+            ['verified', 'storage.modifier.verified'], ['Died', 'entity.name.type'], ['ShowDeathNear', 'entity.name.function'],
+            ['mut', 'storage.modifier'], ['query', 'storage.modifier.query'], ['Spark', 'entity.name.type'],
+        ]],
         ['with Fighter,', [['with', 'storage.modifier'], ['Fighter', 'entity.name.type']]],
         ['without Ghost', [['without', 'storage.modifier'], ['Ghost', 'entity.name.type']]],
         ['int query(', [['query', 'entity.name.function'], ['query', '!storage.modifier']]],
@@ -338,6 +359,24 @@ const cases = {
         ['if (pixel.position.x < 10) pixel.Discard();', [['Discard', 'entity.name.function.call']]],
         ['Draw3D.Mesh(models.crate', [['Draw3D', 'support.class'], ['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
         ['Draw3D.Cube(', [['Draw3D', 'support.class'], ['Cube', 'entity.name.function.call']]],
+    ],
+    'arguments by name, defaults, and a shared name with its parameters': [
+        ['float Strike(float base, float multiplier = 1', [
+            ['Strike', 'entity.name.function'], ['Strike', '!entity.name.function.call'], ['=', 'keyword.operator.assignment'],
+            ['multiplier', '!variable.parameter'], ['false', 'constant.language.boolean'],
+        ]],
+        ['return Strike(10, crit: true)', [
+            ['crit', 'variable.parameter'], [':', 'punctuation.separator.colon'], [':', '!keyword.operator'],
+            ['true', 'constant.language.boolean'],
+        ]],
+        ['return Strike(base: 1, multiplier: on ? 2 : 3)', [
+            ['base', 'variable.parameter'], ['multiplier', 'variable.parameter'], [':', 'punctuation.separator.colon', 2],
+            ['?', 'keyword.operator.ternary'], [':', 'keyword.operator.ternary', 3], ['on', '!variable.parameter'],
+        ]],
+        ['[After(Advance(Body, with Player))]', [
+            ['After', 'entity.name.function.attribute'], ['Body', 'entity.name.type'], ['with', 'storage.modifier'],
+            ['Player', 'entity.name.type'],
+        ]],
     ],
 };
 

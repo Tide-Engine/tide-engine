@@ -119,6 +119,11 @@ view Show(Devices devices)
     Random dice = Random(7);
     var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
+    Draw.Blend(Blend.Add),
+    Draw2D.Clip(Rect(0, 0, 4, 4))
+    {
+        Draw.SetTint(Color.red);
+    }
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
     GUITheme look = default;
@@ -237,9 +242,33 @@ system QueriesAcrossLines(
 {
     foreach (var fighter in fighters) { var target = fighter.body; }
 }
+// Views and local handlers take queries too, with verified in a view's.
+view ShadowsOfFighters(Body body, query (Platform box, without Ghost) platforms) { }
+view SureOfFighters(query (Body mine, verified Health sure, with verified Fighter) both) { }
+local event(Hit hit) ShowHitNear(Body body, query (Body other, with Fighter) fighters) { }
+local event(verified Died) ShowDeathNear(mut Toast toast, query (Spark spark) sparks) { }
 int query(int value) { return value; }
 int QueryName(int query) { return query; }
 void CallQuery() { var answer = query(1); }
+
+// Defaults, arguments by name, and a shared name written with its parameters' types.
+float Strike(float base, float multiplier = 1, bool crit = false)
+{
+    return crit ? base * multiplier * 2 : base * multiplier;
+}
+float Strikes(bool on)
+{
+    return Strike(10, crit: true)
+        + 1;
+}
+float StrikesOn(bool on)
+{
+    return Strike(base: 1, multiplier: on ? 2 : 3);
+}
+system Advance(mut Body body, with Player) { }
+system Advance(mut Body body, with Enemy) { }
+[After(Advance(Body, with Player))]
+system Settle(mut Body body) { }
 
 // verified: a word of its own before a view's parameter, after with and without, and before a local handler's event; a name anywhere else.
 view HealthBar(Health health, verified Health confirmed, mut verified Combat.Armor armor) { }

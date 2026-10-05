@@ -2,6 +2,7 @@
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     ivec4 tide_v0;
 };
 layout(location = 0) in vec2 tide_a0;
@@ -22,6 +23,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     ivec4 tide_v0;
 };
 in vec2 tide_s1;
@@ -77,6 +79,8 @@ void ts_Stars(tt_SkyVertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Stars(tt_SkyVertex(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -84,6 +88,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
@@ -154,6 +159,10 @@ fn ts_Stars(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Stars(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 
@@ -161,6 +170,7 @@ fn ts_Stars(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     vec4 tide_u0;
     vec4 tide_u1;
     vec4 tide_u2;
@@ -358,6 +368,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     vec4 tide_u0;
     vec4 tide_u1;
     vec4 tide_u2;
@@ -438,6 +449,8 @@ void ts_Calm(tt_SkyVertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Calm(tt_SkyVertex(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -445,6 +458,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
     tide_u0: vec4f,
     tide_u1: vec4f,
     tide_u2: vec4f,
@@ -705,6 +719,10 @@ fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Calm(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 

@@ -252,7 +252,7 @@ static float measure(const char *text, const float size)
 }
 
 // ...as a renderer says it.
-static tide_float2 font(const char *text, const float size, const bool target, const unsigned char *weight)
+static tide_float2 font(const char *text, const float size, const tide_target_size *target, const unsigned char *weight)
 {
     (void)target;
     (void)weight;
@@ -268,12 +268,16 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
 
     // A wide screen: the frame's rows and the tick's side by side
     tide_draw_reset(&list);
-    tide_draw_clip(&list, (tide_rect){0, 0, 10, 10}); // A view's, left on
+    tide_draw_set_clip(&list, (tide_rect){0, 0, 10, 10}); // A view's, left on, with a tint
+    tide_draw_set_tint(&list, TIDE_COLOR_RED);
+    tide_draw_rect(&list, tide_f2(5, 5), tide_f2(2, 2), TIDE_COLOR_WHITE);
     tide_profiler_draw(&p, &list, tide_f2(960, 540), font);
-    TIDE_REQUIRE(list.count > 4);
-    TIDE_CHECK(list.commands[1].kind == TIDE_DRAW_NO_CLIP && list.commands[2].kind == TIDE_DRAW_SCREEN);
-    TIDE_CHECK(list.commands[3].kind == TIDE_DRAW_RECT); // The panel, in the corner
-    TIDE_CHECK(list.commands[3].a.x - list.commands[3].b.x * 0.5f == 12.0f);
+    TIDE_REQUIRE(list.count > 5);
+    TIDE_CHECK(list.commands[0].kind == TIDE_DRAW_CLIP && list.commands[1].kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(list.commands[2].kind == TIDE_DRAW_SCREEN && list.commands[3].kind == TIDE_DRAW_NO_CLIP);
+    TIDE_CHECK(list.commands[4].kind == TIDE_DRAW_RECT); // The panel, in the corner, in its own color
+    TIDE_CHECK(list.commands[4].a.x - list.commands[4].b.x * 0.5f == 12.0f);
+    TIDE_CHECK(list.commands[4].color.b == 0.08f && !list.tinted);
     const tide_draw_command *frame = text_command("Frame");
     const tide_draw_command *tick = text_command("Tick");
     TIDE_REQUIRE(frame && tick);

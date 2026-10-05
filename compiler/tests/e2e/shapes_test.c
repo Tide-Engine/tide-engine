@@ -57,7 +57,7 @@ static bool wire(const tide_draw_command *c, const float radius, const float wid
 TIDE_TEST(shapes_record_what_each_call_says)
 {
     tide_local_init(&local);
-    local.Canvas.target = (tide_render_target){.id = 11, .width = 16, .height = 12};
+    local.Canvas.target = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
     tide_devices devices = {0};
     tide_gui_begin(&gui, &devices, tide_f2(200, 100), NULL);
     tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);

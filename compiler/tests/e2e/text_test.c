@@ -22,9 +22,9 @@ static struct {
 } asked[16];
 static int asks;
 
-static tide_float2 measure(const char *text, const float size, const bool target, const unsigned char *font)
+static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
 {
-    if (asks < 16) asked[asks].size = size, asked[asks].target = target, asked[asks].font = font;
+    if (asks < 16) asked[asks].size = size, asked[asks].target = target != NULL, asked[asks].font = font;
     asks++;
     return tide_f2((float)strlen(text) * size * (font ? 1.0f : 0.5f), size);
 }
@@ -33,7 +33,7 @@ static void frame(tide_local *local, tide_draw_list *draw)
 {
     static tide_gui gui;
     tide_devices devices = {0};
-    local->Probe.panel = (tide_render_target){.id = 11, .width = 16, .height = 12};
+    local->Probe.panel = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
     tide_draw_reset(draw);
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), measure);
     tide_frame(NULL, NULL, 1, NULL, local, draw, &gui);

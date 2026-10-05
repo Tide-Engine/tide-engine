@@ -12,16 +12,21 @@ static bool close_to(const float a, const float b)
 // What the renderer was asked, in order.
 static struct {
     float size;
-    bool target;
+    bool target;      // In a render target...
+    float pixels_per; // ...at this many of its image's pixels a unit
 } asked[16];
 static int asks;
 
 // A font of the test's: a character is half as wide as text is tall, and
 // lines are one and a half sizes apart.
-static tide_float2 measure(const char *text, const float size, const bool target, const unsigned char *font)
+static tide_float2 measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
 {
     (void)font;
-    if (asks < 16) asked[asks].size = size, asked[asks].target = target;
+    if (asks < 16) {
+        asked[asks].size = size;
+        asked[asks].target = target != NULL;
+        asked[asks].pixels_per = target ? target->scale : 0;
+    }
     asks++;
     int widest = 0, across = 0, lines = 1;
     for (; *text; text++) {
@@ -36,7 +41,7 @@ static void frame(tide_local *local, tide_draw_list *draw, const tide_measure_fn
     static tide_gui gui;
     tide_devices devices = {0};
     tide_local_init(local);
-    local->Probe.panel = (tide_render_target){.id = 11, .width = 16, .height = 12};
+    local->Probe.panel = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12, .scale = 2}};
     tide_draw_reset(draw);
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), font);
     tide_frame(NULL, NULL, 1, NULL, local, draw, &gui);
@@ -67,7 +72,8 @@ TIDE_TEST(measure_text_is_in_the_units_the_draw_calls_are_in)
     // drawn 60 times its size in pixels, and measured there
     TIDE_CHECK(close_to(probe->world.x, 1) && close_to(probe->world.y, 0.5f));
     TIDE_CHECK(close_to(probe->helper.x, 0.5f) && close_to(probe->helper.y, 0.25f));
-    // A target has its own pixels and its own camera: 8 units of its 12 pixels
+    // A target has its own camera, 8 units of its 12 logical pixels, and its
+    // own pixels: the renderer is told how many of them a unit has
     TIDE_CHECK(close_to(probe->target.x, 4) && close_to(probe->target.y, 2));
     TIDE_CHECK(close_to(probe->after.x, 1) && close_to(probe->after.y, 0.5f));
 
@@ -75,7 +81,7 @@ TIDE_TEST(measure_text_is_in_the_units_the_draw_calls_are_in)
     TIDE_REQUIRE(asks == 7);
     TIDE_CHECK(asked[0].size == 10 && asked[1].size == 10 && asked[2].size == 20);
     TIDE_CHECK(close_to(asked[3].size, 30) && close_to(asked[4].size, 15) && close_to(asked[6].size, 30));
-    TIDE_CHECK(close_to(asked[5].size, 3) && asked[5].target);
+    TIDE_CHECK(close_to(asked[5].size, 3) && asked[5].target && asked[5].pixels_per == 2);
     for (int i = 0; i < 7; i++) TIDE_CHECK(asked[i].target == (i == 5));
 
     tide_draw_free(&draw);

@@ -1,0 +1,12 @@
+// expect: target.Screen sets it around a block
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+view Show(Canvas canvas)
+{
+    canvas.target.Screen();
+}

@@ -1,0 +1,80 @@
+// Systems, views and handlers that share a name: each goes with its
+// parameters' types, in the schedule and where [Before] and [After] name it.
+
+scene Main { }
+
+component Body { float x; }
+component Speed { float x = 1; }
+component Player { }
+component Enemy { }
+
+event Hit { float damage; }
+
+singleton Log
+{
+    float seen;
+    float hits;
+}
+
+system Move(mut Body body, Speed speed, with Player)
+{
+    body.x += speed.x;
+}
+
+system Move(mut Body body, Speed speed, with Enemy)
+{
+    body.x -= speed.x;
+}
+
+// One alone keeps its name
+system Settle(mut Body body)
+{
+    body.x *= 0.5;
+}
+
+[After(Move(Body, Speed, with Player)), Before(Move(Body, Speed, with Enemy))]
+system Watch(Body body, mut Log log)
+{
+    log.seen += body.x;
+    this.Send(Hit { damage = 1 });
+}
+
+event(Hit hit) Count(mut Log log)
+{
+    log.hits += hit.damage;
+}
+
+[After(Count(Log))]
+event(Hit hit) Count(mut Body body)
+{
+    body.x -= hit.damage;
+}
+
+view Show(Body body)
+{
+    Draw2D.Circle(float2(body.x, 0), 1, Color.white);
+}
+
+[After(Show(Body))]
+view Show(Log log)
+{
+    Draw2D.Text($"{log.hits}", float2(0, 0), 12, Color.white);
+}
+
+// `verified` tells two apart too, and is written where one is named
+[After(Sure(verified Body))]
+view Sure(Body body)
+{
+    Draw2D.Circle(float2(body.x, 2), 1, Color.red);
+}
+
+view Sure(verified Body body)
+{
+    Draw2D.Circle(float2(body.x, 3), 1, Color.green);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body, Speed, Player);
+    Spawn(Body, Speed, Enemy);
+}

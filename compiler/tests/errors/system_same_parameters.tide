@@ -1,0 +1,6 @@
+// expect: 'Move' is already declared with these parameters
+scene Main { }
+component Body { float x; }
+component Player { }
+system Move(mut Body body, with Player) { body.x += 1; }
+system Move(mut Body other, with Player) { other.x -= 1; }

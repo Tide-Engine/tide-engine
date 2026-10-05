@@ -467,6 +467,316 @@ static param *find_param(const checker *c, const str name)
 }
 
 // ---------------------------------------------------------------------------
+// Declarations that share a name
+//
+// As in C#, functions can share a name, and so can a type's methods; so can
+// systems, views and handlers, and frags and verts. Their parameters tell them
+// apart: the types in order, with a system's filters, whatever the names,
+// `mut` and defaults. A call picks by its arguments. Where nothing calls
+// ([Before], [After], a mesh's vert and frag), a shared name is written with
+// its parameters' types, `Move(Position, with Player)`, and has to be one
+// declaration's.
+
+typedef VEC(decl *) decl_list;
+
+static bool same_type(type a, type b);
+
+// What shares a name with what: functions, systems of every kind (views and
+// handlers are systems), and frags and verts.
+static bool same_name_kind(const decl *a, const decl *b)
+{
+    return a->kind == b->kind && (a->kind == DECL_FUNCTION || a->kind == DECL_SYSTEM || a->kind == DECL_SHADER);
+}
+
+// Every declaration with `d`'s name where it's declared, `d` among them, in
+// the order declared: a type's methods of that name, or what's of its kind in
+// its namespace.
+static void sharing_name(const program *prog, const decl *d, decl_list *out)
+{
+    if (d->owner) {
+        for (int i = 0; i < d->owner->methods.count; i++) {
+            decl *m = d->owner->methods.items[i];
+            if (!m->is_operator && str_eq(m->name, d->name)) vec_push(*out, m);
+        }
+        return;
+    }
+    const decl_index *index = decls_by(prog, false);
+    const str ns = decl_ns(d);
+    const uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), d->name.ptr, (size_t)d->name.len);
+    for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
+        decl *other = prog->decls.items[i];
+        if (same_name_kind(other, d) && str_eq(other->name, d->name) && str_eq(decl_ns(other), ns)) vec_push(*out, other);
+    }
+}
+
+// Whether a parameter is one of those a declaration is told apart by. A
+// handler's trigger and a command's sender aren't: they're written before its name.
+static bool in_signature(const param *p)
+{
+    return p->mode != PARAM_EVENT && p->mode != PARAM_SENDER;
+}
+
+// 0 for a value, and one for each thing a system's parameter can be instead.
+static int signature_form(const int mode)
+{
+    return mode == PARAM_WITH ? 1 : mode == PARAM_WITHOUT ? 2 : mode == PARAM_QUERY ? 3 : 0;
+}
+
+// Whether two parameter lists tell nothing apart: the same types in the same
+// order, and the same filters.
+static bool same_param_lists(const param *a, const int a_count, const param *b, const int b_count)
+{
+    int i = 0;
+    int j = 0;
+    for (;;) {
+        while (i < a_count && !in_signature(&a[i])) i++;
+        while (j < b_count && !in_signature(&b[j])) j++;
+        if (i == a_count || j == b_count) return i == a_count && j == b_count;
+        const param *p = &a[i++];
+        const param *q = &b[j++];
+        if (signature_form(p->mode) != signature_form(q->mode) || p->ownership != q->ownership || p->verified != q->verified) return false;
+        if (p->mode == PARAM_QUERY) {
+            if (!same_param_lists(p->query.items, p->query.count, q->query.items, q->query.count)) return false;
+        } else if (!p->ownership && !same_type(p->type, q->type)) {
+            return false;
+        }
+    }
+}
+
+static bool params_have_errors(const param *params, const int count)
+{
+    for (int i = 0; i < count; i++) {
+        const param *p = &params[i];
+        if (!in_signature(p) || p->ownership) continue;
+        if (p->mode == PARAM_QUERY ? params_have_errors(p->query.items, p->query.count) : p->type.kind == TY_ERROR) return true;
+    }
+    return false;
+}
+
+// A parameter list's types as code names a declaration by them: "Position,
+// Velocity, with Player".
+static void put_param_types(sb *out, const param *params, const int count)
+{
+    bool first = true;
+    for (int i = 0; i < count; i++) {
+        const param *p = &params[i];
+        if (!in_signature(p)) continue;
+        if (!first) sb_put(out, ", ");
+        first = false;
+        if (p->mode == PARAM_QUERY) {
+            sb_put(out, "query(");
+            put_param_types(out, p->query.items, p->query.count);
+            sb_put(out, ")");
+            continue;
+        }
+        if (p->mode == PARAM_WITH) sb_put(out, "with ");
+        if (p->mode == PARAM_WITHOUT) sb_put(out, "without ");
+        if (p->verified) sb_put(out, "verified ");
+        if (p->ownership || p->type.kind == TY_ERROR) sb_printf(out, STR_FMT, STR_ARG(p->type_name));
+        else sb_put(out, type_name(p->type));
+    }
+}
+
+// What tells a declaration that shares its name apart in generated C: its
+// parameters' types, as an identifier's letters.
+static void put_c_suffix(sb *out, const param *params, const int count)
+{
+    bool any = false;
+    for (int i = 0; i < count; i++) {
+        const param *p = &params[i];
+        if (!in_signature(p)) continue;
+        any = true;
+        sb_put(out, p->mode == PARAM_WITH ? "_with_" : p->mode == PARAM_WITHOUT ? "_without_" : "_");
+        if (p->verified) sb_put(out, "verified_");
+        if (p->mode == PARAM_QUERY) {
+            sb_put(out, "query");
+            put_c_suffix(out, p->query.items, p->query.count);
+            sb_put(out, "_end");
+            continue;
+        }
+        const char *text = p->ownership || p->type.kind == TY_ERROR ? str_to_cstr(p->type_name) : type_name(p->type);
+        for (; *text; text++) {
+            if (isalnum((unsigned char)*text)) sb_putn(out, text, 1);
+            else if (*text == '?') sb_put(out, "_opt");
+            else if (*text != ' ' && *text != '>') sb_put(out, "_"); // The '.' of a namespace, a generic type's '<' and ','
+        }
+    }
+    if (!any) sb_put(out, "_void");
+}
+
+// Once a declaration's parameters have their types: against those before it
+// that share its name, which its parameters have to tell it from, and the
+// names it then goes by, in messages and in generated C.
+static void settle_shared_name(const program *prog, decl *d)
+{
+    decl_list same = {0};
+    sharing_name(prog, d, &same);
+    for (int k = 0; k < same.count && same.items[k] != d; k++) {
+        const decl *other = same.items[k];
+        if (params_have_errors(d->params.items, d->params.count) || params_have_errors(other->params.items, other->params.count)) continue;
+        if (!same_param_lists(d->params.items, d->params.count, other->params.items, other->params.count)) continue;
+        if (d->owner) {
+            diag_error(d->at, "'" STR_FMT "' already has a method '" STR_FMT "' with these parameters", STR_ARG(d->owner->name),
+                       STR_ARG(d->name));
+        } else {
+            diag_error(d->at, "'" STR_FMT "' is already declared with these parameters", STR_ARG(d->qualified));
+            const source *src = diag_source(other->at.file);
+            if (src && other->at.file != d->at.file) diag_note_at(other->at, "the other one is in %s", src->path);
+        }
+        diag_note("declarations that share a name differ in their parameters' types: names, 'mut' and defaults don't tell them apart");
+        break;
+    }
+    sb suffix = {0};
+    put_c_suffix(&suffix, d->params.items, d->params.count);
+    d->c_suffix = suffix.data;
+    sb signature = {0};
+    sb_printf(&signature, STR_FMT "(", STR_ARG(d->name));
+    put_param_types(&signature, d->params.items, d->params.count);
+    sb_put(&signature, ")");
+    d->signature = signature.data;
+}
+
+// A declaration as code names it with its parameters: "Move(Position, with Player)".
+static const char *signature_of(const decl *d)
+{
+    if (d->signature) return d->signature;
+    sb signature = {0};
+    sb_printf(&signature, STR_FMT "(", STR_ARG(d->name));
+    put_param_types(&signature, d->params.items, d->params.count);
+    sb_put(&signature, ")");
+    return signature.data;
+}
+
+// Whether a type as a name with parameters writes it is parameter `p`'s,
+// where `from` writes it.
+static bool names_param_type(const program *prog, const unit *from, const str text, const param *p)
+{
+    if (p->ownership) return str_eq_c(text, "ownership");
+    const type t = p->type;
+    type builtin;
+    if (t.kind == TY_WORLD) return str_eq_c(text, "World");
+    if (builtin_type_named(text, &builtin)) return builtin.kind == t.kind;
+    if (t.kind == TY_STRING) return str_eq_c(text, "string");
+    if (t.kind == TY_RECORD) return str_eq(text, t.decl->name);
+    if (t.kind != TY_COMPONENT && t.kind != TY_SINGLETON && t.kind != TY_INPUT && t.kind != TY_STRUCT && t.kind != TY_ENUM) return false;
+    decl *other;
+    return lookup(prog, from, text, NAME_TYPE, &other) == t.decl;
+}
+
+// Whether the types a name is written with are a parameter list's, one for
+// one. Each then knows its parameter, for editors.
+static bool signature_names(const program *prog, const unit *from, sig_item *items, const int count, const param *params,
+                            const int param_count)
+{
+    int j = 0;
+    for (int i = 0; i < count; i++) {
+        while (j < param_count && !in_signature(&params[j])) j++;
+        if (j == param_count) return false;
+        const param *p = &params[j++];
+        sig_item *item = &items[i];
+        if (signature_form(item->mode) != signature_form(p->mode) || item->verified != p->verified) return false;
+        if (p->mode == PARAM_QUERY) {
+            if (!signature_names(prog, from, item->query.items, item->query.count, p->query.items, p->query.count)) return false;
+        } else if (!names_param_type(prog, from, item->type_name, p)) {
+            return false;
+        }
+        item->param = p;
+    }
+    while (j < param_count && !in_signature(&params[j])) j++;
+    return j == param_count;
+}
+
+static void put_sig_items(sb *out, const sig_item *items, const int count)
+{
+    for (int i = 0; i < count; i++) {
+        const sig_item *item = &items[i];
+        if (i) sb_put(out, ", ");
+        if (item->mode == PARAM_QUERY) {
+            sb_put(out, "query(");
+            put_sig_items(out, item->query.items, item->query.count);
+            sb_put(out, ")");
+            continue;
+        }
+        sb_printf(out, "%s%s" STR_FMT, item->mode == PARAM_WITH ? "with " : item->mode == PARAM_WITHOUT ? "without " : "",
+                  item->verified ? "verified " : "",
+                  STR_ARG(item->type_name));
+    }
+}
+
+// The declaration a name means where nothing calls it: [Before], [After], and
+// a mesh's vert and frag. `first` has the name. When it's the only one, that's
+// it. When others share the name, the name is written with the parameters of
+// the one meant, `Move(Position, with Player)`, and has to be exactly one's:
+// anything else is an error that lists them, and NULL.
+static decl *named_decl(const program *prog, const unit *from, decl *first, const bool has_signature, sig_items *signature,
+                        const loc at)
+{
+    decl_list same = {0};
+    if (first->shares_name) sharing_name(prog, first, &same);
+    else vec_push(same, first);
+    if (!has_signature) {
+        if (same.count == 1) return first;
+        diag_error(at, "%d declarations share the name '" STR_FMT "': write the one meant with its parameters' types", same.count,
+                   STR_ARG(first->name));
+        for (int k = 0; k < same.count; k++) diag_note("'%s'", signature_of(same.items[k]));
+        return NULL;
+    }
+    for (int k = 0; k < same.count; k++) {
+        decl *d = same.items[k];
+        if (signature_names(prog, from, signature->items, signature->count, d->params.items, d->params.count)) return d;
+    }
+    sb written = {0};
+    put_sig_items(&written, signature->items, signature->count);
+    diag_error(at, "no '" STR_FMT "' takes (%s)", STR_ARG(first->name), written.data ? written.data : "");
+    for (int k = 0; k < same.count; k++) diag_note("%s '%s'", same.count == 1 ? "it's" : k == 0 ? "there's" : "and", signature_of(same.items[k]));
+    diag_note("a declaration is named by its parameters' types in order, with its filters, and without 'mut' or names");
+    return NULL;
+}
+
+// The declarations of one kind that share names, once every one of that kind
+// has its parameters' types: see settle_shared_name. In generated C,
+// Damage(float) is Damage_float, which nothing else can be named.
+static void check_shared_names(const checker *c, const decl_kind kind)
+{
+    const program *prog = c->prog;
+    decl_list shared = {0};
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != kind || !d->shares_name) continue;
+        settle_shared_name(prog, d);
+        vec_push(shared, d);
+    }
+    if (shared.count == 0) return;
+    const decl_index *by_c_name = decls_by(prog, true);
+    const char **names = arena_alloc(sizeof(const char *) * (size_t)shared.count);
+    for (int i = 0; i < shared.count; i++) {
+        const decl *d = shared.items[i];
+        sb mine = {0};
+        c_name_of(d, &mine);
+        sb_put(&mine, d->c_suffix);
+        names[i] = mine.data;
+        const decl *met = NULL;
+        for (int j = first_c_named(by_c_name, mine.data, mine.len); j >= 0 && !met; j = by_c_name->next[j]) {
+            const decl *other = prog->decls.items[j];
+            if (other->shares_name || other->builtin) continue; // Those are named with their parameters too (below)
+            if (kind == DECL_SYSTEM && other->kind != DECL_SYSTEM && other->kind != DECL_FUNCTION && other->kind != DECL_SHADER
+                && other->kind != DECL_CONST) continue;
+            sb theirs = {0};
+            c_name_of(other, &theirs);
+            if (strcmp(mine.data, theirs.data) == 0) met = other;
+        }
+        for (int j = 0; j < i && !met; j++) {
+            if (strcmp(names[j], names[i]) == 0 && !same_param_lists(d->params.items, d->params.count, shared.items[j]->params.items,
+                                                                     shared.items[j]->params.count)) met = shared.items[j];
+        }
+        if (!met) continue;
+        diag_error(d->at, "'%s' and '%s' would have the same name in generated C, %s", d->signature,
+                   met->signature ? met->signature : str_to_cstr(met->qualified), mine.data);
+        diag_note("rename one of them");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Expressions
 
 static type check_expr(checker *c, expr *e);
@@ -1236,6 +1546,7 @@ static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
+static void refuse_arg_names(const expr *e, type result);
 
 // `default` where a value of `want` goes: that type's default value, the one
 // a field of it starts at. Types with fields take their declared defaults, as
@@ -1281,7 +1592,11 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
     if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ERROR)) {
         return check_list_literal(c, e, inner);
     }
-    if (is_new_grid(e)) return check_new_grid(c, e, inner);
+    if (is_new_grid(e)) {
+        const type grid = check_new_grid(c, e, inner);
+        refuse_arg_names(e, grid);
+        return grid;
+    }
     if (e->kind == E_DEFAULT) return check_default_value(c, e, inner);
     if (e->kind == E_NULL) {
         null_error(e, want);
@@ -1508,16 +1823,20 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_note("leave the field at default and create its target in a view or local handler");
             return T_ERR;
         }
-        if (argc != 2 || !type_assignable(T_INT_, first) || !type_assignable(T_INT_, e->args.items[1]->type)) {
-            diag_error(e->at, "RenderTarget takes its width and height in pixels, two ints: 'RenderTarget(width, height)'");
+        // Its size in logical pixels, like the window's, and its image's pixels in each: the display's when left out
+        bool numbers = argc == 2 || argc == 3;
+        for (int i = 0; numbers && i < argc; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
+        if (!numbers) {
+            diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
+                              "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
+            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = "tide_render_target_make";
+        e->c_callee = argc == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make";
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
-        vec_push(e->arg_want, T_INT_);
-        vec_push(e->arg_want, T_INT_);
+        for (int i = 0; i < argc; i++) vec_push(e->arg_want, T_FLOAT_);
         return target;
     }
     if (target.kind == TY_TEXTURE) {
@@ -2086,38 +2405,224 @@ static type check_send(checker *c, expr *e)
     return T_VOID_;
 }
 
+// How many of `m`'s parameters a call gives arguments for. An Action isn't
+// one: it's the code written after the call, in braces.
+static int arg_params(const decl *m)
+{
+    return m->params.count - (m->takes_action ? 1 : 0);
+}
+
+// How many arguments a call of `m` has to write: its parameters without a default.
+static int args_needed(const decl *m)
+{
+    int needed = 0;
+    for (int i = 0; i < arg_params(m); i++) needed += m->params.items[i].default_value == NULL;
+    return needed;
+}
+
+// An argument's name as the call wrote it, `crit` in `crit: true`, or empty.
+static str arg_name(const expr *e, const int i)
+{
+    return i < e->arg_names.count ? e->arg_names.items[i] : (str){"", 0};
+}
+
+// Which parameter of `m` each argument of a call is for, as in C#: in order,
+// then by name. `param_of` gets a parameter for each argument as written, or
+// -1. False when the arguments can't be `m`'s, which it says why unless `quiet`.
+static bool bind_args(const expr *e, const decl *m, int *param_of, const bool quiet)
+{
+    const int count = arg_params(m);
+    const int written = e->args.count;
+    bool *given = arena_alloc(sizeof(bool) * (size_t)(count ? count : 1));
+    bool ok = true;
+    bool named = false;
+    int unnamed = 0; // The arguments in order, before any name
+    for (int i = 0; i < written; i++) {
+        param_of[i] = -1;
+        const str name = arg_name(e, i);
+        if (name.len == 0) {
+            if (named) {
+                if (!quiet) {
+                    diag_error(e->args.items[i]->at, "an argument after a named one needs its name too");
+                    diag_note("arguments without a name come first, in the parameters' order");
+                }
+                ok = false;
+                continue;
+            }
+            unnamed++;
+            if (i < count) {
+                param_of[i] = i;
+                given[i] = true;
+            }
+            continue;
+        }
+        named = true;
+        int found = -1;
+        for (int k = 0; k < count; k++) {
+            if (str_eq(m->params.items[k].name, name)) found = k;
+        }
+        if (found < 0) {
+            if (!quiet) {
+                diag_error(e->arg_name_at.items[i], "'" STR_FMT "' has no parameter '" STR_FMT "'", STR_ARG(m->name), STR_ARG(name));
+                suggestion s = suggest_start(name);
+                for (int k = 0; k < count; k++) suggest_consider(&s, m->params.items[k].name);
+                suggest_note(&s);
+            }
+            ok = false;
+            continue;
+        }
+        if (given[found]) {
+            if (!quiet) {
+                diag_error(e->arg_name_at.items[i], "'" STR_FMT "' already has its '" STR_FMT "'", STR_ARG(m->name), STR_ARG(name));
+                diag_note(found < unnamed ? "the argument in its place gives it: name that one, or leave this one out"
+                                          : "an argument is given once");
+            }
+            ok = false;
+            continue;
+        }
+        param_of[i] = found;
+        given[found] = true;
+    }
+    const int needed = args_needed(m);
+    if (unnamed > count || (!named && written < needed)) {
+        if (!quiet) {
+            if (needed == count) {
+                diag_error(e->at, "'" STR_FMT "' takes %d argument%s, not %d", STR_ARG(m->name), count, count == 1 ? "" : "s",
+                           written);
+            } else {
+                diag_error(e->at, "'" STR_FMT "' takes %d to %d arguments, not %d", STR_ARG(m->name), needed, count, written);
+            }
+            if (m->takes_action) diag_note("its Action isn't one: it's the code in braces after the call");
+        }
+        return false;
+    }
+    for (int k = 0; ok && k < count; k++) { // Named ones can leave any out
+        if (given[k] || m->params.items[k].default_value) continue;
+        if (!quiet) {
+            diag_error(e->at, "'" STR_FMT "' isn't given its '" STR_FMT "'", STR_ARG(m->name), STR_ARG(m->params.items[k].name));
+            diag_note("it has no default, so every call passes it: '" STR_FMT ": ...'", STR_ARG(m->params.items[k].name));
+        }
+        ok = false;
+    }
+    return ok;
+}
+
+// Makes a call's arguments what each of `m`'s parameters gets, in the
+// parameters' order: the argument written for it, or its default. The
+// arguments as written stay in `written`, and when names put them in another
+// order than the parameters', `arg_order` keeps the order they're worked out in.
+static void settle_args(expr *e, const decl *m, const int *param_of)
+{
+    const int count = arg_params(m);
+    const int written = e->args.count;
+    bool as_written = written == count;
+    bool in_order = true;
+    for (int i = 0; i < written; i++) {
+        as_written &= param_of[i] == i;
+        if (i > 0) in_order &= param_of[i - 1] < param_of[i];
+    }
+    if (as_written) return;
+    expr **full = arena_alloc(sizeof(expr *) * (size_t)(count ? count : 1));
+    for (int k = 0; k < count; k++) full[k] = m->params.items[k].default_value;
+    for (int i = 0; i < written; i++) full[param_of[i]] = e->args.items[i];
+    for (int i = 0; !in_order && i < written; i++) vec_push(e->arg_order, param_of[i]);
+    e->settled = true;
+    e->written.items = e->args.items;
+    e->written.count = e->args.count;
+    e->written.cap = e->args.cap;
+    e->args.items = full;
+    e->args.count = e->args.cap = count;
+}
+
+// Names on the arguments of one of the engine's functions whose own check goes
+// by place, like Session.Connect(address, port): `names` are its parameters,
+// the last `optional` of which a call can leave out. Puts the arguments in the
+// parameters' order, as settle_args does. False after saying what's wrong.
+static bool order_named_args(expr *e, const char *names, const int optional)
+{
+    if (e->arg_names.count == 0) return true;
+    static expr left_out; // Stands for a default: only whether there's one counts
+    decl called = {0};
+    called.name = e->name;
+    for (const char *p = names; *p;) {
+        const char *end = strchr(p, ',');
+        param prm = {0};
+        prm.name = (str){p, (int)(end ? end - p : (ptrdiff_t)strlen(p))};
+        vec_push(called.params, prm);
+        p = end ? end + 2 : p + strlen(p);
+    }
+    for (int k = 0; k < optional && k < called.params.count; k++) {
+        called.params.items[called.params.count - 1 - k].default_value = &left_out;
+    }
+    const int written = e->args.count;
+    int *param_of = arena_alloc(sizeof(int) * (size_t)(written ? written : 1));
+    e->names_taken = true;
+    if (!bind_args(e, &called, param_of, false)) return false;
+    // What a call leaves out is at the end: the engine's functions have no values to fill a gap with
+    for (int i = 0; i < written; i++) {
+        if (param_of[i] < written) continue;
+        diag_error(e->arg_name_at.items[i], "'" STR_FMT "' is given its '" STR_FMT "' without the ones before it", STR_ARG(e->name),
+                   STR_ARG(called.params.items[param_of[i]].name));
+        return false;
+    }
+    bool in_order = true;
+    for (int i = 1; i < written; i++) in_order &= param_of[i - 1] < param_of[i];
+    if (in_order) return true;
+    expr **ordered = arena_alloc(sizeof(expr *) * (size_t)written);
+    for (int i = 0; i < written; i++) {
+        ordered[param_of[i]] = e->args.items[i];
+        vec_push(e->arg_order, param_of[i]);
+    }
+    e->settled = true;
+    e->written.items = e->args.items;
+    e->written.count = e->written.cap = written;
+    e->args.items = ordered;
+    e->args.cap = written;
+    return true;
+}
+
+static void check_arg_types(checker *c, expr *e, decl *m);
+
 // The arguments of a call of method or function `m`, against its parameters.
-// A mut parameter takes the caller's variable itself, which it changes.
 static void check_method_args(checker *c, expr *e, decl *m)
 {
     e->call = m->kind == DECL_FUNCTION ? CALL_FUNCTION : CALL_METHOD;
     e->method = m;
+    e->names_taken = true;
     decl *from = reading_code(c);
     if (from) {
         const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL};
         vec_push(c->calls, site);
     }
+    int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
+    const bool bound = bind_args(e, m, param_of, true);
     for (int i = 0; i < e->args.count; i++) {
         // Devices passed on are read where they go: the callee's reads count.
         c->device_whole_ok = e->args.items[i];
-        check_expr_want(c, e->args.items[i], i < m->params.count ? m->params.items[i].type : T_ERR);
+        check_expr_want(c, e->args.items[i], param_of[i] >= 0 ? m->params.items[param_of[i]].type : T_ERR);
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
-    // An Action isn't an argument: it's written after the call, in braces.
-    const int count = m->params.count - (m->takes_action ? 1 : 0);
     if (m->takes_action && !e->block) {
         diag_error(e->at, "'" STR_FMT "' takes a block, written after the call: '" STR_FMT "(...) { ... }'",
                    STR_ARG(m->name), STR_ARG(m->name));
     }
-    if (e->args.count != count) {
-        diag_error(e->at, "'" STR_FMT "' takes %d argument%s, not %d", STR_ARG(m->name), count, count == 1 ? "" : "s",
-                   e->args.count);
-        if (m->takes_action) diag_note("its Action isn't one: it's the code in braces after the call");
+    if (!bound) {
+        bind_args(e, m, param_of, false); // What's wrong with them, after what's wrong in them
         return;
     }
+    settle_args(e, m, param_of);
+    check_arg_types(c, e, m);
+}
+
+// Each argument of a call of `m` against its parameter, once they're in the
+// parameters' order. A mut parameter takes the caller's variable itself, which
+// it changes. A default was checked where it's declared.
+static void check_arg_types(checker *c, expr *e, decl *m)
+{
     for (int i = 0; i < e->args.count; i++) {
         const param *p = &m->params.items[i];
         expr *arg = e->args.items[i];
+        if (arg == p->default_value) continue;
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
             diag_error(arg->at, "'" STR_FMT "' changes its '" STR_FMT "', which must be %s, not %s", STR_ARG(m->name),
@@ -2136,6 +2641,205 @@ static void check_method_args(checker *c, expr *e, decl *m)
             }
         }
     }
+}
+
+// Whether an argument takes its type from the parameter it goes to: `default`,
+// `null`, [a, b] and a grid's size. Which function a shared name means is
+// picked without it.
+static bool untyped_arg(const expr *arg)
+{
+    return arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
+}
+
+// Whether an argument, checked unless it's untyped, can go to parameter `p`.
+static bool arg_fits(const expr *arg, const param *p)
+{
+    const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
+    if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
+    if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
+    if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP);
+    if (is_new_grid(arg)) return false; // Functions take no grids
+    const type t = arg->type;
+    if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
+    if (p->mode == PARAM_MUT) return same_type(p->type, t); // The variable itself
+    if (type_assignable(p->type, t)) return true;
+    int64_t value; // As in C#, an int constant fits a byte
+    return inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255;
+}
+
+// C#'s better conversion: which of two parameter types an argument goes to
+// better. Its own type is better than one it converts to, and of two it
+// converts to, the one that converts to the other (an int over a float, for a
+// byte). 1: `a`, -1: `b`, 0: neither.
+static int better_conversion(const expr *arg, const type a, const type b)
+{
+    if (same_type(a, b) || untyped_arg(arg) || arg->type.kind == TY_ERROR || a.kind == TY_ERROR || b.kind == TY_ERROR) return 0;
+    const bool exact_a = same_type(a, arg->type);
+    const bool exact_b = same_type(b, arg->type);
+    if (exact_a != exact_b) return exact_a ? 1 : -1;
+    const bool a_to_b = type_assignable(b, a);
+    const bool b_to_a = type_assignable(a, b);
+    if (a_to_b != b_to_a) return a_to_b ? 1 : -1;
+    return 0;
+}
+
+// C#'s better function: `a` is, for a call, when no argument goes to it worse
+// than to `b` and one goes better; and when they're the same for every
+// argument, when the call wrote all of `a`'s parameters and `b` fills
+// defaults in. 1: `a`, -1: `b`, 0: neither.
+static int better_candidate(const expr *e, const decl *a, const int *a_param, const decl *b, const int *b_param)
+{
+    bool a_better = false;
+    bool b_better = false;
+    for (int i = 0; i < e->args.count; i++) {
+        const int r = better_conversion(e->args.items[i], a->params.items[a_param[i]].type, b->params.items[b_param[i]].type);
+        a_better |= r > 0;
+        b_better |= r < 0;
+    }
+    if (a_better != b_better) return a_better ? 1 : -1;
+    if (a_better) return 0;
+    const bool a_whole = arg_params(a) == e->args.count;
+    const bool b_whole = arg_params(b) == e->args.count;
+    if (a_whole != b_whole) return a_whole ? 1 : -1;
+    return 0;
+}
+
+// A function or method as its declaration writes its parameters: "Damage(float
+// base, float multiplier = 1, bool crit = false)".
+static void put_routine(sb *out, const decl *m)
+{
+    sb_printf(out, STR_FMT "(", STR_ARG(m->name));
+    for (int i = 0; i < m->params.count; i++) {
+        const param *p = &m->params.items[i];
+        sb_printf(out, "%s%s" STR_FMT " " STR_FMT, i ? ", " : "", p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_IN ? "in " : "",
+                  STR_ARG(p->type_name), STR_ARG(p->name));
+        if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text));
+    }
+    sb_put(out, ")");
+}
+
+// A call's arguments as their types, for messages: "float, crit: bool".
+static void put_arg_types(sb *out, const expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        const expr *arg = e->args.items[i];
+        const str name = arg_name(e, i);
+        if (i) sb_put(out, ", ");
+        if (name.len) sb_printf(out, STR_FMT ": ", STR_ARG(name));
+        if (arg->kind == E_DEFAULT) sb_put(out, "default");
+        else if (arg->kind == E_NULL) sb_put(out, "null");
+        else if (arg->kind == E_LIST) sb_put(out, "[...]");
+        else if (is_new_grid(arg)) sb_printf(out, STR_FMT "(...)", STR_ARG(arg->name));
+        else sb_put(out, arg->type.kind == TY_ERROR ? "?" : type_name(arg->type));
+    }
+}
+
+// A call of a name several functions, or several of a type's methods, share:
+// the one C#'s rules pick for its arguments, with them checked against it, or
+// NULL after saying that none takes them, or that more than one could.
+static decl *check_overloaded_args(checker *c, expr *e, decl *first)
+{
+    decl_list same = {0};
+    sharing_name(c->prog, first, &same);
+    const int written = e->args.count;
+    e->names_taken = true;
+    // Each argument once. What takes its type from its parameter waits for the one picked.
+    for (int i = 0; i < written; i++) {
+        expr *arg = e->args.items[i];
+        if (untyped_arg(arg)) continue;
+        c->device_whole_ok = arg;
+        check_expr_any(c, arg);
+    }
+    int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
+    bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
+    for (int k = 0; k < same.count; k++) {
+        const decl *m = same.items[k];
+        param_of[k] = arena_alloc(sizeof(int) * (size_t)(written ? written : 1));
+        fits[k] = m->takes_action == (e->block != NULL) && bind_args(e, m, param_of[k], true);
+    }
+    // A T? or a failable call's value only goes where its own type does (as check_expr_want)
+    for (int i = 0; i < written; i++) {
+        expr *arg = e->args.items[i];
+        if (untyped_arg(arg) || !is_wrapped(arg->type)) continue;
+        bool taken = false;
+        for (int k = 0; k < same.count; k++) {
+            if (fits[k]) taken |= same_type(same.items[k]->params.items[param_of[k][i]].type, arg->type);
+        }
+        if (taken) continue;
+        unwrap_error(arg, arg->type);
+        unwrap_fix(c, arg, arg->type);
+        arg->type = T_ERR;
+    }
+    int applicable = 0;
+    for (int k = 0; k < same.count; k++) {
+        for (int i = 0; fits[k] && i < written; i++) {
+            fits[k] = arg_fits(e->args.items[i], &same.items[k]->params.items[param_of[k][i]]);
+        }
+        applicable += fits[k];
+    }
+    int best = -1;
+    for (int k = 0; k < same.count && best < 0; k++) {
+        if (!fits[k]) continue;
+        bool wins = true;
+        for (int j = 0; j < same.count && wins; j++) {
+            if (j != k && fits[j]) wins = better_candidate(e, same.items[k], param_of[k], same.items[j], param_of[j]) > 0;
+        }
+        if (wins) best = k;
+    }
+    if (best < 0) {
+        for (int i = 0; i < written; i++) { // What's in them is still checked
+            if (untyped_arg(e->args.items[i])) check_expr_want(c, e->args.items[i], T_ERR);
+        }
+        sb args = {0};
+        put_arg_types(&args, e);
+        if (applicable == 0) {
+            diag_error(e->at, "no '" STR_FMT "' takes (%s)", STR_ARG(first->name), args.data ? args.data : "");
+        } else {
+            diag_error(e->at, "'" STR_FMT "(%s)' could be more than one '" STR_FMT "'", STR_ARG(first->name),
+                       args.data ? args.data : "", STR_ARG(first->name));
+        }
+        for (int k = 0; k < same.count; k++) {
+            if (applicable && !fits[k]) continue;
+            sb line = {0};
+            put_routine(&line, same.items[k]);
+            diag_note("%s", line.data);
+        }
+        if (applicable) diag_note("write an argument as the type only one of them takes, like 'float(x)', or name a parameter only one has");
+        return NULL;
+    }
+    decl *m = same.items[best];
+    e->call = m->kind == DECL_FUNCTION ? CALL_FUNCTION : CALL_METHOD;
+    e->method = m;
+    decl *from = reading_code(c);
+    if (from) {
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL};
+        vec_push(c->calls, site);
+    }
+    for (int i = 0; i < written; i++) {
+        expr *arg = e->args.items[i];
+        const type want = m->params.items[param_of[best][i]].type;
+        if (untyped_arg(arg)) {
+            check_expr_want(c, arg, want);
+            continue;
+        }
+        int64_t value; // An int constant where a byte goes is one (as check_expr_want_any)
+        const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
+        if (inner.kind == TY_BYTE && arg->type.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255) arg->type = inner;
+    }
+    for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
+    settle_args(e, m, param_of[best]);
+    check_arg_types(c, e, m);
+    return m;
+}
+
+// The function or method a call means, with its arguments checked: `m`, or
+// when others share its name, the one that takes them (NULL when none does,
+// which is said).
+static decl *check_routine_args(checker *c, expr *e, decl *m)
+{
+    if (m->shares_name) return check_overloaded_args(c, e, m);
+    check_method_args(c, e, m);
+    return m;
 }
 
 // A call of async function `fn`: awaited, its frame part of the caller's, or
@@ -2195,7 +2899,8 @@ static void check_task_call(checker *c, expr *e, decl *fn)
 // Heal(unit.stats, 5), or Combat.Heal(...) from elsewhere.
 static type check_function_call(checker *c, expr *e, decl *fn)
 {
-    check_method_args(c, e, fn);
+    fn = check_routine_args(c, e, fn);
+    if (!fn) return T_ERR;
     if (fn->is_async) check_task_call(c, e, fn);
     if (c->method && c->method->kind == DECL_FUNCTION) {
         bool known = false;
@@ -2233,13 +2938,16 @@ static const char *routines(const checker *c)
 // IsDead() inside another of the type's methods: the same value.
 static type check_self_call(checker *c, expr *e, decl *m)
 {
+    const bool shared = m->shares_name; // Which of them it is comes first
+    if (shared) m = check_overloaded_args(c, e, m);
+    if (!m) return T_ERR;
     if (m->is_mut_method && !c->method->is_mut_method) {
         diag_error(e->at, "'" STR_FMT "' changes the fields, so only a mut method can call it", STR_ARG(m->name));
         diag_note("declare '" STR_FMT "' as 'mut' too", STR_ARG(c->method->name));
         const fix f = {.kind = FIX_MUT_METHOD, .at = e->at, .method = c->method};
         vec_push(c->prog->fixes, f);
     }
-    check_method_args(c, e, m);
+    if (!shared) check_method_args(c, e, m);
     return m->result;
 }
 
@@ -2484,6 +3192,12 @@ static type check_session_call(checker *c, expr *e)
     e->call = CALL_SESSION;
     const int least = start || join || connect || kick ? 1 : 0;
     const int most = connect || kick ? 2 : open || kick_all ? 1 : least;
+    const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port" : kick ? "player, message"
+                        : kick_all ? "message" : "";
+    if (!order_named_args(e, named, most - least)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
     if (e->args.count < least || e->args.count > most) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, "%s", start     ? "Session.Start takes the scene the match starts in: 'Session.Start(Arena)'"
@@ -2580,6 +3294,10 @@ static type check_scene_call(checker *c, expr *e)
     }
     bool local = local_code(c);
     e->local_world = local;
+    if (!order_named_args(e, load ? "scene, visibility" : unload ? "scene" : "scene, player", load ? 1 : 0)) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
 
     if (load) {
         if (e->args.count < 1 || e->args.count > 2) {
@@ -2746,6 +3464,7 @@ static type check_wait(checker *c, expr *e)
     const bool frames = str_eq_c(e->name, "Frames");
     const bool seconds = str_eq_c(e->name, "Seconds");
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if ((ticks || frames || seconds) && !order_named_args(e, ticks ? "ticks" : frames ? "frames" : "seconds", 0)) return T_ERR;
     if (!ticks && !frames && !seconds) {
         diag_error(e->at, "Wait has no '" STR_FMT "'; it has Ticks, Frames and Seconds", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
@@ -2823,9 +3542,9 @@ static type check_clipboard_call(checker *c, expr *e)
         diag_error(e->at, "Clipboard.Copy is a statement of its own");
     }
     e->call = CALL_CLIPBOARD;
-    if (e->args.count != 1) {
+    if (e->args.count != 1 || !order_named_args(e, "text", 0)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Clipboard.Copy takes the text to copy: 'Clipboard.Copy(session.room)'");
+        if (e->args.count != 1) diag_error(e->at, "Clipboard.Copy takes the text to copy: 'Clipboard.Copy(session.room)'");
         return T_ERR;
     }
     const type t = check_expr(c, e->args.items[0]);
@@ -2854,13 +3573,57 @@ static void use_mesh_types(checker *c)
 // `Effects.Shade`.
 static decl *named_shader(const checker *c, expr *arg)
 {
-    str text;
-    const expr *root = chain_root(arg);
-    if (root->kind != E_NAME || !qualified_text(arg, &text)) return NULL;
-    if (find_local(c, root->name) || find_param(c, root->name) || field_in_scope(c, root->name)) return NULL;
+    // Shade, Effects.Shade, or with its parameters' types where frags or verts
+    // share the name: Shade(BoxVertex, Color), Effects.Shade(BoxVertex, Color)
+    const bool with_params = arg->kind == E_CALL || arg->kind == E_METHOD;
+    expr *space = arg->kind == E_METHOD ? arg->object : NULL; // The namespace before the name
+    str text = arg->name;
+    if (space) {
+        str ns;
+        if (!qualified_text(space, &ns)) return NULL;
+        char *joined = arena_alloc((size_t)ns.len + (size_t)arg->name.len + 2);
+        memcpy(joined, ns.ptr, (size_t)ns.len);
+        joined[ns.len] = '.';
+        memcpy(joined + ns.len + 1, arg->name.ptr, (size_t)arg->name.len);
+        text = (str){joined, ns.len + 1 + arg->name.len};
+    } else if (!with_params && !qualified_text(arg, &text)) {
+        return NULL;
+    }
+    const expr *root = chain_root(space ? space : arg);
+    if (arg->kind != E_CALL && root->kind != E_NAME) return NULL;
+    const str first = arg->kind == E_CALL ? arg->name : root->name;
+    if (find_local(c, first) || find_param(c, first) || field_in_scope(c, first)) return NULL;
     decl *other;
     decl *d = lookup(c->prog, c->unit, text, NAME_SHADER, &other);
     if (!d) return NULL;
+    sig_items signature = {0};
+    for (int i = 0; with_params && i < arg->args.count; i++) {
+        expr *type = arg->args.items[i];
+        sig_item item = {0};
+        item.mode = PARAM_READ;
+        item.at = item.type_qual_at = chain_root(type)->at;
+        item.type_at = type->at;
+        if (!qualified_text(type, &item.type_name)) item.type_name = str_from("?"); // No type is written like that
+        vec_push(signature, item);
+    }
+    decl *named = named_decl(c->prog, c->unit, d, with_params, &signature, arg->at);
+    if (named) d = named; // Said, when it's none of them: the first stands in, so nothing else is said of the name
+    // A name from here on, as one without parameters is. Its types stay in
+    // `args`, each knowing the type it names, for editors.
+    for (int i = 0; named && i < signature.count; i++) {
+        expr *type = arg->args.items[i];
+        const param *p = signature.items[i].param;
+        if (type->kind == E_MEMBER) mark_namespaces(type->object);
+        type->bind = BIND_TYPE;
+        type->type_decl = p ? p->type.decl : NULL;
+        type->type = p ? p->type : T_ERR;
+    }
+    if (arg->kind == E_METHOD) {
+        arg->kind = E_MEMBER;
+        arg->member = arg->name;
+    } else if (arg->kind == E_CALL) {
+        arg->kind = E_NAME;
+    }
     if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
     arg->bind = BIND_SHADER;
     arg->type_decl = d;
@@ -2996,13 +3759,16 @@ static bool shader_takes_texture(const decl *code)
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    decl *frag = e->args.count == 3 ? named_shader(c, e->args.items[2]) : NULL;
+    // Draw.Blit(source, destination[, blend], frag)
+    const int last = e->args.count - 1;
+    decl *frag = e->args.count == 3 || e->args.count == 4 ? named_shader(c, e->args.items[last]) : NULL;
     for (int i = 0; i < e->args.count; i++) {
-        if (i != 2 || !frag) check_expr(c, e->args.items[i]);
+        if (i != last || !frag) check_expr(c, e->args.items[i]);
     }
     if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-    if (e->args.count != 3) {
+    if (e->args.count != 3 && e->args.count != 4) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
+        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'");
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
@@ -3022,18 +3788,26 @@ static type check_blit(checker *c, expr *e)
         diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
         ok = false;
     }
+    if (e->args.count == 4) {
+        const type blend = e->args.items[2]->type;
+        if (blend.kind != TY_ERROR && !(blend.kind == TY_ENUM && blend.decl == c->prog->blend)) {
+            diag_error(e->args.items[2]->at, "Blit's third of four is how it goes over its destination, a Blend like Blend.Add, "
+                       "not %s", type_name(blend));
+            ok = false;
+        }
+    }
     if (!frag || !frag->is_frag) {
-        diag_error(e->args.items[2]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
+        diag_error(e->args.items[last]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
         return T_ERR;
     }
     e->frag = frag;
     if (!frag->params.count || frag->params.items[0].type.kind != TY_STRUCT
         || frag->params.items[0].type.decl != c->prog->vertex) {
-        diag_error(e->args.items[2]->at, "Blit's frag runs on Vertex, its full-destination quad");
+        diag_error(e->args.items[last]->at, "Blit's frag runs on Vertex, its full-destination quad");
         ok = false;
     }
     if (!shader_takes_texture(frag)) {
-        diag_error(e->args.items[2]->at, "Blit's frag takes its source as a read-only Texture parameter");
+        diag_error(e->args.items[last]->at, "Blit's frag takes its source as a read-only Texture parameter");
         ok = false;
     }
     if (c->method || c->in_input || !in_view(c)) {
@@ -3041,14 +3815,16 @@ static type check_blit(checker *c, expr *e)
         ok = false;
     } else if (ok) {
         const int errors = diag_error_count();
-        check_shader_binding(c, e, e->args.items[2], frag);
+        check_shader_binding(c, e, e->args.items[last], frag);
         ok = diag_error_count() == errors;
     }
     if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
+    if (e->args.count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
     vec_push(e->arg_want, source);
     vec_push(e->arg_want, e->args.items[1]->type);
+    if (e->args.count == 4) vec_push(e->arg_want, e->args.items[2]->type);
     const mesh_draw draw = {e, c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
@@ -3489,20 +4265,102 @@ static type check_world_call(checker *c, expr *e, param *world)
 }
 
 // Target receivers share the two drawing APIs: the argument's dimension picks
-// an overloaded camera or conversion, and the other methods belong to one API.
+// an overloaded camera, transform or conversion, and the other methods belong
+// to one API.
 static str target_draw_owner(const expr *e)
 {
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
-    if (e->args.count && (str_eq_c(e->name, "Camera") || str_eq_c(e->name, "WorldToScreen")
-                         || str_eq_c(e->name, "ScreenToWorld"))) {
+    const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
+    const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
+    if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
         const type_kind kind = e->args.items[0]->type.kind;
-        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (str_eq_c(e->name, "Camera") && e->args.count == 3);
-        if (str_eq_c(e->name, "Camera") && e->args.count == 2
-            && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
+        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (camera && e->args.count == 3);
+        if (camera && e->args.count == 2 && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
     }
     return str_from(three ? "Draw3D" : "Draw2D");
+}
+
+// What a draw call is called on, for messages: Draw2D, or a target's name.
+static const char *draw_receiver(const expr *e)
+{
+    return e->object && e->object->kind == E_NAME ? str_to_cstr(e->object->name) : "target";
+}
+
+// The spellings from before settings had two forms: Draw2D.Clip() and
+// Draw2D.NoClip() put the clip back. Reports them, with what they are now.
+static bool old_setting(const expr *e)
+{
+    if (!str_eq_c(e->name, "NoClip") && !(str_eq_c(e->name, "Clip") && e->args.count == 0 && !e->block)) return false;
+    const char *on = draw_receiver(e);
+    diag_error(e->at, "%s." STR_FMT "() is '%s.SetClip()' now", on, STR_ARG(e->name), on);
+    diag_note("a setting's Set form sets it for the draws that follow, and with no arguments puts it back as each "
+              "frame starts; around some draws only, '%s.Clip(rect) { ... }'", on);
+    suggest_replacement(e->name, "SetClip");
+    return true;
+}
+
+// A draw setting's call is the form its name says: `Name(...) { ... }` around
+// a block, or `SetName(...);` for the draws that follow. Reports the other.
+static bool check_setting(const checker *c, const expr *e)
+{
+    if (!(e->gui & (DRAW_BLOCK | DRAW_SET))) return true;
+    const char *on = draw_receiver(e);
+    if (e->gui & DRAW_BLOCK) {
+        if (e->block && c->statement_call == e) return true;
+        char set[64];
+        snprintf(set, sizeof set, "Set" STR_FMT, STR_ARG(e->name));
+        const char *args = e->args.count ? "..." : "";
+        diag_error(e->at, "%s." STR_FMT " sets it around a block: '%s." STR_FMT "(%s) { ... }'", on, STR_ARG(e->name), on,
+                   STR_ARG(e->name), args);
+        diag_note("what it found is put back when the block ends; to set it for the draws that follow, write '%s.%s(%s);'",
+                  on, set, args);
+        suggest_replacement(e->name, str_to_cstr(str_from(set)));
+        return false;
+    }
+    if (!e->block) return true;
+    const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
+    diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
+    diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
+              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
+    suggest_replacement(e->name, around);
+    return false;
+}
+
+// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// window's size, or that part of it. Made where the constructor's are.
+static type check_screen_target(checker *c, expr *e)
+{
+    bool any_error = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
+    }
+    if (!str_eq_c(e->name, "Screen")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
+        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+                  "one of a size of its own");
+        return T_ERR;
+    }
+    if (any_error) return T_ERR;
+    if (gpu_refuses(c, e->at, "create a RenderTarget", "the view creates it and supplies its color image as a Texture")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a RenderTarget is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its target in a view or local handler");
+        return T_ERR;
+    }
+    if (e->args.count > 1 || (e->args.count == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
+        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
+        diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = e->args.count ? "tide_render_target_screen" : "tide_render_target_window";
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    for (int i = 0; i < e->args.count; i++) vec_push(e->arg_want, T_FLOAT_);
+    return (type){TY_RENDER_TARGET, NULL};
 }
 
 static type check_method(checker *c, expr *e)
@@ -3554,12 +4412,10 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
+        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
-        if (str_eq_c(owner, "Draw")) {
-            diag_error(e->object->at, "unknown name 'Draw'");
-            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
-            return T_ERR;
-        }
+        // Draw has what Draw2D and Draw3D share: the settings that are the same wherever a draw goes
+        const bool draws = builtin_draw_owner(owner) || str_eq_c(owner, "Draw");
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there.
@@ -3578,10 +4434,12 @@ static type check_method(checker *c, expr *e)
                       "the mouse, like 'if (!menu.paused) Cursor.Lock();'");
             return T_ERR;
         }
-        if ((gui || builtin_draw_owner(owner)) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
+        if (builtin_draw_owner(owner) && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
+        if (draws && !check_setting(c, e)) return T_ERR;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
         if (io || flush) {
@@ -3597,9 +4455,9 @@ static type check_method(checker *c, expr *e)
             e->path_operation = true;
             c->prog->uses_text = true;
         }
-        if (builtin_draw_owner(owner)) {
+        if (draws) { // Draw's own are neither's: they go to no destination
             e->call = CALL_DRAW;
-            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : builtin_draw_owner(owner) ? 2 : 0;
         }
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
@@ -3672,23 +4530,24 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_RENDER_TARGET) {
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
             const bool resize = str_eq_c(e->name, "Resize");
-            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_INT_);
+            for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
             if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
                 diag_error(e->at, "Draw.window is owned by the platform: it can't be resized or disposed");
                 return T_ERR;
             }
             if (gpu_refuses(c, e->at, resize ? "resize a RenderTarget" : "dispose a RenderTarget", "the view owns the target")) return T_ERR;
             if (e->args.count != (resize ? 2 : 0)) {
-                diag_error(e->at, resize ? "Resize takes width and height in pixels: 'target.Resize(width, height)'"
+                diag_error(e->at, resize ? "Resize takes width and height in logical pixels: 'target.Resize(width, height)'"
                                        : "Dispose takes no arguments: 'target.Dispose()'");
+                if (resize) diag_note("the target keeps the pixels per unit it was made with");
                 return T_ERR;
             }
             for (int i = 0; i < e->args.count; i++) {
                 const type t = e->args.items[i]->type;
-                if (!type_assignable(T_INT_, t)) {
-                    diag_error(e->args.items[i]->at, "a render target's size is in pixels, an int, not %s", type_name(t));
+                if (!type_assignable(T_FLOAT_, t)) {
+                    diag_error(e->args.items[i]->at, "a render target's size is in logical pixels, a number, not %s", type_name(t));
                 }
-                vec_push(e->arg_want, T_INT_);
+                vec_push(e->arg_want, T_FLOAT_);
             }
             e->call = CALL_BUILTIN;
             e->c_callee = resize ? "tide_render_target_resize" : "tide_render_target_dispose";
@@ -3704,9 +4563,14 @@ static type check_method(checker *c, expr *e)
         }
         const str owner = target_draw_owner(e);
         if (!check_frame_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+        if (old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
+        if (!check_setting(c, e)) return T_ERR;
         check_default_args(c, e);
+        // With no arguments, a target's cameras and transforms both go back: nothing says which
+        if (e->args.count == 0 && str_eq_c(e->name, "SetCamera")) e->c_callee = "tide_draw_unset_cameras";
+        if (e->args.count == 0 && str_eq_c(e->name, "SetTransform")) e->c_callee = "tide_draw_unset_transforms";
         e->call = CALL_DRAW;
         e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
         return result;
@@ -3750,7 +4614,7 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
     // stats.IsDead(), unit.Heal(5): a struct's or component's method.
     if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT) {
-        decl *const m = find_method(obj.decl, e->name);
+        decl *m = find_method(obj.decl, e->name);
         if (!m) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "%s has no method '" STR_FMT "'", type_name(obj), STR_ARG(e->name));
@@ -3768,6 +4632,9 @@ static type check_method(checker *c, expr *e)
             diag_error(e->at, "Interpolate is how views blend %s between ticks; code doesn't call it", type_name(obj));
             return T_ERR;
         }
+        const bool shared = m->shares_name; // Which of them it is comes first
+        if (shared) m = check_overloaded_args(c, e, m);
+        if (!m) return T_ERR;
         if (m->is_mut_method && through_element(e->object)) {
             diag_error(e->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
             diag_note("take it out, change it, and put it back: 'var e = items[i]; e." STR_FMT "(...); items[i] = e;'",
@@ -3775,7 +4642,7 @@ static type check_method(checker *c, expr *e)
         } else if (m->is_mut_method) {
             check_writable(c, e->object, m, NULL);
         }
-        check_method_args(c, e, m);
+        if (!shared) check_method_args(c, e, m);
         return m->result;
     }
     if (obj.kind != TY_ENTITY && obj.kind != TY_LOCAL_ENTITY) {
@@ -4332,28 +5199,38 @@ static bool through_local_field(const expr *target)
     return false;
 }
 
+// The query binding a value is read through, or NULL: `row.body` and
+// `row.body.position.x`, where `row` is a foreach's row over a query.
+static const param *row_binding(const expr *e)
+{
+    for (; e->kind == E_MEMBER && !e->local_field; e = e->object) {
+        const expr *row = e->object;
+        if (row->kind != E_NAME || row->bind != BIND_LOCAL || !row->local || !row->local->query) continue;
+        const param *query = row->local->query;
+        for (int i = 0; i < query->query.count; i++) {
+            const param *binding = &query->query.items[i];
+            if (binding->mode == PARAM_READ && str_eq(binding->name, e->member)) return binding;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 // Whether a value is the match's as a local handler hears it: its event, or a
 // component or singleton of the match it takes, or a field of one. They're
-// copies from the event's turn, without what the match keeps in its heap.
+// copies from the event's turn, without what the match keeps in its heap. So
+// are the rows of its queries over the match, from the event's tick.
 static bool heard_value(const checker *c, const expr *e)
 {
     const decl *sys = c->method ? NULL : c->system;
     if (!sys || sys->kind != DECL_SYSTEM || !sys->listens) return false;
+    const param *binding = row_binding(e);
+    if (binding) return binding->type.kind == TY_COMPONENT && !binding->type.decl->is_local;
     while (e->kind == E_MEMBER && !e->local_field) e = e->object;
     if (e->kind != E_NAME || e->bind != BIND_PARAM) return false;
     const type t = e->param->type;
     if (t.kind == TY_EVENT) return true;
     return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
-}
-
-// Whether a value is a view's `verified` parameter, or a field of one: the
-// confirmed world's, whose heap isn't the one the view reads text from.
-static bool verified_value(const checker *c, const expr *e)
-{
-    const decl *sys = c->method ? NULL : c->system;
-    if (!sys || sys->kind != DECL_SYSTEM || !sys->is_view) return false;
-    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
-    return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->verified;
 }
 
 // Text, a list, a map, a set or a grid: what a world keeps in its heap.
@@ -4406,6 +5283,13 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         return T_ERR;
     }
     param *p = local_fields_param(e->object, d);
+    if (!p && row_binding(e->object)) {
+        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and a query's rows have the match's fields only",
+                   STR_ARG(f->name), STR_ARG(d->name));
+        diag_note("local fields stay with the entity on this machine: a view that runs for the entity reads and writes "
+                  "them, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
+        return T_ERR;
+    }
     if (!p) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and this is a copy of its value, which has none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -4439,8 +5323,8 @@ static type check_member(checker *c, expr *e)
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
-            diag_error(e->object->at, "unknown name 'Draw'");
-            diag_note("drawing uses Draw2D or Draw3D; Draw has only Blit and window");
+            diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -4657,13 +5541,6 @@ static type check_member(checker *c, expr *e)
                     diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
                               "sets and grids stay in the match: send what it needs of them in a field of another type, or "
                               "read them in a view");
-                    return T_ERR;
-                }
-                if (verified_value(c, e->object) && kept_in_heap(f->type)) {
-                    diag_error(e->at, "'" STR_FMT "' is %s of the confirmed match's, which a view doesn't read yet",
-                               STR_ARG(f->name), heap_what(f->type));
-                    diag_note("a 'verified' parameter gives the confirmed world's numbers, vectors, enums and entities; its "
-                              "text, lists, maps, sets and grids are read through a parameter that isn't 'verified'");
                     return T_ERR;
                 }
                 e->field = f;
@@ -5366,6 +6243,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
                    grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
+    if (!order_named_args(e, "uv, filter", 1)) return T_ERR;
     const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
     const bool filter_ok = e->args.count < 2 || (e->args.items[1]->type.kind == TY_ENUM && e->args.items[1]->type.decl == c->prog->filter);
     if (e->args.count < 1 || e->args.count > 2 || (uv.kind != TY_ERROR && uv.kind != TY_FLOAT2) || !filter_ok) {
@@ -5668,6 +6546,20 @@ static type check_await(checker *c, expr *e)
     return T_ERR;
 }
 
+// `name: value` on an argument of a call that takes its arguments in order:
+// the game's functions and methods take names, and the engine's functions
+// whose parameters have them.
+static void refuse_arg_names(const expr *e, const type result)
+{
+    if (e->names_taken || result.kind == TY_ERROR) return;
+    for (int i = 0; i < e->arg_names.count; i++) {
+        if (e->arg_names.items[i].len == 0) continue;
+        diag_error(e->arg_name_at.items[i], "'" STR_FMT "' takes its arguments in order, without names", STR_ARG(e->name));
+        diag_note("remove '" STR_FMT ":'; a function's or method's own parameters can be named in a call", STR_ARG(e->arg_names.items[i]));
+        return;
+    }
+}
+
 // An expression whose value is used: a failable call's or a T? has to be
 // unwrapped first.
 static type check_expr(checker *c, expr *e)
@@ -5694,8 +6586,8 @@ static type check_expr_any(checker *c, expr *e)
     case E_NAME: t = check_name(c, e); break;
     case E_THIS: t = check_this(c, e); break;
     case E_MEMBER: t = check_member(c, e); break;
-    case E_CALL: t = check_call(c, e); break;
-    case E_METHOD: t = check_method(c, e); break;
+    case E_CALL: t = check_call(c, e); refuse_arg_names(e, t); break;
+    case E_METHOD: t = check_method(c, e); refuse_arg_names(e, t); break;
     case E_LITERAL: t = check_literal(c, e); break;
     case E_BINARY: {
         const bool short_circuit = e->op == T_AND || e->op == T_OR;
@@ -7296,7 +8188,8 @@ static void check_stmt(checker *c, stmt *s)
             s->query = s->value->param;
             element = (type){TY_STRUCT, list.decl};
             if (c->parallel || c->block_depth || c->compare) {
-                diag_error(s->at, "a query foreach must run directly in its system, outside parallel loops and callback blocks");
+                diag_error(s->at, "a query foreach must run directly in its %s, outside parallel loops and callback blocks",
+                           c->system ? system_what(c->system) : "system");
             }
         } else if (list.kind == TY_LIST) {
             element = list_element(list);
@@ -7411,16 +8304,21 @@ static void check_stmt(checker *c, stmt *s)
             // A Sort's comparison: checked with the call, as code of its own (check_sort)
         } else if (e->block) {
             // The block after a call: the caller's own code, run where the function runs it.
-            const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action);
+            const bool takes = (call == CALL_GUI && (e->gui & GUI_CONTAINER)) || (call == CALL_FUNCTION && e->method->takes_action)
+                            || (call == CALL_DRAW && (e->gui & DRAW_BLOCK));
             if (!takes && e->type.kind != TY_ERROR) {
+                // In a list of calls before a block, it's the call that's wrong: its "block" is the next one
+                const loc at = e->stacked ? e->at : e->block->at;
                 if (e->kind == E_METHOD && e->object->kind == E_NAME) {
-                    diag_error(e->block->at, "'" STR_FMT "." STR_FMT "' doesn't take a block", STR_ARG(e->object->name),
-                               STR_ARG(e->name));
+                    diag_error(at, "'" STR_FMT "." STR_FMT "' doesn't take a block", STR_ARG(e->object->name), STR_ARG(e->name));
                 } else {
-                    diag_error(e->block->at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
+                    diag_error(at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
                 }
-                // A setting has two forms: Set for what follows, and the plain name around a block
-                if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                if (e->stacked) {
+                    diag_note("calls listed with commas each take what follows as their block: only calls that take one "
+                              "go in the list");
+                } else if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                    // A setting has two forms: Set for what follows, and the plain name around a block
                     diag_note("GUI.SetTheme sets the theme for the widgets that follow; for the widgets in a block alone, "
                               "write 'GUI.Theme(...) { ... }'");
                 } else {
@@ -8337,8 +9235,59 @@ static void check_fails(const checker *c, decl *m)
     }
 }
 
+// `float multiplier = 1`: what a call that leaves the parameter out passes, as
+// in C#. A constant, like a field's default, of a plain value: what a call
+// can't leave out (a `mut` parameter's variable, a component or singleton,
+// which are the caller's own) takes none.
+static void check_param_default(checker *c, const decl *m, const param *p)
+{
+    expr *value = p->default_value;
+    const char *refused = NULL;
+    if (m->is_operator) {
+        diag_error(value->at, "an operator always gets its operands, so they take no default");
+        return;
+    }
+    if (p->mode == PARAM_MUT) {
+        diag_error(value->at, "a 'mut' parameter is the caller's variable, which a call can't leave out: it takes no default");
+        diag_note("drop 'mut' to take a value, or drop the default");
+        return;
+    }
+    switch (p->type.kind) {
+    case TY_ERROR: return; // Reported
+    case TY_ACTION: refused = "an Action, the code written after the call"; break;
+    case TY_COMPONENT: refused = "a component, which the caller passes its own of"; break;
+    case TY_SINGLETON: refused = "a singleton, which the caller passes its own of"; break;
+    case TY_RECORD: refused = "the devices, which the caller passes"; break;
+    case TY_DRAW_LIST: refused = "the frame's draw list, which the caller passes"; break;
+    default: break;
+    }
+    if (!refused && holds_render_resource(p->type)) refused = "a rendering resource, which the caller passes";
+    if (refused) {
+        diag_error(value->at, "'" STR_FMT "' is %s: it takes no default", STR_ARG(p->name), refused);
+        diag_note("defaults are for plain values, like 'float multiplier = 1'");
+        return;
+    }
+    if ((p->type.kind == TY_ENTITY || p->type.kind == TY_LOCAL_ENTITY) && value->kind != E_DEFAULT) {
+        diag_error(value->at, "the only %s a default can be is the null one: '" STR_FMT " = default'", type_name(p->type),
+                   STR_ARG(p->name));
+        return;
+    }
+    if (value->kind != E_NULL && !is_constant(c, value)) { // null: the nothing of a T?
+        diag_error(value->at, "a parameter's default must be a constant expression");
+        diag_note("use literals, constants, constructors like float3(...), struct values of constants, Math "
+                  "functions and operators; a default can't read fields, singletons, Time or other parameters");
+        suggest_constant(c, value);
+        return;
+    }
+    const type t = check_constant_expr(c, value, true, p->type);
+    if (t.kind != TY_ERROR && !type_assignable(p->type, t)) {
+        diag_error(value->at, "parameter '" STR_FMT "' is %s, not %s", STR_ARG(p->name), type_name(p->type), type_name(t));
+        note_conversion(p->type, t);
+    }
+}
+
 // The types in a method's or function's signature.
-static void check_signature(const checker *c, decl *m)
+static void check_signature(checker *c, decl *m)
 {
     m->return_type = method_type(c, m->return_type_name, m->return_type_qual_at, true);
     if (holds_render_resource(m->return_type)) {
@@ -8357,6 +9306,15 @@ static void check_signature(const checker *c, decl *m)
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
+        }
+        // As in C#, the parameters a call can leave out are the last ones. An
+        // Action isn't an argument: it's the code after the call.
+        if (p->default_value) {
+            check_param_default(c, m, p);
+        } else if (k > 0 && m->params.items[k - 1].default_value && !str_eq_c(p->type_name, "Action")) {
+            diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, so it needs one too", STR_ARG(p->name));
+            diag_note("the parameters a call can leave out go last: give '" STR_FMT "' a default, or move it before '" STR_FMT "'",
+                      STR_ARG(p->name), STR_ARG(m->params.items[k - 1].name));
         }
         if (p->mode == PARAM_IN && !m->is_extern) {
             diag_error(p->at, "only extern functions take 'in' parameters: C gets a read-only pointer to the value");
@@ -8411,7 +9369,7 @@ static bool same_params(const decl *a, const decl *b)
 }
 
 // `Money operator +(Money a, Money b)`: in a struct, taking it, with C#'s rules.
-static void check_operator_decl(const checker *c, const decl *d, decl *m, const int index)
+static void check_operator_decl(checker *c, const decl *d, decl *m, const int index)
 {
     if (d->kind != DECL_STRUCT) diag_error(m->at, "operators go in structs");
     check_signature(c, m);
@@ -8471,7 +9429,7 @@ static void check_operator_pairs(const decl *d)
 // `Angle Interpolate(Angle from, Angle to, float t)`: how views blend values
 // of its type between the last two ticks, instead of field by field. Like an
 // operator, it has no value of its own.
-static void check_interpolate_decl(const checker *c, decl *d, decl *m)
+static void check_interpolate_decl(checker *c, decl *d, decl *m)
 {
     check_signature(c, m);
     m->is_interpolate = true;
@@ -8485,6 +9443,11 @@ static void check_interpolate_decl(const checker *c, decl *d, decl *m)
                  && m->params.items[2].type.kind == TY_FLOAT && same_type(m->return_type, self) && !m->is_mut_method;
     bool mut = false;
     for (int i = 0; i < m->params.count; i++) mut |= m->params.items[i].mode == PARAM_MUT;
+    for (int i = 0; i < m->params.count; i++) {
+        if (!m->params.items[i].default_value) continue;
+        diag_error(m->params.items[i].default_value->at, "views call Interpolate with all three values, so its parameters take no default");
+        return;
+    }
     if (!ok || mut) {
         diag_error(m->at, "Interpolate takes last tick's value, this tick's, and how far between them, and returns "
                           "the value between: '" STR_FMT " Interpolate(" STR_FMT " from, " STR_FMT " to, float t)'",
@@ -8528,7 +9491,7 @@ static void check_correction_interpolates(const program *prog)
 }
 
 // Where methods go (structs and components), their names, and their signatures.
-static void check_method_decls(const checker *c, decl *d)
+static void check_method_decls(checker *c, decl *d)
 {
     for (int i = 0; i < d->methods.count; i++) {
         decl *m = d->methods.items[i];
@@ -8549,13 +9512,26 @@ static void check_method_decls(const checker *c, decl *d)
         if (field_named(d, m->name)) {
             diag_error(m->at, "'" STR_FMT "' already has a field '" STR_FMT "'", STR_ARG(d->name), STR_ARG(m->name));
         }
-        for (int j = 0; j < i; j++) {
-            if (str_eq(d->methods.items[j]->name, m->name)) {
-                diag_error(m->at, "'" STR_FMT "' already has a method '" STR_FMT "'", STR_ARG(d->name), STR_ARG(m->name));
-                diag_note("methods can't share a name, even with different parameters");
-            }
+        for (int j = 0; j < i; j++) { // Methods that share a name: their parameters tell them apart
+            decl *other = d->methods.items[j];
+            if (!other->is_operator && !other->is_interpolate && str_eq(other->name, m->name)) m->shares_name = other->shares_name = true;
         }
         check_signature(c, m);
+    }
+    for (int i = 0; i < d->methods.count; i++) {
+        decl *m = d->methods.items[i];
+        if (!m->shares_name) continue;
+        settle_shared_name(c->prog, m);
+        // Against the other methods' names in generated C: Hurt(float) is Hurt_float there
+        for (int j = 0; j < d->methods.count; j++) {
+            const decl *other = d->methods.items[j];
+            if (other == m || other->is_operator || other->shares_name) continue;
+            if (other->name.len != m->name.len + (int)strlen(m->c_suffix)) continue;
+            if (memcmp(other->name.ptr, m->name.ptr, (size_t)m->name.len) != 0
+                || memcmp(other->name.ptr + m->name.len, m->c_suffix, strlen(m->c_suffix)) != 0) continue;
+            diag_error(other->at, "'" STR_FMT "' and '%s' would have the same name in generated C", STR_ARG(other->name), m->signature);
+            diag_note("rename '" STR_FMT "'", STR_ARG(other->name));
+        }
     }
     if (diag_error_count() == 0) check_operator_pairs(d);
 }
@@ -8688,6 +9664,12 @@ static void check_extern_decl(const checker *c, decl *fn)
         const decl *other = c->prog->decls.items[i];
         if (other == fn) break;
         if (other->is_extern && other->c_name && strcmp(other->c_name, fn->c_name) == 0) {
+            if (fn->shares_name && str_eq(other->qualified, fn->qualified)) { // C has one function of a name
+                diag_error(fn->at, "extern functions that share a name each name a C function of their own, and both of these "
+                                   "are %s", fn->c_name);
+                diag_note("say which C function each is: '[NativeName(\"...\")] extern ... " STR_FMT "(...);'", STR_ARG(fn->name));
+                return;
+            }
             diag_error(fn->at, "'" STR_FMT "' and '" STR_FMT "' are the same C function, %s", STR_ARG(fn->qualified),
                        STR_ARG(other->qualified), fn->c_name);
             diag_note("declare it once");
@@ -8741,7 +9723,7 @@ static void check_async_decl(decl *fn)
     }
 }
 
-static void check_function_decl(const checker *c, decl *fn)
+static void check_function_decl(checker *c, decl *fn)
 {
     if (fn->is_mut_method) {
         diag_error(fn->at, "only methods are 'mut': they change their struct's fields");
@@ -9128,6 +10110,8 @@ static void check_listener(const program *prog, decl *sys)
     const param *of_local = NULL; // A local component: an entity of this machine's
     for (int i = 1; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
+        // A query over the match's entities is something of the match too
+        if (p->type.kind == TY_QUERY && p->query_of && !p->query_local && !of_match) of_match = p;
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         if (!p->type.decl->is_local && !of_match) of_match = p;
         if (p->type.decl->is_local && p->type.kind == TY_COMPONENT && !of_local) of_local = p;
@@ -9203,13 +10187,63 @@ static bool check_verified_param(const decl *sys, const param *p, const decl *d)
     return true;
 }
 
+// `verified` on a binding or a filter of a query, as on a view's own
+// parameter: of the entity as the server confirmed it. Only a view's query
+// has it; a local handler's rows come from one tick already. Returns false
+// after an error.
+static bool check_verified_binding(const decl *sys, const param *p)
+{
+    const loc at = p->verified_at;
+    if (!is_local_code(sys)) {
+        diag_error(at, "the match is the same on every machine, so a query has nothing 'verified' to read");
+        diag_note("what the server has confirmed is one machine's to know: a view's query reads it, 'view Name(query (verified "
+                  STR_FMT " %s) confirmed) { ... }'", STR_ARG(p->type_name), p->name.len ? str_to_cstr(p->name) : "value");
+        return false;
+    }
+    if (sys->is_handler) {
+        const param *trigger = &sys->params.items[0];
+        if (trigger->verified) {
+            diag_error(at, "'" STR_FMT "' hears a confirmed tick, and its query's rows are that tick's already",
+                       STR_ARG(sys->name));
+            diag_note("drop 'verified' here: 'event(verified ...)' says it for all of them");
+        } else {
+            diag_error(at, "a local handler's query has the match as its event's tick left it, so it has nothing 'verified' "
+                       "to read yet");
+            diag_note("to hear the event once the server confirmed it, with everything as that tick left it, write 'local "
+                      "event(verified " STR_FMT " ...) " STR_FMT "(...)'", STR_ARG(trigger->type_name), STR_ARG(sys->name));
+        }
+        return false;
+    }
+    return true;
+}
+
 // A second candidate set belongs to the system, but never to its outer
 // entity filter. Its row is compiler-only data: code reads its named fields.
+// A view takes one as a system does, and so does a local handler: local code
+// reads the match, so their rows are the match as they see it (a view's
+// blended between ticks, or `verified`; a handler's as its event's tick left
+// it), or the local world's as it is.
+// A binding the query refused still names a field of its rows, of no type, so
+// the code that reads it says nothing more.
+static void refused_binding(decl *row, const param *p)
+{
+    if (p->mode != PARAM_READ || !p->name.len) return;
+    const field binding = {.name = p->name, .type_name = p->type_name, .type = T_ERR, .at = p->name_at};
+    vec_push(row->fields, binding);
+}
+
 static void check_entity_query(const checker *c, decl *sys, param *query)
 {
-    if (sys->is_view || sys->is_handler || sys->is_async) {
-        diag_error(query->at, "query parameters are only supported in ordinary systems");
+    // The match's handlers and tasks have none yet
+    const bool refused = sys->is_async || (sys->is_handler && !sys->is_local);
+    if (refused) {
+        diag_error(query->at, "%s can't take a query yet", sys->is_async ? "a task" : sys->is_command ? "a command handler"
+                                                                                                      : "a match event handler");
+        diag_note("systems, views and local handlers take them: a handler reads the entity its event was sent to, and "
+                  "others through 'World world'");
     }
+    // What a local handler takes of the match is its event's: one of a local event has none
+    const bool hears = sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command;
     decl *row = arena_alloc(sizeof(decl));
     row->kind = DECL_STRUCT;
     row->name = str_from("query row");
@@ -9221,6 +10255,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     field entity = {.name = str_from("entity"), .type = T_ENTITY_, .at = query->at};
     vec_push(row->fields, entity);
     comp_mask seen = mask_none();
+    comp_mask seen_verified = mask_none(); // A view's `verified` ones: of the entity as the server confirmed it
     const decl *side_of = NULL;
     for (int i = 0; i < query->query.count; i++) {
         param *p = &query->query.items[i];
@@ -9228,19 +10263,23 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (p->mode == PARAM_QUERY) {
             diag_error(p->at, "a query can't contain another query");
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (p->mode == PARAM_MUT) {
             diag_error(p->at, "query component bindings are read-only and can't be 'mut'");
+            if (is_local_code(sys)) {
+                diag_note("a query's rows are copies of the match's fields; an entity's local fields are written by "
+                          "a view that runs for it, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(p->type_name),
+                          p->name.len ? str_to_cstr(p->name) : "value");
+            }
             p->mode = PARAM_READ;
         }
-        if (p->verified) {
-            diag_error(p->verified_at, "the match is the same on every machine, so a query has nothing 'verified' to read");
-            p->verified = false;
-        }
+        if (p->verified && !check_verified_binding(sys, p)) p->verified = false;
         if (p->ownership) {
             diag_error(p->at, "a query filters by components, so 'ownership' isn't a query filter");
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (p->name.len) {
@@ -9258,17 +10297,45 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (!d || d->kind != DECL_COMPONENT) {
             diag_error(p->type_at, "a query takes only components, and '" STR_FMT "' isn't a component", STR_ARG(p->type_name));
             p->type = T_ERR;
+            refused_binding(row, p);
+            continue;
+        }
+        if (!d->is_local && sys->is_handler && sys->is_local && !hears && !refused) {
+            diag_error(p->type_at, "'" STR_FMT "' belongs to the match, and a handler of a local event only queries local "
+                       "entities", STR_ARG(d->name));
+            diag_note("a local handler of one of the match's events queries the match as that event's tick left it, like "
+                      "'local event(Hit hit) Name(query (" STR_FMT " %s) others) { ... }'", STR_ARG(d->name), example_name(d));
+            p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
         if (!check_param_side(sys, p, d)) {
             p->type = T_ERR;
+            refused_binding(row, p);
             continue;
         }
+        if (p->verified && d->is_local) {
+            diag_error(p->verified_at, "'" STR_FMT "' is local: it's this machine's own, and no server confirms it",
+                       STR_ARG(d->name));
+            diag_note("'verified' is for the match's components, which a client predicts ahead of the server");
+            p->verified = false;
+        }
         p->type = (type){TY_COMPONENT, d};
-        if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice in the query", STR_ARG(d->name));
-        seen = mask_or(seen, bit(d));
-        if (p->mode == PARAM_WITHOUT) query->query_without_mask = mask_or(query->query_without_mask, bit(d));
-        else query->query_need_mask = mask_or(query->query_need_mask, bit(d));
+        if (p->verified) { // Of the entity as the server confirmed it
+            // What the confirmed world keeps in its heap is read there, as for a view's own parameter
+            if (p->mode == PARAM_READ && decl_holds_text(d)) c->prog->uses_text = true;
+            if (mask_has(seen_verified, d->index)) {
+                diag_error(p->at, "'verified " STR_FMT "' appears twice in the query", STR_ARG(d->name));
+            }
+            seen_verified = mask_or(seen_verified, bit(d));
+            if (p->mode == PARAM_WITHOUT) query->query_verified_without = mask_or(query->query_verified_without, bit(d));
+            else query->query_verified_need = mask_or(query->query_verified_need, bit(d));
+        } else {
+            if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice in the query", STR_ARG(d->name));
+            seen = mask_or(seen, bit(d));
+            if (p->mode == PARAM_WITHOUT) query->query_without_mask = mask_or(query->query_without_mask, bit(d));
+            else query->query_need_mask = mask_or(query->query_need_mask, bit(d));
+        }
         if (side_of && side_of->is_local != d->is_local) {
             diag_error(p->type_at, "a query can't mix local and match components: no entity has both");
         } else if (!side_of) side_of = d;
@@ -9289,7 +10356,25 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     if (mask_intersects(query->query_need_mask, query->query_without_mask)) {
         diag_error(query->at, "a query both requires and excludes the same component");
     }
+    if (mask_intersects(query->query_verified_need, query->query_verified_without)) {
+        diag_error(query->at, "a query both requires and excludes the same 'verified' component");
+    }
+    // As a view's own parameters (check_params): with nothing of the world it
+    // draws, the confirmed world's entities are the query's, and its masks
+    // theirs; with some of both, the drawn world's that are in the confirmed
+    // one too
+    if (mask_any(seen_verified) && !mask_any(seen)) {
+        query->query_verified_entities = true;
+        query->query_need_mask = query->query_verified_need;
+        query->query_without_mask = query->query_verified_without;
+        query->query_verified_need = mask_none();
+        query->query_verified_without = mask_none();
+    } else if (mask_any(seen_verified)) {
+        query->query_verified_join = true;
+    }
+    sys->takes_verified |= mask_any(seen_verified) && sys->is_view;
     query->query_local = side_of && side_of->is_local;
+    query->query_of = side_of;
     if (query->query_local) row->fields.items[0].type = (type){TY_LOCAL_ENTITY, NULL};
 }
 
@@ -9324,6 +10409,8 @@ static void check_params(const checker *c, decl *sys)
         }
 
         if (p->verified && p->mode != PARAM_EVENT && !check_verified_param(sys, p, d)) p->verified = false;
+        // What the confirmed world keeps in its heap is read there, and elements with text come as copies in the scratch area
+        if (p->verified && p->mode != PARAM_EVENT && d && decl_holds_text(d)) c->prog->uses_text = true;
         if (p->mode == PARAM_SENDER) {
             if (!str_eq_c(p->type_name, "PlayerID")) {
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
@@ -9540,6 +10627,20 @@ static void check_params(const checker *c, decl *sys)
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
     if (sys->is_handler && sys->is_local && sys->event == prog->forgotten) check_forgotten(sys);
     if (sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command) check_listener(prog, sys);
+    // Whose entities each query goes through. One that names no component is
+    // the code's own world's: the match's for a view and a handler that hears
+    // it, the local world's for a handler of local events. A view's and a
+    // local handler's over the match have their rows made for them, as that
+    // code sees the match (codegen: gen_query_fill, gen_hear_rows).
+    for (int i = 0; i < sys->params.count; i++) {
+        param *p = &sys->params.items[i];
+        if (p->type.kind != TY_QUERY) continue;
+        if (!p->query_of && sys->is_handler && sys->is_local && !sys->listens) {
+            p->query_local = true;
+            p->type.decl->fields.items[0].type = (type){TY_LOCAL_ENTITY, NULL};
+        }
+        p->query_rows = !p->query_local && (sys->is_view || sys->listens);
+    }
 
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
@@ -10008,6 +11109,18 @@ static void add_builtins(program *prog)
         vec_push(filter->members, m);
     }
     prog->filter = filter;
+    // enum Blend { Alpha, Add, Multiply, Replace }: how what's drawn goes over
+    // what's there, with tide/draw.h's tide_blend's values.
+    static const char *const blends[] = {"Alpha", "Add", "Multiply", "Replace"};
+    decl *blend = NEW(decl);
+    blend->kind = DECL_ENUM;
+    blend->name = str_from("Blend");
+    blend->builtin = true;
+    for (int i = 0; i < (int)(sizeof blends / sizeof blends[0]); i++) {
+        const enum_member m = {str_from(blends[i]), {0, 0, 0}, NULL, i};
+        vec_push(blend->members, m);
+    }
+    prog->blend = blend;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -10071,6 +11184,7 @@ static void add_builtins(program *prog)
     vec_push(decls, theme);
     vec_push(decls, control);
     vec_push(decls, filter);
+    vec_push(decls, blend);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -10398,6 +11512,10 @@ static void collect_decls(program *prog)
                 if (str_eq(d->name, other->name) && str_eq(ns, decl_ns(other))) {
                     if (other->builtin) {
                         diag_error(d->at, "'" STR_FMT "' is built into the engine", STR_ARG(d->name));
+                    } else if (same_name_kind(d, other)) {
+                        // Their parameters tell them apart, which is checked once those have their types (settle_shared_name)
+                        d->shares_name = true;
+                        ((decl *)other)->shares_name = true;
                     } else {
                         diag_error(d->at, "'" STR_FMT "' is already declared", STR_ARG(d->qualified));
                         const source *src = diag_source(other->at.file);
@@ -11131,6 +12249,9 @@ static void check_attributes(checker *c)
                     diag_note("write which one you mean, like '" STR_FMT "'", STR_ARG(target->qualified));
                     continue;
                 }
+                // Among those that share the name, the one its parameters say
+                target = named_decl(c->prog, d->unit, target, q->has_signature, &q->signature, q->name_at);
+                if (!target) continue;
                 q->decl = target;
                 if (target == d) {
                     diag_error(q->name_at, "a %s can't run %s itself", kind, before ? "before" : "after");
@@ -11909,7 +13030,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->font);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
@@ -11957,6 +13078,8 @@ bool check(program *prog)
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
+    check_shared_names(&c, DECL_FUNCTION);
+    check_shared_names(&c, DECL_SHADER);
     check_correction_interpolates(prog);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
@@ -11988,6 +13111,7 @@ bool check(program *prog)
         check_stmt(&c, d->body);
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
+    check_shared_names(&c, DECL_SYSTEM);
     diag_phase("checking code");
     drop_unused_seed(prog);
     if (prog->random->named) order_struct(prog, prog->random);
