@@ -28,6 +28,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 
 - [Crates, balls and a floor](../physics/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
 - [A wall of crates, and balls to throw](../physics/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
+- [Siege](./siege.md): a whole game on Box2D, two machines in one match: towers, cannons, a sensor that turns gravity over.
 
 ## What a machine shows
 
@@ -56,4 +57,4 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [The same seed, the same numbers](../language/math.md#seeds): a `Random` and its seed.
 - [A list, changed and sorted](../language/text-and-lists.md#sorting): a list's members, a button each.
 
-[Falling sand](./sand.md) and [Duel](./duel.md) are whole games, to play here too.
+[Falling sand](./sand.md), [Duel](./duel.md) and [Siege](./siege.md) are whole games, to play here too.

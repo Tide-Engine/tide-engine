@@ -26,16 +26,21 @@ const profile = mkdtempSync(join(tmpdir(), 'tide-docs-examples-'));
 // the Markdown: a page is its file's path, and `index.md` its folder's.
 const pages = [];
 const written = new Set();
+// The whole games a page shows as a match of two (`::: tide-game <name>`):
+// each is a page of its own on the site, `/<name>/`, with no source beside it.
+const games = [];
 (function find(folder) {
     for (const entry of readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         const path = join(folder, entry.name);
         if (entry.isDirectory()) {
             if (!['node_modules', 'build', 'static', 'src', 'tests', 'examples'].includes(entry.name) && !entry.name.startsWith('.')) find(path);
         } else if (entry.name.endsWith('.md')) {
+            const page = '/' + relative(docs, path).split(sep).join('/').replace(/\.md$/, '').replace(/(^|\/)index$/, '');
+            for (const found of readFileSync(path, 'utf8').matchAll(/^::: tide-game\s+([a-z][a-z0-9-]*)/gm)) games.push({ page, id: found[1] });
             const ids = Array.from(readFileSync(path, 'utf8').matchAll(/^::: tide-(?:example|players|match)\s+([a-z][a-z0-9-]*)/gm), (found) => found[1]);
             if (!ids.length) continue;
             for (const id of ids) written.add(id);
-            pages.push('/' + relative(docs, path).split(sep).join('/').replace(/\.md$/, '').replace(/(^|\/)index$/, ''));
+            pages.push(page);
         }
     }
 })(docs);
@@ -194,6 +199,28 @@ try {
         }
     };
     const focused = 'example.querySelector("iframe").classList.contains("focused")';
+    // Two frames in one match: the second player's page joined the room the
+    // first one's hosts, and each hears the other's packets.
+    const paired = async (id) => {
+        await until(`${frame(0)}.contentWindow.Tide.room.length === 6 && ${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`, `${id}: one room`);
+        await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, `${id}: a match between the two`);
+        // Beside the slider is the least it can make the ping: the
+        // round trip the game that joined measured with nothing
+        // added, which is when the slider's ping starts.
+        await until(`typeof ${frame(1)}.contentWindow.Tide.minLag === 'number'`, `${id}: a ping measured`);
+        await until('!example.querySelector(".example-lag-min").hidden', `${id}: the least ping shows`);
+        assert.match(await evaluate('example.querySelector(".example-lag-min").textContent'), /^min \d+ ms$/, `${id}: the least ping`);
+        assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.minLag === undefined`), true, `${id}: the host's page has none`);
+        assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.lag === Number(example.querySelector('[data-example-lag]').value)`), true, `${id}: the slider's ping, once the least is known`);
+        // The slider is the ping both pages are told, at once: the
+        // round trip the one that joined is to have (what it then
+        // adds is tide_platform_web_lag's to check, in made-up time).
+        await evaluate(`(() => { const lag = example.querySelector('[data-example-lag]'); lag.value = 125; lag.dispatchEvent(new Event('input')); })()`);
+        assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.lag + ',' + ${frame(1)}.contentWindow.Tide.lag`), '125,125', `${id}: latency`);
+        assert.equal(await evaluate('example.querySelector(".example-lag output").textContent'), '125 ms');
+        const heard = await evaluate(`${frame(1)}.contentWindow.__heard`);
+        await until(`${frame(1)}.contentWindow.__heard > ${heard + 30}`, `${id}: the match goes on, late`);
+    };
     for (const page of pages) {
         // The page's `backend=` goes on to its games.
         await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
@@ -277,28 +304,7 @@ try {
                 assert.equal(await evaluate(`${frame(i)}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
             }
             await until('example.querySelector("[data-example-run]").textContent === "Restart"', `${id}: started`);
-            if (match) {
-                // The second player's page joined the room the first one's
-                // hosts, and each hears the other's packets: they're in one match.
-                await until(`${frame(0)}.contentWindow.Tide.room.length === 6 && ${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`, `${id}: one room`);
-                await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, `${id}: a match between the two`);
-                // Beside the slider is the least it can make the ping: the
-                // round trip the game that joined measured with nothing
-                // added, which is when the slider's ping starts.
-                await until(`typeof ${frame(1)}.contentWindow.Tide.minLag === 'number'`, `${id}: a ping measured`);
-                await until('!example.querySelector(".example-lag-min").hidden', `${id}: the least ping shows`);
-                assert.match(await evaluate('example.querySelector(".example-lag-min").textContent'), /^min \d+ ms$/, `${id}: the least ping`);
-                assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.minLag === undefined`), true, `${id}: the host's page has none`);
-                assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.lag === Number(example.querySelector('[data-example-lag]').value)`), true, `${id}: the slider's ping, once the least is known`);
-                // The slider is the ping both pages are told, at once: the
-                // round trip the one that joined is to have (what it then
-                // adds is tide_platform_web_lag's to check, in made-up time).
-                await evaluate(`(() => { const lag = example.querySelector('[data-example-lag]'); lag.value = 125; lag.dispatchEvent(new Event('input')); })()`);
-                assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.lag + ',' + ${frame(1)}.contentWindow.Tide.lag`), '125,125', `${id}: latency`);
-                assert.equal(await evaluate('example.querySelector(".example-lag output").textContent'), '125 ms');
-                const heard = await evaluate(`${frame(1)}.contentWindow.__heard`);
-                await until(`${frame(1)}.contentWindow.__heard > ${heard + 30}`, `${id}: the match goes on, late`);
-            }
+            if (match) await paired(id); // They're in one match
             if (id === 'rooms') {
                 // The reader's part, played here: one frame starts a match and
                 // opens it, the other types the room's code and joins. The
@@ -390,6 +396,45 @@ try {
             console.log(`${id}: source, rendering, ${match ? 'a match of two, ' : ''}restart and stop passed (${backend})`);
         }
         assert.deepEqual([...sourced].sort(), [...new Set(ids)].sort(), `${page} shows the source of every example it runs`);
+    }
+    // The whole games: two frames of each in one match, as an example's are,
+    // with a player who plays. A game's page is the docs workflow's to put
+    // there (docs/static/<name>/), and one that's missing fails here.
+    for (const { page, id } of games) {
+        if (only && !only.has(id)) continue;
+        await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
+        await until(`location.pathname === '${page}' && document.querySelector('.tide-game')`, `${page} page`);
+        await evaluate(`window.example = document.querySelector('.tide-game[data-example-src="/${id}/"]'); example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
+        await until('example.querySelectorAll("iframe.shown").length === 2', `${id}: both players' frames show`);
+        await until(rendering(2), `${id}: actual rendering`);
+        for (let i = 0; i < 2; i++) {
+            assert.ok((await evaluate(`${frame(i)}.src`)).includes(`/${id}/`), `${id}: the game's own page`);
+            assert.equal(await evaluate(`${frame(i)}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
+        }
+        await until('example.querySelector("[data-example-run]").textContent === "Restart"', `${id}: started`);
+        await paired(id);
+        // Each player points at the middle of their frame and holds the
+        // button for a while, which is how these games are played: the match
+        // goes on through it, on both machines.
+        for (let i = 0; i < 2; i++) {
+            const at = await inside(frame(i), 180, 230);
+            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+            await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+            const draws = await evaluate(`${frame(i)}.contentWindow.__draws`);
+            await until(`${frame(i)}.contentWindow.__draws > ${draws + 60}`, `${id}: player ${i + 1} plays`);
+            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+        }
+        const heard = await evaluate(`${frame(0)}.contentWindow.__heard`);
+        await until(`${frame(0)}.contentWindow.__heard > ${heard + 60}`, `${id}: the match goes on`);
+        assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`), true, `${id}: still one room`);
+        if (shots) {
+            const screenshot = await command('Page.captureScreenshot');
+            writeFileSync(join(shots, `${id}.png`), Buffer.from(screenshot.data, 'base64'));
+        }
+        await evaluate('example.querySelector("[data-example-stop]").click();');
+        assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: stop`);
+        assert.deepEqual(errors, [], `${id}: no runtime or shader errors`);
+        console.log(`${id}: a match of two, played, passed (${backend})`);
     }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');

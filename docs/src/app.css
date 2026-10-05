@@ -512,6 +512,11 @@ button {
     height: 360px;
 }
 
+/* A whole game's two players (::: tide-game) have more to show than an example's. */
+.tide-game .example-viewport {
+    height: 420px;
+}
+
 /* What a pair says is over its players, where it moves nothing as it comes and
    goes: one player's game may be up while the other's still joins. */
 .example-stage {
@@ -580,6 +585,10 @@ button {
 
     .tide-pair .example-viewport {
         height: 300px;
+    }
+
+    .tide-game .example-viewport {
+        height: 400px;
     }
 
     .example-columns {

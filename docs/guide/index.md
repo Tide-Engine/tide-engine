@@ -53,3 +53,4 @@ The screen updates every **frame**, as fast as the display allows:
 - Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).
 - [Play falling sand](./sand.md) in your browser, alone or with friends.
 - [Play Duel](./duel.md), a small 2D arena game against a practice bot or a friend.
+- [Play Siege](./siege.md), a physics toy for up to four: towers of crates, cannons, and gravity that turns over.
