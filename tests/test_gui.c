@@ -1093,3 +1093,740 @@ TIDE_TEST(gui_views_ask_for_the_cursors_lock)
         open = false; // Closed, the views' ask counts again
     }
 }
+
+// ---------------------------------------------------------------------------
+// Controls: widgets a view draws itself, whose input the GUI handles
+
+#define NONE ((tide_touch_phase)TIDE_TOUCHES)
+
+static const tide_rect CARD = {600.0f, 600.0f, 200.0f, 100.0f}; // Away from the buttons, which are laid out at the top left
+
+// What a control said.
+enum { HOVERED = 1, PRESSED = 2, FOCUSED = 4, CLICKED = 8, READ = 16 };
+
+static int said(const tide_control c)
+{
+    return (c.hovered ? HOVERED : 0) | (c.pressed ? PRESSED : 0) | (c.focused ? FOCUSED : 0) | (c.clicked ? CLICKED : 0);
+}
+
+// The rest of a frame's GUI: Play, a control at CARD and Quit, in that order.
+// What the control said.
+static int card_widgets(void)
+{
+    tide_gui_layout_button(&gui, 10, "Play");
+    const tide_control card = tide_gui_control(&gui, 50, CARD);
+    tide_gui_layout_button(&gui, 20, "Quit");
+    end();
+    return said(card);
+}
+
+static int card_frame(void)
+{
+    begin();
+    return card_widgets();
+}
+
+// ...after a sample, in a host's order: and whether views read a press (READ).
+static int sampled_card_frame(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    const int read = views_read_a_press() ? READ : 0;
+    return card_widgets() | read;
+}
+
+TIDE_TEST(gui_a_control_says_what_the_mouse_does_with_it)
+{
+    start();
+    mouse(900.0f, 900.0f, false);
+    TIDE_CHECK(card_frame() == 0);
+    // The GUI draws nothing for it: the screen, and two buttons with their text
+    TIDE_CHECK(draw.count == 5);
+    mouse(650.0f, 650.0f, false);
+    TIDE_CHECK(card_frame() == HOVERED);
+    TIDE_CHECK(draw.count == 5);
+    mouse(650.0f, 650.0f, true);
+    TIDE_CHECK(card_frame() == (HOVERED | PRESSED));
+    TIDE_CHECK(gui.active == 50);
+    // Held wherever the pointer goes meanwhile, as a handle that's dragged is
+    mouse(900.0f, 900.0f, true);
+    TIDE_CHECK(card_frame() == PRESSED);
+    mouse(650.0f, 650.0f, true);
+    TIDE_CHECK(card_frame() == (HOVERED | PRESSED));
+    mouse(650.0f, 650.0f, false);
+    TIDE_CHECK(card_frame() == (HOVERED | CLICKED)); // Let go on it: a click, once
+    TIDE_CHECK(card_frame() == HOVERED);
+
+    // A press that leaves it before it lets go is no click, nor is one that comes onto it held.
+    mouse(650.0f, 650.0f, true);
+    card_frame();
+    mouse(900.0f, 900.0f, true);
+    card_frame();
+    mouse(900.0f, 900.0f, false);
+    TIDE_CHECK(card_frame() == 0);
+    mouse(900.0f, 900.0f, true);
+    card_frame();
+    mouse(650.0f, 650.0f, true);
+    TIDE_CHECK(card_frame() == HOVERED);
+    mouse(650.0f, 650.0f, false);
+    TIDE_CHECK(card_frame() == HOVERED);
+    TIDE_CHECK(gui.focus == 0); // A click doesn't give it the focus, as it doesn't a button
+}
+
+TIDE_TEST(gui_a_press_on_a_control_is_never_the_games)
+{
+    start();
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(sampled_card_frame() == 0);
+    // A finger touches the control. The game samples before the GUI sees the
+    // touch, and still doesn't get it; nor do the views.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 650.0f, 650.0f));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | PRESSED));
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | PRESSED));
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_ENDED, NONE, 650.0f, 650.0f));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | CLICKED)); // Lifted on it: a click
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(sampled_card_frame() == 0); // Nothing stays hovered where the finger lifted
+
+    // A tap between two frames clicks too.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, TIDE_TOUCH_ENDED, 650.0f, 650.0f));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | PRESSED));
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | CLICKED));
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(sampled_card_frame() == 0);
+
+    // A click the mouse made as it came onto the control, between two frames.
+    TIDE_CHECK(!mouse_sample(900.0f, 900.0f, false));
+    TIDE_CHECK(sampled_card_frame() == 0);
+    TIDE_CHECK(!mouse_sample(650.0f, 650.0f, true));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | PRESSED));
+    TIDE_CHECK(!mouse_sample(650.0f, 650.0f, false));
+    TIDE_CHECK(sampled_card_frame() == (HOVERED | CLICKED));
+
+    // Away from it, a press is the game's and the views'.
+    TIDE_CHECK(!mouse_sample(650.0f, 650.0f, false));
+    TIDE_CHECK(sampled_card_frame() == HOVERED);
+    TIDE_CHECK(mouse_sample(900.0f, 900.0f, true));
+    TIDE_CHECK(sampled_card_frame() == READ);
+}
+
+// A key or a gamepad's button down for a frame of the card's GUI, then up for
+// one: what the control said in the first.
+static int card_press(tide_button *b)
+{
+    key(b, true);
+    const int result = card_frame();
+    key(b, false);
+    card_frame();
+    return result;
+}
+
+TIDE_TEST(gui_the_keyboard_moves_the_focus_to_controls_and_clicks_them)
+{
+    start();
+    card_frame(); // Lays them out, for the order: Play, the control, Quit
+    TIDE_CHECK(card_press(&devices.keyboard.downArrow) == 0);
+    TIDE_CHECK(gui.focus == 10);
+    TIDE_CHECK(card_press(&devices.keyboard.downArrow) == FOCUSED);
+    TIDE_CHECK(card_frame() == FOCUSED);
+    TIDE_CHECK(draw.count == 5); // The GUI draws no outline for it: showing the focus is the view's
+
+    // Enter and Space click it: once, as they go down.
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(card_frame() == (FOCUSED | CLICKED));
+    TIDE_CHECK(card_frame() == FOCUSED);
+    key(&devices.keyboard.enter, false);
+    card_frame();
+    TIDE_CHECK(card_press(&devices.keyboard.space) == (FOCUSED | CLICKED));
+    TIDE_CHECK(card_press(&devices.keyboard.numpadEnter) == (FOCUSED | CLICKED));
+
+    // Right goes on and left goes back, from a control and from a button.
+    TIDE_CHECK(card_press(&devices.keyboard.rightArrow) == 0);
+    TIDE_CHECK(gui.focus == 20);
+    TIDE_CHECK(card_press(&devices.keyboard.leftArrow) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.keyboard.upArrow) == 0);
+    TIDE_CHECK(gui.focus == 10);
+    // Tab, and Shift with it
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == 0);
+    TIDE_CHECK(gui.focus == 20);
+    key(&devices.keyboard.leftShift, true);
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == FOCUSED);
+    key(&devices.keyboard.leftShift, false);
+
+    // While it has the focus, the keyboard isn't the game's.
+    tide_devices sampled = devices;
+    key(&sampled.keyboard.w, true);
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(!sampled.keyboard.w.held && !sampled.keyboard.w.pressed);
+    // Escape lets go.
+    TIDE_CHECK(card_press(&devices.keyboard.escape) == 0);
+    TIDE_CHECK(gui.focus == 0);
+}
+
+TIDE_TEST(gui_a_gamepad_moves_the_focus_to_controls_and_clicks_them)
+{
+    start();
+    devices.gamepad.connected = true;
+    card_frame();
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.down) == 0);
+    TIDE_CHECK(gui.focus == 10);
+    // The left stick, to the right: once, however long it's held there
+    devices.gamepad.leftStick = tide_f2(1.0f, 0.0f);
+    TIDE_CHECK(card_frame() == FOCUSED);
+    TIDE_CHECK(card_frame() == FOCUSED);
+    devices.gamepad.leftStick = tide_f2(0.0f, 0.0f);
+    card_frame();
+    TIDE_CHECK(card_press(&devices.gamepad.buttonSouth) == (FOCUSED | CLICKED));
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.right) == 0);
+    TIDE_CHECK(gui.focus == 20);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.left) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.up) == 0);
+    TIDE_CHECK(gui.focus == 10);
+    devices.gamepad.leftStick = tide_f2(0.0f, -1.0f); // Down
+    TIDE_CHECK(card_frame() == FOCUSED);
+    devices.gamepad.leftStick = tide_f2(0.0f, 0.0f);
+    card_frame();
+
+    // While it has the focus, the gamepad isn't the game's.
+    tide_devices sampled = devices;
+    key(&sampled.gamepad.buttonNorth, true);
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(!sampled.gamepad.buttonNorth.held && !sampled.gamepad.buttonNorth.pressed);
+    // East lets go.
+    TIDE_CHECK(card_press(&devices.gamepad.buttonEast) == 0);
+    TIDE_CHECK(gui.focus == 0);
+}
+
+// A frame with a slider, an int field and a button: left and right are the
+// first two's, to step their values.
+static void steppers(float *volume, int32_t *players)
+{
+    begin();
+    tide_gui_layout_slider(&gui, 10, "Volume", volume, 0.0f, 1.0f);
+    tide_gui_layout_int_field(&gui, 20, "Players", players);
+    tide_gui_layout_button(&gui, 30, "Back");
+    end();
+}
+
+TIDE_TEST(gui_left_and_right_stay_with_the_widgets_that_step)
+{
+    start();
+    float volume = 0.5f;
+    int32_t players = 4;
+    steppers(&volume, &players);
+    key(&devices.keyboard.rightArrow, true); // From nothing: the first widget
+    steppers(&volume, &players);
+    key(&devices.keyboard.rightArrow, false);
+    steppers(&volume, &players);
+    TIDE_CHECK(gui.focus == 10 && volume == 0.5f);
+    key(&devices.keyboard.rightArrow, true); // On the slider, it steps the value, and the focus stays
+    steppers(&volume, &players);
+    key(&devices.keyboard.rightArrow, false);
+    steppers(&volume, &players);
+    TIDE_CHECK(gui.focus == 10 && volume > 0.5f);
+    key(&devices.keyboard.downArrow, true);
+    steppers(&volume, &players);
+    key(&devices.keyboard.downArrow, false);
+    steppers(&volume, &players);
+    TIDE_CHECK(gui.focus == 20);
+    key(&devices.keyboard.leftArrow, true); // And the field's
+    steppers(&volume, &players);
+    key(&devices.keyboard.leftArrow, false);
+    steppers(&volume, &players);
+    TIDE_CHECK(gui.focus == 20 && players == 3);
+    key(&devices.keyboard.downArrow, true);
+    steppers(&volume, &players);
+    key(&devices.keyboard.downArrow, false);
+    steppers(&volume, &players);
+    TIDE_CHECK(gui.focus == 30);
+    key(&devices.keyboard.leftArrow, true); // From the button, it goes back
+    steppers(&volume, &players);
+    key(&devices.keyboard.leftArrow, false);
+    TIDE_CHECK(gui.focus == 20 && players == 3);
+}
+
+TIDE_TEST(gui_navigate_lets_the_arrows_start_while_the_game_reads_them)
+{
+    start();
+    card_frame();
+    // The game sampled the devices: the arrows and the d-pad are its own.
+    devices.gamepad.connected = true;
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    key(&devices.gamepad.dpad.down, true);
+    card_frame();
+    TIDE_CHECK(gui.focus == 0);
+    key(&devices.gamepad.dpad.down, false);
+    // A view says a menu is up, each frame it is: they start moving the focus.
+    for (int frame = 0; frame < 3; frame++) {
+        tide_gui_hide(&gui, &sampled);
+        key(&devices.gamepad.dpad.down, frame == 1);
+        begin();
+        tide_gui_navigate(&gui);
+        card_widgets();
+        TIDE_CHECK(gui.focus == (frame == 0 ? 0u : 10u));
+    }
+    // Once a frame goes by without it, they don't: the focus that's there still moves.
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.down) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.gamepad.buttonEast) == 0);
+    TIDE_CHECK(gui.focus == 0);
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.down) == 0);
+    TIDE_CHECK(gui.focus == 0);
+}
+
+// A frame of two views: the first with a control at CARD, the second with the
+// Play button. What each read of W, Enter, what's typed and the gamepad's
+// north and south buttons (bits 0 to 4), the first view's in the low byte.
+static int focus_views(void)
+{
+    int seen = 0;
+    begin();
+    for (uint32_t view = 1; view <= 2; view++) {
+        tide_gui_view(&gui, view);
+        const tide_devices *d = &gui.devices;
+        const int read = (d->keyboard.w.pressed ? 1 : 0) | (d->keyboard.enter.pressed ? 2 : 0) | (d->keyboard.text.count ? 4 : 0)
+                       | (d->gamepad.buttonNorth.pressed ? 8 : 0) | (d->gamepad.buttonSouth.pressed ? 16 : 0);
+        seen |= read << (8 * (view - 1));
+        if (view == 1) tide_gui_control(&gui, 50, CARD);
+        else tide_gui_layout_button(&gui, 10, "Play");
+    }
+    end();
+    return seen;
+}
+
+static void use_keys(const bool held)
+{
+    devices.gamepad.connected = true;
+    key(&devices.keyboard.w, held);
+    key(&devices.keyboard.enter, held);
+    key(&devices.gamepad.buttonNorth, held);
+    key(&devices.gamepad.buttonSouth, held);
+    if (held) type("w");
+}
+
+TIDE_TEST(gui_the_view_of_a_focused_control_keeps_the_keys_the_gui_doesnt_use)
+{
+    start();
+    focus_views();
+    use_keys(true);
+    TIDE_CHECK(focus_views() == (31 | 31 << 8)); // Nothing has the focus: every view reads everything
+    use_keys(false);
+    focus_views();
+    key(&devices.keyboard.tab, true); // The control, which is called first
+    focus_views();
+    key(&devices.keyboard.tab, false);
+    focus_views();
+    TIDE_CHECK(gui.focus == 50);
+    // Its view goes on reading the keyboard and the gamepad, but for what moves
+    // the focus and clicks, which is the GUI's. The other view reads none of it,
+    // nor does the game.
+    use_keys(true);
+    TIDE_CHECK(focus_views() == (1 | 4 | 8));
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(!sampled.keyboard.w.pressed && !sampled.gamepad.buttonNorth.pressed);
+    use_keys(false);
+    focus_views();
+
+    // On a widget of the GUI's own, no view reads them, as ever.
+    key(&devices.keyboard.tab, true);
+    focus_views();
+    key(&devices.keyboard.tab, false);
+    focus_views();
+    TIDE_CHECK(gui.focus == 10);
+    use_keys(true);
+    key(&devices.keyboard.enter, false); // It would press Play
+    key(&devices.gamepad.buttonSouth, false);
+    TIDE_CHECK(focus_views() == 0);
+}
+
+TIDE_TEST(gui_disabled_blocks_stop_a_control)
+{
+    start();
+    int result = 0;
+    for (int frame = 0; frame < 6; frame++) {
+        mouse(650.0f, 650.0f, frame == 1 || frame == 2);
+        key(&devices.keyboard.tab, frame == 4);
+        begin();
+        const int depth = tide_gui_begin_disabled(&gui, true);
+        result |= said(tide_gui_control(&gui, 50, CARD));
+        tide_gui_close(&gui, depth);
+        end();
+        if (frame == 2) { // A press on it still isn't the game's
+            tide_devices sampled = devices;
+            tide_gui_hide(&gui, &sampled);
+            TIDE_CHECK(!sampled.mouse.left.pressed);
+        }
+    }
+    TIDE_CHECK(result == 0 && gui.active == 0 && gui.focus == 0); // Nothing of it is ever true, and Tab goes past it
+
+    // Disabled while it's held or has the focus, it lets go.
+    for (int frame = 0; frame < 4; frame++) {
+        mouse(650.0f, 650.0f, frame >= 1);
+        begin();
+        const int depth = tide_gui_begin_disabled(&gui, frame == 3);
+        const int now = said(tide_gui_control(&gui, 50, CARD));
+        tide_gui_close(&gui, depth);
+        end();
+        TIDE_CHECK(now == (frame == 0 ? HOVERED : frame == 3 ? 0 : (HOVERED | PRESSED)));
+    }
+    TIDE_CHECK(gui.active == 0);
+}
+
+TIDE_TEST(gui_a_modal_stops_the_controls_outside_it)
+{
+    start();
+    const tide_rect inside = {900.0f, 500.0f, 120.0f, 60.0f};
+    bool open = true;
+    int out = 0, in = 0;
+    for (int frame = 0; frame < 5; frame++) {
+        mouse(frame < 3 ? 650.0f : 950.0f, frame < 3 ? 650.0f : 520.0f, frame == 1 || frame == 3);
+        begin();
+        const int outside = said(tide_gui_control(&gui, 50, CARD));
+        const int depth = tide_gui_begin_modal(&gui, 30, TIDE_ANCHOR_MIDDLE_CENTER, &open);
+        TIDE_REQUIRE(depth >= 0);
+        const int within = said(tide_gui_control(&gui, 60, inside));
+        tide_gui_close(&gui, depth);
+        end();
+        if (frame > 0) out |= outside; // The modal is up from the frame after it first drew
+        in |= within;
+        if (frame == 2) TIDE_CHECK(gui.focus == 60); // The modal's first widget has the focus
+    }
+    TIDE_CHECK(out == 0);
+    TIDE_CHECK(in == (HOVERED | PRESSED | FOCUSED | CLICKED)); // The one in it works as ever
+}
+
+// Three controls side by side from one call site, as a loop makes them, but
+// for the one at `skip`: which said `what` (bits 0 to 2).
+static int loop_frame(const int skip, const int what)
+{
+    int which = 0;
+    begin();
+    for (int i = 0; i < 3; i++) {
+        if (i == skip) continue;
+        const uint32_t id = tide_gui_id(&gui, 7, 3); // The same site and seed each time round
+        const tide_control c = tide_gui_control(&gui, id, (tide_rect){600.0f + 110.0f * (float)i, 600.0f, 100.0f, 60.0f});
+        if (said(c) & what) which |= 1 << i;
+    }
+    end();
+    return which;
+}
+
+TIDE_TEST(gui_controls_made_in_a_loop_are_told_apart_by_their_turn)
+{
+    start();
+    // The mouse on the second: it alone is hovered, held and clicked.
+    mouse(760.0f, 630.0f, false);
+    loop_frame(-1, 0);
+    TIDE_CHECK(loop_frame(-1, HOVERED) == 2);
+    mouse(760.0f, 630.0f, true);
+    TIDE_CHECK(loop_frame(-1, PRESSED) == 2);
+    mouse(760.0f, 630.0f, false);
+    TIDE_CHECK(loop_frame(-1, CLICKED) == 2);
+    // The focus goes through them in the loop's order.
+    mouse(900.0f, 900.0f, false);
+    loop_frame(-1, 0);
+    for (int i = 0; i < 3; i++) {
+        key(&devices.keyboard.rightArrow, true);
+        TIDE_CHECK(loop_frame(-1, FOCUSED) == 1 << i);
+        key(&devices.keyboard.rightArrow, false);
+        TIDE_CHECK(loop_frame(-1, FOCUSED) == 1 << i);
+    }
+    // A loop that leaves its last one out leaves the others as they were...
+    key(&devices.keyboard.leftArrow, true);
+    TIDE_CHECK(loop_frame(2, FOCUSED) == 2);
+    key(&devices.keyboard.leftArrow, false);
+    TIDE_CHECK(loop_frame(2, FOCUSED) == 2);
+    // ...but one that leaves an earlier one out gives its turn to the next:
+    // the focus is where the second one made was, which is now the third.
+    TIDE_CHECK(loop_frame(0, FOCUSED) == 4);
+}
+
+#undef NONE
+
+// ---------------------------------------------------------------------------
+// Themes: how the GUI's own widgets look
+
+static bool same_color(const tide_color a, const tide_color b)
+{
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+// A frame with one of each kind of part: an area with a button, a toggle that's
+// on, a slider and a field in it.
+static void every_part(void)
+{
+    static bool on = true;
+    static float volume = 0.5f;
+    static int32_t players = 4;
+    const int area = tide_gui_begin_area(&gui, 99, (tide_rect){400.0f, 400.0f, 500.0f, 300.0f});
+    tide_gui_layout_button(&gui, 1, "Play");
+    tide_gui_layout_toggle(&gui, 2, "Fullscreen", &on);
+    tide_gui_layout_slider(&gui, 3, "", &volume, 0.0f, 1.0f);
+    tide_gui_layout_int_field(&gui, 4, "", &players);
+    tide_gui_close(&gui, area);
+}
+
+TIDE_TEST(gui_looks_as_it_always_did_with_no_theme)
+{
+    start();
+    mouse(5.0f, 5.0f, false);
+    begin();
+    every_part();
+    end();
+    const tide_color text = {0.93f, 0.93f, 0.95f, 1.0f};
+    const tide_color control = {0.2f, 0.2f, 0.25f, 1.0f};
+    const tide_color accent = {1.0f, 0.77f, 0.24f, 1.0f};
+    // The screen; the panel; the button and its text; the toggle's box, its
+    // check and its text; the slider's value, its rail, its filled part and
+    // its thumb; the field and its number.
+    TIDE_REQUIRE(draw.count == 13);
+    TIDE_CHECK(draw.shape_count == 0); // Plain rects, all of them
+    const tide_draw_command *c = draw.commands;
+    TIDE_CHECK(c[1].kind == TIDE_DRAW_RECT && same_color(c[1].color, (tide_color){0.07f, 0.07f, 0.1f, 0.9f}));
+    TIDE_CHECK(c[2].kind == TIDE_DRAW_RECT && same_color(c[2].color, control));
+    TIDE_CHECK(c[3].kind == TIDE_DRAW_TEXT && same_color(c[3].color, text));
+    TIDE_CHECK(c[4].kind == TIDE_DRAW_RECT && same_color(c[4].color, control));
+    TIDE_CHECK(c[5].kind == TIDE_DRAW_RECT && same_color(c[5].color, accent));
+    TIDE_CHECK(c[8].kind == TIDE_DRAW_RECT && same_color(c[8].color, control));
+    TIDE_CHECK(c[9].kind == TIDE_DRAW_RECT && same_color(c[9].color, accent));
+    TIDE_CHECK(c[10].kind == TIDE_DRAW_RECT && same_color(c[10].color, text));
+    TIDE_CHECK(c[11].kind == TIDE_DRAW_RECT && same_color(c[11].color, (tide_color){0.12f, 0.12f, 0.15f, 1.0f}));
+
+    // Under the mouse and held: the hovered colors, and the pressed one.
+    mouse(420.0f, 420.0f, false); // On the button
+    begin();
+    every_part();
+    end();
+    begin();
+    every_part();
+    end();
+    TIDE_CHECK(same_color(draw.commands[2].color, (tide_color){0.28f, 0.28f, 0.34f, 1.0f}));
+    mouse(420.0f, 420.0f, true);
+    begin();
+    every_part();
+    end();
+    TIDE_CHECK(same_color(draw.commands[2].color, (tide_color){0.14f, 0.14f, 0.18f, 1.0f}));
+    mouse(420.0f, 525.0f, false); // On the field
+    begin();
+    every_part();
+    end();
+    begin();
+    every_part();
+    end();
+    TIDE_CHECK(same_color(draw.commands[11].color, (tide_color){0.16f, 0.16f, 0.2f, 1.0f}));
+}
+
+static tide_gui_theme loud_theme(void)
+{
+    tide_gui_theme theme = tide_gui_theme_default();
+    theme.text = (tide_color){0.1f, 0.2f, 0.3f, 1.0f};
+    theme.panel = (tide_color){0.9f, 0.8f, 0.7f, 1.0f};
+    theme.control = (tide_color){0.0f, 0.5f, 1.0f, 1.0f};
+    theme.hot = (tide_color){0.2f, 0.6f, 1.0f, 1.0f};
+    theme.pressed = (tide_color){0.0f, 0.3f, 0.8f, 1.0f};
+    theme.field = (tide_color){1.0f, 1.0f, 1.0f, 1.0f};
+    theme.field_hot = (tide_color){0.9f, 0.9f, 0.9f, 1.0f};
+    theme.accent = (tide_color){1.0f, 0.0f, 0.5f, 1.0f};
+    return theme;
+}
+
+TIDE_TEST(gui_a_theme_colors_every_part)
+{
+    start();
+    const tide_gui_theme theme = loud_theme();
+    for (int frame = 0; frame < 4; frame++) {
+        // Nowhere, then on the button, held there, then on the field
+        mouse(frame == 0 ? 5.0f : 420.0f, frame == 0 ? 5.0f : frame == 3 ? 525.0f : 420.0f, frame == 2);
+        for (int twice = 0; twice < 2; twice++) { // Hovering takes a frame
+            begin();
+            tide_gui_set_theme(&gui, theme);
+            every_part();
+            end();
+        }
+        TIDE_REQUIRE(draw.count == 13);
+        const tide_draw_command *c = draw.commands;
+        TIDE_CHECK(draw.shape_count == 0); // Its corners are square still
+        TIDE_CHECK(same_color(c[1].color, theme.panel));
+        TIDE_CHECK(same_color(c[2].color, frame == 1 ? theme.hot : frame == 2 ? theme.pressed : theme.control));
+        TIDE_CHECK(same_color(c[3].color, theme.text) && same_color(c[6].color, theme.text) && same_color(c[7].color, theme.text));
+        TIDE_CHECK(same_color(c[4].color, theme.control) && same_color(c[5].color, theme.accent));
+        TIDE_CHECK(same_color(c[8].color, theme.control) && same_color(c[9].color, theme.accent));
+        TIDE_CHECK(same_color(c[10].color, theme.text)); // The slider's thumb
+        TIDE_CHECK(same_color(c[11].color, frame == 3 ? theme.field_hot : theme.field));
+        TIDE_CHECK(same_color(c[12].color, theme.text));
+    }
+}
+
+// The shape a command is, or NULL for a plain rect and the rest.
+static const tide_draw_shape_data *shape_of(const tide_draw_command *c)
+{
+    return c->kind == TIDE_DRAW_SHAPE && c->shape < draw.shape_count ? &draw.shapes[c->shape] : NULL;
+}
+
+TIDE_TEST(gui_a_themes_radius_rounds_every_part)
+{
+    start();
+    tide_gui_theme theme = tide_gui_theme_default();
+    theme.radius = 6.0f;
+    mouse(5.0f, 5.0f, false);
+    for (int frame = 0; frame < 2; frame++) {
+        key(&devices.keyboard.tab, frame == 1); // The button has the focus in the second
+        begin();
+        tide_gui_set_theme(&gui, theme);
+        every_part();
+        end();
+    }
+    TIDE_REQUIRE(draw.count == 14);
+    const tide_draw_command *c = draw.commands;
+    // The panel: sized when its area closed, and round
+    TIDE_REQUIRE(shape_of(&c[1]) != NULL);
+    TIDE_CHECK(c[1].a.x == 650.0f && c[1].a.y == 550.0f && c[1].b.x == 500.0f && c[1].b.y == 300.0f);
+    TIDE_CHECK(shape_of(&c[1])->radius == 6.0f && same_color(c[1].color, theme.panel));
+    // The focus's outline goes around the button's corners
+    TIDE_REQUIRE(shape_of(&c[2]) && shape_of(&c[3]));
+    TIDE_CHECK(same_color(c[2].color, theme.accent) && shape_of(&c[2])->radius == 8.0f);
+    TIDE_CHECK(same_color(c[3].color, theme.control) && shape_of(&c[3])->radius == 6.0f);
+    TIDE_CHECK(c[2].b.x == c[3].b.x + 4.0f && c[2].b.y == c[3].b.y + 4.0f);
+    // A toggle's box, and the check inside it, which is rounder by less
+    TIDE_REQUIRE(shape_of(&c[5]) && shape_of(&c[6]));
+    TIDE_CHECK(shape_of(&c[5])->radius == 6.0f && shape_of(&c[6])->radius == 2.0f);
+    // A slider's rail is 6 tall: no rounder than half of that
+    TIDE_REQUIRE(shape_of(&c[9]) != NULL);
+    TIDE_CHECK(c[9].b.y == 6.0f && shape_of(&c[9])->radius == 3.0f);
+    TIDE_CHECK(shape_of(&c[12]) != NULL && shape_of(&c[12])->radius == 6.0f); // The field
+
+    // An area sized by its widgets, in the frame it first comes up: its panel is there, and fits them.
+    begin();
+    tide_gui_set_theme(&gui, theme);
+    const int area = tide_gui_begin_area_at(&gui, 77, TIDE_ANCHOR_MIDDLE_CENTER);
+    tide_gui_layout_button(&gui, 8, "Play");
+    tide_gui_close(&gui, area);
+    end();
+    TIDE_REQUIRE(draw.count == 4 && shape_of(&draw.commands[1]) != NULL);
+    TIDE_CHECK(draw.commands[1].b.y == 28.0f + 24.0f && shape_of(&draw.commands[1])->radius == 6.0f);
+    TIDE_CHECK(draw.commands[1].a.x == 960.0f && draw.commands[1].a.y == 540.0f);
+
+    // Disabled, a round part fades as a square one does.
+    begin();
+    tide_gui_set_theme(&gui, theme);
+    const int off = tide_gui_begin_disabled(&gui, true);
+    tide_gui_button(&gui, 9, (tide_rect){100.0f, 100.0f, 200.0f, 40.0f}, "Locked");
+    tide_gui_close(&gui, off);
+    end();
+    TIDE_REQUIRE(draw.count == 3 && shape_of(&draw.commands[1]) != NULL);
+    TIDE_CHECK(draw.commands[1].color.a == 0.5f);
+}
+
+// The theme's control color in the list's `index`th command.
+static bool drawn_with(const uint32_t index, const tide_gui_theme theme)
+{
+    return index < draw.count && same_color(draw.commands[index].color, theme.control);
+}
+
+TIDE_TEST(gui_a_theme_block_puts_back_what_it_found)
+{
+    start();
+    const tide_gui_theme usual = tide_gui_theme_default();
+    tide_gui_theme red = usual, green = usual, blue = usual;
+    red.control = (tide_color){1.0f, 0.0f, 0.0f, 1.0f};
+    green.control = (tide_color){0.0f, 1.0f, 0.0f, 1.0f};
+    blue.control = (tide_color){0.0f, 0.0f, 1.0f, 1.0f};
+    mouse(900.0f, 900.0f, false);
+
+    begin();
+    tide_gui_layout_button(&gui, 1, "A"); // The usual look
+    const int outer = tide_gui_begin_theme(&gui, red);
+    tide_gui_layout_button(&gui, 2, "B");
+    const int inner = tide_gui_begin_theme(&gui, green);
+    tide_gui_layout_button(&gui, 3, "C");
+    tide_gui_close(&gui, inner);
+    tide_gui_layout_button(&gui, 4, "D"); // The one around it again
+    tide_gui_close(&gui, outer);
+    tide_gui_layout_button(&gui, 5, "E");
+    end();
+    TIDE_REQUIRE(draw.count == 11);
+    TIDE_CHECK(drawn_with(1, usual) && drawn_with(3, red) && drawn_with(5, green) && drawn_with(7, red) && drawn_with(9, usual));
+    // It lays out nothing: the buttons are one under the other, as without it
+    TIDE_CHECK(draw.commands[9].a.y == draw.commands[1].a.y + 4.0f * (28.0f + 5.0f));
+    TIDE_CHECK(draw.commands[5].a.x - draw.commands[5].b.x * 0.5f == 0.0f);
+
+    // Over a look that was set: that's what it puts back, and a look set inside it ends with it.
+    begin();
+    tide_gui_set_theme(&gui, blue);
+    const int block = tide_gui_begin_theme(&gui, red);
+    tide_gui_set_theme(&gui, green);
+    tide_gui_layout_button(&gui, 1, "A");
+    tide_gui_close(&gui, block);
+    tide_gui_layout_button(&gui, 2, "B");
+    end();
+    TIDE_CHECK(drawn_with(1, green) && drawn_with(3, blue));
+
+    // A return out of blocks closes them all, and other blocks in between are as they were.
+    begin();
+    const int first = tide_gui_begin_theme(&gui, red);
+    const int off = tide_gui_begin_disabled(&gui, true);
+    tide_gui_begin_theme(&gui, green);
+    tide_gui_begin_horizontal(&gui, 6);
+    tide_gui_close(&gui, off); // The Disabled block, and what was open in it
+    TIDE_CHECK(same_color(gui.theme.control, red.control) && !gui.groups[gui.depth].disabled);
+    tide_gui_layout_button(&gui, 1, "A");
+    tide_gui_close(&gui, first);
+    TIDE_CHECK(same_color(gui.theme.control, usual.control) && gui.depth == 0);
+    end();
+    TIDE_CHECK(drawn_with(1, red) && draw.commands[1].color.a == 1.0f);
+
+    // In a row, its widgets go on in the row.
+    begin();
+    const int row = tide_gui_begin_horizontal(&gui, 7);
+    tide_gui_layout_button(&gui, 1, "A");
+    const int themed = tide_gui_begin_theme(&gui, red);
+    tide_gui_layout_button(&gui, 2, "B");
+    tide_gui_close(&gui, themed);
+    tide_gui_layout_button(&gui, 3, "C");
+    tide_gui_close(&gui, row);
+    end();
+    TIDE_REQUIRE(draw.count == 7);
+    TIDE_CHECK(draw.commands[1].a.y == draw.commands[3].a.y && draw.commands[3].a.y == draw.commands[5].a.y);
+    TIDE_CHECK(draw.commands[1].a.x < draw.commands[3].a.x && draw.commands[3].a.x < draw.commands[5].a.x);
+    TIDE_CHECK(drawn_with(1, usual) && drawn_with(3, red) && drawn_with(5, usual));
+
+    // Deeper than blocks go, one changes nothing, rather than a look it couldn't put back.
+    begin();
+    for (int i = 0; i < TIDE_GUI_MAX_DEPTH; i++) tide_gui_begin_vertical(&gui, 100 + (uint32_t)i);
+    const int deep = tide_gui_begin_theme(&gui, red);
+    TIDE_CHECK(same_color(gui.theme.control, usual.control));
+    tide_gui_close(&gui, deep);
+    end();
+}
+
+TIDE_TEST(gui_a_set_theme_holds_for_the_views_after_and_ends_with_the_frame)
+{
+    start();
+    const tide_gui_theme usual = tide_gui_theme_default();
+    tide_gui_theme red = usual;
+    red.control = (tide_color){1.0f, 0.0f, 0.0f, 1.0f};
+    mouse(900.0f, 900.0f, false);
+    begin();
+    tide_gui_view(&gui, 1);
+    tide_gui_layout_button(&gui, 1, "A");
+    tide_gui_view(&gui, 2);
+    tide_gui_set_theme(&gui, red);
+    tide_gui_layout_button(&gui, 2, "B");
+    tide_gui_view(&gui, 3); // The next view's widgets have it too
+    tide_gui_layout_button(&gui, 3, "C");
+    end();
+    TIDE_CHECK(drawn_with(1, usual) && drawn_with(3, red) && drawn_with(5, red));
+    // The next frame starts from the usual look.
+    begin();
+    tide_gui_view(&gui, 1);
+    tide_gui_layout_button(&gui, 1, "A");
+    tide_gui_view(&gui, 3);
+    tide_gui_layout_button(&gui, 3, "C");
+    end();
+    TIDE_CHECK(drawn_with(1, usual) && drawn_with(3, usual));
+}

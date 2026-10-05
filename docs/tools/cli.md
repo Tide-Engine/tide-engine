@@ -169,7 +169,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
 - **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
 - **The window's size and scale are what you asked for,** whatever the display is.
-- **Matches start from seed 0.** A game that [rolls](../language/math.md#random-numbers) gets the same rolls every run, where a window's matches each start from a seed of the machine's.
+- **The match's seed is 0.** In a window, [`Time.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same.
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
 
