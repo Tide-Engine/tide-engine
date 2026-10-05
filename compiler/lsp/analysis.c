@@ -2302,7 +2302,9 @@ static void describe(const occurrence *o, sb *out)
                                                          "views and the functions they call."
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
-                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels. `Screen.Flip` gives a "
+                                                         "position counted from its other edge: a device's, from "
+                                                         "the bottom left, as the screen's, from the top left."
                       : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
                                                          "previous one started, for what isn't the match's: particles, "
                                                          "menus, a camera's shake. Local code reads it, and the "
@@ -5369,7 +5371,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Draw3D", CK_MODULE, "3D drawing and its camera", NULL, NULL);
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
-        item(c, "Screen", CK_MODULE, "The window's size, in GUI units", NULL, NULL);
+        item(c, "Screen", CK_MODULE, "The window's size, in pixels, and Flip for the devices' positions", NULL, NULL);
     }
     // The mouse's cursor: views lock it, and they and the input's Sample read whether it's locked
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {

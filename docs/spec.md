@@ -875,8 +875,9 @@ system Advance(mut Match match)
 - `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, enums, text, entities and players) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 - An element is a copy, as with C#'s List of structs: `items[i].count = 1` is an error that says to take it out, change it and put it back. A `mut` parameter or a mut method can't change an element in place either.
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.
-- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead), and not lists, or structs with lists in them, yet.
-- Components, singletons, structs and events can hold lists; inputs can't.
+- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead).
+- Components, singletons, structs and events can hold lists; inputs can't. A struct that holds a list, a map or text is a value like any other: a field of a component, a singleton, an event or another struct, a local, a parameter. Copying it copies what it holds.
+- What isn't supported yet is one inside another's elements: a list can't hold lists, maps, sets or grids (`List<List<int>>`), nor a struct that has a list, a map or a set in it, at any depth (`List<Bag>` where `Bag` has a `List<int>`). A list of structs that hold text is fine. The errors say which field is in the way, and what to write instead: one flat list with where each part starts (and how many it has), or a component on an entity of its own for each inner list, held as a `List<Entity>`.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt` or `Clear`), can't end the loop, wait, spawn or send, and so on.
@@ -885,7 +886,7 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, and lists of maps.
+- Lists of lists, lists of maps, and lists of structs that hold either.
 - Searching with a condition, and sorting by a key.
 - Fixed-size arrays inside components, which need no heap.
 
@@ -902,7 +903,7 @@ system Advance(mut Match match)
 
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
-- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps or structs holding them.
+- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
 - A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
@@ -915,7 +916,7 @@ system Advance(mut Match match)
 
 - Map literals, `[1: "a", 2: "b"]`.
 - Struct keys, and keys by several values.
-- Maps of maps, and maps in lists.
+- Maps of maps or of lists, maps in lists, and structs that hold any of them as a list's elements or a map's values.
 
 ## Grids
 
@@ -1152,7 +1153,7 @@ Implemented, awaiting approval:
   - **Gamepad:** `connected`; `leftStick` and `rightStick` (`float2`); `leftTrigger` and `rightTrigger` (`float`, 0 to 1); face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`); `dpad.up` and the other directions; `leftShoulder`, `rightShoulder`, `start` and `select`.
   - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers, as Unity's. A `Touch` has `press` (a button: `.down` when the finger touched, Unity's Began, and `.up` when it lifted, Ended), `id` (Unity's `touchId`: the same while the finger touches, a new one for each touch), and `position`, `delta` and `startPosition` (`float2`). A finger keeps its slot while it touches. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts. A finger that touches and lifts between two samples reads as held for one, so no tap is lost. A finger is never the mouse, as in Unity's Input System.
   - **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last, as Unity's `Pointer.current`. Code that reads it works with a mouse and a finger alike.
-  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left. `scroll.y` is positive when scrolling away from the user.
+  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left; in a view, `Screen.Flip` gives them from the top left, as the screen and the GUI count (see GUI). `scroll.y` is positive when scrolling away from the user.
 
 ```csharp
 input PlayerInput
@@ -1461,7 +1462,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
-  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
+  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Device positions count from the bottom left, so they go through `Screen.Flip` first (see GUI, Provisional): `Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position))`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
   - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` supplies only `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
@@ -1678,6 +1679,7 @@ Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
 - `Rect(x, y, width, height)` is a built-in value type measured from the top left corner, with `y` down, as in Unity's GUI, with `x`, `y`, `width` and `height`. World drawing and the mouse have `y` up. `GUI`'s rects are on the screen, inside an area or not.
+- `Screen.Flip(position)` gives a `float2` position counted from the screen's other edge: `float2(position.x, Screen.height - position.y)`. The devices count pixels from the bottom left with `y` up (see Input), and the screen, the GUI, `Draw2D.Screen()` and the conversion helpers from the top left with `y` down: `Screen.Flip(devices.pointer.position)` is the pointer on the screen. It's its own inverse, so it converts either way. It's the window's whatever target is drawn into, as the devices are, and readable where `Screen.width` is: views and the functions they call, not the match, the input's code or the GPU. The name is a pick, awaiting the owner.
 - `GUILayout.Area(anchor)` places a panel sized to its content at one of nine anchors, the built-in enum `Anchor`, named as Unity's `TextAnchor` (`UpperLeft` to `LowerRight`), 12 pixels from the screen's edges. `GUILayout.Area(rect)` places it at a rect. An anchored area is placed with its size from the frame before, and moves at the end of the frame if the size changed. One too big for the screen starts at its top left margin.
 - `GUILayout` widgets outside any area stack from the screen's top left, across every view. In a vertical container, buttons, toggles, sliders and fields stretch to the widest widget's width. Labelled widgets put their label in a column at least 130 wide, so a column of them lines up.
 - Widgets shrink when there isn't room: an anchored area is at most as wide as the screen less its margins, and a vertical container's widgets are at most as wide as it is. A row that's too wide shrinks each of its widgets by as much as it can give, with the frame before's widths. Fields and sliders shrink down to a small minimum, a labelled widget's label column first, down to the label; buttons give up half their padding; labels and toggles don't shrink.
