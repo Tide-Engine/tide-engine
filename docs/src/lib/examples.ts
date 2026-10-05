@@ -2,7 +2,7 @@
 interface GamePage {
     /** The code of the room the game hosts or joined, "" for none. */
     room?: string;
-    /** Milliseconds its packets to the room's players leave late. */
+    /** The round trip its player is to have to the match's server, in milliseconds. */
     lag?: number;
     /** Starts a program that waited for it. Done once its first frame is drawn. */
     start?: () => Promise<void>;
@@ -224,7 +224,9 @@ export function liveExamples(article: HTMLElement) {
             start();
         }
 
-        // The slider changes what's running, and what starts next.
+        // The slider changes what's running, and what starts next. Each page
+        // is told the same ping: the one that hosts has no trip to the server
+        // and adds nothing, and the one that joined makes its round trip that.
         function delay() {
             if (lagText) lagText.textContent = `${latency()} ms`;
             for (const frame of frames) {

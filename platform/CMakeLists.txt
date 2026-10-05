@@ -514,6 +514,14 @@ if(TIDE_WEB)
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms_ended-browser" ended)
     set_tests_properties(tide_platform_web_rooms_ended PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
 
+    # A page told to play at a slow connection (`Tide.lag`): its lag is the
+    # round trip its player gets, what the trip takes already in it. The page
+    # stands in for the relay and for WebRTC, in the other tests' virtual time.
+    add_executable(tide_platform_web_lag tests/web_lag.c)
+    target_link_libraries(tide_platform_web_lag PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_lag SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_lag TARGET tide_platform_web_lag)
+
     # Ticks on threads in a browser: a cross-origin isolated page, whose
     # threads are workers sharing its memory, against ticks on one thread.
     tide_add_game(tide_platform_web_threads SOURCES tests/jobs.tide tests/jobs_tasks.c NAME game HOST tests/web_threads.c)

@@ -187,8 +187,9 @@ block('tide-example', (tokens, idx) => {
 // to bring together (a lobby's Host and Join); `tide-match` puts them in one
 // match itself: the first hosts it in a room and the second joins that room,
 // as `tide run --host` and `tide run --join <code>` would. `lag=<ms>` after a
-// match's file name is the latency its slider starts at, each way. One with
-// nothing inside shows no source: for a page that has it beside another frame.
+// match's file name is the ping its slider starts at: the round trip between
+// the player who joins and the server. One with nothing inside shows no
+// source: for a page that has it beside another frame.
 function players(name: string, match: boolean) {
     block(name, (tokens, idx) => {
         const token = tokens[idx];
@@ -198,9 +199,9 @@ function players(name: string, match: boolean) {
         if (!parts || (parts[2] && !match)) throw new Error(`Use ::: ${name} <file-name> ${match ? '[lag=<ms>] ' : ''}<title>`);
         const [, id, lag, title] = parts;
         const src = `/examples/${id}/`;
-        const delay = Math.min(Number(lag ?? 0), 250);
+        const ping = Math.min(Number(lag ?? 0), 500);
         const slider = match
-            ? `<label class="example-lag">Latency, each way <input type="range" min="0" max="250" step="25" value="${delay}" data-example-lag><output>${delay} ms</output></label>`
+            ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output></label>`
             : '';
         const names = match ? ['hosts the match', 'joins it'] : ['', ''];
         const frames = names
