@@ -1,0 +1,3 @@
+// expect: 'Font' is built into the engine
+enum Font { Small, Big }
+scene Main { }

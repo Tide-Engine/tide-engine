@@ -93,20 +93,6 @@ typedef struct tide_textref tide_textref;
 #define TIDE_GUI_MAX_CLAIM_RECTS 256 // Places views claim the pointer at, per frame
 #endif
 
-// Where GUILayout.Area puts an area, named as Unity's TextAnchor. Tide's
-// Anchor enum has the same values.
-typedef enum tide_anchor {
-    TIDE_ANCHOR_UPPER_LEFT,
-    TIDE_ANCHOR_UPPER_CENTER,
-    TIDE_ANCHOR_UPPER_RIGHT,
-    TIDE_ANCHOR_MIDDLE_LEFT,
-    TIDE_ANCHOR_MIDDLE_CENTER,
-    TIDE_ANCHOR_MIDDLE_RIGHT,
-    TIDE_ANCHOR_LOWER_LEFT,
-    TIDE_ANCHOR_LOWER_CENTER,
-    TIDE_ANCHOR_LOWER_RIGHT,
-} tide_anchor;
-
 typedef struct tide_gui_group {
     uint32_t id;
     uint32_t kind;            // Vertical, horizontal or area

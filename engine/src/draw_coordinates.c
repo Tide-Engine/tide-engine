@@ -78,9 +78,10 @@ tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2
     return finite2(result) ? result : zero;
 }
 
-tide_float2 tide_draw_guess_text(const char *text, const float size, const bool target)
+tide_float2 tide_draw_guess_text(const char *text, const float size, const bool target, const unsigned char *font)
 {
     (void)target;
+    (void)font;
     uint32_t bytes = 0, lines = 1;
     for (const char *c = text; *c; c++, bytes++) lines += *c == '\n';
     return tide_f2((float)bytes * size * 0.6f, size + (float)(lines - 1u) * size * 1.2f);
@@ -89,7 +90,8 @@ tide_float2 tide_draw_guess_text(const char *text, const float size, const bool 
 // Match the renderer: text is drawn as many times bigger as the camera has
 // pixels to a unit, and fitted to pixels at that size, so it's measured there.
 tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, const float size,
-                                   const tide_float2 window_size, const tide_measure_fn measure)
+                                   const unsigned char *font, const tide_float2 window_size,
+                                   const tide_measure_fn measure)
 {
     const tide_float2 screen_size = target_size(d, window_size);
     const tide_float2 zero = tide_f2(0.0f, 0.0f);
@@ -98,7 +100,7 @@ tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, co
     float scale;
     bool pixels;
     if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
-    const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(text, size * scale, d->target != 0);
+    const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(text, size * scale, d->target != 0, font);
     const tide_float2 result = tide_f2(drawn.x / scale, drawn.y / scale);
     return finite2(result) ? result : zero;
 }

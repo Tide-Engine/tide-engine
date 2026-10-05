@@ -252,9 +252,10 @@ static float measure(const char *text, const float size)
 }
 
 // ...as a renderer says it.
-static tide_float2 font(const char *text, const float size, const bool target)
+static tide_float2 font(const char *text, const float size, const bool target, const unsigned char *weight)
 {
     (void)target;
+    (void)weight;
     return tide_f2(measure(text, size), size);
 }
 
