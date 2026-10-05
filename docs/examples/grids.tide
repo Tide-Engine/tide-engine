@@ -1,0 +1,72 @@
+settings { title = "Grids"; tickRate = 30; maxPlayers = 1; }
+
+const int SIZE = 40;
+
+// A cell is an int here: how hot it is.
+singleton Heat { Grid2<int> cells = Grid2(SIZE, SIZE); }
+
+local singleton Brush
+{
+    int2 cell;
+    bool down;
+}
+
+input Paint
+{
+    [Clamp(0, 39)] int x;
+    [Clamp(0, 39)] int y;
+    bool down;
+
+    Sample(Devices devices, Brush brush)
+    {
+        x = brush.cell.x;
+        y = brush.cell.y;
+        down = brush.down;
+    }
+}
+
+scene Main { }
+
+system Warm(Paint paint, mut Heat heat, Time time)
+{
+    // An ember that circles by itself, and the player's brush.
+    var ember = float2(Math.Cos(time.t), Math.Sin(time.t)) * 12 + SIZE * 0.5;
+    heat.cells[int2(ember)] = 4000;
+    if (!paint.down) return;
+    // Writes past the grid's size do nothing, so the edges need no checks.
+    for (var dx = -1; dx <= 1; dx++)
+    {
+        for (var dy = -1; dy <= 1; dy++) heat.cells[paint.x + dx, paint.y + dy] = 4000;
+    }
+}
+
+// Every cell at once, on threads: each becomes the average of itself and the
+// four beside it, less a little. A step reads the grid as the loop found it,
+// and changes only its own cell.
+system Spread(mut Heat heat)
+{
+    parallel (var at in heat.cells)
+    {
+        var sum = heat.cells[at] * 4 + heat.cells[at + int2(1, 0)] + heat.cells[at + int2(-1, 0)]
+                + heat.cells[at + int2(0, 1)] + heat.cells[at + int2(0, -1)];
+        heat.cells[at] = Math.Max(sum / 8 - 3, 0);
+    }
+}
+
+view Show(Devices devices, Heat heat, mut Brush brush)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.SetCamera(float2(SIZE * 0.5, SIZE * 0.5 + 2), SIZE * 0.58); // A cell is one unit
+    var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    brush.cell = int2(Math.Floor(pointer));
+    brush.down = devices.pointer.press.pressed && pointer.x >= 0 && pointer.x < SIZE && pointer.y >= 0 && pointer.y < SIZE;
+
+    Draw2D.Rect(float2(SIZE * 0.5), float2(SIZE), Color(0.07, 0.1, 0.17));
+    foreach (var at in heat.cells)
+    {
+        float hot = heat.cells[at] / 4000.0;
+        if (hot > 0.004) Draw2D.Rect(float2(at) + 0.5, float2(1), Color(Math.Sqrt(hot), hot * hot * 0.9 + 0.05, 0.25 - hot * 0.2));
+    }
+    Draw2D.SetScreen();
+    Draw2D.Text("Drag to heat the cells", float2(16, 14), 16, Color.white);
+}

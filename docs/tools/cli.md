@@ -143,6 +143,18 @@ Hot reload is only for `tide run`: `tide build` makes a plain program, or a page
 | `--join <code>` | The match in the room with this code, like `K7QF2M` |
 | `--connect <address>` | The match at an address, like `192.168.1.5` or `localhost:7777` (not on the web) |
 
+### In a web page's address
+
+A game's web page takes the same from its address, so a link can say which match it's for:
+
+| In the address | What it does |
+|---|---|
+| `?host` | As `--host`: the game opens its match, in a room |
+| `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room |
+| `?lag=100` | The page sends its packets to the room's players 100 milliseconds late, to see a match as on a slow connection with both players at one desk |
+
+A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
+
 ## Without a window
 
 `tide run` can play a game with no window at all, to see what it draws or to check it still runs: from a script, on a build server, or for an agent that shouldn't open windows on your screen. The game runs once, as it was built, and `tide` ends with the game's exit code. Nothing is watched or reloaded.

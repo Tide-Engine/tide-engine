@@ -1,0 +1,31 @@
+component Body
+{
+    float2 position;
+    float2 velocity;
+    float radius = 20;
+}
+
+component Ball { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { velocity = float2(160, 120) }, Ball);
+}
+
+system Move(mut Body body, Time time)
+{
+    body.position += body.velocity * time.dt;
+}
+
+system Bounce(mut Body body, with Ball)
+{
+    if (Math.Abs(body.position.x) > 160) body.velocity.x = -body.velocity.x;
+    if (Math.Abs(body.position.y) > 160) body.velocity.y = -body.velocity.y;
+}
+
+view DrawBalls(Body body, with Ball)
+{
+    Draw2D.Circle(body.position, body.radius, Color.red);
+}

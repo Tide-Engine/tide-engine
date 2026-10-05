@@ -31,6 +31,20 @@ A client keeps a snapshot of every tick from the last one the server confirmed, 
 - If an input was different, the client goes back to the snapshot before that tick, and runs it and the ticks after it again with the right inputs.
 - If a hash differs anyway, the client gets the world again from the server: only the pages its own world lacks (see [Sending worlds](#sending-worlds)).
 
+Below are two machines in one match: the first runs the server, and the second joined its room. Move the pointer over a frame to steer that machine's player. A disc is where the machine drawing it predicts the body is, and the ring of its color is where the server has confirmed it, which a view reads [`verified`](#predicted-and-confirmed).
+
+Both machines are at one desk here, so their packets arrive at once. The slider makes each page send its packets late, as a slow connection would:
+
+- **Player 2's own disc still answers at once**, however late its packets are. Its ring trails behind: that's the server's answer, a round trip old.
+- **Player 1 sees player 2 late**, by one trip, and guesses in between: steer player 2 in a circle, and its disc in player 1's frame cuts the corners, walking to where it last heard player 2 point.
+- **Player 1's own disc and ring stay together.** Its machine runs the server, so nothing of its own is ever late.
+
+::: tide-match prediction lag=100 Predicted, and confirmed by the server
+
+<<< @/examples/prediction.tide
+
+:::
+
 A client predicts at most a second ahead of the verified tick; beyond that, it waits for the server. The server keeps four seconds of ticks to send again, and a player further behind gets the whole world. A player that was sent the world has every tick since kept for it until it catches up, however long a big world took to arrive, up to 32 seconds; one that can't catch up in that long gets the world again.
 
 Running ticks again is the cost of prediction: another player's input that wasn't what the client guessed means running every tick from there to the one it's predicting again, which on a busy match is most ticks. A client measures what its ticks cost, and when running them again would take more than its budget a frame (4 ms, unless the host says otherwise), it delays its input a tick at a time: it still samples inputs as far ahead as before, so they arrive in time, but runs ticks that many behind, predicting less. It takes the delay back once there's been room to spare for a while. A game can ask for delay in place of prediction altogether, with `prediction = Prediction.Delay` in its settings (see [Input delay](./matches.md#input-delay)): then its clients never predict, and run each tick once as the server confirms it, as many ticks behind as that takes. Either way, a tick runs when the client's clock reaches it, however early its frame came, so views blend between ticks at the match's pace.

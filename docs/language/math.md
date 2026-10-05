@@ -74,6 +74,14 @@ And these build values:
 
 `Mul` (two matrices, or a matrix and a vector of its size), `Transpose`, `Inverse`, `Determinant`, and for `float4x4`, `Transform` (a point) and `Rotate` (a direction).
 
+Each button below plots a function of `Math` from 0 to 1. The white dot goes along the curve, and the orange one moves by the same number, to see what it does to something that moves.
+
+::: tide-example math Curves from Math
+
+<<< @/examples/math.tide
+
+:::
+
 **Hashing:**
 
 `Math.Hash(value)` turns an `int`, `long`, `int2`, `int3` or `int4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
@@ -177,6 +185,14 @@ A generator the game leaves alone is seeded by the engine, so there's nothing to
 ```csharp
 Spawn(Wanderer { random = Random(7) }); // Every match, the same wanderer
 ```
+
+The view below makes a generator from the slider's seed every frame, and rolls every dot's place, size and color with it. The dots stay where they are, since the same seed rolls the same numbers; another seed gives other dots, and going back gives the first ones again.
+
+::: tide-example random The same seed, the same numbers
+
+<<< @/examples/random.tide
+
+:::
 
 A `Random` has one field, `long state`, which is all there is to it: copy it to keep where a sequence is, and set it to go on from there. A state of 0 is a generator nothing seeded yet. It still rolls, but the same numbers as every other one at 0: what a `Random` in a list starts as, since the engine seeds the fields of components and singletons, and no further.
 
