@@ -300,12 +300,14 @@ void analyze_parallelism(program *prog)
 // Text
 
 // A declaration's name as code in `from`'s namespace writes it: short in the
-// same namespace, qualified elsewhere. With no `from`, always qualified.
+// same namespace, qualified elsewhere. With no `from`, always qualified. One
+// of several that share the name goes with its parameters' types, as code
+// names it: Move(Position, with Player).
 void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from)
 {
     const bool same_namespace = from && d->unit && from->unit && str_eq(d->unit->ns, from->unit->ns);
     const str name = same_namespace || d->qualified.len == 0 ? d->name : d->qualified;
-    sb_printf(out, "%s" STR_FMT "%s", quote, STR_ARG(name), quote);
+    sb_printf(out, "%s" STR_FMT "%s%s", quote, STR_ARG(name), d->signature ? d->signature + d->name.len : "", quote);
 }
 
 // Whether a declaration directly names another in an ordering attribute.

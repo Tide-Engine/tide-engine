@@ -1,0 +1,5 @@
+// expect: an argument after a named one needs its name too
+scene Main { }
+singleton Log { float total; }
+float Damage(float base, float multiplier = 1) { return base * multiplier; }
+system Run(mut Log log) { log.total = Damage(base: 10, 2); }

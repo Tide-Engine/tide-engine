@@ -216,10 +216,11 @@ jobs:
       - name: Compiler cache statistics (start)
         run: ccache --zero-stats
 
-      # CTest uses previous durations to start the longest tests first. Only
-      # scheduling data is cached; every selected test still runs each time.
+      # Start long native tests first. Browser workloads compete for software
+      # rendering CPU when grouped together, so keep their usual ordering.
+      # Only scheduling data is cached; every selected test still runs.
       - name: Cache test durations
-        if: matrix.preset != 'package'
+        if: matrix.preset == 'release' || matrix.preset == 'mingw-release'
         uses: actions/cache@v4
         with:
           path: build/${{ matrix.preset }}/Testing/Temporary/CTestCostData.txt

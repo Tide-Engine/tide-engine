@@ -1,0 +1,9 @@
+// expect: 2 declarations share the name 'Move': write the one meant with its parameters' types
+scene Main { }
+component Body { float x; }
+component Player { }
+component Enemy { }
+system Move(mut Body body, with Player) { body.x += 1; }
+system Move(mut Body body, with Enemy) { body.x -= 1; }
+[After(Move)]
+system Settle(mut Body body) { body.x *= 0.5; }

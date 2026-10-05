@@ -1,0 +1,7 @@
+// expect: 'Connect' isn't given its 'address'
+scene Main { }
+local singleton Menu { bool joining; }
+view Join(Menu menu)
+{
+    if (menu.joining) Session.Connect(port: 7001);
+}

@@ -1,0 +1,4 @@
+// expect: 'health' is a component, which the caller passes its own of: it takes no default
+scene Main { }
+component Health { float value = 100; }
+float Left(Health health = Health { value = 5 }) { return health.value; }
