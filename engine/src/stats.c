@@ -67,8 +67,9 @@ bool tide_stats_input(tide_stats *s, const tide_devices *d, const tide_float2 sc
     s->buttons_held = (uint8_t)held;
     s->hovered = on && !d->pointer.touch;
 
-    // Fingers. One that touched the drawer is the drawer's until a sample
-    // cleared its slot: it lifted, and nothing reads that it was there.
+    // Fingers. One that touched the drawer is the drawer's while it has its
+    // slot: until a sample cleared it or another finger took it, once it
+    // lifted, so nothing reads that it was there.
     const tide_touchscreen *ts = &d->touchscreen;
     for (int i = 0; i < TIDE_TOUCHES; i++) {
         tide_stats_finger *f = &s->fingers[i];

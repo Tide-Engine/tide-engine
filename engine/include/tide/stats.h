@@ -95,7 +95,7 @@ typedef struct tide_stats {
     bool key_held;        // Its key, at the last frame
     uint8_t buttons_held; // The mouse's buttons at the last frame, a bit each, the left one's first
     uint8_t buttons;      // ...and the ones that went down on the drawer, until a sample is done with each
-    tide_stats_finger fingers[TIDE_TOUCHES]; // The fingers that touched it, until a sample is done with each
+    tide_stats_finger fingers[TIDE_TOUCHES]; // The fingers that touched it, while each has its slot
 } tide_stats;
 
 // Once a frame, after the devices were polled (the pointer too:
