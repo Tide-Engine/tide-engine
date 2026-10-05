@@ -97,7 +97,7 @@ github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 
 A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
 
-A name no package has is an error that lists the ones there are. They're folders of the installation's `packages` folder, each named as its line is, where the editors' go to definition takes you. Where the installer puts `tide`, packages from git are kept in that folder too, each host a folder of its own.
+A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
 
 ## Writing a package
 

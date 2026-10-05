@@ -29,8 +29,10 @@
 
 // Set by the build: the repo this server was built from, whose packages/ has
 // the packages that come with tide.
-#ifndef TIDE_SOURCE_DIR
-#define TIDE_SOURCE_DIR NULL
+#ifdef TIDE_SOURCE_DIR
+#define TIDE_REPO_PACKAGES TIDE_SOURCE_DIR "/packages"
+#else
+#define TIDE_REPO_PACKAGES NULL
 #endif
 
 static void send_message(void *user, const char *message, const size_t len)
@@ -167,17 +169,23 @@ int main(void)
     server.manifest = TIDE_GAMES_MANIFEST; // Written by tide_add_game (see cmake/Tide.cmake)
     server.defer = true;                   // It reads ahead: see read_more
     // The engine's headers and the packages that come with tide: the
-    // installation's, or in a build of the repo, the repo's own.
+    // installation's (include/ and src/packages/), or in a build of the repo,
+    // the repo's own.
     char *root = installed_root();
     char *include_dir = NULL;
     if (root) {
         const size_t len = strlen(root) + 16;
         include_dir = malloc(len);
-        if (!include_dir) abort();
+        char *builtin = malloc(len);
+        if (!include_dir || !builtin) abort();
         snprintf(include_dir, len, "%s/include", root);
+        snprintf(builtin, len, "%s/src/packages", root);
         cdefs_set_include_dir(include_dir);
+        packages_set_builtin_folder(builtin);
+        free(builtin);
+    } else {
+        packages_set_builtin_folder(TIDE_REPO_PACKAGES);
     }
-    packages_set_root(root ? root : TIDE_SOURCE_DIR);
     free(root);
 
     lsp_message *queue = NULL; // The messages that have arrived, from `next` on those not handled yet

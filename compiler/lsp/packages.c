@@ -619,16 +619,12 @@ bool packages_fetched(const char *dir)
 // ---------------------------------------------------------------------------
 // The packages that come with tide
 
-static char *builtin_dir; // <root>/packages/, or NULL before anything said where the installation is
+static char *builtin_dir; // The folder they're in, ending in '/', or NULL before anything said which
 
-void packages_set_root(const char *root)
+void packages_set_builtin_folder(const char *folder)
 {
     free(builtin_dir);
-    builtin_dir = NULL;
-    if (!root || !root[0]) return;
-    char *folder = normalize_folder(root);
-    builtin_dir = format("%s" PACKAGES_BUILTIN_DIR "/", folder);
-    free(folder);
+    builtin_dir = folder && folder[0] ? normalize_folder(folder) : NULL;
 }
 
 static bool file_exists(const char *path)
@@ -661,9 +657,7 @@ typedef struct name_list {
     int count;
 } name_list;
 
-// Whatever else is in that folder isn't one: by default, the installation's
-// is also where packages from git are kept (packages_cache), under their
-// hosts' names, which have a '.'.
+// Whatever else is in that folder isn't one.
 static void add_builtin_name(name_list *names, const char *name)
 {
     if (!packages_builtin_exists(name)) return;
