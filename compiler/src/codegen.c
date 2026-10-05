@@ -8938,9 +8938,14 @@ static void gen_par_steps(gen *g, const decl *sys)
         }
         if (!s->windowed) sb_put(o, "    tide_par_cache tide_pc = {{0, 0, 0}, NULL};\n");
         sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n");
-        sb_put(o, "    int32_t tide_from[3], tide_to[3];\n");
-        sb_put(o, "    const bool tide_sparse = tide_par_tile(tide_pl, tide_task, tide_from, tide_to);\n");
-        sb_put(o, "    const int32_t tide_o[3] = {tide_pl->offset[0], tide_pl->offset[1], tide_pl->offset[2]};\n");
+        // Its blocks are numbered from its first one, which starts at tide_o:
+        // block k's place, tide_o + k * its size, is a cell's, never past an
+        // int. tide_o is a copy of its own, like the bounds below: what a
+        // function was handed, a step's writes could change for all the C
+        // compiler knows, and a loop that reads it each round isn't SIMD
+        sb_put(o, "    int32_t tide_origin[3], tide_from[3], tide_to[3];\n");
+        sb_put(o, "    const bool tide_sparse = tide_par_tile(tide_pl, tide_task, tide_origin, tide_from, tide_to);\n");
+        sb_put(o, "    const int32_t tide_o[3] = {tide_origin[0], tide_origin[1], tide_origin[2]};\n");
         // In variables of their own, which nothing the steps write can change
         sb_put(o, "    const int32_t tide_x0 = tide_from[0], tide_x1 = tide_to[0], tide_y0 = tide_from[1], tide_y1 = tide_to[1];\n");
         sb_put(o, "    const int32_t tide_z0 = tide_from[2], tide_z1 = tide_to[2];\n    (void)tide_z0;\n    (void)tide_z1;\n");
@@ -8952,23 +8957,27 @@ static void gen_par_steps(gen *g, const decl *sys)
             const int *lo = s->window_lo, *hi = s->window_hi;
             sb_put(o, "    if (tide_from[0] >= tide_to[0] || tide_from[1] >= tide_to[1] || tide_from[2] >= tide_to[2]) {\n"
                       "        tide_scratch_reset(tide_mark);\n        return;\n    }\n");
-            sb_printf(o, "    const int32_t tide_lo[3] = {tide_o[0] + tide_from[0] * %d + (%d), tide_o[1] + tide_from[1] * %d + (%d), "
-                         "tide_o[2] + tide_from[2] * %d + (%d)};\n",
-                      b[0], lo[0], b[1], lo[1], b[2], lo[2]);
-            sb_printf(o, "    const int32_t tide_hi[3] = {tide_o[0] + (tide_to[0] - 1) * %d + %d, tide_o[1] + (tide_to[1] - 1) * %d + %d, "
-                         "tide_o[2] + (tide_to[2] - 1) * %d + %d};\n",
-                      b[0], hi[0], b[1], hi[1], b[2], hi[2]);
+            // Its own cells are cells. The ones around them that its steps
+            // read may be past the ints' edge, where a step's own arithmetic
+            // wraps: the window starts where that does (tide_add_i), and is
+            // as many cells across as its blocks and their reach are
             sb_printf(o, "    const int32_t tide_own0[3] = {tide_o[0] + tide_from[0] * %d, tide_o[1] + tide_from[1] * %d, "
                          "tide_o[2] + tide_from[2] * %d};\n",
                       b[0], b[1], b[2]);
-            sb_printf(o, "    const int32_t tide_own1[3] = {tide_o[0] + tide_to[0] * %d - 1, tide_o[1] + tide_to[1] * %d - 1, "
-                         "tide_o[2] + tide_to[2] * %d - 1};\n",
+            sb_printf(o, "    const int32_t tide_own1[3] = {tide_o[0] + (tide_to[0] * %d - 1), tide_o[1] + (tide_to[1] * %d - 1), "
+                         "tide_o[2] + (tide_to[2] * %d - 1)};\n",
                       b[0], b[1], b[2]);
-            sb_put(o, "    const int32_t tide_ww = tide_hi[0] - tide_lo[0] + 1, tide_wh = tide_hi[1] - tide_lo[1] + 1;\n");
+            sb_printf(o, "    const int32_t tide_lo[3] = {tide_add_i(tide_own0[0], %d), tide_add_i(tide_own0[1], %d), "
+                         "tide_add_i(tide_own0[2], %d)};\n",
+                      lo[0], lo[1], lo[2]);
+            sb_printf(o, "    const uint32_t tide_extent[3] = {(uint32_t)(tide_to[0] - tide_from[0] - 1) * %du + %du, "
+                         "(uint32_t)(tide_to[1] - tide_from[1] - 1) * %du + %du, (uint32_t)(tide_to[2] - tide_from[2] - 1) * %du + %du};\n",
+                      b[0], hi[0] - lo[0] + 1, b[1], hi[1] - lo[1] + 1, b[2], hi[2] - lo[2] + 1);
+            sb_put(o, "    const int32_t tide_ww = (int32_t)tide_extent[0], tide_wh = (int32_t)tide_extent[1];\n");
             sb_put(o, "    (void)tide_wh;\n");
-            sb_put(o, "    const size_t tide_wn = (size_t)tide_ww * (size_t)tide_wh * (size_t)(tide_hi[2] - tide_lo[2] + 1);\n");
+            sb_put(o, "    const size_t tide_wn = (size_t)tide_extent[0] * (size_t)tide_extent[1] * (size_t)tide_extent[2];\n");
             sb_printf(o, "    %s *const tide_wm = tide_scratch_memory(2u * tide_wn * sizeof(%s));\n", cell, cell);
-            sb_put(o, "    tide_par_window(tide_pl, tide_lo, tide_hi, tide_wm);\n");
+            sb_put(o, "    tide_par_window(tide_pl, tide_lo, tide_extent, tide_wm);\n");
             sb_printf(o, "    memcpy(tide_wm + tide_wn, tide_wm, tide_wn * sizeof(%s));\n", cell);
             sb_printf(o, "    const %s *restrict const tide_win = tide_wm;\n    %s *restrict const tide_wout = tide_wm + tide_wn;\n", cell,
                       cell);
@@ -8983,7 +8992,7 @@ static void gen_par_steps(gen *g, const decl *sys)
             gen_par_nest(g, sys, s, 1, true, false);
         }
         g->indent = 0;
-        if (s->windowed) sb_put(o, "    tide_par_window_put(tide_pl, tide_lo, tide_hi, tide_own0, tide_own1, tide_wout, tide_win);\n");
+        if (s->windowed) sb_put(o, "    tide_par_window_put(tide_pl, tide_lo, tide_extent, tide_own0, tide_own1, tide_wout, tide_win);\n");
         sb_put(o, "    tide_scratch_reset(tide_mark);\n}\n\n");
         line_reset(g);
     }
@@ -9074,13 +9083,16 @@ static void gen_grid_foreach(gen *g, const stmt *s)
     sb_printf(o, "tide_grid_rows_begin(&%s, ", rows);
     gen_expr(g, o, s->value);
     sb_printf(o, ", &%s);\n", grid_shape_name(grid));
-    line(g, o, "int32_t %s_x0, %s_x1, %s_y, %s_z;", rows, rows, rows, rows);
+    // A run ends past its last cell, which can be the last an int says: its
+    // end and what counts up to it are 64 bits wide, so neither goes past one
+    line(g, o, "int64_t %s_x0, %s_x1;", rows, rows);
+    line(g, o, "int32_t %s_y, %s_z;", rows, rows);
     line(g, o, "while (tide_grid_rows_next(&%s, &%s_x0, &%s_x1, &%s_y, &%s_z)) {", rows, rows, rows, rows, rows);
     g->indent++;
-    line(g, o, "for (int32_t %s_x = %s_x0; %s_x < %s_x1; %s_x++) {", rows, rows, rows, rows, rows);
+    line(g, o, "for (int64_t %s_x = %s_x0; %s_x < %s_x1; %s_x++) {", rows, rows, rows, rows, rows);
     g->indent++;
-    if (three) line(g, o, "const tide_int3 %s = {%s_x, %s_y, %s_z};", local_cname(g, s->name), rows, rows, rows);
-    else line(g, o, "const tide_int2 %s = {%s_x, %s_y};", local_cname(g, s->name), rows, rows);
+    if (three) line(g, o, "const tide_int3 %s = {(int32_t)%s_x, %s_y, %s_z};", local_cname(g, s->name), rows, rows, rows);
+    else line(g, o, "const tide_int2 %s = {(int32_t)%s_x, %s_y};", local_cname(g, s->name), rows, rows);
     line(g, o, "(void)%s;", local_cname(g, s->name));
     const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);

@@ -573,7 +573,10 @@ static tide_float2 pixel_scale(void)
 // A whole number of pixels for `pixels` of them: the nearest, 1 at least.
 static int whole_pixels(const double pixels)
 {
-    return pixels < 1.5 ? 1 : (int)floor(pixels + 0.5);
+    // A size is any number a game says, and before the first draw nothing
+    // has said what the GPU takes: more than an int holds is the most of one
+    if (!(pixels >= 1.5)) return 1;
+    return pixels < 2147483647.0 ? (int)floor(pixels + 0.5) : INT32_MAX;
 }
 
 // A render target's size as it's drawn under `to`: its logical pixels, like
@@ -791,7 +794,7 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
 static float line_start(const unsigned char *font, const char *line, const int pixels, const float stretch,
                         const float x, const uint32_t side)
 {
-    int across = 0;
+    int64_t across = 0; // A line of any length: more pixels than an int counts
     for (uint32_t c; side && (c = tide_utf8_next(&line)) != 0 && c != '\n';) across += tide_font_advance(font, c, pixels);
     return floorf(x - (float)across * stretch * 0.5f * (float)side + 0.5f);
 }
@@ -1829,14 +1832,12 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     gpu->draw_indexed(g->index_count, s->count);
 }
 
-static int nearest_pixel(const float v)
+// The pixel nearest `v`, from 0 to `most`: a rect's corner is any float a
+// game says, so it's kept to the target before it's made an int (NaN is 0).
+static int clamp_pixel(const float v, const int most)
 {
-    return (int)floorf(v + 0.5f);
-}
-
-static int clamp_pixel(const int v, const int most)
-{
-    return v < 0 ? 0 : v > most ? most : v;
+    const float nearest = floorf(v + 0.5f);
+    return !(nearest > 0.0f) ? 0 : nearest < (float)most ? (int)nearest : most;
 }
 
 // Only what's inside the step's rect draws from here on, or everything again.
@@ -1849,10 +1850,10 @@ static void clip(const draw_step *s)
     }
     // In the target's pixels, and inside it
     const tide_float2 scale = pixel_scale();
-    const int left = clamp_pixel(nearest_pixel(s->at.x * scale.x), width);
-    const int right = clamp_pixel(nearest_pixel(s->to.x * scale.x), width);
-    const int top = clamp_pixel(nearest_pixel(s->at.y * scale.y), height);
-    const int bottom = clamp_pixel(nearest_pixel(s->to.y * scale.y), height);
+    const int left = clamp_pixel(s->at.x * scale.x, width);
+    const int right = clamp_pixel(s->to.x * scale.x, width);
+    const int top = clamp_pixel(s->at.y * scale.y, height);
+    const int bottom = clamp_pixel(s->to.y * scale.y, height);
     gpu->scissor(left, top, right > left ? right - left : 0, bottom > top ? bottom - top : 0);
 }
 

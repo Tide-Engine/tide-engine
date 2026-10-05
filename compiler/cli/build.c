@@ -410,10 +410,19 @@ static void config_flags(args *a, const build *b, const bool cpp)
     arg_list(a, common_flags);
     arg_list(a, b->opts->release ? release_flags : debug_flags);
     // A library's code works wherever it's loaded, and Android's games are libraries.
+    // On Linux and Android, a function whose locals take more than a page
+    // touches each page as it makes room for them (-fstack-clash-protection):
+    // a stack that runs out, as recursion with no end does, then ends at its
+    // guard page, and never past it in memory that's something else's (see
+    // AGENTS.md, Language). Windows' targets check big frames by themselves.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (b->library || b->opts->android) arg(a, "-fPIC");
+    if (!b->opts->web) arg(a, "-fstack-clash-protection");
 #else
-    if (b->opts->android) arg(a, "-fPIC");
+    if (b->opts->android) {
+        arg(a, "-fPIC");
+        arg(a, "-fstack-clash-protection");
+    }
 #endif
 #ifdef _WIN32
     // Debug info Visual Studio's debugger reads, in a .pdb next to the game.

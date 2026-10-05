@@ -158,6 +158,54 @@ add_test(NAME tidec_e2e_chain_endless COMMAND tidec_e2e_chain_endless)
 set_tests_properties(tidec_e2e_chain_endless PROPERTIES TIMEOUT 30
     PASS_REGULAR_EXPRESSION "an endless chain of events: P[io]ng is 1000 deep in one tick")
 
+# Safety tests: each safety/<name>.tide is a game of Tide alone that tries to
+# make the generated C or the engine do something undefined: an index anywhere,
+# a handle to nothing, numbers at their limits, a comparison that lies. No Tide
+# code can corrupt memory (see AGENTS.md, Language), so each ends in a defined
+# way: it runs to the end having said what its first lines expect, or stops
+# with the engine's own message (safety/expect_safety.cmake). They mean the
+# most under sanitizers (-DTIDE_SANITIZE=ON), where a read or write out of
+# bounds or an undefined operation is a report, and a report fails the test;
+# without them they still pin what each case gives, the same on every platform.
+# safety/host.c runs them as a session would: snapshots that share the world's
+# pages, views between ticks, the world as bytes and back; on the platform
+# layer's threads where there's one.
+file(GLOB TIDE_SAFETY_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/safety/*.tide")
+string(REPLACE ";" "|" TIDE_SAFETY_EMULATOR "${CMAKE_CROSSCOMPILING_EMULATOR}")
+foreach(source IN LISTS TIDE_SAFETY_TESTS)
+    get_filename_component(name "${source}" NAME_WE)
+    set(target tidec_safety_${name})
+    tide_add_game(${target} SOURCES safety/${name}.tide NAME game
+        HOST "${CMAKE_CURRENT_SOURCE_DIR}/safety/host.c")
+    if(TIDE_PLATFORM)
+        target_link_libraries(${target} PRIVATE tide_platform)
+        target_compile_definitions(${target} PRIVATE TIDE_SAFETY_THREADS=1)
+        if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+            target_compile_definitions(${target} PRIVATE TIDE_SAFETY_RENDERER=1)
+        endif()
+    endif()
+    add_test(NAME ${target}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DRUN=$<TARGET_FILE:${target}>"
+            "-DEMULATOR=${TIDE_SAFETY_EMULATOR}"
+            "-DSOURCE=${source}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/safety/expect_safety.cmake")
+    set_tests_properties(${target} PROPERTIES TIMEOUT 300 LABELS safety)
+    # One that draws (`// draws` among its first lines) goes through the
+    # renderer too, where tests have a window and a GPU for it (label `gpu`)
+    file(STRINGS "${source}" draws LIMIT_COUNT 1 REGEX "^// draws")
+    if(draws AND TIDE_PLATFORM AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        add_test(NAME ${target}_gpu
+            COMMAND "${CMAKE_COMMAND}"
+                "-DRUN=$<TARGET_FILE:${target}>"
+                "-DEMULATOR=${TIDE_SAFETY_EMULATOR}"
+                "-DSOURCE=${source}"
+                -DGPU=gpu
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/safety/expect_safety.cmake")
+        set_tests_properties(${target}_gpu PROPERTIES TIMEOUT 300 LABELS "safety;gpu")
+    endif()
+endforeach()
+
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.
 # A folder errors/<name>/ is one program of several files.

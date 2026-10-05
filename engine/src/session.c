@@ -373,6 +373,15 @@ typedef struct sent_mark {
     double at;
 } sent_mark;
 
+// A tick's whole world, packed to send: every player who joined in that tick
+// is sent these bytes, and they go with the last of them.
+typedef struct shared_pack {
+    uint32_t tick;
+    uint8_t *bytes;
+    uint32_t size;
+    uint32_t refs; // Players being sent it
+} shared_pack;
+
 typedef struct connection {
     bool used;
     uint32_t transport;
@@ -401,7 +410,7 @@ typedef struct connection {
     uint32_t snapshot_size;
     uint32_t chunk_count;
     uint8_t *snapshot;
-    bool snapshot_shared; // ...is the server's pack of this tick, which other players joining now are sent too
+    struct shared_pack *shared; // ...is this pack's, a tick's whole world, which other players who joined in that tick are sent too
     void *hashed; // While the hashes are sent: the world they're of, to send once it says what it lacks
     double *chunk_sent;
     uint32_t chunk_ack;  // It has every chunk before this one
@@ -486,13 +495,10 @@ struct tide_server {
     windows w;
     stored_frame *frames; // history
     // The whole world as last packed to send, which every player joining in
-    // the same tick is sent, so a tick packs it once however many join
-    struct {
-        uint32_t tick;
-        uint8_t *bytes;
-        uint32_t size;
-        uint32_t refs; // Players being sent it
-    } pack;
+    // the same tick is sent, so a tick packs it once however many join. NULL
+    // once nobody is sent it. A tick's pack is its players' (shared_pack): it
+    // outlives its place here when another tick's takes it.
+    struct shared_pack *pack;
     uint8_t *frame;  // The tick being made, then its inputs as they're made (frame_capacity each)
     uint8_t *packet; // TIDE_NET_MTU
     uint8_t *input;  // An input: input_size, then its packed bytes
@@ -556,21 +562,24 @@ static void add_event(tide_server *s, const uint8_t kind, const uint32_t player)
 }
 
 // `g`: the game whose world `hashed` is.
-// Lets go of what `c` is being sent: its own bytes, or its share of the
-// server's pack of the tick, which goes once nobody is sent it.
+// Lets go of what `c` is being sent: its own bytes, or its share of a tick's
+// pack, which goes once none of that tick's players is sent it. A pack is
+// counted by the players it's sent to, whichever tick the server has moved on
+// to: one tick's count never frees another's bytes.
 static void drop_snapshot(tide_server *s, connection *c)
 {
-    if (c->snapshot_shared) {
-        if (--s->pack.refs == 0) {
-            free(s->pack.bytes);
-            s->pack.bytes = NULL;
+    if (c->shared) {
+        if (--c->shared->refs == 0) {
+            if (s->pack == c->shared) s->pack = NULL;
+            free(c->shared->bytes);
+            free(c->shared);
         }
     } else {
         free(c->snapshot);
     }
     free(c->chunk_sent);
     c->snapshot = NULL;
-    c->snapshot_shared = false;
+    c->shared = NULL;
     c->chunk_sent = NULL;
 }
 
@@ -583,13 +592,14 @@ static void stop_sending(tide_server *s, connection *c)
     c->sending = false;
 }
 
-// Sends `bytes` (size `size`, to free()) in chunks, from the first.
+// Sends `bytes` (size `size`, to free()) in chunks, from the first; or with
+// `shared`, that pack's bytes, which `c` is counted among the players of.
 static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, uint8_t *bytes, const uint32_t size,
-                           const bool shared)
+                           shared_pack *shared)
 {
     drop_snapshot(s, c);
     c->snapshot = bytes;
-    c->snapshot_shared = shared;
+    c->shared = shared;
     c->snapshot_number++;
     c->snapshot_kind = kind;
     c->snapshot_size = size;
@@ -642,21 +652,20 @@ static void start_snapshot(tide_server *s, connection *c)
     if (c->hashed) {
         uint32_t size;
         uint8_t *bytes = hashes_of(s, c->hashed, &size);
-        send_in_chunks(s, c, SEND_HASHES, bytes, size, false);
+        send_in_chunks(s, c, SEND_HASHES, bytes, size, NULL);
         return;
     }
-    // The whole world: packed once a tick, however many join in it
-    if (!s->pack.bytes || s->pack.tick != s->tick) {
-        if (s->pack.bytes && s->pack.refs == 0) free(s->pack.bytes);
-        uint32_t size;
-        uint8_t *bytes = g->pack_delta(s->world, NULL, NULL, 0, &size);
-        s->pack.tick = s->tick;
-        s->pack.bytes = bytes;
-        s->pack.size = size;
-        s->pack.refs = 0;
+    // The whole world: packed once a tick, however many join in it. An
+    // earlier tick's pack that players are still being sent stays theirs.
+    if (!s->pack || s->pack->tick != s->tick) {
+        shared_pack *made = calloc(1, sizeof *made);
+        if (!made) tide_out_of_memory();
+        made->tick = s->tick;
+        made->bytes = g->pack_delta(s->world, NULL, NULL, 0, &made->size);
+        s->pack = made;
     }
-    s->pack.refs++;
-    send_in_chunks(s, c, SEND_WORLD, s->pack.bytes, s->pack.size, true);
+    s->pack->refs++;
+    send_in_chunks(s, c, SEND_WORLD, s->pack->bytes, s->pack->size, s->pack);
 }
 
 // It said which pages of the hashed world its own lacks: those, as a delta.
@@ -668,7 +677,7 @@ static void send_lacking(tide_server *s, connection *c, const uint8_t *lacks, co
     free_world(g, c->hashed);
     free(c->hashed);
     c->hashed = NULL;
-    send_in_chunks(s, c, SEND_WORLD, delta, delta_size, false);
+    send_in_chunks(s, c, SEND_WORLD, delta, delta_size, NULL);
 }
 
 static void free_connection(tide_server *s, connection *c)
@@ -1893,8 +1902,16 @@ static const void *base_for(tide_client *c, const uint32_t tick, const uint8_t k
     if (c->loaded) {
         const uint32_t t = tick < c->verified ? c->verified : tick > c->ahead ? c->ahead : tick;
         g->copy_world(c->base, world_at(c, t));
+    } else if (kind == START_GIVEN && g->start_size) {
+        // The start's bytes are wherever they came in a message, and the game
+        // reads them as the value they are: from memory aligned for one
+        void *start = malloc(g->start_size);
+        if (!start) tide_out_of_memory();
+        memcpy(start, given, g->start_size);
+        g->start(c->base, dt, start, seed);
+        free(start);
     } else {
-        g->start(c->base, dt, kind == START_GIVEN ? given : NULL, seed);
+        g->start(c->base, dt, NULL, seed);
     }
     return c->base;
 }
