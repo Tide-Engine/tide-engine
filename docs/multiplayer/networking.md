@@ -39,6 +39,8 @@ Both machines are at one desk here, so their packets arrive at once. The slider 
 - **Player 1 sees player 2 late**, by one trip, and guesses in between: steer player 2 in a circle, and its disc in player 1's frame cuts the corners, walking to where it last heard player 2 point.
 - **Player 1's own disc and ring stay together.** Its machine runs the server, so nothing of its own is ever late.
 
+A guess that was wrong is put right the moment the server's answer arrives, which would move a disc all at once. The bodies' `position` is marked `[Position]`, so a disc glides to where the correction put it (see [correction smoothing](#provisional-correction-smoothing)); a ring is the confirmed world as it is.
+
 ::: tide-match prediction lag=100 Predicted, and confirmed by the server
 
 <<< @/examples/prediction.tide

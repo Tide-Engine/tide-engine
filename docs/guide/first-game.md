@@ -162,6 +162,19 @@ tide run --connect localhost
 
 Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
 
+No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input, and puts the match right when the server's answer arrives. Over a slow connection that moves their body a long way in one frame, each time they start or stop. Mark the position, and views draw the correction over a few frames instead:
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    float2 velocity;
+    float radius = 20;
+}
+```
+
+Only what's drawn changes: the match is put right at once, the same on every machine (see [correction smoothing](../game/views.md#provisional-correction-smoothing)).
+
 Here are two machines in one match, each running [the whole game](#the-whole-game): the first hosts it, and the second joined its room, as `tide run --join` does with a room's code (see [Matches](../multiplayer/matches.md#rooms)). Click a frame so it has the keyboard, and steer with `WASD`: its player is yellow there, and gray in the other frame.
 
 ::: tide-match first-game Two players, in one match
