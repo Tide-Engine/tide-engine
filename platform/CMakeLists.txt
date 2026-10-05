@@ -442,6 +442,13 @@ if(TIDE_WEB)
     tide_web_page(tide_platform_web_touch SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_touch TARGET tide_platform_web_touch)
 
+    # A game in a page that scrolls (`embedded` in its page's address) leaves
+    # the page the wheel, and a finger until one taps the game.
+    add_executable(tide_platform_web_embedded tests/web_embedded.c)
+    target_link_libraries(tide_platform_web_embedded PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_embedded SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_embedded TARGET tide_platform_web_embedded QUERY embedded)
+
     # The cursor's lock: the browser's to give at a click or a key press, and
     # to take back. The page stands in for the browser, which gives a script's
     # events no lock.
