@@ -135,6 +135,85 @@ TIDE_TEST(devices_touches_past_the_last_slot_are_left_out)
     TIDE_CHECK(tide_touch_at(d.touchscreen.touches, 4).id == 5);
 }
 
+// A tap: a finger touches in one poll and lifts in the next.
+static void tap(tide_devices *d, const uint32_t source, const float x, const float y)
+{
+    poll_touches(d, (touch_step[]){{TIDE_TOUCH_BEGAN, source, x, y}}, 1);
+    poll_touches(d, (touch_step[]){{TIDE_TOUCH_ENDED, source, x, y}}, 1);
+}
+
+// A game with no input, and a program outside any match, sample nothing: a
+// finger that lifted is never cleared from its slot. Fingers keep coming all
+// the same, each in the slot of the one that lifted longest ago.
+TIDE_TEST(devices_fingers_keep_coming_where_nothing_samples)
+{
+    tide_devices d = {0};
+    const tide_touches *s = &d.touchscreen.touches;
+    for (int32_t i = 1; i <= 25; i++) {
+        const tide_touch *t = &s->at[(i - 1) % TIDE_TOUCHES]; // The slots in turn
+        poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, 7, (float)i, 5}}, 1);
+        TIDE_CHECK(t->id == i && t->press.held && t->press.down && !t->press.up && t->position.x == (float)i);
+        TIDE_CHECK(d.touchscreen.primaryTouch.id == i && d.touchscreen.primaryTouch.press.held);
+        TIDE_CHECK(d.pointer.touch && d.pointer.press.held && d.pointer.position.x == (float)i);
+        poll_touches(&d, (touch_step[]){{TIDE_TOUCH_ENDED, 7, (float)i, 5}}, 1);
+        TIDE_CHECK(t->id == i && !t->press.held && t->press.up && !d.pointer.press.held);
+    }
+    // The slots have the last ten, until a sample clears them
+    for (int32_t i = 0; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].id > 15 && s->at[i].press.pressed);
+    tide_devices_consume(&d);
+    for (int32_t i = 0; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].id == 0 && s->at[i].rested == 0);
+    TIDE_CHECK(d.touchscreen.primaryTouch.id == 0);
+}
+
+TIDE_TEST(devices_the_finger_that_lifted_longest_ago_gives_its_slot)
+{
+    tide_devices d = {0};
+    const tide_touches *s = &d.touchscreen.touches;
+    // One finger rests on the screen while nine others tap, and nothing samples: every slot is taken
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, 1, 0, 0}}, 1);
+    for (uint32_t i = 2; i <= TIDE_TOUCHES; i++) tap(&d, i, (float)i, 0);
+    TIDE_CHECK(s->at[0].id == 1 && s->at[0].press.held && s->at[9].id == 10 && !s->at[9].press.held);
+
+    // It lifts as another touches, in one poll. The new finger takes the slot
+    // of the tap that lifted longest ago, not of the finger that lifted just
+    // now, whose lift is still there to read.
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_ENDED, 1, 0, 0}, {TIDE_TOUCH_BEGAN, 11, 50, 0}}, 2);
+    TIDE_CHECK(s->at[0].id == 1 && !s->at[0].press.held && s->at[0].press.up);
+    TIDE_CHECK(s->at[1].id == 11 && s->at[1].press.held && s->at[1].press.down && s->at[1].position.x == 50.0f);
+    TIDE_CHECK(s->at[2].id == 3 && s->at[2].press.pressed); // The other taps are as they were
+    // The primary touch lifted and touched again: an up and a down
+    const tide_touch *primary = &d.touchscreen.primaryTouch;
+    TIDE_CHECK(primary->id == 11 && primary->press.held && primary->press.up && primary->press.down);
+
+    // Fingers that lifted give their slots, and fingers that touch never do:
+    // nine more fingers come down, and with ten on the screen, another is left out
+    touch_step more[TIDE_TOUCHES];
+    for (uint32_t i = 0; i < TIDE_TOUCHES; i++) more[i] = (touch_step){TIDE_TOUCH_BEGAN, 20 + i, (float)i, 9};
+    poll_touches(&d, more, TIDE_TOUCHES);
+    for (int32_t i = 0; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].press.held && s->at[i].id >= 11);
+    TIDE_CHECK(s->at[1].id == 11 && d.touchscreen.last_id == 20 && primary->id == 11);
+    for (int32_t i = 0; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].source != 29); // The tenth of them
+    // Its moves and its lift are nothing, as it never touched
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_MOVED, 29, 70, 70}, {TIDE_TOUCH_ENDED, 29, 70, 70}}, 2);
+    for (int32_t i = 0; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].press.held && s->at[i].position.x != 70.0f);
+}
+
+// With a slot free, a tap no sample has seen keeps its own: the next sample reads it.
+TIDE_TEST(devices_tap_between_samples_keeps_its_slot_while_one_is_free)
+{
+    tide_devices d = {0};
+    const tide_touches *s = &d.touchscreen.touches;
+    tap(&d, 1, 5, 5);
+    for (uint32_t i = 2; i <= TIDE_TOUCHES; i++) poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, i, (float)i, 0}}, 1);
+    TIDE_CHECK(s->at[0].id == 1 && s->at[0].press.pressed && s->at[0].press.down && s->at[0].press.up);
+    for (int32_t i = 1; i < TIDE_TOUCHES; i++) TIDE_CHECK(s->at[i].id == i + 1 && s->at[i].press.held);
+    tide_devices_consume(&d);
+    TIDE_CHECK(s->at[0].id == 0 && s->at[1].id == 2 && s->at[1].press.pressed && !s->at[1].press.down);
+    // ...and now that slot is the next finger's
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, 40, 1, 1}}, 1);
+    TIDE_CHECK(s->at[0].id == 11 && s->at[0].press.down);
+}
+
 TIDE_TEST(devices_pointer_follows_what_was_used_last)
 {
     tide_devices d = {0};

@@ -259,6 +259,26 @@ TIDE_TEST(gui_fingers_press_buttons)
     TIDE_CHECK(touch_frame(NONE, NONE, 0.0f, 0.0f) == 1);
 }
 
+// A game with no input, and a menu outside any match, sample nothing, so
+// nothing clears a touchscreen's slots of the fingers that lifted. Buttons
+// answer every tap all the same, past as many as there are slots.
+TIDE_TEST(gui_buttons_answer_every_tap_where_nothing_samples)
+{
+    start();
+    for (int i = 0; i < 3 * TIDE_TOUCHES; i++) {
+        const bool quit = i % 2 == 0; // Quit and Play, in turn
+        const float y = quit ? 47.0f : 20.0f;
+        TIDE_CHECK(touch_frame(TIDE_TOUCH_BEGAN, NONE, 20.0f, y) == 0);
+        TIDE_CHECK(gui.active == (quit ? 20u : 10u));
+        TIDE_CHECK(touch_frame(TIDE_TOUCH_ENDED, NONE, 20.0f, y) == (quit ? 2 : 1));
+    }
+    // ...and taps shorter than a frame
+    for (int i = 0; i < 2 * TIDE_TOUCHES; i++) {
+        TIDE_CHECK(touch_frame(TIDE_TOUCH_BEGAN, TIDE_TOUCH_ENDED, 20.0f, 20.0f) == 0);
+        TIDE_CHECK(touch_frame(NONE, NONE, 0.0f, 0.0f) == 1);
+    }
+}
+
 // What a host does before a frame's GUI, with a finger: polls the touchscreen,
 // with up to two events at (x, y) from the top left (TIDE_TOUCHES for none),
 // then samples the game's input. Returns whether the sample has the finger's
