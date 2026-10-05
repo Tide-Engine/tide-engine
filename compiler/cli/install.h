@@ -16,10 +16,8 @@ bool tide_installation_whole(const char *root, const char *version);
 // Puts the package unpacked in `fresh` over the installation in `root`: every
 // file and folder of the package replaces the installation's, and what's in
 // root that the package has none of (the channel, downloaded packages,
-// Android's tools) stays. packages/ holds both: each package that comes with
-// tide replaces the installation's folder of its name there, and the
-// downloaded ones beside them stay. What's replaced goes to `trash`, a folder
-// on root's volume, which the caller deletes.
+// Android's tools) stays. What's replaced goes to `trash`, a folder on root's
+// volume, which the caller deletes.
 //
 // Nothing of the installation goes before what replaces it is in its place.
 // A folder another program has open (an editor showing a header of it) can't

@@ -132,7 +132,10 @@ int main(const int argc, char **argv)
     }
     const char *command = argv[1];
     char *root = install_root();
-    packages_set_root(root); // The packages that come with tide are in <root>/packages
+    // The packages that come with tide are sources of the installation, like the engine's
+    char *builtin = path_join(root, "src/packages");
+    packages_set_builtin_folder(builtin);
+    free(builtin);
     tide_cleanup(root);
 
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) return version(root);

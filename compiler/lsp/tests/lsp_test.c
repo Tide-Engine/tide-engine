@@ -4579,8 +4579,9 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
     make_folder("lsp_bi");
     make_folder("lsp_bi/game");
     make_folder("lsp_bi/install");
-    make_folder("lsp_bi/install/packages");
-    make_folder("lsp_bi/install/packages/dice");
+    make_folder("lsp_bi/install/src");
+    make_folder("lsp_bi/install/src/packages");
+    make_folder("lsp_bi/install/src/packages/dice");
     static const char die[] = "namespace Dice;\n"
                               "component Die { int face; }\n"
                               "system Roll(mut Die die) { die.face += 1; }\n";
@@ -4588,21 +4589,21 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
                                     "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Die); }\n";
     write_file("lsp_bi/game/tide.packages", "dice\n");
     write_file("lsp_bi/game/main.tide", main_file);
-    write_file("lsp_bi/install/packages/dice/tide.packages", "package Dice\n");
-    write_file("lsp_bi/install/packages/dice/die.tide", die);
-    char install[700], root[700], uri_main[700], uri_die[700];
+    write_file("lsp_bi/install/src/packages/dice/tide.packages", "package Dice\n");
+    write_file("lsp_bi/install/src/packages/dice/die.tide", die);
+    char builtin[700], root[700], uri_main[700], uri_die[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
-    game_path(install, sizeof install, "lsp_bi/install");
+    game_path(builtin, sizeof builtin, "lsp_bi/install/src/packages");
     snprintf(root, sizeof root, "file:///%s/lsp_bi/game", dir);
     snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_bi/game/main.tide", dir);
-    snprintf(uri_die, sizeof uri_die, "file:///%s/lsp_bi/install/packages/dice/die.tide", dir);
+    snprintf(uri_die, sizeof uri_die, "file:///%s/lsp_bi/install/src/packages/dice/die.tide", dir);
 
-    // Until the server knows where tide is installed, the name is no package's.
+    // Until the server knows which folder they're in, the name is no package's.
     start_in(root);
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 1 && has(sent[0], uri_main) && !has(sent[0], "\"diagnostics\":[]"));
 
-    packages_set_root(install);
+    packages_set_builtin_folder(builtin);
     start_in(root);
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 2);
@@ -4614,13 +4615,14 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
     open_uri(uri_die, die);
     TIDE_CHECK(sent_count == 2 && has(sent[1], uri_main));
 
-    packages_set_root(NULL);
+    packages_set_builtin_folder(NULL);
     remove_game_file("lsp_bi/game/tide.packages");
     remove_game_file("lsp_bi/game/main.tide");
-    remove_game_file("lsp_bi/install/packages/dice/tide.packages");
-    remove_game_file("lsp_bi/install/packages/dice/die.tide");
-    remove_folder("lsp_bi/install/packages/dice");
-    remove_folder("lsp_bi/install/packages");
+    remove_game_file("lsp_bi/install/src/packages/dice/tide.packages");
+    remove_game_file("lsp_bi/install/src/packages/dice/die.tide");
+    remove_folder("lsp_bi/install/src/packages/dice");
+    remove_folder("lsp_bi/install/src/packages");
+    remove_folder("lsp_bi/install/src");
     remove_folder("lsp_bi/install");
     remove_folder("lsp_bi/game");
     remove_folder("lsp_bi");

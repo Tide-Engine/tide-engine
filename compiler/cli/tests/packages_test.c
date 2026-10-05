@@ -195,7 +195,8 @@ TIDE_TEST(cli_packages_files_say_what_they_are)
 }
 
 // ---------------------------------------------------------------------------
-// The packages that come with tide, in an installation made up for the test
+// The packages that come with tide, in an installation made up for the test:
+// they're in its src/packages, which tide says as it starts
 
 // Everything reported, a line each: "<line>: <message> (<note>)".
 typedef struct said {
@@ -213,34 +214,33 @@ static void say(void *user, const char *where, const int line, const char *messa
 
 static void put(const char *root, const char *file, const char *text);
 
-// An installation with packages: dice, which needs rolls; rolls; lonely, which
-// needs a folder beside it; and what isn't one of them.
+// An installation with packages, in its src/packages: dice, which needs
+// rolls; rolls; lonely, which needs a folder beside it; and what isn't one of
+// them. Gives the installation's folder.
 static char *installation(void)
 {
     char *root = path_join(scratch(), "installed");
     sys_remove_tree(root);
-    put(root, PACKAGES_BUILTIN_DIR "/dice/" PACKAGES_FILE, "package Dice\nrolls\n");
-    put(root, PACKAGES_BUILTIN_DIR "/rolls/" PACKAGES_FILE, "package Rolls\n");
-    put(root, PACKAGES_BUILTIN_DIR "/lonely/" PACKAGES_FILE, "package Lonely\n../rolls\n");
-    // Not packages that come with tide: a folder with no tide.packages, one
-    // named as none is, and the packages from git, which are kept there too
-    put(root, PACKAGES_BUILTIN_DIR "/empty/dice.tide", "namespace Empty;\n");
-    put(root, PACKAGES_BUILTIN_DIR "/Loud/" PACKAGES_FILE, "package Loud\n");
-    put(root, PACKAGES_BUILTIN_DIR "/github.com/owner/repo/0123456789abcdef0123456789abcdef01234567/" PACKAGES_FILE,
-        "package Repo\n");
-    put(root, PACKAGES_BUILTIN_DIR "/.downloads/1/files/" PACKAGES_FILE, "package Repo\n");
+    put(root, "src/packages/dice/" PACKAGES_FILE, "package Dice\nrolls\n");
+    put(root, "src/packages/rolls/" PACKAGES_FILE, "package Rolls\n");
+    put(root, "src/packages/lonely/" PACKAGES_FILE, "package Lonely\n../rolls\n");
+    // Not packages that come with tide: a folder with no tide.packages, and
+    // one named as none is
+    put(root, "src/packages/empty/dice.tide", "namespace Empty;\n");
+    put(root, "src/packages/Loud/" PACKAGES_FILE, "package Loud\n");
     return root;
 }
 
-TIDE_TEST(cli_packages_that_come_with_tide_are_in_its_installation)
+TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
 {
     char *root = installation();
-    // Before anything says where the installation is, none does.
+    char *builtin = path_join(root, "src/packages");
+    // Before anything says which folder they're in, none does.
     char **names = NULL;
     TIDE_CHECK(packages_builtin_names(&names) == 0 && !names);
     TIDE_CHECK(!packages_builtin_exists("dice"));
 
-    packages_set_root(root);
+    packages_set_builtin_folder(builtin);
     TIDE_REQUIRE(packages_builtin_names(&names) == 3);
     TIDE_CHECK(strcmp(names[0], "dice") == 0 && strcmp(names[1], "lonely") == 0 && strcmp(names[2], "rolls") == 0);
     packages_free_names(names, 3);
@@ -257,7 +257,7 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_its_installation)
     TIDE_REQUIRE(g.count == 2);
     TIDE_CHECK(g.file.lines[0].builtin && !g.file.lines[0].local && !g.file.lines[0].commit);
     TIDE_CHECK(strcmp(g.items[0].name, "Rolls") == 0 && strcmp(g.items[1].name, "Dice") == 0);
-    char *want = path_join(root, PACKAGES_BUILTIN_DIR "/dice/");
+    char *want = path_join(builtin, "dice/");
     char *relative = packages_relative(want, g.items[1].folder);
     TIDE_CHECK(strcmp(relative, ".") == 0); // The same folder, however each is written
     free(relative);
@@ -312,14 +312,17 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_its_installation)
     packages_free(&g);
     free(game);
 
-    // An installation with none says so.
-    packages_set_root(scratch());
+    // A tide that comes with none says so: its folder of them isn't there.
+    char *none = path_join(root, "src/none");
+    packages_set_builtin_folder(none);
     char *note = packages_builtin_unknown("dice", NULL);
     TIDE_CHECK(strcmp(note, "it comes with none") == 0);
     free(note);
+    free(none);
 
-    packages_set_root(NULL);
+    packages_set_builtin_folder(NULL);
     sys_remove_tree(root);
+    free(builtin);
     free(root);
 }
 
@@ -336,7 +339,7 @@ TIDE_TEST(cli_a_line_for_a_package_that_comes_with_tide_is_its_name_alone)
     TIDE_CHECK(strcmp(f.lines[0].source, "box2d") == 0);
     TIDE_CHECK(f.lines[1].local && !f.lines[1].builtin); // A folder of the same name is still a folder
     TIDE_CHECK(!f.lines[2].local && !f.lines[2].builtin);
-    // Where it is depends on the installation alone, and there's none here.
+    // Its folder is in the one tide says they're in, and nothing said here.
     char *folder = packages_folder(&f.lines[0], f.folder);
     TIDE_CHECK(!folder);
     packages_free_file(&f);

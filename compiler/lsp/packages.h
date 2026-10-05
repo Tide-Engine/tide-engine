@@ -112,7 +112,8 @@ bool packages_fetched(const char *dir);
 // A package's own folder, ending in '/': a local line's, relative to `base`
 // (the folder of the file it's in), or the repository's, or the folder in it,
 // or where one that comes with tide is. malloc'd; NULL for a git line with no
-// commit, and for a package that comes with tide before packages_set_root.
+// commit, and for a package that comes with tide before
+// packages_set_builtin_folder.
 char *packages_folder(const package_line *line, const char *base);
 
 // The repository part of a git source: "github.com/owner/repo//sub" ->
@@ -129,17 +130,15 @@ bool packages_parse_source(const char *text, char **source, char **ref);
 // Whether a source is a folder on this machine rather than a git repository.
 bool packages_is_local(const char *source);
 
-// The packages that come with tide are in its installation, a folder each,
-// named as tide.packages names it: <root>/packages/<name>/. A line for one is
-// its name alone, with no commit: it's the version that tide came with.
+// The packages that come with tide are in one folder, a folder each, named as
+// tide.packages names it: <folder>/<name>/. A line for one is its name alone,
+// with no commit: it's the version that tide came with.
 
-// The folder of the installation they're in.
-#define PACKAGES_BUILTIN_DIR "packages"
-
-// Says where the installation is (the folder with bin/ and include/ in it).
-// tide and tidels say as they start; before that, and after NULL, no package
-// comes with tide. The path is copied.
-void packages_set_root(const char *root);
+// Says which folder they're in: an installation's src/packages, beside the
+// engine's sources, or this repo's packages. tide and tidels say as they
+// start; before that, and after NULL, no package comes with tide. The path is
+// copied.
+void packages_set_builtin_folder(const char *folder);
 
 // Whether a source is written as the name of a package that comes with tide:
 // lower-case letters and digits, after a letter. Nothing else in a

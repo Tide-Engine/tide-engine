@@ -238,21 +238,22 @@ tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")
 # ---------------------------------------------------------------------------
 # Packages that come with tide
 
-# They're in tide's installation, <root>/packages/<name>, where tide is in
-# <root>/bin: this tide goes in one of its own, with two of them and nothing to
-# build games with, which tide schedule, add and update don't need. Packages
-# from git are kept in that folder too, as in an installation where the
-# installers put it.
+# They're in tide's installation, <root>/src/packages/<name>, where tide is in
+# <root>/bin: this tide goes in one of its own, with three of them and nothing
+# to build games with, which tide schedule, add and update don't need.
 set(built "${TIDE}")
 set(install "${WORK}/install")
 file(COPY "${TIDE}" DESTINATION "${install}/bin")
 get_filename_component(tide_name "${TIDE}" NAME)
 set(TIDE "${install}/bin/${tide_name}")
-set(ENV{TIDE_PACKAGES} "${install}/packages")
-file(WRITE "${install}/packages/rolls/tide.packages" "package Rolls\n")
-file(WRITE "${install}/packages/rolls/sides.tide" "namespace Rolls;\n\nint Sides()\n{\n    return 6;\n}\n")
-file(WRITE "${install}/packages/dice/tide.packages" "package Dice\nrolls\n")
-file(WRITE "${install}/packages/dice/die.tide" "namespace Dice;
+set(builtin "${install}/src/packages")
+# The installation's packages/ is where packages from git are kept, where the
+# installers put tide: nothing there comes with it.
+file(WRITE "${install}/packages/cards/tide.packages" "package Cards\n")
+file(WRITE "${builtin}/rolls/tide.packages" "package Rolls\n")
+file(WRITE "${builtin}/rolls/sides.tide" "namespace Rolls;\n\nint Sides()\n{\n    return 6;\n}\n")
+file(WRITE "${builtin}/dice/tide.packages" "package Dice\nrolls\n")
+file(WRITE "${builtin}/dice/die.tide" "namespace Dice;
 
 component Die
 {
@@ -265,8 +266,8 @@ system Roll(mut Die die)
 }
 ")
 # One that names what it needs by a folder, which no game's file could.
-file(WRITE "${install}/packages/lonely/tide.packages" "package Lonely\n../rolls\n")
-file(WRITE "${install}/packages/lonely/alone.tide" "namespace Lonely;\n")
+file(WRITE "${builtin}/lonely/tide.packages" "package Lonely\n../rolls\n")
+file(WRITE "${builtin}/lonely/alone.tide" "namespace Lonely;\n")
 
 set(game "${WORK}/builtin-game")
 file(WRITE "${game}/main.tide" "using Dice;
@@ -299,10 +300,10 @@ expect_file("${game}/tide.packages" "dice\nrolls\ngithub.com/test/maths ${M1}\n"
 tide("${game}" ARGS update dice EXPECT "Dice comes with tide, so `tide upgrade` is what updates it")
 tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
 
-# A name no package has: those there are, though packages from git are kept in
-# the same folder, and the one that's close.
+# A name no package has: those there are, and the one that's close.
 tide("${game}" ARGS add dise FAILS
     EXPECT "no package called dise comes with this tide" "did you mean 'dice'? It comes with dice, lonely and rolls")
+tide("${game}" ARGS add cards FAILS EXPECT "no package called cards comes with this tide")
 file(WRITE "${game}/tide.packages" "dice\nrolls\nnope\n")
 tide("${game}" ARGS schedule . FAILS
     EXPECT "tide.packages:3: error: no package called nope comes with this tide" "it comes with dice, lonely and rolls")
