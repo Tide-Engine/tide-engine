@@ -43,22 +43,39 @@ export function folderStore(root) {
         await rename(from, to);
     };
 
+    // One thing at a time happens to a name: Windows replaces no file while
+    // it's being read, so a put that came as a get of the same name read it
+    // would fail there. They take their turns instead.
+    const busy = new Map();
+    function alone(name, work) {
+        const before = busy.get(name) || Promise.resolve();
+        const mine = before.then(work, work);
+        const done = mine.catch(() => {}).then(() => { if (busy.get(name) === done) busy.delete(name); });
+        busy.set(name, done);
+        return mine;
+    }
+
     return {
         async get(name) {
-            try {
-                return await readFile(at(name));
-            } catch (error) {
-                if (error.code === 'ENOENT' || error.code === 'EISDIR') return null;
-                throw error;
-            }
+            const path = at(name);
+            return alone(name, async () => {
+                try {
+                    return await readFile(path);
+                } catch (error) {
+                    if (error.code === 'ENOENT' || error.code === 'EISDIR') return null;
+                    throw error;
+                }
+            });
         },
         async put(name, bytes) {
+            at(name);
             const path = await temporary();
             await writeFile(path, bytes);
-            await place(path, name);
+            await alone(name, () => place(path, name));
         },
         async remove(name) {
-            await rm(at(name), { force: true });
+            const path = at(name);
+            return alone(name, () => rm(path, { force: true }));
         },
         async list(prefix) {
             // The folders a prefix can be in: everything up to its last slash
@@ -112,7 +129,8 @@ export function folderStore(root) {
             return { held: path, size, sha256: hash.digest('hex') };
         },
         async keep(upload, name) {
-            await place(upload.held, name);
+            at(name);
+            return alone(name, () => place(upload.held, name));
         },
         async drop(upload) {
             await rm(upload.held, { force: true });

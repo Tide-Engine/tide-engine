@@ -1,0 +1,35 @@
+// What one player does, and how soon the others see it (seen_test.c).
+
+input Pad
+{
+    bool held;
+}
+
+component Walker { }
+
+// What each of two players' keys say, by who joined first.
+singleton Meter
+{
+    bool anyone;
+    PlayerID first;
+    float first_x;  // Where the first player's key says, at once: all that's left of the wait is the engine's
+    float other_x;
+}
+
+scene Main { }
+
+event(PlayerJoined joined) Give(mut Meter meter)
+{
+    if (!meter.anyone)
+    {
+        meter.first = joined.player;
+        meter.anyone = true;
+    }
+    Spawn(Walker, Owner { player = joined.player });
+}
+
+system Step(Pad pad, Owner owner, mut Meter meter, with Walker)
+{
+    if (owner.player == meter.first) meter.first_x = pad.held ? 100 : 0;
+    else meter.other_x = pad.held ? 100 : 0;
+}

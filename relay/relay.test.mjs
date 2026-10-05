@@ -8,13 +8,71 @@ import { after, before, test } from 'node:test';
 
 import { cloudflareTurn, createRelay, DEFAULT_ICE } from './relay.mjs';
 
+// The relay's time is the tests' own: it stands still until a test says how
+// much of it passes, and what the relay does when its time is up (pinging,
+// closing a connection in no room, giving up on a host's answer, forgetting a
+// match that ended) it does right there, inside that call. So no test sleeps
+// until a time must have passed, which goes wrong both ways on a busy machine:
+// less of it had by the clock the relay read (WSL sets its time of day back
+// by seconds under load), or far more. Nothing here goes by the machine's time.
+const clock = (() => {
+    let now = 0;
+    const waits = new Set(); // What the relay asked to have called, and when
+    return {
+        now: () => now,
+        wait(ms, call) {
+            const wait = { at: now + ms, call };
+            waits.add(wait);
+            return () => waits.delete(wait);
+        },
+        // `ms` go by: what waited for a moment in them is called, in order
+        pass(ms) {
+            const end = now + ms;
+            for (;;) {
+                let first = null;
+                for (const wait of waits) if (wait.at <= end && (!first || wait.at < first.at)) first = wait;
+                if (!first) break;
+                waits.delete(first);
+                now = first.at;
+                first.call();
+            }
+            now = end;
+        },
+    };
+})();
+
+const LIMITS = { loneSeconds: 0.5, messageBurst: 20, messagesPerSecond: 1, probeSeconds: 0.3, endedSeconds: 0.5, pingSeconds: 5 };
+const LONE = LIMITS.loneSeconds * 1000, PROBE = LIMITS.probeSeconds * 1000, ENDED = LIMITS.endedSeconds * 1000,
+    PING = LIMITS.pingSeconds * 1000; // Milliseconds
+
 let relay, url;
+const connections = new Set(); // The relay's, still open
 before(async () => {
-    relay = createRelay({ limits: { loneSeconds: 0.5, messageBurst: 20, messagesPerSecond: 1, probeSeconds: 0.3, endedSeconds: 0.5 } });
+    relay = createRelay({ limits: LIMITS, clock });
+    relay.on('connection', socket => {
+        connections.add(socket);
+        socket.on('close', () => connections.delete(socket));
+    });
     await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
     url = `ws://127.0.0.1:${relay.address().port}`;
 });
-after(() => relay.close());
+// A test that failed left its connections open, and the relay's time to close
+// them never comes here: with one of them still there, this file would never
+// end, where it has to say what failed.
+after(() => {
+    relay.close();
+    for (const socket of connections) socket.destroy();
+});
+
+// Waits for the relay to have got somewhere, however long the machine takes
+// over it: its own state is asked, again and again.
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(there) {
+    while (!there()) await sleep(5);
+}
+
+// How many players the relay keeps waiting on the answer of a room's host
+const waitingOn = code => relay.rooms.get(code)?.claims?.length ?? 0;
 
 // A connection, with its messages in order and how it closed.
 async function connect() {
@@ -88,12 +146,11 @@ test('signals go between the host and each joiner', async () => {
     assert.equal(relay.rooms.has('ABCDEF'), false);
 });
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 // A host that never answers pings, like one whose machine went away without
 // its connection closing: a WebSocket by hand, which only talks.
 async function deafHost() {
     const socket = tcpConnect(relay.address().port, '127.0.0.1');
+    socket.on('error', () => {}); // The relay hanging up on it is no error of the test's
     await new Promise(resolve => socket.once('connect', resolve));
     socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
         + `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
@@ -141,7 +198,7 @@ test('players take a room over once its host is gone', async () => {
     host.send({ host: 'MGRATE', key: 'k1' });
     assert.deepEqual(await host.next(), { hosting: 'MGRATE' });
     host.ws.close();
-    while (relay.rooms.has('MGRATE')) await sleep(10);
+    await until(() => !relay.rooms.has('MGRATE'));
     const a = await connect();
     a.send({ migrate: 'MGRATE', key: 'k1' });
     assert.deepEqual(await a.next(), { hosting: 'MGRATE' });
@@ -157,7 +214,7 @@ test('a host that answers keeps its room, and its players join it', async () => 
     const host = await connect(); // Node's WebSocket answers pings by itself
     host.send({ host: 'KEEPXT', key: 'k2' });
     assert.deepEqual(await host.next(), { hosting: 'KEEPXT' });
-    await sleep(350); // Long enough for the relay to ask
+    clock.pass(PROBE); // The room isn't new any more: the relay asks its host before anything else
     const a = await connect();
     a.send({ migrate: 'KEEPXT', key: 'k2' });
     assert.deepEqual(await a.next(), { joined: 'KEEPXT' });
@@ -170,12 +227,14 @@ test('a host that doesn\'t answer loses its room to its players', async () => {
     const host = await deafHost();
     host.send({ host: 'DEAFHS', key: 'k3' });
     assert.deepEqual(await host.next(), { hosting: 'DEAFHS' });
-    await sleep(350);
+    clock.pass(PROBE); // The room isn't new any more: the relay asks its host
     const a = await connect();
     const b = await connect();
     a.send({ migrate: 'DEAFHS', key: 'k3' });
-    await sleep(50);
+    await until(() => waitingOn('DEAFHS') === 1);
     b.send({ migrate: 'DEAFHS', key: 'k3' }); // While the relay waits on the host
+    await until(() => waitingOn('DEAFHS') === 2);
+    clock.pass(PROBE); // The host's time to answer is up
     assert.deepEqual(await a.next(), { hosting: 'DEAFHS' });
     assert.deepEqual(await b.next(), { joined: 'DEAFHS' });
     assert.deepEqual(await a.next(), { peer: 1 });
@@ -190,7 +249,7 @@ test('a match its host ended isn\'t taken over, for a while', async () => {
     host.send({ host: 'ENDEDX', key: 'k5' });
     assert.deepEqual(await host.next(), { hosting: 'ENDEDX' });
     host.send({ end: 'ENDEDX' });
-    while (relay.rooms.has('ENDEDX')) await sleep(10);
+    await until(() => !relay.rooms.has('ENDEDX'));
     const a = await connect();
     a.send({ migrate: 'ENDEDX', key: 'k5' }); // A player who missed the host's goodbye
     assert.deepEqual(await a.next(), { ended: 'ENDEDX' });
@@ -199,8 +258,11 @@ test('a match its host ended isn\'t taken over, for a while', async () => {
     assert.deepEqual(await b.next(), { taken: 'ENDEDX' });
     b.send({ host: 'ENDEDX' });
     assert.deepEqual(await b.next(), { taken: 'ENDEDX' });
-    await sleep(600); // endedSeconds, here
+    clock.pass(ENDED - 1); // Still so a millisecond before endedSeconds are up...
     const c = await connect();
+    c.send({ host: 'ENDEDX' });
+    assert.deepEqual(await c.next(), { taken: 'ENDEDX' });
+    clock.pass(1); // ...and no longer
     c.send({ host: 'ENDEDX' });
     assert.deepEqual(await c.next(), { hosting: 'ENDEDX' });
     for (const p of [host, a, b, c]) p.ws.close();
@@ -212,7 +274,7 @@ test('a match that ended before the relay said hello still ended', async () => {
     host.send(JSON.stringify({ host: 'EARLYE', key: 'k6' })); // Its room, asked for as it ends
     host.send(JSON.stringify({ end: 'EARLYE' }));
     host.close();
-    while (!relay.ended.has('EARLYE')) await sleep(10);
+    await until(() => relay.ended.has('EARLYE'));
     const a = await connect();
     a.send({ migrate: 'EARLYE', key: 'k6' });
     assert.deepEqual(await a.next(), { ended: 'EARLYE' });
@@ -243,7 +305,37 @@ test('a code has 6 characters without look-alikes', async () => {
 
 test('connections that never join a room are closed', async () => {
     const a = await connect();
+    clock.pass(LONE);
     assert.equal(await a.closed, 1008);
+});
+
+test('connections that stopped answering pings are closed, and no others', async () => {
+    const gone = await deafHost();
+    gone.send({ host: 'PNGDED' });
+    assert.deepEqual(await gone.next(), { hosting: 'PNGDED' });
+    const host = await connect(); // Node's WebSocket answers pings by itself
+    host.send({ host: 'PNGHST' });
+    assert.deepEqual(await host.next(), { hosting: 'PNGHST' });
+    const a = await connect();
+    a.send({ join: 'PNGHST' });
+    assert.deepEqual(await a.next(), { joined: 'PNGHST' });
+    assert.deepEqual(await host.next(), { peer: 1 });
+    clock.pass(PING); // Everyone is asked
+    // A connection answers the ping before it sends anything it was told to
+    // send after reading it, and the relay reads what it sent in order: so
+    // the relay has a's answer once it passed y on, and the host's with z
+    host.send({ to: 1, signal: 'x' });
+    assert.deepEqual(await a.next(), { signal: 'x' });
+    a.send({ signal: 'y' });
+    assert.deepEqual(await host.next(), { from: 1, signal: 'y' });
+    host.send({ to: 1, signal: 'z' });
+    assert.deepEqual(await a.next(), { signal: 'z' });
+    clock.pass(PING); // Asked again: who didn't answer the first is gone
+    assert.equal(relay.rooms.has('PNGDED'), false);
+    assert.equal(relay.rooms.get('PNGHST')?.joining.size, 1);
+    gone.socket.destroy();
+    host.ws.close();
+    a.ws.close();
 });
 
 test('too many messages close the connection', async () => {

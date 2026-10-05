@@ -38,7 +38,8 @@ after(async () => {
 let made = 0;
 async function serve({ limits = {}, builders = null, now = Date.now } = {}) {
     const store = folderStore(join(scratch, `data-${++made}`));
-    builders = builders || localBuilders({ env: { TIDE: standIn, TIDE_BUILD_ISOLATION: 'none' } });
+    // TIDE_BUILDS_TEST_LOUD: what the builders say, when a test's builder went wrong
+    builders = builders || localBuilders({ env: { TIDE: standIn, TIDE_BUILD_ISOLATION: 'none' }, quiet: !process.env.TIDE_BUILDS_TEST_LOUD });
     const server = createBuilds({ store, builders, admin, masterKey: randomBytes(32), tide: TIDE, limits, now });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}`;
@@ -299,7 +300,7 @@ test('the same build asked for twice is built once', async () => {
     // At once, and with its mods in another order
     const [first, second] = await Promise.all([s.ask(duel, version, [one, two]), s.ask(duel, version, [two, one])]);
     assert.equal(first.status, 202);
-    assert.equal(second.status, 202);
+    assert.ok(second.status === 202 || second.status === 200, `${second.status}`); // Being built, or built already
     assert.equal(second.build, first.build);
     assert.equal((await s.settled(duel, first.build)).url, `${s.url}/b/${first.build}/`);
     const again = await s.ask(duel, version, [two, one]);

@@ -1428,9 +1428,8 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
-- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between two ticks, so motion is smooth even at 20 ticks per second.
-- They draw this moment: the two ticks are the last one that ran and the one that's coming, which the engine runs early with this machine's input as `Sample` would give it now, and runs again when that changes before the tick's time comes. What a player does shows in the frame that reads it, at any tick rate. No code takes part: nothing in the language says it, and a game is written as if views read the match as it is. A key counts for the whole tick it's read in, as ever, so what it moves starts as far along as that tick has gone by.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as the later of the two ticks has them. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
@@ -2649,7 +2648,7 @@ The service's first slice. Implemented, awaiting approval: the service's first s
 - Provisional: what's signed is a manifest, a line of JSON: `{"build", "target", "sha256", "size"}`, the SHA-256 being the page's. It's at `/b/<build>/manifest.json`, its signature (r then s) at `/b/<build>/manifest.sig`, and the game's public key, 65 bytes uncompressed, at `/games/<id>/key`. Nothing checks them yet: a game that loads builds will.
 - Provisional: a build that failed is built again when it's asked for again. A revoked one never is: what it built is deleted, and its link answers 410.
 - Provisional: a page is fetched again each time it's opened (`Cache-Control: no-cache`, with an `ETag`), so a revoked build is gone from caches too.
-- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 2 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
+- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 1 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
 - Provisional: whoever asks for a build gets all that `tide` said of it. That's the game's own developer for now, as asking takes the game's key; a modder of a closed game will get what it says of the mod's own files.
 
 ### Open
