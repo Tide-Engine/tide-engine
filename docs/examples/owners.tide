@@ -4,7 +4,7 @@ scene Main { }
 
 component Body
 {
-    float2 position;
+    [Position] float2 position; // Drawn gliding to where a correction put it
     Color color;
     float speed = 2.5;
 }

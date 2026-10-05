@@ -4,7 +4,7 @@ scene Main { } // The match's own scene: one machine hosts it, the others join
 
 component Body
 {
-    float2 position;
+    [Position] float2 position; // Drawn gliding to where a correction put it
     Color color;
 }
 singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }

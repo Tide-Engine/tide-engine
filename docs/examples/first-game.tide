@@ -1,6 +1,6 @@
 component Body
 {
-    float2 position;
+    [Position] float2 position;
     float2 velocity;
     float radius = 20;
 }
