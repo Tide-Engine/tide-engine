@@ -1683,6 +1683,7 @@ static type check_enum_conversion(checker *c, expr *e, decl *d)
     // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
     e->type_decl = d;
     e->ctor = CTOR_ENUM;
+    if (d == c->prog->font) c->prog->names_bold = true; // Whatever number it's of
     const type target = {TY_ENUM, d};
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
@@ -4332,6 +4333,9 @@ static type check_enum_member(expr *e, decl *d)
     suggestion s = suggest_start(e->member);
     for (int i = 0; i < d->members.count; i++) suggest_consider(&s, d->members.items[i].name);
     suggest_note(&s);
+    if (d->builtin && str_eq_c(d->name, "Font")) {
+        diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'");
+    }
     return T_ERR;
 }
 
@@ -4498,7 +4502,12 @@ static type check_member(checker *c, expr *e)
     }
 
     decl *const enum_decl = named_enum(c, e->object);
-    if (enum_decl) return check_enum_member(e, enum_decl);
+    if (enum_decl) {
+        const type member = check_enum_member(e, enum_decl);
+        // Font.Bold: the game draws in bold, so it carries the bold's file
+        if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
+        return member;
+    }
 
     // Combat.Health: a namespace, not a variable, on the left. Combat.ORIGIN.x
     // is a member of a constant, which checking Combat.ORIGIN finds.
@@ -9888,8 +9897,9 @@ static void add_builtins(program *prog)
     }
     prog->io_error = io_error;
 
-    // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, as
-    // Unity's TextAnchor. tide/gui.h's tide_anchor has the same values.
+    // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, and
+    // the place of its box a text's position is, as Unity's TextAnchor.
+    // tide/draw.h's tide_anchor has the same values.
     static const char *const anchors[] = {"UpperLeft", "UpperCenter", "UpperRight", "MiddleLeft", "MiddleCenter",
                                           "MiddleRight", "LowerLeft", "LowerCenter", "LowerRight"};
     decl *anchor = NEW(decl);
@@ -9901,6 +9911,20 @@ static void add_builtins(program *prog)
         vec_push(anchor->members, m);
     }
     prog->anchor = anchor;
+
+    // enum Font { Regular, Bold }: the weight Draw2D.Text draws in. Each is a
+    // file of the engine's font, and C names a weight by its file (tide/draw.h:
+    // TIDE_FONT_REGULAR, TIDE_FONT_BOLD), which generated code turns these into.
+    static const char *const fonts[] = {"Regular", "Bold"};
+    decl *font = NEW(decl);
+    font->kind = DECL_ENUM;
+    font->name = str_from("Font");
+    font->builtin = true;
+    for (int i = 0; i < (int)(sizeof fonts / sizeof fonts[0]); i++) {
+        const enum_member m = {str_from(fonts[i]), {0, 0, 0}, NULL, i};
+        vec_push(font->members, m);
+    }
+    prog->font = font;
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw2D.Mesh draws, as tide/draw.h's tide_vertex. And
@@ -10088,6 +10112,7 @@ static void add_builtins(program *prog)
     vec_push(decls, theme);
     vec_push(decls, control);
     vec_push(decls, filter);
+    vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
     vec_push(decls, session);
@@ -11925,7 +11950,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape);
+    builtins_use(prog->anchor, prog->shape, prog->font);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);

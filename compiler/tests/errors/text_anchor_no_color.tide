@@ -1,0 +1,7 @@
+// expect: an anchor and a font come after the color
+scene Main { }
+
+view Show()
+{
+    Draw2D.Text("FIGHT!", float2(0), 64, Anchor.MiddleCenter);
+}

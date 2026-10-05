@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -38,6 +39,15 @@ typedef struct tide_page {
 // running out of memory is the only way they can't, and it can't happen the
 // same way on every machine.
 _Noreturn void tide_out_of_memory(void);
+
+// Whether this is a run nobody watches: TIDE_HIDDEN is set in the environment
+// to anything but nothing or 0, as in the shell of an agent or a build server,
+// which mustn't put anything on somebody's screen. The platform layer shows no
+// window then (tide/platform.h). A program that stops shows no dialog either,
+// whether it stopped as above or crashed: on Windows, the C runtime's (a debug
+// build's abort() shows one that waits for a click) and the system's are off
+// from the program's start, so what it said on stderr is all there is.
+bool tide_hidden(void);
 
 // malloc, calloc and realloc (which takes the old block's size), for memory
 // code on several threads uses: running out ends the program. On the web,

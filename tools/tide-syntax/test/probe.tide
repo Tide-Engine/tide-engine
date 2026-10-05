@@ -112,6 +112,7 @@ view Show(Devices devices)
     Draw2D.Rect(0, 0, 1, 1, Color.white);
     Vertex corner = default;
     Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
+    Draw2D.Text("DUEL", corner.position, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
     Vertex3 corner3 = default;
     Shape panel = default;
     Draw2D.Shape(panel);

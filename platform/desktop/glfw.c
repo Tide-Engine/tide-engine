@@ -10,6 +10,7 @@
 #define GLFW_INCLUDE_NONE // Its OpenGL is ours (src/gl.h)
 #include <GLFW/glfw3.h>
 
+#include "tide/page.h"
 #include "cursor.h"
 #include "gl.h"
 #include "touch_win32.h"
@@ -163,6 +164,8 @@ static void on_mouse_button(GLFWwindow *from, const int button, const int action
 
 bool tide_window_open(const tide_window_desc *desc)
 {
+    // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
+    const bool hidden = desc->hidden || tide_hidden();
     glfwSetErrorCallback(on_error);
     if (!glfwInit()) {
         fprintf(stderr, "tide: no desktop to open a window on\n");
@@ -174,7 +177,7 @@ bool tide_window_open(const tide_window_desc *desc)
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // The only core contexts macOS makes
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);              // Shown once it's in its place
     // Tests keep the size they asked for.
-    glfwWindowHint(GLFW_RESIZABLE, desc->hidden ? GLFW_FALSE : GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
     // Pixels are the display's logical ones (see tide/platform.h): the size
     // asked for is in those, so the window is as many times bigger as the
     // display is scaled where the system counts windows in its own pixels
@@ -192,7 +195,7 @@ bool tide_window_open(const tide_window_desc *desc)
         return false;
     }
     // Frames at the display's pace; tests run as fast as they can.
-    glfwSwapInterval(desc->hidden ? 0 : 1);
+    glfwSwapInterval(hidden ? 0 : 1);
 
     for (size_t i = 0; i < COUNT_OF(keys); i++) key_of[keys[i].glfw] = (int16_t)(keys[i].key + 1);
     glfwSetCharCallback(window, on_char);
@@ -209,7 +212,7 @@ bool tide_window_open(const tide_window_desc *desc)
     tide_win32_touch_attach(glfwGetWin32Window(window));
 #endif
 
-    if (!desc->hidden) {
+    if (!hidden) {
         // In the middle of the screen, as far as its work area goes
         GLFWmonitor *monitor = glfwGetPrimaryMonitor();
         if (monitor) {

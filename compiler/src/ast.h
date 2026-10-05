@@ -906,7 +906,11 @@ typedef struct program {
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
     decl *scene_visibility; // The built-in enum SceneVisibility
-    decl *anchor;        // The built-in enum Anchor, where GUILayout.Area goes
+    decl *anchor;        // The built-in enum Anchor: where GUILayout.Area goes, and the place of a text's box
+    decl *font;          // The built-in enum Font, the weight text is drawn in
+    // Whether code names Font.Bold, or makes a Font of a number: only then does
+    // generated C name the bold weight's file, so only then does the game carry it.
+    bool names_bold;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *shape;         // The built-in struct Shape, what Draw2D.Shape draws

@@ -499,8 +499,8 @@ view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
         var at = label.position + float2(0, 34 * EaseOut(along));
         var text = $"{label.amount}";
         var alpha = Math.Saturate((1 - along) * 3);
-        WriteUpOn(scene, text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8));
-        WriteUpOn(scene, text, at, size, Fade(label.color, alpha));
+        scene.Text(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8), Anchor.MiddleCenter);
+        scene.Text(text, at, size, Fade(label.color, alpha), Anchor.MiddleCenter);
     }
 
     if (sky.shock.z > 1) sky.shock.w = 0;

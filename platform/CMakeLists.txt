@@ -18,16 +18,29 @@ else()
     list(APPEND TIDE_PLATFORM_SOURCES desktop/glfw.c desktop/gl.c)
 endif()
 
-# The font text is drawn in (src/font.c), inside the library, as an array.
+# The font text is drawn in (src/font.c), inside the library, as arrays: a
+# file a weight, each an object of its own with nothing else in it. The
+# regular one, src/font.c names. The bold one, nothing in the library does:
+# the linker only takes its object out of the library for a program whose own
+# code names tide_font_bold_ttf (tide/draw.h), which a game's does when it
+# says Font.Bold. So the library stays a static one, of objects linkers pick
+# from, and no source file of it may name the bold's array.
 set(TIDE_FONT_C "${CMAKE_CURRENT_BINARY_DIR}/tide_font.c")
+set(TIDE_FONT_BOLD_C "${CMAKE_CURRENT_BINARY_DIR}/tide_font_bold.c")
 add_custom_command(OUTPUT "${TIDE_FONT_C}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/font/Tuffy.ttf" "-DOUTPUT=${TIDE_FONT_C}"
         -DNAME=tide_font_ttf -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     DEPENDS font/Tuffy.ttf "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     COMMENT "The platform's font as C"
     VERBATIM)
+add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/font/Tuffy_Bold.ttf" "-DOUTPUT=${TIDE_FONT_BOLD_C}"
+        -DNAME=tide_font_bold_ttf -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS font/Tuffy_Bold.ttf "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    COMMENT "The platform's bold font as C"
+    VERBATIM)
 
-add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}")
+add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}" "${TIDE_FONT_BOLD_C}")
 # Hosts go through include/ only; third_party/ is stb_truetype, for the font.
 target_include_directories(tide_platform PUBLIC include PRIVATE src third_party)
 target_link_libraries(tide_platform PUBLIC tide)
@@ -193,6 +206,18 @@ target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tes
 target_link_libraries(tide_platform_font PRIVATE tide_platform)
 add_test(NAME tide_platform_font COMMAND tide_platform_font)
 
+# A game carries the bold weight's file when it says Font.Bold, and only then:
+# two games as tide_add_game builds them, read as the build left them. No
+# window or GPU, so every platform's tests run it. tide_platform_text is also
+# text to look at (tests/text.tide says how).
+tide_add_game(tide_platform_text SOURCES tests/text.tide)
+tide_add_game(tide_platform_text_plain SOURCES tests/text_plain.tide)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_font_files
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/font_files.mjs" "${CMAKE_CURRENT_SOURCE_DIR}/font"
+            $<TARGET_FILE:tide_platform_text> $<TARGET_FILE:tide_platform_text_plain>)
+endif()
+
 # The PNG writer (src/png.c), which captures are written with: pictures made
 # up from numbers, read back with Node's zlib. No window or GPU, so every
 # platform's tests run it.
@@ -346,6 +371,25 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_capture_refused
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capture.mjs" $<TARGET_FILE:tide_platform_capture>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-refused" refused)
+    endif()
+
+    # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
+    # shell and a build server have it): no window shows, a game or a host
+    # that only its window's closing would end doesn't start, and a stop shows
+    # no dialog. None of that needs a window. That a run with no window and a
+    # test's hidden window go as they do without the variable does, as
+    # tide_platform_draw does.
+    add_executable(tide_platform_hidden tests/hidden.c)
+    target_include_directories(tide_platform_hidden PRIVATE src)
+    target_link_libraries(tide_platform_hidden PRIVATE tide_platform)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_hidden
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden.mjs" $<TARGET_FILE:tide_platform_hidden>
+                $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-refused")
+        add_test(NAME tide_platform_hidden_runs
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden.mjs" $<TARGET_FILE:tide_platform_hidden>
+                $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-runs" runs)
+        set_tests_properties(tide_platform_hidden_runs PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 
     # The cursor's lock on desktop: only a window with the focus holds it, and

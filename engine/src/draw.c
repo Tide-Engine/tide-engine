@@ -125,6 +125,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->instance_used = 0;
     d->uniform_used = 0;
     d->shape_count = 0;
+    d->bold = NULL;
     d->clipped = 0;
     d->target_count = d->target = d->window_clipped = 0;
     d->camera_2d = 0;
@@ -514,15 +515,25 @@ void tide_draw_no_clip(tide_draw_list *d)
     d->clipped = 0;
 }
 
-void tide_draw_text(tide_draw_list *d, const char *text, const tide_float2 position, const float size,
-                    const tide_color color)
+void tide_draw_text_at(tide_draw_list *d, const char *text, const tide_float2 position, const float size,
+                       const tide_color color, const tide_anchor anchor, const unsigned char *font)
 {
     const size_t bytes = strlen(text) + 1;
     d->text = grow(d->text, d->text_used, &d->text_capacity, bytes, 1, 4096u);
     tide_draw_command *c = push(d, TIDE_DRAW_TEXT, position, tide_f2(size, 0.0f), color);
     c->text = d->text_used;
+    // An anchor that's none of the nine is the first, as the GUI's areas take one
+    c->words.anchor = (uint32_t)anchor <= TIDE_ANCHOR_LOWER_RIGHT ? (uint32_t)anchor : TIDE_ANCHOR_UPPER_LEFT;
+    c->words.bold = font != NULL;
+    if (font) d->bold = font;
     memcpy(d->text + d->text_used, text, bytes);
     d->text_used += (uint32_t)bytes;
+}
+
+void tide_draw_text(tide_draw_list *d, const char *text, const tide_float2 position, const float size,
+                    const tide_color color)
+{
+    tide_draw_text_at(d, text, position, size, color, TIDE_ANCHOR_UPPER_LEFT, TIDE_FONT_REGULAR);
 }
 
 // ---------------------------------------------------------------------------
@@ -951,7 +962,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const tide_draw_target_data *t = c->target ? &from->targets[c->target - 1u] : NULL;
             draw_to_version(d, t ? t->id : 0, t ? t->size : (tide_target_size){0}, t ? t->version : 0);
         } else if (c->kind == TIDE_DRAW_TEXT) {
-            tide_draw_text(d, from->text + c->text, c->a, c->b.x, c->color);
+            tide_draw_text_at(d, from->text + c->text, c->a, c->b.x, c->color, (tide_anchor)c->words.anchor,
+                              c->words.bold ? from->bold : TIDE_FONT_REGULAR);
         } else if (c->kind == TIDE_DRAW_MESH) {
             // Its indices are places in `from`'s vertices, which are `d`'s from `base`
             tide_draw_triangles_with(d, base, from->indices + c->mesh.first, c->mesh.count,
