@@ -29,17 +29,20 @@
 //
 //     game --size 1280 720    the window's size, in logical pixels (960 by 540 without it)
 //     game --debug-views      F7 shows the profiler
+//     game --seed 7           the seed of the matches this machine starts (Time.seed), from 0 to
+//                             2147483647, in place of another one from the system each match
 //
 // A game also runs with no window, to see what it draws without one on
 // screen, or in CI (tide_platform_open_headless). Time is made up, a 60th of
 // a second a frame, and so is input, and its matches start with seed 0
-// (Time.seed), so a run repeats exactly on any machine:
+// unless --seed says another, so a run repeats exactly on any machine:
 //
 //     game --frames 300 --capture menu.png    300 frames, the last of them to a PNG
 //     game --script play.txt                  input by frame from a file, which also says
 //                                             when to capture and quit (docs/tools/cli.md)
 //     game --capture big.png --frames 60 --scale 2
 //                                             as on a display scaled to 200%
+//     game --script play.txt --seed 7         the same input, in a match that rolls otherwise
 //
 // Such a run ends with exit code 0 at --frames or the script's `quit`, with
 // 1 when a picture can't be written, and with 2, having started nothing,
