@@ -142,16 +142,25 @@ typedef struct tide_text {
 #define TIDE_IN_MATCH 0u
 #define TIDE_IN_LOCAL 1u
 #define TIDE_IN_SCRATCH 2u
+// The world the server has confirmed, beside the one a frame draws: only in a
+// block's tagged offset, never a `where`, as nothing is written there. What a
+// view takes `verified` is a copy whose text, lists, maps, sets and grids say
+// so (tide_confirmed), and reading them goes to that world's heap.
+#define TIDE_IN_VERIFIED 3u
 
 // The heaps of the worlds generated code runs with: the match's (or NULL),
 // and the local world's (or NULL).
 void tide_text_use(tide_heap *match_heap, tide_heap *local_heap);
 
+// The heap of the world the server has confirmed, for a frame's views to read
+// (or NULL): the match's own where there's one world.
+void tide_text_use_verified(const tide_heap *verified_heap);
+
 // This thread's: the heaps tide_text_use set, by `where`, and the scratch
 // area, as the start of each of its slots (NULL where it has no piece). They're
 // here for the functions below, which run for every element code reads or
 // writes, so they inline.
-extern TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[2];
+extern TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4];
 extern TIDE_THREAD_LOCAL char *tide_scratch_slots[TIDE_SCRATCH_SLOTS];
 
 // The byte at an offset into the scratch area: its slot's start and the rest.
@@ -168,6 +177,22 @@ static inline char *tide_scratch_at(const uint32_t offset)
 static inline tide_heap *tide_heap_of(const uint32_t where)
 {
     return where == TIDE_IN_MATCH || where == TIDE_IN_LOCAL ? tide_world_heaps[where] : NULL;
+}
+
+// The heap a tagged offset's block is read from, by the offset's top two bits:
+// a world's, the confirmed one's too, or NULL for the scratch area's. Only to
+// read: what changes a block finds its heap with tide_heap_of, which the
+// confirmed world's is never.
+static inline const tide_heap *tide_heap_read(const uint32_t where)
+{
+    return tide_world_heaps[where & 3u];
+}
+
+// A tagged offset from a value copied out of the confirmed world, where it
+// said TIDE_IN_MATCH, as that world's own does: the same block, read there.
+static inline uint32_t tide_confirmed(const uint32_t at)
+{
+    return at ? (at & 0x3FFFFFFFu) | TIDE_IN_VERIFIED << 30 : 0u;
 }
 
 // Reading: a view of the text, which lasts until the running code is done.
@@ -211,7 +236,7 @@ static inline tide_block *tide_block_at(const uint32_t at)
     if (!at) return NULL;
     const uint32_t offset = at & 0x3FFFFFFFu;
     if (at >> 30 == TIDE_IN_SCRATCH) return (tide_block *)(uintptr_t)tide_scratch_at(offset);
-    const tide_heap *heap = tide_heap_of(at >> 30);
+    const tide_heap *heap = tide_heap_read(at >> 30);
     return heap ? tide_heap_block(heap, offset) : NULL;
 }
 

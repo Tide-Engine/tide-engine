@@ -17,11 +17,10 @@ Color FighterColor(int side)
     return side == 0 ? UI_BLUE : UI_ORANGE;
 }
 
+// The room is its scene's: with no match, while one is being joined, there's only the backdrop
 [Stage(PaintStages.Arena)]
-view PaintArena(Session session)
+view PaintArena(with Main)
 {
-    // The room is the match's: with none, while one is being joined, there's only the backdrop
-    if (session.state != SessionState.Connected && session.player == default) return;
     // Shade where the room meets its walls
     Inset(float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
 }
