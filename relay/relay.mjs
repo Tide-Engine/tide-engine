@@ -63,6 +63,21 @@ const LIMITS = {
     endedSeconds: 300,      // How long a room whose match ended stays so, for its players who missed it
 };
 
+// The time a relay goes by: this machine's. Its tests bring a clock of their
+// own, which only moves when they say, so none of them waits on the machine's.
+const SYSTEM_CLOCK = {
+    // Milliseconds, on a clock that only goes forward: a relay only ever asks
+    // how long ago something was, and the time of day gets set, back too (a
+    // virtual machine's by seconds at a time, when its host is busy)
+    now: () => performance.now(),
+    // Calls `call` once `ms` have passed. What it gives back calls that off.
+    wait(ms, call) {
+        const timer = setTimeout(call, ms);
+        timer.unref();
+        return () => clearTimeout(timer);
+    },
+};
+
 // STUN only: players find their own addresses, and connect directly or not at all.
 export const DEFAULT_ICE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
 
@@ -110,8 +125,9 @@ export function cloudflareTurn(keyId, token, options = {}) {
 // WebSocket with a line of text (for health checks). Call listen() on it.
 // `iceServers`: what players are told to use, or a function that gives it (a
 // promise will do). `trustProxy`: take the client's address from Fly's
-// Fly-Client-IP header.
-export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {} } = {}) {
+// Fly-Client-IP header. `clock`: where all its time comes from (SYSTEM_CLOCK's
+// `now` and `wait`), for tests.
+export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {}, clock = SYSTEM_CLOCK } = {}) {
     const limit = { ...LIMITS, ...limits };
     const rooms = new Map(); // Code -> room
     const ended = new Map(); // Code -> {key, until}: rooms whose match ended, which no one takes over
@@ -131,15 +147,15 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n');
             return;
         }
-        const ws = accept(request, socket, limit.message, sockets);
+        const ws = accept(request, socket, limit.message, sockets, clock);
         if (!ws) return;
         connections++;
         perAddress.set(address, count + 1);
-        const peer = { ws, room: null, id: 0, claiming: null, tokens: limit.messageBurst, last: Date.now() };
-        const lone = setTimeout(() => { if (!peer.room) ws.close(1008, 'not in a room'); }, limit.loneSeconds * 1000);
+        const peer = { ws, room: null, id: 0, claiming: null, tokens: limit.messageBurst, last: clock.now() };
+        const stopLone = clock.wait(limit.loneSeconds * 1000, () => { if (!peer.room) ws.close(1008, 'not in a room'); });
         ws.onmessage = text => receive(peer, text);
         ws.onclose = () => {
-            clearTimeout(lone);
+            stopLone();
             connections--;
             const left = perAddress.get(address) - 1;
             if (left > 0) perAddress.set(address, left);
@@ -152,7 +168,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
 
     function receive(peer, text) {
         // Messages refill at a steady rate, up to a burst
-        const now = Date.now();
+        const now = clock.now();
         peer.tokens = Math.min(limit.messageBurst, peer.tokens + (now - peer.last) * limit.messagesPerSecond / 1000);
         peer.last = now;
         if (--peer.tokens < 0) {
@@ -176,7 +192,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             else if (rooms.has(code) || endedRoom(code)) peer.ws.send({ taken: code });
             else host(peer, code, key);
         } else if (typeof message.end === 'string' && room && room.host === peer && message.end === room.code) {
-            if (room.key) ended.set(room.code, { key: room.key, until: Date.now() + limit.endedSeconds * 1000 });
+            if (room.key) ended.set(room.code, { key: room.key, until: clock.now() + limit.endedSeconds * 1000 });
             leave(peer);
         } else if (typeof message.join === 'string' && !room && !peer.claiming) {
             const code = message.join;
@@ -202,7 +218,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
     }
 
     function host(peer, code, key) {
-        peer.room = { code, host: peer, joining: new Map(), next: 1, key, since: Date.now(), claims: null };
+        peer.room = { code, host: peer, joining: new Map(), next: 1, key, since: clock.now(), claims: null };
         rooms.set(code, peer.room);
         peer.ws.send({ hosting: code });
     }
@@ -238,7 +254,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         } else if (room.claims) { // Its host was pinged already
             room.claims.push(peer);
             peer.claiming = room;
-        } else if (Date.now() - room.since < limit.probeSeconds * 1000) {
+        } else if (clock.now() - room.since < limit.probeSeconds * 1000) {
             join(peer, room);
         } else {
             room.claims = [peer];
@@ -268,7 +284,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
     // A room whose match ended a moment ago, or null
     function endedRoom(code) {
         const gone = ended.get(code);
-        if (gone && gone.until > Date.now()) return gone;
+        if (gone && gone.until > clock.now()) return gone;
         ended.delete(code);
         return null;
     }
@@ -298,12 +314,15 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         }
     }
 
-    const pings = setInterval(() => {
-        for (const ws of sockets) ws.ping();
-        for (const code of [...ended.keys()]) endedRoom(code); // Forgets those whose time is up
-    }, limit.pingSeconds * 1000);
-    pings.unref();
-    server.on('close', () => clearInterval(pings));
+    let stopPings;
+    (function pings() {
+        stopPings = clock.wait(limit.pingSeconds * 1000, () => {
+            pings(); // Again, as long after
+            for (const ws of sockets) ws.ping();
+            for (const code of [...ended.keys()]) endedRoom(code); // Forgets those whose time is up
+        });
+    })();
+    server.on('close', () => stopPings());
     server.rooms = rooms;
     server.ended = ended;
     return server;
@@ -312,9 +331,9 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
 // ---------------------------------------------------------------------------
 // WebSocket (RFC 6455), as much as browsers use: text messages, pings and
 // closing. Frames from clients are masked; ours aren't. `sockets` holds the
-// open ones.
+// open ones, and `clock` is the relay's.
 
-function accept(request, socket, maxMessage, sockets) {
+function accept(request, socket, maxMessage, sockets, clock) {
     const key = request.headers['sec-websocket-key'];
     if (!/websocket/i.test(request.headers.upgrade || '') || !key || request.headers['sec-websocket-version'] !== '13') {
         socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
@@ -360,7 +379,7 @@ function accept(request, socket, maxMessage, sockets) {
             };
             probes.add(settle);
             socket.write(frame(0x9, Buffer.alloc(0)));
-            setTimeout(() => settle(false), ms).unref();
+            clock.wait(ms, () => settle(false));
         },
         close(code = 1000, reason = '') {
             if (closed) return;
