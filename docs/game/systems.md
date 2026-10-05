@@ -66,7 +66,9 @@ Queries use normal deterministic ECS traversal. They do not sort by entity ID, d
 
 Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
 
-This version supports queries in match systems, with read-only component bindings and component filters. Queries and their whole rows are used directly in `foreach` in the system's ordinary control flow, outside parallel loops and callback blocks; they cannot be stored or passed to functions. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
+Queries have read-only component bindings and component filters. Queries and their whole rows are used directly in `foreach` in the system's ordinary control flow, outside parallel loops and callback blocks; they cannot be stored or passed to functions. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
+
+Systems, views and local handlers take queries. A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views.md#confirmed-state): see [Views](./views.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). The match's own event handlers, command handlers and tasks take none yet.
 
 ## Other entities: the World
 

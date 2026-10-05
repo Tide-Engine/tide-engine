@@ -106,6 +106,37 @@ A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are al
 
 A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
 
+## Other entities
+
+A view runs for its own entities, and often needs the others too: a shadow falls on the highest platform under a fighter, an aim line ends at whoever it would hit. A `query` parameter is that second set, as in a [system](./systems.md#another-set-of-entities):
+
+```csharp
+// A fighter's shadow falls on the highest platform under it.
+view DrawFighter(Body body, with Fighter, query (Platform box) platforms)
+{
+    mut var ground = -10000.0;
+    foreach (var entry in platforms)
+    {
+        var top = entry.box.center.y + entry.box.half.y;
+        var over = Math.Abs(body.position.x - entry.box.center.x) < entry.box.half.x;
+        if (over && top <= body.position.y && top > ground) ground = top;
+    }
+    Draw2D.Ellipse(float2(body.position.x, ground), float2(body.radius, 2), Color(0, 0, 0, 0.5));
+    Draw2D.Circle(body.position, body.radius, Color.white);
+}
+```
+
+The view's own parameters still pick the entities it runs for, and the query picks the ones it goes through for each: neither filters the other. Inside the `foreach`, `entry.box` is that platform's `Platform`, to read, and `entry.entity` is its handle. The syntax and the filters are a system's: bindings, `with` and `without`. A view with only queries runs once a frame.
+
+- **Rows are what the view sees.** They're [blended](#smooth-at-any-tick-rate) between the last two ticks like the view's own parameters, with corrections smoothed the same way: the row of the view's own entity has the values its parameters have. An entity that wasn't there last tick is as it is, and one that's gone is in no row.
+- **`verified` works in a query** as it does on a view's own parameters (see [Confirmed state](#confirmed-state)). `query (verified Health health) confirmed` goes through the confirmed world's entities, as its last tick has them. A query with bindings or filters of both worlds, `query (Body body, verified Health sure) both`, takes the entities that are in both: the same entity, and not only the same handle. `with verified Dead` and `without verified Dead` filter there too.
+- **A query is all the match's or all this machine's.** A view goes through local entities too, like its own sparks: `query (Spark spark) sparks`. Those are as they are now, with what views earlier in the frame wrote, and `entry.entity` is a `LocalEntity`.
+- **Rows are read-only, and have the match's fields.** A binding can't be `mut`, and an entity's [local fields](./local-state.md#local-fields) are read and written by a view that runs for that entity.
+- **A view that queries the match only runs in a match**, like any view that reads it. What should go on outside one stays in a view of its own.
+- **Going through a lot stays cheap.** A query's rows are made once a frame, however many entities the view runs for: a view over thousands of entities that goes through thousands of others blends those others once, not once for each.
+
+The rest is as in a system: queries and rows are used directly in `foreach`, in the view's own code, and can't be stored or passed on, where a component value like `entry.box` can. The order is the ECS's, not by distance or by entity ID. The editor says what a view's queries read above the view and on hover, as it does for a system.
+
 ## Your own entities
 
 "My camera, my HUD, my health bar" is in every multiplayer game, so views have a filter for it. `with ownership` picks the entities this machine's player owns, and `without ownership` every other one:

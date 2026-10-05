@@ -54,11 +54,6 @@ struct Label
     int amount;
 }
 
-// The match's platforms and fighters as the last frame drew them, for effects
-// to bounce off and for the dots that show where a shot would go.
-struct Slab { float2 center; float2 half; }
-struct Mark { float2 position; float radius; bool shield; }
-
 local singleton Fx
 {
     float dt;        // Seconds this frame's effects move on by
@@ -76,8 +71,6 @@ local singleton Fx
     List<Wave> waves;
     List<Streak> streaks;
     List<Label> labels;
-    List<Slab> slabs;
-    List<Mark> marks;
 }
 
 // A corner of the backdrop's quad, from (0, 0) to (1, 1).
@@ -230,24 +223,6 @@ void Confetti(mut Fx fx, float2 at, int count, float speed, Color color)
     }
 }
 
-// Where something going `delta` from `start` first meets a platform, or a
-// fighter; a fraction over 1 when it meets none.
-Sweep Strike(Fx fx, float2 start, float2 delta, float radius)
-{
-    mut var closest = Sweep { };
-    foreach (var slab in fx.slabs)
-    {
-        var hit = SweepBox(start, delta, slab.center, slab.half + radius);
-        if (hit.fraction < closest.fraction) closest = hit;
-    }
-    foreach (var mark in fx.marks)
-    {
-        var hit = SweepCircle(start, delta, mark.position, mark.radius + radius + (mark.shield ? 10 : 0));
-        if (hit.fraction < closest.fraction) closest = hit;
-    }
-    return closest;
-}
-
 // The frame's clock, camera and backdrop, before anything else draws. It's
 // this machine's, so it goes on with no match, while one is being joined.
 [Stage(PaintStages.Prepare)]
@@ -275,8 +250,6 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     fx.kick = Math.Max(0, fx.kick - fx.dt * 5) * Math.Max(0, 1 - fx.dt * 6);
     fx.flash = Math.Max(0, fx.flash - fx.dt * 2.2);
     fx.hurt = Math.Max(0, fx.hurt - fx.dt * 1.9);
-    fx.slabs.Clear();
-    fx.marks.Clear();
 
     var screen = float2(Screen.width, Screen.height);
     canvas.screenHalf = screen * 0.5;
@@ -372,8 +345,63 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
     color = Color(paint.r, paint.g, paint.b, 1);
 }
 
-// The effects go over everything in the arena, which drew before them.
+// The effects' pieces move on each frame, whatever else there is: they're this
+// machine's, so they fall and fade with no match too, while one is being joined.
 [Stage(PaintStages.Effects)]
+view MoveBits(mut Fx fx)
+{
+    mut var i = 0;
+    while (i < fx.bits.count)
+    {
+        mut var bit = fx.bits[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life)
+        {
+            fx.bits[i] = fx.bits[fx.bits.count - 1];
+            fx.bits.RemoveAt(fx.bits.count - 1);
+            continue;
+        }
+        bit.velocity.y -= bit.gravity * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        fx.bits[i] = bit;
+        i++;
+    }
+}
+
+// Those that fall land on the platforms, and bounce. The platforms are the
+// match's, so this view only runs in one: it goes through them with a query.
+[Stage(PaintStages.Effects, 1)]
+view BounceBits(mut Fx fx, query (Platform box) platforms)
+{
+    for (var i = 0; i < fx.bits.count; i++)
+    {
+        mut var bit = fx.bits[i];
+        if (bit.kind != BitKind.Chunk && bit.kind != BitKind.Shell && !(bit.kind == BitKind.Dot && bit.gravity > 0)) continue;
+        foreach (var entry in platforms)
+        {
+            var offset = bit.position - entry.box.center;
+            var inside = entry.box.half + bit.size * 0.5 - Math.Abs(offset);
+            if (inside.x <= 0 || inside.y <= 0) continue;
+            if (inside.x < inside.y)
+            {
+                bit.position.x += (offset.x < 0 ? -1 : 1) * inside.x;
+                bit.velocity.x *= -0.5;
+            }
+            else
+            {
+                bit.position.y += (offset.y < 0 ? -1 : 1) * inside.y;
+                bit.velocity.y *= -0.42;
+                bit.velocity.x *= 0.72;
+                bit.spin *= 0.6;
+            }
+        }
+        fx.bits[i] = bit;
+    }
+}
+
+// The effects go over everything in the arena, which drew before them.
+[Stage(PaintStages.Effects, 2)]
 view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
 {
     var scene = lens.scene;
@@ -413,44 +441,9 @@ view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
         w++;
     }
 
-    mut var i = 0;
-    while (i < fx.bits.count)
+    // The pieces, where MoveBits and BounceBits left them
+    foreach (var bit in fx.bits)
     {
-        mut var bit = fx.bits[i];
-        bit.age += fx.dt;
-        if (bit.age >= bit.life)
-        {
-            fx.bits[i] = fx.bits[fx.bits.count - 1];
-            fx.bits.RemoveAt(fx.bits.count - 1);
-            continue;
-        }
-        bit.velocity.y -= bit.gravity * fx.dt;
-        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
-        bit.position += bit.velocity * fx.dt;
-        if (bit.kind == BitKind.Chunk || bit.kind == BitKind.Shell || bit.kind == BitKind.Dot && bit.gravity > 0)
-        {
-            foreach (var slab in fx.slabs)
-            {
-                var offset = bit.position - slab.center;
-                var inside = slab.half + bit.size * 0.5 - Math.Abs(offset);
-                if (inside.x <= 0 || inside.y <= 0) continue;
-                if (inside.x < inside.y)
-                {
-                    bit.position.x += (offset.x < 0 ? -1 : 1) * inside.x;
-                    bit.velocity.x *= -0.5;
-                }
-                else
-                {
-                    bit.position.y += (offset.y < 0 ? -1 : 1) * inside.y;
-                    bit.velocity.y *= -0.42;
-                    bit.velocity.x *= 0.72;
-                    bit.spin *= 0.6;
-                }
-            }
-        }
-        fx.bits[i] = bit;
-        i++;
-
         var along = bit.age / bit.life;
         var left = 1 - along;
         if (bit.kind == BitKind.Streak)
