@@ -146,7 +146,7 @@ system Burn(mut Unit unit)
 - A function is code that other code calls: systems, views, the input's `Sample` and `Sanitize`, methods and other functions. The engine never runs one by itself.
 - A parameter is a copy, read-only. A `mut` parameter is the caller's variable itself, which the function changes: the caller passes something it can write, and its signature still shows the write, so `Heal(unit.stats, 5)` needs `mut Unit unit`. The argument's type matches exactly.
 - Parameters are built-in types, structs, components and singletons. Return values are built-in types, structs and components; singleton return values aren't supported.
-- Singleton parameters are explicit values, with the same read-only copy and `mut` caller-variable rules as components, in functions and methods. They bind no singleton from the world and grant no world access. Existing restrictions on copying or passing grids and rendering resources still apply; singletons still have no methods of their own.
+- Singleton parameters are explicit values, with the same read-only copy and `mut` caller-variable rules as components, in functions and methods. They bind no singleton from the world and grant no world access: a function reaches other entities through a `World` parameter, which its caller passes its own (see The World). Existing restrictions on copying or passing grids and rendering resources still apply; singletons still have no methods of their own.
 - Caller access remains decisive, through helper chains: match systems and handlers can pass match state they can write; views can read match state and change local state; the input's `Sample` only reads local state. Helper reads and writes count toward the caller's access and scheduling. For a match component or singleton with local fields, only an actual bound parameter supplies them to an ordinary function, not a plain copy (see Local state). Match code can't call a helper that uses local fields, and local code can't call one that writes match fields. Methods don't receive local fields.
 - Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations. Ordinary helpers can't read `session.room` or format a whole `Session` as text; pass the room code as a separate `string`.
 - Functions follow the rules of methods: they see their parameters and `Math`, can't spawn or change entities, and return a value on every path unless they return `void`.
@@ -298,7 +298,7 @@ system Aim(mut Turret turret, Position position) { ... }
 - **Overloads.** `out` doesn't tell functions that share a name apart, as `mut` doesn't: their parameters' types do. A call picks among them as ever, where an `out` argument only goes to an `out` parameter, and `out var` takes its type from the one picked.
 - **`extern` functions.** `out T` is a `T *` in C, as `mut T` is: the difference is Tide's, which passes nothing in and takes it that C writes. `out List<T>` stays the list C makes through its writer. C can't make text, so `out string` is an error there (see C functions).
 - **Code the GPU runs.** A function a frag or vert calls can have `out` parameters: `inout` in GLSL and a pointer in WGSL, as `mut` ones are. Provisional: a local an `out` argument declares can't be declared on a counting loop's own line there.
-- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets).
+- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets), and the `World` has `TryGet<T>(entity, out value)` (see The World).
 - In generated C an `out` parameter is a pointer, as a `mut` one is, and code that has none generates the C it always did.
 
 ```csharp
@@ -328,7 +328,30 @@ system Halve(mut Pile pile, mut Tally tally)
 }
 ```
 
-Open: functions take no `World`, so one can't look an entity's component up to give it through `out` (`bool TryFind(Entity target, World world, out Health health)`): whether a function can take the World is a decision of its own.
+A function that looks an entity's component up and gives it through `out` takes the `World` its caller passes it (see The World):
+
+```csharp
+bool TryFind(Entity target, World world, out Health health)
+{
+    if (!world.Has<Health>(target))
+    {
+        health = default;
+        return false;
+    }
+    health = world.Get<Health>(target);
+    return true;
+}
+
+system Heal(Healer healer, World world)
+{
+    if (TryFind(healer.patient, world, out var health))
+    {
+        // health is the patient's
+    }
+}
+```
+
+`world.TryGet<Health>(healer.patient, out var health)` is that function, built in.
 
 ### Operators
 
@@ -430,6 +453,7 @@ view DrawFighter(Body body, Fighter fighter, query (Platform box) platforms)
 
 - `World world` is a built-in parameter, like `Devices`: any entity's components, by its handle. It reads another entity's component in the same tick, where `Send` would wait for the tick's end. A signature has one at most, and it filters nothing.
 - `world.Get<Health>(target)` is a copy of that entity's `Health` as it is, or its zero value when it has none. `world.Has<Health>(target)` tells whether it has one.
+- Provisional: `world.TryGet<Health>(target, out var health)` is both in one, as C#'s `TryGetValue`: whether the entity has one, and through `out` (see Out parameters), a copy of it, or the component's `default` when it has none. A component with a grid in it can't be copied, so it has no `TryGet`.
 - `world.Set<Health>(target, h)` puts one back, and needs `mut World`. Nothing happens when the entity has none. The component `Get` gives is a copy, as a list's element is: change it and put it back.
 
 ```csharp
@@ -453,6 +477,13 @@ system Heal(Healer healer, mut World world)
 - The signature doesn't list those components, so tooling does: `tidec --schedule` says what each system reads and writes through its `World`, and so do the language server's hover and the line above each system.
 - A `World` parameter that's never used is a warning, and so is a `mut World` that never calls `Set`.
 - Views take `World` to read the match, never to change it: `Set` of the match's component in a view is an error.
+- **Functions and methods take the World too** (agreed 2026-10-05: it's how the work is carried out, not what the language means), as their caller's, passed on: `bool TryFind(Entity target, World world, out Health health)`, called as `TryFind(healer.patient, world, out var health)`. A function has no World of its own: the argument is the `World` parameter of the system, view or handler that calls it, or of the function in between.
+  - What a function reaches through it is what each of its callers reaches, through however many functions it's passed. So the schedule counts it as the system's own, on the same lines (`reads any entity's Health, through World`), a system that sets through a function runs on one thread, and one that reads through a function a component it also changes reads the rows it changed earlier in the same run.
+  - `Set` needs `mut World` there as anywhere, and a caller passes a `mut World` to it: a read-only one is an error that says to declare it `mut`.
+  - The rules that depend on who calls are said at the call: the match can't reach a local component, a local handler's World is this machine's, a view changes nothing of the match, a parallel loop's step and a sort's comparison set nothing, and a system that takes a component as a parameter can't call a function that sets that component through the World.
+  - Provisional: a function takes one World at most, with no default, and it's neither `out` nor a value to keep or return. Operators and `extern` functions take none, and neither do async functions yet: an async handler takes it itself.
+  - Provisional: `world.Set<T>(this, value)` beside a parameter that only reads `T` stays the system's own to write: a function has no `this`, so it can't say the entity is the one its caller runs for.
+  - In generated C the function is handed the worlds it reaches, where its World parameter is written: the match's, read-only unless it sets, and this machine's for local components.
 - `World` is built in: a game can't declare a type of that name outside a namespace.
 - `lookup` parameters (`lookup Health health`, read as `health[e]`) are gone. Writing one is an error that says what to write with `World` instead.
 
@@ -2284,7 +2315,7 @@ local event(Disconnected gone) BackToMenu()
 
 Implemented, awaiting approval:
 
-- `Session` has `state` (`SessionState.Offline`, `Connecting` or `Connected`), `player` (this machine's `PlayerID`, once connected), `ping` (the round trip to the server, in milliseconds), `server` (whether this machine runs it), `open` (whether others can join it, which only the server's machine knows) and `room` (the code of the room the match is in, or `""`, as it is while the match is closed). It's read-only. A single-player match is `Connected` too, with `server` true and `open` false.
+- `Session` has `state` (`SessionState.Offline`, `Connecting` or `Connected`), `player` (this machine's `PlayerID`, once connected), `ping` (the network's round trip to the server, in milliseconds: from when this machine sent to when the answer arrived, less what the server held it, so no wait for a frame is in it), `server` (whether this machine runs it), `open` (whether others can join it, which only the server's machine knows) and `room` (the code of the room the match is in, or `""`, as it is while the match is closed). It's read-only. A single-player match is `Connected` too, with `server` true and `open` false.
 - `Connected` is sent once the match's world has arrived and this machine plays in it; `Disconnected { DisconnectReason reason; string message; }` when it leaves: `Left` (it called `Leave`, or started another match), `TimedOut` (the server stopped answering, or never did), `Refused` (another build of the game, no room left, or a closed match), `ServerLeft` (the server's machine left, which ended the match), `Failed` (it couldn't start: no network, a port in use, an address that isn't one, a room nobody has) `Ended` (the match's last scene unloaded, and `Main` is local; see Scenes) or `Kicked` (the server's machine sent it away). `message` is the kick's, and `""` for the other reasons.
 - `Session.Kick(player)` and `Session.KickAll()` send no message. A kicked player leaves the match at once, as if they had left: `PlayerLeft` follows, and they can join again, as the same player, while the match is open. A goodbye can be lost: a kicked player who didn't hear it is told again whenever they're in touch, while they still send to the server and when they join it again, before they're let in (taking a match over with host migration included). Once they've heard, they can join again. Kicks only change a match this machine runs: on a client, or offline, they do nothing, and this machine's own player can't be kicked (it calls `Leave`). A message is up to 255 bytes of UTF-8, cut where a character starts. A frame takes up to 16 kicks; a `Start`, `Join`, `Connect` or `Leave` after them drops them, as it does Opens. A machine kicked from a match it joined with `--join` or `--connect` doesn't join it again by itself.
 - `Session.Open(port)` takes players in a room, and on `port` too, 7777 without one, except on the web, which has no ports. A closed match turns away anyone who isn't in it, coming back or not; the players in it stay. Opened again, it takes players in the same room and on the same port. `Open` and `Close` only change a match this machine runs: on a client, or offline, they do nothing. When it can take players neither in a room nor on the port, the match stays closed. Opens and Closes before a `Start`, `Join`, `Connect` or `Leave` in the same frame were for the match it ends, so they're dropped. `Session.Play` and `Session.Host` are errors that point to `Start` and `Open`.

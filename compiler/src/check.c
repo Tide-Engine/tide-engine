@@ -47,6 +47,8 @@ typedef struct checker {
     const expr *query_value; // A foreach's direct query parameter name, which is only iterable
     const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
     int outs;                // `out` arguments checked so far: code that has some is checked for what it assigns (assigned.c)
+    const expr *world_arg;   // A call's argument about to be checked: the World can be named there, to pass it on
+    bool world_value_ok;     // ...and the name being checked is it
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -386,13 +388,15 @@ static bool check_reserved(const str name, const loc at)
     return true;
 }
 
-// `World` written where another type goes, when no type of the game's has the
-// name: says where it belongs. Returns whether it did.
+// `World` written where a value's type goes (a field, a local, what a function
+// returns), when no type of the game's has the name: says where it belongs.
+// Returns whether it did.
 static bool world_misplaced(const str name, const loc at)
 {
     if (!str_eq_c(name, "World")) return false;
-    diag_error(at, "the World is a parameter of systems, views and event handlers: 'system Name(World world)'");
-    diag_note("read what's needed there, like 'world.Get<Health>(entity)', and pass the value on");
+    diag_error(at, "the World is a parameter, of systems, views, event handlers and the functions they pass it to: "
+                   "'system Name(World world)'");
+    diag_note("it's no value to keep or return: read what's needed through it, like 'world.Get<Health>(entity)'");
     return true;
 }
 
@@ -2789,8 +2793,9 @@ static void check_method_args(checker *c, expr *e, decl *m)
             finish_out_arg(c, arg, p && p->is_out ? p->type : T_ERR);
             continue;
         }
-        // Devices passed on are read where they go: the callee's reads count.
+        // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
         c->device_whole_ok = arg;
+        c->world_arg = arg;
         check_expr_want(c, arg, p ? p->type : T_ERR);
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
@@ -3012,6 +3017,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         }
         if (untyped_arg(arg)) continue;
         c->device_whole_ok = arg;
+        c->world_arg = arg;
         check_expr_any(c, arg);
     }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
@@ -4402,11 +4408,29 @@ static void note_world_use(const checker *c, decl *component, const bool writes,
     vec_push(code->world_uses, u);
 }
 
-// world.Get<Health>(e), world.Has<Health>(e) and world.Set<Health>(e, value):
-// any entity's component by its handle, through the World parameter `world`.
-// Get gives a copy, or the component's zero value where the entity has none,
-// which Has tells; Set, which `mut World` allows, puts one back and changes
-// nothing there.
+// The arguments of a World call that's wrong already, for what's in them: an
+// `out` one is TryGet's, whatever else is wrong.
+static void check_world_args(checker *c, const expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->is_out) begin_out_arg(c, arg);
+        else check_expr(c, arg);
+    }
+}
+
+// world.Get<Health>(e), world.Has<Health>(e), world.TryGet<Health>(e, out h)
+// and world.Set<Health>(e, value): any entity's component by its handle,
+// through the World parameter `world`. Get gives a copy, or the component's
+// zero value where the entity has none, which Has tells; TryGet is both in
+// one, as C#'s TryGetValue, with the component's default where there's none;
+// Set, which `mut World` allows, puts one back and changes nothing there.
+//
+// In a function or method, the World is its caller's: what the code reaches
+// through it counts as each caller's, and the rules that depend on who calls
+// (which world a component is in, what a view may change, a component the
+// caller takes as a parameter too) are checked at the calls, once every body
+// is checked (check_world_passing).
 static type check_world_call(checker *c, expr *e, param *world)
 {
     e->object->bind = BIND_PARAM;
@@ -4414,21 +4438,25 @@ static type check_world_call(checker *c, expr *e, param *world)
     e->object->type = world->type;
     world->read = true;
     const decl *code = c->system;
+    const bool helper = c->method != NULL; // A function's or method's own World
+    const char *code_what = !helper ? system_what(code) : code->kind == DECL_FUNCTION ? "function" : "method";
     const bool set = str_eq_c(e->name, "Set");
+    const bool try_get = str_eq_c(e->name, "TryGet");
     if (set) world->written = true;
-    if (!set && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has and Set", STR_ARG(e->name));
+    if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
+        check_world_args(c, e);
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet and Set", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Get");
         suggest_consider_c(&s, "Has");
+        suggest_consider_c(&s, "TryGet");
         suggest_consider_c(&s, "Set");
         suggest_note(&s);
         return T_ERR;
     }
-    const char *usage = set ? "(entity, value)" : "(entity)";
+    const char *usage = set ? "(entity, value)" : try_get ? "(entity, out var value)" : "(entity)";
     if (e->type_arg.len == 0) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        check_world_args(c, e);
         diag_error(e->at, STR_FMT " takes the component in '<>': '" STR_FMT "." STR_FMT "<Health>%s'", STR_ARG(e->name),
                    STR_ARG(world->name), STR_ARG(e->name), usage);
         return T_ERR;
@@ -4436,7 +4464,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     decl *d = find_type(c, e->type_arg, e->type_arg_at);
     e->type_decl = d;
     if (!d || d->kind != DECL_COMPONENT) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        check_world_args(c, e);
         if (!d) {
             diag_error(e->type_arg_at, "unknown component '" STR_FMT "'", STR_ARG(e->type_arg));
             suggestion s = suggest_start(e->type_arg);
@@ -4448,16 +4476,16 @@ static type check_world_call(checker *c, expr *e, param *world)
             diag_error(e->type_arg_at, STR_FMT " is of a component, any entity's by its handle, and '" STR_FMT "' is %s",
                        STR_ARG(e->name), STR_ARG(d->name), decl_what(d));
             if (d->kind == DECL_SINGLETON) {
-                diag_note("a %s takes a singleton as a parameter, like '" STR_FMT " name'", system_what(code), STR_ARG(d->name));
+                diag_note("a %s takes a singleton as a parameter, like '" STR_FMT " name'", code_what, STR_ARG(d->name));
             }
         }
         return T_ERR;
     }
     // Which world it's in: the match can't use local state, and a local
     // handler has no World of the match to read.
-    const bool local_in_match = d->is_local && !is_local_code(code);
-    if (local_in_match || (!d->is_local && code->is_handler && code->is_local)) {
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    const bool local_in_match = !helper && d->is_local && !is_local_code(code);
+    if (local_in_match || (!helper && !d->is_local && code->is_handler && code->is_local)) {
+        check_world_args(c, e);
         if (local_in_match) {
             diag_error(e->type_arg_at, "'" STR_FMT "' is local, and the match can't use local state", STR_ARG(d->name));
             diag_note("local state belongs to one machine, and the match runs the same on every one");
@@ -4489,15 +4517,48 @@ static type check_world_call(checker *c, expr *e, param *world)
         }
         ok = ok && fits;
     }
-    for (int i = set ? 2 : 1; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-    if (e->args.count != (set ? 2 : 1)) {
-        diag_error(e->at, set ? STR_FMT " takes an entity's handle and its new component: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
-                              : STR_FMT " takes one entity's handle: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'",
+    if (try_get && e->args.count > 1) { // The variable the component goes to
+        expr *arg = e->args.items[1];
+        if (arg->is_out) {
+            begin_out_arg(c, arg);
+            finish_out_arg(c, arg, decl_type(d));
+        } else {
+            check_expr_want(c, arg, decl_type(d));
+        }
+    }
+    for (int i = set || try_get ? 2 : 1; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        if (arg->is_out) begin_out_arg(c, arg);
+        else check_expr(c, arg);
+    }
+    if (e->args.count != (set || try_get ? 2 : 1)) {
+        diag_error(e->at, set       ? STR_FMT " takes an entity's handle and its new component: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
+                          : try_get ? STR_FMT " takes an entity's handle and the variable its component goes to: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'"
+                                    : STR_FMT " takes one entity's handle: '" STR_FMT "." STR_FMT "<" STR_FMT ">%s'",
                    STR_ARG(e->name), STR_ARG(world->name), STR_ARG(e->name), STR_ARG(d->name), usage);
         return T_ERR;
     }
+    if (try_get) {
+        decl *called = NEW(decl);
+        called->name = str_from("TryGet");
+        param value = {0};
+        value.mode = PARAM_MUT;
+        value.is_out = true;
+        value.name = str_from("value");
+        value.type = decl_type(d);
+        vec_push(called->params, value);
+        check_out_param(c, called, &called->params.items[0], e->args.items[1]);
+        if (holds_grid(decl_type(d))) { // A grid stays where it's made: the variable would be a copy of every chunk
+            diag_error(e->type_arg_at, "TryGet gives a copy of the component, and '" STR_FMT "' has a grid in it, which can't be copied",
+                       STR_ARG(d->name));
+            diag_note("ask whether the entity has one with '" STR_FMT ".Has<" STR_FMT ">(entity)', and read its cells in a system "
+                      "that takes the component", STR_ARG(world->name), STR_ARG(d->name));
+            return T_ERR;
+        }
+        d->tried = true;
+    }
     // A view only reads the match
-    if (set && !d->is_local && code->is_view) {
+    if (set && !d->is_local && !helper && code->is_view) {
         diag_error(e->at, "a view reads the match, and 'Set<" STR_FMT ">' would change it", STR_ARG(d->name));
         diag_note("views draw: a system changes the match");
         return T_ERR;
@@ -4529,7 +4590,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     // came to the entity. Another entity's is still refused: the rows the code
     // hasn't come to yet would be read changed or not by whether a snapshot
     // shares their pages.
-    for (int i = 0; set && i < code->params.count; i++) {
+    for (int i = 0; set && !helper && i < code->params.count; i++) {
         const param *q = &code->params.items[i];
         if (q->type.kind != TY_COMPONENT || q->type.decl != d || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
         if (q->mode == PARAM_READ && e->args.items[0]->kind == E_THIS) continue;
@@ -4549,7 +4610,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     if (ok) note_world_use(c, d, set, e->at);
     if (set) note_text_write(c, decl_holds_text(d)); // Its text and lists go into the world's heap
     if (set) return T_VOID_;
-    return str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
+    return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
 // Target receivers share the two drawing APIs: the argument's dimension picks
@@ -5920,10 +5981,11 @@ static type check_name(checker *c, expr *e)
                       STR_ARG(p->type.decl->local_part->fields.items[0].name));
             return T_ERR;
         }
+        if (p->type.kind == TY_WORLD && c->world_value_ok) return p->type; // Passed on to a function that takes it
         if (p->type.kind == TY_WORLD) {
             diag_error(e->at, "the World is no value: code calls it, like '" STR_FMT ".Get<Health>(entity)'", STR_ARG(e->name));
             diag_note("Get gives a copy of an entity's component, Has tells whether it has one, and Set, with 'mut World', "
-                      "puts one back");
+                      "puts one back; a function or method that takes 'World world' is passed it as an argument");
             return T_ERR;
         }
         return p->type;
@@ -6904,6 +6966,8 @@ static type check_expr_any(checker *c, expr *e)
     c->device_whole_ok = NULL;
     const bool out_ok = c->out_arg == e;
     c->out_arg = NULL;
+    c->world_value_ok = c->world_arg == e;
+    c->world_arg = NULL;
     if (e->is_out && !out_ok) return e->type = refuse_out_arg(c, e);
     type t = T_ERR;
     switch (e->kind) {
@@ -7192,7 +7256,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         diag_error(root->at, "'" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
-        if (gpu_code(c) && root->param == &c->method->params.items[0]) {
+        if (root->param->type.kind == TY_WORLD) {
+            diag_note("declare the parameter as 'mut World " STR_FMT "' to set entities' components through it", STR_ARG(root->name));
+            const fix f = {.kind = FIX_ADD_MUT, .at = root->at, .param = root->param};
+            vec_push(c->prog->fixes, f);
+        } else if (gpu_code(c) && root->param == &c->method->params.items[0]) {
             diag_note("a frag gets its vertex blended across the triangle, to read; a vert changes it: 'vert Name(mut "
                       STR_FMT " " STR_FMT ")'", STR_ARG(root->param->type_name), STR_ARG(root->name));
         } else if (gpu_code(c)) {
@@ -8455,7 +8523,7 @@ static bool stands_alone(const expr *e)
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
         || (call == CALL_GRID && !str_eq_c(called->name, "Sample"))
-        || (call == CALL_WORLD && str_eq_c(called->name, "Set"))
+        || (call == CALL_WORLD && (str_eq_c(called->name, "Set") || str_eq_c(called->name, "TryGet")))
         || (call == CALL_BUILTIN && called->type.kind == TY_VOID) // Debug.Log and Debug.Assert
         || e->kind == E_TRY // Passes an error on, even from a variable
         || called->kind == E_AWAIT;
@@ -9604,6 +9672,7 @@ static void check_param_default(checker *c, const decl *m, const param *p)
     case TY_SINGLETON: refused = "a singleton, which the caller passes its own of"; break;
     case TY_RECORD: refused = "the devices, which the caller passes"; break;
     case TY_DRAW_LIST: refused = "the frame's draw list, which the caller passes"; break;
+    case TY_WORLD: refused = "the World, which the caller passes its own"; break;
     default: break;
     }
     if (!refused && holds_render_resource(p->type)) refused = "a rendering resource, which the caller passes";
@@ -9631,6 +9700,33 @@ static void check_param_default(checker *c, const decl *m, const param *p)
     }
 }
 
+// A function's or method's `World world`: the World of the system, view or
+// handler that calls it, passed on, by the same rules as theirs (one, read
+// through unless it's `mut`).
+static void check_world_param(const decl *m, param *p, const int k)
+{
+    const char *what = m->owner ? "method" : "function";
+    if (m->is_operator) {
+        diag_error(p->type_at, "an operator works on its operands alone, so it takes no World");
+        diag_note("a method or function can: 'bool TryFind(Entity target, World world, out Health health)'");
+        p->type = T_ERR;
+        return;
+    }
+    if (p->is_out) {
+        diag_error(p->out_at, "the World is the caller's, passed as it is: it can't be 'out'");
+        diag_note("take it as 'World " STR_FMT "' to read through it, or 'mut World " STR_FMT "' to set through it", STR_ARG(p->name),
+                  STR_ARG(p->name));
+        p->is_out = false;
+        p->mode = PARAM_READ;
+    }
+    for (int j = 0; j < k; j++) {
+        if (m->params.items[j].type.kind != TY_WORLD) continue;
+        diag_error(p->at, "a %s can only have one World parameter", what);
+        p->type = T_ERR;
+        return;
+    }
+}
+
 // The types in a method's or function's signature.
 static void check_signature(checker *c, decl *m)
 {
@@ -9647,7 +9743,11 @@ static void check_signature(checker *c, decl *m)
                 diag_error(p->name_at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
             }
         }
-        p->type = method_type(c, p->type_name, p->type_qual_at, false);
+        // `World world`: its caller's World, to read any entity's components through (a game's own type of
+        // that name comes first, as for a system's)
+        const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
+        p->type = world ? (type){TY_WORLD, NULL} : method_type(c, p->type_name, p->type_qual_at, false);
+        if (world) check_world_param(m, p, k);
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -9927,6 +10027,7 @@ static const char *c_refuses(const type t)
     case TY_SET: return "sets";
     case TY_ACTION: return "an Action";
     case TY_RECORD: return "the devices";
+    case TY_WORLD: return "the World";
     case TY_SINGLETON: return "singletons";
     case TY_OPTIONAL: return "T? values";
     case TY_STRUCT:
@@ -10086,6 +10187,12 @@ static void check_async_decl(decl *fn)
             p->is_out = false;
             p->mode = PARAM_READ;
             p->type = T_ERR; // Said: what the code does with it says nothing more
+        }
+        if (p->type.kind == TY_WORLD) { // A task's world is its own to get again, like its components: not built yet
+            diag_error(p->type_at, "an async function can't take the World yet");
+            diag_note("read what it needs through the World before it starts, and pass the values; an async handler "
+                      "takes 'World world' itself");
+            p->type = T_ERR;
         }
         if (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON) {
             p->task_ref = true;
@@ -11133,7 +11240,7 @@ static bool call_acts(const expr *e)
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw2D.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
-    case CALL_WORLD: return str_eq_c(e->name, "Set");
+    case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
     case CALL_FUNCTION:
     case CALL_METHOD: {
         const decl *m = e->method;
@@ -13246,6 +13353,135 @@ static void check_this_calls(const checker *c)
     }
 }
 
+// A function's or method's World parameter, or NULL.
+static const param *world_param(const decl *d)
+{
+    for (int i = 0; i < d->params.count; i++) {
+        if (d->params.items[i].type.kind == TY_WORLD) return &d->params.items[i];
+    }
+    return NULL;
+}
+
+// Functions and methods that take the World, once every body is checked. What
+// one reaches through it is what each of its callers reaches, through however
+// many functions it's passed: the callers' world_uses get it, so the schedule,
+// the threads a system runs on and generated code go by it as by a system's
+// own calls. Then the rules that depend on who calls are checked at each
+// call a system, view or handler makes: the match can't reach local state, a
+// local handler's World is this machine's, a view changes nothing of the
+// match, and a component the caller takes as a parameter too can't be set
+// through the World, as the parameter would put this entity's back.
+static void check_world_passing(checker *c)
+{
+    bool any = false;
+    for (int i = 0; i < c->calls.count && !any; i++) any = world_param(c->calls.items[i].to) != NULL;
+    if (!any) return;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!world_param(site->to) || !world_param(site->from)) continue;
+            for (int k = 0; k < site->to->world_uses.count; k++) {
+                const world_use *theirs = &site->to->world_uses.items[k];
+                world_use *own = NULL;
+                for (int j = 0; j < site->from->world_uses.count; j++) {
+                    if (site->from->world_uses.items[j].component == theirs->component) own = &site->from->world_uses.items[j];
+                }
+                if (!own) {
+                    const world_use u = {theirs->component, theirs->writes, site->call->at,
+                                         theirs->writes ? site->call->at : (loc){0, 0, 0}, false, true};
+                    vec_push(site->from->world_uses, u);
+                    grew = true;
+                    continue;
+                }
+                grew |= !own->through_world || (theirs->writes && !own->writes);
+                own->through_world = true;
+                if (theirs->writes && !own->writes) {
+                    own->writes = true;
+                    own->write_at = site->call->at;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            decl *m = k < 0 ? d : d->methods.items[k];
+            if (m->kind != DECL_FUNCTION && m->kind != DECL_METHOD) continue;
+            for (int j = 0; j < m->world_uses.count; j++) {
+                const world_use *u = &m->world_uses.items[j];
+                m->world_match |= !u->component->is_local;
+                m->world_local |= u->component->is_local;
+                m->world_sets |= u->writes && !u->component->is_local;
+            }
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        decl *from = site->from;
+        const decl *to = site->to;
+        if (!world_param(to)) continue;
+        const loc at = site->call->at;
+        bool writes = false;
+        for (int k = 0; k < to->world_uses.count; k++) writes |= to->world_uses.items[k].writes;
+        if (writes && site->parallel) {
+            diag_error(at, "a parallel loop's steps run at once, so each changes only its own place (a grid's cell "
+                           "or block, a list's element or block), and the variables it declares");
+            diag_note("'" STR_FMT "' sets entities' components through its World: call it in a 'for' loop, which goes in order",
+                      STR_ARG(to->name));
+            continue;
+        }
+        if (writes && site->comparing) {
+            diag_error(at, "a comparison runs again and again as the list sorts, so it changes nothing outside it");
+            diag_note("'" STR_FMT "' sets entities' components through its World: call it before the sort", STR_ARG(to->name));
+            continue;
+        }
+        if (from->kind != DECL_SYSTEM) continue; // A function's own callers answer for it
+        for (int k = 0; k < to->world_uses.count; k++) {
+            const world_use *u = &to->world_uses.items[k];
+            const decl *d = u->component;
+            if (d->is_local && !is_local_code(from)) {
+                diag_error(at, "'" STR_FMT "' is local, and the match can't use local state: '" STR_FMT "' reaches it through its World",
+                           STR_ARG(d->name), STR_ARG(to->name));
+                diag_note("local state belongs to one machine, and the match runs the same on every one");
+                break;
+            }
+            if (!d->is_local && from->is_handler && from->is_local) {
+                diag_error(at, "'" STR_FMT "' belongs to the match, and a local handler's World is this machine's: '" STR_FMT
+                               "' reaches it through its World", STR_ARG(d->name), STR_ARG(to->name));
+                diag_note("a view reads any entity's components through its World; a local handler of a match event takes the "
+                          "components of the entity the event was sent to");
+                break;
+            }
+            if (!u->writes) continue;
+            if (!d->is_local && from->is_view) {
+                diag_error(at, "a view reads the match, and '" STR_FMT "' changes '" STR_FMT "' through its World", STR_ARG(to->name),
+                           STR_ARG(d->name));
+                diag_note("views draw: a system changes the match");
+                break;
+            }
+            const param *own = NULL; // This entity's, which the caller takes too
+            for (int j = 0; j < from->params.count; j++) {
+                const param *q = &from->params.items[j];
+                if (q->type.kind == TY_COMPONENT && q->type.decl == d && (q->mode == PARAM_READ || q->mode == PARAM_MUT)) own = q;
+            }
+            if (own) {
+                diag_error(at, "'" STR_FMT "' sets any entity's " STR_FMT " through its World, and the %s takes this entity's too",
+                           STR_ARG(to->name), STR_ARG(d->name), system_what(from));
+                if (own->mode == PARAM_READ) {
+                    diag_note("this entity's can be set beside '" STR_FMT "', which is only read, in the %s itself: 'world.Set<" STR_FMT
+                              ">(this, value)'. For another entity's, send it an event", STR_ARG(own->name), system_what(from),
+                              STR_ARG(d->name));
+                } else {
+                    diag_note("change this entity's through '" STR_FMT "', and send the others an event", STR_ARG(own->name));
+                }
+                break;
+            }
+            if (decl_holds_text(d)) from->writes_text = true; // Into the world's heap, which one system changes at a time
+        }
+    }
+}
+
 // Match code that takes Devices reads the devices of the player who owns the
 // entity: the input sends what it reads of them, through the functions and
 // methods it calls too. A game without an input declaration gets one that
@@ -13532,6 +13768,7 @@ bool check(program *prog)
     check_this_calls(&c);
     check_drawing_calls(&c);
     check_local_field_calls(&c);
+    check_world_passing(&c);
     if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
     warn_unused_locals(&c); // Once it's known which calls draw and call C

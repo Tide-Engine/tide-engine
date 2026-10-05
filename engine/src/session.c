@@ -62,7 +62,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 8u
+#define PROTOCOL 9u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND };
 enum { REFUSE_OTHER_GAME = 1, REFUSE_FULL = 2, REFUSE_CLOSED = 3 };
@@ -108,6 +108,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define EVENTS_PER_PLAYER 4u    // Joins and leaves kept before a tick, for each player the game takes
 #define PLAYER_SET_BYTES 46u    // The most a set of players takes, as a varint: 7 of its 320 bits a byte
 #define HANDOVER_PART 1000u     // Bytes of a handover record per datagram
+#define SENT_TIMES 256u         // Times a client sent that it remembers, to measure its ping when one comes back
 #define TIMEOUT 5.0     // Seconds of silence before giving up on the other side
 #define HELLO_TIMEOUT 2.0 // ...or on one that said hello and never wrote again: it may not be where it said
 #define ROOM_TIMEOUT 15.0 // ...or on a room's host before it first answers: WebRTC can take a while to connect
@@ -164,6 +165,20 @@ static uint16_t millis16(const double t)
 static uint32_t millis_since(const double now, const uint16_t then)
 {
     return (uint16_t)(millis16(now) - then);
+}
+
+// A transport's clock, and when the datagram it last gave arrived by it (see
+// tide_transport.clock): what a ping is measured by, so it's the network's
+// round trip, with no wait for an update in it. A transport with no clock
+// goes by the session's time, `now`: a datagram then arrives as it's read.
+static double clock_of(const tide_transport *t, const double now)
+{
+    return t->clock && t->arrived ? t->clock(t->self) : now;
+}
+
+static double arrived_of(const tide_transport *t, const double now)
+{
+    return t->clock && t->arrived ? t->arrived(t->self) : now;
 }
 
 // Whole ticks from `seconds` at `rate`.
@@ -366,6 +381,7 @@ typedef struct connection {
     bool local; // On the server's machine: its input is the server's too
     double last_heard;
     uint16_t their_time;
+    double their_arrived; // When the datagram that said so arrived, by its transport's clock
     uint32_t rtt_ms;
     // It wrote back after its hello, so it is where it said: only then does it
     // join the match and get the world. A hello alone could come from anyone,
@@ -460,6 +476,7 @@ struct tide_server {
     double clock_start;
     uint32_t clock_base;
     double now;
+    double arrived; // When the datagram being read arrived, by its transport's clock (arrived_of)
     traffic traffic;
     uint32_t players;        // How many the game takes (tide_game_players): what the arrays by player have
     connection *connections; // Player n is connections[n]
@@ -779,6 +796,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         c->nonce = nonce;
         c->last_heard = s->now;
         c->their_time = their_time;
+        c->their_arrived = s->arrived;
         c->local = s->desc.local_first && transport == 0;
         for (uint32_t i = 0; i < s->w.inputs; i++) c->input_tick[i] = UINT32_MAX;
         c->newest_input = s->tick;
@@ -824,7 +842,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     c = &s->connections[player];
     const uint32_t bytes = s->game->max_input_bytes ? s->game->max_input_bytes : 1u;
     *c = (connection){.used = true, .transport = transport, .address = from, .nonce = nonce, .last_heard = s->now,
-                      .their_time = their_time, .new_player = new_player, .welcoming = true,
+                      .their_time = their_time, .their_arrived = s->arrived, .new_player = new_player, .welcoming = true,
                       .has_world = (flags & HELLO_HAS_WORLD) != 0, .can_start = (flags & HELLO_CAN_START) != 0};
     c->local = s->desc.local_first && transport == 0;
     c->inputs = malloc((size_t)(s->w.inputs + 1u) * bytes);
@@ -886,7 +904,10 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     const bool newest = (int16_t)(uint16_t)(their_time - c->their_time) >= 0;
     const bool wants = (flags & CLIENT_WANTS_WORLD) != 0;
     c->last_heard = s->now;
-    if (newest) c->their_time = their_time;
+    if (newest) {
+        c->their_time = their_time;
+        c->their_arrived = s->arrived;
+    }
     if (echo) c->rtt_ms = millis_since(s->now, echo);
     c->welcoming = false;
     if (!c->greeted) greet(s, c);
@@ -974,6 +995,7 @@ static void server_receive(tide_server *s, const uint32_t transport)
     uint32_t size;
     while ((size = t->receive(t->self, &from, data, sizeof data)) > 0) {
         if (from.kind != TIDE_ADDRESS_LOOPBACK) s->traffic.received += size;
+        s->arrived = arrived_of(t, s->now);
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
         if (type == MSG_HELLO) {
@@ -1204,6 +1226,16 @@ static void server_tick(tide_server *s)
     *f = (stored_frame){tick, w.size, data};
 }
 
+// How long the server has held the time it echoes to a player: from when the
+// datagram that said it arrived to now, as it's sent back, in milliseconds.
+// The player takes it out of its ping (see measure), which is the network's
+// round trip and none of the server's wait for an update or a tick.
+static uint32_t held_ms(const tide_server *s, const connection *c)
+{
+    const double held = clock_of(&s->desc.transports[c->transport], s->now) - c->their_arrived;
+    return held > 0.0 ? (held < 60.0 ? (uint32_t)(held * 1000.0 + 0.5) : 60000u) : 0u;
+}
+
 static void send_welcome(tide_server *s, const connection *c)
 {
     uint8_t data[64];
@@ -1222,6 +1254,7 @@ static void send_welcome(tide_server *s, const connection *c)
     tide_write_u32(&w, c->sending ? c->chunk_count : 0u);
     tide_write_u16(&w, millis16(s->now));
     tide_write_u16(&w, c->their_time);
+    tide_write_u16(&w, (uint16_t)held_ms(s, c));
     tide_write_u64(&w, s->cookies[c - s->connections]);
     send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
 }
@@ -1253,6 +1286,7 @@ static void start_server_packet(const tide_server *s, const connection *c, tide_
     header(w, MSG_SERVER);
     tide_write_u16(w, millis16(s->now));
     tide_write_u16(w, c->their_time);
+    tide_write_varint(w, held_ms(s, c));
     tide_write_u32(w, s->tick);
     write_signed(w, (int32_t)(c->newest_input - s->tick)); // The newest input it has, and so how early they arrive
     *count_at = w->size;
@@ -1604,7 +1638,15 @@ struct tide_client {
     uint32_t tick_rate;
     uint32_t server_tick; // The server's, as it last said while sending a world
     uint16_t their_time;
-    uint32_t rtt_ms;
+    uint32_t rtt_ms;  // What an answer takes to be read: from the update that sent to the update that reads it
+    uint32_t ping_ms; // ...and the network's part of that alone (measure)
+    double arrived;   // When the datagram being read arrived, by the transport's clock (arrived_of)
+    // The times it last sent, as it said them, and when by the transport's clock
+    struct {
+        uint16_t said;
+        double at;
+    } sent[SENT_TIMES];
+    uint32_t sent_count;
     uint32_t input_ack; // The server has every input before this tick
     command_queue commands;
     bool commands_rebase; // Pending intent carried to another server's authoritative snapshot
@@ -1881,6 +1923,39 @@ static void answer_hashes(tide_client *c)
     stop_receiving(c);
 }
 
+// The time this update's datagrams say they were sent: as the server echoes
+// it, and remembered with when that is by the transport's clock.
+static uint16_t said_time(tide_client *c)
+{
+    const uint16_t said = millis16(c->now);
+    const uint32_t at = c->sent_count++ % SENT_TIMES;
+    c->sent[at].said = said;
+    c->sent[at].at = clock_of(&c->desc.transport, c->now);
+    return said;
+}
+
+// The server echoed a time this machine said, `held_ms` after it arrived
+// there. From the update that said it to this one is what an answer takes to
+// be read, which is what the client waits by. The ping is the network's part
+// of it: from when it was sent to when the answer arrived, by the transport's
+// clock, less what the server held it. So it counts no wait for an update, on
+// either machine: two players at one desk have a ping of about nothing,
+// whatever their frame rates.
+static void measure(tide_client *c, const uint16_t echo, const uint32_t held_ms)
+{
+    if (!echo) return;
+    c->rtt_ms = millis_since(c->now, echo);
+    double trip = (double)c->rtt_ms / 1000.0;
+    for (uint32_t i = 0; i < SENT_TIMES && i < c->sent_count; i++) { // The newest that said so
+        const uint32_t at = (c->sent_count - 1u - i) % SENT_TIMES;
+        if (c->sent[at].said != echo) continue;
+        trip = c->arrived - c->sent[at].at;
+        break;
+    }
+    const double ping = trip - (double)held_ms / 1000.0;
+    c->ping_ms = ping > 0.0 ? (uint32_t)(ping * 1000.0 + 0.5) : 0u;
+}
+
 static void on_welcome(tide_client *c, tide_reader *r)
 {
     const uint32_t nonce = tide_read_u32(r);
@@ -1895,6 +1970,7 @@ static void on_welcome(tide_client *c, tide_reader *r)
     const uint32_t chunks = tide_read_u32(r);
     const uint16_t their_time = tide_read_u16(r);
     const uint16_t echo = tide_read_u16(r);
+    const uint16_t held = tide_read_u16(r);
     const uint64_t cookie = tide_read_u64(r);
     if (r->failed || nonce != c->nonce || player >= c->players || tick_rate == 0 || kind > SEND_HASHES) return;
     if (!c->frames) { // Its windows, now that it knows the tick rate
@@ -1918,7 +1994,7 @@ static void on_welcome(tide_client *c, tide_reader *r)
     c->tick_rate = tick_rate;
     if (server_tick > c->server_tick) c->server_tick = server_tick;
     c->their_time = their_time;
-    if (echo) c->rtt_ms = millis_since(c->now, echo);
+    measure(c, echo, held);
     // A world it doesn't have yet: the first, a newer one after it went wrong,
     // or one past all it ran, when it fell behind further than the server
     // keeps ticks. Something it had whole, it had: what's after it is newer.
@@ -1963,12 +2039,13 @@ static void on_server(tide_client *c, tide_reader *r)
 {
     const uint16_t their_time = tide_read_u16(r);
     const uint16_t echo = tide_read_u16(r);
+    const uint32_t held = tide_read_varint(r);
     const uint32_t server_tick = tide_read_u32(r);
     const int32_t early = read_signed(r); // Its newest input, from the server's tick
     const uint8_t pieces = tide_read_u8(r);
     if (r->failed) return;
     c->their_time = their_time;
-    if (echo) c->rtt_ms = millis_since(c->now, echo);
+    measure(c, echo, held);
     c->margin = early < -30000 ? -30000 : early > 30000 ? 30000 : early;
     c->margin_known = true;
     const uint32_t input_ack = server_tick + (uint32_t)early;
@@ -2080,6 +2157,7 @@ static void client_receive(tide_client *c)
     while (t->receive && (size = t->receive(t->self, &from, data, sizeof data)) > 0) {
         if (from.kind != TIDE_ADDRESS_LOOPBACK) c->traffic.received += size;
         if (!tide_address_equal(from, c->desc.server)) continue;
+        c->arrived = arrived_of(t, c->now);
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
         if (type != 0 && type != MSG_HELLO) c->last_heard = c->now;
@@ -2527,7 +2605,7 @@ static void send_hello(tide_client *c)
     header(&w, MSG_HELLO);
     tide_write_u64(&w, c->game->hash);
     tide_write_u32(&w, c->nonce);
-    tide_write_u16(&w, millis16(c->now));
+    tide_write_u16(&w, said_time(c));
     tide_write_u64(&w, c->desc.cookie);
     tide_write_u8(&w, (c->desc.knew_kick ? HELLO_KNEW_KICK : 0u) | (c->base ? HELLO_HAS_WORLD : 0u)
                           | (can_start(c) ? HELLO_CAN_START : 0u));
@@ -2539,7 +2617,7 @@ static void send_client(tide_client *c)
 {
     tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
     header(&w, MSG_CLIENT);
-    tide_write_u16(&w, millis16(c->now));
+    tide_write_u16(&w, said_time(c));
     tide_write_u16(&w, c->their_time);
     // Whether it needs the world, or is taking the one coming, and has one to build it from
     const bool wants = c->need_snapshot || !c->loaded || c->receiving;
@@ -2769,7 +2847,8 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .state = c->state,
         .reason = c->reason,
         .player = c->welcomed ? tide_player_from_index(c->player) : (tide_player_id){0},
-        .ping_ms = c->rtt_ms,
+        .ping_ms = c->ping_ms,
+        .answer_ms = c->rtt_ms,
         .verified_tick = c->verified,
         .predicted_tick = c->ahead,
         .delay_ticks = c->delay,

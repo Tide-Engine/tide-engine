@@ -1,7 +1,0 @@
-// expect: the World is a parameter of systems, views and event handlers: 'system Name(World world)'
-component Health { int value; }
-scene Main { }
-int Read(World world, Entity e)
-{
-    return 0;
-}

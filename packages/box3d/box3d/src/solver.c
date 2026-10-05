@@ -1064,6 +1064,15 @@ static void b3ExecuteBlock( b3SolverStage* stage, b3StepContext* context, b3Solv
 	}
 }
 
+// Tide: for a worker's wait on the web (see b3SolverTask, and ../TIDE.md). The package's bridge has them.
+#if defined( __wasm__ )
+// A worker that's been through this many rounds of the wait, each ending in a yield that does nothing there,
+// sleeps for the rest of it: about as long as waking one takes, so waits between stages go as they did
+#define B3_TIDE_WAIT_ROUNDS 4096
+bool b3t_stage_sleep( const uint32_t* bits, uint32_t seen );
+void b3t_stage_wake( const uint32_t* bits );
+#endif
+
 // This staggers the worker start indices so they avoid touching the same solver blocks
 static inline int GetWorkerStartIndex( int workerIndex, int blockCount, int workerCount )
 {
@@ -1134,6 +1143,9 @@ static void b3ExecuteMainStage( b3SolverStage* stage, b3StepContext* context, ui
 	else
 	{
 		b3AtomicStoreU32( &context->atomicSyncBits, syncBits );
+#if defined( __wasm__ )
+		b3t_stage_wake( &context->atomicSyncBits.value ); // Tide: the workers that sleep
+#endif
 
 		int syncIndex = ( syncBits >> 16 ) & 0xFFFF;
 		B3_ASSERT( syncIndex > 0 );
@@ -1356,6 +1368,9 @@ static void b3SolverTask( void* taskContext )
 
 		// Signal workers to finish
 		b3AtomicStoreU32( &context->atomicSyncBits, UINT_MAX );
+#if defined( __wasm__ )
+		b3t_stage_wake( &context->atomicSyncBits.value ); // Tide: the workers that sleep
+#endif
 
 		B3_ASSERT( stageIndex == context->stageCount );
 		return;
@@ -1371,10 +1386,25 @@ static void b3SolverTask( void* taskContext )
 		// todo improve this spinner
 		uint32_t syncBits;
 		int spinCount = 0;
+#if defined( __wasm__ )
+		int waitRounds = 0;
+#endif
 		while ( ( syncBits = b3AtomicLoadU32( &context->atomicSyncBits ) ) == lastSyncBits )
 		{
 			if ( spinCount > 5 )
 			{
+#if defined( __wasm__ )
+				// Tide: WebAssembly has no pause and a page no yield, so this loop holds its core for as long
+				// as it waits, and with a worker on every core the system takes one from a worker with a block
+				// to run whatever else it has, which the stage then waits a time slice for. A worker that has
+				// waited long sleeps until the main thread gives the next stage, where its thread can.
+				if ( ++waitRounds > B3_TIDE_WAIT_ROUNDS && b3t_stage_sleep( &context->atomicSyncBits.value, lastSyncBits ) )
+				{
+					waitRounds = 0;
+					spinCount = 0;
+					continue;
+				}
+#endif
 				b3Yield();
 				spinCount = 0;
 			}

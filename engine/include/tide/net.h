@@ -60,6 +60,14 @@ typedef struct tide_transport {
     // take it over (host migration), as a room's relay then makes sure.
     // NULL where that means nothing.
     void (*end)(void *self);
+    // The transport's own clock, in seconds from whenever, and when the
+    // datagram `receive` last gave arrived by it: some time before the frame
+    // that read it. A session's ping is the network's round trip, measured
+    // between the two, so it counts no wait for a frame. Both NULL where a
+    // transport can't say when datagrams arrive: a ping there counts from
+    // when they're read.
+    double (*clock)(void *self);
+    double (*arrived)(void *self);
 } tide_transport;
 
 // ---------------------------------------------------------------------------

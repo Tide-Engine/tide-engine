@@ -685,22 +685,25 @@
     // its host, and introduces the others to it.
 
     const relayUrl = config.relay || 'wss://relay.tide-engine.dev';
-    // `Tide.lag`, or `lag=` in the page's address: the round trip to its
-    // match's server this page's player is to have, in milliseconds, to see a
-    // match as on a slow connection with both players at one desk. It's the
-    // whole trip, there and back, and what the trip takes already is part of
+    // `Tide.lag`, or `lag=` in the page's address: the ping this page's
+    // player is to have, in milliseconds, to see a match as on a slow
+    // connection with both players at one desk. A ping is the network's whole
+    // round trip to the match's server, there and back (the session's:
+    // tide_client_status.ping_ms), and what the trip takes already is part of
     // it: the page adds what's missing (`added`), half to what it sends and
     // half to what it receives, so a lag of 100 reads as a ping of 100, not as
-    // 100 more than it was. A page that hosts adds nothing: its machine runs
-    // the server, and each player who joined says its own. The page can change
-    // it while the game runs, and reads `Tide.minLag`, the least a lag can make
-    // the trip: what trips took while the page added nothing, 0 until the
-    // program measured 8 of them so (a page that wants it starts with no lag).
-    // `Tide.room` is the code of the room the program hosts or joined ("" for
-    // none), for the page to show or to link to.
+    // 100 more than it was. What it holds back arrives, to the program, when
+    // it's let go. A page that hosts adds nothing: its machine runs the
+    // server, and each player who joined says its own. The page can change it
+    // while the game runs, and reads `Tide.minLag`, the least a lag can make
+    // the ping: what it was while the page added nothing, undefined until the
+    // program measured 8 of them so (a page that wants it starts with no lag),
+    // and on a page that hosts. `Tide.room` is the code of the room the
+    // program hosts or joined ("" for none), for the page to show or to link
+    // to.
     if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
     Object.defineProperty(config, 'minLag', { configurable: true, enumerable: true,
-        get: () => room && !room.hosting && room.leastOf >= 8 ? Math.round(room.least) : 0 });
+        get: () => room && !room.hosting && room.leastOf >= 8 ? Math.round(room.least) : undefined });
     Object.defineProperty(config, 'room', { configurable: true, enumerable: true,
         get: () => room && !room.failed && room.reachable ? room.code : '' });
     const CODE_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // No look-alikes: 0 and O, 1 and I
@@ -718,6 +721,8 @@
             number: ++rooms, hosting, code, failed: false, reachable: true, connected: false, opened: performance.now(),
             ws: null, announced: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
             key: key || (hosting ? newKey() : ''), moving: !!key, moved: 0,
+            // When the datagram the program last took arrived (performance.now)
+            arrived: 0,
             // `Tide.lag`: what the page adds to a round trip and since when,
             // what a trip takes beside that, once one was measured, what
             // trips took while nothing was added and how many of them that's
@@ -928,8 +933,10 @@
             // caught up with its own end yet takes it for a player who gave up
             if (!r.hosting && r.ws) r.ws.close();
             if (room !== r || !(event.data instanceof ArrayBuffer)) return;
+            // It arrives now, or once the page lets it go: a while before
+            // the frame that reads it, which is no part of a ping
             const arrive = () => {
-                if (room === r && r.inbox.length < 4096) r.inbox.push([peer.number, new Uint8Array(event.data)]);
+                if (room === r && r.inbox.length < 4096) r.inbox.push([peer.number, new Uint8Array(event.data), performance.now()]);
             };
             // The way back's half of what `Tide.lag` adds
             const late = Math.floor(added(r) / 2);
@@ -1026,35 +1033,36 @@
             for (;;) {
                 const next = room.inbox.shift();
                 if (!next) return 0;
-                const [from, bytes] = next;
+                const [from, bytes, arrived] = next;
                 if (bytes.length > capacity || bytes.length === 0) continue; // Longer ones are dropped
                 view().setUint32(fromPtr, from, true);
                 u8().set(bytes, ptr);
+                room.arrived = arrived;
                 room.heard = true;
                 return bytes.length;
             }
         },
-        // The round trip the program measures to its room's host, in
-        // milliseconds (0 for none), which it says every frame: what `Tide.lag`
-        // is to make it. Less what the page adds, a trip is what one takes by
-        // itself, if all of it went with what's added now: it set out after
-        // that last changed. The program counts time by its frames, each up to
-        // a frame's work behind the page's clock, so a trip that set out
-        // within 50 ms of the change doesn't count. Nor does one said again
-        // with nothing heard since. Frames come when they come, so trips
-        // differ by a frame's length: the page goes by what they take on
-        // the whole. What's left of a trip with something added isn't what
-        // one takes with nothing: it follows how the page's delays fall
-        // among the server's ticks. So `Tide.minLag` is from the trips with
-        // nothing added alone: their mean, of the last 32 or so once there
-        // are that many, as it's there to be read.
-        room_ping(ping) {
+        room_arrived: () => room ? room.arrived : 0,
+        // The ping the program measures to its room's host, in milliseconds
+        // (under 0 for none), which it says every frame: what `Tide.lag` is to
+        // make it. Less what the page adds, it's what the ping is by itself,
+        // if all of its trip went with what's added now: it set out after
+        // that last changed, which was `answer` ago, what the program says an
+        // answer took to be read. The program counts that by its frames, each
+        // up to a frame's work behind the page's clock, so a trip that set
+        // out within 50 ms of the change doesn't count. Nor does one said
+        // again with nothing heard since. The page's timers fire a little
+        // late, each its own little, so the page goes by what's left on the
+        // whole. `Tide.minLag` is from the pings with nothing added alone:
+        // their mean, of the last 32 or so once there are that many, as it's
+        // there to be read.
+        room_ping(ping, answer) {
             const r = room;
             if (!r) return;
             const add = added(r);
             const heard = r.heard;
             r.heard = false;
-            if (!heard || !(ping > 0) || performance.now() - ping - 50 <= r.addedSince) return;
+            if (!heard || ping < 0 || performance.now() - answer - 50 <= r.addedSince) return;
             const rest = Math.max(ping - add, 0);
             r.rest = r.measured ? r.rest + (rest - r.rest) / 8 : rest;
             r.measured = true;
@@ -1793,6 +1801,10 @@
             return -1;
         }
     }
+    // As many as the browser says the machine has processors: both threads of a
+    // core that runs two, as it says nothing else. The pool's workers sleep
+    // when they have nothing to do (platform/src/jobs.c), so that's no more
+    // than the machine can run.
     platform.threads = () => shared ? Math.max(1, Math.min(navigator.hardwareConcurrency || 1, 32)) : 1;
 
     // Local files live in the page, including while a new build takes over.

@@ -80,6 +80,8 @@ stage 2  Drain  (per entity)
 
 The editors show it above the system too, `stage 1 · World: reads Armor; writes Health`, and when you hover the system or its `World` parameter.
 
+A system that passes its `World` to a function reaches what the function does, and it's listed the same way: the schedule doesn't tell the two apart.
+
 [Read-only query parameters](./systems.md#another-set-of-entities) also read components of a separate entity set. Those bindings count as reads of any entity's component and appear in the schedule and editor hints, so `query (Body body, with Fighter) fighters` waits for earlier systems that write `Body`, even when their outer entity filters differ. The query's `with` and `without` filters access no component data.
 
 In a big game, the long lists are cut short. Every wait that's a system's own is there, but the ones that go through another system (`and through Fire`) and the systems it runs alongside are named up to 32 each and counted past that: `after 412 more, through those`, `alongside Expire, Fade and 168 more`.

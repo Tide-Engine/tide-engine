@@ -88,6 +88,7 @@ typedef struct endpoint {
     tide_loopback *net;
     uint32_t number;
     bool open;
+    double arrived; // When the datagram it last gave arrived
 } endpoint;
 
 struct tide_loopback {
@@ -116,7 +117,7 @@ tide_loopback *tide_loopback_create(const uint64_t seed)
     tide_loopback *net = calloc(1, sizeof *net);
     if (!net) return NULL;
     net->random = seed;
-    for (uint32_t i = 0; i < LOOPBACK_ENDPOINTS; i++) net->endpoints[i] = (endpoint){net, i + 1u, false};
+    for (uint32_t i = 0; i < LOOPBACK_ENDPOINTS; i++) net->endpoints[i] = (endpoint){net, i + 1u, false, 0.0};
     return net;
 }
 
@@ -172,7 +173,7 @@ static void loopback_send(void *self, const tide_address to, const void *data, c
 
 static uint32_t loopback_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
 {
-    const endpoint *e = self;
+    endpoint *e = self;
     tide_loopback *net = e->net;
     for (;;) {
         int32_t next = -1;
@@ -190,9 +191,24 @@ static uint32_t loopback_receive(void *self, tide_address *from, void *data, con
         }
         memcpy(data, d.data, d.size);
         *from = d.from;
+        e->arrived = d.at;
         remove_at(net, (uint32_t)next);
         return d.size;
     }
+}
+
+// The network's time is its clock, and a datagram arrived when its time came,
+// however long after that its endpoint was read.
+static double loopback_clock(void *self)
+{
+    const endpoint *e = self;
+    return e->net->now;
+}
+
+static double loopback_arrived(void *self)
+{
+    const endpoint *e = self;
+    return e->arrived;
 }
 
 static void loopback_close(void *self)
@@ -211,7 +227,7 @@ tide_transport tide_loopback_endpoint(tide_loopback *net, const uint32_t number)
     if (number < 1 || number > LOOPBACK_ENDPOINTS) return (tide_transport){0};
     endpoint *e = &net->endpoints[number - 1u];
     e->open = true;
-    return (tide_transport){e, loopback_send, loopback_receive, loopback_close, NULL};
+    return (tide_transport){e, loopback_send, loopback_receive, loopback_close, NULL, loopback_clock, loopback_arrived};
 }
 
 // ---------------------------------------------------------------------------

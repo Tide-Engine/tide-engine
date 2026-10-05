@@ -151,7 +151,8 @@ static void counted_end(void *self)
 static tide_transport count(machine *m, const tide_transport inner)
 {
     m->transport = (counted){inner, m};
-    return (tide_transport){&m->transport, counted_send, counted_receive, counted_close, inner.end ? counted_end : NULL};
+    return (tide_transport){.self = &m->transport, .send = counted_send, .receive = counted_receive, .close = counted_close,
+                            .end = inner.end ? counted_end : NULL};
 }
 
 // The platform's pool, with only its first `threads` threads taking part.
@@ -187,7 +188,7 @@ static const tide_jobs *jobs_for(const uint32_t threads)
     const tide_jobs *pool = tide_platform_jobs();
     if (!pool || threads == 1) return NULL;
     if (threads == 0 || threads >= pool->threads) return pool;
-    the_limited = (limited){{&the_limited, threads, limited_run, NULL}, pool};
+    the_limited = (limited){{&the_limited, threads, limited_run, NULL, NULL}, pool};
     return &the_limited.jobs;
 }
 

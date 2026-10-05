@@ -1008,10 +1008,19 @@ static const char *operator_word(const decl *m)
 }
 
 // A function that's handed the local state, `tide_l`, by the local code that
-// calls it: one that reaches this machine's files, or reads Frame.dt.
+// calls it: one that reaches this machine's files, reads Frame.dt, or reaches
+// local entities' components through its World.
 static bool takes_local(const decl *m)
 {
-    return m->uses_io || m->frame_time;
+    return m->uses_io || m->frame_time || m->world_local;
+}
+
+// A function or method that reaches the match's entities through its World
+// parameter, itself or through the functions it passes it on to: it's handed
+// the match's world, `tide_w`, by the code that calls it, in the World's place.
+static bool takes_world(const decl *m)
+{
+    return m->world_match;
 }
 
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
@@ -1431,7 +1440,8 @@ static const char *place_where(const gen *g, const expr *e)
 // variable is: a mut one's, but text's, whose tide_textref says.
 static bool takes_where(const param *p)
 {
-    return p->function_param && !p->task_ref && p->mode == PARAM_MUT && p->type.kind != TY_STRING && p->type.kind != TY_RECORD;
+    return p->function_param && !p->task_ref && p->mode == PARAM_MUT && p->type.kind != TY_STRING && p->type.kind != TY_RECORD
+        && p->type.kind != TY_WORLD;
 }
 
 // Whether `e` makes a new value, rather than naming one that's somewhere: a
@@ -2143,6 +2153,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     if (takes_local(m)) {
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
+    if (takes_world(m)) sb_printf(o, "%stide_w", args++ ? ", " : ""); // What its World argument stands for
+    if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
         const bool have_address = g->routine->is_mut_method;
         sb_put(o, m->is_mut_method ? "tide_self, tide_self_where" : have_address ? "*tide_self" : "tide_self");
@@ -2170,6 +2182,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
     }
     for (int i = 0; i < e->args.count; i++) {
+        if (m->params.items[i].type.kind == TY_WORLD) continue; // The worlds it's handed, above
         if (args++) sb_put(o, ", ");
         if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
@@ -2654,6 +2667,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_grid_clear(&(");
             gen_expr(g, o, e->object);
             sb_printf(o, "), &%s, %s)", grid_shape_name(e->object->type.decl), place_where(g, e->object));
+        } else if (e->call == CALL_WORLD && str_eq_c(e->name, "TryGet")) {
+            // world.TryGet<Health>(e, out health): whether it has one, and into the variable, it or the default
+            const expr *value = e->args.items[1];
+            sb_printf(o, "tide_tryget_%s(%s, ", type_cname(e->type_decl), e->type_decl->is_local ? "tide_l" : "tide_w");
+            gen_expr(g, o, e->args.items[0]);
+            sb_put(o, ", &(");
+            gen_expr(g, o, value);
+            sb_printf(o, "), %s)", place_where(g, value));
         } else if (e->call == CALL_WORLD) {
             // world.Get<Health>(e): that entity's, or its zero when it has none; Has: whether it has one;
             // Set: puts one back, and nothing when it has none
@@ -3490,6 +3511,7 @@ static bool writes(const expr *e)
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: return true; // Clear
     case CALL_RANDOM: return true; // Each of a Random's methods steps it
+    case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
     default: return false;
     }
 }
@@ -3588,6 +3610,7 @@ static bool settled(const expr *e)
     if (!e) return true;
     // Constants; Devices and the draw list, which nothing in Tide writes
     if (e->bind == BIND_CONST || e->type.kind == TY_RECORD || e->type.kind == TY_DRAW_LIST) return true;
+    if (e->type.kind == TY_WORLD) return false; // Passed on: what the call reads through it, another call can change
     switch (e->kind) {
     case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
@@ -4482,7 +4505,7 @@ static void gen_inline(gen *g, const expr *e)
     const char **names = arena_alloc(sizeof(char *) * (size_t)(fn->params.count + 1));
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
-        if (p->type.kind == TY_ACTION) continue;
+        if (p->type.kind == TY_ACTION || p->type.kind == TY_WORLD) continue; // The World is its caller's, as its code is
         gen_frame *caller = g->frame;
         g->frame = &frame;
         names[i] = local_cname(g, p->name);
@@ -8493,6 +8516,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         }
     } else if (fn) {
         if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
+        if (takes_world(fn)) capture(&out, fn->world_sets ? "tide_world *" : "const tide_world *", "tide_w");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -8501,6 +8525,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         if (fn->uses_this) capture(&out, "tide_entity", "tide_this");
         for (int i = 0; i < fn->params.count; i++) {
             const param *p = &fn->params.items[i];
+            if (p->type.kind == TY_WORLD) continue;
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
             else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
@@ -10328,7 +10353,9 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
+    if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", m->world_sets ? "" : "const ");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
+        if (n > 0) sb_put(o, ", "); // After what it's handed
         sb_printf(o, m->is_mut_method ? "%s *tide_self, const uint32_t tide_self_where" : "const %s tide_self", type_cname(m->owner));
         n++;
     }
@@ -10339,6 +10366,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     // A mut parameter comes with where the caller's variable is (see tide/text.h)
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
+        if (p->type.kind == TY_WORLD) continue; // The worlds it's handed, above
         if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
@@ -10371,7 +10399,9 @@ static void gen_routine(gen *g, const decl *m)
     if (m->uses_this) line(g, o, "(void)tide_this;");
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
     if (takes_local(m)) line(g, o, "(void)tide_l;");
+    if (takes_world(m)) line(g, o, "(void)tide_w;");
     for (int i = 0; i < m->params.count; i++) {
+        if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
         if (has_fields_ptr(&m->params.items[i])) line(g, o, "(void)%s;", fields_name(g, m->params.items[i].name));
@@ -10805,6 +10835,25 @@ static void gen_tasks(gen *g)
 static void gen_routines(gen *g)
 {
     sb *o = &g->c;
+    // world.TryGet<Health>(e, out health), for each component code asks for that way: whether the entity has
+    // one, and into the caller's variable, a copy of it, or the component's default
+    for (int i = 0; i < g->prog->components.count; i++) {
+        const decl *d = g->prog->components.items[i];
+        if (!d->tried) continue;
+        const char *name = type_cname(d);
+        const type t = {TY_COMPONENT, (decl *)d};
+        sb_printf(o, "TIDE_HELPER bool tide_tryget_%s(const %s *w, const tide_entity e, %s *value, const uint32_t where)\n{\n"
+                     "    (void)where;\n    const bool has = tide_has_%s(w, e);\n", name, world_type(d->is_local), name, name);
+        sb_printf(o, "    const %s found = has ? ", name);
+        if (type_has_list(t)) sb_printf(o, "tide_copy_%s(tide_get_%s(w, e))", name, name); // Its lists the copy's own
+        else sb_printf(o, "tide_get_%s(w, e)", name);
+        sb_put(o, " : ");
+        gen_default(g, o, t);
+        sb_put(o, ";\n");
+        if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", name);
+        else sb_put(o, "    *value = found;\n");
+        sb_put(o, "    return has;\n}\n\n");
+    }
     bool externs = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];

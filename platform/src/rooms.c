@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/time.h"
+
 // The room this program is in, whichever machine does the work: `number`
 // tells rooms apart, so a transport left over from the last one does nothing.
 static uint32_t backend_host(void);
@@ -27,7 +29,8 @@ static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1]);
 static bool backend_failed(void);
 static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_t size);
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
-static void backend_ping(uint32_t ping_ms);
+static double backend_arrived(void); // When the datagram backend_receive last gave arrived: seconds, by tide_time_now_ns
+static void backend_ping(int32_t ping_ms, uint32_t answer_ms);
 
 #if defined(__wasm__)
 
@@ -88,9 +91,15 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
     return tide_web_room_receive(number, from, data, capacity);
 }
 
-static void backend_ping(const uint32_t ping_ms)
+// The page notes when each datagram came, by the clock the program has too.
+static double backend_arrived(void)
 {
-    tide_web_room_ping(ping_ms);
+    return tide_web_room_arrived() * 1e-3;
+}
+
+static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
+{
+    tide_web_room_ping(ping_ms, answer_ms);
 }
 
 #else
@@ -127,6 +136,7 @@ typedef struct native_room {
     int peer_count;
     uint32_t next_number;
     int next_read;
+    double arrived; // When the datagram backend_receive last gave arrived
 } native_room;
 
 static native_room *room;
@@ -577,6 +587,7 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
                 // with its own end yet takes it for a player who gave up
                 if (!room->hosting && room->ws_live) relay_close(room);
                 *from = room->peers[i].number;
+                room->arrived = room->peers[i].peer->arrived;
                 room->next_read = (i + 1) % room->peer_count;
                 return (uint32_t)n;
             }
@@ -587,10 +598,16 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
     return 0;
 }
 
+static double backend_arrived(void)
+{
+    return room ? room->arrived : 0.0;
+}
+
 // Only a page plays at a slow connection.
-static void backend_ping(const uint32_t ping_ms)
+static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
 {
     (void)ping_ms;
+    (void)answer_ms;
 }
 
 #endif
@@ -634,6 +651,21 @@ static void room_end(void *self)
     backend_end(r->number);
 }
 
+// A ping in a room is the network's round trip (tide_transport.clock): each
+// datagram is noted as it arrives, by the system or the page, by the one clock
+// everything here has.
+static double room_clock(void *self)
+{
+    (void)self;
+    return (double)tide_time_now_ns() * 1e-9;
+}
+
+static double room_arrived(void *self)
+{
+    (void)self;
+    return backend_arrived();
+}
+
 // A transport for room `number`: false, closing it, without the memory.
 static bool transport(const uint32_t number, const uint32_t code, tide_transport *out)
 {
@@ -643,7 +675,8 @@ static bool transport(const uint32_t number, const uint32_t code, tide_transport
         return false;
     }
     *r = (room_transport){number, code};
-    *out = (tide_transport){.self = r, .send = room_send, .receive = room_receive, .close = room_close, .end = room_end};
+    *out = (tide_transport){.self = r, .send = room_send, .receive = room_receive, .close = room_close, .end = room_end,
+                            .clock = room_clock, .arrived = room_arrived};
     return true;
 }
 
@@ -690,9 +723,9 @@ bool tide_platform_room_failed(void)
     return backend_failed();
 }
 
-void tide_platform_room_ping(const uint32_t ping_ms)
+void tide_platform_room_ping(const int32_t ping_ms, const uint32_t answer_ms)
 {
-    backend_ping(ping_ms);
+    backend_ping(ping_ms, answer_ms);
 }
 
 void tide_platform_room_key(char *out, const size_t size)
@@ -734,6 +767,7 @@ typedef struct both {
     tide_transport udp;
     tide_transport room;
     bool room_first; // Taking turns, so neither waits on the other
+    const tide_transport *gave; // Which the last datagram came on
 } both;
 
 static void both_send(void *self, const tide_address to, const void *data, const uint32_t size)
@@ -749,8 +783,26 @@ static uint32_t both_receive(void *self, tide_address *from, void *data, const u
     b->room_first = !b->room_first;
     const tide_transport *first = b->room_first ? &b->room : &b->udp;
     const tide_transport *second = b->room_first ? &b->udp : &b->room;
-    const uint32_t n = first->receive(first->self, from, data, capacity);
-    return n ? n : second->receive(second->self, from, data, capacity);
+    uint32_t n = first->receive(first->self, from, data, capacity);
+    b->gave = first;
+    if (!n) {
+        n = second->receive(second->self, from, data, capacity);
+        b->gave = second;
+    }
+    return n;
+}
+
+// Both go by the one clock, and each says when its own datagrams arrived.
+static double both_clock(void *self)
+{
+    const both *b = self;
+    return b->udp.clock(b->udp.self);
+}
+
+static double both_arrived(void *self)
+{
+    const both *b = self;
+    return b->gave ? b->gave->arrived(b->gave->self) : 0.0;
 }
 
 static void both_close(void *self)
@@ -774,8 +826,9 @@ bool tide_platform_host_open(const uint16_t port, tide_transport *out)
     const bool has_room = tide_platform_room_host(&in_room);
     both *b = has_udp && has_room ? malloc(sizeof *b) : NULL;
     if (b) {
-        *b = (both){udp, in_room, false};
-        *out = (tide_transport){.self = b, .send = both_send, .receive = both_receive, .close = both_close, .end = both_end};
+        *b = (both){udp, in_room, false, NULL};
+        *out = (tide_transport){.self = b, .send = both_send, .receive = both_receive, .close = both_close, .end = both_end,
+                                .clock = both_clock, .arrived = both_arrived};
         return true;
     }
     if (has_udp && has_room) {

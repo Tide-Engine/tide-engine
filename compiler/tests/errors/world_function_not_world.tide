@@ -1,0 +1,5 @@
+// expect: 'Alive' takes World for 'world', not Entity
+component Health { int value; Entity other; }
+scene Main { }
+bool Alive(Entity target, World world) { return world.Has<Health>(target); }
+system Read(mut Health health) { if (Alive(health.other, health.other)) health.value += 1; }

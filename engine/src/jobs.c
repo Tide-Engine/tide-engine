@@ -37,6 +37,10 @@
 #define PIECE_WORK 250000u
 #define MOST_PIECES 16u
 
+// A thread that found nothing to do this many times in a row stops looking
+// for a while: it yields its core, or leaves the tick where it can (see work).
+#define IDLE_LOOKS 256u
+
 #define NONE UINT32_MAX
 
 // The task running on this thread, while systems run.
@@ -190,6 +194,7 @@ typedef struct tick_run {
     atomic_uint tasks_ready; // Those a thread could take now
     atomic_uint tasks_used;  // C started tasks in this tick
     uint32_t threads;        // The pool's, and the caller's
+    const tide_jobs *jobs;
     void *world;
     const tide_tick_systems *tick;
     system_state *state;
@@ -211,16 +216,28 @@ static void relax(void)
 #endif
 }
 
+// There's something for `count` more threads to do: the pool's that left the
+// tick for want of it (see work) are asked back.
+static void ask(const tick_run *r, const uint32_t count)
+{
+    if (count && r->jobs->more) r->jobs->more(r->jobs->self, count);
+}
+
 // The system is done: those waiting for it are one closer to starting, and
 // the next to settle its spawns one closer to it.
 static void finish_system(tick_run *r, const uint32_t s)
 {
     tide_memory_sync(); // What its tasks made on other threads (see tide/page.h)
+    uint32_t ready = 0; // What this lets start
     for (uint32_t i = r->first_dependent[s]; i < r->first_dependent[s + 1u]; i++) {
-        atomic_fetch_sub(&r->state[r->dependents[i]].waiting, 1u);
+        system_state *waited = &r->state[r->dependents[i]];
+        if (atomic_fetch_sub(&waited->waiting, 1u) == 1u) ready += waited->tasks;
     }
-    if (r->state[s].next_settle != NONE) atomic_fetch_sub(&r->state[r->state[s].next_settle].settle_waiting, 1u);
+    if (r->state[s].next_settle != NONE && atomic_fetch_sub(&r->state[r->state[s].next_settle].settle_waiting, 1u) == 1u) ready++;
     atomic_fetch_add(&r->finished, 1u);
+    // This thread goes on to one of them itself, so a system that only lets
+    // one more task start wakes nobody
+    if (ready > 1u) ask(r, ready - 1u);
 }
 
 static void finish_task(tick_run *r, const uint32_t s)
@@ -265,6 +282,21 @@ static bool work_once(tick_run *r)
 // systems share their loops out.
 static TIDE_THREAD_LOCAL tick_run *current;
 
+// Whether this thread can sleep in the work it's given (tide_job_sleep): it's
+// one of a pool's that can, in a tick. Only the web asks.
+#if defined(__wasm__) && defined(__wasm_atomics__)
+static TIDE_THREAD_LOCAL bool sleeps;
+static void may_sleep(const bool can)
+{
+    sleeps = can;
+}
+#else
+static void may_sleep(const bool can)
+{
+    (void)can;
+}
+#endif
+
 // A task of a loop a running system shares out, if there's one to do.
 static bool help_loop(tick_run *r)
 {
@@ -298,7 +330,12 @@ static bool help_task(tick_run *r)
         unsigned ready = TASK_READY;
         if (atomic_load_explicit(&slot->state, memory_order_relaxed) != TASK_READY) continue;
         if (!atomic_compare_exchange_strong(&slot->state, &ready, TASK_RUNNING)) continue;
-        atomic_fetch_sub(&r->tasks_ready, 1u);
+        // The threads for the tasks still there are this one's to ask for:
+        // whoever started them only asked for the first (tide_job_start). One
+        // taken before it was counted leaves the count under what's there,
+        // for a moment: nothing to ask for then
+        const uint32_t ready_before = atomic_fetch_sub(&r->tasks_ready, 1u);
+        if (ready_before > 1u && ready_before <= TASK_SLOTS) ask(r, ready_before - 1u);
         tide_memory_sync(); // What the thread that started it made
         slot->work(slot->context);
         atomic_store(&slot->state, TASK_DONE);
@@ -309,27 +346,33 @@ static bool help_task(tick_run *r)
 
 static void work(void *context, const uint32_t thread)
 {
-    (void)thread;
     tick_run *r = context;
     current = r;
     if (r->tick->prepare) r->tick->prepare(r->world);
     // A thread with nothing to do spins a little, then lets the system run
     // something else on its core: with a thread on every core, one the
     // system pushes aside for a moment would otherwise hold the tick up for
-    // a whole time slice, while the rest spin. What a running system shares
-    // out comes first, its C's tasks and its loops: what waits for that system
-    // waits for them.
+    // a whole time slice, while the rest spin. Where the pool's threads can
+    // sleep, it leaves the tick instead, and whatever makes more work than
+    // the threads at it take asks it back (ask): the caller's thread stays, as
+    // the tick is its to finish. What a running system shares out comes first,
+    // its C's tasks and its loops: what waits for that system waits for them.
+    const bool leaves = thread != 0u && r->jobs->more;
+    may_sleep(leaves);
     uint32_t idle = 0;
     while (atomic_load(&r->finished) < r->tick->count) {
         if (help_task(r) || help_loop(r) || work_once(r)) {
             idle = 0;
-        } else if (++idle < 256u) {
+        } else if (++idle < IDLE_LOOKS) {
             relax();
+        } else if (leaves) {
+            break;
         } else {
             tide_yield();
             idle = 0;
         }
     }
+    may_sleep(false);
     current = NULL;
 }
 
@@ -349,6 +392,7 @@ void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint
         for (uint32_t task = 0; task < count; task++) work_fn(context, task);
         return;
     }
+    ask(r, count - 1u); // This thread takes its share
     for (;;) {
         const uint32_t task = atomic_fetch_add(&job.next, 1u);
         if (task >= count) break;
@@ -379,7 +423,9 @@ tide_job tide_job_start(void (*work_fn)(void *context), void *context)
             slot->work = work_fn;
             slot->context = context;
             atomic_store(&slot->state, TASK_READY);
-            atomic_fetch_add(&r->tasks_ready, 1u);
+            // A thread for the first of them, which asks for the rest's as it
+            // takes it: code that starts a run of tasks pays for one call
+            if (atomic_fetch_add(&r->tasks_ready, 1u) == 0u) ask(r, 1u);
             return i + 1u;
         }
     } else if (serial_threads > 1u) {
@@ -419,6 +465,44 @@ uint32_t tide_job_threads(void)
     return r ? r->threads : serial_threads > 1u ? serial_threads : 1u;
 }
 
+#if defined(__wasm__) && defined(__wasm_atomics__)
+
+// Threads in tide_job_sleep, or on their way in. A sleeper counts itself
+// before the wait looks at the word, and whoever changed the word looks for
+// sleepers after, so one of the two sees the other: a wake that finds no
+// sleeper has nobody to wake.
+static atomic_uint sleeping;
+
+bool tide_job_sleep(const uint32_t *word, const uint32_t seen)
+{
+    if (!sleeps) return false; // The page's own thread can't wait
+    atomic_fetch_add(&sleeping, 1u);
+    __builtin_wasm_memory_atomic_wait32((int32_t *)(uintptr_t)word, (int32_t)seen, -1);
+    atomic_fetch_sub(&sleeping, 1u);
+    return true;
+}
+
+void tide_job_wake(const uint32_t *word)
+{
+    if (atomic_load(&sleeping)) __builtin_wasm_memory_atomic_notify((int32_t *)(uintptr_t)word, UINT32_MAX);
+}
+
+#else
+
+bool tide_job_sleep(const uint32_t *word, const uint32_t seen)
+{
+    (void)word;
+    (void)seen;
+    return false; // A pause and a yield are there for the wait
+}
+
+void tide_job_wake(const uint32_t *word)
+{
+    (void)word;
+}
+
+#endif
+
 // Each task's queue, kept from tick to tick by the thread that runs ticks, so
 // their pages are made once rather than every tick.
 static TIDE_THREAD_LOCAL tide_queue *kept_queues;
@@ -439,7 +523,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
     const uint32_t count = tick->count;
     tick_run r = {.world = world, .tick = tick, .state = zeroed(count, sizeof(system_state)),
                   .first_dependent = zeroed(count + 1u, sizeof(uint32_t)), .profile = jobs->profile,
-                  .threads = jobs->threads};
+                  .threads = jobs->threads, .jobs = jobs};
     for (uint32_t i = 0; i < LOOP_SLOTS; i++) {
         atomic_init(&r.loops[i].job, NULL);
         atomic_init(&r.loops[i].users, 0u);

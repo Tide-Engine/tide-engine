@@ -130,6 +130,20 @@ static void finish(void *task, void *user)
 }
 
 #ifdef __wasm__
+// Box2D's workers wait for each stage of a step in a loop, which on the web
+// holds a core for as long as it goes on. One that has waited long sleeps
+// until the next stage is given (solver.c, where they're called from), on the
+// threads that can (tide/jobs.h).
+bool b2t_stage_sleep(const uint32_t *bits, const uint32_t seen)
+{
+    return tide_job_sleep(bits, seen);
+}
+
+void b2t_stage_wake(const uint32_t *bits)
+{
+    tide_job_wake(bits);
+}
+
 // On the web, memory another thread grew can't be used until this one hears of
 // it, which the engine's allocator sees to (tide/page.h).
 static void *allocate(const size_t size, const int alignment)
