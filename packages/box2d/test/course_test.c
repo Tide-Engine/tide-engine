@@ -75,3 +75,89 @@ TIDE_TEST(box2d_orders_a_games_systems)
     TIDE_CHECK(late.velocity.x == 2.0f && near(late.position.x, DT));
     tide_world_free(&a);
 }
+
+// ---------------------------------------------------------------------------
+// What a view sees
+
+static tide_world b;
+static tide_world previous;
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+
+static void put(tide_world *w, has_fn *has, const Box2D_Body body)
+{
+    tide_set_Box2D_Body(w, the(w, has), body);
+}
+
+TIDE_TEST(box2d_views_see_a_body_turn_the_short_way)
+{
+    start(&a, Case_Turning);
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    bool wrapped = false;
+    for (int i = 0; i < 400 && !wrapped; i++) {
+        tide_world_copy(&previous, &a);
+        tide_world_tick(&a);
+        const float was = body_of(&previous, tide_has_Spinner).angle;
+        const float is = body_of(&a, tide_has_Spinner).angle;
+        if (was < 3.0f || is > -3.0f) continue;
+        // The tick its angle went from just under half a turn to just over it, which Box2D says as -pi: a
+        // view halfway between the two ticks sees it half a turn round, not facing the other way
+        wrapped = true;
+        tide_draw_reset(&draw);
+        tide_frame(&a, &previous, 0.5f, NULL, &local, &draw, &gui);
+        printf("    between a tick at %g and the next at %g, a view sees the body at %g\n", (double)was, (double)is,
+               (double)local.Seen.angle);
+        TIDE_CHECK(tide_abs_f(local.Seen.angle) > 3.0f);
+        TIDE_CHECK(near(local.Seen.position.y, 5.0f));
+    }
+    TIDE_CHECK(wrapped);
+    tide_local_free(&local);
+    tide_world_free(&a);
+    tide_world_free(&previous);
+}
+
+// The match says a body is somewhere else than this machine drew it, as the
+// server does of what a client predicted: what a view sees doesn't jump there.
+// It's where it was drawn, and gets to where the match says over a few frames.
+TIDE_TEST(box2d_views_glide_through_a_correction)
+{
+    start(&a, Case_Turning);
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    tick(&a, 30);
+    tide_world_copy(&previous, &a);
+    tide_world_tick(&a);
+    const Box2D_Body drawn = body_of(&a, tide_has_Spinner);
+    tide_draw_reset(&draw);
+    tide_frame(&a, &previous, 1.0f, NULL, &local, &draw, &gui);
+    TIDE_CHECK(local.Seen.position.x == drawn.position.x && local.Seen.angle == drawn.angle);
+
+    // The same tick as the server had it: a meter to the side, and turned half a radian more
+    tide_world_copy(&b, &a);
+    Box2D_Body said = drawn;
+    said.position.x += 1.0f;
+    said.angle += 0.5f;
+    put(&b, tide_has_Spinner, said);
+    const uint64_t hash = tide_world_hash(&b);
+    const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false};
+    tide_local_correct(&local, &correction);
+    tide_draw_reset(&draw);
+    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    printf("    drawn at %g and turned %g, and said to be at %g and %g: a view sees it at %g and %g", (double)drawn.position.x,
+           (double)drawn.angle, (double)said.position.x, (double)said.angle, (double)local.Seen.position.x, (double)local.Seen.angle);
+    TIDE_CHECK(near(local.Seen.position.x, drawn.position.x) && near(local.Seen.angle, drawn.angle));
+    // ...and halfway there 75 ms later
+    tide_local_frame_time(&local, 0.075f);
+    tide_draw_reset(&draw);
+    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)local.Seen.angle);
+    TIDE_CHECK(near(local.Seen.position.x, drawn.position.x + 0.5f) && near(local.Seen.angle, drawn.angle + 0.25f));
+    // None of it is the match's: the world is as the server said
+    TIDE_CHECK(tide_world_hash(&b) == hash && body_of(&b, tide_has_Spinner).position.x == said.position.x);
+    tide_local_free(&local);
+    tide_world_free(&a);
+    tide_world_free(&b);
+    tide_world_free(&previous);
+}

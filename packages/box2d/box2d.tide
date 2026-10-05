@@ -31,12 +31,17 @@ enum BodyType
 
 // A rigid body. Its place and speeds are Box2D's after each step, and a system
 // that writes them moves the body: the next step starts from what they say.
+//
+// Where it is and how it's turned are said to be that, for views: they see a
+// body turn the short way between two ticks, as its angle goes from pi to -pi
+// at half a turn, and when the server corrects where this machine had it, they
+// see it get there over a few frames. Neither changes anything of the match.
 component Body
 {
     long id; // Box2D's own handle: 0 until the body's first step
     BodyType type = BodyType.Dynamic;
-    float2 position;
-    float angle; // In radians
+    [Position] float2 position;
+    [Rotation] float angle; // In radians, from -pi to pi
     float2 velocity;
     float spin; // In radians a second
     float2 impulse; // Given to the body at the next step, once
