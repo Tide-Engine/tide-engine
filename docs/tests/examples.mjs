@@ -263,7 +263,9 @@ try {
                 // hosts, and each hears the other's packets: they're in one match.
                 await until(`${frame(0)}.contentWindow.Tide.room.length === 6 && ${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`, `${id}: one room`);
                 await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, `${id}: a match between the two`);
-                // The slider is what both pages delay their packets by, at once.
+                // The slider is the ping both pages are told, at once: the
+                // round trip the one that joined is to have (what it then
+                // adds is tide_platform_web_lag's to check, in made-up time).
                 await evaluate(`(() => { const lag = example.querySelector('[data-example-lag]'); lag.value = 125; lag.dispatchEvent(new Event('input')); })()`);
                 assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.lag + ',' + ${frame(1)}.contentWindow.Tide.lag`), '125,125', `${id}: latency`);
                 assert.equal(await evaluate('example.querySelector(".example-lag output").textContent'), '125 ms');

@@ -10,7 +10,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 
 - [Two players, in one match](./first-game.md#play-together): the game from the first tutorial, hosted by one frame and joined by the other.
 - [Open a room, and join it](../multiplayer/matches.md#rooms): a lobby to work yourself. Start a match, open it, join it by its code, close it, kick, leave.
-- [Predicted, and confirmed by the server](../multiplayer/networking.md#prediction-and-rollback): what a machine predicts beside what the server has confirmed, with a slider for latency.
+- [Predicted, and confirmed by the server](../multiplayer/networking.md#prediction-and-rollback): what a machine predicts beside what the server has confirmed, with a slider for the second player's ping.
 - [Whose input a system reads](../game/input.md#who-gets-which-input): `Owner`, traded between two players, and a body nobody owns.
 - [A command, and a handler that says no](../game/commands.md#handling): an action sent into the match, and the handler that checks who sent it.
 
