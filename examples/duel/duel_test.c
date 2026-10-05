@@ -11,6 +11,31 @@ static tide_player_id player(int side)
     return tide_player_from_index(side);
 }
 
+// A card of a build's list, which the world keeps in its heap.
+static Card card_at(const Build build, const int32_t index)
+{
+    return *(const Card *)tide_list_read(&world.heap, build.cards, index, sizeof(Card));
+}
+
+static int32_t card_count(const Build build)
+{
+    return tide_list_read_count(&world.heap, build.cards);
+}
+
+// Whether two builds are the same: their numbers, and the cards they hold. A
+// build's bytes say where its cards are, which is nothing of what they are.
+static bool same_build(Build a, Build b)
+{
+    const int32_t count = card_count(a);
+    if (card_count(b) != count) return false;
+    for (int32_t i = 0; i < count; i++) {
+        if (card_at(a, i) != card_at(b, i)) return false;
+    }
+    a.cards = (tide_list){0};
+    b.cards = (tide_list){0};
+    return memcmp(&a, &b, sizeof a) == 0;
+}
+
 static void start(void)
 {
     tide_world_free(&world);
@@ -533,17 +558,22 @@ TIDE_TEST(duel_a_build_remembers_the_cards_it_was_given_in_order)
 {
     start();
     draft(0);
-    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.blue).build.cards == 0);
+    TIDE_CHECK(card_count(tide_get_Fighter(&world, world.Duel.blue).build) == 0);
+    const Card third = (Card)world.Duel.offers.z;
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 2));
     tide_world_tick(&world);
-    const int first = tide_get_Fighter(&world, world.Duel.blue).build.cards;
-    TIDE_CHECK(first >= 1 && first <= 8); // One card: its number, from 1.
+    Build build = tide_get_Fighter(&world, world.Duel.blue).build;
+    TIDE_REQUIRE(card_count(build) == 1);
+    TIDE_CHECK(card_at(build, 0) == third);
     draft(0);
+    const Card first = (Card)world.Duel.offers.x;
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 0));
     tide_world_tick(&world);
-    const int both = tide_get_Fighter(&world, world.Duel.blue).build.cards;
-    TIDE_CHECK(both % 16 == first);
-    TIDE_CHECK(both / 16 >= 1 && both / 16 <= 8);
+    build = tide_get_Fighter(&world, world.Duel.blue).build;
+    TIDE_REQUIRE(card_count(build) == 2);
+    TIDE_CHECK(card_at(build, 0) == third && card_at(build, 1) == first);
+    // The other fighter's build has none of them
+    TIDE_CHECK(card_count(tide_get_Fighter(&world, world.Duel.orange).build) == 0);
     tide_world_free(&world);
 }
 
@@ -703,11 +733,12 @@ TIDE_TEST(duel_cards_persist_between_rounds_and_reset_on_rematch)
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 0));
     tide_world_tick(&world);
     const Build upgrade = tide_get_Fighter(&world, world.Duel.blue).build;
-    TIDE_CHECK(memcmp(&baseline, &upgrade, sizeof upgrade) != 0);
+    TIDE_CHECK(!same_build(baseline, upgrade));
+    TIDE_CHECK(card_count(baseline) == 0 && card_count(upgrade) == 1);
     TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
     tide_world_tick(&world);
     Fighter fighter = tide_get_Fighter(&world, world.Duel.blue);
-    TIDE_CHECK(memcmp(&upgrade, &fighter.build, sizeof upgrade) == 0);
+    TIDE_CHECK(same_build(upgrade, fighter.build));
     TIDE_CHECK(fighter.health == upgrade.maxHealth);
     TIDE_CHECK(tide_get_Body(&world, world.Duel.blue).position.x == -360);
     world.Duel.scoreBlue = 5;
@@ -718,7 +749,7 @@ TIDE_TEST(duel_cards_persist_between_rounds_and_reset_on_rematch)
     fighter = tide_get_Fighter(&world, world.Duel.blue);
     TIDE_CHECK(world.Duel.match == match + 1);
     TIDE_CHECK(world.Duel.scoreBlue == 0 && world.Duel.scoreOrange == 0);
-    TIDE_CHECK(memcmp(&baseline, &fighter.build, sizeof baseline) == 0);
+    TIDE_CHECK(same_build(baseline, fighter.build));
     TIDE_CHECK(fighter.health == 100);
     tide_world_free(&world);
 }
@@ -770,7 +801,7 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     TIDE_REQUIRE(choose(world.Duel.orange, 1, round, 0)); // The winner cannot draft.
     tide_world_tick(&world);
     const Build after = tide_get_Fighter(&world, world.Duel.blue).build;
-    TIDE_CHECK(memcmp(&before, &after, sizeof before) == 0);
+    TIDE_CHECK(same_build(before, after));
     TIDE_CHECK(world.Duel.phase == Phase_Draft && world.Duel.round == round);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 1));
     tide_world_tick(&world);
@@ -833,14 +864,71 @@ TIDE_TEST(duel_effects_move_by_the_frames_length_with_a_match_and_with_none)
     // Joining another machine's match: there's none here meanwhile, and the
     // frames go on, with the backdrop's clock and the spinner
     const float now = local.Fx.now;
-    const int32_t frames = local.Fx.frame;
     tide_local_set_session(&local, TIDE_SESSION_CONNECTING, (tide_player_id){0}, 0, false, false, "");
     frame(NULL, 0.25f);
-    TIDE_CHECK(local.Fx.frame == frames + 1 && local.Fx.now == now + 0.05f);
+    TIDE_CHECK(local.Fx.now == now + 0.05f);
     TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.18f) < 1e-5f); // 0.72 turns a second
     for (int i = 0; i < 5; i++) frame(NULL, 0.25f);
     TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.08f) < 1e-5f); // Past a turn, it starts over
     TIDE_CHECK(draw.count > 0);
+    tide_local_free(&local);
+    tide_world_free(&world);
+}
+
+// A tick that tells this machine what it sent, and the frame that shows it.
+static tide_event_log heard;
+
+static void tick_and_show(void)
+{
+    tide_world_tick_events(&world, NULL, &heard);
+    tide_local_events(&local, &heard);
+    frame(&world, 0.008f);
+}
+
+// What happens in the match reaches the effects through its events: the local
+// handlers set a fighter's and a shot's local fields and add what flies, and
+// nothing watches the world for changes.
+TIDE_TEST(duel_effects_come_from_what_the_match_sends)
+{
+    start();
+    tide_local_init(&local);
+    place(world.Duel.blue, -220, 180);
+    place(world.Duel.orange, 0, 180);
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.bits.at == 0 && local.Fx.labels.at == 0 && local.Fx.streaks.at == 0);
+
+    // Blue fires: its gun kicks, and the shot's trail starts at the muzzle
+    Fighter blue = tide_get_Fighter(&world, world.Duel.blue);
+    blue.fireCooldown = 0;
+    tide_set_Fighter(&world, world.Duel.blue, blue);
+    tide_world_set_input(&world, player(0), (Controls){.aim = {1, 0}, .fire = true});
+    tick_and_show();
+    tide_world_set_input(&world, player(0), (Controls){.aim = {1, 0}});
+    const tide_entity shot = shot_from(world.Duel.blue);
+    TIDE_REQUIRE(tide_has_Bullet(&world, shot));
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.blue).recoil > 0.5f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.orange).recoil == 0.0f);
+    TIDE_CHECK(tide_has_Bullet_local(&local, shot) && tide_get_Bullet_local(&local, shot).trail.x != 0.0f);
+    TIDE_CHECK(local.Fx.bits.at != 0); // The muzzle's flash and sparks
+
+    // It hits orange: a flash, what the hit took in white on its bar, and a number
+    aim_shot(shot, -100, 180, 18000, 0, 0);
+    tick_and_show();
+    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.orange).health == 66);
+    const Fighter_local struck = tide_get_Fighter_local(&local, world.Duel.orange);
+    TIDE_CHECK(struck.hit > 0.5f && struck.chip > 30.0f && struck.chip <= 34.0f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.blue).hit == 0.0f);
+    TIDE_CHECK(local.Fx.labels.at != 0);
+    // The shot is gone, and the last of its trail was drawn up to where it ended
+    TIDE_CHECK(!tide_has_Bullet(&world, shot) && local.Fx.streaks.at != 0);
+    TIDE_CHECK(!tide_has_Bullet_local(&local, shot)); // ...and what was kept for it went with it
+
+    // A tick nobody listens to shows nothing, and the match goes the same
+    const float chip = tide_get_Fighter_local(&local, world.Duel.orange).chip;
+    tide_world_tick(&world);
+    frame(&world, 0.0f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.orange).chip == chip);
+    tide_event_log_free(&heard);
     tide_local_free(&local);
     tide_world_free(&world);
 }

@@ -47,7 +47,8 @@ local singleton Camera
 // The toolbox: the window's lower left corner.
 bool Over(Pointer pointer)
 {
-    return pointer.position.x < 200 && pointer.position.y < 200;
+    var at = Screen.Flip(pointer.position); // From the top left, as the Rect the view claims is
+    return at.x < 200 && at.y > Screen.height - 200;
 }
 
 // A function claims for the view that calls it, and reads what it claimed.

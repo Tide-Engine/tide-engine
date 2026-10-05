@@ -1,0 +1,5 @@
+// expect: no version of Screen.Flip takes (float)
+// expect: Screen.Flip(float2 position) -> float2
+scene Main { }
+local singleton Probe { float2 at; }
+view Look(mut Probe probe, Devices devices) { probe.at = Screen.Flip(devices.pointer.position.y); }

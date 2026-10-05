@@ -64,6 +64,11 @@ tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2
     return finite2(result) ? result : zero;
 }
 
+tide_float2 tide_draw_screen_flip(const tide_float2 point, const tide_float2 screen_size)
+{
+    return tide_f2(point.x, screen_size.y - point.y);
+}
+
 tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
 {
     const tide_float2 screen_size = target_size(d, window_size);

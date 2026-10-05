@@ -677,8 +677,52 @@ event(Spawned) Arm(with Player)
 }
 ```
 
+- **Local handlers** hear the match's events on each machine, to show what happened: `local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)`. It's `local` and the same `event(...)`, with no keyword of its own.
+  - It takes the event; the components of the entity the event was sent to, to read, where `mut` reaches only their local fields, as in a view; the match's singletons, to read; and local singletons, which it changes. One that takes no components runs once per event, as a match handler does.
+  - It runs at the start of the frame, before the views, for each tick this machine simulated since the last frame, in order. It changes local state and can't draw, like every handler.
+  - It sees what it takes of the match as the event's turn left it, even when the entity is gone by the frame: that's what makes `Destroyed` say where something ended. Only what handlers take is kept.
+  - The engine's own events have them too: `Spawned`, `Destroyed`, `PlayerJoined` and `PlayerLeft`.
+  - **Once, under rollback.** Each tick remembers the events it delivered locally. When a tick is run again, the same event (the same tick, event, entity and fields) stays silent; one only the corrected tick has is heard then, late; one the correction removed isn't taken back.
+  - **Events only local code handles.** The match can send an event no match handler takes, purely for what's shown, like `Impact { float2 at; float2 normal; }`. It costs the match nothing: the world's bytes, hash, snapshots and what's sent are what they'd be without it, and a machine with nobody to show it to does no work for it.
+  - **`verified`** before the event, `local event(verified Died died) ShowDeath(...)`, hears it once the server has confirmed the tick that sent it: late by the prediction's lead, never wrong, never taken back. What the handler takes of the match comes from that confirmed tick, as the event's turn left it, so nothing else is marked. A predicted handler and a verified one of the same event can both exist. See Views and drawing for `verified` in views.
+
+```csharp
+// The match sends Hit to the fighter, and handles it; each machine shows it.
+local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)
+{
+    fighter.flash = 1;   // A local field
+    Burst(fx, body.position, hit.impulse);
+}
+
+// Where a shot ended: its components as they were when it went
+local event(Destroyed) ShotEnded(Body body, Bullet bullet, mut Fx fx) { ... }
+
+// Nothing in the match handles Impact: it's sent for whoever shows it
+event Impact
+{
+    float2 at;
+    float2 normal;
+}
+
+local event(Impact impact) Spark(mut Fx fx) { ... }
+
+// The spark as it's predicted, the death once it's certain
+local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
+```
+
 ### Provisional
 
+- **Local handlers of the match's events**, beyond what's decided:
+  - **The same event** is one of the same tick, event and fields, sent to the same entity. An entity is the same by what it was born as (see Local state, an entity after a rollback), where a machine knows that of both: a handle a replay gave to another entity is another entity's, so an event to it is heard, and the same entity on another handle isn't heard twice. Otherwise it's the same by its handle. Two alike in one tick are two: each is heard once.
+  - `Spawned` and `Destroyed` come from both worlds. A local handler of one hears the match's when it takes something of the match (a component, a filter or a singleton) or is `verified`; taking only local state, it's the local world's, as before. One that takes a local component and something of the match is an error.
+  - What it takes of the match is a copy from the event's turn: after the match's handlers of that event ran, and for `Destroyed`, before the entity goes. `Time` is the tick the event was sent in. An event sent to an entity that's gone by its turn isn't heard, as it isn't handled.
+  - **Text, lists, maps, sets and grids of the match aren't heard yet:** naming one, in the event or in a component or singleton the handler takes, is an error that says so, a copy of the value has them empty, and they don't count towards two events being the same. Local state has them as ever.
+  - It can't take the `World` (it's the match as it is now, not as the event left it), `Devices`, the input, or `with ownership` (it takes `Owner owner` and `Session session`, and compares). It can't be `async` yet: it starts a task with what the task needs.
+  - Local fields are the entity's, whether or not it's still there: what a handler writes for an entity that's gone goes with the rest at that frame (below), `Forgotten` first.
+  - A frame runs them first: then the local fields of entities that are gone go, then the views run. What they spawn, change and send locally is handled at the end of the frame, like a view's. They send commands as views do.
+  - An event's local handlers run in declaration order, and `[Before]` and `[After]` order them among themselves, apart from the match's handlers of the event. An event has 64 at most.
+  - A machine hears what's sent from the tick it joins in: its own `PlayerJoined` and every later one, and nothing of the entities that came with the world it was sent, which have no `Spawned` for it. Ticks a world sent again skips (a client that went wrong) say nothing. A match that changes hands goes on from the new host's last confirmed tick, so the ticks after it are heard again on a machine that had heard them.
+  - A handler of an event nothing sends is a warning, like a match handler's, and `tidec --schedule` lists each event's local handlers after the match's.
 - `event` is only a keyword at the start of a declaration, like `input`.
 - A trigger's name is optional for any event: a handler that doesn't read the event leaves it out.
 - `Spawned` handlers run as the spawn is applied, and `Destroyed` handlers just before the entity goes, both in the queue's order. A spawn's `Spawned` handlers run before the next change in the queue.
@@ -692,8 +736,8 @@ event(Spawned) Arm(with Player)
 ### Open
 
 - Events for a component being added or removed.
-- Local handlers, such as playing a sound when a `Hit` happens (`local event(Hit hit) PlayHitSound()`). They have to run once even when rollback re-runs the tick that sent the event, and choose between predicted and verified ticks.
 - Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for loops over queries.
+- Local handlers: text and lists of the match in what they hear; the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
 
 ## Commands
 
@@ -831,8 +875,9 @@ system Advance(mut Match match)
 - `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, enums, text, entities and players) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 - An element is a copy, as with C#'s List of structs: `items[i].count = 1` is an error that says to take it out, change it and put it back. A `mut` parameter or a mut method can't change an element in place either.
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.
-- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead), and not lists, or structs with lists in them, yet.
-- Components, singletons, structs and events can hold lists; inputs can't.
+- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead).
+- Components, singletons, structs and events can hold lists; inputs can't. A struct that holds a list, a map or text is a value like any other: a field of a component, a singleton, an event or another struct, a local, a parameter. Copying it copies what it holds.
+- What isn't supported yet is one inside another's elements: a list can't hold lists, maps, sets or grids (`List<List<int>>`), nor a struct that has a list, a map or a set in it, at any depth (`List<Bag>` where `Bag` has a `List<int>`). A list of structs that hold text is fine. The errors say which field is in the way, and what to write instead: one flat list with where each part starts (and how many it has), or a component on an entity of its own for each inner list, held as a `List<Entity>`.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt` or `Clear`), can't end the loop, wait, spawn or send, and so on.
@@ -841,7 +886,7 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, and lists of maps.
+- Lists of lists, lists of maps, and lists of structs that hold either.
 - Searching with a condition, and sorting by a key.
 - Fixed-size arrays inside components, which need no heap.
 
@@ -858,7 +903,7 @@ system Advance(mut Match match)
 
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
-- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps or structs holding them.
+- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
 - A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
@@ -871,7 +916,7 @@ system Advance(mut Match match)
 
 - Map literals, `[1: "a", 2: "b"]`.
 - Struct keys, and keys by several values.
-- Maps of maps, and maps in lists.
+- Maps of maps or of lists, maps in lists, and structs that hold any of them as a list's elements or a map's values.
 
 ## Grids
 
@@ -1108,7 +1153,7 @@ Implemented, awaiting approval:
   - **Gamepad:** `connected`; `leftStick` and `rightStick` (`float2`); `leftTrigger` and `rightTrigger` (`float`, 0 to 1); face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`); `dpad.up` and the other directions; `leftShoulder`, `rightShoulder`, `start` and `select`.
   - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers, as Unity's. A `Touch` has `press` (a button: `.down` when the finger touched, Unity's Began, and `.up` when it lifted, Ended), `id` (Unity's `touchId`: the same while the finger touches, a new one for each touch), and `position`, `delta` and `startPosition` (`float2`). A finger keeps its slot while it touches. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts. A finger that touches and lifts between two samples reads as held for one, so no tap is lost. A finger is never the mouse, as in Unity's Input System.
   - **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last, as Unity's `Pointer.current`. Code that reads it works with a mouse and a finger alike.
-  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left. `scroll.y` is positive when scrolling away from the user.
+  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left; in a view, `Screen.Flip` gives them from the top left, as the screen and the GUI count (see GUI). `scroll.y` is positive when scrolling away from the user.
 
 ```csharp
 input PlayerInput
@@ -1245,9 +1290,30 @@ view Nameplates(Player player, without ownership) { ... }
   - `without ownership`: every other entity the view's other parameters and filters admit: entities with no `Owner`, and entities another player owns.
   - They're filters: they create no data dependency, and the view needs no `Owner` or `Session` parameter for them. It can still take either, and `with Owner` still means "has any owner": `with Owner, without ownership` is the entities whose `Owner` isn't this machine's player: another player's, or no player's. A view that takes both `with ownership` and `without ownership`, or `with ownership` and `without Owner`, is an error, as no entity is both.
   - A view with no component parameter runs once per entity through them, as through `with Player`: `view Hud(with ownership)`.
-  - Only local code that runs for the match's entities has them, which is views. In match code (systems, the match's event handlers, tasks) they're errors, since the match has no "this machine": the message points to `with Owner`, the entities that have any owner, or `without Owner`. Local handlers only take local state, and local entities have no owner, so there they're errors too.
+  - Only views have them. In match code (systems, the match's event handlers, tasks) they're errors, since the match has no "this machine": the message points to `with Owner`, the entities that have any owner, or `without Owner`. A local handler doesn't filter by them either: one of a match event takes `Owner owner` and `Session session` and compares them, and local entities have no owner.
   - Outside a match, a view with either doesn't run, like any view that reads the match.
   - `ownership` is a keyword only right after `with` or `without`, where it's never a component's name. Anywhere else it's a name like any other: a field, a local, a parameter or a declaration can be called `ownership`, and a qualified name starts with it as with any namespace (`with ownership.Flag`).
+- **`verified`** before a parameter's type means "from the world the server has confirmed": one word with one meaning everywhere, a modifier like `mut`, and a keyword only there. A client's views draw the world as it predicts it, which can be wrong for a moment; what must not be wrong, like a health bar, a score or a death, is read `verified`.
+
+```csharp
+// Movement as predicted, the health bar only what's confirmed.
+view DrawFighter(Body body, verified Health health) { ... }
+
+// The same component twice: what's predicted, and what's confirmed so far.
+view HealthBar(Health health, verified Health confirmed) { ... }
+
+// A filter, and a singleton.
+view Corpse(Body body, with verified Dead) { ... }
+view Board(verified Duel duel) { ... }
+```
+
+  - A view runs for an entity when each parameter exists in the world it names. A view with components of both worlds needs the entity in both, so it skips one whose spawn isn't confirmed yet; a game that wants it drawn sooner splits the view in two. A view whose components are all `verified` runs for the confirmed world's entities.
+  - "The same entity" in both worlds is the same entity, not only the same handle: a rollback can give a handle to another entity (see Local state, an entity after a rollback).
+  - Filters take it too: `with verified Dead`, `without verified Dead`. So do singletons: `verified Duel duel`.
+  - A `verified` value isn't blended: it's as the last confirmed tick has it.
+  - In match code it's an error: the match is the same on every machine and has no "confirmed". Systems, match handlers, tasks and queries say so, and point to views and local handlers.
+  - With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says. To hold a death until it's confirmed, a game makes the death a state of a living entity (a field or a tag), takes everything `verified` in that view, or shows it from `local event(verified Destroyed)`.
+  - A local handler takes it on its event: `local event(verified Died died)` (see Events).
 - Meshes are the general shape: `Draw2D.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with other drawing calls. `Draw3D` also supplies cube, sphere, cylinder and plane helpers.
 - `Texture` is a local, read-only image reference. `RenderTarget` is a local drawing destination whose `.color` is a `Texture`. Target receiver methods (`scene.Clear`, `scene.Camera`, `scene.Mesh` and the other drawing methods) make the destination explicit. Ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`; the window has no sampleable `.color`. Each target has independent frame camera and clip state, shared across views, and switching passes preserves color and depth. A clear resets both within its clip.
 - A render target's size is in logical pixels, like the window's, and its image is made at the display's scale: `RenderTarget(width, height)` creates one in local code, of a positive width and height. Drawing into a target is then the same as drawing into the window: `target.Screen()` is in logical pixels, text is fitted to the image's real pixels, shapes' edges are smooth over one of them, and conversions (`WorldToScreen` and the others), clips and a frag's `pixel.position` are in logical pixels.
@@ -1367,6 +1433,18 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 ### Provisional
 
+- **`verified` in views**, beyond what's decided:
+  - Any `verified` component or filter asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so an entity whose spawn isn't confirmed yet is skipped by it too.
+  - The same entity is told by what each was born as, where this machine knows it of both, and by its handle otherwise (an entity that came with a world the server sent).
+  - `mut` goes with it: `mut verified Health health` reads the confirmed `Health` and writes the entity's local fields, which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`; through the other it's an error that says so.
+  - A view of the confirmed world's entities draws them as they are there: nothing it reads of them is blended, corrections aren't smoothed, and `this` is the confirmed entity. Its `World` is still the world it draws.
+  - Text, lists, maps, sets and grids of the confirmed world aren't read yet: naming one through a `verified` parameter is an error, and a copy of the value has them empty. They're read through a parameter that isn't `verified`.
+  - `verified World world` isn't built: an error that points to `verified` component parameters.
+  - A frag or vert can't say `verified`: it reads what its view is given. The mesh's components are the view's own as it draws them (the ones that aren't `verified`, where it takes one both ways), and the confirmed ones in a view of the confirmed world's entities.
+  - A function's parameter can't say it either: the view takes it `verified` and passes it on.
+  - With one world and no server, as on a C host that ticks a world itself, that world is the confirmed one too.
+  - Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match.
+  - `verified` is a word of its own before a parameter's type where a type and a name follow, after `with` or `without` where a name follows, and before an event in a handler's `event(...)`. Anywhere else it's a name like any other.
 - `frag` and `vert` declare code the GPU runs for a mesh's pixels and vertices (above, and GPU code below).
 - `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
 - Views run in declaration order, after all the systems of the frame's ticks. Within a view, entities run in the same order as in systems.
@@ -1389,7 +1467,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
-  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
+  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Device positions count from the bottom left, so they go through `Screen.Flip` first (see GUI, Provisional): `Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position))`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
   - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` supplies only `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - A render target's size (above), in what the agreed design leaves open. These are the implementation's picks, not yet confirmed:
@@ -1491,6 +1569,8 @@ view DrawHud(Arena arena)
 ### Open
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
+- **Blending confirmed state.** A `verified` value is as the last confirmed tick has it, so it steps at the tick rate. Showing other players from confirmed state, blended between confirmed ticks rather than predicted ahead (a competitive shooter wants their positions not extrapolated), needs that, and may belong at another level than a parameter's modifier.
+- `verified World`, and the confirmed world's text and lists.
 - Views reading input, for example to draw where the local player aims before the tick runs.
 - GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.
@@ -1570,6 +1650,7 @@ Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
 - `Rect(x, y, width, height)` is a built-in value type measured from the top left corner, with `y` down, as in Unity's GUI, with `x`, `y`, `width` and `height`. World drawing and the mouse have `y` up. `GUI`'s rects are on the screen, inside an area or not.
+- `Screen.Flip(position)` gives a `float2` position counted from the screen's other edge: `float2(position.x, Screen.height - position.y)`. The devices count pixels from the bottom left with `y` up (see Input), and the screen, the GUI, `Draw2D.Screen()` and the conversion helpers from the top left with `y` down: `Screen.Flip(devices.pointer.position)` is the pointer on the screen. It's its own inverse, so it converts either way. It's the window's whatever target is drawn into, as the devices are, and readable where `Screen.width` is: views and the functions they call, not the match, the input's code or the GPU. The name is a pick, awaiting the owner.
 - `GUILayout.Area(anchor)` places a panel sized to its content at one of nine anchors, the built-in enum `Anchor`, named as Unity's `TextAnchor` (`UpperLeft` to `LowerRight`), 12 pixels from the screen's edges. `GUILayout.Area(rect)` places it at a rect. An anchored area is placed with its size from the frame before, and moves at the end of the frame if the size changed. One too big for the screen starts at its top left margin.
 - `GUILayout` widgets outside any area stack from the screen's top left, across every view. In a vertical container, buttons, toggles, sliders and fields stretch to the widest widget's width. Labelled widgets put their label in a column at least 130 wide, so a column of them lines up.
 - Widgets shrink when there isn't room: an anchored area is at most as wide as the screen less its margins, and a vertical container's widgets are at most as wide as it is. A row that's too wide shrinks each of its widgets by as much as it can give, with the frame before's widths. Fields and sliders shrink down to a small minimum, a labelled widget's label column first, down to the label; buttons give up half their padding; labels and toggles don't shrink.
@@ -1624,7 +1705,7 @@ Implemented, awaiting approval:
   - A view's match fields are blended copies, as ever; local fields aren't blended, and are read and written in place.
 - **The compiler enforces the boundary,** so no mistake can reach a running game:
   - Match code (systems, match event handlers, match scenes) can't read or write anything local, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends. The input's `Sample` reads this machine's, and writes only the input.
-  - Local code (views, local event handlers, local scenes) can read the match but never change it: no `mut` on match components or singletons, and no spawning, changing or sending match things.
+  - Local code (views, local event handlers, local scenes) can read the match but never change it: no `mut` on match components or singletons, and no spawning, changing or sending match things. Views read it as it's drawn, or `verified`; a local handler hears its events (see Events).
   - The only way from local code into the match is input. Starting, joining and leaving a match are session calls, which never touch a running match.
   - Errors say where to go instead: "a view can't change the match: put it in the input and handle it in a system."
 
@@ -1682,8 +1763,8 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 - `local` is only a keyword at the start of a declaration, and before a field's type. It goes before components, singletons, events and event handlers; before any other declaration it's an error that says why (structs and functions belong to neither side, views are always local, systems run the match). Anywhere else it's a name like any other, a field's too.
 - **`LocalEntity`** is an entity of the local world. `Spawn` in local code returns one, and `this` is one in a view of local components, where in a view of match components it's an `Entity`. Local code can hold and read an `Entity` (the unit a player selected, say) but never change one. The match's declarations can't hold a `LocalEntity`, and neither can structs, which both sides share.
 - A view runs for the entities of one world: its components are all local or all the match's.
-- Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now, but a handler of `Forgotten`, which takes the match component or singleton whose local fields are going (below).
-- The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, local, draw, gui)` every frame. `tide_frame` lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
+- Local handlers handle local events, and `Spawned` and `Destroyed` of local entities, with local state only; the match's events, with what they take of the match as the event left it (see Events); and `Forgotten`, with the match component or singleton whose local fields are going (below).
+- The host keeps the local state and calls `tide_local_init(local)` once, then `tide_frame(w, previous, alpha, verified, local, draw, gui)` every frame. `tide_frame` runs the local handlers of what the match sent since the last frame (which the host handed it with `tide_local_events`), lets go of the local fields of entities that are gone, runs the views, then applies their local changes and events. Outside a match, `w` is NULL, and views that read the match don't run.
 - The local world has its own entity table and queue, which grow as they need, as the match's do.
 - **`Frame.dt`** (the name is a pick, to confirm: `Time` is the match's, so Unity's `Time.deltaTime` can't be it) is the seconds since this machine's previous frame started, a `float`, read-only: what moves things that aren't the match's (particles, menus, a camera's shake) at the same speed whatever the display's rate.
   - It's this machine's, and has nothing to do with the match: it's there in a local scene and while connecting, where no view that takes `Time` runs, and in a match it's the same value, whatever the tick rate and however many ticks the frame ran.
@@ -1734,7 +1815,8 @@ Local fields, beyond what's decided:
 - **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local component or singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
 - **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
   - a view's, read through `Box box` and written through `mut Box box`;
-  - an ordinary function's, which gets them with the component or singleton: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own bound parameter, `Bake(box)`. The parameter can go through helper chains with its local fields. Such a function is local code: only views, handlers of `Forgotten` and functions like it call it, and calling it from match code is an error that says where it uses a local field;
+  - an ordinary function's, which gets them with the component or singleton: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own bound parameter, `Bake(box)`. The parameter can go through helper chains with its local fields. Such a function is local code: only views, local handlers and functions like it call it, and calling it from match code is an error that says where it uses a local field;
+  - a local handler's of one of the match's events, for the entity the event was sent to (see Events);
   - a handler of `Forgotten`'s (below).
 - **A component's or singleton's value is the match's part.** A copy (`var b = box;`), a value written out (`Box { ... }`), and what `world.Get<Box>(entity)` or `default` gives have no local fields, and `b.verts` is an error that says to read them through the parameter. So is naming one in a value, `Box { verts = ... }`, and passing a copy to a function that uses them. Methods work on values, so they have none either, including through explicit parameters; an ordinary function that takes a bound component or singleton parameter does.
 - **One side at a time.** A function that changes a component's or singleton's match fields through a parameter and uses its local fields through the same one is an error: no code could call it. This follows helper chains too. A view can't pass a match component or singleton to a function that changes its match fields.
@@ -1767,12 +1849,12 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
   - It runs for entities that had something written, as the others have nothing to let go of, and for a singleton once, as the match goes. It isn't async, and the program ending sends none.
   - Games can't send it, and a handler of it is a local handler: `local event(Forgotten) ...`.
 - **In C**, the generated `Box` struct, `tide_get_Box` and the rest stay the match's part. The local fields are a struct of their own, `Box_local`, which the local state keeps: `tide_has_Box_local(local, entity)` says whether anything was written for an entity, `tide_get_Box_local(local, entity)` gives a copy (the defaults when nothing was, with text, lists and grids empty), and `tide_set_Box_local(local, entity, value)` sets them, as their bytes. A singleton's are `local->Arena_local`.
-- **Hosts** give the frame the last world the server confirmed: `tide_frame(w, previous, alpha, verified, local, draw, gui)`, where `tide_session_view` gives it with the other two (`tide_view_worlds.verified`). NULL is for a host with one world: `w` is all there is.
-- **Hot reloading** carries local fields over by name with the rest of the local state: an entity's as its component's, field by field, and a singleton's as a local singleton's. A component that's gone, or has no local fields left, takes them with it.
+- **Hosts** give the frame the last world the server confirmed: `tide_frame(w, previous, alpha, verified, local, draw, gui)`, where `tide_session_view` gives it with the other two (`tide_view_worlds.verified`). NULL is for a host with one world: `w` is all there is, and it's what `verified` parameters read too.
+- **Hosts hand local handlers what the match sent**, before each frame: `tide_local_events(local, tide_session_events(session))`, which `tide/run.h` does. The session records what its client's ticks send, each event once however often its tick ran, and again for `verified` handlers once the server confirmed the tick. A host that ticks a world itself gives the tick a log, `tide_world_tick_events(w, jobs, &events)`, and hands that over the same way: with no server, what it ticks is all there is, so a tick's events are heard by both kinds of handler at the next frame. `tide_world_tick(w)` records nothing, and its world comes out the same. See `tide/events.h`.
+- **Hot reloading** carries local fields over by name with the rest of the local state: an entity's as its component's, field by field, and a singleton's as a local singleton's. A component that's gone, or has no local fields left, takes them with it. What a session recorded of the match's events for local handlers isn't carried over: a swap comes between two frames, when the last frame's were heard, and the ticks a client had run and not had confirmed tell `verified` handlers nothing once the new build confirms them as they were. They still don't tell the others twice.
 
 ### Open
 
-- Local handlers of match events (see Events).
 - Saving local state, such as settings, between runs.
 - **An `Entity` local code holds, after a rollback.** A rollback can give a handle to another entity (see local fields, above), and an `Entity` in local state, like a selected unit, then names the other one: nothing tells local code yet. Local fields are told apart, but only follow what this machine spawned: after the server sends a world again, its entities are known by their handles. And a predicted entity that the server's order gave another handle is another entity to local fields, which start over there rather than move with it.
 - Local state for a component the game didn't declare, like a package's: a declaration of its own that says which component it's for, on the storage local fields have.
@@ -1864,6 +1946,7 @@ system Collapse(Arena arena)
 - Players find each other's matches in rooms, by a code. The hosting machine picks its room's code itself, so local code has it at once, with nothing to wait for: `Session.room`.
 - Local code sees where this machine stands through a built-in local singleton, `Session` (taken as a parameter like any singleton), and the built-in local events `Connected` and `Disconnected`.
 - Clients have no input delay: their own input applies at once, and they run ahead of the server so it arrives in time. Only other players' inputs are ever guessed. A client that can't afford to run its predicted ticks again delays its input instead, a tick at a time, until it can (see Settings, `prediction`); a game can ask for delay in place of prediction altogether.
+- Local code tells what's predicted from what the server has confirmed with one word, `verified`: before a view's parameter or filter it reads the confirmed world (see Views and drawing), and before a local handler's event it hears the event once its tick is confirmed (see Events). Without it, a view draws the world as this machine predicts it, and a local handler hears each tick as this machine first ran it.
 - The desktop transport is our own thin layer on UDP. The web's is WebRTC data channels that neither order nor resend, so browsers host matches as well as join them. A relay we host introduces players to each other; their packets go straight between them whenever their networks allow it (see AGENTS.md, Networking).
 
 ```csharp
@@ -1934,7 +2017,7 @@ Implemented, awaiting approval:
 - Servers with no window and no player of their own.
 - Keeping a room open across reloads under `tide run --web`.
 - Lobbies, and finding matches without a code.
-- Telling predicted state from verified state in game code (see AGENTS.md, Networking).
+- Showing other players from confirmed state, blended between confirmed ticks (see Views and drawing, Open).
 
 ## Settings
 

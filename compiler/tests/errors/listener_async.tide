@@ -1,0 +1,13 @@
+// expect: a local handler of a match event can't be async yet
+component Health { int value; }
+event Hit { int damage; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health).Send(Hit); }
+
+local async event(Hit hit) Flash(Health health, mut Log log)
+{
+    await Wait.Frames(2);
+    log.count = health.value;
+}

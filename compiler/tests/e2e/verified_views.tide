@@ -1,0 +1,142 @@
+// `verified` parameters: what a view reads of the world the server has
+// confirmed, beside the one it draws. A shield one player raises decides what
+// some ticks do, so a client that hasn't heard of the shield yet predicts
+// those wrong for a while, and its views see both worlds meanwhile.
+
+component Target
+{
+    int id;
+    int health = 5;
+    local int sure; // Frames a view of the confirmed world drew it
+}
+
+component Armor
+{
+    int plates;
+}
+
+component Dead { }
+
+component Player { }
+
+singleton Guard
+{
+    bool up;
+}
+
+singleton Score
+{
+    int points;
+}
+
+input Controls
+{
+    bool shield;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Target { id = 1 });
+    Spawn(Target { id = 2 }, Armor { plates = 2 });
+    Spawn(Target { id = 3 });
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+system Lower(mut Guard guard)
+{
+    guard.up = false;
+}
+
+system Raise(Controls controls, mut Guard guard, with Player)
+{
+    if (controls.shield) guard.up = true;
+}
+
+// The shield is up around ticks 90, 150 and 240: what a machine that hasn't
+// heard of it predicts there, the server never did.
+system Strike(mut Target target, mut Score score, Guard guard, Time time)
+{
+    if (target.id == 2 && time.tick == 200) this.Add(Dead);
+    if (target.id == 3 && time.tick == 91 && !guard.up) this.Destroy();
+    if (target.id != 1) return;
+    if (time.tick == 30) target.health -= 1;
+    if (time.tick == 90 && !guard.up)
+    {
+        target.health -= 1;
+        score.points += 10;
+    }
+    if (time.tick == 100) score.points += 1;
+    if (time.tick == 150 && !guard.up) Spawn(Target { id = 6 });
+    if (time.tick == 151 && !guard.up) this.Add(Dead);
+    if (time.tick == 241) Spawn(Target { id = guard.up ? 5 : 4 });
+}
+
+local singleton Seen
+{
+    int drawn;         // A bit for each id a view of the drawn world ran for
+    int both;          // ...and one that takes the entity from both worlds
+    int mismatch;      // Times that one was handed two different entities
+    int ahead;         // Frames the drawn health was under the confirmed one
+    int plates;        // The armor, as confirmed
+    int confirmed;     // A bit for each id a view of the confirmed world ran for
+    int confirmedOnly; // Frames it ran for an entity the drawn world hadn't
+    int corpses;       // A bit for each id that's Dead as confirmed
+    int drawnCorpses;  // ...and as drawn
+    int fresh;         // A bit for each id that's confirmed, and not Dead there
+    int scoreAhead;    // Frames the drawn score wasn't the confirmed one
+    int sureMost;      // The most the confirmed score ever was
+}
+
+view Plain(Target target, mut Seen seen)
+{
+    seen.drawn |= 1 << target.id;
+}
+
+// The same component twice: as it's drawn, and as the server confirmed it
+view Bars(Target mine, verified Target confirmed, mut Seen seen)
+{
+    seen.both |= 1 << mine.id;
+    if (mine.id != confirmed.id) seen.mismatch += 1;
+    if (mine.health < confirmed.health) seen.ahead += 1;
+}
+
+// A component only the confirmed world is asked for
+view Plating(Target target, verified Armor armor, mut Seen seen)
+{
+    seen.plates = armor.plates + target.id;
+}
+
+// All of it confirmed: it runs for the confirmed world's entities
+view Confirmed(mut verified Target target, World world, mut Seen seen)
+{
+    seen.confirmed |= 1 << target.id;
+    target.sure += 1;
+    if (!world.Has<Target>(this)) seen.confirmedOnly += 1;
+}
+
+view Corpses(Target target, mut Seen seen, with verified Dead)
+{
+    seen.corpses |= 1 << target.id;
+}
+
+view DrawnCorpses(Target target, mut Seen seen, with Dead)
+{
+    seen.drawnCorpses |= 1 << target.id;
+}
+
+view Fresh(Target target, mut Seen seen, without verified Dead)
+{
+    seen.fresh |= 1 << target.id;
+}
+
+view Board(Score mine, verified Score sure, mut Seen seen)
+{
+    if (mine.points != sure.points) seen.scoreAhead += 1;
+    if (sure.points > seen.sureMost) seen.sureMost = sure.points;
+}

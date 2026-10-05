@@ -1,0 +1,3 @@
+// expect: a map can't hold sets yet
+scene Main { }
+component Seen { Map<int, Set<int>> byRoom; }

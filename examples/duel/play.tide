@@ -171,7 +171,7 @@ float2 Middle(Rect rect)
 // Whether the pointer is in `rect`, in the screen's pixels.
 bool Over(Devices devices, Rect rect)
 {
-    var at = float2(devices.pointer.position.x, Screen.height - devices.pointer.position.y);
+    var at = Screen.Flip(devices.pointer.position); // Devices count pixels from the bottom, and the screen from the top
     return at.x >= rect.x && at.x < rect.x + rect.width && at.y >= rect.y && at.y < rect.y + rect.height;
 }
 
@@ -591,7 +591,7 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
 
 // Joining another machine's match, or finding this one again after its host left.
 [Stage(PaintStages.Menu, 20)]
-view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu menu)
+view PaintConnecting(Session session, Devices devices, mut DuelMenu menu)
 {
     if (session.state != SessionState.Connecting) return;
     Draw2D.Screen();
@@ -600,9 +600,7 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
     menu.turn = Math.Frac(menu.turn + Frame.dt * 0.72);
     if (session.player == default)
     {
-        // No match is behind it yet: only the backdrop, and what the last one's effects left
-        Draw2D.Clear(UI_BACKGROUND);
-        if (sky.quad.count > 0) Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
+        // No match is behind it yet: only the backdrop, which BeginFrame draws with no match too
         var wide = Math.Min(screen.x - 24, 380);
         var back = Rect(middle.x - 95, middle.y + 22, 190, 40);
         Draw2D.Rect(middle, screen, Color(0.012, 0.018, 0.05, 0.6));

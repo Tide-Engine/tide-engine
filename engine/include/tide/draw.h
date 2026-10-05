@@ -756,8 +756,8 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 // `screen_size` is the window's width and height in logical pixels. When a
 // target is selected, its dimensions are used instead. Screen
 // positions are from the top left, with y down, as tide_draw_screen and the
-// GUI's are. Device positions are from the bottom left: change their y to
-// screen_size.y - y before passing them here.
+// GUI's are. Device positions are from the bottom left:
+// tide_draw_screen_flip gives them as screen positions.
 //
 // Each target keeps its own cameras. The 2D helpers use its most recent
 // 2D camera or screen command, or the
@@ -766,6 +766,12 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 // leave the 3D camera as it was. Neither needs a frame to have been rendered.
 tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
 tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+
+// The same point counted from the window's other edge: a device position
+// (pixels from the bottom left, y up) as a screen position (from the top left,
+// y down), and a screen position as a device's. It's the window's whatever
+// target is selected, as the devices are.
+tide_float2 tide_draw_screen_flip(tide_float2 point, tide_float2 screen_size);
 
 // The 3D helpers use the most recent 3D camera, or the default perspective
 // camera. A screen position's z is depth: 0 at the near plane, 1 at the far
