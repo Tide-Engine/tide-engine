@@ -1,0 +1,9 @@
+// expect: 'TryGet' makes its 'value', so the argument says 'out'
+component Health { int value; }
+component Healer { Entity patient; Health seen; }
+scene Main { }
+system Read(mut Healer healer, World world)
+{
+    mut var health = Health { };
+    if (world.TryGet<Health>(healer.patient, health)) healer.patient = default;
+}

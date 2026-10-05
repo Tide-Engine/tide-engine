@@ -1,4 +1,4 @@
-// expect: the World has no method 'Find'; it has Get, Has and Set
+// expect: the World has no method 'Find'; it has Get, Has, TryGet and Set
 component Health { int value; }
 scene Main { }
 system Read(World world, with Health)
