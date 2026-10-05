@@ -1,0 +1,3 @@
+// expect: Frame.dt can only be read in local code, and in functions it calls
+local scene Main { }
+struct Spark { float age; void Grow() { age += Frame.dt; } }

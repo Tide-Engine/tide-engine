@@ -70,8 +70,6 @@ struct Shot
 
 local singleton Fx
 {
-    int tick;        // The match's tick at the last frame
-    float pace = 0.0167; // How long a frame takes, evened out
     float dt;        // Seconds this frame's effects move on by
     float now;       // Seconds of frames drawn, which never go back
     int frame;
@@ -251,17 +249,13 @@ void Impact(mut Fx fx, float2 at, float2 velocity, Color color)
     Dust(fx, where, normal * 30, 2, 9, Fade(color, 0.22));
 }
 
-// The frame's clock, camera and backdrop, before anything else draws.
+// The frame's clock, camera and backdrop, before anything else draws. It's
+// this machine's, so it goes on with no match, while one is being joined.
 [Stage(PaintStages.Prepare)]
-view BeginFrame(Time time, mut Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
+view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
 {
-    // Nothing tells a view how long a frame is. The match's ticks do, as
-    // whole steps: evened out over the frames that drew, they're a frame's
-    // length, however long the match has run and whatever the display's rate.
-    var ticks = time.tick - fx.tick;
-    fx.tick = time.tick;
-    fx.pace += ((ticks > 0 && ticks < 30 ? ticks * time.dt : 0) - fx.pace) * 0.03;
-    fx.dt = Math.Min(fx.pace, 0.05);
+    // A frame after a stall is a step, not a leap
+    fx.dt = Math.Min(Frame.dt, 0.05);
     fx.now += fx.dt;
     fx.frame += 1;
 

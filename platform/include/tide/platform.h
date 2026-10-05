@@ -34,6 +34,61 @@ typedef struct tide_window_desc {
 // Opens the window and its graphics context.
 void tide_platform_open(const tide_window_desc *desc);
 
+// A headless window: none on screen, for pictures of what a game draws and
+// for runs nobody watches (an agent's, CI's). It's what tide/run.h opens for
+// a game started with --capture, --frames or --script. Nothing about it
+// depends on this machine, so a run repeats exactly, on any:
+//
+// - Frames draw into pixels of its own, at the size asked for and `scale` of
+//   them to a logical pixel, whatever this machine's display is.
+//   tide_platform_frame_pixels reads them, and tide_platform_capture writes
+//   them as a PNG.
+// - Time is made up: every frame is a 60th of a second long, however long it
+//   took, and frames come as fast as the machine runs them.
+// - The devices are made up too, never the system's: tide_platform_poll takes
+//   what tide_platform_input said and what the script says, as it would take
+//   a player's input. The cursor is locked whenever the game asks, and
+//   nothing reaches the system's clipboard.
+//
+// tide_platform_run ends the program with exit code 0 once `frames` frames
+// drew or the script's `quit` line says, whichever is first, with 1 when a
+// picture couldn't be written, and as ever with what the frame function
+// returns.
+typedef struct tide_headless_desc {
+    int width, height; // In logical pixels; default 960 x 540
+    float scale;       // Pixels to a logical one, each way, as a display scaled to 150% has 1.5; default 1
+    uint32_t frames;   // The run ends once this many drew; 0 for when its script quits
+    const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
+    // A file of input by frame, of pictures to take and of when the run ends:
+    // lines like `120 key d down`, `400 capture fight.png` and `500 quit`
+    // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
+    // names is beside it.
+    const char *script;
+} tide_headless_desc;
+
+// Opens a headless window, in tide_platform_open's place. Ends the program
+// with exit code 2, having said why, when the script can't be read or a line
+// of it is wrong (which it names), or when nothing ends the run. Desktop only.
+void tide_platform_open_headless(const tide_headless_desc *desc);
+
+// Made-up input for a headless window, one event as a script's line has it
+// after its frame: "key d down", "mouse 640 360", "button left", "text K7QF2M".
+// The next tide_platform_poll takes it. False, having said why, for what
+// isn't an event, or when the window isn't headless.
+bool tide_platform_input(const char *event);
+
+// The frame a headless window last drew (tide_platform_draw, and the overlay
+// over it), whole: `*width` by `*height` pixels of 4 bytes each (red, green,
+// blue, alpha), rows from the top, which stay until the next call. A window
+// shows no alpha, and what's in it here is what drawing left there. NULL
+// before the first frame, and for a window that isn't headless.
+const uint8_t *tide_platform_frame_pixels(int *width, int *height);
+
+// Writes that frame to the file at `path` as a PNG, without its alpha, and
+// says so on stdout. False, having said why, when there's no frame or the
+// file can't be written; folders aren't made for it.
+bool tide_platform_capture(const char *path);
+
 // Returned by a frame function to keep going. Any other value ends the program
 // with that exit code.
 #define TIDE_KEEP_RUNNING (-1)
@@ -146,9 +201,11 @@ uint64_t tide_platform_entropy(void);
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
 
-// The width of `text` drawn `size` tall with the platform's font, in the same
-// units: the tide_measure_fn that tide_gui_begin takes.
-float tide_platform_measure_text(const char *text, float size);
+// How big `text` is drawn `size` tall with the platform's font, in the same
+// units: its widest line's width and its lines' height, on the window's
+// pixels or (`target`) on a render target's own. It's the tide_measure_fn that
+// tide_gui_begin takes (tide/draw.h), and needs no window open.
+tide_float2 tide_platform_measure_text(const char *text, float size, bool target);
 
 // Renders `list` offscreen at the window's size, then reads the pixels at
 // `points` (window pixels from the top left) as 0xRRGGBBAA. For tests: proves

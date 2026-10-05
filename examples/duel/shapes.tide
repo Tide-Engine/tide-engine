@@ -220,36 +220,10 @@ void GlowOval(mut Shapes shapes, float2 center, float2 radii, float spread, Colo
                             line = float4(0, 0, 1, 1), fill = color, fill2 = color });
 }
 
-// How wide the engine's font draws `text` at `size`, near enough to center it:
-// each letter's width, as a part of the size.
-float TextWidth(string text, float size)
-{
-    mut var width = 0.0;
-    for (var i = 0; i < text.length; i++)
-    {
-        var letter = text.Substring(i, 1);
-        if (letter == " ") width += 0.3;
-        else if ("AGOQZNU".Contains(letter)) width += 0.645;
-        else if ("BCDHKTVXY".Contains(letter)) width += 0.59;
-        else if ("EFJLPRS".Contains(letter)) width += 0.545;
-        else if ("Iilj.,:;!'|·".Contains(letter)) width += 0.21;
-        else if ("0123456789".Contains(letter)) width += 0.555;
-        else if ("MWm#".Contains(letter)) width += 0.76;
-        else if ("abdeghnopquvy?".Contains(letter)) width += 0.505;
-        else if ("cksxz".Contains(letter)) width += 0.455;
-        else if ("frt".Contains(letter)) width += 0.34;
-        else if ("-+/=*".Contains(letter)) width += 0.43;
-        else if ("w%".Contains(letter)) width += 0.68;
-        else if ("()".Contains(letter)) width += 0.265;
-        else width += 0.55;
-    }
-    return width * size;
-}
-
 // Text with its middle at `center`, on the screen, where y goes down.
 void Write(string text, float2 center, float size, Color color)
 {
-    Draw2D.Text(text, float2(center.x - TextWidth(text, size) * 0.5, center.y - size * 0.5), size, color);
+    Draw2D.Text(text, center - Draw2D.MeasureText(text, size) * 0.5, size, color);
 }
 
 // The same, drawn twice a little apart: the engine's font is a light one,
@@ -264,5 +238,6 @@ void WriteBold(string text, float2 center, float size, Color color)
 // The same in the arena, where y goes up.
 void WriteUp(string text, float2 center, float size, Color color)
 {
-    Draw2D.Text(text, float2(center.x - TextWidth(text, size) * 0.5, center.y + size * 0.5), size, color);
+    var half = Draw2D.MeasureText(text, size) * 0.5;
+    Draw2D.Text(text, center + float2(-half.x, half.y), size, color);
 }

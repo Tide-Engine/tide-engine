@@ -102,7 +102,6 @@ typedef struct gen {
     const expr *raw_place; // A text field being generated as the tide_text it is, not read as text
     uint64_t game_hash;    // Of the header: tells builds of different games apart
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
-    bool compound;        // The statement being generated is a compound assignment (+=): its value is worked out beside a read of its target
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool list_caches;      // The function being generated has tide_lc, a cache for each list type (gen_grid_caches)
     VEC(task_info) tasks;  // Every async function and handler that runs, callees before what awaits them
@@ -808,15 +807,41 @@ static bool has_fields_ptr(const param *p)
     return p->local_use && local_part_of(p->type) != NULL;
 }
 
-// Whether the match's entities remember what they were spawned as
-// (tide_entity_set_born): some component has local fields, which are kept by
-// the entity's handle, and a rollback can give a handle to another entity.
-// Other games' spawns pay nothing for it.
+static bool correction_snap(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Snap")) return true;
+    }
+    return false;
+}
+
+static bool decl_corrects(const decl *d)
+{
+    if (d->is_local || d->interpolate) return false;
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || correction_snap(f)) continue;
+        if (f->view_correction || (f->type.kind == TY_STRUCT && decl_corrects(f->type.decl))) return true;
+    }
+    return false;
+}
+
+static bool program_corrects(const program *prog)
+{
+    for (int i = 0; i < prog->components.count; i++) if (decl_corrects(prog->components.items[i])) return true;
+    for (int i = 0; i < prog->singletons.count; i++) if (decl_corrects(prog->singletons.items[i])) return true;
+    return false;
+}
+
+// Local fields and correction errors stay with what was spawned, rather than
+// its handle alone: a rollback can give the same handle to another entity.
+// Other games' spawns keep no birth metadata.
 static bool entities_born(const program *prog)
 {
     for (int i = 0; i < prog->local_parts.count; i++) {
         if (prog->local_parts.items[i]->kind == DECL_COMPONENT) return true;
     }
+    for (int i = 0; i < prog->components.count; i++) if (decl_corrects(prog->components.items[i])) return true;
     return false;
 }
 
@@ -900,6 +925,13 @@ static const char *operator_word(const decl *m)
     }
 }
 
+// A function that's handed the local state, `tide_l`, by the local code that
+// calls it: one that reaches this machine's files, or reads Frame.dt.
+static bool takes_local(const decl *m)
+{
+    return m->uses_io || m->frame_time;
+}
+
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
 // Combat.Heal, and tide_operator_Money_add_2 for Money's + (numbered, as a
 // struct can have several).
@@ -978,9 +1010,9 @@ static void line_reset(gen *g)
 
 static void gen_expr(gen *g, sb *o, const expr *e);
 
-// Generates `e` into a fresh string. Tide expressions have no side effects,
-// so an expression that's needed several times (a vector's components) can
-// simply be repeated.
+// Generates `e` into a fresh string. What has side effects in a statement runs
+// before it, into temporaries (see hoist_ordered), so an expression that's
+// needed several times (a vector's components) can simply be repeated.
 static const char *expr_text(gen *g, const expr *e)
 {
     sb b = {0};
@@ -993,7 +1025,7 @@ static const char *expr_text(gen *g, const expr *e)
 static void gen_as(gen *g, sb *o, expr *e, const type want)
 {
     const type have = e->type;
-    if (e->kind == E_CONDITIONAL && (want.kind != have.kind || want.decl != have.decl)) {
+    if (e->kind == E_CONDITIONAL && !e->hoisted && (want.kind != have.kind || want.decl != have.decl)) {
         // Convert each side, so literals stay literals: (c ? 1.0f : 0.0f).
         sb_put(o, "(");
         gen_expr(g, o, e->cond);
@@ -1325,6 +1357,7 @@ static bool takes_where(const param *p)
 // copied as it's taken, so no two variables share a list.
 static bool is_fresh(const expr *e)
 {
+    if (e->kept) return true; // Read before its statement, into a copy of its own
     if (e->kind == E_METHOD && e->call == CALL_WORLD) return false; // world.Get<Health>(e): out of that entity's row
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }
@@ -1653,7 +1686,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
                 continue;
             }
             const bool widen = is_float && type_is_int_based(arg->type);
-            if (arg->kind == E_MEMBER && arg->swizzle_len > 1) {
+            if (arg->kind == E_MEMBER && arg->swizzle_len > 1 && !arg->hoisted) {
                 // A swizzle argument: read its components straight from the source vector.
                 const char *access = object_access(g, arg->object);
                 for (int k = 0; k < dim; k++) {
@@ -1727,6 +1760,12 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_put(o, "tide_player_from_index(");
         gen_expr(g, o, first);
         sb_put(o, ")");
+        break;
+
+    case CTOR_ENUM: // Card(n): the number as the enum's own type, which keeps a byte's or a ushort's low bits
+        sb_printf(o, "((%s)(", c_type(t));
+        gen_expr(g, o, first);
+        sb_put(o, "))");
         break;
 
     case CTOR_COLOR:
@@ -2016,7 +2055,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "tide_draw, tide_ui, tide_gui_seed(tide_seed, %du)", ++g->sites);
         args++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
@@ -2035,9 +2074,13 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_put(o, ", tide_this");
         args++;
     }
-    // A read-only list argument is passed as it is, unless a mut argument could
-    // change it during the call: then it's a copy.
+    // A read-only list argument is passed as it is, unless a mut argument, or
+    // the value a mut method is called on, could change it during the call:
+    // then it's a copy.
     bool mut_list = false;
+    for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
+        mut_list |= type_has_list(m->owner->fields.items[i].type);
+    }
     for (int i = 0; i < e->args.count && i < m->params.count; i++) {
         mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
     }
@@ -2154,10 +2197,8 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
-    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL
-                       || e->io_operation
-                       || (e->call == CALL_DRAW && e->type.kind != TY_VOID))) {
-        sb_put(o, e->hoisted); // Already ran, before the statement: a unit, or an operator that calls C
+    if (e->hoisted) {
+        sb_put(o, e->hoisted); // Already ran, or was read, before the statement (see hoist_ordered)
         return;
     }
     if (e->bind == BIND_CONST) {
@@ -2465,6 +2506,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);
+        } else if (e->call == CALL_CONSTRUCT) { // Combat.Stance(2): an enum in a namespace, from its number
+            gen_construct(g, o, e);
         } else if (e->call == CALL_GUI) {
             gen_gui_call(g, o, e);
         } else if (e->call == CALL_LIST) { // items.Add(x): the list, by address if the method changes it
@@ -2524,18 +2567,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_RANDOM) { // random.NextInt(6): the generator first, by address, as the call steps it
-            if (e->hoisted) {
-                sb_put(o, e->hoisted); // Already ran, before the statement
-            } else {
-                sb_printf(o, "%s(&(", e->c_callee);
-                gen_expr(g, o, e->object);
-                sb_put(o, ")");
-                for (int i = 0; i < e->args.count; i++) {
-                    sb_put(o, ", ");
-                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
-                }
-                sb_put(o, ")");
+            sb_printf(o, "%s(&(", e->c_callee);
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
+            for (int i = 0; i < e->args.count; i++) {
+                sb_put(o, ", ");
+                gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
             }
+            sb_put(o, ")");
         } else if (e->call == CALL_DRAW && e->shader) {
             // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
@@ -2618,6 +2657,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
                                         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
                 sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
+            }
+            if (e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText")) { // As the frame's renderer draws text
+                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height), tide_ui->measure");
             }
             sb_put(o, ")");
         }
@@ -3182,7 +3224,8 @@ static const expr *task_start(const expr *e)
     return NULL;
 }
 
-static void hoist_spawns(gen *g, expr *a, expr *b);
+static void hoist_spawns(gen *g, expr *e);
+static void hoist_arguments(gen *g, const expr *call);
 
 // Starts a task: its frame, with the arguments, runs until it first waits,
 // then waits in its world's table. It belongs to the entity the code runs
@@ -3192,7 +3235,7 @@ static void gen_task_start(gen *g, const expr *call)
     sb *o = &g->c;
     const decl *fn = call->method;
     const bool local = starts_local(g);
-    for (int i = 0; i < call->args.count; i++) hoist_spawns(g, call->args.items[i], NULL);
+    hoist_arguments(g, call);
     line(g, o, "{ // " STR_FMT, STR_ARG(fn->qualified));
     g->indent++;
     line(g, o, "%s tide_start = {0};", type_cname(task_of(g, fn)->frame));
@@ -3229,15 +3272,32 @@ static void gen_task_start(gen *g, const expr *call)
 // arguments, an operator's operands and an initializer's fields unspecified.
 // What has side effects keeps its order: spawns (which allocate entity IDs),
 // calls that draw or use the GUI (widgets appear in the order they're called),
-// and calls to C (which may keep state), with the functions, methods and
-// operators that make them. A statement runs them first, into temporaries, in
-// source order: children before the expression that uses them, siblings left
-// to right.
+// calls to C (which may keep state), with the functions, methods and
+// operators that make them, and calls that write: what they're passed as
+// `mut`, or the value a `mut` method is called on. A statement runs them
+// first, into temporaries, in source order: children before the expression
+// that uses them, siblings left to right.
+//
+// A call that writes changes what the code beside it reads. So in a statement
+// with one (`strict`), a value worked out before it that it could change is
+// read first too, in its turn among the others, into a temporary of its own
+// (`read`); and one worked out after it has it run before the statement even
+// when nothing else does (`forced`).
 //
 // The right of && and ||, and the sides of ?:, only run sometimes. The checker
-// keeps spawns and widgets out of them; when they call C, the whole && or ?:
-// is a unit, which runs as if statements with its own parts in order inside.
-typedef VEC(expr *) expr_list;
+// keeps spawns and widgets out of them; when they hold something that keeps
+// its order, the whole && or ?: is a unit, which runs as if statements with
+// its own parts in order inside.
+typedef struct ordered_item {
+    expr *e;
+    bool read; // A value read ahead of a call that writes, rather than something with side effects
+} ordered_item;
+
+typedef struct ordering {
+    VEC(ordered_item) items;
+    bool strict;
+    bool forced;
+} ordering;
 
 static bool is_spawn(const expr *e)
 {
@@ -3257,113 +3317,425 @@ static bool is_unwrap(const expr *e)
     return e->kind == E_COALESCE || e->kind == E_IS || e->kind == E_TRY || e->kind == E_DEFAULTED;
 }
 
-static bool holds_ordered(expr *e);
-
-// A call that changes what it's called with: a Random's method, which steps
-// its generator, or a function or method that changes a mut argument or the
-// value it's called on. C picks the order of two calls in one expression, and
-// of a call and a read of what it changes, so these run before their
-// statement, in source order (see changes_inside).
-static bool call_changes(const expr *e)
+// Whether calling `m` changes something of its caller's: what it takes as
+// `mut`, or the value a `mut` method is called on.
+static bool routine_writes(const decl *m)
 {
-    if (e->kind != E_CALL && e->kind != E_METHOD) return false;
-    if (e->call == CALL_RANDOM) return true;
-    if ((e->call != CALL_FUNCTION && e->call != CALL_METHOD) || !e->method) return false;
-    if (e->method->is_mut_method) return true;
-    for (int i = 0; i < e->method->params.count; i++) {
-        if (e->method->params.items[i].mode == PARAM_MUT) return true;
+    if (!m) return false;
+    if (m->is_mut_method) return true;
+    for (int i = 0; i < m->params.count; i++) {
+        if (m->params.items[i].mode == PARAM_MUT) return true;
     }
     return false;
 }
 
-static void collect_ordered(expr *e, expr_list *out)
+// Whether `e` itself, a call or an operator, writes something the code around
+// it can read.
+static bool writes(const expr *e)
 {
-    if (!e) return;
+    if (e->kind == E_BINARY || e->kind == E_UNARY) return routine_writes(e->method);
+    if (e->kind != E_CALL && e->kind != E_METHOD) return false;
+    switch (e->call) {
+    case CALL_FUNCTION:
+    case CALL_METHOD: return routine_writes(e->method);
+    case CALL_GUI: return e->arg_mut != 0;
+    case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
+    case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
+    case CALL_GRID: return true; // Clear
+    case CALL_RANDOM: return true; // Each of a Random's methods steps it
+    default: return false;
+    }
+}
+
+// Whether a call that writes is somewhere in `e`.
+static bool holds_writer(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT) { // What it waits for runs as a task (see gen_await): only its arguments are the statement's
+        for (int i = 0; i < e->lhs->args.count; i++) {
+            if (holds_writer(e->lhs->args.items[i])) return true;
+        }
+        return false;
+    }
+    if (writes(e) || holds_writer(e->object) || holds_writer(e->lhs) || holds_writer(e->rhs) || holds_writer(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (holds_writer(e->args.items[i])) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (holds_writer(e->inits.items[i].value)) return true;
+    }
+    return false;
+}
+
+// Whether a call runs before its statement when anything does: it has side
+// effects, and gives a value a temporary can hold.
+static bool call_keeps_order(const expr *e)
+{
+    if (is_spawn(e)) return true;
+    if (e->type.kind == TY_VOID) return false;
+    if (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation || e->io_operation) return true;
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c)) {
+        return true;
+    }
+    return writes(e);
+}
+
+// A struct's operator that keeps its order: it calls C, or writes.
+static bool operator_keeps_order(const expr *e)
+{
+    return e->method && (e->method->calls_c || routine_writes(e->method));
+}
+
+static bool settled(const expr *e);
+
+static bool all_settled(const expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        if (!settled(e->args.items[i])) return false;
+    }
+    return true;
+}
+
+// Whether a call only works its value out from its operands: a constructor,
+// a function of Math or of text, or a function or method of the game's that
+// has no side effects, which only sees what it's given.
+static bool call_settled(const expr *e)
+{
+    if (e->call == CALL_CONSTRUCT) return all_settled(e);
+    // Random(seed): a generator from its seed alone
+    if (e->kind == E_CALL && e->call == CALL_BUILTIN && e->c_callee && strcmp(e->c_callee, "tide_random_seeded") == 0) {
+        return all_settled(e);
+    }
+    if (e->kind != E_METHOD) { // IsDead() inside a method reads the value the method runs on
+        return e->call == CALL_FUNCTION && !e->method->owner && all_settled(e);
+    }
+    switch (e->call) {
+    case CALL_BUILTIN: {
+        const expr *owner = e->object;
+        if (!owner || owner->kind != E_NAME || e->resource_operation || e->io_operation) return false;
+        const bool math = str_eq_c(owner->name, "Math") || str_eq_c(owner->name, "quaternion") || str_eq_c(owner->name, "Color")
+                       || str_eq_c(owner->name, "float2x2") || str_eq_c(owner->name, "float3x3")
+                       || str_eq_c(owner->name, "float4x4");
+        return math && all_settled(e);
+    }
+    case CALL_FUNCTION: return !e->method->owner && all_settled(e); // Combat.Heal(...)
+    case CALL_METHOD:
+    case CALL_TEXT:
+    case CALL_LIST: // The ones that only read: the others keep their order
+    case CALL_MAP: return settled(e->object) && all_settled(e);
+    default: return false; // The World, the frame's cameras: what they read isn't an operand
+    }
+}
+
+// Whether `e`'s value is the same wherever in its statement it's worked out:
+// it reads nothing a call there could write. What keeps its order is, since
+// its value waits in a temporary.
+static bool settled(const expr *e)
+{
+    if (!e) return true;
+    // Constants; Devices and the draw list, which nothing in Tide writes
+    if (e->bind == BIND_CONST || e->type.kind == TY_RECORD || e->type.kind == TY_DRAW_LIST) return true;
     switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
+    case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
+        return true;
+    case E_NAME:
+        // A local that isn't mut never changes. A query's row reads the world as it is.
+        if (e->bind == BIND_LOCAL) return e->local && !e->local->is_mut && !e->local->query;
+        // A function's read-only parameter is its own copy, but a list, which may be its caller's
+        if (e->bind == BIND_PARAM) {
+            const param *p = e->param;
+            return p->function_param && !p->task_ref && p->mode != PARAM_MUT && !type_has_list(p->type);
+        }
+        return e->bind != BIND_FIELD; // A type's name and the like: no value at all
     case E_MEMBER:
-        collect_ordered(e->object, out);
-        break;
-    case E_METHOD:
-    case E_CALL:
-        if (e->kind == E_METHOD) collect_ordered(e->object, out);
-        for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
-        if (is_spawn(e)
-            || (e->type.kind != TY_VOID
-                && (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation
-                    || e->io_operation || call_changes(e)
-                    || ((e->call == CALL_FUNCTION || e->call == CALL_METHOD)
-                        && (e->method->draws || e->method->is_extern || e->method->calls_c))))) {
-            vec_push(*out, e);
-        }
-        break;
-    case E_LITERAL:
-        for (int i = 0; i < e->inits.count; i++) collect_ordered(e->inits.items[i].value, out);
-        break;
-    case E_BINARY:
-        collect_ordered(e->lhs, out);
-        if (e->op != T_AND && e->op != T_OR) {
-            collect_ordered(e->rhs, out);
-            if (e->method && e->method->calls_c) vec_push(*out, e); // A struct's operator that calls C
-        } else if (holds_ordered(e->rhs)) {
-            vec_push(*out, e);
-        }
-        break;
+        if (e->enum_member || e->c_constant) return true;
+        if (e->local_field || e->typed_text || e->edge != EDGE_NONE) return false;
+        return settled(e->object);
+    case E_INDEX:
+        return settled(e->object) && settled(e->lhs);
     case E_UNARY:
-        collect_ordered(e->lhs, out);
-        if (e->method && e->method->calls_c) vec_push(*out, e);
-        break;
+    case E_BINARY: // A struct's operator only sees its operands
+        return operator_keeps_order(e) || (settled(e->lhs) && settled(e->rhs));
     case E_CONDITIONAL:
-        collect_ordered(e->cond, out);
-        if (holds_ordered(e->lhs) || holds_ordered(e->rhs)) vec_push(*out, e);
-        break;
+        return settled(e->cond) && settled(e->lhs) && settled(e->rhs);
+    case E_LITERAL:
+        for (int i = 0; i < e->inits.count; i++) {
+            if (!settled(e->inits.items[i].value)) return false;
+        }
+        return true;
     case E_INTERP:
     case E_LIST:
-        for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
+        return all_settled(e);
+    case E_CALL:
+    case E_METHOD:
+        if (call_keeps_order(e)) return true;
+        if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
+            // Local fields come by address, beside the value (has_fields_ptr)
+            for (int i = 0; i < e->method->params.count; i++) {
+                if (has_fields_ptr(&e->method->params.items[i])) return false;
+            }
+        }
+        return call_settled(e);
+    }
+    return false;
+}
+
+// How an expression takes an operand.
+typedef enum operand_role {
+    TAKEN, // A value, worked out in its turn
+    USED,  // A variable, or a part of one, which the expression reads as it runs, once its operands are worked out
+    PLACE, // A variable, or a part of one, which the expression takes by address
+} operand_role;
+
+typedef struct operand {
+    expr *e;
+    operand_role role;
+} operand;
+
+typedef VEC(operand) operand_list;
+
+// Whether `e` names a variable, or a part of one: a field, an element.
+static bool is_place(const expr *e)
+{
+    while (e->kind == E_MEMBER || e->kind == E_INDEX) e = e->object;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM || e->bind == BIND_FIELD);
+}
+
+// A variable an expression reads by value: when it runs. Anything else it's
+// given there is a value worked out in its turn.
+static operand_role use_of(const expr *e)
+{
+    return is_place(e) ? USED : TAKEN;
+}
+
+static void operand_push(operand_list *ops, expr *e, const operand_role role)
+{
+    const operand op = {e, role};
+    vec_push(*ops, op);
+}
+
+// A value an expression takes. A literal's are its fields' values: they're
+// what's worked out, and code reads them where they're written (gen_value).
+static void take(operand_list *ops, expr *e)
+{
+    if (!e) return;
+    if (e->kind != E_LITERAL) {
+        operand_push(ops, e, TAKEN);
+        return;
+    }
+    for (int i = 0; i < e->inits.count; i++) take(ops, e->inits.items[i].value);
+}
+
+// A call's operands: the value a method is called on, then its arguments.
+static void call_operands(expr *e, operand_list *ops)
+{
+    const decl *m = e->call == CALL_FUNCTION || e->call == CALL_METHOD ? e->method : NULL;
+    if (e->kind == E_METHOD) {
+        switch (e->call) {
+        case CALL_METHOD: operand_push(ops, e->object, m->is_mut_method ? PLACE : use_of(e->object)); break;
+        case CALL_LIST:
+        case CALL_MAP:
+        case CALL_GRID:
+        case CALL_RANDOM: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
+        case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
+        case CALL_TEXT:
+        case CALL_ADD:
+        case CALL_REMOVE:
+        case CALL_DESTROY:
+        case CALL_SEND: take(ops, e->object); break;
+        default:
+            if (e->targeted || e->resource_operation) take(ops, e->object); // A render target
+            break; // Math, Scene, GUI and the like: a name, no value
+        }
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        operand_role role = TAKEN;
+        if (m && i < m->params.count) {
+            const param *p = &m->params.items[i];
+            if (p->mode == PARAM_MUT) {
+                role = PLACE;
+            } else if (m->is_extern && p->mode == PARAM_IN && arg->type.kind == p->type.kind && arg->type.decl == p->type.decl
+                       && addressable(arg)) {
+                role = USED; // C reads it where it is (gen_extern_call)
+            }
+        } else if (e->call == CALL_GUI && (e->arg_mut & (1u << i))) {
+            role = PLACE;
+        }
+        if (role == TAKEN) take(ops, arg);
+        else operand_push(ops, arg, role);
+    }
+}
+
+// Whether a temporary can hold a value of type `t`.
+static bool can_keep(const type t)
+{
+    switch (t.kind) {
+    case TY_ERROR: case TY_VOID: case TY_GRID: case TY_ACTION: case TY_WORLD: case TY_QUERY: return false;
+    default: return true;
+    }
+}
+
+static void collect_ordered(expr *e, ordering *out, bool later);
+
+// An expression's operands, in the order they're worked out, with what keeps
+// its order in each. In a statement with a call that writes, a value that
+// such a call in a later operand could change is read in its turn, into a
+// temporary. One that such a call in an earlier operand could have changed is
+// read after it, and so is a variable the expression reads as it runs: then
+// those calls run before the statement. `later`: a call that writes runs after
+// these operands, outside them.
+static void collect_operands(ordering *out, const operand_list *ops, const bool later)
+{
+    int first = -1; // The operands that hold calls that write, from the first to the last
+    int last = -1;
+    for (int i = 0; out->strict && i < ops->count; i++) {
+        if (!holds_writer(ops->items[i].e)) continue;
+        if (first < 0) first = i;
+        last = i;
+    }
+    for (int i = 0; i < ops->count; i++) {
+        expr *e = ops->items[i].e;
+        const bool after = later || i < last;
+        if (ops->items[i].role != TAKEN) {
+            collect_ordered(e, out, after);
+            if (ops->items[i].role == USED && first >= 0 && (first != i || last != i)) out->forced = true;
+            continue;
+        }
+        const int had = out->items.count;
+        collect_ordered(e, out, false);
+        if (!out->strict) continue;
+        if (out->items.count > had && out->items.items[out->items.count - 1].e == e) continue; // It waits in a temporary already
+        if (settled(e)) continue;
+        if (after && can_keep(e->type)) {
+            const ordered_item item = {e, true};
+            vec_push(out->items, item);
+        } else if (after || (first >= 0 && first < i)) {
+            out->forced = true;
+        }
+    }
+}
+
+static bool holds_ordered(expr *e);
+
+// What keeps its order in `e`, in the order it runs. `later`: `e` is a
+// variable or a part of one, and a call that writes runs after its own
+// operands (an element's index) are worked out.
+static void collect_ordered(expr *e, ordering *out, const bool later)
+{
+    if (!e) return;
+    operand_list ops = {0};
+    switch (e->kind) {
+    case E_MEMBER: {
+        const int had = out->items.count;
+        collect_ordered(e->object, out, later);
+        // A swizzle reads each component from its vector, which is written out again for each
+        if (e->swizzle_len > 1 && out->items.count > had) out->forced = true;
         break;
-    case E_INDEX:
-        collect_ordered(e->object, out);
-        collect_ordered(e->lhs, out);
+    }
+    case E_METHOD:
+    case E_CALL: {
+        call_operands(e, &ops);
+        collect_operands(out, &ops, false);
+        const decl *m = e->call == CALL_FUNCTION || e->call == CALL_METHOD ? e->method : NULL;
+        // IsDead(Hurt(1)) in a method: the value it runs on is read as it's called
+        for (int i = 0; out->strict && m && m->owner && e->kind == E_CALL && !m->is_mut_method && i < e->args.count; i++) {
+            if (holds_writer(e->args.items[i])) out->forced = true;
+        }
+        // A vector made from vectors reads each one's components from its text, written out again for each
+        for (int i = 0; e->call == CALL_CONSTRUCT && e->ctor == CTOR_COMPONENTS && i < e->args.count; i++) {
+            expr *arg = e->args.items[i];
+            if (type_dim(arg->type) >= 2 && holds_ordered(arg)) out->forced = true;
+        }
+        if (call_keeps_order(e)) {
+            const ordered_item item = {e, false};
+            vec_push(out->items, item);
+        }
+        break;
+    }
+    case E_LITERAL:
+        take(&ops, e);
+        collect_operands(out, &ops, false);
+        break;
+    case E_BINARY:
+    case E_UNARY:
+    case E_CONDITIONAL: {
+        const bool unit = is_unit(e);
+        take(&ops, e->kind == E_CONDITIONAL ? e->cond : e->lhs);
+        if (!unit) take(&ops, e->rhs);
+        collect_operands(out, &ops, false);
+        // A unit: its other parts are its own, as they only run sometimes
+        const bool ordered = !unit ? operator_keeps_order(e)
+                           : (e->kind == E_CONDITIONAL && holds_ordered(e->lhs)) || holds_ordered(e->rhs);
+        if (ordered) {
+            const ordered_item item = {e, false};
+            vec_push(out->items, item);
+        }
+        break;
+    }
+    case E_INTERP:
+    case E_LIST:
+        for (int i = 0; i < e->args.count; i++) take(&ops, e->args.items[i]);
+        collect_operands(out, &ops, false);
+        break;
+    case E_INDEX: // The element is read once its index is worked out
+        operand_push(&ops, e->object, use_of(e->object));
+        take(&ops, e->lhs);
+        collect_operands(out, &ops, later);
         break;
     case E_COALESCE: // Its right side is its own: it only runs when the left fails
     case E_IS:
     case E_TRY:
     case E_DEFAULTED:
-        collect_ordered(e->lhs, out);
-        vec_push(*out, e);
+    case E_AWAIT: {
+        if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
+            for (int i = 0; i < e->lhs->args.count; i++) take(&ops, e->lhs->args.items[i]);
+        } else {
+            take(&ops, e->lhs);
+        }
+        collect_operands(out, &ops, false);
+        const ordered_item item = {e, false};
+        vec_push(out->items, item);
         break;
-    case E_AWAIT: // The call's arguments first, then the wait
-        for (int i = 0; i < e->lhs->args.count; i++) collect_ordered(e->lhs->args.items[i], out);
-        vec_push(*out, e);
-        break;
+    }
     default:
         break;
     }
 }
 
-static bool holds_ordered(expr *e)
+// What keeps its order in a statement's expression.
+static ordering order_of(expr *e)
 {
-    expr_list found = {0};
-    collect_ordered(e, &found);
-    return found.count > 0;
+    ordering o = {0};
+    o.strict = holds_writer(e);
+    collect_ordered(e, &o, false);
+    return o;
 }
 
-static bool must_hoist(const expr_list *ordered);
+static bool holds_ordered(expr *e)
+{
+    const ordering found = order_of(e);
+    return found.items.count > 0;
+}
+
+static bool must_hoist(const ordering *ordered);
 
 // Whether a part that runs only sometimes needs its own calls put in order.
 static bool part_must_hoist(expr *e)
 {
-    expr_list ordered = {0};
-    collect_ordered(e, &ordered);
+    const ordering ordered = order_of(e);
     return must_hoist(&ordered);
 }
 
 // Whether a statement's spawns and calls go before it, in order: it spawns, C
-// would pick the order of two of them, or a unit's parts would.
-static bool must_hoist(const expr_list *ordered)
+// would pick the order of two of them, or of one and something read beside
+// it, or a unit's parts would.
+static bool must_hoist(const ordering *ordered)
 {
-    if (ordered->count > 1) return true;
-    for (int i = 0; i < ordered->count; i++) {
-        expr *e = ordered->items[i];
+    if (ordered->forced || ordered->items.count > 1) return true;
+    for (int i = 0; i < ordered->items.count; i++) {
+        expr *e = ordered->items.items[i].e;
         if (is_spawn(e) || is_unwrap(e) || e->kind == E_AWAIT) return true;
         if (!is_unit(e)) continue;
         if (e->kind == E_BINARY ? part_must_hoist(e->rhs) : part_must_hoist(e->lhs) || part_must_hoist(e->rhs)) {
@@ -3373,55 +3745,39 @@ static bool must_hoist(const expr_list *ordered)
     return false;
 }
 
-// Whether a statement's expression `root` has a call in it that changes what
-// it's called with (call_changes), other than `root` itself: then the rest of
-// the expression may read what the call changes, in an order C picks, so the
-// statement's calls go before it. A call that's the whole expression runs
-// where it is.
-static bool changes_inside(expr *root)
-{
-    expr_list ordered = {0};
-    collect_ordered(root, &ordered);
-    for (int i = 0; i < ordered.count; i++) {
-        expr *e = ordered.items[i];
-        if (e != root && call_changes(e)) return true;
-        // A part that runs only sometimes, which collect_ordered leaves to its unit
-        if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR) && (call_changes(e->rhs) || changes_inside(e->rhs))) return true;
-        if (e->kind == E_CONDITIONAL
-            && (call_changes(e->lhs) || changes_inside(e->lhs) || call_changes(e->rhs) || changes_inside(e->rhs))) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Whether hoist_spawns runs anything of `e` before its statement.
 static bool needs_hoisting(expr *e)
 {
-    expr_list ordered = {0};
-    collect_ordered(e, &ordered);
-    return must_hoist(&ordered) || (e && changes_inside(e));
+    const ordering ordered = order_of(e);
+    return must_hoist(&ordered);
 }
 
 static void hoist_unit(gen *g, expr *e, const char *name);
 static void hoist_unwrap(gen *g, expr *e);
 static bool wrapped_in_parens(const char *text);
 
-// Runs what keeps its order in a statement's expressions (in the order given)
-// before it, into temporaries the statement then reads.
-static void hoist_spawns(gen *g, expr *a, expr *b)
+// Runs what keeps its order (in the order given) before its statement, into
+// temporaries the statement then reads.
+static void hoist_ordered(gen *g, const ordering *ordered)
 {
-    expr_list ordered = {0};
-    collect_ordered(a, &ordered);
-    collect_ordered(b, &ordered);
     // Code copied into several calls is generated again each time.
-    for (int i = 0; i < ordered.count; i++) ordered.items[i]->hoisted = NULL;
-    // `total += Bump(counter)` reads its target beside the call, so the call isn't alone there
-    if (!must_hoist(&ordered) && !(a && changes_inside(a)) && !(b && (changes_inside(b) || (g->compound && call_changes(b))))) return;
-    for (int i = 0; i < ordered.count; i++) {
-        expr *e = ordered.items[i];
+    for (int i = 0; i < ordered->items.count; i++) {
+        ordered->items.items[i].e->hoisted = NULL;
+        ordered->items.items[i].e->kept = false;
+    }
+    if (!must_hoist(ordered)) return;
+    for (int i = 0; i < ordered->items.count; i++) {
+        expr *e = ordered->items.items[i].e;
         sb name = {0};
-        if (is_spawn(e)) {
+        if (ordered->items.items[i].read) { // As it is now, with its lists copied, so nothing shares them
+            sb_printf(&name, "tide_read%d", g->call_temps++);
+            indent(g, &g->c);
+            sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
+            gen_value_of(g, &g->c, e, e->type);
+            sb_put(&g->c, ";\n");
+            task_declare(g, name.data, e->type);
+            e->kept = true;
+        } else if (is_spawn(e)) {
             sb_printf(&name, "tide_spawned%d", g->spawn_temps++);
             indent(g, &g->c);
             sb_printf(&g->c, "%stide_entity %s = ", mutable_locals ? "" : "const ", name.data);
@@ -3452,6 +3808,53 @@ static void hoist_spawns(gen *g, expr *a, expr *b)
     }
 }
 
+// A statement's expression: what keeps its order in it runs before it.
+static void hoist_spawns(gen *g, expr *e)
+{
+    const ordering ordered = order_of(e);
+    hoist_ordered(g, &ordered);
+}
+
+// The arguments of a task's start, which each go into its frame in a statement
+// of their own: what keeps its order in any of them runs before the first.
+static void hoist_arguments(gen *g, const expr *call)
+{
+    ordering ordered = {0};
+    operand_list ops = {0};
+    for (int i = 0; i < call->args.count; i++) {
+        if (call->method->params.items[i].task_ref) continue; // A component's name: the task gets it itself
+        ordered.strict |= holds_writer(call->args.items[i]);
+        take(&ops, call->args.items[i]);
+    }
+    collect_operands(&ordered, &ops, false);
+    hoist_ordered(g, &ordered);
+}
+
+// An assignment's. What its target runs (an element's index) comes first; a
+// compound one then reads what the target holds; then the value is worked out.
+static void hoist_assign(gen *g, const stmt *s)
+{
+    ordering ordered = {0};
+    const bool target_writes = holds_writer(s->target);
+    const bool value_writes = holds_writer(s->value);
+    ordered.strict = target_writes || value_writes;
+    collect_ordered(s->target, &ordered, value_writes);
+    if (s->op != T_ASSIGN) {
+        // The target is written out twice, to read and to write: what it runs waits in temporaries
+        if (ordered.items.count > 0) ordered.forced = true;
+        if (value_writes) { // What it held before the value's calls wrote
+            const ordered_item item = {s->target, true};
+            vec_push(ordered.items, item);
+        }
+    }
+    const int had = ordered.items.count;
+    collect_ordered(s->value, &ordered, false);
+    // A value read after a call in the target wrote
+    const bool waits = ordered.items.count > had && ordered.items.items[ordered.items.count - 1].e == s->value;
+    if (target_writes && !waits && !settled(s->value)) ordered.forced = true;
+    hoist_ordered(g, &ordered);
+}
+
 // A unit, before its statement: && and || as an if that runs the right side
 // only when it decides, and ?: as an if/else, with each part's own calls in
 // order inside. Its value goes in `name`.
@@ -3467,7 +3870,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
         g->indent++;
         const int mark = task_mark(g);
         task_declare(g, name, (type){TY_BOOL, NULL}); // Its own, while the right side waits
-        hoist_spawns(g, e->rhs, NULL);
+        hoist_spawns(g, e->rhs);
         task_pop(g, mark);
         indent(g, o);
         sb_printf(o, "%s = ", name);
@@ -3486,7 +3889,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
         expr *value = side == 0 ? e->lhs : e->rhs;
         g->indent++;
         const int mark = task_mark(g);
-        hoist_spawns(g, value, NULL);
+        hoist_spawns(g, value);
         task_pop(g, mark);
         indent(g, o);
         sb_printf(o, "%s = ", name);
@@ -3621,7 +4024,7 @@ static void hoist_unwrap(gen *g, expr *e)
     line(g, o, "} else {");
     g->indent++;
     const int mark = task_mark(g); // Its value isn't set until the right side is done
-    hoist_spawns(g, e->rhs, NULL);
+    hoist_spawns(g, e->rhs);
     task_pop(g, mark);
     indent(g, o);
     sb_printf(o, "%s = ", name.data);
@@ -3906,20 +4309,16 @@ static void gen_stmt(gen *g, const stmt *s)
         declare_bindings(g, s->cond);
     }
     switch (s->kind) {
-    case S_VAR: hoist_spawns(g, s->value, NULL); break;
+    case S_VAR: hoist_spawns(g, s->value); break;
     case S_EXPR:
-        if (!task_start(s->value)) hoist_spawns(g, s->value, NULL);
+        if (!task_start(s->value)) hoist_spawns(g, s->value);
         break;
-    case S_ASSIGN:
-        g->compound = s->op != T_ASSIGN;
-        hoist_spawns(g, s->target, s->value);
-        g->compound = false;
-        break;
+    case S_ASSIGN: hoist_assign(g, s); break;
     case S_IF:
-    case S_SWITCH: hoist_spawns(g, s->cond, NULL); break;
+    case S_SWITCH: hoist_spawns(g, s->cond); break;
     case S_RETURN:
     case S_FAIL:
-    case S_FOREACH: hoist_spawns(g, s->value, NULL); break; // A foreach's list is made once, before it
+    case S_FOREACH: hoist_spawns(g, s->value); break; // A foreach's list is made once, before it
     default: break;
     }
 
@@ -4021,7 +4420,7 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "while (true) {");
             g->indent++;
             declare_bindings(g, s->cond); // Names `is` gives, for the body
-            hoist_spawns(g, s->cond, NULL);
+            hoist_spawns(g, s->cond);
             line(g, o, "if (!(%s)) break;", expr_text(g, s->cond));
         } else {
             const char *cond = s->cond ? expr_text(g, s->cond) : "true";
@@ -4282,7 +4681,17 @@ static void gen_stmt(gen *g, const stmt *s)
     }
 
     case S_ASSIGN: {
-        const expr *target = s->target;
+        expr *target = s->target;
+        // A compound one reads its target first: where a call in its value
+        // writes, that's the copy made before it (hoist_assign), and the
+        // target itself is only where the result goes.
+        expr before = *target;
+        expr *left = target;
+        if (target->kept) {
+            target->hoisted = NULL;
+            target->kept = false;
+            left = &before;
+        }
         if (target->kind == E_INDEX && (target->object->type.kind == TY_GRID || target->object->type.kind == TY_LIST)
             && in_window(g, target)) { // Into the step's window, or its task's copy of its elements
             indent(g, o);
@@ -4290,7 +4699,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_window_index(g, o, target);
             sb_put(o, "] = ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_put(o, ";\n");
             break;
         }
@@ -4307,7 +4716,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_expr(g, o, target->lhs);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             if (g->par_loop) sb_put(o, ");\n");
             else sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
@@ -4330,7 +4739,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_as(g, o, target->lhs, map->fields.items[0].type);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_value_of(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
@@ -4342,7 +4751,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_expr(g, o, target->lhs);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
@@ -4371,7 +4780,7 @@ static void gen_stmt(gen *g, const stmt *s)
                 sb_put(o, "), ");
             }
             if (s->op == T_ASSIGN) gen_value_of(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             if (ref) sb_put(o, ");\n");
             else sb_printf(o, ", %s);\n", place_where(g, target));
             break;
@@ -4387,7 +4796,7 @@ static void gen_stmt(gen *g, const stmt *s)
         if (s->op == T_ASSIGN) {
             gen_as(g, o, s->value, target->type);
         } else {
-            gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
         }
         sb_put(o, ";");
         if (target->kind == E_MEMBER && target->swizzle_len > 1) {
@@ -4824,6 +5233,7 @@ static void gen_header(gen *g)
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
+    if (program_corrects(prog)) sb_put(o, "#define TIDE_HAS_VIEW_CORRECTIONS 1\n\n");
 
     bool enums = false;
     for (int i = 0; i < prog->decls.count; i++) {
@@ -5001,10 +5411,28 @@ static void gen_header(gen *g)
     }
     sb_put(o, "    } value;\n} tide_start;\n\n");
 
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *name = type_cname(d);
+            sb_printf(o, "typedef struct tide_correction_%s { %s error; uint32_t snaps; bool valid; } tide_correction_%s;\n", name, name, name);
+        }
+    }
+    if (program_corrects(prog)) sb_put(o, "\n");
     sb_put(o, "// This machine's own state, outside every world: never sent, rolled back or hashed.\n");
     sb_put(o, "// Like a world, it starts zeroed and tide_local_free lets it go.\n\n");
     sb_put(o, "typedef struct tide_local {\n");
     sb_put(o, "    const tide_io *tide_io; // Host-owned storage provider; excluded from saved state\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_attached tide_corrections_%s; // Private presentation errors, never serialized\n", type_cname(d));
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_correction_%s tide_correction_%s;\n", type_cname(d), type_cname(d));
+    }
     for (int i = 0; i < prog->singletons.count; i++) {
         if (!prog->singletons.items[i]->is_local) continue;
         const char *name = type_cname(prog->singletons.items[i]);
@@ -5032,10 +5460,8 @@ static void gen_header(gen *g)
         sb_put(o, "    uint32_t tide_kept_verified; // ...and of the verified one: what's kept is looked over when either changes\n");
     }
     gen_task_tables(g, true);
-    if (world_has_tasks(g, true)) {
-        sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
-        sb_put(o, "    float tide_frame_seconds;  // This frame's length, which they count down (tide_local_frame_time)\n");
-    }
+    if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
+    sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
@@ -5121,6 +5547,7 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_local_rebind_resources(tide_local *local, bool same_memory);\n\n");
     sb_put(o, "// The local state's tide_world_free, tide_world_pack and tide_world_unpack.\n");
     sb_put(o, "void tide_local_free(tide_local *local);\n");
+    if (program_corrects(prog)) sb_put(o, "void tide_local_correct(tide_local *local, const tide_view_correction *correction);\n");
     sb_put(o, "uint32_t tide_local_pack(const tide_local *local, uint8_t *out, uint32_t capacity);\n");
     sb_put(o, "bool tide_local_unpack(tide_local *local, const uint8_t *data, uint32_t size);\n\n");
     sb_put(o, "// Runs every view once, in declaration order, adding their Draw calls to `draw`\n");
@@ -5154,8 +5581,8 @@ static void gen_header(gen *g)
     sb_put(o, "// and `message` a kick's, or NULL), handled at the end of the next tide_frame.\n");
     sb_put(o, "void tide_local_connected(tide_local *local);\n");
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message);\n\n");
-    sb_put(o, "// How long this frame is, in seconds, which local tasks' Wait.Seconds counts down.\n");
-    sb_put(o, "// Call it before tide_frame.\n");
+    sb_put(o, "// How long this frame is, in seconds: what Frame.dt reads, and local tasks'\n");
+    sb_put(o, "// Wait.Seconds counts down. Call it before tide_frame; until then it's 0.\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds);\n\n");
     if (prog->command_types.count) {
         sb_put(o, "#define TIDE_HAS_COMMANDS 1\n"
@@ -5345,7 +5772,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d.fields, live);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -5823,8 +6250,30 @@ static void gen_blend_fields(gen *g, const decl *d)
         char before[256];
         snprintf(v, sizeof v, "v->%s", field_cname(f));
         snprintf(before, sizeof before, "before->%s", field_cname(f));
-        gen_blend_value(g, v, before, f->type);
+        if (f->view_correction == 2 && f->type.kind == TY_FLOAT) {
+            line(g, &g->c, "%s = tide_correction_wrap(%s) + tide_correction_wrap(tide_correction_wrap(%s) - tide_correction_wrap(%s)) * t;", v, before, v, before);
+        } else {
+            gen_blend_value(g, v, before, f->type);
+        }
     }
+}
+
+static void gen_correction_math(gen *g)
+{
+    bool angles = false;
+    for (int i = 0; i < g->prog->decls.count; i++) {
+        const decl *d = g->prog->decls.items[i];
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            angles |= f->view_correction == 2 && f->type.kind == TY_FLOAT;
+        }
+    }
+    if (angles) sb_put(&g->c, "TIDE_HELPER float tide_correction_wrap(float v)\n{\n"
+                            "    if (!tide_is_finite_f(v)) return 0.0f;\n"
+                            "    if (v >= -TIDE_PI_F && v <= TIDE_PI_F) return v;\n"
+                            "    if (v > TIDE_PI_F && v <= 3.0f * TIDE_PI_F) return v - 2.0f * TIDE_PI_F;\n"
+                            "    if (v < -TIDE_PI_F && v >= -3.0f * TIDE_PI_F) return v + 2.0f * TIDE_PI_F;\n"
+                            "    return tide_atan2_f(tide_sin_f(v), tide_cos_f(v));\n}\n\n");
 }
 
 // Views see the match between its last two ticks: for each type with fields
@@ -5860,9 +6309,233 @@ static void gen_blend_helpers(gen *g)
             sb_printf(o, "TIDE_HELPER const %s *tide_prev_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n",
                       name, name, name);
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
+            if (decl_corrects(d)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
         }
     }
+    g->indent = 0;
+}
+
+enum correction_action { CORRECTION_EMPTY, CORRECTION_ACCUMULATE, CORRECTION_APPLY, CORRECTION_DECAY };
+
+// Only role-bearing primitive leaves participate. An ordinary struct is
+// traversed, but a [Snap] boundary and a custom Interpolate are never crossed.
+static void gen_correction_leaves(gen *g, const decl *d, const char *path, const int action)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || correction_snap(f)) continue;
+        sb p = {0};
+        sb_printf(&p, "%s%s%s", path, *path ? "." : "", field_cname(f));
+        if (!f->view_correction) {
+            if (f->type.kind == TY_STRUCT && decl_corrects(f->type.decl)) gen_correction_leaves(g, f->type.decl, p.data, action);
+            continue;
+        }
+        const char *at = p.data;
+        const int dim = type_dim(f->type);
+        if (f->type.kind == TY_QUATERNION) {
+            if (action == CORRECTION_EMPTY) {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f) return false;", at, at, at, at);
+            } else if (action == CORRECTION_ACCUMULATE) {
+                line(g, &g->c, "{");
+                g->indent++;
+                line(g, &g->c, "const tide_quaternion a = tide_normalize_q(before->%s), b = tide_normalize_q(after->%s);", at, at);
+                line(g, &g->c, "const bool same = (a.value.x == b.value.x && a.value.y == b.value.y && a.value.z == b.value.z && a.value.w == b.value.w)");
+                line(g, &g->c, "               || (a.value.x == -b.value.x && a.value.y == -b.value.y && a.value.z == -b.value.z && a.value.w == -b.value.w);");
+                line(g, &g->c, "if (!same) e->%s = tide_normalize_q(tide_mul_q(tide_mul_q(tide_normalize_q(e->%s), a), tide_inverse_q(b)));", at, at);
+                line(g, &g->c, "if (e->%s.value.x == 0.0f && e->%s.value.y == 0.0f && e->%s.value.z == 0.0f) e->%s = (tide_quaternion){0};", at, at, at, at);
+                g->indent--;
+                line(g, &g->c, "}");
+            } else if (action == CORRECTION_APPLY) {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f)", at, at, at, at);
+                line(g, &g->c, "    v->%s = tide_normalize_q(tide_mul_q(e->%s, v->%s));", at, at, at);
+            } else {
+                line(g, &g->c, "if (e->%s.value.x != 0.0f || e->%s.value.y != 0.0f || e->%s.value.z != 0.0f || e->%s.value.w != 0.0f) {", at, at, at, at);
+                g->indent++;
+                line(g, &g->c, "e->%s = tide_slerp_q(tide_identity_q(), e->%s, keep);", at, at);
+                line(g, &g->c, "if (e->%s.value.x == 0.0f && e->%s.value.y == 0.0f && e->%s.value.z == 0.0f) e->%s = (tide_quaternion){0};", at, at, at, at);
+                g->indent--;
+                line(g, &g->c, "}");
+            }
+            continue;
+        }
+        static const char *const axes[] = {"x", "y", "z", "w"};
+        for (int axis = 0; axis < dim; axis++) {
+            sb leaf = {0};
+            sb_printf(&leaf, "%s%s%s", at, dim > 1 ? "." : "", dim > 1 ? axes[axis] : "");
+            const char *l = leaf.data;
+            if (action == CORRECTION_EMPTY) line(g, &g->c, "if (e->%s != 0.0f) return false;", l);
+            else if (action == CORRECTION_ACCUMULATE && f->view_correction == 2)
+                line(g, &g->c, "e->%s = tide_correction_wrap(e->%s + tide_correction_wrap(tide_correction_wrap(before->%s) - tide_correction_wrap(after->%s)));", l, l, l, l);
+            else if (action == CORRECTION_ACCUMULATE) line(g, &g->c, "e->%s += before->%s - after->%s;", l, l, l);
+            else if (action == CORRECTION_APPLY && f->view_correction == 2)
+                line(g, &g->c, "if (e->%s != 0.0f) v->%s = tide_correction_wrap(v->%s) + e->%s;", l, l, l, l);
+            else if (action == CORRECTION_APPLY) line(g, &g->c, "if (e->%s != 0.0f) v->%s += e->%s;", l, l, l);
+            else line(g, &g->c, "e->%s *= keep;", l);
+        }
+    }
+}
+
+static void gen_correction_state(gen *g)
+{
+    const program *prog = g->prog;
+    if (!program_corrects(prog)) return;
+    sb *o = &g->c;
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (!side) sb_printf(o, "static const uint32_t tide_sizes_correction_%s[] = {sizeof(tide_entity), sizeof(tide_correction_%s), sizeof(uint32_t)};\n"
+                                   "static const tide_columns tide_columns_correction_%s = {3, 4, tide_sizes_correction_%s};\n\n", n, n, n, n);
+            sb_printf(o, "TIDE_HELPER bool tide_correction_empty_%s(const %s *e)\n{\n", n, n);
+            g->indent = 1;
+            gen_correction_leaves(g, d, "", CORRECTION_EMPTY);
+            sb_put(o, "    return true;\n}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_accumulate_%s(%s *e, const %s *before, const %s *after)\n{\n", n, n, n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_ACCUMULATE);
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_apply_%s(%s *v, const %s *e)\n{\n", n, n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_APPLY);
+            sb_put(o, "}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_correction_decay_%s(%s *e, float keep)\n{\n", n, n);
+            gen_correction_leaves(g, d, "", CORRECTION_DECAY);
+            sb_put(o, "}\n\n");
+            if (side) {
+                sb_printf(o, "TIDE_HELPER void tide_correct_view_%s(tide_local *l, const tide_world *w, %s *v)\n{\n"
+                             "    tide_correction_%s *s = &l->tide_correction_%s;\n", n, n, n, n);
+                if (d->snapped) sb_printf(o, "    if (s->valid && s->snaps != (uint32_t)w->%s.tide_snaps) memset(s, 0, sizeof *s);\n", n);
+                else sb_put(o, "    (void)w;\n");
+                sb_printf(o, "    if (s->valid) tide_correction_apply_%s(v, &s->error);\n}\n\n", n);
+            } else {
+                sb_printf(o, "TIDE_HELPER void tide_correct_view_%s(tide_local *l, const tide_world *w, tide_entity e, %s *v)\n{\n"
+                             "    tide_attached *a = &l->tide_corrections_%s;\n"
+                             "    const uint32_t row = tide_attached_find(a, &tide_columns_correction_%s, e);\n"
+                             "    if (row == TIDE_ATTACHED_NONE) return;\n"
+                             "    tide_correction_%s *s = tide_attached_cell(a, &tide_columns_correction_%s, row);\n"
+                             "    if (s->snaps != tide_entity_snaps(&w->entities, e)\n"
+                             "        || !tide_born_same(tide_attached_born(a, &tide_columns_correction_%s, row), tide_entity_born(&w->entities, e))) {\n"
+                             "        tide_attached_remove(a, &tide_columns_correction_%s, row);\n        return;\n    }\n"
+                             "    tide_correction_apply_%s(v, &s->error);\n}\n\n", n, n, n, n, n, n, n, n, n, n);
+            }
+        }
+    }
+    sb_put(o, "static void tide_corrections_reset(tide_local *l)\n{\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    tide_attached_free(&l->tide_corrections_%s, &tide_columns_correction_%s);\n", type_cname(d), type_cname(d));
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (decl_corrects(d)) sb_printf(o, "    memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", type_cname(d), type_cname(d));
+    }
+    sb_put(o, "}\n\nstatic void tide_corrections_decay(tide_local *l, float seconds)\n{\n"
+              "    if (!(seconds > 0.0f) || !tide_is_finite_f(seconds)) return;\n"
+              "    const float keep = tide_exp_f(-seconds * (0.6931471805599453f / 0.075f));\n");
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (side) sb_printf(o, "    if (l->tide_correction_%s.valid) {\n        tide_correction_%s *s = &l->tide_correction_%s;\n"
+                                  "        tide_correction_decay_%s(&s->error, keep);\n"
+                                  "        if (tide_correction_empty_%s(&s->error)) memset(s, 0, sizeof *s);\n    }\n", n, n, n, n, n);
+            else sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                              "        for (uint32_t row = a->rows.count; row-- > 0;) {\n"
+                              "            tide_correction_%s *s = tide_attached_cell(a, &tide_columns_correction_%s, row);\n"
+                              "            tide_correction_decay_%s(&s->error, keep);\n"
+                              "            if (tide_correction_empty_%s(&s->error)) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                              "        }\n    }\n", n, n, n, n, n, n);
+        }
+    }
+    sb_put(o, "}\n\n");
+    sb_put(o, "static void tide_corrections_prune(tide_local *l, const tide_world *w, const tide_world *verified)\n{\n"
+              "    if (!w && !verified) { tide_corrections_reset(l); return; }\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (!decl_corrects(d)) continue;
+        const char *n = type_cname(d);
+        sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                     "        for (uint32_t row = a->rows.count; row-- > 0;) {\n"
+                     "            const tide_entity e = tide_attached_entity(a, &tide_columns_correction_%s, row);\n"
+                     "            const uint32_t born = tide_attached_born(a, &tide_columns_correction_%s, row);\n"
+                     "            const tide_correction_%s *s = tide_attached_get(a, &tide_columns_correction_%s, row);\n"
+                     "            if (w && tide_has_%s(w, e) && tide_born_same(born, tide_entity_born(&w->entities, e))) {\n"
+                     "                if (s->snaps == tide_entity_snaps(&w->entities, e)) continue;\n"
+                     "            } else if (verified && tide_has_%s(verified, e)\n"
+                     "                       && tide_born_same(born, tide_entity_born(&verified->entities, e))) continue;\n"
+                     "            tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                     "        }\n    }\n", n, n, n, n, n, n, n, n);
+    }
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!decl_corrects(d) || !d->snapped) continue;
+        const char *n = type_cname(d);
+        sb_printf(o, "    if (w && l->tide_correction_%s.valid && l->tide_correction_%s.snaps != (uint32_t)w->%s.tide_snaps)\n"
+                     "        memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", n, n, n, n, n);
+    }
+    sb_put(o, "}\n\nvoid tide_local_correct(tide_local *l, const tide_view_correction *c)\n{\n"
+              "    if (!c || c->reset || !c->before || !c->after) { tide_corrections_reset(l); return; }\n"
+              "    const tide_world *before = c->before, *after = c->after;\n"
+              "    const tide_world *before_previous = c->before_previous, *after_previous = c->after_previous;\n"
+              "    (void)before_previous; (void)after_previous;\n");
+    for (int side = 0; side < 2; side++) {
+        const int count = side ? prog->singletons.count : prog->components.count;
+        for (int i = 0; i < count; i++) {
+            const decl *d = side ? prog->singletons.items[i] : prog->components.items[i];
+            if (!decl_corrects(d)) continue;
+            const char *n = type_cname(d);
+            if (side) {
+                sb_printf(o, "    {\n        tide_correction_%s *s = &l->tide_correction_%s;\n", n, n);
+                if (d->snapped) sb_printf(o, "        if (before->%s.tide_snaps != after->%s.tide_snaps) { memset(s, 0, sizeof *s); } else {\n", n, n);
+                else sb_put(o, "        {\n");
+                sb_printf(o, "            %s old_value = before->%s, new_value = after->%s;\n", n, n, n);
+                sb_printf(o, "            if (c->alpha < 1.0f) {\n"
+                             "                tide_blend_%s(&old_value, before_previous ? &before_previous->%s : NULL, c->alpha);\n"
+                             "                tide_blend_%s(&new_value, after_previous ? &after_previous->%s : NULL, c->alpha);\n            }\n", n, n, n, n);
+                if (d->snapped) sb_printf(o, "            if (s->valid && s->snaps != (uint32_t)after->%s.tide_snaps) memset(s, 0, sizeof *s);\n", n);
+                sb_printf(o, "            tide_correction_accumulate_%s(&s->error, &old_value, &new_value);\n"
+                             "            s->valid = !tide_correction_empty_%s(&s->error);\n", n, n);
+                if (d->snapped) sb_printf(o, "            s->snaps = (uint32_t)after->%s.tide_snaps;\n", n);
+                sb_put(o, "        }\n    }\n");
+            } else {
+                sb_printf(o, "    {\n        tide_attached *a = &l->tide_corrections_%s;\n"
+                             "        for (uint32_t index = 0; index < after->entities.next_unused; index++) {\n"
+                             "            const tide_entity e = tide_entity_in_slot(&after->entities, index);\n"
+                             "            %s old_value, new_value;\n"
+                             "            if (!tide_load_%s(after, e, &new_value)) continue;\n"
+                             "            uint32_t row = tide_attached_find(a, &tide_columns_correction_%s, e);\n"
+                             "            const uint32_t snaps = tide_entity_snaps(&after->entities, e), born = tide_entity_born(&after->entities, e);\n"
+                             "            if (!tide_load_%s(before, e, &old_value)\n"
+                             "                || tide_entity_snaps(&before->entities, e) != snaps\n"
+                             "                || !tide_born_same(tide_entity_born(&before->entities, e), born)) {\n"
+                             "                if (row != TIDE_ATTACHED_NONE) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                             "                continue;\n            }\n"
+                             "            if (c->alpha < 1.0f) {\n"
+                             "                %s p;\n"
+                             "                if (before_previous) tide_blend_%s(&old_value, tide_prev_%s(before_previous, before, e, &p), c->alpha);\n"
+                             "                if (after_previous) tide_blend_%s(&new_value, tide_prev_%s(after_previous, after, e, &p), c->alpha);\n"
+                             "            }\n"
+                             "            tide_correction_%s value = {0};\n"
+                             "            if (row != TIDE_ATTACHED_NONE) {\n"
+                             "                const tide_correction_%s *s = tide_attached_get(a, &tide_columns_correction_%s, row);\n"
+                             "                if (s->snaps == snaps && tide_born_same(tide_attached_born(a, &tide_columns_correction_%s, row), born)) value = *s;\n"
+                             "                else { tide_attached_remove(a, &tide_columns_correction_%s, row); row = TIDE_ATTACHED_NONE; }\n"
+                             "            }\n"
+                             "            tide_correction_accumulate_%s(&value.error, &old_value, &new_value);\n"
+                             "            if (tide_correction_empty_%s(&value.error)) {\n"
+                             "                if (row != TIDE_ATTACHED_NONE) tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                             "            } else {\n"
+                             "                if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(a, &tide_columns_correction_%s, e, born);\n"
+                             "                value.snaps = snaps; value.valid = true;\n"
+                             "                *(tide_correction_%s *)tide_attached_cell(a, &tide_columns_correction_%s, row) = value;\n"
+                             "            }\n        }\n    }\n", n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n);
+            }
+        }
+    }
+    sb_put(o, "}\n\n");
     g->indent = 0;
 }
 
@@ -7082,7 +7755,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             }
         }
     } else if (fn) {
-        if (fn->uses_io) capture(&out, "tide_local *", "tide_l");
+        if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -8111,6 +8784,9 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
                          "&tide_p%d), tide_alpha); }\n",
                       pad, c, i, c, i, c, i);
         }
+        if (sys->is_view && decl_corrects(p->type.decl)) {
+            sb_printf(o, "%stide_correct_view_%s(tide_l, tide_w, tide_ent[tide_i], &tide_v%d);\n", pad, c, i);
+        }
         if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
     if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, pad); // Its filter got it already
@@ -8514,7 +9190,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_put(o, "tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed");
         n++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -8559,7 +9235,7 @@ static void gen_routine(gen *g, const decl *m)
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
-    if (m->uses_io) line(g, o, "(void)tide_l;");
+    if (takes_local(m)) line(g, o, "(void)tide_l;");
     for (int i = 0; i < m->params.count; i++) {
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
@@ -9252,6 +9928,7 @@ static void gen_bounds(gen *g, const decl *d, const char *in)
         const field *f = &d->fields.items[i];
         for (int k = 0; k < f->attributes.count; k++) {
             const attribute *a = &f->attributes.items[k];
+            if (!str_eq_c(a->name, "Clamp") && !str_eq_c(a->name, "Min") && !str_eq_c(a->name, "Max")) continue;
             // [Min(x)] is "at least x": the larger of the two, and [Max] the reverse.
             const char *fn = str_eq_c(a->name, "Clamp") ? "clamp" : str_eq_c(a->name, "Min") ? "max" : "min";
             indent(g, o);
@@ -9759,6 +10436,7 @@ static void gen_system_run(gen *g, const decl *sys)
             const char *s = type_cname(p->type.decl);
             sb_printf(o, "    %s tide_v%d = tide_w->%s;\n", s, i, s);
             if (param_blends(p)) sb_printf(o, "    if (tide_blend) tide_blend_%s(&tide_v%d, &tide_prev->%s, tide_alpha);\n", s, i, s);
+            if (decl_corrects(p->type.decl)) sb_printf(o, "    tide_correct_view_%s(tide_l, tide_w, &tide_v%d);\n", s, i);
         }
         // The local fields of an entity nothing was written for: their defaults
         // (gen_row_fields), made once for the view's whole run
@@ -10155,6 +10833,7 @@ static void gen_api(gen *g)
     // The local fields of entities that are gone go first: with no verified
     // world given, the one views draw is all there is
     if (prog->local_parts.count) sb_put(o, "    tide_local_forget(local, w, verified ? verified : w);\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_prune(local, w, verified ? verified : w);\n");
     // A host that shows where frames' time goes gave the GUI a profile
     // (tide/profile.h): each view says how long it took
     if (prog->views.count) {
@@ -10174,8 +10853,8 @@ static void gen_api(gen *g)
     }
     sb_put(o, "}\n\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds)\n{\n");
-    if (world_has_tasks(g, true)) sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
-    else sb_put(o, "    (void)local;\n    (void)seconds;\n}\n\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_decay(local, seconds);\n");
+    sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
 
     const char *joined = type_cname(prog->player_joined);
     const char *left = type_cname(prog->player_left);
@@ -10445,6 +11124,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *world = world_type(local);
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
+    if (local && program_corrects(prog)) sb_put(o, "    tide_corrections_reset(w);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    tide_table_free(&w->%s, %s);\n", arch_name(g, a), arch_columns(g, a));
     }
@@ -10506,6 +11186,16 @@ static void gen_world_bytes(gen *g, const bool local)
         sb_printf(o, "    memset(&header.%s, 0, sizeof header.%s);\n", fields_table(fields.items[i]), fields_table(fields.items[i]));
     }
     if (world_heap(prog, local)) sb_put(o, "    memset(&header.heap, 0, sizeof header.heap);\n");
+    if (local) {
+        for (int i = 0; i < prog->components.count; i++) {
+            const decl *d = prog->components.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&header.tide_corrections_%s, 0, sizeof header.tide_corrections_%s);\n", type_cname(d), type_cname(d));
+        }
+        for (int i = 0; i < prog->singletons.count; i++) {
+            const decl *d = prog->singletons.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&header.tide_correction_%s, 0, sizeof header.tide_correction_%s);\n", type_cname(d), type_cname(d));
+        }
+    }
     sb_put(o, "    tide_writer bytes = {out, capacity, 0, false, false};\n");
     sb_put(o, "    tide_write_bytes(&bytes, &header, sizeof header);\n");
     sb_put(o, "    tide_entities_pack(&w->entities, &bytes);\n");
@@ -10548,6 +11238,16 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
     if (local) sb_put(o, "    w->tide_io = io;\n");
+    if (local) {
+        for (int i = 0; i < prog->components.count; i++) {
+            const decl *d = prog->components.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&w->tide_corrections_%s, 0, sizeof w->tide_corrections_%s);\n", type_cname(d), type_cname(d));
+        }
+        for (int i = 0; i < prog->singletons.count; i++) {
+            const decl *d = prog->singletons.items[i];
+            if (decl_corrects(d)) sb_printf(o, "    memset(&w->tide_correction_%s, 0, sizeof w->tide_correction_%s);\n", type_cname(d), type_cname(d));
+        }
+    }
     sb_put(o, "    memset(&w->entities, 0, sizeof w->entities);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    memset(&w->%s, 0, sizeof w->%s);\n", arch_name(g, a), arch_name(g, a));
@@ -11078,6 +11778,7 @@ static void gen_game_api(gen *g)
     sb_printf(o, "void tide_local_connected(tide_local *local)\n{\n    tide_cmd_send_%s(local, (tide_entity){0}, (%s){0});\n}\n\n",
               connected, connected);
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message)\n{\n");
+    if (program_corrects(prog)) sb_put(o, "    tide_corrections_reset(local);\n");
     if (prog->command_types.count) sb_put(o, "    local->tide_outgoing_from = local->tide_outgoing_count = 0;\n"
                                            "    memset(local->tide_outgoing_sizes, 0, sizeof local->tide_outgoing_sizes);\n"
                                            "    memset(local->tide_outgoing, 0, sizeof local->tide_outgoing);\n");
@@ -11794,7 +12495,9 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_apply(&g, true);
     gen_shaders(&g);
     gen_routines(&g);
+    gen_correction_math(&g);
     gen_blend_helpers(&g); // After the routines: a type's Interpolate is one
+    gen_correction_state(&g);
     if (prog->match_devices) gen_keep_devices(&g);
     if (prog->input) gen_sample(&g);
     if (prog->input && prog->input->sanitize) gen_sanitize(&g);

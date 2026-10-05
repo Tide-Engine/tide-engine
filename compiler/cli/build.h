@@ -21,8 +21,11 @@ char *tide_build(const char *root, const build_options *opts);
 // Runs a game on this machine, as `tide run` does natively: the game is a
 // library in a small host program, rebuilt whenever one of its files changes and
 // swapped into the running game (see tide/host.h). `args` go to the game
-// (--host, --join, --connect), ending with NULL. Returns the game's exit code.
-int tide_run_reloading(const char *root, const build_options *opts, const char *const *args);
+// (--host, --join, --connect, --size, and a run with no window's), ending
+// with NULL. With `once`, as for a run with no window (--capture, --frames,
+// --script), the game runs as it was built: nothing is watched, rebuilt or
+// swapped in. Returns the game's exit code.
+int tide_run_reloading(const char *root, const build_options *opts, const char *const *args, bool once);
 
 // The same on the web (`tide run --web`): tide serves the game's page on this
 // machine, opens it in a browser if `open_page`, and builds the game again

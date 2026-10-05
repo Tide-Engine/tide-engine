@@ -39,7 +39,7 @@ Where nothing picks a seed (tests, benchmarks, a world a C host starts itself) i
 
 Everything that could run in a different order does so in a fixed one:
 
-- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere. Calls that change what they're given, like a generator's rolls, run in the order they're written too: in `float2(random.NextFloat(), random.NextFloat())`, x is rolled first on every platform.
+- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere, and so does what a function changes through a `mut` parameter and what's read beside it. A generator's rolls are such calls: in `float2(random.NextFloat(), random.NextFloat())`, x is rolled first on every platform.
 - Systems run in one order (see [Systems](../game/systems.md#order)), and structural changes and events apply in the order they were made.
 - Running systems in parallel will never change results: thread timing never decides the order of anything that can be seen.
 

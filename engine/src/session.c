@@ -1662,6 +1662,19 @@ struct tide_client {
     double slack_since;     // Since when it's had room to spare, to take delay back after a while
     double delay_hold_until; // No change of delay until then: the last one takes a round trip to show
 
+    // The last pair actually drawn. Recording it is free; replay keeps old
+    // endpoints only when it is about to replace one of them.
+    bool presented;
+    bool presented_previous;
+    uint32_t presented_tick;
+    float presented_alpha;
+    void *correction_before;
+    void *correction_previous;
+    void *correction_after;
+    void *correction_after_previous;
+    bool correction_pending;
+    bool correction_reset;
+
     // Its clock: the tick it should have reached is clock_base plus the ticks since clock_start
     double clock_start;
     int64_t clock_base;
@@ -1700,6 +1713,101 @@ static void stop_receiving(tide_client *c)
 }
 
 static void *world_at(const tide_client *c, uint32_t tick);
+
+static void discard_view_correction(tide_client *c)
+{
+    free_world(c->game, c->correction_before);
+    free_world(c->game, c->correction_previous);
+    free_world(c->game, c->correction_after);
+    free_world(c->game, c->correction_after_previous);
+    free(c->correction_before);
+    free(c->correction_previous);
+    free(c->correction_after);
+    free(c->correction_after_previous);
+    c->correction_before = NULL;
+    c->correction_previous = NULL;
+    c->correction_after = NULL;
+    c->correction_after_previous = NULL;
+    c->correction_pending = false;
+    c->correction_reset = false;
+}
+
+static void reset_view_correction(tide_client *c)
+{
+    discard_view_correction(c);
+    c->presented = false;
+    c->correction_pending = c->desc.correct_views != NULL;
+    c->correction_reset = true;
+}
+
+static bool presented_retained(const tide_client *c)
+{
+    const uint32_t first = c->presented_previous ? c->presented_tick - 1u : c->presented_tick;
+    return c->loaded && c->presented_tick <= c->ahead && first >= c->first_tick
+        && (c->verified == 0u || first >= c->verified - 1u)
+        && c->ahead - first < c->ring;
+}
+
+// Called only for a replay overwrite, never ordinary advancement. Keep both
+// old endpoints once, even when an update replays the same tick repeatedly.
+static void capture_view_correction(tide_client *c, const uint32_t tick)
+{
+    if (!c->desc.correct_views || !c->presented || c->correction_pending
+        || (tick != c->presented_tick && (!c->presented_previous || tick != c->presented_tick - 1u))) return;
+    c->correction_pending = true;
+    if (!presented_retained(c)) {
+        c->correction_reset = true;
+        return;
+    }
+    const tide_game *g = c->game;
+    c->correction_before = calloc(1, g->world_size);
+    if (c->presented_previous) c->correction_previous = calloc(1, g->world_size);
+    if (!c->correction_before || (c->presented_previous && !c->correction_previous)) {
+        free(c->correction_before);
+        free(c->correction_previous);
+        c->correction_before = NULL;
+        c->correction_previous = NULL;
+        c->correction_reset = true;
+        return;
+    }
+    g->copy_world(c->correction_before, world_at(c, c->presented_tick));
+    if (c->presented_previous) g->copy_world(c->correction_previous, world_at(c, c->presented_tick - 1u));
+}
+
+static void finish_view_correction(tide_client *c)
+{
+    if (!c->correction_pending) return;
+    const bool reset = c->correction_reset || !c->correction_before;
+    const tide_view_correction correction = {
+        .before = reset ? NULL : c->correction_before,
+        .before_previous = reset ? NULL : c->correction_previous,
+        .after = reset ? NULL : c->correction_after ? c->correction_after : c->correction_before,
+        .after_previous = reset ? NULL : c->correction_after_previous
+            ? c->correction_after_previous : c->correction_previous,
+        .tick = c->presented_tick,
+        .alpha = c->presented_alpha,
+        .reset = reset,
+    };
+    if (c->desc.correct_views) c->desc.correct_views(c->desc.user, &correction);
+    discard_view_correction(c);
+}
+
+// A catch-up update may confirm past the displayed pair and reuse its ring
+// slots before the callback. Keep each reconstructed endpoint as it changes;
+// an endpoint not rewritten is still the copied old endpoint.
+static void finish_view_rewrite(tide_client *c, const uint32_t tick)
+{
+    if (!c->correction_pending || c->correction_reset || !c->correction_before) return;
+    void **after = tick == c->presented_tick ? &c->correction_after
+        : c->presented_previous && tick == c->presented_tick - 1u ? &c->correction_after_previous : NULL;
+    if (!after) return;
+    if (!*after) *after = calloc(1, c->game->world_size);
+    if (!*after) {
+        c->correction_reset = true;
+        return;
+    }
+    c->game->copy_world(*after, world_at(c, tick));
+}
 
 static void drop_base(tide_client *c)
 {
@@ -2167,6 +2275,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     }
     const uint64_t started = c->desc.now_ns ? c->desc.now_ns() : 0u;
     g->tick(world, c->desc.jobs);
+    finish_view_rewrite(c, tick + 1u);
     if (c->desc.now_ns) {
         const double cost = (double)(c->desc.now_ns() - started) * 1e-9;
         c->tick_cost = c->tick_cost > 0.0 ? c->tick_cost * 0.9 + cost * 0.1 : cost;
@@ -2176,7 +2285,10 @@ static void run_predicted(tide_client *c, const uint32_t tick)
 // From the verified world, the predicted ticks again.
 static void predict_again(tide_client *c)
 {
-    for (uint32_t t = c->verified; t < c->ahead; t++) run_predicted(c, t);
+    for (uint32_t t = c->verified; t < c->ahead; t++) {
+        capture_view_correction(c, t + 1u);
+        run_predicted(c, t);
+    }
     c->again += c->ahead - c->verified;
 }
 
@@ -2211,6 +2323,10 @@ static void load_snapshot(tide_client *c)
     }
     drop_base(c);
     c->base_failed = false;
+    if (!c->loaded) reset_view_correction(c);
+    else if (c->presented && tick > c->presented_tick - (c->presented_previous ? 1u : 0u)) {
+        reset_view_correction(c); // The replacement has no history at the displayed timestamp.
+    } else capture_view_correction(c, tick);
     // Ahead of the world that came, it keeps its predicted ticks, which it runs again
     if (!c->loaded || c->ahead < tick) c->verified = c->ahead = tick;
     if (c->sampled < c->ahead) c->sampled = c->ahead;
@@ -2218,6 +2334,7 @@ static void load_snapshot(tide_client *c)
     free_world(g, *slot);
     free(*slot);
     *slot = world;
+    finish_view_rewrite(c, tick);
     const bool first = !c->loaded;
     c->loaded = true;
     c->first_tick = tick;
@@ -2300,8 +2417,10 @@ static void play(tide_client *c)
         if (tick < c->ahead && !stale && as_predicted(c, f)) {
             ok = c->game->hash_world(world_at(c, tick + 1u)) == frame_hash(f);
         } else {
+            if (tick < c->ahead) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
             ok = apply_frame(c, world_at(c, tick + 1u), f);
+            finish_view_rewrite(c, tick + 1u);
             stale |= tick + 1u < c->ahead;
         }
         drop_frame(f);
@@ -2567,6 +2686,7 @@ void tide_client_destroy(tide_client *c)
     }
     if (c->desc.transport.close) c->desc.transport.close(c->desc.transport.self);
     stop_receiving(c);
+    discard_view_correction(c);
     drop_base(c);
     free(c->handover_bytes);
     clear_commands(&c->commands);
@@ -2586,7 +2706,7 @@ void tide_client_destroy(tide_client *c)
     free(c);
 }
 
-void tide_client_update(tide_client *c, const double now)
+static void update_client(tide_client *c, const double now)
 {
     c->now = now;
     if (c->state == TIDE_SESSION_OFFLINE) return;
@@ -2605,6 +2725,12 @@ void tide_client_update(tide_client *c, const double now)
     send_client(c);
     send_commands(c);
     adjust_delay(c);
+}
+
+void tide_client_update(tide_client *c, const double now)
+{
+    update_client(c, now);
+    finish_view_correction(c);
 }
 
 tide_client_status tide_client_status_of(const tide_client *c)
@@ -2648,6 +2774,16 @@ tide_view_worlds tide_client_view(const tide_client *c)
     if (alpha > 1.0) alpha = 1.0;
     return (tide_view_worlds){world_at(c, c->ahead), c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
                               (float)alpha, world_at(c, c->verified)};
+}
+
+void tide_client_mark_presented(tide_client *c)
+{
+    if (!c || !c->desc.correct_views || !c->loaded) return;
+    const tide_view_worlds view = tide_client_view(c);
+    c->presented = true;
+    c->presented_previous = view.previous != NULL;
+    c->presented_tick = c->ahead;
+    c->presented_alpha = view.alpha;
 }
 
 // ---------------------------------------------------------------------------
@@ -2708,6 +2844,9 @@ static void drop_stale(tide_session *s)
 // Ends whatever it's in, without a word to local code.
 static void tear_down(tide_session *s)
 {
+    if (s->desc.correct_views && (s->client || s->stale || s->server)) {
+        s->desc.correct_views(s->desc.user, &(tide_view_correction){.reset = true});
+    }
     if (s->client) keep_traffic(s, s->client->traffic);
     if (s->server) keep_traffic(s, s->server->traffic);
     tide_client_destroy(s->client);
@@ -2788,6 +2927,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         .base = world, // What its server goes on from, if anything: nothing to send
         .now_ns = s->desc.now_ns,
         .resim_budget = s->desc.resim_budget,
+        .correct_views = s->desc.correct_views,
     };
     s->client = s->server ? tide_client_create(&client, now) : NULL;
     if (!s->client) {
@@ -2863,6 +3003,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
         .base = migrating && s->stale ? tide_client_verified_world(s->stale) : NULL, // Most of it, most likely
         .now_ns = s->desc.now_ns,
         .resim_budget = s->desc.resim_budget,
+        .correct_views = s->desc.correct_views,
     };
     s->client = tide_client_create(&client, now);
     if (!s->client) {
@@ -2913,9 +3054,9 @@ void tide_session_update(tide_session *s, const double now)
     const double t = now - s->paused;
 
     if (s->loopback) tide_loopback_set_time(s->loopback, t);
-    tide_client_update(s->client, t);
+    update_client(s->client, t);
     if (s->server) tide_server_update(s->server, t);
-    tide_client_update(s->client, t); // What the server just sent: this machine's ticks, at once
+    update_client(s->client, t); // What the server just sent: this machine's ticks, at once
 
     const tide_client_status status = tide_client_status_of(s->client);
     if (!s->server && status.cookie) s->cookie = status.cookie;
@@ -2925,10 +3066,17 @@ void tide_session_update(tide_session *s, const double now)
         // Back in a match that changed hands, it was never out of it
         if (!s->stale) {
             push_event(s, (tide_session_event){.kind = TIDE_SESSION_CONNECTED_EVENT, .reason = TIDE_DISCONNECT_LEFT});
+        } else if (s->desc.correct_views) {
+            // Keep visual errors while the stale world is drawn. Adoption
+            // restarts the network tick timeline: equal numeric ticks cannot
+            // prove matching match timestamps, so the new history resets.
+            s->desc.correct_views(s->desc.user, &(tide_view_correction){.reset = true});
+            discard_view_correction(s->client); // Coalesce its initial snapshot reset with adoption.
         }
         drop_stale(s);
     }
     if (status.state == TIDE_SESSION_OFFLINE && !s->server && !s->stale && can_migrate(s->client)) {
+        finish_view_correction(s->client);
         begin_migration(s);
         return;
     }
@@ -2940,6 +3088,7 @@ void tide_session_update(tide_session *s, const double now)
         return;
     }
     s->last_state = status.state;
+    finish_view_correction(s->client);
 }
 
 // Seconds after `now` until a clock that started at `start`, at `rate`, counts
@@ -2979,6 +3128,17 @@ tide_view_worlds tide_session_view(const tide_session *s)
     if (s->client && s->client->loaded) return tide_client_view(s->client);
     if (s->stale) return (tide_view_worlds){tide_client_world(s->stale), NULL, 1.0f, tide_client_verified_world(s->stale)};
     return (tide_view_worlds){0};
+}
+
+void tide_session_mark_presented(tide_session *s)
+{
+    if (s->client && s->client->loaded) tide_client_mark_presented(s->client);
+    else if (s->stale && s->desc.correct_views) {
+        s->stale->presented = true;
+        s->stale->presented_tick = s->stale->ahead;
+        s->stale->presented_previous = false;
+        s->stale->presented_alpha = 1.0f;
+    }
 }
 
 const void *tide_session_server_world(const tide_session *s)
@@ -3092,6 +3252,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         .cookie = s->cookie, // This machine's player, as it was
         .jobs = s->desc.jobs,
         .base = server.world, // What its server goes on from: nothing to send
+        .correct_views = s->desc.correct_views,
     };
     s->client = s->server ? tide_client_create(&client, now) : NULL;
     if (!s->client) {
@@ -3120,6 +3281,19 @@ void tide_session_set_game(tide_session *s, const tide_game *game)
     if (s->client) {
         s->client->desc.game = game;
         s->client->game = game;
+    }
+}
+
+void tide_session_set_view_corrector(tide_session *s, const tide_view_correct_fn correct_views)
+{
+    s->desc.correct_views = correct_views;
+    tide_client *clients[] = {s->client, s->stale};
+    for (uint32_t i = 0; i < 2u; i++) {
+        tide_client *c = clients[i];
+        if (!c) continue;
+        discard_view_correction(c);
+        c->presented = false;
+        c->desc.correct_views = correct_views;
     }
 }
 
@@ -3259,6 +3433,8 @@ static bool prepare_client(const tide_client *c, const tide_game *g, const tide_
 // for them, were the old build's.
 static void commit_client(tide_client *c, const tide_game *g, client_migration *m)
 {
+    reset_view_correction(c);
+    finish_view_correction(c);
     const bool changed = c->game->hash != g->hash;
     clear_commands(&c->commands); // Another layout has no translation of pending wire values
     for (uint32_t i = 0; i < c->ring; i++) {

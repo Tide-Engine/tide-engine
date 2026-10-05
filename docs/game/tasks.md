@@ -82,7 +82,7 @@ For now:
 
 A task belongs to a world, like the code that starts it. A system's or a match handler's tasks are the match's: they're part of it, in snapshots, state hashes and rollback, they go to players who join, and they carry on when the match changes hands. A view's or a local handler's tasks are this machine's, in its local state.
 
-An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state makes it local. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
+An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
 
 ## What a task keeps
 
@@ -115,4 +115,4 @@ A task waiting for an async call waits in the same place: the call is part of th
 
 ## In C
 
-Hosts tell local tasks how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
+Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
