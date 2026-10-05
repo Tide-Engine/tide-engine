@@ -1679,6 +1679,72 @@ TIDE_TEST(lsp_enums_and_switch)
     TIDE_CHECK(has(symbols, "\"name\":\"Playing\",\"detail\":\"5\",\"kind\":22"));
 }
 
+// An enum's name converts an int, Phase(5), as int(phase) gives its number:
+// there the name is the enum, as anywhere else it's written.
+TIDE_TEST(lsp_enum_conversion)
+{
+    start();
+#define PHASES "enum Phase { Warmup, Playing = 5 }\nsingleton Match { Phase phase; int n; }\nscene Main { }\n"
+    static const char game[] = PHASES "system S(mut Match match)\n{\n    match.phase = Pha$se(match.n);\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "enum Phase"));
+    TIDE_CHECK(has(hover, "`Phase(number)` is the `Phase` with that number"));
+    TIDE_CHECK(!has(hover, "low 8 bits")); // Stored as an int
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    request_with("textDocument/rename", "\"newName\":\"Stage\"");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "Stage phase;") && has(renamed, "match.phase = Stage(match.n);"));
+
+    // While it's written: what it takes, and what it gives
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase($\n}\n");
+    const char *signature = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signature, "Phase(int number)"));
+    TIDE_CHECK(has(signature, "A number none of its members has stays as it is"));
+    TIDE_CHECK(offers(complete(PHASES "system S(mut Match match)\n{\n    match.phase = $\n}\n"), "Phase"));
+
+    // A literal argument says what it is
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase(5);\n}\n");
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":30,\"character\":0}}");
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":5,\"character\":24},\"label\":\"number:\",\"kind\":2"));
+
+    // An argument it refuses: the name is still the enum's
+    open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Pha$se(1.5);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Phase(...) converts an int, not float"));
+    TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
+
+    // One stored as a byte says what becomes of a number that doesn't fit it
+    open_document("enum Voxel : byte { Air, Stone }\nsingleton Terrain { Voxel under; int n; }\nscene Main { }\n"
+                  "system S(mut Terrain terrain)\n{\n    terrain.under = Vox$el(terrain.n);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "its low 8 bits"));
+
+    // By its qualified name: the namespace, then the enum
+    static const char framed[] = "namespace Frame;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                                 "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Frame.Pha$se(match.n);\n}\n";
+    open_document(framed);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
+    request_with("textDocument/rename", "\"newName\":\"Stage\"");
+    renamed = apply_reply(framed, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "match.phase = Frame.Stage(match.n);"));
+    open_document("namespace Frame;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                  "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Frame.Phase($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Phase(int number)"));
+
+    // Another call that names an enum, which the checker refuses, isn't one: its name stays its own
+    open_document(PHASES "system S(World world, mut Match match)\n{\n    match.n = int(world.Ge$t<Phase>(default));\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Phase' is an enum"));
+    TIDE_CHECK(!has(request("textDocument/hover"), "`Phase(number)`"));
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Stage\""), "\"error\""));
+#undef PHASES
+}
+
 TIDE_TEST(lsp_scheduling_phases)
 {
     start();

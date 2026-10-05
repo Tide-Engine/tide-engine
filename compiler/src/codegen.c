@@ -1683,6 +1683,12 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_put(o, ")");
         break;
 
+    case CTOR_ENUM: // Card(n): the number as the enum's own type, which keeps a byte's or a ushort's low bits
+        sb_printf(o, "((%s)(", c_type(t));
+        gen_expr(g, o, first);
+        sb_put(o, "))");
+        break;
+
     case CTOR_COLOR:
         sb_put(o, "(tide_color){");
         for (int i = 0; i < e->args.count; i++) {
@@ -2419,6 +2425,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, e->hoisted); // Already ran, before the statement
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);
+        } else if (e->call == CALL_CONSTRUCT) { // Combat.Stance(2): an enum in a namespace, from its number
+            gen_construct(g, o, e);
         } else if (e->call == CALL_GUI) {
             gen_gui_call(g, o, e);
         } else if (e->call == CALL_LIST) { // items.Add(x): the list, by address if the method changes it

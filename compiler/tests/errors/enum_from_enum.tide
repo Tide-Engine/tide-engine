@@ -1,0 +1,6 @@
+// expect: Phase(...) converts an int, not Weapon
+enum Phase { Warmup, Playing }
+enum Weapon { Sword, Bow }
+singleton Match { Phase phase; Weapon weapon; }
+scene Main { }
+system S(mut Match match) { match.phase = Phase(match.weapon); }

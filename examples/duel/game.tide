@@ -183,18 +183,6 @@ command Rematch { int match; }
 command Practice { int match; }
 command ToMenu { int match; }
 
-Card CardNumbered(int number)
-{
-    if (number == 0) return Card.Vitality;
-    if (number == 1) return Card.RapidFire;
-    if (number == 2) return Card.Scatter;
-    if (number == 3) return Card.Ricochet;
-    if (number == 4) return Card.HeavyShot;
-    if (number == 5) return Card.SwiftFeet;
-    if (number == 6) return Card.Featherweight;
-    return Card.Mortar;
-}
-
 Card Offer(int round, int side, int slot)
 {
     var first = Math.Hash(int3(round, side, 0)) % CARDS;
@@ -202,7 +190,7 @@ Card Offer(int round, int side, int slot)
     if (second == first) second = (second + 1) % CARDS;
     mut var third = Math.Hash(int3(round, side, 2)) % CARDS;
     while (third == first || third == second) third = (third + 1) % CARDS;
-    return CardNumbered(slot == 0 ? first : slot == 1 ? second : third);
+    return Card(slot == 0 ? first : slot == 1 ? second : third);
 }
 
 // How many upgrades a build has, and which the one at `index` was.
@@ -217,7 +205,7 @@ Card CardAt(Build build, int index)
 {
     mut var left = build.cards;
     for (var i = 0; i < index; i++) left /= 16;
-    return CardNumbered(left % 16 - 1);
+    return Card(left % 16 - 1);
 }
 
 void ApplyCard(mut Build build, Card card)
