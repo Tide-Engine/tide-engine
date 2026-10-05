@@ -1694,6 +1694,10 @@ struct tide_client {
     uint32_t handover_version;
     uint32_t handover_size;
     uint8_t *handover_bytes;
+
+    // What each tick it ran and hasn't had confirmed told its local handlers,
+    // so a tick it runs again tells them nothing twice (tide/events.h)
+    tide_hearing hearing;
 };
 
 static void go_offline(tide_client *c, const tide_disconnect_reason reason)
@@ -1899,6 +1903,8 @@ static void on_welcome(tide_client *c, tide_reader *r)
             return;
         }
         for (uint32_t i = 0; i < c->w.inputs; i++) c->input_tick[i] = UINT32_MAX;
+        // A tick it remembers is one it ran and hasn't had confirmed: as many as it has snapshots at most
+        if (c->desc.events) tide_hearing_init(&c->hearing, c->w.prediction + 2u, c->desc.events);
     }
     c->welcomed = true;
     c->cookie = cookie;
@@ -2199,6 +2205,21 @@ static bool room_ahead(tide_client *c)
     return true;
 }
 
+// Runs `tick` on `world`, the world before it. With local handlers that hear
+// the match, and a host that takes what they hear, the tick records what it
+// sent, and what of it the tick hadn't told them yet goes out (tide/events.h).
+static void run_tick(tide_client *c, void *world, const uint32_t tick)
+{
+    const tide_game *g = c->game;
+    tide_event_log *events = g->tick_events ? tide_hearing_begin(&c->hearing, tick) : NULL;
+    if (!events) {
+        g->tick(world, c->desc.jobs);
+        return;
+    }
+    g->tick_events(world, c->desc.jobs, events);
+    tide_hearing_end(&c->hearing, tick);
+}
+
 // The hash a frame says the world has after its tick.
 static uint64_t frame_hash(const pending_frame *f)
 {
@@ -2254,7 +2275,7 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
             || !g->command(world, sender, sequence, data, size)) return false;
     }
     if (r.failed || r.at != r.size) return false;
-    g->tick(world, c->desc.jobs);
+    run_tick(c, world, f->tick);
     return g->hash_world(world) == hash;
 }
 
@@ -2274,7 +2295,7 @@ static void run_predicted(tide_client *c, const uint32_t tick)
         if (c->server_input_mine) g->set_server_input(world, c->input);
     }
     const uint64_t started = c->desc.now_ns ? c->desc.now_ns() : 0u;
-    g->tick(world, c->desc.jobs);
+    run_tick(c, world, tick);
     finish_view_rewrite(c, tick + 1u);
     if (c->desc.now_ns) {
         const double cost = (double)(c->desc.now_ns() - started) * 1e-9;
@@ -2336,6 +2357,8 @@ static void load_snapshot(tide_client *c)
     *slot = world;
     finish_view_rewrite(c, tick);
     const bool first = !c->loaded;
+    // The ticks before it were never confirmed one by one: what they sent stays unsaid
+    tide_hearing_skip_to(&c->hearing, tick);
     c->loaded = true;
     c->first_tick = tick;
     c->need_snapshot = false;
@@ -2428,6 +2451,7 @@ static void play(tide_client *c)
             c->need_snapshot = true;
             break;
         }
+        tide_hearing_confirm(&c->hearing, tick); // What it sent is certain now
         c->verified++;
         if (c->ahead < c->verified) c->ahead = c->verified;
         if (c->sampled < c->ahead) c->sampled = c->ahead; // Behind the server: no input was sampled for those ticks
@@ -2687,6 +2711,7 @@ void tide_client_destroy(tide_client *c)
     if (c->desc.transport.close) c->desc.transport.close(c->desc.transport.self);
     stop_receiving(c);
     discard_view_correction(c);
+    tide_hearing_free(&c->hearing);
     drop_base(c);
     free(c->handover_bytes);
     clear_commands(&c->commands);
@@ -2813,6 +2838,10 @@ struct tide_session {
     bool migrating;
 
     traffic traffic; // Of the servers and clients it had: theirs is added as they go
+
+    // What its matches sent, for the host to hand the game's local handlers
+    // (tide_session_events): its clients' own, one after another
+    tide_event_log heard;
 };
 
 // The session's own time starts over with each match.
@@ -2874,6 +2903,7 @@ void tide_session_destroy(tide_session *s)
 {
     if (!s) return;
     tear_down(s);
+    tide_event_log_free(&s->heard);
     free(s);
 }
 
@@ -2928,6 +2958,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         .now_ns = s->desc.now_ns,
         .resim_budget = s->desc.resim_budget,
         .correct_views = s->desc.correct_views,
+        .events = &s->heard,
     };
     s->client = s->server ? tide_client_create(&client, now) : NULL;
     if (!s->client) {
@@ -3004,6 +3035,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
         .now_ns = s->desc.now_ns,
         .resim_budget = s->desc.resim_budget,
         .correct_views = s->desc.correct_views,
+        .events = &s->heard,
     };
     s->client = tide_client_create(&client, now);
     if (!s->client) {
@@ -3130,6 +3162,12 @@ tide_view_worlds tide_session_view(const tide_session *s)
     return (tide_view_worlds){0};
 }
 
+tide_event_log *tide_session_events(tide_session *s)
+{
+    s->heard.taken = true; // From now on its clients' ticks record what they send
+    return &s->heard;
+}
+
 void tide_session_mark_presented(tide_session *s)
 {
     if (s->client && s->client->loaded) tide_client_mark_presented(s->client);
@@ -3253,6 +3291,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         .jobs = s->desc.jobs,
         .base = server.world, // What its server goes on from: nothing to send
         .correct_views = s->desc.correct_views,
+        .events = &s->heard,
     };
     s->client = s->server ? tide_client_create(&client, now) : NULL;
     if (!s->client) {
@@ -3282,6 +3321,10 @@ void tide_session_set_game(tide_session *s, const tide_game *game)
         s->client->desc.game = game;
         s->client->game = game;
     }
+    // What the last build recorded is laid out its own way: the ticks it ran
+    // and this one confirms as they were tell the handlers nothing
+    if (s->client) tide_hearing_rebuilt(&s->client->hearing);
+    tide_event_log_clear(&s->heard);
 }
 
 void tide_session_set_view_corrector(tide_session *s, const tide_view_correct_fn correct_views)
@@ -3454,6 +3497,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
     }
     stop_receiving(c); // A world it was receiving is the old build's: the server sends it again
     drop_base(c);      // ...and so is the one it would have built it from
+    tide_hearing_rebuilt(&c->hearing); // ...and what its ticks sent, as its handlers heard it
     c->game = g;
     c->desc.game = g;
     if (changed && c->loaded && g->command && g->command_sequence) {

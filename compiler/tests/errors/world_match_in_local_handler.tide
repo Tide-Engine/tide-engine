@@ -1,4 +1,4 @@
-// expect: 'Health' belongs to the match, and local handlers only take local state for now
+// expect: 'Health' belongs to the match, and a local handler's World is this machine's
 local component Spark { Entity follows; }
 local event Tap { }
 component Health { int value; }
