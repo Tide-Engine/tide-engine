@@ -55,7 +55,7 @@ export function localBuilders({ env = {}, quiet = true } = {}) {
 // Fly gives an app's secrets to every machine in it, so the service's own (the
 // master key the games' keys are encrypted with) are another app's.
 // `options.fetch` is for tests.
-export function flyMachines({ app, token, image, region = 'fra', guest = { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 }, fetch = globalThis.fetch }) {
+export function flyMachines({ app, token, image, region = 'fra', guest = { cpu_kind: 'shared', cpus: 1, memory_mb: 1024 }, fetch = globalThis.fetch }) {
     const api = `https://api.machines.dev/v1/apps/${encodeURIComponent(app)}/machines`;
     const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
     return {

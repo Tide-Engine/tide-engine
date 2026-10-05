@@ -10,6 +10,8 @@
 //                     version's source and gives one build's page; no game's
 //                     key is ever here.
 //   TIDE              the tide program (tide, without it)
+//   TIDE_BUILD_WARM   a folder each build's .tide starts as a copy of: the
+//                     engine's objects, made once with the image
 //   TIDE_BUILD_ISOLATION  `none`: tide runs as this program does, network and
 //                     all, for tests and a developer's own machine. Without
 //                     it, as below, or the build fails saying it can't be.
@@ -29,7 +31,7 @@
 //   - tide's environment is made here: nothing of this program's is in it.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -177,7 +179,9 @@ export function tideEnvironment(isolation, own, { home, packages, mirror = null 
 //   work       an empty folder to work in
 //   isolation  'machine' or 'none' (see above)
 //   mirror     for tests: a folder that stands in for git hosts (TIDE_GIT_MIRROR)
-export async function build({ job, source, tide, work, isolation = 'machine', user = 1000, mirror = null }) {
+//   warm       a folder to start the game's .tide from: what tide kept of a build of another game with
+//              this tide, of which the engine's objects are this game's too (Dockerfile.builder)
+export async function build({ job, source, tide, work, isolation = 'machine', user = 1000, mirror = null, warm = null }) {
     const limits = job.limits;
     const deadline = Date.now() + limits.seconds * 1000;
     const log = makeLog(limits.log);
@@ -224,6 +228,8 @@ export async function build({ job, source, tide, work, isolation = 'machine', us
     let listed = existsSync(file) ? readFileSync(file, 'utf8') : '';
     if (listed && !listed.endsWith('\n')) listed += '\n';
     writeFileSync(file, listed + job.mods.map(mod => mod + '\n').join(''));
+    // The engine's objects are the same for every game: a build starts from the ones made with the image, and compiles the game
+    if (warm && existsSync(warm)) cpSync(warm, join(game, '.tide'), { recursive: true });
     if (isolation === 'machine') spawnSync('chown', ['-R', `${user}:${user}`, work]);
 
     // What it says of the build's folders is of the game's: paths from its folder
@@ -236,6 +242,7 @@ export async function build({ job, source, tide, work, isolation = 'machine', us
     };
     const why = (ended, what) => {
         if (ended.late) return `it took over ${limits.seconds} seconds, which is all a build gets`;
+        if (ended.signal === 'SIGXFSZ') return `${what} wrote a file of over ${Math.round(limits.file / (1024 * 1024))} MB, which is all one can be`;
         if (ended.signal) return `${what} was stopped by the system (${ended.signal}): out of memory, most likely`;
         return null;
     };
@@ -288,7 +295,12 @@ async function main() {
     const work = mkdtempSync(join(tmpdir(), 'tide-build-'));
     let result;
     try {
-        result = await build({ job, source, tide, work, isolation: process.env.TIDE_BUILD_ISOLATION || 'machine', mirror: process.env.TIDE_GIT_MIRROR || null });
+        result = await build({
+            job, source, tide, work,
+            isolation: process.env.TIDE_BUILD_ISOLATION || 'machine',
+            mirror: process.env.TIDE_GIT_MIRROR || null,
+            warm: process.env.TIDE_BUILD_WARM || null,
+        });
     } catch (error) {
         console.error(`builder: ${error.stack || error}`);
         result = { message: 'the builder itself failed at it', log: '' };

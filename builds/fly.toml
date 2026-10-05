@@ -35,6 +35,9 @@ primary_region = 'fra'
 [env]
   TIDE_BUILDS_URL = 'https://builds.tide-engine.dev'
   TIDE_BUILDERS_APP = 'tide-builders'
+  # A builder: Fly's smallest CPU, and the memory a build has
+  TIDE_BUILDERS_CPUS = '1'
+  TIDE_BUILDERS_MEMORY = '1024'
 
 # Storage is this volume for now, behind store.mjs, which is all that knows:
 # it moves to object storage without the rest changing.
