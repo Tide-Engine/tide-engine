@@ -94,6 +94,13 @@ set(TIDE_REPOSITORY "BlenMiner/tide-engine" CACHE STRING "The GitHub repository 
 # prebuilt platform layer.
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/package/VERSION" CONTENT "${TIDE_VERSION}\n")
 install(FILES "${CMAKE_BINARY_DIR}/package/VERSION" DESTINATION . COMPONENT tide)
+# The packages that come with tide (packages/, a folder each) are sources too:
+# tide compiles one with the games that list it by its name, and with no
+# other. They install as they are, but for what tide makes in a game's folder
+# (an example's, in a package). OPTIONAL: there's no folder until there's a
+# package.
+install(DIRECTORY packages/ DESTINATION packages COMPONENT tide OPTIONAL
+    PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE)
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(tools) # Editor support
 endif()

@@ -124,6 +124,33 @@ TIDE_TEST(cli_an_upgrade_replaces_the_package_and_keeps_the_rest)
     sys_remove_tree(WORK);
 }
 
+// The packages that come with tide are in the installation's packages/, which
+// is also where a user's tide keeps the packages it downloads: each of the
+// first is replaced, and the rest stays.
+TIDE_TEST(cli_an_upgrade_replaces_the_packages_that_come_with_tide_and_keeps_those_from_git)
+{
+    old_installation();
+    put(ROOT, "packages/rolls/tide.packages", "package Rolls\n");
+    put(ROOT, "packages/rolls/rolls.tide", "old rolls.tide");
+    put(ROOT, "packages/rolls/gone.tide", "a file 1.1.0's has none of");
+    put(ROOT, "packages/github.com/someone/physics/0123/body.tide", "a package from git");
+    put(ROOT, "packages/.downloads/7/files/body.tide", "another tide's download");
+    new_package();
+    put(FRESH, "packages/rolls/tide.packages", "package Rolls\n");
+    put(FRESH, "packages/rolls/rolls.tide", "new rolls.tide");
+    put(FRESH, "packages/cards/tide.packages", "package Cards\n");
+    char failed[1024];
+    TIDE_CHECK(install(failed));
+    TIDE_CHECK(failed[0] == '\0');
+    check_upgraded();
+    TIDE_CHECK(says(ROOT, "packages/rolls/rolls.tide", "new rolls.tide"));
+    TIDE_CHECK(!there(ROOT, "packages/rolls/gone.tide"));
+    TIDE_CHECK(says(ROOT, "packages/cards/tide.packages", "package Cards\n"));
+    TIDE_CHECK(says(ROOT, "packages/github.com/someone/physics/0123/body.tide", "a package from git"));
+    TIDE_CHECK(says(ROOT, "packages/.downloads/7/files/body.tide", "another tide's download"));
+    sys_remove_tree(WORK);
+}
+
 // What the upgrade that deleted most of an installation left: its new tide,
 // headers of the version before, and nothing else of the package.
 TIDE_TEST(cli_an_upgrade_finishes_one_that_stopped_partway)

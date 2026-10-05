@@ -2396,6 +2396,14 @@ Implemented, awaiting approval:
 - A package's systems that match no entity, and its handlers of events nothing sends, aren't warned about: a game may use only part of a package.
 - The language server analyzes a game with its packages, and a package's file with an open game that uses it, or else the package on its own, which needs no `Main`.
 
+Packages that come with tide: a package in tide's installation, which a game opts into with one line, and which costs a game that doesn't list it nothing. How the line is written and where the package is looked up are picks, awaiting the owner:
+
+- Provisional: the line is a name alone, lower-case letters and digits after a letter: `box2d`. Nothing else in the file is written that way: a git source has a `/`, a folder starts with `.`, `/` or a drive (so a folder of that name beside the game is `./box2d`), and `package` and `tide` lines take a second word.
+- Provisional: it takes no commit and no `@ref`, each an error that says why: the package is the version this tide came with. So what a game builds of it depends on the tide that builds it, where a git line's commit doesn't; `tide 0.3` in the game's file says the oldest.
+- Provisional: the package is the folder `packages/<name>` of tide's installation, the folder tide's `bin` is in, beside `include` and `src/engine`. This repo's are in `packages/`, which a build installs. Where the installers put tide, that's also the folder packages from git are kept in, each host a folder of its own, so `tide upgrade` replaces the packages its release has there, one by one, and leaves the rest.
+- Provisional: it's otherwise a package like any other. Its `tide.packages` says `package Name` and lists what it needs, which the game's file lists too: another that comes with tide by its name, or one from git. It can't need a folder, as a package from git can't. `tide run` reloads the game when its files change, as it does for a folder's.
+- Provisional: a name no package has is an error that lists the names there are, with the closest when one is close. `tide add <name>` writes the line, in lower case however the name was typed, with the lines of what the package needs; `tide update` leaves the line alone and says nothing about it, and `tide update <name>` says `tide upgrade` is what updates it.
+
 ### Open
 
 - A registry of names, so a line doesn't need its host.

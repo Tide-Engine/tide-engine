@@ -7,6 +7,7 @@
 #include "build.h"
 #include "editors.h"
 #include "install.h"
+#include "packages.h"
 #include "packages_cmd.h"
 #include "sys.h"
 #include "toolchain.h"
@@ -36,7 +37,7 @@ static void usage(void)
            "  build [folder]     build the game into <folder>/build\n"
            "  schedule [folder]  show which systems can run at the same time, and why the others wait\n"
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
-           "  add <source>       add a package to the game here, from git or a folder (see below)\n"
+           "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
            "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
            "  upgrade            update tide to the newest version\n"
@@ -78,6 +79,7 @@ static void usage(void)
            "add: a package from git is github.com/owner/repo (or its URL), at the newest commit of\n"
            "its default branch; @branch after it follows a branch, @v1 the newest v1.x.y tag, and\n"
            "//folder a folder in the repository. A folder on this machine is a path, like ../shared.\n"
+           "A package that comes with tide is its name alone, and is the version this tide came with.\n"
            "\n"
            "upgrade:\n"
            "  --nightly          follow nightly versions from now on\n"
@@ -130,6 +132,7 @@ int main(const int argc, char **argv)
     }
     const char *command = argv[1];
     char *root = install_root();
+    packages_set_root(root); // The packages that come with tide are in <root>/packages
     tide_cleanup(root);
 
     if (strcmp(command, "version") == 0 || strcmp(command, "--version") == 0) return version(root);
@@ -148,7 +151,8 @@ int main(const int argc, char **argv)
 
     if (strcmp(command, "add") == 0) {
         if (argc != 3 || argv[2][0] == '-') {
-            fprintf(stderr, "tide: add takes a package: `tide add github.com/owner/repo`, or a folder\n");
+            fprintf(stderr, "tide: add takes a package: `tide add github.com/owner/repo`, a folder, or the name of one that "
+                            "comes with tide\n");
             return 2;
         }
         char *folder = path_absolute(".");

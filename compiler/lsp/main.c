@@ -19,11 +19,18 @@
 
 #include "cdefs.h"
 #include "folders.h"
+#include "packages.h"
 #include "server.h"
 
 // Set by the build: the list of games and their files.
 #ifndef TIDE_GAMES_MANIFEST
 #define TIDE_GAMES_MANIFEST NULL
+#endif
+
+// Set by the build: the repo this server was built from, whose packages/ has
+// the packages that come with tide.
+#ifndef TIDE_SOURCE_DIR
+#define TIDE_SOURCE_DIR NULL
 #endif
 
 static void send_message(void *user, const char *message, const size_t len)
@@ -119,8 +126,9 @@ static int take_message(lsp_message *out)
 }
 
 // Installed, tidels is in <install>/bin and the engine headers are in
-// <install>/include. NULL if they aren't there, as in a build of the repo.
-static char *installed_include_dir(void)
+// <install>/include: the installation's folder, or NULL if they aren't there,
+// as in a build of the repo.
+static char *installed_root(void)
 {
     char *bin = folder_of_program();
     if (!bin) return NULL;
@@ -134,20 +142,17 @@ static char *installed_include_dir(void)
     }
     *last = '\0';
     const size_t len = strlen(bin) + 32;
-    char *dir = malloc(len);
     char *probe = malloc(len);
-    if (!dir || !probe) abort();
-    snprintf(dir, len, "%s/include", bin);
-    snprintf(probe, len, "%s/tide/math.h", dir);
-    free(bin);
+    if (!probe) abort();
+    snprintf(probe, len, "%s/include/tide/math.h", bin);
     FILE *f = fopen(probe, "rb");
     free(probe);
     if (!f) {
-        free(dir);
+        free(bin);
         return NULL;
     }
     fclose(f);
-    return dir;
+    return bin;
 }
 
 int main(void)
@@ -161,8 +166,19 @@ int main(void)
     lsp_init(&server, send_message, NULL);
     server.manifest = TIDE_GAMES_MANIFEST; // Written by tide_add_game (see cmake/Tide.cmake)
     server.defer = true;                   // It reads ahead: see read_more
-    char *include_dir = installed_include_dir();
-    if (include_dir) cdefs_set_include_dir(include_dir);
+    // The engine's headers and the packages that come with tide: the
+    // installation's, or in a build of the repo, the repo's own.
+    char *root = installed_root();
+    char *include_dir = NULL;
+    if (root) {
+        const size_t len = strlen(root) + 16;
+        include_dir = malloc(len);
+        if (!include_dir) abort();
+        snprintf(include_dir, len, "%s/include", root);
+        cdefs_set_include_dir(include_dir);
+    }
+    packages_set_root(root ? root : TIDE_SOURCE_DIR);
+    free(root);
 
     lsp_message *queue = NULL; // The messages that have arrived, from `next` on those not handled yet
     int queued = 0;

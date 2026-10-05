@@ -12,7 +12,7 @@ tide <command> [folder] [options]
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
-| `tide add <source>` | Adds a package to the game in the current folder, from git or a folder |
+| `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
 | `tide upgrade` | Updates tide to the newest version |
@@ -265,6 +265,7 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 | `tide add github.com/owner/repo@v1` | The newest `v1.x.y` tag, which `tide update` follows |
 | `tide add github.com/owner/repo//physics` | The package in the repository's `physics` folder |
 | `tide add ../shared` | A package in a folder on this machine |
+| `tide add box2d` | A package that comes with `tide`, by its name |
 | `tide update` | Every package from git, to the newest commit of what it follows |
 | `tide update physics` | One, by its name, its repository's name or its source |
 

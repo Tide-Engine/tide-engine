@@ -10,12 +10,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common.h"
 #include "version.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <dirent.h>
 #include <sys/stat.h>
 #endif
 
@@ -253,6 +255,16 @@ static bool starts_with(const char *s, const char *prefix)
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
 
+bool packages_is_builtin(const char *source)
+{
+    if (source[0] < 'a' || source[0] > 'z') return false;
+    for (const char *c = source; *c; c++) {
+        if (!(*c >= 'a' && *c <= 'z') && !(*c >= '0' && *c <= '9')) return false;
+    }
+    // The words that start tide.packages's other lines are no package's name
+    return strcmp(source, "package") != 0 && strcmp(source, "tide") != 0;
+}
+
 bool packages_parse_source(const char *text, char **source, char **ref)
 {
     *source = NULL;
@@ -268,6 +280,18 @@ bool packages_parse_source(const char *text, char **source, char **ref)
         }
         *source = s;
         return true;
+    }
+    // The name of one that comes with tide, alone: nothing of a path or a URL
+    // (git@github.com:owner/repo starts like a name too).
+    if (!strpbrk(s, "/\\:")) {
+        char *at = strchr(s, '@');
+        if (at) *at = '\0';
+        if (packages_is_builtin(s) && (!at || at[1])) {
+            if (at) *ref = dup(at + 1);
+            *source = s;
+            return true;
+        }
+        if (at) *at = '@';
     }
 
     // https://, ssh://git@ and git@host:owner/repo (scp's way of writing it)
@@ -461,7 +485,7 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
             continue;
         }
 
-        package_line l = {number, NULL, NULL, NULL, packages_is_local(words[0])};
+        package_line l = {number, NULL, NULL, NULL, packages_is_local(words[0]), false};
         if (l.local) {
             if (count == 2) {
                 report_at(report, user, path, number, "a folder's files are used as they are, so there's no commit",
@@ -479,13 +503,27 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
             if (!packages_parse_source(words[0], &source, &ref)) {
                 report_at(report, user, path, number,
                           "a package is a git repository and its commit, like `github.com/owner/repo 0123abc...`, "
-                          "or a folder, like `../shared`",
+                          "a folder, like `../shared`, or the name of one that comes with tide",
                           "'%s' isn't a package", words[0]);
                 ok = false;
                 continue;
             }
             l.source = source;
             l.ref = ref;
+            l.builtin = packages_is_builtin(source);
+            if (l.builtin && (ref || count == 2)) {
+                char note[600];
+                snprintf(note, sizeof note,
+                         "a name alone, like `%s`, is a package that comes with tide: it's the version this tide came with",
+                         source);
+                report_at(report, user, path, number, note,
+                          ref ? "a package that comes with tide follows no branch or version"
+                              : "a package that comes with tide needs no commit");
+                free(source);
+                free(ref);
+                ok = false;
+                continue;
+            }
             if (count == 2) {
                 if (!valid_commit(words[1])) {
                     report_at(report, user, path, number, "a commit is written in full: its 40 hex digits",
@@ -578,8 +616,125 @@ bool packages_fetched(const char *dir)
     return there;
 }
 
+// ---------------------------------------------------------------------------
+// The packages that come with tide
+
+static char *builtin_dir; // <root>/packages/, or NULL before anything said where the installation is
+
+void packages_set_root(const char *root)
+{
+    free(builtin_dir);
+    builtin_dir = NULL;
+    if (!root || !root[0]) return;
+    char *folder = normalize_folder(root);
+    builtin_dir = format("%s" PACKAGES_BUILTIN_DIR "/", folder);
+    free(folder);
+}
+
+static bool file_exists(const char *path)
+{
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesA(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISREG(info.st_mode);
+#endif
+}
+
+bool packages_builtin_exists(const char *name)
+{
+    if (!builtin_dir || !packages_is_builtin(name)) return false;
+    char *file = format("%s%s/" PACKAGES_FILE, builtin_dir, name);
+    const bool there = file_exists(file);
+    free(file);
+    return there;
+}
+
+static int name_order(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+typedef struct name_list {
+    char **items;
+    int count;
+} name_list;
+
+// Whatever else is in that folder isn't one: by default, the installation's
+// is also where packages from git are kept (packages_cache), under their
+// hosts' names, which have a '.'.
+static void add_builtin_name(name_list *names, const char *name)
+{
+    if (!packages_builtin_exists(name)) return;
+    names->items = realloc(names->items, sizeof(char *) * (size_t)(names->count + 1));
+    if (!names->items) abort();
+    names->items[names->count++] = dup(name);
+}
+
+int packages_builtin_names(char ***out)
+{
+    name_list names = {0};
+    *out = NULL;
+    if (!builtin_dir) return 0;
+#ifdef _WIN32
+    char *pattern = format("%s*", builtin_dir);
+    WIN32_FIND_DATAA entry;
+    const HANDLE search = FindFirstFileA(pattern, &entry);
+    free(pattern);
+    if (search == INVALID_HANDLE_VALUE) return 0;
+    do add_builtin_name(&names, entry.cFileName);
+    while (FindNextFileA(search, &entry));
+    FindClose(search);
+#else
+    DIR *dir = opendir(builtin_dir);
+    if (!dir) return 0;
+    for (const struct dirent *entry; (entry = readdir(dir));) add_builtin_name(&names, entry->d_name);
+    closedir(dir);
+#endif
+    if (names.count > 1) qsort(names.items, (size_t)names.count, sizeof(char *), name_order);
+    *out = names.items;
+    return names.count;
+}
+
+void packages_free_names(char **names, const int count)
+{
+    for (int i = 0; i < count; i++) free(names[i]);
+    free(names);
+}
+
+char *packages_builtin_unknown(const char *name, const char *folder)
+{
+    char **names = NULL;
+    const int count = packages_builtin_names(&names);
+    suggestion guess = suggest_start(str_from(name));
+    for (int i = 0; i < count; i++) suggest_consider_c(&guess, names[i]);
+
+    char text[2048];
+    size_t n = 0;
+    if (suggest_close(&guess)) {
+        n += (size_t)snprintf(text, sizeof text, "did you mean '" STR_FMT "'? It", STR_ARG(guess.best));
+    } else {
+        n += (size_t)snprintf(text, sizeof text, "it");
+    }
+    if (count == 0) n += (size_t)snprintf(text + n, sizeof text - n, " comes with none");
+    for (int i = 0; i < count && n < sizeof text; i++) {
+        n += (size_t)snprintf(text + n, sizeof text - n, "%s%s", i == 0 ? " comes with " : i + 1 == count ? " and " : ", ",
+                              names[i]);
+    }
+    // A folder of that name beside the file is likely what was meant
+    char *beside = folder ? format("%s%s", folder, name) : NULL;
+    if (beside && folder_exists(beside) && n < sizeof text) {
+        snprintf(text + n, sizeof text - n, "; a folder is written as a path, like ./%s", name);
+    }
+    free(beside);
+    packages_free_names(names, count);
+    return dup(text);
+}
+
 char *packages_folder(const package_line *line, const char *base)
 {
+    if (line->builtin) return builtin_dir ? format("%s%s/", builtin_dir, line->source) : NULL;
     if (line->local) {
         if (is_absolute(line->source)) return normalize_folder(line->source);
         char *joined = format("%s%s", base, line->source);
@@ -598,10 +753,11 @@ char *packages_folder(const package_line *line, const char *base)
 }
 
 // The same package, as two lines name it: the same folder, or the same
-// source. `a_base` and `b_base` are where each line's folder is from.
+// source, which for one that comes with tide is its name. `a_base` and
+// `b_base` are where each line's folder is from.
 static bool same_package(const package_line *a, const char *a_base, const package_line *b, const char *b_base)
 {
-    if (a->local != b->local) return false;
+    if (a->local != b->local || a->builtin != b->builtin) return false;
     if (!a->local) return strcmp(a->source, b->source) == 0;
     char *x = packages_folder(a, a_base);
     char *y = packages_folder(b, b_base);
@@ -693,7 +849,7 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
     int found = 0;
     for (int i = 0; i < game->count; i++) {
         const package_line *line = &game->lines[i];
-        if (!line->local && !line->commit) {
+        if (!line->local && !line->builtin && !line->commit) {
             char note[600];
             snprintf(note, sizeof note, "`tide update %s` pins it to the newest commit%s%s", line->source,
                      line->ref ? " of " : "", line->ref ? line->ref : "");
@@ -701,8 +857,16 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
             ok = false;
             continue;
         }
+        if (line->builtin && !packages_builtin_exists(line->source)) {
+            char *note = packages_builtin_unknown(line->source, game->folder);
+            report_at(report, user, game->path, line->line, note, "no package called %s comes with this tide",
+                      line->source);
+            free(note);
+            ok = false;
+            continue;
+        }
         char *dir = packages_folder(line, game->folder);
-        if (!line->local) {
+        if (!line->local && !line->builtin) {
             char *repo = packages_repo_dir(line);
             bool here = packages_fetched(repo);
             if (!here && fetch) here = fetch(user, line, repo);
@@ -735,7 +899,7 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
         }
         if (pf->tide_line && !tide_version_at_least(pf->tide[0], pf->tide[1], pf->tide[2])) {
             char note[600] = "run `tide upgrade`";
-            if (!line->local) {
+            if (!line->local && !line->builtin) {
                 snprintf(note, sizeof note, "run `tide upgrade`, or use a commit of %s made for tide %s", line->source,
                          tide_version_text());
             }
@@ -770,9 +934,16 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
         for (int r = 0; r < pf->count; r++) {
             const package_line *need = &pf->lines[r];
             if (need->local && !out->items[k].line->local) {
-                report_at(report, user, pf->path, need->line,
-                          "name it by its git repository and commit, like the game does",
-                          "a package from git can't use a folder on this machine (%s)", need->source);
+                if (out->items[k].line->builtin) {
+                    report_at(report, user, pf->path, need->line,
+                              "name it as a game does: by its name if it comes with tide too, or by its git "
+                              "repository and commit",
+                              "a package that comes with tide can't use a folder on this machine (%s)", need->source);
+                } else {
+                    report_at(report, user, pf->path, need->line,
+                              "name it by its git repository and commit, like the game does",
+                              "a package from git can't use a folder on this machine (%s)", need->source);
+                }
                 ok = false;
                 continue;
             }
