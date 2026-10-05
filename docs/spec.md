@@ -2648,7 +2648,7 @@ The service's first slice. Implemented, awaiting approval: the service's first s
 - Provisional: what's signed is a manifest, a line of JSON: `{"build", "target", "sha256", "size"}`, the SHA-256 being the page's. It's at `/b/<build>/manifest.json`, its signature (r then s) at `/b/<build>/manifest.sig`, and the game's public key, 65 bytes uncompressed, at `/games/<id>/key`. Nothing checks them yet: a game that loads builds will.
 - Provisional: a build that failed is built again when it's asked for again. A revoked one never is: what it built is deleted, and its link answers 410.
 - Provisional: a page is fetched again each time it's opened (`Cache-Control: no-cache`, with an `ETag`), so a revoked build is gone from caches too.
-- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 2 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
+- Provisional: the limits. A version is 64 MB at most, and unpacks to 4096 files of 256 MB; a build has 10 minutes, 1 GB of memory and a page of 64 MB; its packages unpack to 512 MB; a game keeps 512 MB of versions and builds; 4 builds run at once.
 - Provisional: whoever asks for a build gets all that `tide` said of it. That's the game's own developer for now, as asking takes the game's key; a modder of a closed game will get what it says of the mod's own files.
 
 ### Open

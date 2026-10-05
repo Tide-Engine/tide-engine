@@ -12,6 +12,8 @@
 //   TIDE_BUILDERS_TOKEN     a token for it, and for nothing else
 //   TIDE_BUILDERS_IMAGE     the builders' image, when it isn't that app's own for the tide of
 //                           tide.version: registry.fly.io/<app>:tide-<version> (fly.builder.toml)
+//   TIDE_BUILDERS_CPUS      a builder's shared CPUs (1 without it), and
+//   TIDE_BUILDERS_MEMORY    its memory in MB (1024): all the memory a build has
 //
 // Without them, builders are processes on this machine, which run $TIDE (or
 // tide) as it is, with nothing kept from it: for trying the service, never
@@ -39,6 +41,7 @@ const builders = fly
         token: need('TIDE_BUILDERS_TOKEN'),
         image: process.env.TIDE_BUILDERS_IMAGE || `registry.fly.io/${fly}:tide-${tide}`,
         region: process.env.FLY_REGION || 'fra',
+        guest: { cpu_kind: 'shared', cpus: Number(process.env.TIDE_BUILDERS_CPUS || 1), memory_mb: Number(process.env.TIDE_BUILDERS_MEMORY || 1024) },
     })
     : localBuilders({ env: { TIDE_BUILD_ISOLATION: 'none' }, quiet: false });
 const store = folderStore(process.env.TIDE_BUILDS_DATA || './data');
