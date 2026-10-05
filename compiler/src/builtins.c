@@ -658,6 +658,8 @@ static const struct {
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).
     {"Cursor", "locked", TY_BOOL, "tide_ui->devices.mouse.locked"},
+    // In local code and the functions it calls: what the host said of this frame (tide_local_frame_time)
+    {"Frame", "dt", TY_FLOAT, "tide_l->tide_frame_seconds"},
 };
 
 #define MEMBER_COUNT (sizeof members / sizeof members[0])
@@ -670,6 +672,12 @@ static const char *member_doc(const size_t i)
                "asked. A browser only locks it at a click or a key press, Escape gives the cursor back to the player "
                "until the next one, and a window that loses the focus lets it go too. Views read it, and the input's "
                "`Sample`.";
+    }
+    if (strcmp(members[i].owner, "Frame") == 0) {
+        return "The seconds since this machine's previous frame started, as its host gave them: what moves things "
+               "that aren't the match's, like particles and menus, at the same speed whatever the display's rate. "
+               "It's there with no match too. Local code reads it: views, local handlers and tasks, and the "
+               "functions they call. The match's is `Time.dt`, a tick's length.";
     }
     return NULL;
 }
@@ -685,7 +693,7 @@ bool builtin_owner(const str name)
 {
     type ignored;
     return str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
-        || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Debug")
+        || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
         || builtin_type_named(name, &ignored);

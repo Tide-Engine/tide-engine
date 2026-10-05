@@ -106,12 +106,12 @@ system Run(mut Counter c)
 }
 
 // Containers close when a return or break leaves them.
-local singleton Frame
+local singleton Leaving
 {
     int mode;
 }
 
-view Returns(Frame frame)
+view Returns(Leaving frame)
 {
     GUILayout.Area(Rect(500, 500, 300, 300))
     {
@@ -121,7 +121,7 @@ view Returns(Frame frame)
     }
 }
 
-view Breaks(Frame frame)
+view Breaks(Leaving frame)
 {
     switch (frame.mode)
     {

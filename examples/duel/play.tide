@@ -21,7 +21,7 @@ local singleton DuelMenu
     int rematch = -1;
     int asked = -1; // The match a button last sent a command for, so it's sent once
     int focus = -1; // The card the keys are on
-    int frames;     // Turns a spinner where there's no match to tell the time
+    float turn;     // How far round the spinner is, in turns
 }
 
 string CardName(Card card)
@@ -621,10 +621,10 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
     Draw2D.Screen();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
-    menu.frames += 1;
+    menu.turn = Math.Frac(menu.turn + Frame.dt * 0.72);
     if (session.player == default)
     {
-        // No match is behind it yet, so nothing else has drawn
+        // No match is behind it yet: only the backdrop, and what the last one's effects left
         StartShapes(shapes, 1);
         Draw2D.Clear(UI_BACKGROUND);
         if (sky.quad.count > 0) Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
@@ -634,7 +634,7 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
         GlowBox(shapes, middle + float2(0, 10), float2(wide - 30, 130), 20, 40, Color(0, 0.004, 0.02, 0.6));
         Plate(shapes, middle, float2(wide, 170), 18, Color(0.11, 0.14, 0.245, 0.98), Color(0.045, 0.058, 0.118, 0.98), 1.5,
               Color(0.3, 0.39, 0.58));
-        Arc(shapes, middle + float2(-wide * 0.5 + 40, -42), 11, 3.2, menu.frames * 0.012, 0.7, UI_BLUE);
+        Arc(shapes, middle + float2(-wide * 0.5 + 40, -42), 11, 3.2, menu.turn, 0.7, UI_BLUE);
         var backNow = Pill(shapes, devices, back, UI_INK, false, true);
         Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
         shapes.list.Clear();
@@ -650,7 +650,7 @@ view PaintConnecting(Session session, Devices devices, Sky sky, mut DuelMenu men
         var back = Rect(screen.x - 166, screen.y - 37, 152, 30);
         Plate(shapes, float2(middle.x, screen.y - 22), float2(screen.x + 4, 46), 0, Color(0.05, 0.065, 0.13, 0.96),
               Color(0.03, 0.04, 0.09, 0.96), 1.5, Color(0.3, 0.39, 0.58));
-        Arc(shapes, float2(26, screen.y - 22), 8, 2.6, menu.frames * 0.012, 0.7, UI_BLUE);
+        Arc(shapes, float2(26, screen.y - 22), 8, 2.6, menu.turn, 0.7, UI_BLUE);
         var backNow = Pill(shapes, devices, back, UI_INK, false, true);
         Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
         shapes.list.Clear();

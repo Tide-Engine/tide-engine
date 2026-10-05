@@ -2080,6 +2080,10 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
                       : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
+                                                         "previous one started, for what isn't the match's: particles, "
+                                                         "menus, a camera's shake. Local code reads it, and the "
+                                                         "functions it calls. The match's is `Time.dt`."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
@@ -2898,6 +2902,7 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
     }
     case OCC_OWNER:
         if (str_eq_c(o->owner, "Devices")) return cdefs_find("tide_devices", out);
+        if (str_eq_c(o->owner, "Frame")) return false; // The game's own local state keeps it: no engine header does
         return cdefs_find_header(builtin_draw_owner(o->owner)                                         ? "draw.h"
                                  : str_eq_c(o->owner, "File") || str_eq_c(o->owner, "Directory")
                                        || str_eq_c(o->owner, "Path") || str_eq_c(o->owner, "Application")
@@ -4640,9 +4645,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             return;
         }
         if (n == 1 && builtin_owner(base)) {
-            const bool io_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
-                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage");
-            if (io_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
+            // This machine's files and its frame's length: local code's, and its functions'
+            const bool local_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
+                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Frame");
+            if (local_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
             const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
@@ -5060,6 +5066,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "File", CK_MODULE, "Reads and writes this machine's files", NULL, NULL);
         item(c, "Directory", CK_MODULE, "Lists and manages this machine's directories", NULL, NULL);
         item(c, "Application", CK_MODULE, "Persistent save and temporary cache paths", NULL, NULL);
+        item(c, "Frame", CK_MODULE, "This machine's frame: how long it is, for what isn't the match's", NULL, NULL);
         if (sc.decl->is_async) item(c, "Storage", CK_MODULE, "Await persistent storage commits", NULL, NULL);
     }
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
@@ -6176,7 +6183,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     enum { DECL_WORDS = 14 };
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
-                                           "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
+                                           "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};

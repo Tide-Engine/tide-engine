@@ -880,6 +880,13 @@ static const char *operator_word(const decl *m)
     }
 }
 
+// A function that's handed the local state, `tide_l`, by the local code that
+// calls it: one that reaches this machine's files, or reads Frame.dt.
+static bool takes_local(const decl *m)
+{
+    return m->uses_io || m->frame_time;
+}
+
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
 // Combat.Heal, and tide_operator_Money_add_2 for Money's + (numbered, as a
 // struct can have several).
@@ -1996,7 +2003,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "tide_draw, tide_ui, tide_gui_seed(tide_seed, %du)", ++g->sites);
         args++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
@@ -4969,10 +4976,8 @@ static void gen_header(gen *g)
         sb_put(o, "    uint32_t tide_kept_verified; // ...and of the verified one: what's kept is looked over when either changes\n");
     }
     gen_task_tables(g, true);
-    if (world_has_tasks(g, true)) {
-        sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
-        sb_put(o, "    float tide_frame_seconds;  // This frame's length, which they count down (tide_local_frame_time)\n");
-    }
+    if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
+    sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
@@ -5086,8 +5091,8 @@ static void gen_header(gen *g)
     sb_put(o, "// and `message` a kick's, or NULL), handled at the end of the next tide_frame.\n");
     sb_put(o, "void tide_local_connected(tide_local *local);\n");
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message);\n\n");
-    sb_put(o, "// How long this frame is, in seconds, which local tasks' Wait.Seconds counts down.\n");
-    sb_put(o, "// Call it before tide_frame.\n");
+    sb_put(o, "// How long this frame is, in seconds: what Frame.dt reads, and local tasks'\n");
+    sb_put(o, "// Wait.Seconds counts down. Call it before tide_frame; until then it's 0.\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds);\n\n");
     if (prog->command_types.count) {
         sb_put(o, "#define TIDE_HAS_COMMANDS 1\n"
@@ -7246,7 +7251,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             }
         }
     } else if (fn) {
-        if (fn->uses_io) capture(&out, "tide_local *", "tide_l");
+        if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -8661,7 +8666,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_put(o, "tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed");
         n++;
     }
-    if (m->uses_io) {
+    if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -8706,7 +8711,7 @@ static void gen_routine(gen *g, const decl *m)
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
-    if (m->uses_io) line(g, o, "(void)tide_l;");
+    if (takes_local(m)) line(g, o, "(void)tide_l;");
     for (int i = 0; i < m->params.count; i++) {
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
@@ -10305,8 +10310,7 @@ static void gen_api(gen *g)
     sb_put(o, "}\n\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds)\n{\n");
     if (program_corrects(prog)) sb_put(o, "    tide_corrections_decay(local, seconds);\n");
-    if (world_has_tasks(g, true)) sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
-    else sb_put(o, "    (void)local;\n    (void)seconds;\n}\n\n");
+    sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
 
     const char *joined = type_cname(prog->player_joined);
     const char *left = type_cname(prog->player_left);

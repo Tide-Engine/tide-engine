@@ -116,6 +116,7 @@ view Show(Devices devices)
     DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     if (!Cursor.locked) Cursor.Lock();
+    float step = Frame.dt;
 }
 
 // Operators that aren't what they look like.

@@ -108,6 +108,7 @@ tide_e2e_test(devices)
 tide_e2e_test(pause)
 tide_e2e_test(claims) # Widgets a view draws itself: what's typed, and claiming the pointer and the keyboard
 tide_e2e_test(cursor) # Cursor.Lock, asked each frame, and Cursor.locked, which the window says
+tide_e2e_test(frame_time) # Frame.dt: the frame's length a host gives, read by local code with a match and with none
 tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
