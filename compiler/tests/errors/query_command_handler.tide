@@ -1,4 +1,4 @@
-// expect: query parameters are only supported in ordinary systems
+// expect: a command handler can't take a query yet
 component Body { float x; }
 command Inspect { }
 command(Inspect inspect, PlayerID sender) Hits(query (Body body) bodies) { }

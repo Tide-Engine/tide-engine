@@ -27,6 +27,17 @@
 // Which handlers an event is for.
 #define TIDE_HEARD_PREDICTED 1u // Those that hear a tick as this machine ran it
 #define TIDE_HEARD_VERIFIED 2u  // Those that hear it once the server confirmed it
+// In `wants`, beside those: some handler of the event reads rows its tick
+// recorded (TIDE_HEARD_ROWS)
+#define TIDE_HEARD_READS_ROWS 4u
+
+// Not an event, in `event`: rows a tick recorded for its events' handlers,
+// like the entities a handler's query goes through (`query (Body body, with
+// Fighter) fighters`), as the tick left them. Once for the tick, however many
+// of its events read them: after the tick's events in a log, and wherever one
+// that reads rows goes, they go too. `handlers` says which rows, by the
+// game's numbering, `same` how many, and they follow the tide_heard.
+#define TIDE_HEARD_ROWS 0xFFFFu
 
 // An event in a log. After it come the event's own value and what its handlers
 // read, as the game's generated code lays them out.
@@ -69,6 +80,31 @@ static inline const tide_heard *tide_event_log_next(const tide_event_log *log, u
     const tide_heard *heard = (const tide_heard *)(log->bytes + *at);
     *at += heard->size;
     return heard;
+}
+
+// The event just pushed takes `size` bytes in all, no more than it was pushed
+// with: what's past them is the log's again.
+void tide_event_log_trim(tide_event_log *log, tide_heard *heard, uint32_t size);
+
+// The rows numbered `rows` that the tick of `heard` recorded for its handlers,
+// or NULL: the first after it in the log, which are its run's, as a tick's
+// rows come after its events. `at` is where `heard` ends.
+static inline const tide_heard *tide_event_log_rows(const tide_event_log *log, uint32_t at, const tide_heard *heard,
+                                                    const uint64_t rows)
+{
+    for (const tide_heard *next; (next = tide_event_log_next(log, &at));) {
+        if (next->tick != heard->tick || next->as != heard->as) return NULL; // Another run's from here on
+        if (next->event == TIDE_HEARD_ROWS && next->handlers == rows) return next;
+    }
+    return NULL;
+}
+
+// How many rows of `size` bytes each `rows` holds, a TIDE_HEARD_ROWS record or
+// NULL: none when it's not as big as it says.
+static inline uint32_t tide_heard_row_count(const tide_heard *rows, const uint32_t size)
+{
+    if (!rows || rows->same > (rows->size - sizeof *rows) / (size ? size : 1u)) return 0u;
+    return (uint32_t)rows->same;
 }
 
 // A copy of `heard`, one of `from`'s, at the end of `to`, for the handlers

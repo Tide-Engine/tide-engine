@@ -242,6 +242,18 @@ typedef struct param {
     comp_mask query_need_mask;
     comp_mask query_without_mask;
     bool query_local; // The candidates belong to the local world rather than the match
+    const struct decl *query_of; // Its first component, which says whose its entities are; NULL with none
+    // A view's query with `verified` bindings or filters, as a view's own
+    // (decl.verified_need): what its entities need and lack in the world the
+    // server confirmed, and whether it goes through that world's entities (all
+    // of it is `verified`) or the drawn world's that are in both
+    comp_mask query_verified_need;
+    comp_mask query_verified_without;
+    bool query_verified_entities;
+    bool query_verified_join;
+    // A view's or a local handler's over the match: its entries are made before
+    // the code runs, as it sees the match (blended, or as its event's tick left it)
+    bool query_rows;
     struct param *query_source; // A nested binding or filter's containing query parameter
 } param;
 
