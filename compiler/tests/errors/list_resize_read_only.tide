@@ -1,0 +1,5 @@
+// expect: 'inv' is read-only
+// expect: 'List.Resize' is a mut method: it changes what it's called on
+scene Main { }
+component Inventory { List<int> scores; }
+system S(Inventory inv) { inv.scores.Resize(3); }

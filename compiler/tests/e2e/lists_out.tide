@@ -1,0 +1,167 @@
+// `out List<T>` on extern functions: lists C makes (lists_out_c.c). C gets a
+// tide_list_out, asks it for room, fills it and says how many elements there
+// are, and the caller's list is exactly those: a few, enough to be in chunks
+// (see tide/list.h), from one to the other both ways, in the match, in the
+// local world and in locals.
+
+struct Cell
+{
+    int id;
+    float weight;
+    bool alive;
+}
+
+struct Holder
+{
+    int tag;
+    List<byte> bytes;
+}
+
+// `count` elements, each made from its place and `seed`. Returns how many it said.
+extern int c_out_bytes(out List<byte> bytes, int count, int seed);
+extern int c_out_cells(out List<Cell> cells, int count, int seed);
+// The same bytes, but the one at `at`
+extern int c_out_poked(out List<byte> bytes, int count, int seed, int at);
+// Asks for room for `first`, fills it and says so, then asks again for `count`: the room it has last is the list
+extern void c_out_twice(out List<byte> bytes, int first, int count, int seed);
+// Asks for `room`, fills it, and says `said` of them: fewer than it asked for, or more
+extern void c_out_said(out List<byte> bytes, int room, int said, int seed);
+// Asks for room and fills it, and never says how many
+extern void c_out_silent(out List<byte> bytes, int count, int seed);
+// Asks for nothing
+extern void c_out_nothing(out List<byte> bytes);
+// Reads one list and makes another in one call: each element twice
+extern int c_out_doubled(List<float> from, int count, out List<float> twice);
+// How many of a list's first `count` bytes are what c_out_bytes makes from `seed`
+extern int c_right_bytes(List<byte> bytes, int count, int seed);
+
+singleton Store
+{
+    List<byte> image;
+    List<Cell> cells; // 12 bytes each: chunks hold a number of them that's no power of two
+    List<float> halves;
+    List<float> doubles;
+    Holder held;
+    int said; // What C returned
+}
+
+// A list each entity has
+component Blob
+{
+    int seed;
+    List<byte> bytes;
+}
+
+// What the host asks of the next tick, which takes it
+singleton Job
+{
+    int op;
+    int count;
+    int seed;
+    int extra;
+    int result;
+}
+
+// ...and of the next frame
+local singleton Shown
+{
+    List<byte> image;
+    int op;
+    int count;
+    int seed;
+    int said;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Blob { seed = 1 });
+    Spawn(Blob { seed = 2 });
+    Spawn(Blob { seed = 3 });
+}
+
+// A function passes its caller's list on, wherever that is
+void Fill(mut List<byte> into, int count, int seed)
+{
+    c_out_bytes(into, count, seed);
+}
+
+// Lists in locals, which are in the scratch area. Returns how many of its 8 checks passed.
+int Locals(int count, int seed)
+{
+    mut var passed = 0;
+    mut List<byte> made = [];
+    var said = c_out_bytes(made, count, seed); // From empty
+    if (said == count && made.count == count && c_right_bytes(made, made.count, seed) == count) passed += 1;
+    c_out_bytes(made, 7, seed + 1); // Fewer
+    if (made.count == 7 && c_right_bytes(made, 7, seed + 1) == 7) passed += 1;
+    c_out_bytes(made, count * 2, seed + 2); // More
+    if (made.count == count * 2 && c_right_bytes(made, made.count, seed + 2) == count * 2) passed += 1;
+    c_out_silent(made, count, seed); // Never said how many
+    if (made.count == 0) passed += 1;
+    mut List<byte> three = [1, 2, 3]; // One that held something: none of it stays
+    c_out_bytes(three, 5, seed);
+    if (three.count == 5 && c_right_bytes(three, 5, seed) == 5) passed += 1;
+    c_out_nothing(three);
+    if (three.count == 0 && three[0] == 0) passed += 1;
+    mut Holder holder = Holder { tag = 9 }; // In a struct
+    c_out_bytes(holder.bytes, count, seed);
+    if (holder.tag == 9 && holder.bytes.count == count && c_right_bytes(holder.bytes, count, seed) == count) passed += 1;
+    Fill(made, 11, seed); // Through a function
+    if (made.count == 11 && c_right_bytes(made, 11, seed) == 11) passed += 1;
+    return passed;
+}
+
+// Each entity's own list: as many bytes as the host asks for times its seed
+system Each(mut Blob blob, Job job)
+{
+    if (job.op == 15) c_out_bytes(blob.bytes, job.count * blob.seed, blob.seed);
+}
+
+system Run(mut Store store, mut Job job)
+{
+    var op = job.op;
+    job.op = 0;
+    if (op == 1) store.said = c_out_bytes(store.image, job.count, job.seed);
+    else if (op == 2) store.said = c_out_cells(store.cells, job.count, job.seed);
+    else if (op == 3) store.said = c_out_poked(store.image, job.count, job.seed, job.extra);
+    else if (op == 4) c_out_twice(store.image, job.extra, job.count, job.seed);
+    else if (op == 5) c_out_said(store.image, job.count, job.extra, job.seed);
+    else if (op == 6) c_out_silent(store.image, job.count, job.seed);
+    else if (op == 7) c_out_nothing(store.image);
+    else if (op == 8) job.result = c_out_doubled(store.halves, store.halves.count, store.doubles);
+    else if (op == 9) Fill(store.image, job.count, job.seed);
+    else if (op == 10) c_out_bytes(store.held.bytes, job.count, job.seed);
+    else if (op == 11) job.result = Locals(job.count, job.seed);
+    else if (op == 12)
+    {
+        // A call that makes a list is a call that writes: what a statement reads of the list before the call is
+        // as it was, and what it reads after is as C left it
+        c_out_bytes(store.image, 3, 1);
+        var before = store.image.count * 10 + c_out_bytes(store.image, 5, 1);
+        var after = c_out_bytes(store.image, 4, 1) * 10 + store.image.count;
+        job.result = before * 100 + after;
+    }
+    else if (op == 13)
+    {
+        store.halves.Clear();
+        for (var i = 0; i < job.count; i++) store.halves.Add(i * 0.5);
+    }
+    else if (op == 14)
+    {
+        // A copy taken out of the match's list is the code's own: C makes it anew, and the match's stays
+        mut var copy = store.image;
+        c_out_bytes(copy, job.count, job.seed);
+        job.result = copy.count == job.count && c_right_bytes(copy, copy.count, job.seed) == job.count ? 1 : 0;
+    }
+}
+
+// The local world's list, which C makes in a view
+view Show(mut Shown screen)
+{
+    var op = screen.op;
+    screen.op = 0;
+    if (op == 1) screen.said = c_out_bytes(screen.image, screen.count, screen.seed);
+    else if (op == 7) c_out_nothing(screen.image);
+}
