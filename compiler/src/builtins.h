@@ -14,10 +14,14 @@ bool builtin_owner(str name);
 // The two frame drawing APIs: Draw2D and Draw3D.
 bool builtin_draw_owner(str name);
 
-// The program's Anchor enum, which GUILayout.Area takes, and its Shape struct,
-// which Draw2D.Shape does. Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape);
+// The program's Anchor enum, which GUILayout.Area and Draw2D.Text take, its
+// Shape struct, which Draw2D.Shape does, and its Font enum, a text's weight.
+// Call before resolving calls.
+void builtins_use(const decl *anchor, const decl *shape, const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
+// Its GUITheme and GUIControl structs, which GUI.SetTheme and GUI.Theme take
+// and GUI.Control gives, the same way.
+void builtins_use_gui(const decl *theme, const decl *control);
 
 // The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such

@@ -1,6 +1,7 @@
 // What makes the duel feel alive is this machine's own: sparks, rings, trails,
-// a camera that shakes. None of it is in the match. Views watch the match, and
-// add an effect here when they see something happen in it.
+// a camera that shakes. None of it is in the match. The match says what
+// happens in it, and this machine's handlers of that add an effect here
+// (heard.tide).
 enum PaintStages { Prepare, Arena, Platforms, Fighters, Bullets, Effects, Hud, Menu, Overlay }
 
 enum BitKind { Streak, Dot, Puff, Chunk, Shell }
@@ -54,25 +55,14 @@ struct Label
 }
 
 // The match's platforms and fighters as the last frame drew them, for effects
-// to bounce off and shots to end on.
+// to bounce off and for the dots that show where a shot would go.
 struct Slab { float2 center; float2 half; }
 struct Mark { float2 position; float radius; bool shield; }
-
-// A shot the frame drew. One that's missing from the next frame hit something.
-struct Shot
-{
-    Entity entity;
-    float2 position;
-    float2 velocity;
-    int side;
-    int frame;
-}
 
 local singleton Fx
 {
     float dt;        // Seconds this frame's effects move on by
     float now;       // Seconds of frames drawn, which never go back
-    int frame;
     Random random;   // What rolls the effects: this machine's own, as nothing of them is the match's
     float trauma;    // How hard the camera shakes, 0 to 1
     float calm = 1;  // How much of that shows: less while the fight is only the menu's scenery
@@ -88,7 +78,6 @@ local singleton Fx
     List<Label> labels;
     List<Slab> slabs;
     List<Mark> marks;
-    List<Shot> shots;
 }
 
 // A corner of the backdrop's quad, from (0, 0) to (1, 1).
@@ -239,22 +228,6 @@ Sweep Strike(Fx fx, float2 start, float2 delta, float radius)
     return closest;
 }
 
-// A shot ends on what it hit: a flash, a ring, and sparks off the surface.
-void Impact(mut Fx fx, float2 at, float2 velocity, Color color)
-{
-    var speed = Math.Length(velocity);
-    var direction = speed > 1 ? velocity / speed : float2(1, 0);
-    var reach = velocity * (1.6 / 60);
-    var hit = Strike(fx, at, reach, 5);
-    var where = hit.fraction <= 1 ? at + reach * hit.fraction : at + reach * 0.4;
-    var normal = hit.fraction <= 1 ? hit.normal : -direction;
-    var away = Math.Reflect(direction, normal);
-    Burst(fx, where, away + normal * 0.6, 1.9, 9, 330, Mix(color, Color.white, 0.35));
-    Ripple(fx, where, 3, 26, 3.5, 0.22, Mix(color, Color.white, 0.5));
-    fx.bits.Add(Bit { position = where, color = Fade(Color.white, 0.9), life = 0.09, size = 15, kind = BitKind.Dot });
-    Dust(fx, where, normal * 30, 2, 9, Fade(color, 0.22));
-}
-
 // The frame's clock, camera and backdrop, before anything else draws. It's
 // this machine's, so it goes on with no match, while one is being joined.
 [Stage(PaintStages.Prepare)]
@@ -263,7 +236,6 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky)
     // A frame after a stall is a step, not a leap
     fx.dt = Math.Min(Frame.dt, 0.05);
     fx.now += fx.dt;
-    fx.frame += 1;
 
     fx.trauma = Math.Max(0, fx.trauma - fx.dt * 1.7);
     var shake = fx.trauma * fx.trauma * 15 * fx.calm;
@@ -354,7 +326,7 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
     // Motes that rise through the room, one to a cell of a wider grid, each in its own place there
     var drift = (here + float2(Math.Sin(time * 0.3 + here.y * 0.01) * 12, -time * 14)) / 110;
     var home = Math.Floor(drift);
-    var luck = Math.Frac(Math.Sin(Math.Dot(home, float2(127.1, 311.7))) * 43758.5);
+    var luck = Math.Hash(int2(home)) / 2147483648.0; // 0 to 1, the same for a cell on every GPU
     var place = float2(luck, Math.Frac(luck * 57.3)) * 0.7 + 0.15;
     var mote = Math.Saturate((1.5 + luck - Math.Length(Math.Frac(drift) - place) * 110) * scale);
     paint = paint + Color(0.55, 0.66, 1) * (mote * Math.Step(0.45, luck) * (0.2 + 0.2 * Math.Sin(time * 1.3 + luck * 40)));
@@ -371,21 +343,6 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
 [Stage(PaintStages.Effects)]
 view PaintEffects(mut Fx fx, mut Sky sky)
 {
-    // A shot that this frame didn't draw is gone: it hit something
-    mut var s = 0;
-    while (s < fx.shots.count)
-    {
-        var shot = fx.shots[s];
-        if (shot.frame == fx.frame)
-        {
-            s++;
-            continue;
-        }
-        Impact(fx, shot.position, shot.velocity, FighterColor(shot.side));
-        fx.shots[s] = fx.shots[fx.shots.count - 1];
-        fx.shots.RemoveAt(fx.shots.count - 1);
-    }
-
     mut var t = 0;
     while (t < fx.streaks.count)
     {
@@ -508,8 +465,8 @@ view PaintEffects(mut Fx fx, mut Sky sky)
         var at = label.position + float2(0, 34 * EaseOut(along));
         var text = $"{label.amount}";
         var alpha = Math.Saturate((1 - along) * 3);
-        WriteUp(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8));
-        WriteUp(text, at, size, Fade(label.color, alpha));
+        Draw2D.Text(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8), Anchor.MiddleCenter);
+        Draw2D.Text(text, at, size, Fade(label.color, alpha), Anchor.MiddleCenter);
     }
 
     if (sky.shock.z > 1) sky.shock.w = 0;

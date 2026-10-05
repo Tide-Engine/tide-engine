@@ -1,0 +1,16 @@
+// expect: a local handler can't change the match, and 'value' is a match field of 'Health'
+component Health
+{
+    int value;
+    local float flash;
+}
+event Hit { int damage; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health).Send(Hit); }
+
+local event(Hit hit) Flash(mut Health health)
+{
+    health.flash = 1;
+    health.value -= hit.damage;
+}

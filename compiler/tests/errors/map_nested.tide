@@ -1,0 +1,4 @@
+// expect: a map can't hold lists yet
+// expect: keep each list in a component, on an entity of its own, and hold the entities: 'Map<PlayerID, Entity>'
+scene Main { }
+component Hands { Map<PlayerID, List<int>> cards; }

@@ -187,10 +187,13 @@ const cases = {
         ['Vertex corner', [['Vertex', 'support.class']]],
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
         ['Shape panel', [['Shape', 'support.class']]],
+        ['GUIControl card', [['GUIControl', 'support.class']]],
+        ['GUITheme look', [['GUITheme', 'support.class']]],
         ['Draw2D.Shape(panel)', [['Shape', '!support.class'], ['Shape', 'entity.name.function.call']]],
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw2D.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
@@ -270,6 +273,44 @@ const cases = {
             ['with', 'storage.modifier', 2], ['ownership', '!keyword', 2],
         ]],
         ['int Owned(', [['ownership', '!keyword'], ['ownership', '!keyword', 2]]],
+    ],
+    "verified is a modifier before a view's parameter, after with and without, and before a local handler's event": [
+        ['view HealthBar(', [
+            ['verified', 'storage.modifier.verified'], ['Health', 'entity.name.type', 2], ['confirmed', '!storage'],
+            ['mut', 'storage.modifier'], ['verified', 'storage.modifier.verified', 2], ['Combat', 'entity.name.type'],
+            ['Armor', 'entity.name.type'],
+        ]],
+        ['view Corpses(', [
+            ['with', 'storage.modifier'], ['verified', 'storage.modifier.verified'], ['Dead', 'entity.name.type'],
+            ['without', 'storage.modifier'], ['verified', 'storage.modifier.verified', 2], ['Ghost', 'entity.name.type'],
+        ]],
+        ['verified Body sure,', [['verified', 'storage.modifier.verified'], ['Body', 'entity.name.type'], ['sure', '!storage']]],
+        ['mut verified Mesh baked,', [['mut', 'storage.modifier'], ['verified', 'storage.modifier.verified'], ['Mesh', 'entity.name.type']]],
+        ['without verified Dead)', [['without', 'storage.modifier'], ['verified', 'storage.modifier.verified'], ['Dead', 'entity.name.type']]],
+        ['local event(verified Died died) ShowDeath(', [
+            ['local', 'storage.modifier'], ['event', 'storage.type'], ['verified', 'storage.modifier.verified'],
+            ['Died', 'entity.name.type'], ['died', 'variable.parameter'], ['ShowDeath', 'entity.name.function'],
+            ['ShowDeath', '!entity.name.function.call'],
+        ]],
+        ['local event(verified Combat.Died) CountDeath(', [
+            ['verified', 'storage.modifier.verified'], ['Combat', 'entity.name.type'], ['Died', 'entity.name.type'],
+            ['CountDeath', 'entity.name.function'], ['CountDeath', '!entity.name.function.call'],
+        ]],
+    ],
+    'verified is a name anywhere else': [
+        ['local event(verified) HearVerified(', [
+            ['verified', '!storage.modifier'], ['verified', 'entity.name.type'], ['HearVerified', 'entity.name.function'],
+            ['HearVerified', '!entity.name.function.call'],
+        ]],
+        ['view Trusted(', [['verified', '!storage.modifier'], ['with', 'storage.modifier'], ['verified', '!storage.modifier', 2]]],
+        ['int Checked(', [
+            ['verified', '!storage.modifier'], ['verified', '!storage.modifier', 2], ['is', 'keyword.operator.expression.is'],
+            ['verified', '!storage.modifier', 3], ['verified', '!storage.modifier', 4],
+        ]],
+        ['bool verified;', [['verified', '!storage.modifier']]],
+        ['mut void Prove(', [['mut', 'storage.modifier'], ['verified', '!storage.modifier']]],
+        ['mut verified tally', [['mut', 'storage.modifier'], ['verified', '!storage.modifier']]],
+        ['verified = tally;', [['verified', '!storage.modifier']]],
     ],
     'local before a field is a modifier, and a name anywhere else': [
         ['local List<Vertex3> verts;', [['local', 'storage.modifier'], ['Vertex3', '!storage.modifier']]],

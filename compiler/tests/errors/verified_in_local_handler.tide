@@ -1,0 +1,12 @@
+// expect: a local handler takes the match as its event's tick left it, so it has nothing 'verified' to read yet
+component Body { float2 position; }
+event Hit { int damage; }
+local singleton Fx { float x; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body).Send(Hit); }
+
+local event(Hit hit) Spark(verified Body body, mut Fx fx)
+{
+    fx.x = body.position.x;
+}

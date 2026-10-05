@@ -768,7 +768,7 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     }
 }
 
-static bool list_element_ok(type t, loc at);
+static bool list_element_ok(type t, loc at, const type *key);
 
 // Map<K, V> or Set<K> for those types: one declaration for each, so two maps
 // from ints to text are the same type. A map's `entry` is the struct a foreach
@@ -854,7 +854,7 @@ static bool resolve_map_type(const checker *c, const str text, const loc at, typ
         }
     }
     bool ok = map_key_ok(parts[0], at, set);
-    if (!set && !list_element_ok(parts[1], at)) ok = false;
+    if (!set && !list_element_ok(parts[1], at, &parts[0])) ok = false;
     *out = ok ? map_of(c->prog, parts[0], parts[1], set) : T_ERR;
     return true;
 }
@@ -1009,8 +1009,51 @@ static void unwrap_error(const expr *e, const type t)
               type_name(error));
 }
 
-// What a list can hold: values, never ECS data, Actions or other lists.
-static bool list_element_ok(const type t, const loc at)
+// The first list, map or set a struct has in it, in a struct of its own or not:
+// its kind, with the field it's in written to `path`, like "items" or
+// "bag.items". TY_ERROR for a struct with none.
+static type_kind first_held(const type t, char *path, const size_t size)
+{
+    const size_t start = strlen(path);
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        const type_kind kind = f->type.kind;
+        snprintf(path + start, size - start, "%s" STR_FMT, start ? "." : "", STR_ARG(f->name));
+        if (kind == TY_LIST || kind == TY_MAP || kind == TY_SET) return kind;
+        if (kind == TY_STRUCT) {
+            const type_kind inner = first_held(f->type, path, size);
+            if (inner != TY_ERROR) return inner;
+        }
+        path[start] = '\0';
+    }
+    return TY_ERROR;
+}
+
+// A struct with a list, a map or a set in it, as a list's element or a map's
+// value: nothing holds one yet. Says which field is in the way, and what to
+// write instead. `key` is the map's key type, or NULL for a list.
+static void refuse_held(const type t, const loc at, const type *key)
+{
+    char path[256] = "";
+    const type_kind kind = first_held(t, path, sizeof path);
+    const char *one = kind == TY_LIST ? "list" : kind == TY_MAP ? "map" : "set";
+    char entities[160];
+    if (key) snprintf(entities, sizeof entities, "Map<%s, Entity>", type_name(*key));
+    else snprintf(entities, sizeof entities, "List<Entity>");
+    diag_error(at, "a %s can't hold '" STR_FMT "' yet: its '%s' is a %s", key ? "map" : "list", STR_ARG(t.decl->name), path, one);
+    if (kind == TY_LIST) {
+        diag_note("keep all of their '%s' in one list, and in each '" STR_FMT "' where its part starts and how many it "
+                  "has; or keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
+                  path, STR_ARG(t.decl->name), STR_ARG(t.decl->name), entities);
+    } else {
+        diag_note("keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
+                  STR_ARG(t.decl->name), entities);
+    }
+}
+
+// What a list can hold, and a map as its values: values, never ECS data,
+// Actions or other lists. `key` is the map's key type, or NULL for a list.
+static bool list_element_ok(const type t, const loc at, const type *key)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
@@ -1024,13 +1067,13 @@ static bool list_element_ok(const type t, const loc at)
             return false;
         }
         if (!holds_list(t)) return true;
-        diag_error(at, "a list or a map can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(t.decl->name));
-        diag_note("lists and maps can't hold lists or maps yet");
+        refuse_held(t, at, key);
         return false;
     case TY_LIST:
     case TY_MAP:
     case TY_SET:
-        diag_error(at, "a list or a map can't hold lists or maps yet");
+        // The parser refuses these where they're written, with what to write instead
+        diag_error(at, "a %s can't hold %s yet", key ? "map" : "list", t.kind == TY_LIST ? "lists" : t.kind == TY_MAP ? "maps" : "sets");
         return false;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
@@ -1059,7 +1102,7 @@ static bool resolve_list_type(const checker *c, const str text, const loc at, ty
             suggest_note(&sg);
         }
     }
-    *out = list_element_ok(element, at) ? list_of(c->prog, element) : T_ERR;
+    *out = list_element_ok(element, at, NULL) ? list_of(c->prog, element) : T_ERR;
     return true;
 }
 
@@ -1636,6 +1679,7 @@ static type check_enum_conversion(checker *c, expr *e, decl *d)
     // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
     e->type_decl = d;
     e->ctor = CTOR_ENUM;
+    if (d == c->prog->font) c->prog->names_bold = true; // Whatever number it's of
     const type target = {TY_ENUM, d};
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
@@ -2673,6 +2717,12 @@ static type check_gui_call(checker *c, expr *e, const type result)
         if (!e->block) {
             diag_error(e->at, "%s takes a block: '%s(...) { ... }'", name.data, name.data);
             diag_note("its widgets go in the braces after it");
+            // A setting has two forms: the plain name around a block, and Set for what follows
+            if (str_eq_c(e->name, "Theme")) {
+                diag_note("to set it for the widgets that follow, in this view and the ones after it, write "
+                          "'GUI.SetTheme(...)'");
+                suggest_replacement(e->name, "SetTheme");
+            }
         }
     } else if (result.kind != TY_VOID && c->loop_header > 0) {
         diag_error(e->at, "%s can't be in a loop's condition or a for's step", name.data);
@@ -3353,7 +3403,7 @@ static type check_world_call(checker *c, expr *e, param *world)
         return T_ERR;
     }
     // Which world it's in: the match can't use local state, and a local
-    // handler only takes local state.
+    // handler has no World of the match to read.
     const bool local_in_match = d->is_local && !is_local_code(code);
     if (local_in_match || (!d->is_local && code->is_handler && code->is_local)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -3361,8 +3411,10 @@ static type check_world_call(checker *c, expr *e, param *world)
             diag_error(e->type_arg_at, "'" STR_FMT "' is local, and the match can't use local state", STR_ARG(d->name));
             diag_note("local state belongs to one machine, and the match runs the same on every one");
         } else {
-            diag_error(e->type_arg_at, "'" STR_FMT "' belongs to the match, and local handlers only take local state for now",
+            diag_error(e->type_arg_at, "'" STR_FMT "' belongs to the match, and a local handler's World is this machine's",
                        STR_ARG(d->name));
+            diag_note("a view reads any entity's components through its World; a local handler of a match event takes the "
+                      "components of the entity the event was sent to");
         }
         return T_ERR;
     }
@@ -3527,6 +3579,7 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         if ((gui || builtin_draw_owner(owner)) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
@@ -4239,6 +4292,9 @@ static type check_enum_member(expr *e, decl *d)
     suggestion s = suggest_start(e->member);
     for (int i = 0; i < d->members.count; i++) suggest_consider(&s, d->members.items[i].name);
     suggest_note(&s);
+    if (d->builtin && str_eq_c(d->name, "Font")) {
+        diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'");
+    }
     return T_ERR;
 }
 
@@ -4274,6 +4330,42 @@ static bool through_local_field(const expr *target)
         if (e->kind == E_MEMBER && e->local_field) return true;
     }
     return false;
+}
+
+// Whether a value is the match's as a local handler hears it: its event, or a
+// component or singleton of the match it takes, or a field of one. They're
+// copies from the event's turn, without what the match keeps in its heap.
+static bool heard_value(const checker *c, const expr *e)
+{
+    const decl *sys = c->method ? NULL : c->system;
+    if (!sys || sys->kind != DECL_SYSTEM || !sys->listens) return false;
+    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
+    if (e->kind != E_NAME || e->bind != BIND_PARAM) return false;
+    const type t = e->param->type;
+    if (t.kind == TY_EVENT) return true;
+    return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
+}
+
+// Whether a value is a view's `verified` parameter, or a field of one: the
+// confirmed world's, whose heap isn't the one the view reads text from.
+static bool verified_value(const checker *c, const expr *e)
+{
+    const decl *sys = c->method ? NULL : c->system;
+    if (!sys || sys->kind != DECL_SYSTEM || !sys->is_view) return false;
+    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
+    return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->verified;
+}
+
+// Text, a list, a map, a set or a grid: what a world keeps in its heap.
+static bool kept_in_heap(const type t)
+{
+    return t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID;
+}
+
+static const char *heap_what(const type t)
+{
+    if (t.kind == TY_STRING) return "text";
+    return t.kind == TY_LIST ? "a list" : t.kind == TY_MAP ? "a map" : t.kind == TY_SET ? "a set" : "a grid";
 }
 
 // A Forgotten handler's component or singleton: its entity is gone from the
@@ -4321,6 +4413,19 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
                   "function the view passes it to");
         return T_ERR;
     }
+    // Local fields are the entity's, whichever world a parameter's value comes
+    // from: a view that takes the component both ways reaches them one way
+    if (p->verified && code && code->kind == DECL_SYSTEM) {
+        for (int i = 0; i < code->params.count; i++) {
+            const param *twin = &code->params.items[i];
+            if (twin == p || twin->verified || twin->type.decl != d || (twin->mode != PARAM_READ && twin->mode != PARAM_MUT)) continue;
+            diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', which is the entity's whatever the server "
+                       "confirmed: read it through '" STR_FMT "'", STR_ARG(f->name), STR_ARG(d->name), STR_ARG(twin->name));
+            diag_note("'" STR_FMT "' is '" STR_FMT "' as the server confirmed it, for its match fields", STR_ARG(p->name),
+                      STR_ARG(d->name));
+            return T_ERR;
+        }
+    }
     if (!p->local_use) p->local_use_at = e->at;
     p->local_use = true;
     e->field = f;
@@ -4356,7 +4461,12 @@ static type check_member(checker *c, expr *e)
     }
 
     decl *const enum_decl = named_enum(c, e->object);
-    if (enum_decl) return check_enum_member(e, enum_decl);
+    if (enum_decl) {
+        const type member = check_enum_member(e, enum_decl);
+        // Font.Bold: the game draws in bold, so it carries the bold's file
+        if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
+        return member;
+    }
 
     // Combat.Health: a namespace, not a variable, on the left. Combat.ORIGIN.x
     // is a member of a constant, which checking Combat.ORIGIN finds.
@@ -4539,6 +4649,21 @@ static type check_member(checker *c, expr *e)
                     diag_error(e->at, "'" STR_FMT "' is a match field of '" STR_FMT "', and the entity is gone: only its "
                                "local fields are left", STR_ARG(f->name), STR_ARG(obj.decl->name));
                     diag_note("keep what the handler needs of the match in a local field, set while the entity was there");
+                    return T_ERR;
+                }
+                if (heard_value(c, e->object) && kept_in_heap(f->type)) {
+                    diag_error(e->at, "'" STR_FMT "' is %s of the match's, which a local handler doesn't hear yet",
+                               STR_ARG(f->name), heap_what(f->type));
+                    diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
+                              "sets and grids stay in the match: send what it needs of them in a field of another type, or "
+                              "read them in a view");
+                    return T_ERR;
+                }
+                if (verified_value(c, e->object) && kept_in_heap(f->type)) {
+                    diag_error(e->at, "'" STR_FMT "' is %s of the confirmed match's, which a view doesn't read yet",
+                               STR_ARG(f->name), heap_what(f->type));
+                    diag_note("a 'verified' parameter gives the confirmed world's numbers, vectors, enums and entities; its "
+                              "text, lists, maps, sets and grids are read through a parameter that isn't 'verified'");
                     return T_ERR;
                 }
                 e->field = f;
@@ -5872,8 +5997,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                    && !through_local_field(target) && !(arg_of && target == root && root->param->type.decl->local_part)) {
             diag_note("a view can't change the match: put what it wants in the input, and change it in a system");
         } else {
-            diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to write to it",
-                      STR_ARG(root->param->type_name), STR_ARG(root->name));
+            diag_note("declare the parameter as 'mut %s" STR_FMT " " STR_FMT "' to write to it",
+                      root->param->verified ? "verified " : "", STR_ARG(root->param->type_name), STR_ARG(root->name));
             const fix f = {.kind = FIX_ADD_MUT, .at = root->at, .param = root->param};
             vec_push(c->prog->fixes, f);
         }
@@ -7294,7 +7419,13 @@ static void check_stmt(checker *c, stmt *s)
                 } else {
                     diag_error(e->block->at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
                 }
-                diag_note("is a ';' missing after the call?");
+                // A setting has two forms: Set for what follows, and the plain name around a block
+                if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                    diag_note("GUI.SetTheme sets the theme for the widgets that follow; for the widgets in a block alone, "
+                              "write 'GUI.Theme(...) { ... }'");
+                } else {
+                    diag_note("is a ';' missing after the call?");
+                }
             }
             c->block_depth++;
             check_stmt(c, e->block);
@@ -8058,10 +8189,13 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
         }
+        // A struct declared after this field had no fields yet when the field's type was resolved
         if (f->type.kind == TY_LIST && holds_list(list_element(f->type))) {
-            const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-            diag_error(at, "a list can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(list_element(f->type).decl->name));
-            diag_note("lists and maps can't hold lists or maps yet");
+            refuse_held(list_element(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, NULL);
+        }
+        if (f->type.kind == TY_MAP && holds_list(map_value(f->type))) {
+            const type key = f->type.decl->fields.items[0].type;
+            refuse_held(map_value(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, &key);
         }
         check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
@@ -8649,6 +8783,11 @@ static void check_shader_decl(const checker *c, decl *d)
         param *p = &d->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
         p->type = T_ERR;
+        if (p->verified) {
+            diag_error(p->verified_at, "a %s reads what the view that draws its mesh is given, so 'verified' isn't its to say", word);
+            diag_note("a view of the confirmed world's entities, whose components are all 'verified', draws them as confirmed");
+            p->verified = false;
+        }
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT) {
             diag_error(p->at, "a %s has no entities to filter: it takes what it reads, and the view that draws the mesh says "
                               "which entities", word);
@@ -8794,6 +8933,25 @@ static void check_method_body(checker *c, decl *m)
     c->system = NULL;
 }
 
+// `event(verified Died died)`: the handler hears the event once the server has
+// confirmed the tick that sent it. Only a local handler of one of the match's
+// events can: the match has no "confirmed", and a local event is this
+// machine's alone.
+static void check_verified_trigger(const decl *handler, param *p, const decl *d)
+{
+    if (!handler->is_local) {
+        diag_error(p->verified_at, "the match is the same on every machine, so a match handler has no 'verified' events");
+        diag_note("what the server has confirmed is one machine's to know: a local handler hears it, 'local event(verified "
+                  STR_FMT " ...) " STR_FMT "(...)'", STR_ARG(d->name), STR_ARG(handler->name));
+        p->verified = false;
+    } else if (d->is_local) {
+        diag_error(p->verified_at, "'" STR_FMT "' is a local event: it's this machine's own, and no server confirms it",
+                   STR_ARG(d->name));
+        diag_note("'verified' is for the match's events, which a client hears as it predicts them first");
+        p->verified = false;
+    }
+}
+
 // A handler's trigger, `event(Hit hit)`: the event it handles.
 static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
 {
@@ -8823,20 +8981,21 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
         if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
         return;
     }
-    // Spawned and Destroyed come from both worlds; the handler's side picks one.
+    if (p->verified) check_verified_trigger(handler, p, d);
+    // Spawned and Destroyed come from both worlds; the handler's side picks one
+    // (check_listener). A local handler of another of the match's events hears
+    // it: it's a listener (decl.listens).
     if (d == c->prog->spawned || d == c->prog->destroyed) return;
     if (d->is_local && !handler->is_local) {
         diag_error(at, "'" STR_FMT "' is local, so its handlers are too: 'local event(" STR_FMT " ...) " STR_FMT "(...)'",
                    STR_ARG(d->name), STR_ARG(d->name), STR_ARG(handler->name));
-    } else if (!d->is_local && handler->is_local) {
-        diag_error(at, "local handlers of match events aren't supported yet");
-        diag_note("they need to tell predicted ticks from verified ones, which comes with multiplayer");
     }
 }
 
 // A component or singleton `d` in the parameters of `sys`, from the other side:
 // match code can't use local state, and local code can't change the match.
-// Local handlers only take local state for now. Returns false after an error.
+// A handler of a local event only takes local state. Returns false after an
+// error.
 static const char *system_what(const decl *sys);
 
 static bool check_param_side(const decl *sys, const param *p, const decl *d)
@@ -8852,13 +9011,25 @@ static bool check_param_side(const decl *sys, const param *p, const decl *d)
     const bool forgets = sys->is_handler && sys->is_local && sys->event && sys->event->builtin
                       && str_eq_c(sys->event->name, "Forgotten");
     if (!d->is_local && forgets && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
+    // A local handler of one of the match's events hears it with what it takes
+    // of the match, as the event's turn left it: to read, and a component's
+    // local fields to write, as a view does
+    const bool hears = sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command;
+    if (!d->is_local && hears) {
+        if (p->mode == PARAM_MUT && !d->local_part) {
+            diag_error(p->at, "a local handler can't change the match, and '" STR_FMT "' belongs to it", STR_ARG(d->name));
+            diag_note("it hears what happened, to show it: take '" STR_FMT "' without 'mut'. What only this machine keeps for "
+                      "it goes in local fields, which 'mut' lets a handler write: 'local float timer;'", STR_ARG(d->name));
+            return false;
+        }
+        return true;
+    }
     if (!d->is_local && sys->is_handler && sys->is_local) {
-        diag_error(at, "'" STR_FMT "' belongs to the match, and local handlers only take local state for now",
+        diag_error(at, "'" STR_FMT "' belongs to the match, and a handler of a local event only takes local state",
                    STR_ARG(d->name));
         if (forgets) diag_note("a handler of Forgotten takes the one whose local fields are going, as a parameter");
-        else if (d->local_part) diag_note("to let go of what its local fields hold as its entity goes, handle Forgotten: "
-                                          "'local event(Forgotten) Name(" STR_FMT " %s) { ... }'", STR_ARG(d->name),
-                                          example_name(d));
+        else diag_note("a local handler of one of the match's events takes what it reads of the match, like 'local event(Hit "
+                       "hit) Name(" STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
         return false;
     }
     if (!d->is_local && sys->is_view && p->mode == PARAM_MUT && !d->local_part) {
@@ -8889,8 +9060,9 @@ static void check_ownership(const checker *c, decl *sys, param *p)
         return;
     }
     if (!sys->is_view) {
-        diag_error(p->type_at, "'%s ownership' filters the match's entities, and local handlers only take local state for now",
-                   word);
+        diag_error(p->type_at, "'%s ownership' filters the entities a view runs for, and this is a handler", word);
+        diag_note("a local handler of a match event takes the entity's 'Owner owner' and the local 'Session session', and "
+                  "compares 'owner.player' with 'session.player'");
         return;
     }
     const int ownership = with ? OWNERSHIP_WITH : OWNERSHIP_WITHOUT;
@@ -8942,6 +9114,95 @@ static void check_forgotten(decl *sys)
     }
 }
 
+// A local handler of one of the match's events, `local event(Hit hit)
+// ShowHit(Body body, mut Fx fx)`: a listener. It runs at the start of a frame
+// for what the ticks since the last one sent, with what it takes of the match
+// as the event's turn left it, so nothing it takes is the world's as it is
+// now. Spawned and Destroyed come from both worlds: a local handler of one
+// hears the match's when it takes something of the match, or is `verified`.
+static void check_listener(const program *prog, decl *sys)
+{
+    const param *trigger = &sys->params.items[0];
+    const bool either = sys->event == prog->spawned || sys->event == prog->destroyed;
+    const param *of_match = NULL; // Something it takes of the match
+    const param *of_local = NULL; // A local component: an entity of this machine's
+    for (int i = 1; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
+        if (!p->type.decl->is_local && !of_match) of_match = p;
+        if (p->type.decl->is_local && p->type.kind == TY_COMPONENT && !of_local) of_local = p;
+    }
+    if (either && !of_match && !trigger->verified) return; // The local world's entities
+    if (either && of_local) {
+        const loc at = trigger->verified ? trigger->verified_at : of_match->type_at.line ? of_match->type_at : of_match->at;
+        diag_error(at, "'" STR_FMT "' hears this machine's entities, as it takes '" STR_FMT "', which is local, and the "
+                   "match's, as it %s", STR_ARG(sys->name), STR_ARG(of_local->type_name),
+                   trigger->verified ? "is 'verified'" : "takes something of the match");
+        diag_note("an entity is in one world: write a handler for each");
+        return;
+    }
+    sys->listens = true;
+    sys->listens_verified = trigger->verified;
+    if (sys->is_async) {
+        diag_error(sys->async_at, "a local handler of a match event can't be async yet: what it takes of the match is as the "
+                   "event left it, which a task can't get again");
+        diag_note("start a task from it instead, with what the task needs as arguments");
+    }
+    for (int i = 1; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind != TY_WORLD) continue;
+        diag_error(p->at, "a local handler hears the match as the event left it, and the World is the match as it is now");
+        diag_note("take what it reads of the entity the event was sent to as parameters, or put it in the event's fields");
+    }
+}
+
+// `verified Health health`, `with verified Dead`: from the world the server has
+// confirmed. A view's parameter says it, of the match's components and
+// singletons, to read. The match has no "confirmed", and a local handler's
+// parameters already come from one tick, the one its event was sent in.
+// Returns false after an error.
+static bool check_verified_param(const decl *sys, const param *p, const decl *d)
+{
+    const loc at = p->verified_at;
+    if (!is_local_code(sys)) {
+        diag_error(at, "the match is the same on every machine, so %s has nothing 'verified' to read",
+                   sys->is_handler ? "a match handler" : sys->is_async ? "a task" : "a system");
+        diag_note("what the server has confirmed is one machine's to know: a view reads it, 'view Name(verified " STR_FMT
+                  " %s) { ... }', and a local handler hears it, 'local event(verified Hit hit) Name(...)'", STR_ARG(p->type_name),
+                  d ? example_name(d) : "value");
+        return false;
+    }
+    if (sys->is_handler) {
+        const param *trigger = &sys->params.items[0];
+        if (trigger->verified) {
+            diag_error(at, "'" STR_FMT "' hears a confirmed tick, and what it takes of the match is that tick's already",
+                       STR_ARG(sys->name));
+            diag_note("drop 'verified' here: 'event(verified ...)' says it for all of them");
+        } else {
+            diag_error(at, "a local handler takes the match as its event's tick left it, so it has nothing 'verified' to read yet");
+            diag_note("to hear the event once the server confirmed it, with everything as that tick left it, write 'local "
+                      "event(verified " STR_FMT " ...) " STR_FMT "(...)'", STR_ARG(trigger->type_name), STR_ARG(sys->name));
+        }
+        return false;
+    }
+    if (!d || (d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON)) {
+        if (!d && str_eq_c(p->type_name, "World")) {
+            diag_error(at, "the World of the confirmed match isn't built yet");
+            diag_note("take the components the view reads of it as parameters, like 'verified Health health'");
+        } else {
+            diag_error(at, "'verified' goes before a component or singleton of the match, and '" STR_FMT "' isn't one",
+                       STR_ARG(p->type_name));
+        }
+        return false;
+    }
+    if (d->is_local) {
+        diag_error(at, "'" STR_FMT "' is local: it's this machine's own, and no server confirms it", STR_ARG(d->name));
+        diag_note("'verified' is for the match's components and singletons, which a client predicts ahead of the server");
+        return false;
+    }
+    return true;
+}
+
 // A second candidate set belongs to the system, but never to its outer
 // entity filter. Its row is compiler-only data: code reads its named fields.
 static void check_entity_query(const checker *c, decl *sys, param *query)
@@ -8972,6 +9233,10 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (p->mode == PARAM_MUT) {
             diag_error(p->at, "query component bindings are read-only and can't be 'mut'");
             p->mode = PARAM_READ;
+        }
+        if (p->verified) {
+            diag_error(p->verified_at, "the match is the same on every machine, so a query has nothing 'verified' to read");
+            p->verified = false;
         }
         if (p->ownership) {
             diag_error(p->at, "a query filters by components, so 'ownership' isn't a query filter");
@@ -9036,6 +9301,7 @@ static void check_params(const checker *c, decl *sys)
     bool has_devices = false;
     bool has_world = false;
     comp_mask seen = mask_none();
+    comp_mask seen_verified = mask_none(); // A view's `verified` ones: of the entity as the server confirmed it
     const decl *side_of = NULL; // The first component: which world the entities are in
 
     for (int i = 0; i < sys->params.count; i++) {
@@ -9057,6 +9323,7 @@ static void check_params(const checker *c, decl *sys)
             }
         }
 
+        if (p->verified && p->mode != PARAM_EVENT && !check_verified_param(sys, p, d)) p->verified = false;
         if (p->mode == PARAM_SENDER) {
             if (!str_eq_c(p->type_name, "PlayerID")) {
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
@@ -9204,9 +9471,9 @@ static void check_params(const checker *c, decl *sys)
             if (p->mode == PARAM_MUT && d->builtin) {
                 diag_error(p->at, "'" STR_FMT "' is managed by the engine and is read-only", STR_ARG(d->name));
             }
-            for (int j = 0; j < i; j++) {
-                if (sys->params.items[j].type.decl == d) {
-                    diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
+            for (int j = 0; j < i; j++) { // Once from each world at most: as it's drawn, and `verified`
+                if (sys->params.items[j].type.decl == d && sys->params.items[j].verified == p->verified) {
+                    diag_error(p->at, "'%s" STR_FMT "' appears twice", p->verified ? "verified " : "", STR_ARG(d->name));
                 }
             }
             p->type = (type){TY_SINGLETON, d};
@@ -9214,10 +9481,17 @@ static void check_params(const checker *c, decl *sys)
         }
 
         p->type = (type){TY_COMPONENT, d};
-        if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
-        seen = mask_or(seen, bit(d));
-        if (p->mode == PARAM_WITHOUT) sys->without_mask = mask_or(sys->without_mask, bit(d));
-        else sys->need_mask = mask_or(sys->need_mask, bit(d));
+        if (p->verified) { // Of the entity as the server confirmed it
+            if (mask_has(seen_verified, d->index)) diag_error(p->at, "'verified " STR_FMT "' appears twice", STR_ARG(d->name));
+            seen_verified = mask_or(seen_verified, bit(d));
+            if (p->mode == PARAM_WITHOUT) sys->verified_without = mask_or(sys->verified_without, bit(d));
+            else sys->verified_need = mask_or(sys->verified_need, bit(d));
+        } else {
+            if (mask_has(seen, d->index)) diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
+            seen = mask_or(seen, bit(d));
+            if (p->mode == PARAM_WITHOUT) sys->without_mask = mask_or(sys->without_mask, bit(d));
+            else sys->need_mask = mask_or(sys->need_mask, bit(d));
+        }
         // An entity is in one world, so its components are all of one side.
         if (side_of && side_of->is_local != d->is_local) {
             const decl *local = d->is_local ? d : side_of;
@@ -9245,9 +9519,27 @@ static void check_params(const checker *c, decl *sys)
     } else if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }
-    sys->per_entity = entity || mask_any(seen) || sys->ownership;
+    // A view's `verified` components and filters. With none of the world it
+    // draws, the confirmed world's entities are the ones it runs for, and its
+    // masks are theirs; with some of both, it runs for the drawn world's
+    // entities that are in the confirmed one too.
+    if (mask_intersects(sys->verified_need, sys->verified_without)) {
+        diag_error(sys->at, "view '" STR_FMT "' both requires and excludes the same 'verified' component", STR_ARG(sys->name));
+    }
+    for (int i = 0; i < sys->params.count; i++) sys->takes_verified |= sys->params.items[i].verified && !sys->is_handler;
+    if (mask_any(seen_verified) && !mask_any(seen) && !entity) {
+        sys->verified_entities = true;
+        sys->need_mask = mask_or(sys->need_mask, sys->verified_need);
+        sys->without_mask = mask_or(sys->without_mask, sys->verified_without);
+        sys->verified_need = mask_none();
+        sys->verified_without = mask_none();
+    } else if (mask_any(seen_verified)) {
+        sys->verified_join = true;
+    }
+    sys->per_entity = entity || mask_any(seen) || mask_any(seen_verified) || sys->ownership;
     sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
     if (sys->is_handler && sys->is_local && sys->event == prog->forgotten) check_forgotten(sys);
+    if (sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command) check_listener(prog, sys);
 
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
@@ -9302,7 +9594,9 @@ static void warn_unused_params(checker *c, const decl *sys)
         }
         if (!p->read && kind == TY_COMPONENT) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
-            if (sys->is_handler || sys->is_view) {
+            if (p->verified) {
+                diag_note("to only require the component in the confirmed world, write 'with verified " STR_FMT "'", STR_ARG(type));
+            } else if (sys->is_handler || sys->is_view) {
                 diag_note("to only require the component, write 'with " STR_FMT "'", STR_ARG(type));
             } else {
                 diag_note("to only require the component, write 'with " STR_FMT "': a filter doesn't make other "
@@ -9562,8 +9856,9 @@ static void add_builtins(program *prog)
     }
     prog->io_error = io_error;
 
-    // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, as
-    // Unity's TextAnchor. tide/gui.h's tide_anchor has the same values.
+    // enum Anchor { UpperLeft, ..., LowerRight }: where GUILayout.Area goes, and
+    // the place of its box a text's position is, as Unity's TextAnchor.
+    // tide/draw.h's tide_anchor has the same values.
     static const char *const anchors[] = {"UpperLeft", "UpperCenter", "UpperRight", "MiddleLeft", "MiddleCenter",
                                           "MiddleRight", "LowerLeft", "LowerCenter", "LowerRight"};
     decl *anchor = NEW(decl);
@@ -9575,6 +9870,20 @@ static void add_builtins(program *prog)
         vec_push(anchor->members, m);
     }
     prog->anchor = anchor;
+
+    // enum Font { Regular, Bold }: the weight Draw2D.Text draws in. Each is a
+    // file of the engine's font, and C names a weight by its file (tide/draw.h:
+    // TIDE_FONT_REGULAR, TIDE_FONT_BOLD), which generated code turns these into.
+    static const char *const fonts[] = {"Regular", "Bold"};
+    decl *font = NEW(decl);
+    font->kind = DECL_ENUM;
+    font->name = str_from("Font");
+    font->builtin = true;
+    for (int i = 0; i < (int)(sizeof fonts / sizeof fonts[0]); i++) {
+        const enum_member m = {str_from(fonts[i]), {0, 0, 0}, NULL, i};
+        vec_push(font->members, m);
+    }
+    prog->font = font;
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw2D.Mesh draws, as tide/draw.h's tide_vertex. And
@@ -9638,6 +9947,57 @@ static void add_builtins(program *prog)
     shape->fields.items[6].default_value = none;
     shape->fields.items[8].default_value = white;
     prog->shape = shape;
+    // struct GUITheme { Color text; Color panel; Color control; Color hot;
+    // Color pressed; Color field; Color fieldHot; Color accent; float radius; }:
+    // how the GUI's own widgets look, which generated C hands tide/gui.h as a
+    // tide_gui_theme. Its defaults are the look every frame starts with,
+    // tide_gui_theme_default in the engine's gui.c: a change to one goes to
+    // the other.
+    decl *theme = NEW(decl);
+    theme->kind = DECL_STRUCT;
+    theme->name = str_from("GUITheme");
+    theme->builtin = true;
+    static const char *const theme_colors[][5] = {
+        {"text", "0.93", "0.93", "0.95", "1"},  {"panel", "0.07", "0.07", "0.1", "0.9"},
+        {"control", "0.2", "0.2", "0.25", "1"}, {"hot", "0.28", "0.28", "0.34", "1"},
+        {"pressed", "0.14", "0.14", "0.18", "1"}, {"field", "0.12", "0.12", "0.15", "1"},
+        {"fieldHot", "0.16", "0.16", "0.2", "1"}, {"accent", "1", "0.77", "0.24", "1"}};
+    for (int i = 0; i < (int)(sizeof theme_colors / sizeof theme_colors[0]); i++) {
+        field f = {0};
+        f.name = str_from(theme_colors[i][0]);
+        f.type_name = str_from("Color");
+        expr *color = NEW(expr); // Color(r, g, b, a)
+        color->kind = E_CALL;
+        color->name = str_from("Color");
+        for (int k = 1; k < 5; k++) {
+            expr *part = NEW(expr);
+            part->kind = E_FLOAT;
+            part->text = str_from(theme_colors[i][k]);
+            vec_push(color->args, part);
+        }
+        f.default_value = color;
+        vec_push(theme->fields, f);
+    }
+    field theme_radius = {0};
+    theme_radius.name = str_from("radius");
+    theme_radius.type_name = str_from("float");
+    vec_push(theme->fields, theme_radius);
+    prog->gui_theme = theme;
+    // struct GUIControl { bool hovered; bool pressed; bool focused; bool
+    // clicked; }: what GUI.Control says of a control, as tide/gui.h's
+    // tide_control.
+    decl *control = NEW(decl);
+    control->kind = DECL_STRUCT;
+    control->name = str_from("GUIControl");
+    control->builtin = true;
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked"};
+    for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(control_fields[i]);
+        f.type_name = str_from("bool");
+        vec_push(control->fields, f);
+    }
+    prog->gui_control = control;
     static const char *const filters[] = {"Point", "Bilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
@@ -9708,7 +10068,10 @@ static void add_builtins(program *prog)
     vec_push(decls, vertex);
     vec_push(decls, vertex3);
     vec_push(decls, shape);
+    vec_push(decls, theme);
+    vec_push(decls, control);
     vec_push(decls, filter);
+    vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
     vec_push(decls, session);
@@ -11546,7 +11909,8 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape);
+    builtins_use(prog->anchor, prog->shape, prog->font);
+    builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
     check_units(prog);
@@ -11663,6 +12027,16 @@ bool check(program *prog)
             if (h->is_command && h->event->handlers.count) {
                 diag_error(h->at, "command '" STR_FMT "' has more than one handler", STR_ARG(h->event->name));
                 diag_note("validate and handle it in one handler; that handler can send ordinary events");
+            }
+            // The tick runs an event's handlers; its listeners hear it at the next frame
+            if (h->listens) {
+                if (h->event->listeners.count == 64) {
+                    diag_error(h->at, "'" STR_FMT "' has more than 64 local handlers", STR_ARG(h->event->name));
+                    diag_note("each is a bit in what a tick records of the event: do more in one handler");
+                    continue;
+                }
+                vec_push(h->event->listeners, h);
+                continue;
             }
             vec_push(h->event->handlers, h);
         }

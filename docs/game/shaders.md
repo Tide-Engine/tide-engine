@@ -168,7 +168,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, ints, floats, vectors, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; `Math`; and sampling a grid.
+- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid.
 - **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw2D` and `Draw3D`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
@@ -179,8 +179,35 @@ error: a loop the GPU runs counts, so it's known how far it goes: 'while' could 
   = note: write it as a for with a bound, and 'break' out of it: 'for (int i = 0; i < 8; i++) { ... }'
 ```
 
+### Math
+
+Everything in [`Math`](../language/math.md) is there unless it makes no sense on a GPU, with the types it works on and what builds them: vectors, quaternions (`Math.Mul`, `Rotate`, `Slerp`, `quaternion.AxisAngle`, `Euler`, `LookRotation`), matrices (`Math.Inverse`, `Determinant`, `float4x4.TRS`, `PerspectiveFov`) and `Math.Hash`. A function gives the same answer in a system, in a view and in a frag, up to how the GPU rounds.
+
+- **`Math.Hash` is exact.** It's integers, so a frag gets the number a system gets: a pattern made from a cell's hash is the same on every GPU.
+
+```csharp
+frag Stars(BoxVertex vertex, mut Color color)
+{
+    // About one cell in thirty has a star, the same cells on every machine
+    int2 cell = int2(Math.Floor(vertex.uv * 64));
+    color = Math.Hash(cell) % 30 == 0 ? Color.white : Color.black;
+}
+```
+
+- **Floats come out as the GPU rounds them.** `Sin`, `Pow`, a quaternion's `Slerp` and a matrix's `Inverse` follow the same formulas as on the CPU, and each GPU rounds them its own way. Big numbers lose the most: the sine of a number in the thousands is wherever that GPU's rounding puts it, so the old trick of a hash made from a sine comes out striped on some machines. `Math.Hash` is what that's for.
+- **It's as forgiving as on the CPU** (see [Forgiving with bad values](../language/math.md#forgiving-with-bad-values)): `Normalize` gives zero for a vector with no direction and the identity for a quaternion with none, `Min` and `Max` with one NaN give the other, and `Clamp` and `Saturate` always give a value in range.
+- **It gives a number wherever the CPU does.** A GPU's own functions leave some answers open, and Tide's don't: a whole power of a number under 0 (`Math.Pow(-2, 2)` is 4), anything to the power of 0 (1), `Math.Atan2(0, 0)` (0), and `Math.SmoothStep` from an edge down to a lower one (it falls where the other way around rises). Where the CPU has no number to give either (the square root of a number under 0, the inverse of a matrix that has none), the GPU gives whatever it gives.
+
+What's left out is left out for a reason, and its error says what to write instead. There's one:
+
+| Not on the GPU | Why | Instead |
+|---|---|---|
+| `Math.Hash` of a `long` | A GPU's ints are 32 bits, so no `long` gets there | `Math.Hash(int2(low, high))` is the same number, for the long's halves: `int(x)` and `int(x >> 32)`, split on the CPU and kept in fields the frag reads |
+
+A [`Random`](../language/math.md#not-on-the-gpu) isn't there either: its state is the CPU's, so a frag reads a number the view rolled, or hashes.
+
 ::: warning The GPU's numbers aren't the match's
-Every machine's GPU rounds a little differently, so what a frag or a vert works out never reaches the match: they're local code, as views are, and `Math` there is the GPU's own. Anything the match depends on is worked out in a system.
+Every machine's GPU rounds a little differently, so what a frag or a vert works out never reaches the match: they're local code, as views are, and what `Math` makes of floats there is that GPU's own. Only its integers, `Math.Hash`, are the same everywhere. Anything the match depends on is worked out in a system.
 :::
 
 ## Many at once

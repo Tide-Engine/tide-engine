@@ -115,7 +115,68 @@ view Bodies(Player player, Scenery scenery, without ownership)
 
 They're filters, beside `with` and `without`: the view takes neither `Owner` nor `Session` for them, and `if (owner.player != session.player) return;` goes. A view that wants both kinds at once, like one that draws your player yellow and the others gray, still takes `Owner` and `Session` and compares.
 
-Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+Only views have them. The match runs the same on every machine, so a system can't ask whose machine it's on: there it's an error, and `with Owner` picks the entities that any player owns. A local handler doesn't filter by them either: one of a match event takes `Owner owner` and `Session session`, and compares (see [Events](./events.md#what-isn-t-there-yet)). `ownership` is a keyword only right after `with` and `without`, so it still names anything else.
+
+## Confirmed state
+
+In a match with other machines, a client runs ahead of the server: its views draw the world as this machine predicts it, and a prediction can be wrong for a moment, until the server says how the tick went (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). That suits what has to answer at once, like movement. What must not be wrong, like a health bar, a score or a death, is read `verified`: from the world the server has confirmed.
+
+`verified` goes before a parameter's type, like `mut`:
+
+```csharp
+// Movement as predicted, the health bar only what's confirmed.
+view DrawFighter(Body body, verified Health health)
+{
+    Draw2D.Circle(body.position, 0.5, Color.white);
+    Draw2D.Rect(body.position + float2(0, 0.8), float2(health.value * 0.01, 0.1), Color.red);
+}
+
+// The same component twice: what's predicted, and what's confirmed so far.
+view HealthBar(Body body, Health health, verified Health confirmed)
+{
+    var at = body.position + float2(0, 1);
+    Draw2D.Rect(at, float2(confirmed.value * 0.01, 0.1), Color.gray);
+    Draw2D.Rect(at, float2(health.value * 0.01, 0.1), Color.red);
+}
+
+// A filter, and a singleton.
+view Corpse(Body body, with verified Dead)
+{
+    Draw2D.Circle(body.position, 0.5, Color.gray);
+}
+
+view Board(verified Duel duel)
+{
+    Draw2D.Screen();
+    Draw2D.Text($"Round {duel.round}", float2(20, 20), 24, Color.white);
+}
+```
+
+- **A view runs for an entity when each parameter exists in the world it names.** A view with components of both worlds needs the entity in both, so it skips one whose spawn isn't confirmed yet. A game that wants it drawn sooner splits the view in two: one that draws what's predicted, and one that adds what's confirmed.
+- **A view whose components are all `verified`** runs for the confirmed world's entities, and draws them as they are there: `this` is the confirmed entity, and corrections aren't smoothed.
+- **Filters take it**: `with verified Dead`, `without verified Dead`. Either asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so it skips an entity whose spawn isn't confirmed yet too.
+- **Singletons take it**: `verified Duel duel`.
+- **A `verified` value isn't blended.** It's as the last confirmed tick has it, where the rest of what a view reads is [blended](#smooth-at-any-tick-rate) between two ticks.
+- **`mut` goes with it.** `mut verified Health health` reads the confirmed `Health` and writes the entity's [local fields](./local-state.md#local-fields), which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`.
+- **The same entity** in both worlds is the entity, not only its handle: running a tick again can give a handle to another entity, which is then in one world only (see [After a rollback](./local-state.md#after-a-rollback)).
+- **It's the view's to say.** A function's parameter can't say `verified`: the view takes the value `verified` and passes it on. Nor can a [frag or vert](./shaders.md), which reads what its view is given.
+- **The match has no "confirmed".** It's the same on every machine, so `verified` in a system, a match handler or a task is an error, which points to views and local handlers.
+
+Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match. A local handler takes `verified` on its event, to hear it once it's certain: see [Events](./events.md#verified-handlers).
+
+### Holding a death until it's confirmed
+
+With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says: the view needs the entity in both worlds. There are three ways to hold a death until the server has confirmed it:
+
+- **Make the death a state of a living entity**, a field or a tag like `Dead`, and destroy the entity later. Views read the state `verified`, as `Corpse` does above.
+- **Take everything `verified` in that view.** It then runs for the confirmed world's entities, so the entity is drawn, as the server last confirmed it, until the server says it's gone.
+- **Show it from a local handler**: `local event(verified Destroyed) ...` hears the entity go once it's certain, with its components as they were (see [Events](./events.md#verified-handlers)).
+
+### What isn't there yet
+
+- **Text, lists, maps, sets and grids of the confirmed world.** Naming one through a `verified` parameter is an error, and a copy of a component that has one has it empty. Read them through a parameter that isn't `verified`.
+- **`verified World world`**, which is an error that points to `verified` component parameters. A view's `World` is the world it draws.
+- **Blending confirmed state.** A `verified` value steps at the tick rate. Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead, isn't there yet.
 
 ## Draw functions
 
@@ -139,8 +200,10 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Ellipse(center, radii, color)` | An ellipse. `Ellipse(center, radii, rotation, color)` turns it, and `WireEllipse(center, radii, width, color)` is its outline |
 | `Draw2D.Arc(center, radius, start, sweep, width, color)` | Part of a ring |
 | `Draw2D.Shape(shape)` | A [`Shape`](#the-general-shape): a fill from one color to another, an outline around a fill, an edge that fades |
-| `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
-| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)) |
+| `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it (see [Text](#text)) |
+| `Draw2D.Text(text, position, size, color, anchor)` | Text with `position` another place of its box: `Anchor.MiddleCenter` centers it there |
+| `Draw2D.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw2D.Text(text, position, size, color, anchor, font)` |
+| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
 | `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
@@ -348,29 +411,63 @@ view Health(Stats stats)
 
 What views draw there is under the GUI's widgets, which draw last.
 
-## Measuring text
+The mouse, touches and the pointer count pixels from the bottom left instead, with `y` up. `Screen.Flip(devices.pointer.position)` is where the pointer is in the screen's pixels: see [Screen and world coordinates](#screen-and-world-coordinates).
 
-`Draw2D.Text` takes the text's top left corner. To center a line, align it to the right, or fit a panel around it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line.
+## Text
+
+`Draw2D.Text(text, position, size, color)` draws text in the engine's font. Its `size` is its font size, as CSS's and Unity's: the height of a line of it, with its capitals in the line's middle. A newline in the text starts another line under it. Text is fitted to the display's pixels, so it's sharp at the sizes it's read at.
+
+### Anchors
+
+Without more, `position` is the text's top left corner. An `Anchor` after the color says which place of the text's box it is instead, the nine of Unity's `TextAnchor`: `UpperLeft`, `UpperCenter`, `UpperRight`, `MiddleLeft`, `MiddleCenter`, `MiddleRight`, `LowerLeft`, `LowerCenter` and `LowerRight`.
 
 ```csharp
 view Banner(Round round)
 {
     Draw2D.Screen();
-    var size = Draw2D.MeasureText(round.message, 48);
-    var corner = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
-    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, size + float2(32, 16), Color.black);
-    Draw2D.Text(round.message, corner, 48, Color.white);
+    var middle = float2(Screen.width, Screen.height) * 0.5;
+    Draw2D.Text("FIGHT!", middle, 64, Color.white, Anchor.MiddleCenter);
+    Draw2D.Text($"Round {round.number}", float2(Screen.width - 16, 16), 24, Color.gray, Anchor.UpperRight);
 }
 ```
 
-That's the message in the middle of the screen, on a panel that fits it. Text against the right edge starts at `Screen.width - size.x`.
+That's a word in the middle of the screen, and the round's number against its top right corner, wherever the window's edges are and however wide the text comes out.
 
-The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered on a body starts half its height above the body's middle:
+The box is as wide as the text's widest line and as tall as its lines. Upper is towards the top of the screen, whether the calls are in the world, where `y` goes up, or in the screen's pixels, where it goes down: a name over a body is `Draw2D.Text(player.name, body.position + float2(0, 1), 0.5, Color.white, Anchor.LowerCenter)` under any camera. Text of several lines lines up on the anchor's side: its lines start together at a left anchor, end together at a right one, and are centered on one between.
+
+### Bold
+
+The font has two weights. `Font.Bold`, last in the call, draws text in the font's own bold:
 
 ```csharp
-var size = Draw2D.MeasureText(player.name, 0.5);
-Draw2D.Text(player.name, body.position + float2(-size.x, size.y) * 0.5, 0.5, Color.white);
+Draw2D.Text("DUEL", at, 88, Color.white, Font.Bold);
+Draw2D.Text("DUEL", at, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
 ```
+
+`Font.Regular` is the weight text has without one. A `Font` is a value like any enum's, so a function can take one and pass it on.
+
+Bold is a second font file, and a game only carries it when its code says `Font.Bold`: about 95 KB more in the program, and nothing for a game that never does. Its strokes are a whole number of pixels thick, as the regular weight's are, so text stays sharp. At the smallest sizes, under 13 of the display's pixels, that's one pixel in both weights: bold is for text of about that size and up, and for titles. A letter the bold weight doesn't have (it covers Latin, Greek and Cyrillic, less widely than the regular one) is drawn in the regular weight.
+
+The GUI's widgets are in the regular weight.
+
+### Measuring text
+
+To fit a panel around a text, or to put something beside it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line. It's the box an anchor names a place of.
+
+```csharp
+view Banner(Round round)
+{
+    Draw2D.Screen();
+    var middle = float2(Screen.width, Screen.height) * 0.5;
+    var size = Draw2D.MeasureText(round.message, 48, Font.Bold);
+    Draw2D.Rect(middle, size + float2(32, 16), Color.black);
+    Draw2D.Text(round.message, middle, 48, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+```
+
+That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw2D.MeasureText(text, size, Font.Bold)`.
+
+The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera.
 
 It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own pixels and camera, and `target.MeasureText(text, size)` measures for it.
 
@@ -487,12 +584,12 @@ The conversion helpers use the currently selected camera, including a camera set
 
 In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far limit, rather than a distance in world units. The standard perspective camera has an infinite far limit, so depth 1 has no finite world position. The ray helpers work with perspective and orthographic cameras, including custom projection matrices. Intersect the ray with your game's objects or a plane to pick a world position; a pixel alone has no unique 3D position.
 
-Device positions use a bottom-left origin with `y` up. Flip their `y` before passing them to these helpers:
+The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw2D.Screen()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
 
 ```csharp
 view Pointer(Devices devices)
 {
-    var screen = float2(devices.mouse.position.x, Screen.height - devices.mouse.position.y);
+    var screen = Screen.Flip(devices.pointer.position);
     var world = Draw2D.ScreenToWorld(screen);
     Draw2D.WireCircle(world, 0.2, Color.yellow);
 
@@ -578,7 +675,7 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 
 Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
 
 `[Snap]` keeps a field out of blending, for angles that wrap and values that jump:
 

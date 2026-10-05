@@ -18,6 +18,43 @@ _Noreturn void tide_out_of_memory(void)
     abort();
 }
 
+bool tide_hidden(void)
+{
+    const char *value = getenv("TIDE_HIDDEN");
+    return value && value[0] && strcmp(value, "0") != 0;
+}
+
+#ifdef _WIN32
+
+#include <crtdbg.h>
+
+// Windows' own, without its headers.
+__declspec(dllimport) unsigned int __stdcall GetErrorMode(void);
+__declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);
+
+// Before main, in a run nobody watches: nobody is there to click a dialog
+// away, so none shows. It's here, with what every program of the engine's
+// links, so no program has to remember it.
+__attribute__((constructor)) static void hidden_start(void)
+{
+    if (!tide_hidden()) return;
+    // The system's, for a crash, or a library or a disk that's missing:
+    // SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX and SEM_NOOPENFILEERRORBOX
+    SetErrorMode(GetErrorMode() | 0x0001u | 0x0002u | 0x8000u);
+    // The C runtime's: abort() ends the program at once, with exit code 3,
+    // and a failed assert says so on stderr, in a program with no console too
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    _set_error_mode(_OUT_TO_STDERR);
+#ifdef _DEBUG // The debug runtime's reports of what its own checks found, and of a failed _ASSERT
+    for (int kind = _CRT_ERROR; kind <= _CRT_ASSERT; kind++) {
+        _CrtSetReportMode(kind, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(kind, _CRTDBG_FILE_STDERR);
+    }
+#endif
+}
+
+#endif
+
 #if defined(__wasm__) && defined(__wasm_atomics__)
 
 #define WASM_PAGE 65536u

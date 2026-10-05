@@ -33,6 +33,22 @@
 # tidec generates for programs it warns about: each is part of a warning's
 # text, and has to be there.
 
+# The bold weight's file (platform/font/Tuffy_Bold.ttf) as a library of that
+# one object. A game that says Font.Bold names the file in its C
+# (tide_font_bold_ttf, tide/draw.h), and a linker takes it out of a library for
+# such a game alone: out of the platform layer's, which has it too, for a game
+# with a window, and out of this one for a HOST's program, which may link no
+# platform layer. So a game builds whichever program it's in, and one that
+# never says Font.Bold carries no file in any.
+set(TIDE_FONT_BOLD_C "${PROJECT_BINARY_DIR}/tide_font_bold/tide_font_bold.c")
+add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf"
+        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    COMMENT "The bold font as C"
+    VERBATIM)
+add_library(tide_font_bold STATIC "${TIDE_FONT_BOLD_C}")
+
 set(TIDE_GAMES_MANIFEST "${PROJECT_SOURCE_DIR}/build/tools/games.txt")
 set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
 
@@ -150,7 +166,7 @@ function(tide_add_game target)
         tide_android_app(${target} LABEL "${title}")
     elseif(ARG_HOST)
         add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" ${c_sources})
-        target_link_libraries(${target} PRIVATE tide)
+        target_link_libraries(${target} PRIVATE tide tide_font_bold)
     else()
         if(NOT TARGET tide_platform)
             message(FATAL_ERROR "tide_add_game(${target}): a game without HOST opens a window, which needs the "

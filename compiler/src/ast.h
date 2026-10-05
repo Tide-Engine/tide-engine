@@ -223,6 +223,10 @@ typedef struct param {
     bool read;    // The body names it
     bool written; // The body assigns through it
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
+    // `verified Health health`, `with verified Dead`, `event(verified Died died)`: from the world the server has
+    // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
+    bool verified;
+    loc verified_at; // ...the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
@@ -372,6 +376,7 @@ typedef struct decl {
     bool is_command;        // `command`: a local submission whose one match handler receives its sender
     const struct decl *needs_target; // A handler that takes data from the entity the event is sent to, or NULL
     VEC(struct decl *) handlers;     // Its handlers, in the order they run
+    VEC(struct decl *) listeners;    // A match event's local handlers (decl.listens), in the order they run
 
     // Structs and components: their methods
     VEC(struct decl *) methods;
@@ -417,6 +422,11 @@ typedef struct decl {
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event
     struct decl *forgets; // A local handler of Forgotten: the match component or singleton whose local fields it hears go
+    // A local handler of one of the match's events, `local event(Hit hit) ShowHit(...)`: it runs at the start of a
+    // frame, for what the ticks since the last one sent, with the entity's components as the event's turn left them.
+    // It's among its event's `listeners`, not its `handlers`, which the tick runs.
+    bool listens;
+    bool listens_verified; // ...once the server confirmed the tick: `local event(verified Hit hit)`
     bool per_entity;     // Runs once per matching entity, not once per tick.
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
@@ -453,6 +463,17 @@ typedef struct decl {
     VEC(world_use) world_uses; // Query reads and World access, by component: query declaration order, then first body use
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
+    // A view's `verified` parameters and filters name the world the server has
+    // confirmed. With components of both worlds, it runs for the entities of
+    // the world views draw that are in the confirmed one too, with these there
+    // (verified_join). With `verified` components only, it runs for the
+    // confirmed world's entities, and need_mask and without_mask are theirs
+    // (verified_entities).
+    comp_mask verified_need;
+    comp_mask verified_without;
+    bool verified_join;
+    bool verified_entities;
+    bool takes_verified; // Some parameter of it is `verified`, a singleton's too: it needs a confirmed world to run
     int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's `with ownership` or `without ownership`, which its rows are checked for
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
     struct decl *order_enum; // [Stage]: the enum whose declaration order defines the phases
@@ -885,10 +906,16 @@ typedef struct program {
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
     decl *scene_visibility; // The built-in enum SceneVisibility
-    decl *anchor;        // The built-in enum Anchor, where GUILayout.Area goes
+    decl *anchor;        // The built-in enum Anchor: where GUILayout.Area goes, and the place of a text's box
+    decl *font;          // The built-in enum Font, the weight text is drawn in
+    // Whether code names Font.Bold, or makes a Font of a number: only then does
+    // generated C name the bold weight's file, so only then does the game carry it.
+    bool names_bold;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *shape;         // The built-in struct Shape, what Draw2D.Shape draws
+    decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
+    decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C

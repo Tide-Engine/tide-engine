@@ -112,6 +112,7 @@ view Show(Devices devices)
     Draw2D.Rect(0, 0, 1, 1, Color.white);
     Vertex corner = default;
     Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
+    Draw2D.Text("DUEL", corner.position, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
     Vertex3 corner3 = default;
     Shape panel = default;
     Draw2D.Shape(panel);
@@ -119,6 +120,9 @@ view Show(Devices devices)
     var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
+    GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
+    GUITheme look = default;
+    GUI.SetTheme(look);
     if (!Cursor.locked) Cursor.Lock();
     float step = Frame.dt;
 }
@@ -236,3 +240,28 @@ system QueriesAcrossLines(
 int query(int value) { return value; }
 int QueryName(int query) { return query; }
 void CallQuery() { var answer = query(1); }
+
+// verified: a word of its own before a view's parameter, after with and without, and before a local handler's event; a name anywhere else.
+view HealthBar(Health health, verified Health confirmed, mut verified Combat.Armor armor) { }
+view Corpses(Body body, with verified Dead, without verified Combat.Ghost) { }
+view ConfirmedAcrossLines(
+    verified Body sure,
+    mut verified Mesh baked,
+    without verified Dead)
+{
+}
+local event(verified Died died) ShowDeath(Body body, mut Toast toast) { }
+local event(verified Combat.Died) CountDeath(mut Toast toast) { }
+local event(verified) HearVerified(mut Toast toast) { }
+view Trusted(verified trust, with verified) { }
+int Checked(Stats? verified) { if (verified is Stats checked) return Twice(verified, verified); }
+struct Proof
+{
+    bool verified;
+    mut void Prove(bool proven) { verified = proven; }
+}
+void Proving()
+{
+    mut verified tally = default;
+    verified = tally;
+}

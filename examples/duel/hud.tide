@@ -1,58 +1,22 @@
 // Over the arena, in the screen's pixels: the score, both fighters' health and
 // upgrades, what the buttons do, and the words between rounds.
 
-// What the views last saw of the match's flow, to tell when it changes.
+// How long the round's flow has been where it is. The match's events say when
+// it turns (heard.tide): the views only count the seconds.
 local singleton Flow
 {
-    int match = -1;
-    bool attract;
-    Phase phase;
     float age;         // Seconds in this phase
-    int blue;
-    int orange;
     int winner = -1;   // Who took the last round: a side, or -1 when both went down
     float since = 100; // Seconds since a round ended
 }
 
 [Stage(PaintStages.Prepare, 10)]
-view WatchRound(Duel duel, mut Flow flow, mut Fx fx, mut Sky sky)
+view WatchRound(Duel duel, mut Flow flow, mut Fx fx)
 {
     flow.age += fx.dt;
     flow.since += fx.dt;
     // Behind the menu, the fight is scenery: it shakes and flashes less
     fx.calm = duel.attract ? 0.25 : 1;
-    if (duel.match != flow.match || duel.attract != flow.attract)
-    {
-        flow.match = duel.match;
-        flow.attract = duel.attract;
-        flow.phase = duel.phase;
-        flow.age = 0;
-        flow.blue = duel.scoreBlue;
-        flow.orange = duel.scoreOrange;
-        flow.since = 100;
-        return;
-    }
-    if (duel.scoreBlue != flow.blue || duel.scoreOrange != flow.orange)
-    {
-        flow.winner = duel.scoreBlue > flow.blue ? 0 : 1;
-        flow.since = 0;
-        flow.blue = duel.scoreBlue;
-        flow.orange = duel.scoreOrange;
-    }
-    if (duel.phase == flow.phase) return;
-    if (flow.phase == Phase.Fight && duel.phase == Phase.Countdown)
-    {
-        flow.winner = -1;
-        flow.since = 0;
-    }
-    if (duel.phase == Phase.Fight)
-    {
-        Shock(sky, float2(0, 30), 0.75);
-        Flash(fx, Color.white, 0.1);
-        fx.kick = 0.9;
-    }
-    flow.phase = duel.phase;
-    flow.age = 0;
 }
 
 string SideName(int side)
@@ -72,8 +36,10 @@ Color CardColor(Card card)
     return Color(1, 0.62, 0.22);
 }
 
+// The score is what the server has confirmed: a round this machine only
+// predicted lights nothing.
 [Stage(PaintStages.Hud)]
-view PaintScore(Duel duel, Flow flow)
+view PaintScore(verified Duel duel, Flow flow)
 {
     Draw2D.Screen();
     if (duel.attract) return;
@@ -115,23 +81,21 @@ view PaintScore(Duel duel, Flow flow)
         Draw2D.RoundRect(float2(34, 25), float2(6, 26), 3, 0.3, UI_ORANGE);
     }
 
-    if (Screen.width >= 720) Write($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(middle, row + 20), 10, UI_MUTED);
+    if (Screen.width >= 720) Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(middle, row + 20), 10, UI_MUTED, Anchor.MiddleCenter);
     if (!compact)
     {
-        Draw2D.Text("DUEL", float2(46, 11), 26, UI_INK);
-        Draw2D.Text("DUEL", float2(46.6, 11), 26, UI_INK);
+        Draw2D.Text("DUEL", float2(46, 11), 26, UI_INK, Font.Bold);
     }
 }
 
 [Stage(PaintStages.Hud, 10)]
-view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
+view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session session)
 {
     if (duel.attract) return;
-    var latest = world.Get<Fighter>(this);
     var color = FighterColor(fighter.side);
     var blue = fighter.side == 0;
     var who = blue ? duel.bluePlayer : duel.orangePlayer;
-    var mine = !latest.bot && who == session.player;
+    var mine = !fighter.bot && who == session.player;
     // Beside the score on a low screen, and under it otherwise
     var slim = Screen.height < 640 && Screen.width >= 720;
     var narrow = Screen.width < 720;
@@ -142,8 +106,10 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     var inward = blue ? 1 : -1;
     var bar = float2(edge + inward * width * 0.5, top + 21);
 
-    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
-    var before = Math.Saturate((latest.health + fighter.chip) / fighter.build.maxHealth);
+    // Its health as the server confirmed it, and in white what the last hits took
+    var solid = SureHealth(fighter, sure);
+    var health = Math.Saturate(solid / fighter.build.maxHealth);
+    var before = Math.Saturate((solid + fighter.chip) / fighter.build.maxHealth);
     var room = width - 6;
     var start = edge + inward * 3;
     Panel(bar, float2(width, 13), 6.5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.5,
@@ -166,7 +132,7 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     Draw2D.Circle(face + float2(inward * 1.5 - 3, -1), 2.1, Color.white);
     Draw2D.Circle(face + float2(inward * 1.5 + 3, -1), 2.1, Color.white);
     var name = SideName(fighter.side);
-    var tag = mine ? "YOU" : latest.bot ? "BOT" : "";
+    var tag = mine ? "YOU" : fighter.bot ? "BOT" : "";
     var nameWidth = Draw2D.MeasureText(name, 12).x;
     var tagWidth = tag == "" ? 0 : Draw2D.MeasureText(tag, 9).x + 10;
     var nameAt = blue ? edge + 24 : edge - 24 - nameWidth;
@@ -174,22 +140,22 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     if (tag != "")
         Panel(float2(tagAt + tagWidth * 0.5, top + 5), float2(tagWidth, 14), 7, mine ? color : Color(0.16, 0.2, 0.32),
               mine ? color : Color(0.16, 0.2, 0.32), 0, Color.clear);
-    var gems = CardCount(latest.build);
-    for (var i = 0; i < gems; i++)
+    // Its cards as this machine has them: a list isn't read from the confirmed match yet
+    for (var i = 0; i < fighter.build.cards.count; i++)
     {
         var gem = float2((blue ? tagAt + tagWidth + 13 : tagAt - 13) + inward * i * 14, top + 5);
-        var tint = CardColor(CardAt(latest.build, i));
+        var tint = CardColor(fighter.build.cards[i]);
         Draw2D.RoundRect(gem, float2(9.5, 9.5), 2, Math.PI * 0.25, UI_OUTLINE);
         Draw2D.RoundRect(gem, float2(7, 7), 1.5, Math.PI * 0.25, tint);
         Draw2D.Circle(gem + float2(-1, -1.5), 1.2, Fade(Color.white, 0.8));
     }
 
     Draw2D.Text(name, float2(nameAt, top - 1), 12, color);
-    if (tag != "") Write(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED);
+    if (tag != "") Draw2D.Text(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED, Anchor.MiddleCenter);
     if (narrow) return;
-    var left = $"{int(Math.Ceil(Math.Max(0, latest.health)))}";
+    var left = $"{int(Math.Ceil(Math.Max(0, solid)))}";
     var inner = edge + inward * width;
-    Draw2D.Text(left, float2(blue ? inner - Draw2D.MeasureText(left, 12).x : inner, top - 1), 12, UI_INK);
+    Draw2D.Text(left, float2(inner, top - 1), 12, UI_INK, blue ? Anchor.UpperRight : Anchor.UpperLeft);
 }
 
 // One hint: a key's cap, and what the key does. With `draw` off, it only
@@ -206,7 +172,7 @@ float Hint(bool draw, float2 at, string key, string does, float ready, Color col
         // Filling up, while what the key does comes back
         if (ready < 1)
             Draw2D.RoundRect(float2(at.x + 3 + (cap - 6) * ready * 0.5, at.y + 8), float2((cap - 6) * ready, 2.5), 1.2, color);
-        Write(key, center, 11, ready >= 1 ? UI_INK : UI_MUTED);
+        Draw2D.Text(key, center, 11, ready >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
         Draw2D.Text(does, float2(at.x + cap + 6, at.y - 6), 11, UI_MUTED);
     }
     return at.x + cap + 6 + Draw2D.MeasureText(does, 11).x + 18;
@@ -250,10 +216,10 @@ view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, with
         Oval(move, float2(36), Color(0.5, 0.62, 0.8, 0.07), Color(0.5, 0.62, 0.8, 0.07), 1.6, Color(0.5, 0.62, 0.8, 0.45));
         Oval(block, float2(36), Fade(color, 0.1), Fade(color, 0.1), 1.6, Fade(color, shield >= 1 ? 0.9 : 0.35));
         Draw2D.Arc(block, 31, -Math.PI * 0.5, Math.TAU * shield, 3, Fade(color, 0.8)); // From the top, clockwise
-        Write("MOVE", move, 11, UI_MUTED);
-        Write("BLOCK", block, 11, shield >= 1 ? UI_INK : UI_MUTED);
+        Draw2D.Text("MOVE", move, 11, UI_MUTED, Anchor.MiddleCenter);
+        Draw2D.Text("BLOCK", block, 11, shield >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
         if (screen.x > 520)
-            Write("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED);
+            Draw2D.Text("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED, Anchor.MiddleCenter);
         return;
     }
     // On a narrow screen, two rows would cover the arena: the keys alone fit
@@ -286,8 +252,8 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var words = flow.winner < 0 ? "DOUBLE K.O." : SideName(flow.winner) + " TAKES THE ROUND";
         var slide = (1 - EaseOut(flow.since / 0.3)) * 60;
         var shown = Math.Saturate(open * 1.4 - 0.4);
-        Write(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35 * shown));
-        WriteBold(words, middle + float2(slide, 0), big ? 34 : 22, Fade(UI_OUTLINE, shown));
+        Draw2D.Text(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(words, middle + float2(slide, 0), big ? 34 : 22, Fade(UI_OUTLINE, shown), Anchor.MiddleCenter, Font.Bold);
         return;
     }
 
@@ -296,8 +262,8 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var enter = EaseOut(flow.age / 0.25);
         GlowBox(middle, float2(250 * enter, 40), 20, 60, Color(0.008, 0.012, 0.035, 0.7));
         Draw2D.RoundRect(middle + float2(0, big ? 34 : 24), float2(150 * Math.Saturate(duel.timer / 1.2), 3), 1.5, Fade(UI_INK, 0.8 * enter));
-        Write($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, Fade(UI_MUTED, enter));
-        WriteBold("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, Fade(UI_INK, enter));
+        Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, Fade(UI_MUTED, enter), Anchor.MiddleCenter);
+        Draw2D.Text("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, Fade(UI_INK, enter), Anchor.MiddleCenter, Font.Bold);
     }
     else if (duel.phase == Phase.Fight && flow.age < 0.8)
     {
@@ -306,9 +272,9 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var size = Math.Round((big ? 62 : 40) * (1 + 0.5 * Math.Max(0, 1 - flow.age * 8)) * 0.5) * 2;
         var shown = Math.Saturate((1 - gone) * 2.5);
         var apart = 3 + 14 * gone;
-        WriteBold("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75 * shown));
-        WriteBold("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75 * shown));
-        WriteBold("FIGHT!", middle, size, Fade(Color.white, shown));
+        Draw2D.Text("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("FIGHT!", middle, size, Fade(Color.white, shown), Anchor.MiddleCenter, Font.Bold);
     }
     else if (duel.phase == Phase.Draft && flow.age > 1.5)
     {
@@ -320,6 +286,6 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var width = Math.Min(screen.x - 24, Draw2D.MeasureText(words, 15).x + 86);
         Panel(middle, float2(width, 54), 27, Color(0.1, 0.13, 0.22, 0.95), Color(0.05, 0.065, 0.125, 0.95), 1.6, Fade(tint, 0.8));
         Draw2D.Arc(middle + float2(-width * 0.5 + 28, 0), 10, flow.age * 0.9 * Math.TAU, Math.TAU * 0.7, 3, tint);
-        Write(words, middle + float2(16, 0), screen.x < 460 ? 11 : 15, tint);
+        Draw2D.Text(words, middle + float2(16, 0), screen.x < 460 ? 11 : 15, tint, Anchor.MiddleCenter);
     }
 }
