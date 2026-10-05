@@ -1726,17 +1726,17 @@ TIDE_TEST(lsp_enum_conversion)
     TIDE_CHECK(has(request("textDocument/hover"), "its low 8 bits"));
 
     // By its qualified name: the namespace, then the enum
-    static const char framed[] = "namespace Frame;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
-                                 "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Frame.Pha$se(match.n);\n}\n";
-    open_document(framed);
+    static const char qualified[] = "namespace Combat;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                                 "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Pha$se(match.n);\n}\n";
+    open_document(qualified);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":5}"));
     request_with("textDocument/rename", "\"newName\":\"Stage\"");
-    renamed = apply_reply(framed, "file:///test.tide");
-    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "match.phase = Frame.Stage(match.n);"));
-    open_document("namespace Frame;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
-                  "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Frame.Phase($\n}\n");
+    renamed = apply_reply(qualified, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "match.phase = Combat.Stage(match.n);"));
+    open_document("namespace Combat;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
+                  "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Phase($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Phase(int number)"));
 
     // Another call that names an enum, which the checker refuses, isn't one: its name stays its own
