@@ -76,7 +76,7 @@ static inline void *tide_list_at(const tide_list l, const int32_t i, const uint3
         tide_block *b = (tide_block *)(uintptr_t)tide_scratch_at(offset);
         return i >= 0 && (uint32_t)i < b->a ? (char *)(b + 1) + (size_t)i * size : NULL;
     }
-    const tide_heap *heap = tide_heap_of(l.at >> 30);
+    const tide_heap *heap = tide_heap_read(l.at >> 30);
     if (!heap) return NULL;
     tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
     const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);

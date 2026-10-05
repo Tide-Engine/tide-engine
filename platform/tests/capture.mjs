@@ -1,5 +1,5 @@
 // The standard host with no window (tide/run.h's --capture, --frames, --script,
-// --size and --scale), on capture.tide, which draws a block for each thing a
+// --size, --scale and --seed), on capture.tide, which draws a block for each thing a
 // script's input did, and for what its match rolled: the pictures a run takes
 // are read back (png_read.mjs) and checked for those blocks, pixel by pixel.
 //
@@ -81,6 +81,11 @@ if (mode === 'refused') {
     refused('--scale without a run it is for', ['--scale', '2'], '--scale is for a run with no window');
     refused('a scale past 8', ['--frames', '2', '--scale', '9'], '--scale takes');
     refused('a picture too big', ['--frames', '2', '--size', '16000', '9000', '--scale', '2'], "more than a capture's");
+    refused('--seed with no number', ['--frames', '2', '--seed'], '--seed takes the seed');
+    refused('a seed that is no number', ['--frames', '2', '--seed', 'lucky'], 'from 0 to 2147483647', "not 'lucky'");
+    refused('a seed past the last one', ['--frames', '2', '--seed', '2147483648'], "not '2147483648'");
+    refused('a seed under 0', ['--frames', '2', '--seed', '-1'], "not '-1'");
+    refused('a seed that is no whole number', ['--frames', '2', '--seed', '1.5'], "not '1.5'");
     check(!existsSync(join(scratch, 'x.png')), 'and wrote no picture');
     process.exit(failures ? 1 : 0);
 }
@@ -179,6 +184,36 @@ const first = ['start.png', 'locked.png', 'played.png', 'last.png'].map(bytes);
 const again = run(args);
 check(again.status === 0 && ['start.png', 'locked.png', 'played.png', 'last.png'].every((name, i) => bytes(name).equals(first[i])),
       'a run repeats exactly: the same pictures, byte for byte');
+
+// --seed picks the match's seed. A run with one, 20 frames long: the picture,
+// its bytes, the color of the seed's block and where the roll's block is.
+function seeded(seed) {
+    const name = seed === undefined ? 'unseeded.png' : `seed-${seed}.png`;
+    const ran = run(['--frames', '20', '--capture', name, '--size', '320', '200', '--scale', '2',
+                     ...(seed === undefined ? [] : ['--seed', String(seed)])]);
+    if (ran.status !== 0) return { status: ran.status, err: ran.err, spots: [] };
+    const png = readPng(bytes(name));
+    const rolled = Array.from({ length: 12 }, (_, i) => 40 + i * 20).filter(x => same(png.at(x * 2, 130 * 2), magenta));
+    return { status: 0, png, bytes: bytes(name), spots: rolled };
+}
+// 2134933696 is 0x7F4080C0: its low bytes are the block's red, green and blue
+const picked = seeded(2134933696);
+check(picked.status === 0, `a run with --seed ends with exit code 0${picked.status === 0 ? '' : `: ${picked.status}\n${picked.err}`}`);
+if (picked.status === 0) {
+    check(block(picked.png, 280, 100, 10, [0xC0, 0x80, 0x40]), "--seed picks the match's seed: the game draws its bits");
+    check(picked.spots.length === 1, 'and the match rolled with it');
+    const pickedAgain = seeded(2134933696);
+    check(pickedAgain.status === 0 && pickedAgain.bytes.equals(picked.bytes), 'the same seed again is the same picture, byte for byte');
+    // Seeds are for trying other matches: of a few, not all roll alike. Seed 0
+    // is the run with no --seed.
+    const zero = seeded(0), unseeded = seeded();
+    check(zero.status === 0 && unseeded.status === 0 && zero.bytes.equals(unseeded.bytes) && block(zero.png, 280, 100, 10, black),
+          '--seed 0 is the run with no --seed');
+    const others = [zero, seeded(1), seeded(2)];
+    const rolls = [picked, ...others].map(ran => ran.spots.join());
+    check(others.every(ran => ran.status === 0 && ran.spots.length === 1) && new Set(rolls).size > 1,
+          `other seeds roll otherwise (at ${rolls.join(', ')})`);
+}
 
 // --frames and --capture alone, at the size and scale asked for
 const plain = run(['--frames', '3', '--capture', 'plain.png', '--size', '300', '100', '--scale', '1.5']);

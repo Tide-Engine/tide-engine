@@ -4145,10 +4145,20 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter]]"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(int width, int height)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(float width, float height)"));
     snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget(16, $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(int width, int height)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height)"));
+    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit)"));
+    // RenderTarget.Screen: the one that follows the window, after the type's name
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Screen"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Screen($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "always the window's size"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Scr$een(0.5);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "always the window's size"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Dis$pose();\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
@@ -5061,7 +5071,9 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
     TIDE_CHECK(offers(header, "query"));
     TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
-    TIDE_CHECK(!offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
+    // Views and local handlers take them too; the match's handlers don't yet
+    TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
     TIDE_CHECK(!offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
 
     const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
@@ -5083,6 +5095,68 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *braceless = complete(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
                                                "    foreach (var fighter in fighters) Debug.Log(fighter.$\n}\n");
     TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
+}
+
+// A view's and a local handler's query: what's offered in it, and what the
+// editor says of it, as of a system's.
+TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
+{
+    start();
+    const char *bindings = complete(QUERY_TYPES "view Show(query ($) fighters) { }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "verified"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "system Hits(query ($) fighters) { }\n"), "verified")); // Only a view's
+    TIDE_CHECK(offers(complete(QUERY_TYPES "view Show(query (Body body, with $) fighters) { }\n"), "verified"));
+    const char *confirmed = complete(QUERY_TYPES "local component Spark { int value; }\n"
+                                                 "view Show(query (verified $) fighters) { }\n");
+    TIDE_CHECK(offers(confirmed, "Body") && !offers(confirmed, "Spark") && !offers(confirmed, "Score"));
+    const char *rows = complete(QUERY_TYPES "view Show(query (Body body, verified Fighter sure) fighters)\n{\n"
+                                          "    foreach (var fighter in fighters) { var value = fighter.$; }\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body") && offers(rows, "sure"));
+
+    static const char game[] = QUERY_TYPES
+        "local singleton Seen { float x; int health; }\n"
+        "event Hit { int damage; }\n"
+        "system Strike(with Fighter) { this.Send(Hit { damage = 1 }); }\n"
+        "view Show(Body shot, mut Seen seen, query (Body body, verified Fighter sure) fighters)\n{\n"
+        "    foreach (var fighter in fighters)\n    {\n"
+        "        seen.x = fighter.body.position.x + shot.position.x;\n"
+        "        seen.health = fighter.sure.health;\n"
+        "    }\n}\n"
+        "local event(Hit hit) Heard(mut Seen seen, query (Body body, with Fighter) fighters)\n{\n"
+        "    foreach (var fighter in fighters) seen.x = fighter.body.position.x + hit.damage;\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // The view's query, its `verified` binding and the word itself
+    const char *query = request_at("file:///test.tide", "textDocument/hover", 10, 79, "");
+    TIDE_CHECK(has(query, "read-only second entity set, independent of the entity this view runs for"));
+    TIDE_CHECK(has(query, "the same entity in the world the server has confirmed"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 72, ""), "As the last tick the server confirmed has it"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 56, ""),
+                   "The query goes through the entities the view draws that are the same entity in the confirmed world too"));
+    // What it reads of every entity's, on the view and above it
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 6, ""),
+                   "Through its queries, it reads any entity's `Body` and `Fighter`"));
+    const char *lenses = request("textDocument/codeLens");
+    TIDE_CHECK(has(lenses, "Query: reads Body and Fighter"));
+    TIDE_CHECK(has(lenses, "hears Hit at the start of a frame") && count(lenses, "Query: reads Body") == 2);
+    // The handler's: the match as its event's tick left it
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 18, 76, ""),
+                   "Its rows are the match as the tick that sent the event left it"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 18, 23, ""), "Through its queries, it reads any entity's `Body`"));
+
+    // A view's query of the drawn world, and one of this machine's entities
+    open_document(QUERY_TYPES "local component Spark { int value; }\nlocal singleton Seen { float x; }\n"
+                  "view Show(mut Seen seen, query (Body body) bodies, query (Spark spark) sparks)\n{\n"
+                  "    foreach (var row in bodies) seen.x += row.body.position.x;\n"
+                  "    foreach (var row in sparks) seen.x += row.spark.value;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 45, ""), "blended between the last two ticks"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 72, ""), "this machine's own entities, as they are"));
+    // What's refused says so in the editor
+    open_document(QUERY_TYPES "view Show(query (mut Body body) bodies)\n{\n"
+                  "    foreach (var row in bodies) Debug.Log($\"{row.body.position.x}\");\n}\n");
+    TIDE_CHECK(has(last_sent(), "query component bindings are read-only"));
 }
 
 TIDE_TEST(lsp_entity_query_symbols)

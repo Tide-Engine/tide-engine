@@ -38,7 +38,8 @@ static void grid_pixels(const tide_grid_dir *dir, const tide_heap *heap, const t
 uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
     const tide_grid_dir *dir = tide_grid_dir_of(g);
-    tide_heap *heap = tide_heap_of(g.at >> 30);
+    // The confirmed world's too: only its pages' hashes are asked of it, which it keeps
+    tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(g.at >> 30);
     if (!dir || !heap || dir->dims != 2u || dir->size[0] <= 0 || dir->size[1] <= 0 || s->cell != sizeof(tide_color)) {
         return 0;
     }
@@ -111,7 +112,7 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     if (l.at >> 30 == TIDE_IN_SCRATCH) {
         return tide_hash_end(tide_hash_more(h, tide_list_at(l, 0, size), (size_t)count * size));
     }
-    tide_heap *heap = tide_heap_of(l.at >> 30);
+    tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(l.at >> 30);
     if (!heap) return tide_hash_end(h);
     const uint32_t block = l.at & 0x3FFFFFFFu;
     const tide_block *b = tide_heap_block(heap, block);

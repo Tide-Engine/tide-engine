@@ -1,0 +1,8 @@
+// expect: a query is only used directly by foreach
+component Body { float x; }
+scene Main { }
+float First(float x) { return x; }
+view Hits(query (Body body) bodies)
+{
+    Debug.Log($"{First(bodies)}");
+}

@@ -1021,6 +1021,7 @@
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
+        glGetIntegerv: (pname, ptr) => writeParameter(gl.getParameter(pname), ptr),
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
         glGetProgramiv: (p, pname, ptr) => writeParameter(gl.getProgramParameter(get('program', p), pname), ptr),
         glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
@@ -1370,6 +1371,7 @@
                 groups: new Set() });
             return gpuAdd('target', { color, depth: depthFor(width, height), width, height, canvas: null, context: null });
         },
+        gpu_target_limit: () => device.limits.maxTextureDimension2D,
         gpu_target_texture: id => gpuTables.target[id].color,
         gpu_target_free(id) {
             const t = gpuTables.target[id];

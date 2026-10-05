@@ -17,8 +17,8 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
 {
     tide_world_init(&world, 1.0f);
     tide_local_init(&local);
-    local.Buffers.scene = (tide_render_target){.id = 11, .width = 16, .height = 12};
-    local.Buffers.scratch = (tide_render_target){.id = 12, .width = 8, .height = 6};
+    local.Buffers.scene = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
+    local.Buffers.scratch = (tide_render_target){.id = 12, .size = {.width = 8, .height = 6}};
     static const uint8_t pixels[4] = {255, 127, 0, 255};
     local.Buffers.image = (tide_texture_ref){.image = {.pixels = pixels, .width = 1, .height = 1, .version = 1}};
     tide_devices devices = {0};
@@ -74,11 +74,11 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     const tide_texture_ref cpu = {.image = {.pixels = pixels, .width = 1, .height = 1, .version = 1}};
     const tide_render_target target = tide_render_target_make(16, 12);
     local.Buffers.scene = target;
-    local.Buffers.scratch = tide_render_target_make(8, 6);
+    local.Buffers.scratch = tide_render_target_make_scaled(8, 6, 2); // Two pixels of its image a unit
     local.Buffers.image = cpu;
     local.Buffers.nested = (Resources){.target = target, .image = cpu, .retained = 77};
     local.Buffers.windowAlias = (tide_render_target){.id = TIDE_RENDER_WINDOW};
-    local.Buffers.borrowed = (tide_render_target){.id = 99, .width = 1, .height = 1};
+    local.Buffers.borrowed = (tide_render_target){.id = 99, .size = {.width = 1, .height = 1}};
     local.Buffers.beginTask = 1;
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
     TIDE_REQUIRE(local.arch0_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
@@ -121,8 +121,11 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     // resolved size rather than the descriptor's original construction size.
     local.Buffers.resumed.image = tide_render_target_color(target);
     tide_render_target_resize(target, 40, 30);
+    // ...and what a size doesn't say: a target's pixels per unit, and that it follows the window.
+    local.Buffers.borrowed = tide_render_target_screen(0.5f);
     tide_local_rebind_resources(&local, true);
-    TIDE_CHECK(local.Buffers.scene.width == 40 && local.Buffers.resumed.image.image.height == 30);
+    TIDE_CHECK(local.Buffers.scene.size.width == 40 && local.Buffers.resumed.image.target.size.height == 30);
+    TIDE_CHECK(local.Buffers.scratch.size.scale == 2 && local.Buffers.borrowed.size.window == 0.5f);
     const uint32_t size = tide_local_pack(&local, NULL, 0);
     uint8_t *bytes = malloc(size);
     TIDE_REQUIRE(bytes != NULL);
@@ -133,9 +136,14 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     tide_local_rebind_resources(&restored, false);
     const tide_render_target recreated = restored.Buffers.scene;
     TIDE_REQUIRE(tide_render_target_managed(recreated.id) && recreated.id != target.id);
-    TIDE_CHECK(recreated.width == 40 && recreated.height == 30);
+    TIDE_CHECK(recreated.size.width == 40 && recreated.size.height == 30 && recreated.size.scale == 0);
+    const tide_render_target dense = tide_render_target_resolve(restored.Buffers.scratch);
+    TIDE_CHECK(tide_render_target_live(dense.id) && dense.id != local.Buffers.scratch.id);
+    TIDE_CHECK(dense.size.width == 8 && dense.size.height == 6 && dense.size.scale == 2);
+    const tide_render_target following = tide_render_target_resolve(restored.Buffers.borrowed);
+    TIDE_CHECK(tide_render_target_live(following.id) && following.size.window == 0.5f);
     TIDE_CHECK(restored.Buffers.nested.target.id == recreated.id && restored.Buffers.resumed.target.id == recreated.id);
-    TIDE_CHECK(restored.Buffers.resumed.image.target == recreated.id);
+    TIDE_CHECK(restored.Buffers.resumed.image.target.id == recreated.id);
     TIDE_CHECK(tide_get_Graphic(&restored, graphic).resources.target.id == recreated.id);
     TIDE_CHECK(tide_get_Object_local(&restored, object).resources.target.id == recreated.id);
     TIDE_CHECK(restored.Buffers.nested.retained == 77 && restored.Buffers.beginTask == 2);

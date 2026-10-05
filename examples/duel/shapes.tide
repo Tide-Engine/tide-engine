@@ -4,6 +4,10 @@
 // shapes the game draws again and again that take a `Shape` to say: a fill
 // that goes from one color to another under an outline, and edges that fade
 // into a glow or a shadow.
+//
+// Each draws into the window, as `Draw2D` does. The arena isn't drawn there
+// but into a target the size of the screen (effects.tide), so the ones it uses
+// come a second time, ending in `On`, and take what they draw into.
 Color Fade(Color color, float alpha)
 {
     return Color(color.r, color.g, color.b, color.a * alpha);
@@ -25,43 +29,78 @@ Color Shade(Color color, float amount)
 // A box whose fill goes from `top` to `bottom`, with an outline.
 void Panel(float2 center, float2 size, float radius, Color top, Color bottom, float outline, Color edge)
 {
-    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = top, color2 = bottom,
-                         outline = outline, outlineColor = edge });
+    PanelOn(Draw.window, center, size, radius, top, bottom, outline, edge);
+}
+
+void PanelOn(RenderTarget to, float2 center, float2 size, float radius, Color top, Color bottom, float outline, Color edge)
+{
+    to.Shape(Shape { center = center, size = size, radius = radius, color = top, color2 = bottom,
+                     outline = outline, outlineColor = edge });
 }
 
 // An ellipse, the same way.
 void Oval(float2 center, float2 radii, Color top, Color bottom, float outline, Color edge)
 {
-    Draw2D.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = top, color2 = bottom,
-                         outline = outline, outlineColor = edge });
+    OvalOn(Draw.window, center, radii, top, bottom, outline, edge);
+}
+
+void OvalOn(RenderTarget to, float2 center, float2 radii, Color top, Color bottom, float outline, Color edge)
+{
+    to.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = top, color2 = bottom,
+                     outline = outline, outlineColor = edge });
 }
 
 // Light that fades over `spread` from a disc's edge.
 void Glow(float2 center, float radius, float spread, Color color)
 {
-    Draw2D.Shape(Shape { center = center, size = float2(radius * 2), radius = radius, color = color, soft = spread });
+    GlowOn(Draw.window, center, radius, spread, color);
+}
+
+void GlowOn(RenderTarget to, float2 center, float radius, float spread, Color color)
+{
+    to.Shape(Shape { center = center, size = float2(radius * 2), radius = radius, color = color, soft = spread });
 }
 
 void GlowLine(float2 from, float2 to, float width, float spread, Color color)
 {
+    GlowLineOn(Draw.window, from, to, width, spread, color);
+}
+
+void GlowLineOn(RenderTarget target, float2 from, float2 to, float width, float spread, Color color)
+{
     // A pill as long as the line and its round ends, turned along it
     var along = to - from;
-    Draw2D.Shape(Shape { center = (from + to) * 0.5, size = float2(Math.Length(along) + width, width),
+    target.Shape(Shape { center = (from + to) * 0.5, size = float2(Math.Length(along) + width, width),
                          radius = width * 0.5, rotation = Math.Atan2(along.y, along.x), color = color, soft = spread });
 }
 
 void GlowBox(float2 center, float2 size, float radius, float spread, Color color)
 {
-    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = spread });
+    GlowBoxOn(Draw.window, center, size, radius, spread, color);
+}
+
+void GlowBoxOn(RenderTarget to, float2 center, float2 size, float radius, float spread, Color color)
+{
+    to.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = spread });
 }
 
 void GlowOval(float2 center, float2 radii, float spread, Color color)
 {
-    Draw2D.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = color, soft = spread });
+    GlowOvalOn(Draw.window, center, radii, spread, color);
+}
+
+void GlowOvalOn(RenderTarget to, float2 center, float2 radii, float spread, Color color)
+{
+    to.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = color, soft = spread });
 }
 
 // Clear in the middle, and `color` over `spread` inwards from the box's edge.
 void Inset(float2 center, float2 size, float radius, float spread, Color color)
 {
-    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = -spread });
+    InsetOn(Draw.window, center, size, radius, spread, color);
+}
+
+void InsetOn(RenderTarget to, float2 center, float2 size, float radius, float spread, Color color)
+{
+    to.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = -spread });
 }

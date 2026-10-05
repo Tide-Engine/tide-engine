@@ -1,0 +1,9 @@
+// expect: a task can't take a query yet
+component Body { float x; }
+event Hit { int damage; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body).Send(Hit { damage = 1 }); }
+async event(Hit hit) Show(query (Body body) bodies)
+{
+    await Wait.Ticks(hit.damage);
+}
