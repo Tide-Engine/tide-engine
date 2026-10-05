@@ -617,10 +617,12 @@ Not built yet. What's agreed (2026-10-05); the design proposed for the rest, and
 
 - Mods are a service we run, the third beside the relay and hosting: remote compilation. A mod is a package that someone other than the game's developer adds to it, and the service builds the game with its mods, whole, natively, for each set of them. So mod code is game code, with its storage, schedule and speed: nothing is interpreted (the owner: the modding community is big, and limiting it is rough), no game carries a runtime for mods, and the engine gains no dynamic path for them.
 - Every machine of a match runs the same build, fetched from the service, never from the host. Builds are signed with a key per game, and can be revoked.
-- A mod is Tide alone: no `extern`, C, C++ or libraries. Its files are virtual, as a web page's are.
-- A mod replaces a game's declaration with an explicit `override`, and what can be replaced is the developer's choice, which the game marks. It's a substitution while compiling. Two mods replacing one declaration are an error that names both.
+- A mod is Tide alone: no `extern`, C, C++ or libraries. Its files are virtual, as a web page's are, and its code calls nothing that reaches outside the game (`Session.Connect` and `Clipboard.Copy` first; the list is part of the sandbox's work).
+- A mod replaces a game's declaration with an explicit `override`, and only one the game marked `virtual`: what can be replaced is the developer's choice. An override matches by name and by parameters, both, filters among them: systems can have the same filters under different names. It's a substitution while compiling. Two mods replacing one declaration are an error that names both.
+- `mods` is a setting, false by default: with it, what `tide build` makes can run the builds the service signed for the game, and a game without it has none of this.
+- A closed game's source is seen by the service alone; its modders get its declarations without their bodies.
 - That Tide code can't corrupt memory is Tide's own promise, for every game (the owner: "a Tide issue, not a mod issue"): mods rest on it, and it has to be tested as one.
-- On desktop, a modded build runs in the OS's sandbox as a second layer, since the compiler was never a security boundary. The web has the browser's. WebAssembly isn't that layer on desktop: mod code compiles with the game, so it would put the whole game in a runtime.
+- On desktop, a modded build runs in the OS's sandbox as a second layer, since the compiler was never a security boundary. The web has the browser's. WebAssembly isn't that layer on desktop: mod code compiles with the game, so it would put the whole game in a runtime. A system that can't sandbox a build runs no mods; making the sandbox work wherever games ship is our job.
 - Stores that forbid downloaded code (iOS, consoles) have the mods a developer built in, and no others.
 
 ## Determinism
