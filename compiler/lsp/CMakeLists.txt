@@ -11,6 +11,8 @@ target_link_libraries(tidels PRIVATE tidels_core)
 install(TARGETS tidels RUNTIME DESTINATION bin COMPONENT tide)
 # Which files make up each game, for analysing them together (see cmake/Tide.cmake).
 target_compile_definitions(tidels PRIVATE "TIDE_GAMES_MANIFEST=\"${TIDE_GAMES_MANIFEST}\"")
+# The packages that come with tide, for a tidels that isn't installed: the repo's own (packages/).
+target_compile_definitions(tidels PRIVATE "TIDE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
 
 if(WIN32)
     # Editors keep tidels running, and Windows won't overwrite a running
