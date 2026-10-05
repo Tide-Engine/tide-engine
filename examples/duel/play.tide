@@ -290,33 +290,33 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
 
     // The title, with each side's color off to its side
     var bob = Math.Sin(fx.now * 1.6) * 2;
-    WriteBold("DUEL", titleAt + float2(-4, 2 + bob), title, Fade(UI_BLUE, 0.9));
-    WriteBold("DUEL", titleAt + float2(4, -2 + bob), title, Fade(UI_ORANGE, 0.9));
-    WriteBold("DUEL", titleAt + float2(0, bob), title, Color.white);
-    if (!short) Write("FIRST TO FIVE ROUNDS WINS", titleAt + float2(0, title * 0.5 + 12), 11, UI_MUTED);
+    Draw2D.Text("DUEL", titleAt + float2(-4, 2 + bob), title, Fade(UI_BLUE, 0.9), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text("DUEL", titleAt + float2(4, -2 + bob), title, Fade(UI_ORANGE, 0.9), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text("DUEL", titleAt + float2(0, bob), title, Color.white, Anchor.MiddleCenter, Font.Bold);
+    if (!short) Draw2D.Text("FIRST TO FIVE ROUNDS WINS", titleAt + float2(0, title * 0.5 + 12), 11, UI_MUTED, Anchor.MiddleCenter);
 
-    Write("PRACTICE", Middle(play) + float2(0, short ? 0 : -7), short ? 15 : 19, UI_OUTLINE);
-    if (!short) Write("against a bot", Middle(play) + float2(0, 12), 11, Fade(UI_OUTLINE, 0.72));
+    Draw2D.Text("PRACTICE", Middle(play) + float2(0, short ? 0 : -7), short ? 15 : 19, UI_OUTLINE, Anchor.MiddleCenter);
+    if (!short) Draw2D.Text("against a bot", Middle(play) + float2(0, 12), 11, Fade(UI_OUTLINE, 0.72), Anchor.MiddleCenter);
     if (hosting)
     {
-        Draw2D.Text("ROOM", float2(invite.x + 16, invite.y + invite.height * 0.5 - 5), 10, UI_MUTED);
-        Draw2D.Text(session.room, float2(invite.x + 56, invite.y + invite.height * 0.5 - 10), 20, UI_INK);
-        Write("COPY", Middle(copy), 11, UI_INK);
+        Draw2D.Text("ROOM", float2(invite.x + 16, invite.y + invite.height * 0.5), 10, UI_MUTED, Anchor.MiddleLeft);
+        Draw2D.Text(session.room, float2(invite.x + 56, invite.y + invite.height * 0.5), 20, UI_INK, Anchor.MiddleLeft);
+        Draw2D.Text("COPY", Middle(copy), 11, UI_INK, Anchor.MiddleCenter);
     }
     else
     {
-        Write(session.server && session.open ? "OPENING A ROOM..." : "INVITE A FRIEND", Middle(invite), short ? 12 : 14,
-              Fade(UI_INK, busy ? 0.4 : 1));
+        Draw2D.Text(session.server && session.open ? "OPENING A ROOM..." : "INVITE A FRIEND", Middle(invite), short ? 12 : 14,
+              Fade(UI_INK, busy ? 0.4 : 1), Anchor.MiddleCenter);
     }
     GUI.Disabled(busy)
     {
         GUI.TextField(field, "", menu.code);
     }
-    Write("JOIN", Middle(join), short ? 12 : 14, Fade(UI_INK, !busy && menu.code.Trim() != "" ? 1 : 0.4));
-    if (busy) Write("Connecting...", note, 11, UI_MUTED);
-    else if (menu.message != "") Write(menu.message, note, 11, UI_ORANGE);
-    else if (hosting) Write("Send the code to a friend. You duel when they join.", note, 11, UI_MUTED);
-    else Write("Got a friend's code? Type it there and join.", note, 11, UI_MUTED);
+    Draw2D.Text("JOIN", Middle(join), short ? 12 : 14, Fade(UI_INK, !busy && menu.code.Trim() != "" ? 1 : 0.4), Anchor.MiddleCenter);
+    if (busy) Draw2D.Text("Connecting...", note, 11, UI_MUTED, Anchor.MiddleCenter);
+    else if (menu.message != "") Draw2D.Text(menu.message, note, 11, UI_ORANGE, Anchor.MiddleCenter);
+    else if (hosting) Draw2D.Text("Send the code to a friend. You duel when they join.", note, 11, UI_MUTED, Anchor.MiddleCenter);
+    else Draw2D.Text("Got a friend's code? Type it there and join.", note, 11, UI_MUTED, Anchor.MiddleCenter);
 
     var start = devices.keyboard.enter.down || devices.gamepad.buttonSouth.down || devices.gamepad.start.down;
     if ((playNow || start) && !busy && menu.asked != duel.match)
@@ -349,11 +349,11 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu)
     var rect = slim ? Rect(Screen.width - 82, Screen.height - 34, 68, 26)
                     : Rect(Screen.width - 84, Screen.width < 720 ? 6 : 11, 68, 26);
     var pressed = Pill(devices, rect, UI_INK, false, session.state == SessionState.Connected);
-    Write(two ? "LEAVE" : "MENU", Middle(rect), 10, UI_INK);
+    Draw2D.Text(two ? "LEAVE" : "MENU", Middle(rect), 10, UI_INK, Anchor.MiddleCenter);
     if (session.room != "" && Screen.width >= 720 && !slim)
     {
         var room = "ROOM " + session.room;
-        Draw2D.Text(room, float2(rect.x - 12 - Draw2D.MeasureText(room, 11).x, rect.y + 7), 11, UI_MUTED);
+        Draw2D.Text(room, float2(rect.x - 12, rect.y + 7), 11, UI_MUTED, Anchor.UpperRight);
     }
     if (two)
     {
@@ -389,7 +389,7 @@ void DraftCard(Card card, int slot, float2 center, float2 size, bool lit, float 
                     Fade(Mix(accent, Color.white, 0.45), shown));
         Panel(float2(left + size.x - 22, center.y), float2(24, 24), 6, Color(0.14, 0.18, 0.3, shown),
               Color(0.08, 0.1, 0.19, shown), 1.3, Fade(lit ? accent : Color(0.3, 0.39, 0.58), shown));
-        Write($"{slot + 1}", float2(left + size.x - 22, center.y), 12, Fade(UI_INK, shown));
+        Draw2D.Text($"{slot + 1}", float2(left + size.x - 22, center.y), 12, Fade(UI_INK, shown), Anchor.MiddleCenter);
         return;
     }
 
@@ -407,17 +407,17 @@ void DraftCard(Card card, int slot, float2 center, float2 size, bool lit, float 
     Oval(badge, float2(badgeSize), Color(0.065, 0.085, 0.16, shown), Color(0.03, 0.04, 0.09, shown), 2,
          Fade(accent, 0.8 * shown));
     CardIcon(card, badge, badgeSize * 1.25, Fade(accent, shown));
-    Write(CardName(card), float2(center.x, name), size.x < 200 ? 16 : 20, Fade(UI_INK, shown));
-    Write(CardEffect(card), float2(center.x, name + 28), size.x < 200 ? 12 : 14, Fade(Mix(accent, Color.white, 0.45), shown));
-    if (roomy) Write(CardFlavor(card), float2(center.x, name + 50), 12, Fade(UI_MUTED, shown));
+    Draw2D.Text(CardName(card), float2(center.x, name), size.x < 200 ? 16 : 20, Fade(UI_INK, shown), Anchor.MiddleCenter);
+    Draw2D.Text(CardEffect(card), float2(center.x, name + 28), size.x < 200 ? 12 : 14, Fade(Mix(accent, Color.white, 0.45), shown), Anchor.MiddleCenter);
+    if (roomy) Draw2D.Text(CardFlavor(card), float2(center.x, name + 50), 12, Fade(UI_MUTED, shown), Anchor.MiddleCenter);
 
     // Its button, with the key that picks it
     Panel(pick, float2(size.x - 40, 38), 11, Fade(lit ? Shade(accent, 0.3) : Color(0.15, 0.19, 0.32), shown),
           Fade(lit ? Shade(accent, -0.1) : Color(0.08, 0.105, 0.2), shown), 1.5,
           Fade(lit ? Shade(accent, 0.6) : Color(0.3, 0.39, 0.58), shown));
     Draw2D.RoundRect(pick + float2(-size.x * 0.5 + 44, 0), float2(22, 22), 6, Color(0.03, 0.04, 0.09, 0.85 * shown));
-    Write($"{slot + 1}", pick + float2(-size.x * 0.5 + 44, 0), 12, Fade(UI_INK, shown));
-    Write("PICK", pick + float2(8, 0), 13, Fade(lit ? UI_OUTLINE : UI_INK, shown));
+    Draw2D.Text($"{slot + 1}", pick + float2(-size.x * 0.5 + 44, 0), 12, Fade(UI_INK, shown), Anchor.MiddleCenter);
+    Draw2D.Text("PICK", pick + float2(8, 0), 13, Fade(lit ? UI_OUTLINE : UI_INK, shown), Anchor.MiddleCenter);
 }
 
 // The round's loser picks an upgrade: a card by a click or a tap, by its
@@ -511,16 +511,16 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
     }
 
     var heading = rows ? first.y - size.y * 0.5 - (tiny ? 16 : 44) : first.y - size.y * 0.5 - 62;
-    Write(screen.x < 520 ? "PICK AN UPGRADE" : "CHOOSE YOUR UPGRADE", float2(middle.x, heading), rows ? (tiny ? 15 : 20) : 28,
-          Fade(color, dim));
+    Draw2D.Text(screen.x < 520 ? "PICK AN UPGRADE" : "CHOOSE YOUR UPGRADE", float2(middle.x, heading), rows ? (tiny ? 15 : 20) : 28,
+          Fade(color, dim), Anchor.MiddleCenter);
     if (!tiny)
-        Write(screen.x < 520 ? "It stays for the match." : "You lost the round, so you grow stronger. It stays for the match.",
-              float2(middle.x, heading + (rows ? 22 : 30)), rows ? 11 : 13, Fade(UI_MUTED, dim));
+        Draw2D.Text(screen.x < 520 ? "It stays for the match." : "You lost the round, so you grow stronger. It stays for the match.",
+              float2(middle.x, heading + (rows ? 22 : 30)), rows ? 11 : 13, Fade(UI_MUTED, dim), Anchor.MiddleCenter);
     if (!tiny)
     {
         var last = first.y + stride.y * 2 + size.y * 0.5 + (rows ? 14 : 28);
-        Write(!online ? "Reconnecting. Your match will resume." : waiting ? "Locked in." : rows ? "Tap a card, or press 1, 2 or 3."
-                      : "Click a card, or press 1, 2 or 3.", float2(middle.x, last), 12, Fade(UI_MUTED, dim));
+        Draw2D.Text(!online ? "Reconnecting. Your match will resume." : waiting ? "Locked in." : rows ? "Tap a card, or press 1, 2 or 3."
+                      : "Click a card, or press 1, 2 or 3.", float2(middle.x, last), 12, Fade(UI_MUTED, dim), Anchor.MiddleCenter);
     }
 }
 
@@ -566,14 +566,14 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
     var words = SideName(blueWon ? 0 : 1) + " WINS";
     var size = Math.Round((big ? 64 : 38) * (1 + 0.4 * Math.Max(0, 1 - age * 6)) * 0.5) * 2;
     var at = middle + float2(0, big ? -66 : -52);
-    Write(winner == session.player ? "VICTORY" : two ? "DEFEAT" : "THE BOT TAKES IT", at + float2(0, big ? -52 : -34),
-          big ? 13 : 11, Fade(UI_MUTED, enter));
-    WriteBold(words, at + float2(-4, 3), size, Fade(Shade(tint, -0.5), enter));
-    WriteBold(words, at, size, Fade(Mix(tint, Color.white, 0.3), enter));
-    Write($"{duel.scoreBlue}  -  {duel.scoreOrange}", middle + float2(0, big ? 4 : -6), big ? 26 : 20, Fade(UI_INK, enter));
-    Write(waiting ? "STARTING..." : "PLAY AGAIN", Middle(again), big ? 17 : 14, Fade(UI_OUTLINE, online && !waiting ? 1 : 0.5));
-    Write(two ? "LEAVE" : "BACK TO THE MENU", Middle(leave), big ? 13 : 12, Fade(UI_INK, online ? 1 : 0.4));
-    if (!online) Write("Reconnecting before the rematch...", float2(middle.x, leave.y + leave.height + 16), 11, UI_MUTED);
+    Draw2D.Text(winner == session.player ? "VICTORY" : two ? "DEFEAT" : "THE BOT TAKES IT", at + float2(0, big ? -52 : -34),
+          big ? 13 : 11, Fade(UI_MUTED, enter), Anchor.MiddleCenter);
+    Draw2D.Text(words, at + float2(-4, 3), size, Fade(Shade(tint, -0.5), enter), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text(words, at, size, Fade(Mix(tint, Color.white, 0.3), enter), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text($"{duel.scoreBlue}  -  {duel.scoreOrange}", middle + float2(0, big ? 4 : -6), big ? 26 : 20, Fade(UI_INK, enter), Anchor.MiddleCenter);
+    Draw2D.Text(waiting ? "STARTING..." : "PLAY AGAIN", Middle(again), big ? 17 : 14, Fade(UI_OUTLINE, online && !waiting ? 1 : 0.5), Anchor.MiddleCenter);
+    Draw2D.Text(two ? "LEAVE" : "BACK TO THE MENU", Middle(leave), big ? 13 : 12, Fade(UI_INK, online ? 1 : 0.4), Anchor.MiddleCenter);
+    if (!online) Draw2D.Text("Reconnecting before the rematch...", float2(middle.x, leave.y + leave.height + 16), 11, UI_MUTED, Anchor.MiddleCenter);
 
     var start = devices.keyboard.enter.down || devices.keyboard.space.down || devices.gamepad.buttonSouth.down;
     if ((againNow || start) && online && !waiting && age > 0.3)
@@ -612,7 +612,7 @@ view PaintConnecting(Session session, Devices devices, mut DuelMenu menu)
         Draw2D.Text("CONNECTING", float2(middle.x - wide * 0.5 + 64, middle.y - 54), 22, UI_INK);
         Draw2D.Text(menu.code == "" ? "Waiting for the match" : "Room " + menu.code.Trim().ToUpper().Substring(0, 12),
                     float2(middle.x - wide * 0.5 + 64, middle.y - 24), 13, UI_MUTED);
-        Write("BACK TO THE MENU", Middle(back), 12, UI_INK);
+        Draw2D.Text("BACK TO THE MENU", Middle(back), 12, UI_INK, Anchor.MiddleCenter);
         if (backNow) Session.Start(Main);
     }
     else
@@ -623,7 +623,7 @@ view PaintConnecting(Session session, Devices devices, mut DuelMenu menu)
         Draw2D.Arc(float2(26, screen.y - 22), 8, menu.turn * Math.TAU, Math.TAU * 0.7, 2.6, UI_BLUE);
         var backNow = Pill(devices, back, UI_INK, false, true);
         Draw2D.Text("Reconnecting...", float2(44, screen.y - 29), 13, UI_MUTED);
-        Write("BACK TO THE MENU", Middle(back), 11, UI_INK);
+        Draw2D.Text("BACK TO THE MENU", Middle(back), 11, UI_INK, Anchor.MiddleCenter);
         if (backNow) Session.Start(Main);
     }
 }
