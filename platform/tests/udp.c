@@ -266,12 +266,17 @@ TIDE_TEST(udp_a_ping_counts_no_wait_for_a_frame)
 
     const uint64_t began = tide_time_now_ns();
     const uint64_t frame_ns = 60000000ull;
+    uint64_t last = began;
     uint32_t least = UINT32_MAX;
     uint32_t answer = 0;
     int measured = 0;
-    for (uint64_t frame = 1; frame <= 200 && measured < 20; frame++) {
-        while (tide_time_now_ns() - began < frame * frame_ns) tide_yield();
-        const double now = (double)(tide_time_now_ns() - began) * 1e-9;
+    for (int frame = 1; frame <= 200 && measured < 20; frame++) {
+        // Each frame 60 ms after the last, at the least: a busy machine makes
+        // it more, and never less, as frames kept to a schedule would be
+        // while they catch up
+        while (tide_time_now_ns() - last < frame_ns) tide_yield();
+        last = tide_time_now_ns();
+        const double now = (double)(last - began) * 1e-9;
         tide_server_update(server, now);
         tide_client_update(client, now);
         const tide_client_status s = tide_client_status_of(client);
