@@ -1,4 +1,0 @@
-// expect: query parameters are only supported in ordinary systems
-component Body { float x; }
-scene Main { }
-view Hits(query (Body body) bodies) { }

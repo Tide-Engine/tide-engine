@@ -400,14 +400,15 @@ typedef struct camera {
 } camera;
 
 static camera last_camera = {{0.0f, 0.0f}, 1.0f, false};
-static int draw_width, draw_height; // The selected target's logical pixels, during a draw
+static float draw_width, draw_height;           // The selected target's logical pixels, during a draw
+static int draw_pixel_width, draw_pixel_height; // ...and its image's own
 
 static tide_float2 to_screen(const camera *cam, const tide_float2 p)
 {
     if (cam->gui) return tide_f2(p.x * cam->scale, p.y * cam->scale);
-    const int width = draw_width ? draw_width : screen_width, height = draw_height ? draw_height : screen_height;
-    return tide_f2((float)width * 0.5f + (p.x - cam->center.x) * cam->scale,
-                   (float)height * 0.5f - (p.y - cam->center.y) * cam->scale);
+    const float width = draw_width > 0.0f ? draw_width : (float)screen_width;
+    const float height = draw_height > 0.0f ? draw_height : (float)screen_height;
+    return tide_f2(width * 0.5f + (p.x - cam->center.x) * cam->scale, height * 0.5f - (p.y - cam->center.y) * cam->scale);
 }
 
 // A rect's top left corner on screen: y goes up in the world, down in the GUI.
@@ -483,6 +484,7 @@ enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, S
 
 typedef struct draw_step {
     uint32_t kind;    // STEP_*
+    uint32_t blend;   // How it goes over what's there: tide_blend
     uint32_t target;  // The destination: 0 for the window, 1 + its place in the list's targets
     uint32_t first;   // STEP_SHAPES: its shapes; STEP_TEXT and STEP_MESH: its vertices;
                       // STEP_MESH_3D: its instances' transforms in the list's matrices;
@@ -496,7 +498,8 @@ typedef struct draw_step {
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t smooth;  // STEP_SHAPES: for a run with smooth shapes, 1 + where its shapes' extras start; else 0
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
-    tide_gpu_id pipeline; // ...and its shader's pipeline, once it's found
+    tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
+    tide_color tint;  // STEP_MESH_3D: what its pixels' colors are multiplied by
     tide_float2 at;   // STEP_CLIP: its top left corner in window pixels
     tide_float2 to;   // ...and its bottom right one
     rgba color;       // STEP_CLEAR
@@ -511,6 +514,7 @@ static uint32_t mesh_vertex_count, mesh_vertex_capacity;
 static draw_step *steps;
 static uint32_t step_count, step_capacity;
 static uint32_t draw_target;
+static uint32_t draw_blend; // How the command being turned into steps blends: tide_blend
 static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
 
 // A target's cameras and clip belong to it for the whole frame, including
@@ -520,22 +524,37 @@ typedef struct frame_target {
     uint32_t camera_3d, fit;
     draw_step clipping;
     tide_gpu_id gpu;
-    int width, height;
+    float width, height;           // Its logical pixels, as the window's
+    int pixel_width, pixel_height; // ...and its image's own
     uint64_t id;
     uint64_t version;
+    tide_target_size size; // As the list recorded it
     bool valid;
 } frame_target;
 
 static frame_target *frame_targets;
 static uint32_t frame_target_capacity;
 
-// Whether the selected destination uses its own pixels rather than the
-// window's logical pixels: a render target or the readback target does. A
-// headless window's frame doesn't: it's drawn as a window's is, scale and all.
-static bool offscreen;
+// What a list is drawn into, where its commands for the window go: the
+// window, a headless one's frame, or pixels to read back. It has a size in
+// logical pixels and one in its own, and how many of the second are in the
+// first is the display's scale for this draw: the list's render targets that
+// are at the display's scale take it from here, as its text does.
+typedef struct draw_root {
+    tide_gpu_id gpu;
+    float width, height;
+    int pixel_width, pixel_height;
+} draw_root;
 
-// Whether the selected destination's pixels aren't logical ones: a window's on
-// a scaled display. Circles are drawn as smooth shapes there (see add_circle).
+static draw_root root; // The draw's, while a list is drawn
+
+// The most pixels a side a render target's image has on the device there is
+// (tide_gpu.target_limit), or 0 before one drew.
+static int target_most;
+
+// Whether the selected destination's pixels aren't logical ones: a window's
+// on a scaled display, or a render target's at another scale than 1. Circles
+// are drawn as smooth shapes there (see add_circle).
 static bool scaled;
 
 // The window's pixels in a logical one, which its text is fitted to (see font.h).
@@ -544,10 +563,56 @@ static tide_float2 window_scale(void)
     return tide_f2((float)pixel_width / (float)screen_width, (float)pixel_height / (float)screen_height);
 }
 
-// The target's pixels per logical pixel.
+// The selected destination's pixels per logical pixel.
 static tide_float2 pixel_scale(void)
 {
-    return offscreen ? tide_f2(1.0f, 1.0f) : window_scale();
+    if (!(draw_width > 0.0f)) return window_scale(); // Not in a draw
+    return tide_f2((float)draw_pixel_width / draw_width, (float)draw_pixel_height / draw_height);
+}
+
+// A whole number of pixels for `pixels` of them: the nearest, 1 at least.
+static int whole_pixels(const double pixels)
+{
+    return pixels < 1.5 ? 1 : (int)floor(pixels + 0.5);
+}
+
+// A render target's size as it's drawn under `to`: its logical pixels, like
+// the window's, and its image's own. One at the display's scale has as many
+// of those in a logical one as `to` has, and one that follows the window has
+// `to`'s size times its factor, in both. An image the GPU has no room for
+// keeps its shape with fewer pixels (`limited`): what's drawn into it still
+// lands where it would, less sharp. False for a size there's no image of.
+static bool target_extent(const tide_target_size size, const draw_root *to, float *width, float *height,
+                          int *wide_pixels, int *high_pixels, bool *limited)
+{
+    *width = *height = 0.0f;
+    *wide_pixels = *high_pixels = 0;
+    *limited = false;
+    if (!tide_target_size_valid(size) || !(to->width > 0.0f) || !(to->height > 0.0f)) return false;
+    const tide_float2 logical = tide_target_size_logical(size, tide_f2(to->width, to->height));
+    if (!(logical.x > 0.0f) || !(logical.y > 0.0f)) return false;
+    double wide, high;
+    if (size.window > 0.0f) { // The window's own pixels, times the factor: all of them for 1
+        wide = (double)to->pixel_width * (double)size.window;
+        high = (double)to->pixel_height * (double)size.window;
+    } else if (size.scale > 0.0f) {
+        wide = (double)size.width * (double)size.scale;
+        high = (double)size.height * (double)size.scale;
+    } else {
+        wide = (double)size.width * (double)to->pixel_width / (double)to->width;
+        high = (double)size.height * (double)to->pixel_height / (double)to->height;
+    }
+    const double longest = wide > high ? wide : high;
+    if (target_most > 0 && floor(longest + 0.5) > (double)target_most) {
+        wide *= (double)target_most / longest;
+        high *= (double)target_most / longest;
+        *limited = true;
+    }
+    *width = logical.x;
+    *height = logical.y;
+    *wide_pixels = whole_pixels(wide);
+    *high_pixels = whole_pixels(high);
+    return true;
 }
 
 // Room for `count` more extras after the ones there.
@@ -589,8 +654,24 @@ static draw_step *add_step(const uint32_t kind)
         step_capacity = capacity;
     }
     draw_step *s = &steps[step_count++];
-    *s = (draw_step){.kind = kind, .target = draw_target};
+    *s = (draw_step){.kind = kind, .blend = draw_blend, .target = draw_target};
     return s;
+}
+
+// Whether what's drawn next goes on with the last step: it's of that kind, and blends as it does.
+static bool run_goes_on(const uint32_t kind)
+{
+    return step_count != 0 && steps[step_count - 1].kind == kind && steps[step_count - 1].blend == draw_blend;
+}
+
+// A run of shapes starts. What multiplies goes through the pipeline that
+// draws every kind, the one whose colors go to white where they're clear, so
+// each of its shapes has an extra (see settle_extras).
+static void start_shapes(void)
+{
+    draw_step *s = add_step(STEP_SHAPES);
+    s->first = shape_count;
+    if (draw_blend == TIDE_BLEND_MULTIPLY) s->smooth = shape_extra_count + 1u;
 }
 
 // A shape, after the ones before it when nothing came between them. A frame
@@ -603,7 +684,7 @@ static void add_shape(const int kind, const float ax, const float ay, const floa
         shapes = tide_realloc(shapes, shape_capacity * sizeof(shape), capacity * sizeof(shape));
         shape_capacity = capacity;
     }
-    if (step_count == 0 || steps[step_count - 1].kind != STEP_SHAPES) add_step(STEP_SHAPES)->first = shape_count;
+    if (!run_goes_on(STEP_SHAPES)) start_shapes();
     steps[step_count - 1].count++;
     shapes[shape_count++] = (shape){{ax, ay}, {bx, by}, {color.r, color.g, color.b, color.a}, (float)kind};
 }
@@ -613,7 +694,7 @@ static void add_shape(const int kind, const float ax, const float ay, const floa
 static void add_smooth(const int kind, const float x, const float y, const float half_width, const float half_height,
                        const rgba color, const shape_extra extra)
 {
-    if (step_count == 0 || steps[step_count - 1].kind != STEP_SHAPES) add_step(STEP_SHAPES)->first = shape_count;
+    if (!run_goes_on(STEP_SHAPES)) start_shapes();
     if (!steps[step_count - 1].smooth) steps[step_count - 1].smooth = shape_extra_count + 1u;
     settle_extras(); // The plain shapes before it in the run
     add_shape(kind, x, y, half_width, half_height, color);
@@ -629,14 +710,16 @@ static void add_smooth_shape(const tide_draw_list *list, const tide_draw_command
     static const int kinds[] = {[TIDE_SHAPE_BOX] = SHAPE_BOX, [TIDE_SHAPE_ELLIPSE] = SHAPE_ELLIPSE,
                                 [TIDE_SHAPE_ARC] = SHAPE_ARC};
     const tide_draw_shape_data *s = &list->shapes[c->shape];
-    if (s->form > TIDE_SHAPE_ARC) return;
+    const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
+    if (form > TIDE_SHAPE_ARC) return;
     const tide_float2 center = to_screen(cam, c->a);
     const float scale = cam->scale;
     const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
-    add_smooth(kinds[s->form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, to_rgba(c->color),
+    add_smooth(kinds[form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, to_rgba(c->color),
                (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
                              .radius = s->radius * scale,
-                             .outline = s->outline * scale,
+                             // A hairline is a logical pixel wide, whatever the camera
+                             .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
                              .soft = s->soft * scale,
                              .sweep = s->sweep,
                              .color2 = {color2.r, color2.g, color2.b, color2.a},
@@ -685,8 +768,8 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
 {
     const uint32_t count = c->mesh.count;
     mesh_vertex *out = mesh_room(count);
-    draw_step *s = step_count ? &steps[step_count - 1] : NULL;
-    if (!s || s->kind != STEP_MESH || s->texture != c->mesh.texture || s->filter != c->mesh.filter) {
+    draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter) {
         s = add_step(STEP_MESH);
         s->first = mesh_vertex_count;
         s->texture = c->mesh.texture;
@@ -741,7 +824,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
     float pen_x = line_start(font, text, pixels, stretch, x, side);
     float pen_y = floorf((at.y + tide_font_baseline(font) * size) * scale.y - above + 0.5f); // On the baseline
 
-    if (step_count == 0 || steps[step_count - 1].kind != STEP_TEXT) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             pen_x = line_start(font, text, pixels, stretch, x, side);
@@ -771,12 +854,87 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
     }
 }
 
+// Text a transform turned or stretched (see tide_draw_set_transform): laid out
+// as it would be upright, at the size the transform's mean scale makes it,
+// then each glyph through the transform. `at` is where the place `anchor`
+// names of its box is on the screen, and `size` its font size in the units
+// its command is in, as the transform found it. There are no pixels to fit it
+// to: its glyphs are the ones fitted for upright text of that size, and their
+// pixels blend where they land.
+static void add_text_turned(const char *text, const tide_float2 at, const float size, const camera *cam,
+                            const tide_float2x2 turn, const rgba color, const uint32_t anchor, const unsigned char *font)
+{
+    const float mean = sqrtf(fabsf(turn.c0.x * turn.c1.y - turn.c0.y * turn.c1.x));
+    const float drawn = size * cam->scale * mean; // Its size on the screen, in logical pixels
+    if (!(drawn > 0.0f) || !(mean > 0.0f)) return;
+    const tide_float2 scale = pixel_scale();
+    float stretch;
+    const int pixels = tide_font_pixels(drawn, scale.y, &stretch);
+    const float pitch = tide_font_pitch(font, pixels, stretch);
+    // The anchor's column and row, as upright text has them (see add_text)
+    const uint32_t side = anchor % 3u, row = anchor / 3u;
+    float above = 0.0f;
+    if (row) {
+        uint32_t lines = 1;
+        for (const char *c = text; *c; c++) lines += *c == '\n';
+        above = (drawn * scale.y + (float)(lines - 1u) * pitch) * 0.5f * (float)row;
+    }
+    // Where the layout's right and down go on the screen: through the transform, in the units it's in,
+    // whose y goes up under a camera, and less its scale, which the layout's size has already
+    const float up = cam->gui ? 1.0f : -1.0f;
+    const tide_float2 right = tide_f2(turn.c0.x / mean, turn.c0.y * up / mean);
+    const tide_float2 down = tide_f2(turn.c1.x * up / mean, turn.c1.y / mean);
+    // From its anchor, in the target's pixels
+    float pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
+    float pen_y = floorf(tide_font_baseline(font) * drawn * scale.y - above + 0.5f);
+
+    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
+        if (c == '\n') {
+            pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
+            pen_y += pitch;
+            continue;
+        }
+        tide_font_glyph g;
+        if (!tide_font_glyph_for(font, c, pixels, &g)) continue; // No room for it this frame
+        if (g.width) {
+            // Half an atlas pixel more each way: the clear one around the glyph, which its edge blends with
+            const float x0 = (pen_x + ((float)g.left - 0.5f) * stretch) / scale.x;
+            const float y0 = (pen_y + ((float)g.top - 0.5f) * stretch) / scale.y;
+            const float x1 = x0 + ((float)g.width + 1.0f) * stretch / scale.x;
+            const float y1 = y0 + ((float)g.height + 1.0f) * stretch / scale.y;
+            const float u0 = (float)g.x - 0.5f, v0 = (float)g.y - 0.5f;
+            const float u1 = u0 + (float)g.width + 1.0f, v1 = v0 + (float)g.height + 1.0f;
+            const float xs[4] = {x0, x1, x1, x0}, ys[4] = {y0, y0, y1, y1};
+            const float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
+            mesh_vertex corners[4];
+            for (int i = 0; i < 4; i++) {
+                corners[i] = (mesh_vertex){{at.x + xs[i] * right.x + ys[i] * down.x, at.y + xs[i] * right.y + ys[i] * down.y},
+                                           {us[i], vs[i]},
+                                           {color.r, color.g, color.b, color.a}};
+            }
+            mesh_vertex *out = mesh_room(6);
+            out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
+            out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
+            mesh_vertex_count += 6;
+            steps[step_count - 1].count += 6;
+        }
+        pen_x += (float)g.advance * stretch;
+    }
+}
+
+// The engine's own pipelines, each in a version for each way of blending
+// (tide_blend), made the first time a list draws with it.
+enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
+enum { BLENDS = TIDE_BLEND_REPLACE + 1 };
+
 // What the renderer keeps on the GPU (see gpu.h): its pipelines, whose
 // shaders are in shaders.h, and the buffers and textures a list's steps draw
 // from, made the first time they're needed.
 static struct {
-    tide_gpu_id shapes, smooth_shapes, meshes, text, meshes_3d, clear; // Pipelines
-    tide_gpu_id corners;                                               // The shapes' quad
+    tide_gpu_id pipelines[PIPELINE_KINDS][BLENDS];
+    tide_gpu_id clear;   // The clears' pipeline
+    tide_gpu_id corners; // The shapes' quad
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
     tide_gpu_id shape_extras;
@@ -802,24 +960,41 @@ static struct {
 // The shapes', meshes' and text's uniforms, as their shaders have them: from
 // the target's logical pixels (from its top left, y down) to clip space, as
 // OpenGL's matrices go, column by column; for text, 1 over the atlas's size;
-// and for shapes, the target's own pixels in a logical one, across and down,
-// which is how they know where a pixel ends.
+// for shapes, the target's own pixels in a logical one, across and down,
+// which is how they know where a pixel ends; and `fix`, whose first is 1 for
+// what multiplies what's there (TIDE_BLEND_MULTIPLY), 0 otherwise: there a
+// color goes to white as its alpha goes to 0, so what's clear changes nothing.
+// A run of the plain shapes alone has `screen` only.
 typedef struct screen_uniforms {
     float screen[16];
     float texel[2];
     float scale[2];
+    float fix[4];
 } screen_uniforms;
+
+// The 3D meshes': the camera, from the world to clip space, what tints them,
+// and `fix`, as above.
+typedef struct mesh_3d_uniforms {
+    tide_float4x4 camera;
+    float tint[4];
+    float fix[4];
+} mesh_3d_uniforms;
 
 // What the uniforms of a shader of the game's start with (see tide_shader),
 // before a run's own: `tide_camera`, from the units its mesh is in to clip
-// space, and `tide_screen`, the target's pixels in a logical one, across and
-// down, then its height in its own pixels.
+// space, `tide_screen`, the target's pixels in a logical one, across and
+// down, its height in its own pixels, and 1 where the draw multiplies what's
+// there, and `tide_tint`, what its pixels' colors are multiplied by.
 typedef struct shaded_uniforms {
     tide_float4x4 camera;
     float screen[4];
+    float tint[4];
 } shaded_uniforms;
 
-_Static_assert(sizeof(shaded_uniforms) + TIDE_SHADER_UNIFORM_BYTES <= TIDE_GPU_MAX_UNIFORMS,
+// A float4 short of the block, too: Android's emulator links a shader whose
+// block is 255 float4s and refuses one of 256, which it counts as its
+// vertex shader's uniform vectors
+_Static_assert(sizeof(shaded_uniforms) + TIDE_SHADER_UNIFORM_BYTES <= TIDE_GPU_MAX_UNIFORMS - 16u,
                "a shader's uniforms fit a pipeline's block");
 _Static_assert(TIDE_SHADER_ATTRIBUTES <= TIDE_GPU_MAX_ATTRIBUTES && TIDE_SHADER_TEXTURES <= TIDE_GPU_MAX_TEXTURES,
                "a shader's attributes and textures fit a pipeline's");
@@ -880,11 +1055,14 @@ static uint32_t gpu_texture_count, gpu_texture_capacity;
 static uint32_t gpu_frame;
 
 // Render targets retain their attachments across passes and frames. Their
-// owner supplies a stable identity; resizing replaces both attachments.
+// owner supplies a stable identity; resizing replaces both attachments, and
+// so does an image that comes to another number of pixels: the display's
+// scale changed under a target that's at it, or the window's size under one
+// that follows it.
 typedef struct gpu_target {
     uint64_t id;
     uint64_t version;
-    int width, height;
+    int width, height; // Its image's pixels
     tide_gpu_id target;
 } gpu_target;
 
@@ -900,10 +1078,15 @@ static gpu_target *find_target(const uint64_t id)
     return NULL;
 }
 
-// Called outside a pass: a newly made image is black, with its depth reset.
-static gpu_target *target_for(const uint64_t id, const int width, const int height, const uint64_t version)
+// The GPU's image of a render target of `size`, under the draw's root. Called
+// outside a pass: a newly made image is black, with its depth reset.
+static gpu_target *target_for(const uint64_t id, const tide_target_size size, const uint64_t version)
 {
-    if (!tide_render_target_live(id) || width <= 0 || height <= 0) return NULL;
+    float logical_width, logical_height;
+    int width, height;
+    bool limited;
+    if (!tide_render_target_live(id)
+        || !target_extent(size, &root, &logical_width, &logical_height, &width, &height, &limited)) return NULL;
     gpu_target *g = find_target(id);
     if (!g) {
         if (gpu_target_count == gpu_target_capacity) {
@@ -922,6 +1105,11 @@ static gpu_target *target_for(const uint64_t id, const int width, const int heig
         g->target = gpu->target(width, height);
         gpu->begin(g->target, true);
         gpu->end();
+        if (limited) {
+            fprintf(stderr, "tide: a render target of %g by %g is more pixels than this GPU has a side (%d): its image "
+                            "is %d by %d, less sharp\n", (double)logical_width, (double)logical_height, target_most,
+                    width, height);
+        }
     }
     return g;
 }
@@ -949,7 +1137,8 @@ typedef struct shader_pipeline {
     uint64_t id;
     tide_gpu_id pipeline;
     uint32_t frame; // The frame that last drew through it
-    bool blit;     // Replace color and leave depth alone, rather than an ordinary mesh
+    uint8_t blend;  // How it goes over what's there: a pipeline for each way a shader is drawn (tide_blend)
+    bool blit;      // The whole destination, leaving its depth alone, rather than an ordinary mesh
 } shader_pipeline;
 
 static shader_pipeline *shader_pipelines;
@@ -971,6 +1160,7 @@ static bool gpu_ready(void)
     free(gpu_state.target_pixels);
     free(gpu_state.frame_pixels);
     memset(&gpu_state, 0, sizeof gpu_state);
+    target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
     gpu_target_count = 0;
@@ -993,88 +1183,100 @@ static const char *joined(const char *first, const char *second)
     return whole;
 }
 
-// The pipelines, the quad and the white pixel, the first time a list is drawn.
+// One of the engine's pipelines, for one way of blending: made if there's none.
+static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend)
+{
+    static const tide_gpu_blend blends[BLENDS] = {
+        [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
+        [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
+    tide_gpu_id *made = &gpu_state.pipelines[kind][blend < BLENDS ? blend : TIDE_BLEND_ALPHA];
+    if (*made) return *made;
+    tide_gpu_pipeline_desc desc;
+    switch (kind) {
+    case PIPELINE_SHAPES:
+        desc = (tide_gpu_pipeline_desc){
+            .name = "shapes",
+            .glsl_vertex = shape_glsl_vertex,
+            .glsl_fragment = shape_glsl_fragment,
+            .wgsl = shape_wgsl,
+            .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}}, // The quad's corners, and an instance a shape
+            .slot_count = 2,
+            .attributes = {{0, TIDE_GPU_FLOAT2, 0},
+                           {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
+                           {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
+                           {1, TIDE_GPU_FLOAT, offsetof(shape, kind)}},
+            .attribute_count = 4,
+            .uniform_size = 16 * sizeof(float),
+        };
+        break;
+    case PIPELINE_SMOOTH_SHAPES:
+        desc = (tide_gpu_pipeline_desc){
+            .name = "smooth shapes",
+            .glsl_vertex = smooth_shape_glsl_vertex,
+            .glsl_fragment = smooth_shape_glsl_fragment,
+            .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            // The quad's corners, an instance a shape, and an extra for each
+            .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(shape_extra), true}},
+            .slot_count = 3,
+            .attributes = {{0, TIDE_GPU_FLOAT2, 0},
+                           {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
+                           {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
+                           {1, TIDE_GPU_FLOAT, offsetof(shape, kind)},
+                           {2, TIDE_GPU_FLOAT4, offsetof(shape_extra, turn)},
+                           {2, TIDE_GPU_FLOAT2, offsetof(shape_extra, soft)},
+                           {2, TIDE_GPU_BYTES4, offsetof(shape_extra, color2)},
+                           {2, TIDE_GPU_BYTES4, offsetof(shape_extra, rim)}},
+            .attribute_count = 8,
+            .uniform_size = sizeof(screen_uniforms),
+        };
+        break;
+    case PIPELINE_MESHES:
+    case PIPELINE_TEXT: // A mesh's corners, with pixels of its own
+        desc = (tide_gpu_pipeline_desc){
+            .name = kind == PIPELINE_TEXT ? "text" : "meshes",
+            .glsl_vertex = mesh_glsl_vertex,
+            .glsl_fragment = kind == PIPELINE_TEXT ? text_glsl_fragment : mesh_glsl_fragment,
+            .wgsl = kind == PIPELINE_TEXT ? text_wgsl : mesh_wgsl,
+            .slots = {{sizeof(mesh_vertex), false}},
+            .slot_count = 1,
+            .attributes = {{0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, position)},
+                           {0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, uv)},
+                           {0, TIDE_GPU_BYTES4, offsetof(mesh_vertex, color)}},
+            .attribute_count = 3,
+            .uniform_size = sizeof(screen_uniforms),
+            .texture_count = 1,
+        };
+        break;
+    default:
+        desc = (tide_gpu_pipeline_desc){
+            .name = "3D meshes",
+            .glsl_vertex = mesh_3d_glsl_vertex,
+            .glsl_fragment = mesh_glsl_fragment,
+            .wgsl = mesh_3d_wgsl,
+            .slots = {{sizeof(mesh_3d_vertex), false}, {sizeof(tide_float4x4), true}}, // Its corners, and an instance a transform
+            .slot_count = 2,
+            .attributes = {{0, TIDE_GPU_FLOAT3, offsetof(mesh_3d_vertex, position)},
+                           {0, TIDE_GPU_FLOAT2, offsetof(mesh_3d_vertex, uv)},
+                           {0, TIDE_GPU_BYTES4, offsetof(mesh_3d_vertex, color)},
+                           {1, TIDE_GPU_FLOAT4, 0 * sizeof(tide_float4)},
+                           {1, TIDE_GPU_FLOAT4, 1 * sizeof(tide_float4)},
+                           {1, TIDE_GPU_FLOAT4, 2 * sizeof(tide_float4)},
+                           {1, TIDE_GPU_FLOAT4, 3 * sizeof(tide_float4)}},
+            .attribute_count = 7,
+            .uniform_size = sizeof(mesh_3d_uniforms),
+            .texture_count = 1,
+            .depth = TIDE_GPU_DEPTH_TEST,
+        };
+        break;
+    }
+    desc.blend = blends[blend < BLENDS ? blend : TIDE_BLEND_ALPHA];
+    return *made = gpu->pipeline(&desc);
+}
+
+// The clears' pipeline, the quad and the white pixel, the first time a list is drawn.
 static void renderer_start(void)
 {
-    if (gpu_state.shapes) return;
-    gpu_state.shapes = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "shapes",
-        .glsl_vertex = shape_glsl_vertex,
-        .glsl_fragment = shape_glsl_fragment,
-        .wgsl = shape_wgsl,
-        .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}}, // The quad's corners, and an instance a shape
-        .slot_count = 2,
-        .attributes = {{0, TIDE_GPU_FLOAT2, 0},
-                       {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
-                       {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
-                       {1, TIDE_GPU_FLOAT, offsetof(shape, kind)}},
-        .attribute_count = 4,
-        .uniform_size = 16 * sizeof(float),
-        .blend = TIDE_GPU_BLEND_ALPHA,
-        .depth = TIDE_GPU_DEPTH_NONE,
-    });
-    gpu_state.smooth_shapes = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "smooth shapes",
-        .glsl_vertex = smooth_shape_glsl_vertex,
-        .glsl_fragment = smooth_shape_glsl_fragment,
-        .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
-        // The quad's corners, an instance a shape, and an extra for each
-        .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(shape_extra), true}},
-        .slot_count = 3,
-        .attributes = {{0, TIDE_GPU_FLOAT2, 0},
-                       {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
-                       {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
-                       {1, TIDE_GPU_FLOAT, offsetof(shape, kind)},
-                       {2, TIDE_GPU_FLOAT4, offsetof(shape_extra, turn)},
-                       {2, TIDE_GPU_FLOAT2, offsetof(shape_extra, soft)},
-                       {2, TIDE_GPU_BYTES4, offsetof(shape_extra, color2)},
-                       {2, TIDE_GPU_BYTES4, offsetof(shape_extra, rim)}},
-        .attribute_count = 8,
-        .uniform_size = sizeof(screen_uniforms),
-        .blend = TIDE_GPU_BLEND_ALPHA,
-        .depth = TIDE_GPU_DEPTH_NONE,
-    });
-    tide_gpu_pipeline_desc mesh = {
-        .name = "meshes",
-        .glsl_vertex = mesh_glsl_vertex,
-        .glsl_fragment = mesh_glsl_fragment,
-        .wgsl = mesh_wgsl,
-        .slots = {{sizeof(mesh_vertex), false}},
-        .slot_count = 1,
-        .attributes = {{0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, position)},
-                       {0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, uv)},
-                       {0, TIDE_GPU_BYTES4, offsetof(mesh_vertex, color)}},
-        .attribute_count = 3,
-        .uniform_size = sizeof(screen_uniforms),
-        .texture_count = 1,
-        .blend = TIDE_GPU_BLEND_ALPHA,
-        .depth = TIDE_GPU_DEPTH_NONE,
-    };
-    gpu_state.meshes = gpu->pipeline(&mesh);
-    mesh.name = "text"; // A mesh's corners, with pixels of its own
-    mesh.glsl_fragment = text_glsl_fragment;
-    mesh.wgsl = text_wgsl;
-    gpu_state.text = gpu->pipeline(&mesh);
-    gpu_state.meshes_3d = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "3D meshes",
-        .glsl_vertex = mesh_3d_glsl_vertex,
-        .glsl_fragment = mesh_glsl_fragment,
-        .wgsl = mesh_3d_wgsl,
-        .slots = {{sizeof(mesh_3d_vertex), false}, {sizeof(tide_float4x4), true}}, // Its corners, and an instance a transform
-        .slot_count = 2,
-        .attributes = {{0, TIDE_GPU_FLOAT3, offsetof(mesh_3d_vertex, position)},
-                       {0, TIDE_GPU_FLOAT2, offsetof(mesh_3d_vertex, uv)},
-                       {0, TIDE_GPU_BYTES4, offsetof(mesh_3d_vertex, color)},
-                       {1, TIDE_GPU_FLOAT4, 0 * sizeof(tide_float4)},
-                       {1, TIDE_GPU_FLOAT4, 1 * sizeof(tide_float4)},
-                       {1, TIDE_GPU_FLOAT4, 2 * sizeof(tide_float4)},
-                       {1, TIDE_GPU_FLOAT4, 3 * sizeof(tide_float4)}},
-        .attribute_count = 7,
-        .uniform_size = sizeof(tide_float4x4),
-        .texture_count = 1,
-        .blend = TIDE_GPU_BLEND_ALPHA,
-        .depth = TIDE_GPU_DEPTH_TEST,
-    });
+    if (gpu_state.clear) return;
     gpu_state.clear = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "clears",
         .glsl_vertex = clear_glsl_vertex,
@@ -1087,6 +1289,21 @@ static void renderer_start(void)
     static const float corners[12] = {0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0};
     gpu_state.corners = gpu->buffer(TIDE_GPU_VERTICES, sizeof corners, corners);
     gpu_state.white = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 255, 255, 255});
+}
+
+// The pipeline each step of the engine's own draws through, before anything draws.
+static void find_pipelines(void)
+{
+    for (uint32_t i = 0; i < step_count; i++) {
+        draw_step *s = &steps[i];
+        switch (s->kind) {
+        case STEP_SHAPES: s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend); break;
+        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend); break;
+        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend); break;
+        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend); break;
+        default: break;
+        }
+    }
 }
 
 // The GPU's copy of the list's 3D mesh `mesh`, uploaded if it hasn't got it.
@@ -1192,14 +1409,14 @@ static void forget_meshes_3d(void)
     }
 }
 
-// Where the pipeline of the shader `id` is in the index, or would go.
-static uint32_t shader_slot(const uint64_t id, const bool blit)
+// Where the pipeline of the shader `id`, blending as `blend`, is in the index, or would go.
+static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend)
 {
     const uint32_t mask = shader_index_capacity - 1u;
-    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u)) & mask;
+    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu) & mask;
     while (shader_index[i]) {
         const shader_pipeline *p = &shader_pipelines[shader_index[i] - 1u];
-        if (p->id == id && p->blit == blit) break;
+        if (p->id == id && p->blit == blit && p->blend == blend) break;
         i = (i + 1u) & mask;
     }
     return i;
@@ -1218,17 +1435,21 @@ static void index_shaders(void)
         memset(shader_index, 0, capacity * sizeof(uint32_t));
     }
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
-        shader_index[shader_slot(shader_pipelines[i].id, shader_pipelines[i].blit)] = i + 1u;
+        shader_index[shader_slot(shader_pipelines[i].id, shader_pipelines[i].blit, shader_pipelines[i].blend)] = i + 1u;
     }
 }
 
-// The pipeline of a shader of the game's, made if there's none: it reads a
-// mesh's vertices as they are from the first slot, and from the second an
-// instance's bytes, a float4 or an int4 an attribute.
-static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit)
+// The pipeline of a shader of the game's for one way of blending, made if
+// there's none: it reads a mesh's vertices as they are from the first slot,
+// and from the second an instance's bytes, a float4 or an int4 an attribute.
+static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend)
 {
+    static const tide_gpu_blend blends[BLENDS] = {
+        [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
+        [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
+    if (blend >= BLENDS) blend = blit ? TIDE_BLEND_REPLACE : TIDE_BLEND_ALPHA;
     if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
-    const uint32_t slot = shader_slot(shader->id, blit);
+    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
         p->frame = gpu_frame;
@@ -1250,7 +1471,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit)
         .slot_count = instance_size ? 2u : 1u,
         .uniform_size = (uint32_t)sizeof(shaded_uniforms) + tide_shader_uniform_size(shader),
         .texture_count = shader->texture_count,
-        .blend = blit ? TIDE_GPU_BLEND_REPLACE : TIDE_GPU_BLEND_ALPHA,
+        .blend = blends[blend],
         .depth = !blit && shader->dims == 3 ? TIDE_GPU_DEPTH_TEST : TIDE_GPU_DEPTH_NONE,
     };
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
@@ -1272,7 +1493,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit)
         shader_pipeline_capacity = capacity;
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
-    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, blit};
+    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend, blit};
     shader_index[slot] = ++shader_pipeline_count;
     return pipeline;
 }
@@ -1330,7 +1551,7 @@ static bool upload_shaded(const tide_draw_list *list)
         const tide_draw_run *run = &list->runs[steps[i].first];
         any = true;
         mesh_for(list, run->mesh);
-        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT);
+        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend);
     }
     if (any && list->instance_used) {
         buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used, 1, 4096u);
@@ -1466,7 +1687,7 @@ static bool unavailable_texture(const tide_draw_list *list, const uint32_t textu
 {
     if (!texture || texture > list->texture_count) return false;
     const tide_draw_texture *t = &list->textures[texture - 1u];
-    return t->space == TIDE_PIXELS_TARGET && (!tide_render_target_live(t->id) || t->width <= 0 || t->height <= 0);
+    return t->space == TIDE_PIXELS_TARGET && (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target));
 }
 
 static bool samples_unavailable(const tide_draw_list *list, const draw_step *s)
@@ -1485,14 +1706,22 @@ static bool samples_unavailable(const tide_draw_list *list, const draw_step *s)
 // A source recorded after Resize first sees the replacement black image,
 // even when no command draws into it. An older source still aliases the
 // current attachment; it never rolls a target back to an earlier revision.
+// A source at the revision there is, whose image now comes to another number
+// of pixels (the display's scale changed, or the window's size under a target
+// that follows it), sees the image made again, black, as a destination would.
 static bool prepare_source_target(const tide_draw_list *list, const uint32_t texture, const bool check)
 {
     if (!texture || texture > list->texture_count) return false;
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (t->space != TIDE_PIXELS_TARGET) return false;
     const gpu_target *g = find_target(t->id);
-    if (g && (!tide_render_target_managed(t->id) || t->version <= g->version)) return false;
-    if (!check) target_for(t->id, t->width, t->height, t->version);
+    if (g && (!tide_render_target_managed(t->id) || t->version < g->version)) return false;
+    float width, height;
+    int wide, high;
+    bool limited;
+    if (!target_extent(t->target, &root, &width, &height, &wide, &high, &limited)) return false;
+    if (g && g->target && t->version == g->version && g->width == wide && g->height == high) return false;
+    if (!check) target_for(t->id, t->target, t->version);
     return true;
 }
 
@@ -1523,7 +1752,7 @@ static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_st
     tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     if (!s->camera || s->fit) {
-        const float across = (float)draw_height / (float)draw_width;
+        const float across = draw_height / draw_width;
         world_to_clip.c0.x *= across, world_to_clip.c1.x *= across;
         world_to_clip.c2.x *= across, world_to_clip.c3.x *= across;
     }
@@ -1534,7 +1763,7 @@ static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_st
 // where to_screen puts a point, on the target.
 static tide_float4x4 camera_to_clip(const camera *cam)
 {
-    const float x = 2.0f * cam->scale / (float)draw_width, y = 2.0f * cam->scale / (float)draw_height;
+    const float x = 2.0f * cam->scale / draw_width, y = 2.0f * cam->scale / draw_height;
     tide_float4x4 m = tide_identity_f4x4();
     m.c0.x = x;
     if (cam->gui) { // From the top left, y down
@@ -1561,9 +1790,18 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     const uint32_t own = tide_shader_uniform_size(shader);
     block.engine.camera = s->kind == STEP_BLIT ? tide_identity_f4x4() :
                           shader->dims == 3 ? camera_3d_to_clip(list, s) : camera_to_clip(&s->through);
+    if (run->moved && shader->dims != 3 && s->kind != STEP_BLIT) { // Its mesh goes through its transform first
+        tide_float4x4 moved = tide_identity_f4x4();
+        moved.c0.x = run->transform.x.x, moved.c0.y = run->transform.x.y;
+        moved.c1.x = run->transform.y.x, moved.c1.y = run->transform.y.y;
+        moved.c3.x = run->transform.offset.x, moved.c3.y = run->transform.offset.y;
+        block.engine.camera = tide_mul_f4x4(block.engine.camera, moved);
+    }
     block.engine.screen[0] = scale.x, block.engine.screen[1] = scale.y;
-    block.engine.screen[2] = (float)(offscreen ? draw_height : pixel_height);
-    block.engine.screen[3] = 0.0f;
+    block.engine.screen[2] = (float)draw_pixel_height;
+    block.engine.screen[3] = s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
+    block.engine.tint[0] = run->tint.r, block.engine.tint[1] = run->tint.g;
+    block.engine.tint[2] = run->tint.b, block.engine.tint[3] = run->tint.a;
     if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);
     gpu->use(s->pipeline);
     gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
@@ -1579,9 +1817,11 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
 static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
 {
     const gpu_mesh *g = &gpu_meshes[s->mesh - 1u];
-    const tide_float4x4 world_to_clip = camera_3d_to_clip(list, s);
-    gpu->use(gpu_state.meshes_3d);
-    gpu->uniforms(&world_to_clip, sizeof world_to_clip);
+    const mesh_3d_uniforms uniforms = {.camera = camera_3d_to_clip(list, s),
+                                       .tint = {s->tint.r, s->tint.g, s->tint.b, s->tint.a},
+                                       .fix = {s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f}};
+    gpu->use(s->pipeline);
+    gpu->uniforms(&uniforms, sizeof uniforms);
     sample_step_texture(list, s);
     gpu->vertices(0, g->vertices, 0);
     gpu->vertices(1, gpu_state.matrices, (size_t)s->first * sizeof(tide_float4x4));
@@ -1602,7 +1842,7 @@ static int clamp_pixel(const int v, const int most)
 // Only what's inside the step's rect draws from here on, or everything again.
 static void clip(const draw_step *s)
 {
-    const int width = offscreen ? draw_width : pixel_width, height = offscreen ? draw_height : pixel_height;
+    const int width = draw_pixel_width, height = draw_pixel_height;
     if (s->kind == STEP_NO_CLIP) {
         gpu->scissor(0, 0, width, height);
         return;
@@ -1616,19 +1856,65 @@ static void clip(const draw_step *s)
     gpu->scissor(left, top, right > left ? right - left : 0, bottom > top ? bottom - top : 0);
 }
 
-static void select_target(const uint32_t at, const tide_gpu_id window)
+// One of the list's 2D cameras (1 + its place, or 0 for a frame's first), on the selected target.
+static camera camera_named(const tide_draw_list *list, const uint32_t at)
 {
+    camera cam = {{0.0f, 0.0f}, 1.0f, false};
+    if (!at || at > list->camera_count) return cam;
+    const tide_draw_camera_data *c = &list->cameras[at - 1u];
+    if (c->screen) {
+        cam.gui = true;
+    } else {
+        cam.center = c->center;
+        cam.scale = c->size > 0.0f ? (float)draw_height / (2.0f * c->size) : 1.0f;
+    }
+    return cam;
+}
+
+// One of the list's clips on the selected target, from `at` to `to` in its
+// logical pixels: its rect through the camera it was made under, and of that,
+// what's inside the clip it was made in.
+static void clip_corners(const tide_draw_list *list, uint32_t clip, tide_float2 *at, tide_float2 *to)
+{
+    *at = *to = tide_f2(0.0f, 0.0f);
+    bool first = true;
+    for (uint32_t depth = 0; clip && clip <= list->clip_count && depth < list->clip_count; depth++) {
+        const tide_draw_clip_data *c = &list->clips[clip - 1u];
+        const camera cam = camera_named(list, c->camera);
+        // Its corners on the screen, whichever way up the units are
+        const tide_float2 p = to_screen(&cam, tide_f2(c->rect.x, c->rect.y));
+        const tide_float2 q = to_screen(&cam, tide_f2(c->rect.x + c->rect.width, c->rect.y + c->rect.height));
+        const tide_float2 low = tide_f2(p.x < q.x ? p.x : q.x, p.y < q.y ? p.y : q.y);
+        const tide_float2 high = c->rect.width > 0.0f && c->rect.height > 0.0f
+                                     ? tide_f2(p.x < q.x ? q.x : p.x, p.y < q.y ? q.y : p.y) : low;
+        if (first) {
+            *at = low, *to = high;
+        } else {
+            *at = tide_f2(at->x > low.x ? at->x : low.x, at->y > low.y ? at->y : low.y);
+            *to = tide_f2(to->x < high.x ? to->x : high.x, to->y < high.y ? to->y : high.y);
+            if (to->x < at->x) to->x = at->x;
+            if (to->y < at->y) to->y = at->y;
+        }
+        first = false;
+        clip = c->parent;
+    }
+}
+
+static void select_target(const uint32_t at)
+{
+    const frame_target *f = &frame_targets[at];
     draw_target = at;
-    draw_width = frame_targets[at].width;
-    draw_height = frame_targets[at].height;
-    offscreen = at != 0 || window != gpu_state.frame;
-    scaled = !offscreen && (pixel_width != screen_width || pixel_height != screen_height);
+    draw_width = f->width;
+    draw_height = f->height;
+    draw_pixel_width = f->pixel_width;
+    draw_pixel_height = f->pixel_height;
+    scaled = (float)draw_pixel_width != draw_width || (float)draw_pixel_height != draw_height;
 }
 
 static screen_uniforms target_uniforms(void)
 {
     const tide_float2 scale = pixel_scale();
-    screen_uniforms u = {.screen = {[0] = 2.0f / (float)draw_width, [5] = -2.0f / (float)draw_height,
+    screen_uniforms u = {.screen = {[0] = 2.0f / draw_width, [5] = -2.0f / draw_height,
                                     [10] = 1.0f, [12] = -1.0f, [13] = 1.0f, [15] = 1.0f},
                          .scale = {scale.x, scale.y}};
     if (gpu_state.atlas) {
@@ -1638,15 +1924,25 @@ static screen_uniforms target_uniforms(void)
     return u;
 }
 
-// Draws the list into `target`: the window for 0, or tide_platform_read_pixels'
-// own pixels. With `over`, it goes over what's there (the overlay), and leaves
-// the frame's camera, textures and meshes as they are.
-static void draw_list(const tide_draw_list *list, const tide_gpu_id target, const bool over)
+// The uniforms of a step that draws shapes, a mesh or text: the target's, and how the step blends.
+static const screen_uniforms *step_uniforms(screen_uniforms *of_target, const draw_step *s)
+{
+    of_target->fix[0] = s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
+    return of_target;
+}
+
+// Draws the list into `to`: the window, a headless one's frame, or
+// tide_platform_read_pixels' own pixels. With `over`, it goes over what's
+// there (the overlay), and leaves the frame's camera, textures and meshes as
+// they are.
+static void draw_list(const tide_draw_list *list, const draw_root to, const bool over)
 {
     if (!gpu_ready()) { // Between a device that was lost and the next
         if (!over) draw_calls = 0;
         return;
     }
+    const tide_gpu_id target = to.gpu;
+    root = to;
     if (!over && target_epoch != list->epoch) {
         for (uint32_t i = 0; i < gpu_target_count; i++) gpu->target_free(gpu_targets[i].target);
         gpu_target_count = 0;
@@ -1659,25 +1955,33 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
                                      (targets + 1u) * sizeof(frame_target));
         frame_target_capacity = targets + 1u;
     }
-    frame_targets[targets] = (frame_target){.id = TIDE_RENDER_INVALID, .width = 1, .height = 1}; // Invalid destination
+    // Invalid destination
+    frame_targets[targets] = (frame_target){.id = TIDE_RENDER_INVALID, .width = 1.0f, .height = 1.0f,
+                                            .pixel_width = 1, .pixel_height = 1};
     for (uint32_t i = 0; i < targets; i++) {
-        frame_targets[i] = (frame_target){.through = {.scale = 1.0f}, .world = {.scale = 1.0f}, .fit = 1,
-                                          .clipping = {.kind = STEP_NO_CLIP}};
+        frame_target *f = &frame_targets[i];
+        *f = (frame_target){.through = {.scale = 1.0f}, .world = {.scale = 1.0f}, .fit = 1,
+                            .clipping = {.kind = STEP_NO_CLIP}};
         if (i) {
             const tide_draw_target_data *t = &list->targets[i - 1u];
-            frame_targets[i].id = t->id;
-            frame_targets[i].version = t->version;
-            frame_targets[i].width = t->width;
-            frame_targets[i].height = t->height;
-            frame_targets[i].valid = tide_render_target_live(t->id) && t->width > 0 && t->height > 0;
+            bool limited;
+            f->id = t->id;
+            f->version = t->version;
+            f->size = t->size;
+            // In logical pixels, like the window: what's drawn into it lands as it would there
+            f->valid = target_extent(t->size, &root, &f->width, &f->height, &f->pixel_width, &f->pixel_height, &limited)
+                    && tide_render_target_live(t->id);
+            if (!f->valid) f->width = f->height = 1.0f, f->pixel_width = f->pixel_height = 1;
         } else {
-            frame_targets[i].gpu = target;
-            frame_targets[i].width = screen_width;
-            frame_targets[i].height = screen_height;
-            frame_targets[i].valid = true;
+            f->gpu = target;
+            f->width = root.width;
+            f->height = root.height;
+            f->pixel_width = root.pixel_width;
+            f->pixel_height = root.pixel_height;
+            f->valid = true;
         }
     }
-    select_target(0, target);
+    select_target(0);
     tide_font_frame();
     shape_count = 0;
     shape_extra_count = 0;
@@ -1689,9 +1993,10 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         camera *cam = &f->through;
         if (c->kind != TIDE_DRAW_TARGET && !f->valid) continue;
         const rgba color = to_rgba(c->color);
+        draw_blend = c->blend;
         switch ((tide_draw_kind)c->kind) {
         case TIDE_DRAW_TARGET:
-            select_target(c->target < targets ? c->target : targets, target);
+            select_target(c->target < targets ? c->target : targets);
             add_step(STEP_TARGET);
             break;
         case TIDE_DRAW_CLEAR:
@@ -1699,7 +2004,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         case TIDE_DRAW_CAMERA:
             cam->center = c->a;
-            cam->scale = c->b.x > 0.0f ? (float)draw_height / (2.0f * c->b.x) : 1.0f;
+            cam->scale = c->b.x > 0.0f ? draw_height / (2.0f * c->b.x) : 1.0f;
             cam->gui = false;
             f->world = *cam;
             break;
@@ -1711,6 +2016,11 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             add_mesh(list, c, cam);
             break;
         case TIDE_DRAW_CAMERA_3D:
+            if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA
+                f->camera_3d = 0;
+                f->fit = 1;
+                break;
+            }
             f->camera_3d = c->camera.matrix + 1u;
             f->fit = c->camera.fit;
             break;
@@ -1725,6 +2035,7 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
             s->fit = f->fit;
+            s->tint = c->color;
             break;
         }
         case TIDE_DRAW_SHADED:
@@ -1739,12 +2050,8 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         }
         case TIDE_DRAW_CLIP: {
-            // Its corners on the screen, whichever way up the units are
-            const tide_float2 p = to_screen(cam, c->a);
-            const tide_float2 q = to_screen(cam, tide_f2(c->a.x + c->b.x, c->a.y + c->b.y));
             draw_step *s = add_step(STEP_CLIP);
-            s->at = tide_f2(p.x < q.x ? p.x : q.x, p.y < q.y ? p.y : q.y);
-            s->to = c->b.x > 0.0f && c->b.y > 0.0f ? tide_f2(p.x < q.x ? q.x : p.x, p.y < q.y ? q.y : p.y) : s->at;
+            clip_corners(list, c->clip, &s->at, &s->to);
             break;
         }
         case TIDE_DRAW_NO_CLIP:
@@ -1775,11 +2082,17 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color);
             break;
         }
-        case TIDE_DRAW_TEXT:
+        case TIDE_DRAW_TEXT: {
             // A command in bold without the bold's file (a list filled by hand) is in the regular weight
-            add_text(list->text + c->text, to_screen(cam, c->a), c->b.x * cam->scale, color, c->words.anchor,
-                     c->words.bold ? list->bold : TIDE_FONT_REGULAR);
+            const unsigned char *font = c->words.bold ? list->bold : TIDE_FONT_REGULAR;
+            if (c->words.turned && c->words.turned <= list->turn_count) {
+                add_text_turned(list->text + c->text, to_screen(cam, c->a), c->b.x, cam, list->turns[c->words.turned - 1u],
+                                color, c->words.anchor, font);
+            } else {
+                add_text(list->text + c->text, to_screen(cam, c->a), c->b.x * cam->scale, color, c->words.anchor, font);
+            }
             break;
+        }
         }
     }
     settle_extras();
@@ -1787,11 +2100,12 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
 
     // What the steps draw from goes to the GPU first
     renderer_start();
+    find_pipelines();
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
     const bool shaded = upload_shaded(list);
     upload_atlas();
-    select_target(0, target);
+    select_target(0);
     screen_uniforms uniforms = target_uniforms();
     gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     bool pass_active = true;
@@ -1801,14 +2115,14 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         if (s->target != draw_target) {
             if (pass_active) gpu->end();
             pass_active = false;
-            select_target(s->target, target);
+            select_target(s->target);
             frame_target *f = &frame_targets[draw_target];
             if (!f->valid) {
                 fprintf(stderr, "draw skipped: render target %llu is invalid or disposed\n", (unsigned long long)f->id);
                 continue;
             }
             if (draw_target) {
-                const gpu_target *g = target_for(f->id, f->width, f->height, f->version);
+                const gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
             }
             gpu->begin(f->gpu, false);
@@ -1837,12 +2151,11 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         case STEP_SHAPES:
             // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
+            gpu->use(s->pipeline);
             if (s->smooth) {
-                gpu->use(gpu_state.smooth_shapes);
-                gpu->uniforms(&uniforms, sizeof uniforms);
+                gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
                 gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
             } else {
-                gpu->use(gpu_state.shapes);
                 gpu->uniforms(uniforms.screen, sizeof uniforms.screen);
             }
             gpu->vertices(0, gpu_state.corners, 0);
@@ -1862,8 +2175,8 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         }
         case STEP_MESH:
             if (s->count == 0) break;
-            gpu->use(gpu_state.meshes);
-            gpu->uniforms(&uniforms, sizeof uniforms);
+            gpu->use(s->pipeline);
+            gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             sample_step_texture(list, s);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
@@ -1890,8 +2203,8 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
             break;
         default: // Text
             if (s->count == 0 || !gpu_state.atlas) break;
-            gpu->use(gpu_state.text);
-            gpu->uniforms(&uniforms, sizeof uniforms);
+            gpu->use(s->pipeline);
+            gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             gpu->sample(0, gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
@@ -1900,8 +2213,9 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
         }
     }
     if (pass_active) gpu->end();
-    offscreen = false;
-    draw_width = draw_height = 0;
+    draw_width = draw_height = 0.0f;
+    draw_pixel_width = draw_pixel_height = 0;
+    scaled = false;
     draw_target = 0;
     if (!over) {
         draw_calls = calls;
@@ -1916,16 +2230,20 @@ static void draw_list(const tide_draw_list *list, const tide_gpu_id target, cons
 }
 
 // What frames draw into: the window (0), or a headless one's own pixels, made
-// the first time and again when the device is another.
-static tide_gpu_id frame_destination(void)
+// the first time and again when the device is another. Either way it's the
+// window's size, at the display's scale.
+static draw_root frame_destination(void)
 {
-    if (!headless || !gpu_ready()) return 0;
+    draw_root to = {.width = (float)screen_width, .height = (float)screen_height,
+                    .pixel_width = pixel_width, .pixel_height = pixel_height};
+    if (!headless || !gpu_ready()) return to;
     if (!gpu_state.frame) {
         gpu_state.frame = gpu->target(pixel_width, pixel_height);
         gpu_state.frame_width = pixel_width;
         gpu_state.frame_height = pixel_height;
     }
-    return gpu_state.frame;
+    to.gpu = gpu_state.frame;
+    return to;
 }
 
 void tide_platform_draw(const tide_draw_list *list)
@@ -1946,10 +2264,22 @@ tide_float2 tide_platform_screen_size(void)
     return tide_f2((float)screen_width, (float)screen_height);
 }
 
-// As add_text draws it: on the window's pixels, or a render target's own.
-tide_float2 tide_platform_measure_text(const char *text, const float size, const bool target, const unsigned char *font)
+// As add_text draws it: on the window's pixels, or on those of a render
+// target's image, as many to a logical one as a frame drawn into the window
+// gives it.
+tide_float2 tide_platform_measure_text(const char *text, const float size, const tide_target_size *target,
+                                       const unsigned char *font)
 {
-    const tide_float2 scale = target ? tide_f2(1.0f, 1.0f) : window_scale();
+    tide_float2 scale = window_scale();
+    if (target) {
+        const draw_root window = {.width = (float)screen_width, .height = (float)screen_height,
+                                  .pixel_width = pixel_width, .pixel_height = pixel_height};
+        float width, height;
+        int wide, high;
+        bool limited;
+        if (!target_extent(*target, &window, &width, &height, &wide, &high, &limited)) return tide_f2(0.0f, 0.0f);
+        scale = tide_f2((float)wide / width, (float)high / height);
+    }
     tide_float2 measured;
     tide_font_size(font, text, size, scale.x, scale.y, &measured.x, &measured.y);
     return measured;
@@ -1990,7 +2320,7 @@ void tide_platform_draw_overlay(const char *text)
     const float top = (float)screen_height - 12.0f - (float)count * pitch;
     const tide_float2 panel = tide_f2(widest + 16.0f, (float)count * pitch + 8.0f);
     tide_draw_reset(&overlay);
-    tide_draw_screen(&overlay);
+    tide_draw_set_screen(&overlay);
     tide_draw_rect(&overlay, tide_f2(right + 8.0f - panel.x * 0.5f, top - 6.0f + panel.y * 0.5f), panel,
                    (tide_color){0.0f, 0.0f, 0.0f, 140.0f / 255.0f});
     for (int i = 0; i < count; i++) {
@@ -2040,8 +2370,16 @@ bool tide_platform_capture(const char *path)
 
 void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *points, const int count, uint32_t *out)
 {
-    const int width = screen_width, height = screen_height;
-    if (!gpu_ready()) { // Nothing to draw with for now: no pixels
+    tide_platform_read_pixels_as(list, screen_width, screen_height, 1.0f, points, count, out);
+}
+
+void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_width, const int logical_height,
+                                  const float scale, const tide_float2 *points, const int count, uint32_t *out)
+{
+    // As a window of that size has them on a display scaled that much (see follow_window)
+    const int width = whole_pixels((double)logical_width * (double)scale);
+    const int height = whole_pixels((double)logical_height * (double)scale);
+    if (!gpu_ready() || logical_width < 1 || logical_height < 1 || !(scale > 0.0f)) { // Nothing to draw with: no pixels
         memset(out, 0, (size_t)(count > 0 ? count : 0) * sizeof *out);
         return;
     }
@@ -2054,7 +2392,8 @@ void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *po
         gpu_state.target_width = width;
         gpu_state.target_height = height;
     }
-    draw_list(list, gpu_state.target, false);
+    draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
+                                .pixel_width = width, .pixel_height = height}, false);
     gpu->target_read(gpu_state.target, gpu_state.target_pixels);
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;

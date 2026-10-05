@@ -1,0 +1,9 @@
+// expect: 'Show' hears a confirmed tick, and its query's rows are that tick's already
+component Body { float x; }
+event Hit { int damage; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body).Send(Hit { damage = 1 }); }
+local event(verified Hit hit) Show(query (verified Body body) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x + hit.damage}");
+}

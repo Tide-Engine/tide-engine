@@ -1,0 +1,7 @@
+// expect: Draw2D.Clip sets it around a block
+scene Main { }
+
+view Show()
+{
+    if (true) Draw2D.Clip(Rect(0, 0, 1, 1));
+}

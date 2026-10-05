@@ -154,6 +154,23 @@ typedef struct unit {
     VEC(loc) using_at;
 } unit;
 
+// One parameter of a declaration that's named with its parameters, as C#'s
+// `cref` names an overload: `Position` or `with Player` in
+// [After(Move(Position, with Player))]. Its type as written, with neither a
+// name nor `mut`.
+typedef struct sig_item {
+    int mode;      // PARAM_READ, PARAM_WITH, PARAM_WITHOUT or PARAM_QUERY
+    bool verified; // `verified Health`, `with verified Dead`: a view's, from the world the server has
+    str type_name; // "ownership" for `with ownership`; empty for a query
+    loc at;        // Where it starts
+    loc type_at;   // The type's name (the last part if it's qualified)
+    loc type_qual_at;
+    VEC(struct sig_item) query; // PARAM_QUERY: its own parameters
+    const struct param *param;  // The parameter it names, once checked
+} sig_item;
+
+typedef VEC(sig_item) sig_items;
+
 // A name that may be qualified by a namespace: Health, Combat.Health.
 typedef struct qname {
     str text;    // Without spaces: "Combat.Health"
@@ -161,6 +178,8 @@ typedef struct qname {
     loc name_at; // The last part: the name itself
     struct decl *decl; // What it names, once checked
     const struct enum_member *enum_member; // Ordering attributes: a phase in this enum
+    bool has_signature;  // Written with its parameters, `Move(Position, with Player)`: which of the declarations that share the name
+    sig_items signature;
 } qname;
 
 // [Before(Physics.Integrate)]
@@ -228,6 +247,8 @@ typedef struct param {
     bool verified;
     loc verified_at; // ...the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
+    str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
@@ -242,6 +263,18 @@ typedef struct param {
     comp_mask query_need_mask;
     comp_mask query_without_mask;
     bool query_local; // The candidates belong to the local world rather than the match
+    const struct decl *query_of; // Its first component, which says whose its entities are; NULL with none
+    // A view's query with `verified` bindings or filters, as a view's own
+    // (decl.verified_need): what its entities need and lack in the world the
+    // server confirmed, and whether it goes through that world's entities (all
+    // of it is `verified`) or the drawn world's that are in both
+    comp_mask query_verified_need;
+    comp_mask query_verified_without;
+    bool query_verified_entities;
+    bool query_verified_join;
+    // A view's or a local handler's over the match: its entries are made before
+    // the code runs, as it sees the match (blended, or as its event's tick left it)
+    bool query_rows;
     struct param *query_source; // A nested binding or filter's containing query parameter
 } param;
 
@@ -357,6 +390,13 @@ typedef struct decl {
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
     const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
+    // Overloads, as in C#: functions that share a name, a type's methods that
+    // do, and systems, views, handlers, frags and verts that do. Their
+    // parameters tell them apart: their types in order, with a system's
+    // filters, whatever their names, `mut` and defaults.
+    bool shares_name;     // Another declaration of its kind has its name, where it's declared
+    const char *c_suffix; // ...so its name in generated C goes on with its parameters' types: "_float_Weapon"
+    const char *signature; // ...and messages and tools write it with them, as code names it: "Move(Position, with Player)"
     bool device_group;  // Devices, Keyboard, Mouse, Gamepad, Dpad, Touch, ...: records made of device values
     int leaves_count;   // ...how many
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
@@ -562,11 +602,14 @@ typedef enum builtin_call {
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
 } builtin_call;
 
-// What a GUI call needs besides its arguments (expr.gui).
+// What a GUI call needs besides its arguments, and which form of a draw
+// setting a call is (expr.gui).
 enum {
     GUI_ID = 1,        // A widget ID, from where it's called
     GUI_CONTAINER = 2, // A block after the call: GUILayout.Vertical() { ... }
     GUI_SKIPS = 4,     // A container whose block doesn't always run: it returns -1 then
+    DRAW_BLOCK = 8,    // A draw setting around a block, which puts back what it found: Draw.Blend(...) { ... }
+    DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
 };
 
 // How a constructor call builds its value.
@@ -648,9 +691,22 @@ struct expr {
 
     // E_CALL, E_METHOD
     VEC(expr *) args;
+    // Arguments written with their parameter's name, `crit: true`, and
+    // parameters a call leaves out for their defaults. The parser leaves
+    // `args` as written. Where a call names arguments or leaves some out, the
+    // checker makes `args` what each parameter gets, in the parameters' order
+    // (a parameter's own default where the call wrote nothing, the same
+    // expression at every such call), and keeps what was written in `written`.
+    VEC(str) arg_names;   // Each argument's name as written, empty for one without; no items when none has one
+    VEC(loc) arg_name_at;
+    bool settled;         // `args` is in the parameters' order, defaults filled in: `written` has what the call wrote
+    VEC(expr *) written;  // The arguments as written, for a settled call (none, when it wrote none)
+    VEC(int) arg_order;   // Named arguments out of the parameters' order: each written argument's place in `args`, in the order written, which they're worked out in
+    bool names_taken;     // The checker matched the names to parameters; it refuses names on calls that take none
     builtin_call call;
     ctor_form ctor;         // CALL_CONSTRUCT; CTOR_ENUM even where the checker refused the conversion
     const char *c_callee;   // CALL_BUILTIN
+    const char *c_pack;     // ...and the function that makes the one value it takes of its arguments, or NULL
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
@@ -660,8 +716,10 @@ struct expr {
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
-    int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER
+    int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER; CALL_DRAW: DRAW_BLOCK and DRAW_SET
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
+    bool stacked;         // One of the calls listed with commas before one block: each one's block is the
+                          // call after it, and the last one's the block itself
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
     bool blit;           // Draw.Blit: source texture, destination target and a frag
@@ -917,6 +975,7 @@ typedef struct program {
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
+    decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is

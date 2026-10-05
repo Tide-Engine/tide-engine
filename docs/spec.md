@@ -117,9 +117,9 @@ system Hurt(mut Unit unit)
 - A method returns a value with `return value;`, on every path, unless it returns `void`.
 - A method sees its fields, its parameters and `Math`. It can't spawn, change entities or draw: systems do.
 - A component's method has `this`: the entity whose component it's called on. A method that uses it, itself or through another of its methods, can only be called on a component the code runs for, a parameter of a system, view or handler: a copy belongs to no entity. A struct's methods and `Interpolate` have no `this`.
-- Methods can't share a name, even with different parameters, and a method can't share one with a field.
+- Methods can share a name when their parameters differ, as functions can (see Default values, named arguments and overloads). A method can't share one with a field.
 - Singletons and inputs have no methods (an input has `Sample` and `Sanitize`): keep the data and its methods in a struct, and the struct in them.
-- Parameters work as in functions.
+- Parameters work as in functions: they can have default values, and calls can name them.
 
 ```csharp
 struct Stats
@@ -151,7 +151,8 @@ system Burn(mut Unit unit)
 - Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations. Ordinary helpers can't read `session.room` or format a whole `Session` as text; pass the room code as a separate `string`.
 - Functions follow the rules of methods: they see their parameters and `Math`, can't spawn or change entities, and return a value on every path unless they return `void`.
 - A function can draw and use the GUI. Then only views, and other functions like it, can call it, as with `Draw2D` and `Draw3D`.
-- Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace.
+- Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace but other functions, whose parameters tell them apart (see Default values, named arguments and overloads).
+- A parameter can have a default value, which a call can leave out, and a call can pass arguments by name: see the same section.
 - A function's last parameter can be an `Action`: code the caller writes in braces after the call, `Section("Audio") { ... }`. A function takes at most one, always last, and it's always written after the call, never inside the parentheses.
 - The function runs the block by calling it, `content();`, as many times as it chooses, including none. The block runs as if it were written at the call: it sees the caller's locals and parameters, and what it reads and writes counts toward the caller's signature.
 - A function that takes an `Action` is inlined where it's called, so blocks cost nothing and need no closures. It can't call itself, directly or through other functions, and a block can only be run, not stored.
@@ -184,6 +185,88 @@ system Regenerate(mut Unit unit)
 {
     Heal(unit.stats, 0.5);
 }
+```
+
+### Calls that take a block
+
+- Some calls take a block, written in braces after them: the GUI's containers (`GUILayout.Horizontal() { ... }`), draw settings (`Draw.Blend(Blend.Add) { ... }`, see Views and drawing) and a game's functions that take an `Action` (above).
+- Calls that take a block can be listed with commas before one block, which they share, so they don't nest three deep:
+
+```csharp
+Draw.Blend(Blend.Add),
+Draw.Tint(Fade(Color.white, shown)),
+Draw2D.Clip(panel)
+{
+    ...
+}
+
+GUILayout.Area(Anchor.MiddleCenter),
+GUI.Disabled(busy)
+{
+    ...
+}
+```
+
+- A list means what nesting its calls in that order does: each call's block is the call after it, and the last one's is the block. The first is set up first and put back last.
+- It's a rule of the language, not of `Draw`: the GUI's containers, the draw settings and a game's own functions with an `Action` go in one list, each beside the others.
+- A call in the list that takes no block is an error at that call, which says so.
+- The comma is what makes a list. With none, a call followed by another is still a missing `;`.
+- The formatter puts a call a line, each starting where the first does, and the block's braces on lines of their own.
+
+### Default values, named arguments and overloads
+
+**Following C# here is agreed.** So is how a shared name is written where nothing calls it: with its parameters' types, and it has to be one declaration's. The points marked Provisional are picks the owner hasn't confirmed.
+
+- **Default values.** A function's or method's parameter can have one: `float Damage(float base, float multiplier = 1, bool crit = false)`. A call can leave such a parameter out, and it gets the default.
+  - They're the last parameters, as in C#: after one with a default, each has one. An `Action` still comes last: it isn't an argument.
+  - Provisional: a default is a constant expression, as a field's is (see Field defaults), and `null` for a `T?`. It can't read another parameter.
+  - Provisional: only plain values take one. A `mut` parameter is the caller's variable, a component or a singleton is the caller's own, and the devices, a `DrawList` and rendering resources are passed: none of them can be left out. An `Entity`'s only default is `default`, the null entity. Operators and `Interpolate` take none.
+  - Parameters of systems, views, handlers, frags and verts take none: the engine supplies them, and nothing calls them.
+  - An `extern` function's parameters take them too: C is passed the default like any argument.
+- **Named arguments.** A call can pass an argument by its parameter's name, `Damage(10, crit: true)`, which lets it leave out the ones before. Struct values keep `=` (`Body { position = p }`), as in C#.
+  - Arguments without a name come first, in the parameters' order. After a named one, each is named, in any order: `Damage(crit: true, base: 5)`.
+  - Each parameter is given once, and every parameter without a default is given.
+  - Arguments are worked out in the order written, whatever order the parameters are in (see Evaluation order).
+  - Provisional: `default` as an argument stays the type's default, as in C#, not the parameter's.
+  - The engine's functions take names too, where their parameters have names: `Draw2D.Circle(center: p, radius: 2, color: Color.red)`, `Session.Connect(address: host, port: 7001)`, `Debug.Assert(ok, message: "lost")`. What a call leaves out of them is at the end. Constructors (`float3(...)`), `Spawn`, `Send`, `Add`, `Remove`, a list's and a map's methods, the `World`'s methods, the component-wise `Math` functions and `Draw2D.Mesh` and its kin take their arguments in order.
+- **Overloads.** Functions can share a name, and so can a type's methods, when their parameters differ: `Damage(float base, float multiplier = 1)` and `Damage(float base, Weapon weapon)`.
+  - What tells them apart is their parameters' types, in order. Names, `mut` and defaults don't: two declarations that differ only in those are an error.
+  - A call picks by its arguments, as in C#. Each one that could take them is a candidate. One is better than another when no argument goes to it worse and at least one goes better: an argument's own type is better than one it converts to, and of two types it converts to, the one that converts to the other (an `int` over a `float`, for a `byte`). When that leaves two the same, the one the call wrote every parameter of is better than one that fills defaults in. A call that fits none, or fits two equally, is an error that lists them.
+  - `default`, `null`, `[a, b]` and a grid's size take their type from the parameter, so they don't pick: the other arguments do.
+  - Provisional: `extern` functions that share a name each say which C function they are, with `[NativeName]`, since C has one function of a name.
+  - A function still shares its name with nothing else in its namespace (a type, a system, a constant), and a method with no field.
+- **Systems, views, handlers, frags and verts** can share a name the same way. Nothing calls them, so the name is written with its parameters where it's used:
+  - `[After(Move(Position, Velocity, with Player))]`: the parameters' types in order, with the filters (`with`, `without`, `with ownership`, and a query as `query(Body, with Fighter)`) and a view's `verified` (`Bar(verified Health)`), and neither names nor `mut`. A handler's trigger isn't among them: it's written before the name.
+  - A mesh's vert and frag are named the same way: `Draw2D.Mesh(vertices, indices, Tint(Vertex, Color))`.
+  - A name alone is fine while only one declaration has it, as it always was. When several share it, the name alone is an error that lists them as they're written, and so is a parameter list that isn't exactly one's. A name written with parameters is checked against them even when it's the only one.
+  - Tools show a shared name with its parameters: `tidec --schedule`, the profiler's rows, the language server.
+- Provisional: in generated C, a declaration that shares its name goes on with its parameters' types (`tide_function_Damage_float_Weapon`). One alone keeps the name it had, so code that shares no names generates the C it always did.
+
+```csharp
+float Damage(float base, float multiplier = 1, bool crit = false)
+{
+    return crit ? base * multiplier * 2 : base * multiplier;
+}
+
+float Damage(float base, Weapon weapon)
+{
+    return base + weapon.power;
+}
+
+system Strike(mut Unit unit, Weapon weapon)
+{
+    unit.health -= Damage(10);              // multiplier 1, no crit
+    unit.health -= Damage(10, crit: true);  // By name, past multiplier
+    unit.health -= Damage(10, weapon);      // The other one
+}
+```
+
+```csharp
+system Move(mut Position position, Velocity velocity, with Player) { ... }
+system Move(mut Position position, Velocity velocity, with Enemy) { ... }
+
+[After(Move(Position, Velocity, with Player)), Before(Move(Position, Velocity, with Enemy))]
+system Aim(mut Turret turret, Position position) { ... }
 ```
 
 ### Operators
@@ -249,7 +332,7 @@ system ClampPlayer(mut Transform trs, with Player)
 
 ### Read-only entity queries
 
-A system can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
+A system, a view or a local handler can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
 
 ```csharp
 system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
@@ -261,12 +344,26 @@ system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) figh
 }
 ```
 
-- The outer parameters still select the entities the system runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick.
-- The nested list accepts named read-only match component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World`, local component or nested query.
-- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are system parameters only in this version, iterated in the system's ordinary control flow, outside parallel loops and callback blocks.
+- The outer parameters still select the entities the code runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick, and a view with only query parameters once per frame.
+- The nested list accepts named read-only component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World` or nested query. A system's is of the match's components; a view's and a local handler's are all the match's or all local (below).
+- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are parameters of systems, views and local handlers, iterated in that code's ordinary control flow, outside parallel loops and callback blocks. The match's event handlers, command handlers and tasks take none yet.
 - Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
-- Component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
-- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the system's run.
+- In a system, component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
+- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the code's run.
+- **Views take `query` parameters as systems do**, read-only, with the same syntax and the same filters:
+
+```csharp
+// A fighter's shadow falls on the highest platform under it.
+view DrawFighter(Body body, Fighter fighter, query (Platform box) platforms)
+{
+    foreach (var entry in platforms) { ... entry.box.center ... }
+}
+```
+
+  - **Rows are what a view sees**: blended between ticks like the view's own parameters, over the entities of the world it draws. An entity that wasn't there last tick is as it is, as for a view's own entity.
+  - **`verified` inside a query** follows the rule for views (see Views and drawing): a binding marked `verified` comes from the world the server has confirmed. `query (verified Health health) confirmed` loops over the confirmed world's entities; a query that mixes marked and unmarked bindings takes the entities that are in both, the same entity and not just the same handle. The filters `with verified X` and `without verified X` work in a query too.
+  - **A query is all local or all the match's**, as a view is: a view may loop over local entities too, like its own sparks.
+- **Local handlers take queries too** (`local event(Hit hit) Show(..., query (Body body, with Fighter) fighters)`): they're local code that reads the match as views do. Their rows are as the handler's own match parameters are: from the tick that sent the event.
 
 ### The World
 
@@ -400,7 +497,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Syntax
 
-- Statements: blocks, `if`/`else`, `switch`, loops (see Loops), `break;`, `continue;`, `return;`, `fail error;` (see Errors), local declarations, assignments (`= += -= *= /= %= <<= >>= &= |= ^=`), `i++` and `i--`, and calls: of `Spawn`, `Add`, `Remove`, `Destroy`, `Send`, the `World`'s `Set`, the `Draw2D`, `Draw3D` and GUI functions, lists' methods, and methods and functions, with a block after the ones that take one, and with `!` after or `try` before the ones that can fail.
+- Statements: blocks, `if`/`else`, `switch`, loops (see Loops), `break;`, `continue;`, `return;`, `fail error;` (see Errors), local declarations, assignments (`= += -= *= /= %= <<= >>= &= |= ^=`), `i++` and `i--`, and calls: of `Spawn`, `Add`, `Remove`, `Destroy`, `Send`, the `World`'s `Set`, the `Draw2D`, `Draw3D` and GUI functions, lists' methods, and methods and functions, with a block after the ones that take one (several of them can be listed with commas before one block: see Calls that take a block), and with `!` after or `try` before the ones that can fail.
 
 ### Evaluation order
 
@@ -409,6 +506,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - A read-only argument is a copy made in its turn, a list's too: `Total(items, Push(items, 4))` totals the list as it was. A `mut` method given its own value's list (`bag.Absorb(bag.items)`) gets a copy as well.
 - A list's, a map's and a set's changes that give a value (`items.Remove(x)`, `seen.Add(k)`) are calls that write, and so are widgets that change what they're given (`GUILayout.Toggle(title, open)`) and C functions with a `mut` parameter.
 - A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
+- Arguments passed by name are worked out in the order the call writes them, not the parameters': in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`. A default the call leaves out is a constant, so it has no turn.
 
 ### Functions and blocks
 
@@ -457,6 +555,7 @@ event(Spawned) Setup(with Main)
 
 - Files compile in order of their paths, compared byte by byte. Systems run in that order, then in the order they're declared within a file. Views, which draw once per frame, follow the same rules among themselves; later views draw on top.
 - `[Before(X)]` makes a system run before `X`, and `[After(X)]` after it. They take any number of systems (`[After(Gravity, Collisions)]`), with qualified names when needed (`[After(Physics.Gravity)]`).
+- Where several systems share a name, it's written with the parameters of the one meant, as types: `[After(Move(Position, Velocity, with Player))]`. A shared name alone is an error that lists them (see Default values, named arguments and overloads).
 - An enum can define named phases: `[Stage(TickStages.Simulation)]` assigns a declaration to a phase, and `[Stage(TickStages.Simulation, 10)]` gives it an offset within that phase. The offset is an `int` known while compiling, like an enum value: an integer literal, an integer constant, or integer operations on them. It defaults to 0 and can be negative. Each declaration has at most one `Stage`.
 - Phases follow the enum members' declaration order, regardless of their numeric values. Lower offsets run before higher ones within a phase; offsets never move work into another phase. Equal offsets keep the default order unless declaration constraints change it.
 - `Before` and `After` can name enum members too, mixed with declaration names: `[After(TickStages.Simulation, Gravity)]`. A phase reference means before all of that phase or after all of it, including every offset. Empty phases keep their place in the order. Different enums define independent phase orders; explicit declaration constraints can connect them.
@@ -570,7 +669,7 @@ Implemented, awaiting approval:
   - A match singleton's, as the match starts, from the match's seed and which field it is.
   - In the local world there's no seed: a local component's is seeded from its entity's handle, a local singleton's from which field it is, and a `local Random` field of a match component from the match entity's handle. They're the same every run.
   - A generator code sets to 0 later isn't seeded again.
-- **`Time.seed`** is the match's seed: an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`, but in a run with no window: `--capture`, `--frames`, `--script`). It's a field of `Time`, so it's the world's: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks, the standard host's runs with no window) it's 0, so a run repeats exactly.
+- **`Time.seed`** is the match's seed: an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`, but in a run with no window: `--capture`, `--frames`, `--script`). `--seed <n>` on the standard host's command line (`tide run --seed 7`) picks the seed instead, from 0 to 2147483647: every match that machine starts in the run has it (`tide_session_desc.seed`), with a window or without, on every platform. The owner asked for the flag on 2026-10-05; that it's every match of the run, and for runs with a window too, is how it was built. It's a field of `Time`, so it's the world's: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks, the standard host's runs with no window) it's 0, so a run repeats exactly.
 - **A game that uses none of it is what it was.** `Time` only has `seed` in a game that reads it or has a `Random` in the match's components or singletons, and only such a game's header has `tide_world_start_seeded(w, dt, start, seed)` and includes `tide/random.h`. Other games' worlds, hashes, headers and traffic don't change. A game that only rolls in local state has no seed in its match either.
 - **Hot reload**: a `Random` field is a struct with a `long`, so its state carries over by name like any field. One a reload adds starts at 0 on the entities that are there already, like any new field at its default: they roll alike until they're spawned again.
 - **Every player can read the seed** until scenes hide state from players (see Scenes): it's in the world, which every machine has whole.
@@ -626,7 +725,7 @@ Implemented, awaiting approval:
 ### Decided
 
 - An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. `event Hit { ... }` declares one, with fields like a struct's, which carry its context.
-- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters.
+- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters, which only a local handler takes (see Read-only entity queries).
 - An event with no fields needs no name in the trigger: `event(Spawned) Arm(...)`.
 - `entity.Send(Hit { ... })` sends an event to an entity. `Send(RoundOver { ... })` sends it to the whole world.
 - A handler's components and `this` come from the entity the event was sent to, as a system's come from the entity it runs for. If that entity doesn't match the handler's parameters, the handler doesn't run for it.
@@ -678,7 +777,7 @@ event(Spawned) Arm(with Player)
 ```
 
 - **Local handlers** hear the match's events on each machine, to show what happened: `local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)`. It's `local` and the same `event(...)`, with no keyword of its own.
-  - It takes the event; the components of the entity the event was sent to, to read, where `mut` reaches only their local fields, as in a view; the match's singletons, to read; and local singletons, which it changes. One that takes no components runs once per event, as a match handler does.
+  - It takes the event; the components of the entity the event was sent to, to read, where `mut` reaches only their local fields, as in a view; the match's singletons, to read; local singletons, which it changes; and queries, whose rows are the match as the tick that sent the event left it (see Read-only entity queries). One that takes no components runs once per event, as a match handler does.
   - It runs at the start of the frame, before the views, for each tick this machine simulated since the last frame, in order. It changes local state and can't draw, like every handler.
   - It sees what it takes of the match as the event's turn left it, even when the entity is gone by the frame: that's what makes `Destroyed` say where something ended. Only what handlers take is kept.
   - The engine's own events have them too: `Spawned`, `Destroyed`, `PlayerJoined` and `PlayerLeft`.
@@ -736,7 +835,7 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 ### Open
 
 - Events for a component being added or removed.
-- Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for loops over queries.
+- Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for queries in the match's event handlers, command handlers and tasks, which only systems, views and local handlers take so far.
 - Local handlers: text and lists of the match in what they hear; the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
 
 ## Commands
@@ -1280,7 +1379,7 @@ component Pose
 ```csharp
 view RenderGame(Player player, with ownership)
 {
-    Draw3D.Camera(player.pos, player.rot, 75);
+    Draw3D.SetCamera(player.pos, player.rot, 75);
 }
 
 view Nameplates(Player player, without ownership) { ... }
@@ -1311,14 +1410,19 @@ view Board(verified Duel duel) { ... }
   - "The same entity" in both worlds is the same entity, not only the same handle: a rollback can give a handle to another entity (see Local state, an entity after a rollback).
   - Filters take it too: `with verified Dead`, `without verified Dead`. So do singletons: `verified Duel duel`.
   - A `verified` value isn't blended: it's as the last confirmed tick has it.
-  - In match code it's an error: the match is the same on every machine and has no "confirmed". Systems, match handlers, tasks and queries say so, and point to views and local handlers.
+  - In match code it's an error: the match is the same on every machine and has no "confirmed". Systems, match handlers, tasks and their queries say so, and point to views and local handlers.
   - With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says. To hold a death until it's confirmed, a game makes the death a state of a living entity (a field or a tag), takes everything `verified` in that view, or shows it from `local event(verified Destroyed)`.
   - A local handler takes it on its event: `local event(verified Died died)` (see Events).
 - Meshes are the general shape: `Draw2D.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with other drawing calls. `Draw3D` also supplies cube, sphere, cylinder and plane helpers.
-- `Texture` is a local, read-only image reference. `RenderTarget` is a local drawing destination whose `.color` is a `Texture`. Target receiver methods (`scene.Clear`, `scene.Camera`, `scene.Mesh` and the other drawing methods) make the destination explicit. Ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`; the window has no sampleable `.color`. Each target has independent frame camera and clip state, shared across views, and switching passes preserves color and depth. A clear resets both within its clip.
-- `RenderTarget(width, height)` creates an image with positive pixel dimensions in local code. Its color and depth persist across frames. Copies, including `.color` references, share the image. `target.Resize(width, height)` changes its dimensions and discards its contents, even at the same size. `target.Dispose()` invalidates all aliases and releases its attachments; repeated disposal is harmless. A default target is invalid. These operations cannot run in field defaults or the match. Invalid destinations and disposed sources skip drawing with a diagnostic, including already-recorded uses of an image disposed in the frame. `Draw.window` cannot be resized or disposed. Hot reload retains managed dimensions and shared aliases, adopting their state natively and recreating their images on the web; borrowed references are cleared and rendered contents are discarded. Device loss discards GPU contents.
+- `Texture` is a local, read-only image reference. `RenderTarget` is a local drawing destination whose `.color` is a `Texture`. Target receiver methods (`scene.Clear`, `scene.SetCamera`, `scene.Mesh` and the other drawing methods) make the destination explicit. Ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`; the window has no sampleable `.color`. Each target has independent frame camera and clip state, shared across views, and switching passes preserves color and depth. A clear resets both within its clip.
+- A render target's size is in logical pixels, like the window's, and its image is made at the display's scale: `RenderTarget(width, height)` creates one in local code, of a positive width and height. Drawing into a target is then the same as drawing into the window: `target.Screen()` is in logical pixels, text is fitted to the image's real pixels, shapes' edges are smooth over one of them, and conversions (`WorldToScreen` and the others), clips and a frag's `pixel.position` are in logical pixels.
+  - A third argument is its pixels per unit, the display's scale when left out: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels whatever the display, for pixel art and anything that must not depend on the display.
+  - `RenderTarget.Screen()` is a target that's always the window's size, and `RenderTarget.Screen(factor)` one that's always that part of it: `RenderTarget.Screen(0.5)` is half as wide and half as high. The engine makes it again when the window's size or the display's scale changes, and the game never calls `Resize` on it. What was drawn in it is lost then, which doesn't matter for a target a game draws again every frame.
+  - When the display's scale changes (the window moves to another monitor, a browser zooms), targets at the display's scale are made again and lose their contents, as with a lost device. Targets with pixels per unit of their own aren't touched.
+  - Nothing reads the display's scale: there's no `Screen.scale`.
+  - A target's color and depth persist across frames otherwise. Copies, including `.color` references, share the image. `target.Resize(width, height)` changes the size of a target that isn't the window's to size, and discards its contents, even at the same size. `target.Dispose()` invalidates all aliases and releases its attachments; repeated disposal is harmless. A default target is invalid. These operations cannot run in field defaults or the match. Invalid destinations and disposed sources skip drawing with a diagnostic, including already-recorded uses of an image disposed in the frame. `Draw.window` cannot be resized or disposed. Hot reload retains managed sizes, pixels per unit, whether a target follows the window, and shared aliases, adopting their state natively and recreating their images on the web; borrowed references are cleared and rendered contents are discarded. Device loss discards GPU contents.
 - `Grid2<Color>` remains a CPU pixel source: `Draw2D.Mesh(vertices, indices, texture)` accepts a sized grid or a `Texture`. Grid pixels can be local or match state and are uploaded again when their cells change. Rendering into a target never writes CPU grid cells.
-- `Draw.Blit(source, destination, frag)` has explicit source and destination. It runs a frag taking `Vertex` and one read-only `Texture` source parameter over a full destination quad, replacing color and alpha, preserving depth, and temporarily ignoring camera and clip. The source is a `Texture` or `Grid2<Color>`. Sampling the destination's own image is an error. GUI and stats stay on the window. Target storage is recreated after resize, hot reload and device loss; its previous rendered contents are lost.
+- `Draw.Blit(source, destination, frag)` has explicit source and destination. It runs a frag taking `Vertex` and one read-only `Texture` source parameter over a full destination quad, replacing color and alpha, preserving depth, and temporarily ignoring camera and clip (and the other draw settings, below, where it also takes a blend of its own). The source is a `Texture` or `Grid2<Color>`. Sampling the destination's own image is an error. GUI and stats stay on the window. Target storage is recreated after resize, hot reload and device loss; its previous rendered contents are lost.
 - Filtering is how a draw reads the pixels, not part of them: `Draw2D.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.
 - **Code the GPU runs is written in Tide: `frag` and `vert`.** They're declaration kinds, like `view`: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. Their signature says what they read, and the engine supplies it. Neither returns a value. A `Draw2D.Mesh` or `Draw3D.Mesh` names them after its other arguments, the vert first, and both are optional.
 
@@ -1350,7 +1454,7 @@ view DrawBox(Box box, Models models)
 ```
 
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
-  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, isn't there yet. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
+  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, isn't there yet. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are (or as `Draw.Blend` says, times `Draw.Tint`: see Draw settings).
   - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw2D.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`. One read-only `Texture` parameter per stage may receive an explicit draw source; both stages receive the same source when both take it.
   - There are no individual plain value arguments to bind: what a frag or vert reads lives in a component, a singleton (local ones included), or the ordinary instance struct supplied by `Draw2D.Instanced`/`Draw3D.Instanced`.
   - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
@@ -1358,8 +1462,7 @@ view DrawBox(Box box, Models models)
   - 2D meshes take them too: a vertex struct whose `position` is a `float2` is drawn through the 2D camera or the screen, in order with the other 2D calls.
   - They call ordinary Tide functions, which then have to stay within what the GPU runs.
   - What the GPU computes differs between machines, so it never reaches the match: frags and verts are local code, as views are, and what `Math` makes of floats there is the GPU's own rounding, not Tide's deterministic functions. Only its integers, `Math.Hash`, are the same there as in the match.
-- `Draw2D.Clip(rect)` keeps the Draw calls after it inside a rectangle, and `Draw2D.Clip()` ends it.
-- `Draw2D.Screen()` puts the Draw calls after it in the screen's pixels, from the top left with `y` down, as the GUI's are. What views draw there is under the GUI's widgets.
+- Draw settings (below) say how what's drawn comes out and where it lands: how it blends, what tints it, what moves it, the clip, the camera, and the screen's pixels in the camera's place.
 - **The mouse's cursor is locked by asking, frame by frame.** `Cursor.Lock()` asks for the cursor's lock, for a camera that looks around. A view, or a function it calls, calls it every frame it wants the mouse, as with `GUI.ShowKeyboard()`: the lock is held while some view asked in the frame that just ended. When no view asks (a pause menu is up, the match ended), the cursor comes back on its own. There's no `Unlock`.
 - `Cursor.locked` is whether the lock holds right now, a `bool`. It's what the platform says, not what was asked, since a platform may refuse the lock or drop it.
 - While the cursor is locked, it's hidden, `devices.mouse.position` and the pointer's stay where they were, `devices.mouse.delta` keeps coming with no screen's edge to stop at (the mouse's own movement, without acceleration, where the system gives it), and the GUI sees no pointer: nothing hovers, and a click presses no widget.
@@ -1388,7 +1491,7 @@ local singleton Menu
 
 view Look(Devices devices, Viewer viewer, mut Menu menu)
 {
-    Draw3D.Camera(viewer.position, viewer.rotation, 75);
+    Draw3D.SetCamera(viewer.position, viewer.rotation, 75);
     if (devices.keyboard.escape.down) menu.paused = true;
     if (!menu.paused) Cursor.Lock();
     // The lock went away on its own, as it does at Escape: the pause menu
@@ -1426,20 +1529,85 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 }
 ```
 
+#### Draw settings
+
+- A setting changes how everything drawn after it comes out. Each has two forms, told apart by name. The plain name wraps a block, and puts back what it found when the block ends. The `Set` name stays for the draws that follow, in this view and the views after it, until it's set again or the frame ends:
+
+```csharp
+Draw.Blend(Blend.Add) { ... }      // Around some draws
+Draw.SetBlend(Blend.Add);          // For the views that follow, as a camera is set for a frame
+```
+
+- The settings, all with the same two forms:
+  - `Blend` and `SetBlend`: how colors go over what's there. `Blend.Alpha` (the default: by their alpha), `Blend.Add`, `Blend.Multiply` and `Blend.Replace`.
+  - `Tint` and `SetTint`: fades or colors everything inside, multiplying its color and its alpha.
+  - `Transform` and `SetTransform`: moves, turns and scales everything inside.
+  - `Clip` and `SetClip`: only what's inside a rectangle draws.
+  - `Camera` and `SetCamera`: the camera the draws go through.
+  - `Screen` and `SetScreen`: the draws are in the screen's pixels, from the top left with `y` down, as the GUI's are. `Draw2D.Screen() { ... }` lets a view of the world draw a label in pixels, and leaves the camera as it was for the views after it. What views draw on the screen is under the GUI's widgets.
+  - Depth, cull and mask come later, with the same rule.
+- A form written as the other is a compile error, whose message names the other: `Draw.Blend(x);` with no block points to `Draw.SetBlend`, and `Draw.SetBlend(x) { }` to `Draw.Blend`. The spellings from before settings had two forms are errors the same way: `Draw2D.Camera(...);`, `Draw3D.Camera(...);`, `Draw2D.Clip(rect);`, `Draw2D.Clip();` and `Draw2D.Screen();`, and each on a render target. The language server offers the rename as a quick fix.
+- Every frame starts from the defaults. The GUI and the stats overlay are never drawn with a game's settings.
+- A block that's left early (`return`, `try`, `fail`, `break`, `continue`) still puts back what it found, as a GUI container is still closed.
+- Settings can be listed with commas before one block, with each other and with any other call that takes one (see Calls that take a block).
+
+```csharp
+view Sparks(Spark spark, Hud hud)
+{
+    Draw.Blend(Blend.Add),
+    Draw.Tint(Color(1, 1, 1, spark.life))
+    {
+        Draw2D.Circle(spark.position, spark.radius, spark.color);
+    }
+    Draw2D.Screen()
+    {
+        Draw2D.Text(spark.name, Draw2D.WorldToScreen(spark.position), 14, Color.white);
+    }
+}
+```
+
 ### Provisional
 
+- Draw settings, where the decided rules above leave a choice (to confirm):
+  - **Where each lives.** What says how a draw comes out is the same wherever it's drawn, and is `Draw`'s: `Draw.Blend` and `Draw.Tint`, which `Draw2D` and `Draw3D` share. What says where a draw lands belongs to its destination, as cameras and clips already did: `Draw2D.Transform`, `Draw2D.Clip`, `Draw2D.Camera`, `Draw2D.Screen`, `Draw3D.Transform` and `Draw3D.Camera` are the window's, and a render target has each as a method, in both forms (`target.Clip(rect) { ... }`, `target.SetCamera(...)`), its own for the frame. A target's 2D and 3D forms are told apart by their arguments. So a blend or a tint around draws into a target applies to them, and the window's clip or transform doesn't.
+  - **Putting a `Set` back.** A `Set` with no arguments sets what each frame starts with: `Draw.SetBlend()` is `Blend.Alpha`, `Draw.SetTint()` no tint, `Draw2D.SetTransform()` and `Draw3D.SetTransform()` no transform, `Draw2D.SetClip()` no clip, `Draw2D.SetCamera()` the first camera (the origin at the middle of the screen, a world unit a pixel, which is also how to leave the screen's pixels) and `Draw3D.SetCamera()` the first 3D one. On a target, `target.SetCamera()` and `target.SetTransform()` put back both the 2D and the 3D one. `Draw2D.NoClip()` is gone: it's `Draw2D.SetClip()`.
+  - **Nesting.** A block's setting is inside the one it found, where that means something: a clip in a clip is what of its rect is inside the outer one, a tint multiplies the tint there is, and a transform is inside the transform there is. A blend, a camera and the screen have nothing to be inside, and replace what's there. A `Set` sets outright, in a block too: `Draw2D.SetClip(rect)` inside a `Draw2D.Clip` block isn't inside its clip, and the block still puts back what it found when it ends.
+  - **`Blend`** is a built-in enum: `Alpha`, `Add`, `Multiply`, `Replace`. A game can't declare the name outside a namespace. In each, a color's alpha is how much of it there is: `Add` adds the color times its alpha, as light adds, and `Multiply` multiplies what's there by the color, by less as its alpha goes to 0, so what's clear (a shape's smooth edge, the gaps in text) changes nothing. `Replace` writes the color and its alpha as they are. In a render target, `Add` also adds its alpha to the one there, and `Multiply` leaves that one alone.
+  - **`Tint`** takes a `Color`. It multiplies shapes' and text's colors, a mesh's corners', a 3D mesh's, and what a `frag` wrote, alpha included.
+  - **`Draw2D.Transform`** takes `(offset)`, `(offset, rotation)`, `(offset, rotation, scale)` with a `float` or a `float2` scale, or a `float3x3` matrix. `offset` is a `float2` in the units the calls are in, `rotation` is in radians from `+x` towards `+y`, as shapes' are, and the draws are scaled, then turned, then moved, all about (0, 0). The matrix's first two columns are where (1, 0) and (0, 1) go, and its third where (0, 0) does. **`Draw3D.Transform`** takes a `float4x4`, which each mesh's own transform goes through on its way to the world.
+  - A transform is no part of the conversions: `Draw2D.WorldToScreen` and the others are the camera's alone. `Draw2D.MeasureText` is in the units the transform takes, so inside one, text measures as it's drawn.
+  - **Shapes under a transform** stay shapes. Moved, turned, mirrored and scaled as much each way, they're exactly that, and rects that are only moved and scaled still fill whole pixels, so tiles under one leave no seams. A transform that stretches (more one way than the other) or skews gives the nearest shape: a circle or an ellipse is the ellipse it becomes, a rect's sides follow its own axes, and what has no direction (a corner's radius, an outline's width, how far an edge fades, a ring's radius) is scaled by the transform's mean. A `WireRect` or `WireCircle` that's turned or stretched keeps an outline a pixel wide. Meshes go through any transform as they are, corner by corner.
+  - **Text under a transform**: moved, and scaled as much each way, it's text of that size, fitted to the display's pixels as any text (so as a scale changes, it steps from one whole size to the next, as it does under a camera that zooms). Turned, stretched or mirrored, it has no pixels to fit: it's laid out as it would be upright, at the size the transform's mean scale makes it, and drawn through the transform, softer than upright text. Either way its anchor's place is its `position` through the transform, and its box is against it as it is upright, then turned with it.
+  - **A clip under a transform** is the upright rect around what its rect becomes: clips don't turn.
+  - **`frag` and `vert`**: a mesh drawn through them blends as the setting says, its frag's color is multiplied by the tint, and a 2D one's vertices go through the transform after its vert, before the camera. A 3D one's `instance.transform` is its own through `Draw3D.Transform`.
+  - **`Draw2D.Clear` and `Draw3D.Clear`** fill what the clip leaves with their color as it is: no blend, tint or transform changes a clear.
+  - **`Draw.Blit`** is its destination's, whatever is set: no blend, tint, transform, camera or clip changes it. It takes a blend of its own before its frag, `Draw.Blit(source, destination, Blend.Add, frag)`, and replaces what's there without one. So a pass over the screen doesn't change with what an earlier view left set.
+  - A setting that's set to what it was, or set and put back with nothing drawn, costs nothing: what's drawn on either side of it is still drawn at once. A tint and a 2D transform are worked into shapes and text as they're recorded, so shapes with a tint or a transform each are still one draw call. A mesh through a `frag` gets its tint and its 2D transform with its draw, so instances with different ones are different draws.
+  - In C (`tide/draw.h`), `tide_draw_set_*` are the `Set` forms (`tide_draw_set_camera`, `tide_draw_set_clip`, `tide_draw_set_screen`, `tide_draw_set_blend`...), `tide_draw_unset_*` the ones with no arguments, and `tide_draw_push_*` with `tide_draw_pop(list, mark)` the blocks. The former `tide_draw_camera`, `tide_draw_camera_3d`, `tide_draw_camera_matrices`, `tide_draw_clip`, `tide_draw_no_clip` and `tide_draw_screen` were renamed to match.
 - **`verified` in views**, beyond what's decided:
   - Any `verified` component or filter asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so an entity whose spawn isn't confirmed yet is skipped by it too.
   - The same entity is told by what each was born as, where this machine knows it of both, and by its handle otherwise (an entity that came with a world the server sent).
   - `mut` goes with it: `mut verified Health health` reads the confirmed `Health` and writes the entity's local fields, which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`; through the other it's an error that says so.
   - A view of the confirmed world's entities draws them as they are there: nothing it reads of them is blended, corrections aren't smoothed, and `this` is the confirmed entity. Its `World` is still the world it draws.
-  - Text, lists, maps, sets and grids of the confirmed world aren't read yet: naming one through a `verified` parameter is an error, and a copy of the value has them empty. They're read through a parameter that isn't `verified`.
+  - A `verified` value is whole: its text, lists, maps, sets and grids are the confirmed world's, read like any other's, through members, methods, loops, copies of the value and the functions it's passed to. Nothing of them is copied to read them, but the elements of a list or map whose elements hold text, which a view gets a copy of each time it runs. They're to read: like everything a view takes of the match, a change goes to a copy, in a local or in local state.
   - `verified World world` isn't built: an error that points to `verified` component parameters.
   - A frag or vert can't say `verified`: it reads what its view is given. The mesh's components are the view's own as it draws them (the ones that aren't `verified`, where it takes one both ways), and the confirmed ones in a view of the confirmed world's entities.
   - A function's parameter can't say it either: the view takes it `verified` and passes it on.
   - With one world and no server, as on a C host that ticks a world itself, that world is the confirmed one too.
   - Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match.
   - `verified` is a word of its own before a parameter's type where a type and a name follow, after `with` or `without` where a name follows, and before an event in a handler's `event(...)`. Anywhere else it's a name like any other.
+- **Queries in views and local handlers**, beyond what's decided (see Read-only entity queries):
+  - **Rows are read-only, and have the match's fields only.** `mut` on a binding is an error, in a view as in a system, and a row doesn't reach an entity's local fields, to read or to write: those are a view's that runs for the entity, through its own parameter. Naming one through a row is an error that says so.
+  - `entry.entity` is an `Entity` for the match's entities, the confirmed world's handle in a query whose bindings and filters are all `verified`, and a `LocalEntity` for a local query's.
+  - **Outside a match, a view with a query over the match doesn't run**, like any view that reads the match: a view only runs when everything it reads exists. A query that names no component is the match's in a view. A game that wants the rest of the view to go on outside a match keeps the query in a view of its own.
+  - A view's rows are made once a frame for the view, when it first runs for an entity, so a view no entity matches makes none, and a view that runs for each of its entities doesn't blend a query's again for each. Correction smoothing (`[Position]`, `[Rotation]`) applies to them as to the view's own parameters. Text and lists of the world the view draws are read through a row as through a parameter.
+  - As for a view's own parameters: any `verified` binding or filter asks for the entity in the confirmed world; a `verified` binding isn't blended, and its text, lists, maps, sets and grids are the confirmed world's, read from its heap; the same component can be bound both ways in one query, `query (Health health, verified Health sure) both`; with one world and no server, that world is the confirmed one too.
+  - **A local query** reads the local world as it is, with what views earlier in the frame wrote. A view that changes a local component it also queries sees the rows it changed earlier in that run, as a system does, and its own entity's as it was before the view ran for it.
+  - `ownership` isn't a query filter, in a view either: an error, as in a system.
+  - **A local handler's rows are its event's tick's once that tick is done**: after all its events and changes, not as each event's turn left things, where the handler's own components are. So an entity the tick destroyed is in no row, the one the event was sent to included, and one it spawned is in them. They aren't blended. The tick records them once, whichever of its events have a handler that reads them, and only when it sent one.
+  - Under rollback, a handler that hears a tick as it's predicted gets the rows of the run that first sent its event, and one of a `verified` event the confirmed run's.
+  - Nothing in a local handler's query says `verified`: its event does, for all of it. Text, lists, maps, sets and grids of the match aren't in its rows (an error to name, and empty in a copy), as for what the handler takes itself.
+  - A query of this machine's entities in a local handler is the local world as it is when the handler runs. A handler of a local event, `Forgotten` among them, takes only those. A query over the match counts as something of the match's for `Spawned` and `Destroyed`: a local handler of one that takes it hears the match's.
 - `frag` and `vert` declare code the GPU runs for a mesh's pixels and vertices (above, and GPU code below).
 - `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
 - Views run in declaration order, after all the systems of the frame's ticks. Within a view, entities run in the same order as in systems.
@@ -1448,7 +1616,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - Positions and sizes are in world units with `y` up. The camera maps them to the screen.
 - The Draw functions:
   - `Draw2D.Clear(color)`: fills the screen.
-  - `Draw2D.Camera(center, size)`: the camera for the Draw calls after it. `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size. Each frame starts black, with the camera at the origin and one world unit per pixel.
+  - `Draw2D.SetCamera(center, size)`, or `Draw2D.Camera(center, size) { ... }` around a block (see Draw settings): the camera for the Draw calls. `center` is the world position at the middle of the screen, and `size` is half the visible height, like Unity's orthographic size. Each frame starts black, with the camera at the origin and one world unit per pixel.
   - `Draw2D.Circle(center, radius, color)` and `Draw2D.WireCircle(center, radius, color)`.
   - `Draw2D.Rect(center, size, color)` and `Draw2D.WireRect(center, size, color)`.
   - `Draw2D.Line(from, to, color)`.
@@ -1463,20 +1631,28 @@ event(Died dead) Respawn(mut Body body, Arena arena)
     - Bold is fitted to pixels by its own measures, as the regular weight is by its: its stems are a whole number of pixels thick. Under 13 of the display's pixels that's one pixel in both weights, where bold only differs in its letters' shapes and widths.
     - An `Anchor` made of a number that's none of the nine (`Anchor(40)`) is `Anchor.UpperLeft`.
     - Measuring takes no anchor: a text is as big at every one.
-  - `Draw2D.MeasureText(text, size)` and `Draw2D.MeasureText(text, size, font)` draw nothing, and return a `float2`: how big `Draw2D.Text` would draw `text` at `size` where the call is, in the weight `font` (`Font.Regular` without one), with the width of its widest line in `x` and the height of its lines in `y`. Both are positive and in the units the Draw calls are in: the screen's pixels after `Draw2D.Screen()`, and world units under the 2D camera. It's the text's box, which an anchor names a place of: without one, the text reaches `x` to the right of its `position` and `y` below it on the screen. One line is `size` high, and each newline adds the distance from one line to the next; an empty text is still one line high. A `size` that isn't above 0 gives zero, as nothing is drawn. Text is fitted to the display's pixels, so the answer is the one for this display, this camera and this frame, to the pixel: it's measured where it's drawn rather than kept. `target.MeasureText(text, size)` and `target.MeasureText(text, size, font)` measure for a render target, in its own pixels and through its own camera. The name, and that it returns one `float2` rather than a width alone, are the implementation's picks, not yet confirmed.
+  - `Draw2D.MeasureText(text, size)` and `Draw2D.MeasureText(text, size, font)` draw nothing, and return a `float2`: how big `Draw2D.Text` would draw `text` at `size` where the call is, in the weight `font` (`Font.Regular` without one), with the width of its widest line in `x` and the height of its lines in `y`. Both are positive and in the units the Draw calls are in: the screen's pixels on the screen, and world units under the 2D camera. It's the text's box, which an anchor names a place of: without one, the text reaches `x` to the right of its `position` and `y` below it on the screen. One line is `size` high, and each newline adds the distance from one line to the next; an empty text is still one line high. A `size` that isn't above 0 gives zero, as nothing is drawn. Text is fitted to the display's pixels, so the answer is the one for this display, this camera and this frame, to the pixel: it's measured where it's drawn rather than kept. `target.MeasureText(text, size)` and `target.MeasureText(text, size, font)` measure for a render target, through its own camera: in the units its calls are in, as the text is fitted to its image's own pixels. The name, and that it returns one `float2` rather than a width alone, are the implementation's picks, not yet confirmed.
   - `Draw2D.Mesh(vertices, indices)`, `Draw2D.Mesh(vertices, indices, texture)` and `Draw2D.Mesh(vertices, indices, texture, filter)`: a `List<Vertex>`, a `List<int>`, a `Grid2<Color>` and a `Filter`.
-  - `Draw2D.Clip(rect)` and `Draw2D.Clip()`, and `Draw2D.Screen()`.
-  - In 3D: `Draw3D.Camera(position, rotation, fieldOfView)` and `Draw3D.Camera(transform, projection)`, and `Draw3D.Mesh(vertices, indices, transform)`, `Draw3D.Mesh(vertices, indices, transform, texture)` and `Draw3D.Mesh(vertices, indices, transform, texture, filter)`: a `List<Vertex3>`, a `List<int>`, a `float4x4`, a `Grid2<Color>` and a `Filter`.
+  - The other settings (see Draw settings): `Draw.Blend(mode)`, `Draw.Tint(color)`, `Draw2D.Transform(...)`, `Draw3D.Transform(transform)`, `Draw2D.Clip(rect)` and `Draw2D.Screen()`, each around a block, and each with its `Set` form.
+  - In 3D: `Draw3D.SetCamera(position, rotation, fieldOfView)` and `Draw3D.SetCamera(transform, projection)`, or `Draw3D.Camera` with either around a block, and `Draw3D.Mesh(vertices, indices, transform)`, `Draw3D.Mesh(vertices, indices, transform, texture)` and `Draw3D.Mesh(vertices, indices, transform, texture, filter)`: a `List<Vertex3>`, a `List<int>`, a `float4x4`, a `Grid2<Color>` and a `Filter`.
   - Both `Draw2D.Mesh` and `Draw3D.Mesh` take a list of a vertex struct of the game's instead, and after their other arguments, a vert and a frag by name (GPU code, below). `Draw2D` requires a `float2 position`, and `Draw3D` a `float3 position`.
-  - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip`.
+  - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip` and `Draw2D.SetClip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
-  - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
+  - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; on the screen (`Draw2D.Screen`, `Draw2D.SetScreen`) they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
   - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Device positions count from the bottom left, so they go through `Screen.Flip` first (see GUI, Provisional): `Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position))`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
-  - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` supplies only `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
+  - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` has what the two share: `Blend`, `Tint`, `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
+- A render target's size (above), in what the agreed design leaves open. These are the implementation's picks, not yet confirmed:
+  - Sizes are numbers, not only ints, as `Screen.width` and `Screen.height` are floats: `RenderTarget(Screen.width / 4, 90.5)`. `Resize` takes them the same way.
+  - A target's image has the whole number of pixels nearest its size times its scale, one at least, each way. It's then stretched over the target's size by under half a pixel, as a window's pixels are on a display with a scale that isn't whole: the size stays what was asked for, so conversions and what's drawn at the target's edges land where the size says. A `RenderTarget.Screen(factor)` target has the window's own pixels times the factor, rounded the same way, so `RenderTarget.Screen()` has the window's pixels exactly.
+  - A width, a height, pixels per unit or a factor that isn't above 0, or isn't a number, makes an invalid target, as a default one is, with a diagnostic: drawing with it is skipped.
+  - `Resize` on a target made with `RenderTarget.Screen` does nothing but a diagnostic: its size is the window's to say. It can't be known when the code is checked, as a target is a value. `Resize` takes no pixels per unit: a target keeps the ones it was made with, and one that wants others is disposed of and made again.
+  - No image is bigger than the GPU's largest texture a side. A target that would be, after its scale, keeps its shape with fewer pixels, the most that fit, with a diagnostic when its image is made: what's drawn into it lands where it would, less sharp.
+  - A target at the display's scale takes the scale of what its frame is drawn into: the window's or, in a run with no window, the run's `--scale`. A host's C that reads pixels back from a frame of its own (`tide_platform_read_pixels`) draws it at a scale of 1, whatever the display's.
+  - A target that follows the window has no pixels per unit of its own: `RenderTarget.Screen(factor)` is at the display's scale. A pass that wants the same number of pixels on every display, whatever the window's size, has no form yet.
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
 - `Rect`, `WireRect` and the `Line` with no width fill whole pixels, so rects side by side leave no seam and a line is a pixel wide wherever it is. `Circle` and `WireCircle` have a smooth edge, the outline a pixel wide. The other shapes are the smooth ones: a pixel is in one by how far it is from the shape's edge, which is smooth over one pixel of the screen at any size, turned any way.
-  - Their lengths (sizes, radii, widths) are in the units the calls are in, as positions are: the world's under a camera, pixels after `Draw2D.Screen()`. A size, radius or width that isn't above 0 draws nothing.
+  - Their lengths (sizes, radii, widths) are in the units the calls are in, as positions are: the world's under a camera, pixels on the screen. A size, radius or width that isn't above 0 draws nothing.
   - Angles are in radians, from `+x` towards `+y`: counterclockwise under a camera, where `y` goes up, and clockwise on the screen, where it goes down. A `rotation` turns a shape about its center.
   - A `radius` rounds a rect's corners, no more than half its smaller side. An ellipse's `radii` are half its width and half its height. An outline (`width`) is inside the shape's edge, no wider than half the shape's smaller side. A thick line's ends are round, and reach half its width past where it ends.
   - `Arc` is part of a ring: of the circle outline `width` thick inside `radius`, what's from the angle `start` on for `sweep`, the other way round for a sweep under 0, cut straight across at both ends. A width of the radius is a slice of a disc. A sweep of a whole turn or more is the whole ring.
@@ -1494,9 +1670,9 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 - The engine tells whether a grid's cells changed from the hashes it keeps of the grid's chunks, without reading the cells: a frame that changed nothing costs a hash per chunk. A texture no call of a frame draws with is let go, and comes back when one does.
 - Views read the match's grids as they are at the latest tick: cells aren't blended.
 - `[a, b, c]` where a built-in function takes a list is that list, as it is for a function's argument: `Draw2D.Mesh(corners, [0, 1, 2])`.
-- `Draw2D.Clip`'s `Rect` goes from (x, y) to (x + width, y + height) in the units the calls are in: the world's under a camera, with `y` up, and pixels after `Draw2D.Screen()`. It's set where it lands on the screen then, to whole pixels, and stays there when the camera changes. `Draw2D.Clear` fills the clip. Each frame starts with none, and a view's clip never clips the GUI.
-- `Draw2D.Camera` after `Draw2D.Screen()` goes back to the world.
-- 3D meshes go through a camera of their own, which the 2D one and `Draw2D.Screen()` leave as it is, and the other calls go through theirs whatever the 3D camera is.
+- A clip's `Rect` goes from (x, y) to (x + width, y + height) in the units the calls are in: the world's under a camera, with `y` up, and pixels on the screen. It's where it lands on the screen then, to whole pixels, and stays there when the camera changes. `Draw2D.Clear` fills the clip. Each frame starts with none, and a view's clip never clips the GUI.
+- `Draw2D.SetCamera` after `Draw2D.SetScreen()` goes back to the world.
+- 3D meshes go through a camera of their own, which the 2D one and the screen leave as it is, and the other calls go through theirs whatever the 3D camera is.
 - GPU code (`frag`, `vert` and the functions they call):
   - **`color` starts as `Color.white`** (to confirm). It isn't the pixel already on the screen, which a GPU doesn't let a frag read, though `mut` elsewhere means reading what's there and changing it. A frag that never writes it draws white.
   - `frag` and `vert` are keywords only at the start of a declaration, like `view`. They share their names with functions: a frag and a function can't have the same name. Nothing calls one, and its name is no value: `Draw2D.Mesh`, `Draw3D.Mesh`, either namespace's `Instanced`, and `Draw.Blit` name it. `local` before one is an error, as it's local already.
@@ -1508,7 +1684,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - Only the fields the code reads are sent: a component's with each instance, and a singleton's once for the draw. Reading a parameter whole, as a value passed on, sends all of its fields.
   - A `local` field of the match's component or singleton (see Local state) is read like any other field of it: what this machine keeps for the entity being drawn, or the field's default where nothing was written.
   - A frag or vert takes no `World`: the GPU is sent the components of the entity being drawn, and the view copies what it needs of others into a component of it or a singleton.
-  - **`Pixel pixel`** (to confirm) is a parameter a frag can take, which says where its pixel is: `pixel.position`, a `float2` in the screen's pixels from the top left, as `Draw2D.Screen()`'s; `pixel.depth`, a `float` from 0 at the camera's near side to 1; and `pixel.world`, a `float3`, where on the mesh it is in the world: the vertex's position after the vert, through the draw's transform, blended. A 2D mesh's is its position in the units it's drawn in, with `z` 0.
+  - **`Pixel pixel`** (to confirm) is a parameter a frag can take, which says where its pixel is: `pixel.position`, a `float2` in the screen's pixels from the top left, as `Draw2D.Screen`'s; `pixel.depth`, a `float` from 0 at the camera's near side to 1; and `pixel.world`, a `float3`, where on the mesh it is in the world: the vertex's position after the vert, through the draw's transform, blended. A 2D mesh's is its position in the units it's drawn in, with `z` 0.
   - **`Instance instance`** (to confirm) is a parameter a frag or a vert can take: `instance.transform` is the `float4x4` the draw was given, and the identity for a 2D mesh. A normal in the world is `Math.Rotate(instance.transform, vertex.normal)`, in the vert or in the frag.
   - `Pixel` and `Instance` are built in only as a frag's or vert's parameter types. A game that declares a type of its own with either name gets its own there.
   - The camera isn't given: a game keeps where its camera is in its own state, which a frag takes like any singleton.
@@ -1524,13 +1700,13 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - Never there: lists, maps and sets, text, entities and players, `byte`, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Frame`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
   - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
-  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 4000 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
+  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
   - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
   - A function both the CPU and the GPU run compiles for both.
   - `tide shaders` (`tidec --shaders`) prints each shader, as GLSL and as WGSL. No game sees a shader compiler's error: what tidec writes always compiles.
 - Colors: `+`, `-` and `*` between two colors work channel by channel, alpha too, and a color times a number, or divided by one, scales every channel.
-- `Draw3D.Camera(position, rotation, fieldOfView)` is a perspective camera: at `position`, looking along `rotation`'s `+z` with its `+x` to the right of the screen and `+y` up, as Unity's, and seeing `fieldOfView` degrees up and down (clamped to 0.00001 to 179, as Unity does), as much across as the screen's shape gives. It sees from 0.3 units in front of it on, as Unity's cameras, and has no far side, which costs depth precision next to nothing. Each frame starts with one at the origin, looking along `+z`, with 60 degrees.
-- `Draw3D.Camera(transform, projection)` is any camera: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees, looking down `-z` (OpenGL's and Unity's view space), to clip space, the screen's shape included. `Screen.width / Screen.height` is the shape.
+- `Draw3D.SetCamera(position, rotation, fieldOfView)` (and `Draw3D.Camera` with the same, around a block) is a perspective camera: at `position`, looking along `rotation`'s `+z` with its `+x` to the right of the screen and `+y` up, as Unity's, and seeing `fieldOfView` degrees up and down (clamped to 0.00001 to 179, as Unity does), as much across as the screen's shape gives. It sees from 0.3 units in front of it on, as Unity's cameras, and has no far side, which costs depth precision next to nothing. Each frame starts with one at the origin, looking along `+z`, with 60 degrees.
+- `Draw3D.SetCamera(transform, projection)` is any camera: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees, looking down `-z` (OpenGL's and Unity's view space), to clip space, the screen's shape included. `Screen.width / Screen.height` is the shape.
 - `Vertex3` is a built-in struct: `float3 position`, `float2 uv` and `Color color = Color.white`. A game can't declare the name outside a namespace.
 - 3D meshes are the only calls that test and write depth: they hide each other by how far they are, whatever their order, and every other call draws over what's there, in order. `Draw2D.Clear` clears depth too, within the clip. A see-through 3D mesh blends with what's behind it and writes depth like any other. Triangles, textures and filters are as a mesh's: either side draws, and there's no lighting.
 - A 3D mesh is its two lists. The engine keeps a copy of each it draws, on the GPU too, and only copies it again when it changed: a world's list tells from the hashes its heap keeps of its pages (a list in chunks, of each chunk's), so drawing one that didn't change costs a hash for each of its pages; a list made along the way is read. A mesh no call of a frame draws is let go. A mesh that changed is another copy, so what a frame drew before it changed stays as it was.
@@ -1562,7 +1738,7 @@ view DrawBalls(Body body, Ball ball)
 
 view DrawHud(Arena arena)
 {
-    Draw2D.Camera(float2(0, 0), arena.halfSize.y);
+    Draw2D.SetCamera(float2(0, 0), arena.halfSize.y);
     Draw2D.Text("fire: space", float2(-arena.halfSize.x, arena.halfSize.y), 18, Color.gray);
 }
 ```
@@ -1571,7 +1747,8 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - **Blending confirmed state.** A `verified` value is as the last confirmed tick has it, so it steps at the tick rate. Showing other players from confirmed state, blended between confirmed ticks rather than predicted ahead (a competitive shooter wants their positions not extrapolated), needs that, and may belong at another level than a parameter's modifier.
-- `verified World`, and the confirmed world's text and lists.
+- `verified World`: the confirmed world's other entities, by their handles.
+- Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
 - Views reading input, for example to draw where the local player aims before the tick runs.
 - GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.
@@ -1648,7 +1825,7 @@ local singleton Lobby
 // A card the view draws itself: the GUI says what the player does with it
 view Cards(mut Hand hand)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     for (var slot = 0; slot < 3; slot++)
     {
         var rect = Rect(40 + slot * 220, 200, 200, 280);
@@ -2163,9 +2340,9 @@ Implemented, awaiting approval:
 - C gets text as it is when a zero follows it, and a copy in the scratch area otherwise. Text C returns is copied into the scratch area, as C may reuse its memory; NULL is empty text. A `mut string` can't go to C.
 - An `Action` and the devices can't be passed to C, nor structs that hold text or lists.
 - `DrawList` is only an extern function's parameter, a `tide_draw_list *` in C, neither `mut` nor `in`. `Draw2D.list` is only an argument for one: a local, a field or a Tide function's parameter can't hold it. It needs the frame, as drawing does, so it's an error in systems, tasks and a parallel loop's steps.
-- C draws meshes with `tide_draw_mesh`, or `tide_draw_vertices` and `tide_draw_triangles` for vertices that several batches share, and clips with `tide_draw_clip` and `tide_draw_no_clip`. `tide_vertex` is `Vertex`.
+- C draws meshes with `tide_draw_mesh`, or `tide_draw_vertices` and `tide_draw_triangles` for vertices that several batches share, and clips with `tide_draw_set_clip` and `tide_draw_unset_clip`, or `tide_draw_push_clip` and `tide_draw_pop` around some of them. `tide_vertex` is `Vertex`.
 - Shaders are tidec's to write: generated code draws through them with `tide_draw_mesh_shaded` (`tide/mesh.h`) and a `tide_shader` (`tide/draw.h`), and C has no frag or vert of its own yet.
-- C draws 3D meshes with `tide_draw_mesh_3d`, through `tide_draw_camera_3d` and `tide_draw_camera_matrices`. `tide_vertex3` is `Vertex3`. A `tide_mesh` is its vertices and indices where C keeps them, and a `version`, as a texture's: the draw list copies them when it hasn't got that version, and C says they changed by changing it (`tide_mesh_version` hashes them).
+- C draws 3D meshes with `tide_draw_mesh_3d`, through `tide_draw_set_camera_3d` and `tide_draw_set_camera_matrices`. `tide_vertex3` is `Vertex3`. A `tide_mesh` is its vertices and indices where C keeps them, and a `version`, as a texture's: the draw list copies them when it hasn't got that version, and C says they changed by changing it (`tide_mesh_version` hashes them).
 - C's textures are pixels it keeps: `tide_texture` is their address, `width`, `height` and a `version`, 4 bytes a pixel (red, green, blue, alpha), rows from the first. The draw list copies them when their version or size isn't what it last copied, so C can free or change them once the call returns, and says they changed by changing the version. C holds no handle, and nothing is created or freed.
 - At a hot reload the draw list forgets the textures it copied, as the new build's C may name other pixels at the same address and version.
 - Calls are put in order the way spawns and GUI calls are: what has to go first runs before its statement, and before a loop's condition each round. An `&&` or `||` whose right side calls C, or a `?:` whose sides do, runs as `if` statements then, so each part still only runs when it would, with its own calls in order. So do struct operators that call C.

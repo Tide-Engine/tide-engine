@@ -32,12 +32,16 @@ enum {
     GL_COLOR_BUFFER_BIT = 0x4000,
     GL_LEQUAL = 0x0203,
     GL_ALWAYS = 0x0207,
+    GL_ZERO = 0,
+    GL_ONE = 1,
     GL_SRC_ALPHA = 0x0302,
     GL_ONE_MINUS_SRC_ALPHA = 0x0303,
+    GL_DST_COLOR = 0x0306,
     GL_CULL_FACE = 0x0B44,
     GL_DEPTH_TEST = 0x0B71,
     GL_BLEND = 0x0BE2,
     GL_SCISSOR_TEST = 0x0C11,
+    GL_MAX_TEXTURE_SIZE = 0x0D33,
     GL_UNPACK_ALIGNMENT = 0x0CF5,
     GL_PACK_ALIGNMENT = 0x0D05,
     GL_TEXTURE_2D = 0x0DE1,
@@ -59,6 +63,7 @@ enum {
     GL_DEPTH_COMPONENT24 = 0x81A6,
     GL_R8 = 0x8229,
     GL_TEXTURE0 = 0x84C0,
+    GL_MAX_RENDERBUFFER_SIZE = 0x84E8,
     GL_ARRAY_BUFFER = 0x8892,
     GL_ELEMENT_ARRAY_BUFFER = 0x8893,
     GL_STATIC_DRAW = 0x88E4,
@@ -90,6 +95,8 @@ enum {
     V(BindTexture, (GLenum target, GLuint texture), (target, texture))                                                 \
     V(BindVertexArray, (GLuint array), (array))                                                                        \
     V(BlendFunc, (GLenum source, GLenum destination), (source, destination))                                           \
+    V(BlendFuncSeparate, (GLenum source, GLenum destination, GLenum source_alpha, GLenum destination_alpha),          \
+      (source, destination, source_alpha, destination_alpha))                                                         \
     V(BufferData, (GLenum target, GLsizeiptr size, const void *data, GLenum usage), (target, size, data, usage))       \
     V(BufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const void *data), (target, offset, size, data)) \
     R(GLenum, CheckFramebufferStatus, (GLenum target), (target))                                                       \
@@ -124,6 +131,7 @@ enum {
     V(GenSamplers, (GLsizei count, GLuint *samplers), (count, samplers))                                               \
     V(GenTextures, (GLsizei count, GLuint *textures), (count, textures))                                               \
     V(GenVertexArrays, (GLsizei count, GLuint *arrays), (count, arrays))                                               \
+    V(GetIntegerv, (GLenum name, GLint *out), (name, out))                                                             \
     V(GetProgramInfoLog, (GLuint program, GLsizei capacity, GLsizei *length, GLchar *log),                             \
       (program, capacity, length, log))                                                                                \
     V(GetProgramiv, (GLuint program, GLenum name, GLint *out), (program, name, out))                                   \

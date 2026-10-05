@@ -1,0 +1,7 @@
+// expect: no version of Draw.SetBlend takes (int)
+scene Main { }
+
+view Show()
+{
+    Draw.SetBlend(1);
+}

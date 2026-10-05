@@ -32,6 +32,7 @@ tide <command> [folder] [options]
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--frames`, `--script`, `--scale` | `run` only: plays the game [without a window](#without-a-window), to see what it draws |
+| `--seed <n>` | `run` only: the seed of the matches the game starts, [`Time.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -167,8 +168,9 @@ tide run --frames 300 --capture menu.png
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
-| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there |
+| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/views.md#targets-and-post-processing) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
+| `--seed <n>` | The seed of the run's matches, 0 without it |
 
 ::: info Provisional
 These options' names and the script's format are new, and may still change.
@@ -181,7 +183,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
 - **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
 - **The window's size and scale are what you asked for,** whatever the display is.
-- **The match's seed is 0.** In a window, [`Time.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same.
+- **The match's seed is 0.** In a window, [`Time.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same. `--seed 7` picks another seed, to see the game roll otherwise: the same seed is the same run again.
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
 
@@ -229,7 +231,7 @@ tide run --script play.txt --size 1280 720
 | `key <name> down`, `key <name> up` | A key goes down or up, by its name in [`Devices`](../game/input.md#devices): `w`, `space`, `enter`, `leftShift`, `upArrow`, `digit1` |
 | `key <name>` | A tap: down for this frame, and up at the next |
 | `button <name> down`, `up`, or neither | A mouse button, the same way: `left`, `right`, `middle`, `back` or `forward`. `button left` is a click where the mouse is |
-| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw2D.Screen()`'s are |
+| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw2D.Screen`'s are |
 | `move <dx> <dy>` | The mouse moves by so much, across and down: what turns a camera whose [cursor is locked](../game/views.md#looking-around) |
 | `scroll <x> <y>` | The wheel turns, `y` positive away from you |
 | `text <characters>` | Characters typed, to the line's end, as [`devices.keyboard.text`](../game/input.md#typed-text) and the GUI's fields get them: 32 a frame, as a paste comes. No key is pressed for them: Enter and Backspace are `key` lines |

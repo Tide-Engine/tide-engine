@@ -141,8 +141,24 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
-          path: C:/llvm
-          key: llvm-tools-Windows-${{ env.LLVM_VERSION }}-${{ hashFiles('cmake/LLVM.cmake') }}
+          # Cache the build tools and their aliases, plus clang's resources.
+          # Debuggers, Fortran and the other LLVM programs aren't used here.
+          path: |
+            C:/llvm/bin/clang.exe
+            C:/llvm/bin/clang++.exe
+            C:/llvm/bin/clang-scan-deps.exe
+            C:/llvm/bin/llvm-ar.exe
+            C:/llvm/bin/llvm-ranlib.exe
+            C:/llvm/bin/llvm-lib.exe
+            C:/llvm/bin/llvm-rc.exe
+            C:/llvm/bin/llvm-windres.exe
+            C:/llvm/bin/llvm-mt.exe
+            C:/llvm/bin/lld.exe
+            C:/llvm/bin/ld.lld.exe
+            C:/llvm/bin/lld-link.exe
+            C:/llvm/bin/wasm-ld.exe
+            C:/llvm/lib/clang
+          key: llvm-tools-v2-Windows-${{ env.LLVM_VERSION }}-${{ hashFiles('cmake/LLVM.cmake', 'cmake/*toolchain.cmake') }}
       # LLVM's own release, the very archive tide's package unpacks: its
       # programs and clang's headers.
       - name: Install tools (Windows)
@@ -199,6 +215,17 @@ jobs:
           restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-
       - name: Compiler cache statistics (start)
         run: ccache --zero-stats
+
+      # Start long native tests first. Browser workloads compete for software
+      # rendering CPU when grouped together, so keep their usual ordering.
+      # Only scheduling data is cached; every selected test still runs.
+      - name: Cache test durations
+        if: matrix.preset == 'release' || matrix.preset == 'mingw-release'
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.preset }}/Testing/Temporary/CTestCostData.txt
+          key: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ github.sha }}
+          restore-keys: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-
 
       # Native tests that open a window (label gpu: the demo's smoke test, the
       # renderer's) need OpenGL in a window, which no runner has: Windows' and

@@ -45,7 +45,7 @@ void Anchored(float2 at, Anchor anchor, Font font, Color color, Color mark)
 view Specimen()
 {
     Draw2D.Clear(Color(0.07, 0.08, 0.11));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Rect(float2(Screen.width * 0.75, Screen.height * 0.5), float2(Screen.width * 0.5, Screen.height), Color(0.93, 0.93, 0.9));
     Column(0, Color.white);
     Column(Screen.width * 0.5, Color(0.08, 0.08, 0.1));
@@ -59,7 +59,7 @@ view Specimen()
     }
 
     // Under a camera, where y goes up: upper is still towards the top of the screen
-    Draw2D.Camera(float2(0, 0), 10);
+    Draw2D.SetCamera(float2(0, 0), 10);
     Draw2D.Text("upper left", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.UpperLeft);
     Draw2D.Text("lower right", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.LowerRight, Font.Bold);
 }

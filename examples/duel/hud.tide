@@ -41,7 +41,7 @@ Color CardColor(Card card)
 [Stage(PaintStages.Hud)]
 view PaintScore(verified Duel duel, Flow flow)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     if (duel.attract) return;
     var middle = Screen.width * 0.5;
     // A narrow screen, or a low one, has less room over the arena
@@ -140,11 +140,10 @@ view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session sess
     if (tag != "")
         Panel(float2(tagAt + tagWidth * 0.5, top + 5), float2(tagWidth, 14), 7, mine ? color : Color(0.16, 0.2, 0.32),
               mine ? color : Color(0.16, 0.2, 0.32), 0, Color.clear);
-    // Its cards as this machine has them: a list isn't read from the confirmed match yet
-    for (var i = 0; i < fighter.build.cards.count; i++)
+    for (var i = 0; i < sure.build.cards.count; i++)
     {
         var gem = float2((blue ? tagAt + tagWidth + 13 : tagAt - 13) + inward * i * 14, top + 5);
-        var tint = CardColor(fighter.build.cards[i]);
+        var tint = CardColor(sure.build.cards[i]);
         Draw2D.RoundRect(gem, float2(9.5, 9.5), 2, Math.PI * 0.25, UI_OUTLINE);
         Draw2D.RoundRect(gem, float2(7, 7), 1.5, Math.PI * 0.25, tint);
         Draw2D.Circle(gem + float2(-1, -1.5), 1.2, Fade(Color.white, 0.8));
@@ -252,8 +251,11 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var words = flow.winner < 0 ? "DOUBLE K.O." : SideName(flow.winner) + " TAKES THE ROUND";
         var slide = (1 - EaseOut(flow.since / 0.3)) * 60;
         var shown = Math.Saturate(open * 1.4 - 0.4);
-        Draw2D.Text(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35 * shown), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(words, middle + float2(slide, 0), big ? 34 : 22, Fade(UI_OUTLINE, shown), Anchor.MiddleCenter, Font.Bold);
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw2D.Text(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text(words, middle + float2(slide, 0), big ? 34 : 22, UI_OUTLINE, Anchor.MiddleCenter, Font.Bold);
+        }
         return;
     }
 
@@ -261,9 +263,12 @@ view PaintBanner(Duel duel, Flow flow, Session session)
     {
         var enter = EaseOut(flow.age / 0.25);
         GlowBox(middle, float2(250 * enter, 40), 20, 60, Color(0.008, 0.012, 0.035, 0.7));
-        Draw2D.RoundRect(middle + float2(0, big ? 34 : 24), float2(150 * Math.Saturate(duel.timer / 1.2), 3), 1.5, Fade(UI_INK, 0.8 * enter));
-        Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, Fade(UI_MUTED, enter), Anchor.MiddleCenter);
-        Draw2D.Text("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, Fade(UI_INK, enter), Anchor.MiddleCenter, Font.Bold);
+        Draw.Tint(Fade(Color.white, enter))
+        {
+            Draw2D.RoundRect(middle + float2(0, big ? 34 : 24), float2(150 * Math.Saturate(duel.timer / 1.2), 3), 1.5, Fade(UI_INK, 0.8));
+            Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, UI_MUTED, Anchor.MiddleCenter);
+            Draw2D.Text("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, UI_INK, Anchor.MiddleCenter, Font.Bold);
+        }
     }
     else if (duel.phase == Phase.Fight && flow.age < 0.8)
     {
@@ -272,9 +277,12 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var size = Math.Round((big ? 62 : 40) * (1 + 0.5 * Math.Max(0, 1 - flow.age * 8)) * 0.5) * 2;
         var shown = Math.Saturate((1 - gone) * 2.5);
         var apart = 3 + 14 * gone;
-        Draw2D.Text("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text("FIGHT!", middle, size, Fade(Color.white, shown), Anchor.MiddleCenter, Font.Bold);
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw2D.Text("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("FIGHT!", middle, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+        }
     }
     else if (duel.phase == Phase.Draft && flow.age > 1.5)
     {

@@ -45,6 +45,7 @@ tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
+tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
@@ -53,6 +54,8 @@ tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
 tide_e2e_test(methods)
+tide_e2e_test(overloads) # Default values, named arguments, and functions, methods and systems that share a name
+tide_e2e_test(overloads_extern SOURCES e2e/overloads_extern.tide e2e/overloads_extern_c.c) # ...and C functions, which have neither
 tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)
@@ -72,6 +75,8 @@ tide_e2e_test(local_events) # Local handlers of the match's events: heard once, 
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
+tide_e2e_test(verified_heap) # ...its text, lists, maps, sets and grids, from its own heap
+tide_e2e_test(view_queries) # Queries in views and local handlers: blended, `verified`, or as an event's tick left them
 tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)

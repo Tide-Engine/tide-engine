@@ -31,7 +31,7 @@ view Show(mut Probe probe, Devices devices)
 {
     probe.sameList = SameList(Draw2D.list, Draw3D.list);
     Draw2D.Clear(Color.black);
-    Draw2D.Camera(float2(2, 3), 5);
+    Draw2D.SetCamera(float2(2, 3), 5);
     probe.screen2 = Project2(float2(2, 3));
     probe.world2 = Draw2D.ScreenToWorld(probe.screen2);
     // Devices count from the bottom left, the screen from the top left: Screen.Flip goes either way
@@ -41,11 +41,11 @@ view Show(mut Probe probe, Devices devices)
     probe.flippedTwice = Screen.Flip(Screen.Flip(devices.pointer.position));
     Draw2D.Mesh([], []);
     Draw2D.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     probe.overlay = Draw2D.WorldToScreen(float2(12, 34));
 
     Draw3D.Clear(Color.black);
-    Draw3D.Camera(float3(0, 0, -5), quaternion.identity, 60);
+    Draw3D.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
     probe.screen3 = Project3(float3(0, 0, 5));
     probe.world3 = Draw3D.ScreenToWorld(probe.screen3);
     probe.rayOrigin = Draw3D.ScreenRayOrigin(probe.screen3.xy);

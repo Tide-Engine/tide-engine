@@ -1,0 +1,5 @@
+// expect: 'Damage' already has its 'base'
+scene Main { }
+singleton Log { float total; }
+float Damage(float base, float multiplier = 1) { return base * multiplier; }
+system Run(mut Log log) { log.total = Damage(10, base: 5); }

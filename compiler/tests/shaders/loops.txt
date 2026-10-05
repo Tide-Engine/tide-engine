@@ -1,0 +1,142 @@
+// Spread on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+out vec2 tide_s1;
+struct tt_Corner {
+    vec2 m_position;
+    vec2 m_uv;
+};
+void main() {
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Spread on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Corner {
+    vec2 m_position;
+    vec2 m_uv;
+};
+int tide_i(int x) {
+    return x;
+}
+int tf_Twice(int t_n) {
+    return (t_n * 2);
+}
+
+void ts_Spread(tt_Corner t_corner, inout vec4 t_color) {
+    vec4 t_sum = vec4(0.0, 0.0, 0.0, 0.0);
+    for (int t_x = (-1); (t_x <= 1); t_x = (t_x + 1)) {
+        t_sum = (t_sum + textureLod(pixels0, (t_corner.m_uv + (vec2(float(t_x), 0.0) * 0.25)), 0.0));
+    }
+    {
+        int t_0from0 = (-tide_i(2));
+        int t_0to1 = (tide_i(6) / tide_i(2));
+        int t_0by2 = (tide_i(4) / tide_i(2));
+        for (int t_y = t_0from0; (t_y < t_0to1); t_y = (t_y + t_0by2)) {
+            t_sum = (t_sum + textureLod(pixels0, (t_corner.m_uv + (vec2(0.0, float(t_y)) * 0.25)), 0.0));
+        }
+    }
+    {
+        int t_0from3 = tf_Twice(1);
+        for (int t_i = t_0from3; (t_i < tide_v0.x); t_i = (t_i + 1)) {
+            t_sum = (t_sum + textureLod(pixels0, t_corner.m_uv, 0.0));
+        }
+    }
+    t_color = (t_sum * 0.125);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Spread(tt_Corner(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Spread on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Corner {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tf_Twice(t_n: i32) -> i32 {
+    return (t_n * 2);
+}
+
+fn ts_Spread(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+    var t_sum: vec4f = vec4f(0.0, 0.0, 0.0, 0.0);
+    for (var t_x: i32 = (-1); (t_x <= 1); t_x = (t_x + 1)) {
+        t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(f32(t_x), 0.0) * 0.25)), 0.0));
+    }
+    {
+        var t_0from0: i32 = (-tide_i(2));
+        var t_0to1: i32 = (tide_i(6) / tide_i(2));
+        var t_0by2: i32 = (tide_i(4) / tide_i(2));
+        for (var t_y: i32 = t_0from0; (t_y < t_0to1); t_y = (t_y + t_0by2)) {
+            t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(0.0, f32(t_y)) * 0.25)), 0.0));
+        }
+    }
+    {
+        var t_0from3: i32 = tf_Twice(1);
+        for (var t_i: i32 = t_0from3; (t_i < tide_block.tide_v0.x); t_i = (t_i + 1)) {
+            t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, t_corner.m_uv, 0.0));
+        }
+    }
+    (*t_color) = (t_sum * 0.125);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Spread(tt_Corner(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

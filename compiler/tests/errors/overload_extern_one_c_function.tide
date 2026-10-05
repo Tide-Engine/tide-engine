@@ -1,0 +1,4 @@
+// expect: extern functions that share a name each name a C function of their own, and both of these are Mix
+scene Main { }
+extern float Mix(float a, float b);
+extern int Mix(int a, int b);

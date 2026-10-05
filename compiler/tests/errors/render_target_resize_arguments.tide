@@ -1,4 +1,4 @@
-// expect: Resize takes width and height in pixels
+// expect: Resize takes width and height in logical pixels
 scene Main { }
 local singleton Buffers { RenderTarget scene; }
 view Show(Buffers buffers) { buffers.scene.Resize(64); }

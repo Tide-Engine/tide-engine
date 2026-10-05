@@ -24,7 +24,7 @@ void Stamp(Shape shape, float2 at)
 
 view Direct()
 {
-    Draw2D.Camera(float2(0, 0), 50);
+    Draw2D.SetCamera(float2(0, 0), 50);
     Draw2D.Line(float2(0, 0), float2(3, 4), 2, Color.red);
     Draw2D.WireRect(float2(1, 1), float2(8, 6), 1.5, Color.green);
     Draw2D.WireCircle(float2(2, 2), 5, 2, Color.blue);

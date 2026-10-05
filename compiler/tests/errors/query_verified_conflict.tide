@@ -1,0 +1,9 @@
+// expect: a query both requires and excludes the same 'verified' component
+component Body { float x; }
+component Dead { }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body, Dead); }
+view Show(query (Body body, with verified Dead, without verified Dead) bodies)
+{
+    foreach (var row in bodies) Debug.Log($"{row.body.x}");
+}

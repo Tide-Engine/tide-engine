@@ -2,7 +2,7 @@
 // a camera that shakes. None of it is in the match. The match says what
 // happens in it, and this machine's handlers of that add an effect here
 // (heard.tide).
-enum PaintStages { Prepare, Arena, Platforms, Fighters, Bullets, Effects, Hud, Menu, Overlay }
+enum PaintStages { Prepare, Arena, Platforms, Fighters, Bullets, Effects, Light, Hud, Menu, Overlay }
 
 enum BitKind { Streak, Dot, Puff, Chunk, Shell }
 
@@ -54,11 +54,6 @@ struct Label
     int amount;
 }
 
-// The match's platforms and fighters as the last frame drew them, for effects
-// to bounce off and for the dots that show where a shot would go.
-struct Slab { float2 center; float2 half; }
-struct Mark { float2 position; float radius; bool shield; }
-
 local singleton Fx
 {
     float dt;        // Seconds this frame's effects move on by
@@ -76,8 +71,6 @@ local singleton Fx
     List<Wave> waves;
     List<Streak> streaks;
     List<Label> labels;
-    List<Slab> slabs;
-    List<Mark> marks;
 }
 
 // A corner of the backdrop's quad, from (0, 0) to (1, 1).
@@ -95,6 +88,26 @@ local singleton Sky
     float2 look;   // The camera's offset
     float4 shock;  // A ring of light through the floor: where, how old, how strong
     float4 shock2;
+}
+
+// What the arena is seen through. It isn't drawn into the window but into a
+// target that's always the window's size, so that what's bright in it can
+// spill over what's next to it (PaintLight): its bright parts go to smaller
+// targets, are blurred there, and are added to the arena as it reaches the
+// window. The score, the keys and the menus are drawn into the window
+// afterwards, with none of that light on their text.
+local singleton Lens
+{
+    RenderTarget scene;  // The arena
+    RenderTarget bright; // Its bright parts, a quarter of the size...
+    RenderTarget spread; // ...blurred across here, and down again into `bright`
+    RenderTarget wide;   // Those again at an eighth of the size, for light that reaches further...
+    RenderTarget wider;  // ...blurred the same way
+    bool made;
+    Texture glow;  // What the frag that composes the frame adds to the arena: the light close to what's bright
+    Texture haze;  // ...and the light far around it
+    float2 pixel;  // One of the screen's pixels, as textures count: 1 over its size
+    float2 along;  // From one sample of a blur to the next
 }
 
 float EaseOut(float t)
@@ -210,29 +223,22 @@ void Confetti(mut Fx fx, float2 at, int count, float speed, Color color)
     }
 }
 
-// Where something going `delta` from `start` first meets a platform, or a
-// fighter; a fraction over 1 when it meets none.
-Sweep Strike(Fx fx, float2 start, float2 delta, float radius)
-{
-    mut var closest = Sweep { };
-    foreach (var slab in fx.slabs)
-    {
-        var hit = SweepBox(start, delta, slab.center, slab.half + radius);
-        if (hit.fraction < closest.fraction) closest = hit;
-    }
-    foreach (var mark in fx.marks)
-    {
-        var hit = SweepCircle(start, delta, mark.position, mark.radius + radius + (mark.shield ? 10 : 0));
-        if (hit.fraction < closest.fraction) closest = hit;
-    }
-    return closest;
-}
-
 // The frame's clock, camera and backdrop, before anything else draws. It's
 // this machine's, so it goes on with no match, while one is being joined.
 [Stage(PaintStages.Prepare)]
-view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky)
+view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
 {
+    if (!lens.made)
+    {
+        // The window's size, whatever it becomes, at the display's own pixels: nothing here resizes them
+        lens.scene = RenderTarget.Screen();
+        lens.bright = RenderTarget.Screen(0.25);
+        lens.spread = RenderTarget.Screen(0.25);
+        lens.wide = RenderTarget.Screen(0.125);
+        lens.wider = RenderTarget.Screen(0.125);
+        lens.made = true;
+    }
+    var scene = lens.scene;
     // A frame after a stall is a step, not a leap
     fx.dt = Math.Min(Frame.dt, 0.05);
     fx.now += fx.dt;
@@ -244,8 +250,6 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky)
     fx.kick = Math.Max(0, fx.kick - fx.dt * 5) * Math.Max(0, 1 - fx.dt * 6);
     fx.flash = Math.Max(0, fx.flash - fx.dt * 2.2);
     fx.hurt = Math.Max(0, fx.hurt - fx.dt * 1.9);
-    fx.slabs.Clear();
-    fx.marks.Clear();
 
     var screen = float2(Screen.width, Screen.height);
     canvas.screenHalf = screen * 0.5;
@@ -263,12 +267,14 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky)
     sky.look = fx.shake;
     sky.shock.z += fx.dt * 1.35;
     sky.shock2.z += fx.dt * 1.35;
-    Draw2D.Clear(UI_BACKGROUND);
-    Draw2D.Screen();
-    Draw2D.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
+    scene.Clear(UI_BACKGROUND);
+    scene.SetScreen();
+    scene.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
 
+    // The arena's camera, and the window's too: what's drawn there over a fighter finds it with the same one
     var zoom = 1 + fx.kick * 0.035 * fx.calm;
-    Draw2D.Camera(fx.shake, screen.y * 0.5 / (canvas.scale * zoom));
+    scene.SetCamera(fx.shake, screen.y * 0.5 / (canvas.scale * zoom));
+    Draw2D.SetCamera(fx.shake, screen.y * 0.5 / (canvas.scale * zoom));
 }
 
 vert PlaceSky(mut Corner corner, Sky sky)
@@ -339,46 +345,11 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
     color = Color(paint.r, paint.g, paint.b, 1);
 }
 
-// The effects go over everything in the arena, which drew before them.
+// The effects' pieces move on each frame, whatever else there is: they're this
+// machine's, so they fall and fade with no match too, while one is being joined.
 [Stage(PaintStages.Effects)]
-view PaintEffects(mut Fx fx, mut Sky sky)
+view MoveBits(mut Fx fx)
 {
-    mut var t = 0;
-    while (t < fx.streaks.count)
-    {
-        mut var streak = fx.streaks[t];
-        streak.age += fx.dt;
-        if (streak.age >= streak.life)
-        {
-            fx.streaks[t] = fx.streaks[fx.streaks.count - 1];
-            fx.streaks.RemoveAt(fx.streaks.count - 1);
-            continue;
-        }
-        fx.streaks[t] = streak;
-        var left = 1 - streak.age / streak.life;
-        GlowLine(streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
-        Draw2D.Line(streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
-        t++;
-    }
-
-    mut var w = 0;
-    while (w < fx.waves.count)
-    {
-        mut var wave = fx.waves[w];
-        wave.age += fx.dt;
-        if (wave.age >= wave.life)
-        {
-            fx.waves[w] = fx.waves[fx.waves.count - 1];
-            fx.waves.RemoveAt(fx.waves.count - 1);
-            continue;
-        }
-        fx.waves[w] = wave;
-        var along = wave.age / wave.life;
-        var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
-        Draw2D.WireCircle(wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
-        w++;
-    }
-
     mut var i = 0;
     while (i < fx.bits.count)
     {
@@ -393,58 +364,134 @@ view PaintEffects(mut Fx fx, mut Sky sky)
         bit.velocity.y -= bit.gravity * fx.dt;
         bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
         bit.position += bit.velocity * fx.dt;
-        if (bit.kind == BitKind.Chunk || bit.kind == BitKind.Shell || bit.kind == BitKind.Dot && bit.gravity > 0)
+        fx.bits[i] = bit;
+        i++;
+    }
+}
+
+// Those that fall land on the platforms, and bounce. The platforms are the
+// match's, so this view only runs in one: it goes through them with a query.
+[Stage(PaintStages.Effects, 1)]
+view BounceBits(mut Fx fx, query (Platform box) platforms)
+{
+    for (var i = 0; i < fx.bits.count; i++)
+    {
+        mut var bit = fx.bits[i];
+        if (bit.kind != BitKind.Chunk && bit.kind != BitKind.Shell && !(bit.kind == BitKind.Dot && bit.gravity > 0)) continue;
+        foreach (var entry in platforms)
         {
-            foreach (var slab in fx.slabs)
+            var offset = bit.position - entry.box.center;
+            var inside = entry.box.half + bit.size * 0.5 - Math.Abs(offset);
+            if (inside.x <= 0 || inside.y <= 0) continue;
+            if (inside.x < inside.y)
             {
-                var offset = bit.position - slab.center;
-                var inside = slab.half + bit.size * 0.5 - Math.Abs(offset);
-                if (inside.x <= 0 || inside.y <= 0) continue;
-                if (inside.x < inside.y)
-                {
-                    bit.position.x += (offset.x < 0 ? -1 : 1) * inside.x;
-                    bit.velocity.x *= -0.5;
-                }
-                else
-                {
-                    bit.position.y += (offset.y < 0 ? -1 : 1) * inside.y;
-                    bit.velocity.y *= -0.42;
-                    bit.velocity.x *= 0.72;
-                    bit.spin *= 0.6;
-                }
+                bit.position.x += (offset.x < 0 ? -1 : 1) * inside.x;
+                bit.velocity.x *= -0.5;
+            }
+            else
+            {
+                bit.position.y += (offset.y < 0 ? -1 : 1) * inside.y;
+                bit.velocity.y *= -0.42;
+                bit.velocity.x *= 0.72;
+                bit.spin *= 0.6;
             }
         }
         fx.bits[i] = bit;
-        i++;
+    }
+}
 
+// A bit that's light rather than a thing: a spark, or a flash where a shot
+// left its gun or ended.
+bool Glows(Bit bit)
+{
+    return bit.kind == BitKind.Streak || bit.kind == BitKind.Dot && bit.gravity == 0;
+}
+
+// The effects go over everything in the arena, which drew before them.
+[Stage(PaintStages.Effects, 2)]
+view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
+{
+    var scene = lens.scene;
+    // What's thrown first, where MoveBits and BounceBits left it: dust, pieces
+    // and shells, which cover what's behind them
+    foreach (var bit in fx.bits)
+    {
+        if (Glows(bit)) continue; // With the light, below
         var along = bit.age / bit.life;
         var left = 1 - along;
-        if (bit.kind == BitKind.Streak)
+        if (bit.kind == BitKind.Puff)
         {
-            var speed = Math.Length(bit.velocity);
-            var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
-            GlowLine(tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
-            Draw2D.Line(tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
-        }
-        else if (bit.kind == BitKind.Puff)
-        {
-            Draw2D.Circle(bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
+            scene.Circle(bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
         }
         else if (bit.kind == BitKind.Dot)
         {
-            Draw2D.Circle(bit.position, bit.size * 0.5 * (bit.gravity > 0 ? Math.Min(1, left * 3) : left),
-                 Fade(bit.color, Math.Min(1, left * 2.5)));
+            scene.Circle(bit.position, bit.size * 0.5 * Math.Min(1, left * 3), Fade(bit.color, Math.Min(1, left * 2.5)));
         }
         else if (bit.kind == BitKind.Shell)
         {
-            Draw2D.RoundRect(bit.position, float2(bit.size * 2.3, bit.size), 1, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 4)));
+            scene.RoundRect(bit.position, float2(bit.size * 2.3, bit.size), 1, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 4)));
         }
         else
         {
-            Draw2D.RoundRect(bit.position, float2(bit.size), bit.size * 0.28, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 3)));
+            scene.RoundRect(bit.position, float2(bit.size), bit.size * 0.28, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 3)));
         }
     }
 
+    // Then the light, which adds to what's under it rather than covering it:
+    // trails, rings, sparks and flashes are brighter where they cross
+    Draw.Blend(Blend.Add)
+    {
+        mut var t = 0;
+        while (t < fx.streaks.count)
+        {
+            mut var streak = fx.streaks[t];
+            streak.age += fx.dt;
+            if (streak.age >= streak.life)
+            {
+                fx.streaks[t] = fx.streaks[fx.streaks.count - 1];
+                fx.streaks.RemoveAt(fx.streaks.count - 1);
+                continue;
+            }
+            fx.streaks[t] = streak;
+            var left = 1 - streak.age / streak.life;
+            GlowLineOn(scene, streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
+            scene.Line(streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
+            t++;
+        }
+
+        mut var w = 0;
+        while (w < fx.waves.count)
+        {
+            mut var wave = fx.waves[w];
+            wave.age += fx.dt;
+            if (wave.age >= wave.life)
+            {
+                fx.waves[w] = fx.waves[fx.waves.count - 1];
+                fx.waves.RemoveAt(fx.waves.count - 1);
+                continue;
+            }
+            fx.waves[w] = wave;
+            var along = wave.age / wave.life;
+            var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
+            scene.WireCircle(wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
+            w++;
+        }
+
+        foreach (var bit in fx.bits)
+        {
+            if (!Glows(bit)) continue;
+            var left = 1 - bit.age / bit.life;
+            if (bit.kind == BitKind.Dot)
+            {
+                scene.Circle(bit.position, bit.size * 0.5 * left, Fade(bit.color, Math.Min(1, left * 2.5)));
+                continue;
+            }
+            var speed = Math.Length(bit.velocity);
+            var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
+            GlowLineOn(scene, tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
+            scene.Line(tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
+        }
+    }
 
     // Numbers, over everything in the arena
     mut var l = 0;
@@ -465,12 +512,92 @@ view PaintEffects(mut Fx fx, mut Sky sky)
         var at = label.position + float2(0, 34 * EaseOut(along));
         var text = $"{label.amount}";
         var alpha = Math.Saturate((1 - along) * 3);
-        Draw2D.Text(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8), Anchor.MiddleCenter);
-        Draw2D.Text(text, at, size, Fade(label.color, alpha), Anchor.MiddleCenter);
+        scene.Text(text, at + float2(1.5, -1.5), size, Fade(UI_BACKGROUND, alpha * 0.8), Anchor.MiddleCenter);
+        scene.Text(text, at, size, Fade(label.color, alpha), Anchor.MiddleCenter);
     }
 
     if (sky.shock.z > 1) sky.shock.w = 0;
     if (sky.shock2.z > 1) sky.shock2.w = 0;
+}
+
+// How bright a color has to be before it spills, and how much of it does:
+// close to what's bright, and far around it.
+const float GLOW_FROM = 0.62;
+const float GLOW_NEAR = 0.9;
+const float GLOW_FAR = 1.4;
+
+// The arena's bright parts, at a quarter of its size: each pixel is what it
+// covers of the arena, sampled three times across and three down so nothing
+// small falls between two samples, and what's left of that above GLOW_FROM.
+// White is brighter than a color as strong, so a shot's core spills more
+// than a fighter's side.
+frag Brights(Vertex vertex, mut Color color, Texture source, Lens lens)
+{
+    mut var sum = Color(0, 0, 0, 0);
+    for (var y = -1; y <= 1; y++)
+    {
+        for (var x = -1; x <= 1; x++) sum = sum + source.Sample(vertex.uv + float2(x, y) * lens.pixel * 1.33);
+    }
+    var seen = sum * (1.0 / 9);
+    var light = Math.Max(seen.r, Math.Max(seen.g, seen.b)) * 0.5 + (seen.r * 0.3 + seen.g * 0.5 + seen.b * 0.2) * 0.5;
+    var kept = Math.Saturate((light - GLOW_FROM) / (1 - GLOW_FROM));
+    color = Color(seen.r * kept, seen.g * kept, seen.b * kept, 1);
+}
+
+// A blur along one axis, as wide as nine pixels of its target, in five
+// samples: each of the outer four is between two pixels and reads both.
+frag Blur(Vertex vertex, mut Color color, Texture source, Lens lens)
+{
+    var near = lens.along * 1.3846;
+    var far = lens.along * 3.2308;
+    var sum = source.Sample(vertex.uv) * 0.227
+            + (source.Sample(vertex.uv + near) + source.Sample(vertex.uv - near)) * 0.3162
+            + (source.Sample(vertex.uv + far) + source.Sample(vertex.uv - far)) * 0.0703;
+    color = Color(sum.r, sum.g, sum.b, 1);
+}
+
+// A target half the size of its source: each of its pixels is between four of
+// the source's, and reads them all at once.
+frag Halve(Vertex vertex, mut Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+// The frame: the arena as it was drawn, and its light over it. Light adds
+// less to what's bright already, so a fighter keeps its shading under its own
+// glow, and the dark around it takes all of it.
+frag Lit(Vertex vertex, mut Color color, Texture source, Lens lens)
+{
+    var arena = source.Sample(vertex.uv, Filter.Point);
+    var glow = lens.glow.Sample(vertex.uv) * GLOW_NEAR + lens.haze.Sample(vertex.uv) * GLOW_FAR;
+    color = Color(arena.r + glow.r * (1 - arena.r), arena.g + glow.g * (1 - arena.g), arena.b + glow.b * (1 - arena.b), 1);
+}
+
+// The arena goes to the window, with the light of its bright parts: blurred
+// at a quarter of the screen's size for what's close to them, and again at an
+// eighth for what's far. Six small passes and one over the screen. A Blit
+// replaces what's there, so the frag that composes the frame reads the arena
+// and its light, and writes their sum.
+[Stage(PaintStages.Light)]
+view PaintLight(mut Lens lens)
+{
+    lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
+    Draw.Blit(lens.scene.color, lens.bright, Brights);
+    // A step of a blur is a pixel of its target, which is four of the screen's here
+    lens.along = float2(lens.pixel.x * 4, 0);
+    Draw.Blit(lens.bright.color, lens.spread, Blur);
+    lens.along = float2(0, lens.pixel.y * 4);
+    Draw.Blit(lens.spread.color, lens.bright, Blur);
+    // ...and eight there
+    Draw.Blit(lens.bright.color, lens.wide, Halve);
+    lens.along = float2(lens.pixel.x * 8, 0);
+    Draw.Blit(lens.wide.color, lens.wider, Blur);
+    lens.along = float2(0, lens.pixel.y * 8);
+    Draw.Blit(lens.wider.color, lens.wide, Blur);
+
+    lens.glow = lens.bright.color;
+    lens.haze = lens.wide.color;
+    Draw.Blit(lens.scene.color, Draw.window, Lit);
 }
 
 // Light over the whole screen, after the menus: a flash, a hit's red edges,
@@ -478,7 +605,7 @@ view PaintEffects(mut Fx fx, mut Sky sky)
 [Stage(PaintStages.Overlay)]
 view PaintOverlay(mut Fx fx)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var screen = float2(Screen.width, Screen.height);
 
     mut var i = 0;
@@ -505,8 +632,12 @@ view PaintOverlay(mut Fx fx)
                Fade(bit.color, Math.Min(1, left * 3)));
     }
 
-    if (fx.hurt > 0.01)
-        Inset(screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
-    if (fx.flash > 0.01)
-        Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash * fx.calm));
+    // Both are light: they add to the screen, and darken nothing
+    Draw.Blend(Blend.Add)
+    {
+        if (fx.hurt > 0.01)
+            Inset(screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
+        if (fx.flash > 0.01)
+            Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash * fx.calm));
+    }
 }
