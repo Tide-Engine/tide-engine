@@ -211,10 +211,18 @@ export async function build({ job, source, tide, work, isolation = 'machine', us
         return [all[0], all.slice(1)];
     };
 
+    // Why a step that didn't end by itself ended: the build's time, wherever in it that runs out, or the system
+    const why = (ended, what) => {
+        if (ended.late) return `it took over ${limits.seconds} seconds, which is all a build gets`;
+        if (ended.signal === 'SIGXFSZ') return `${what} wrote a file of over ${Math.round(limits.file / (1024 * 1024))} MB, which is all one can be`;
+        if (ended.signal) return `${what} was stopped by the system (${ended.signal}): out of memory, most likely`;
+        return null;
+    };
+
     const said = makeLog(4096);
     const version = await run(...command([], ['version']), { env, cwd: work, deadline, log: said });
     const has = /^tide (\S+)/.exec(said.text());
-    if (version.code !== 0 || !has) return failed('this builder\'s tide doesn\'t run');
+    if (version.code !== 0 || !has) return failed(why(version, 'tide') || 'this builder\'s tide doesn\'t run');
     if (has[1] !== job.tide) return failed(`this builder has tide ${has[1]}, and the build is of tide ${job.tide}`);
 
     try {
@@ -240,12 +248,6 @@ export async function build({ job, source, tide, work, isolation = 'machine', us
         log.add(`$ ${title}\n${shown(own.text())}`);
         return ended;
     };
-    const why = (ended, what) => {
-        if (ended.late) return `it took over ${limits.seconds} seconds, which is all a build gets`;
-        if (ended.signal === 'SIGXFSZ') return `${what} wrote a file of over ${Math.round(limits.file / (1024 * 1024))} MB, which is all one can be`;
-        if (ended.signal) return `${what} was stopped by the system (${ended.signal}): out of memory, most likely`;
-        return null;
-    };
 
     const fetched = await step([], ['fetch', game], 'tide fetch');
     if (fetched.code !== 0) return failed(why(fetched, 'fetching its packages') || 'its packages couldn\'t be fetched: the log says which');
@@ -266,12 +268,18 @@ async function main() {
     const name = process.env.TIDE_BUILD;
     const token = process.env.TIDE_BUILD_TOKEN;
     if (!service || !name || !token) throw new Error('TIDE_BUILDS_URL, TIDE_BUILD and TIDE_BUILD_TOKEN say what to build');
-    // Each on a connection of its own, closed after: nothing is left open to keep this program from ending
-    const ask = (what, method = 'GET', body = null) => new Promise((done, failed) => {
-        const url = new URL(`${service}/builder/${name}/${what}`);
-        const request = (url.protocol === 'https:' ? https : http).request(url, {
+    // Everything it asks and says goes over one connection, kept between
+    // them and closed once the answer is given, so nothing is left open to
+    // keep this program from ending. One connection, not one each: on Windows
+    // a Node that opened a new one just after a program it ran had ended
+    // would at times end itself there with no word (0xC0000409: about one
+    // builder in three hundred on a busy machine), and never did on one kept.
+    const web = service.startsWith('https:') ? https : http;
+    const agent = new web.Agent({ keepAlive: true, maxSockets: 1 });
+    const ask = (what, method = 'GET', body = null, again = true) => new Promise((done, failed) => {
+        const request = web.request(new URL(`${service}/builder/${name}/${what}`), {
             method,
-            agent: false,
+            agent,
             headers: { authorization: `Bearer ${token}`, ...(body === null ? {} : { 'content-length': Buffer.byteLength(body) }) },
         }, response => {
             const chunks = [];
@@ -283,7 +291,12 @@ async function main() {
                 else failed(new Error(`the service answered ${response.statusCode} to ${what}: ${bytes.toString('utf8').trim()}`));
             });
         });
-        request.on('error', failed);
+        request.on('error', error => {
+            // The other end closed the connection while nothing was on it, as it may after a build's
+            // minutes, just as this went out: once more, on a new one
+            if (again && request.reusedSocket && (error.code === 'ECONNRESET' || error.code === 'EPIPE')) ask(what, method, body, false).then(done, failed);
+            else failed(error);
+        });
         request.end(body ?? undefined);
     });
 
@@ -304,9 +317,8 @@ async function main() {
     } catch (error) {
         console.error(`builder: ${error.stack || error}`);
         result = { message: 'the builder itself failed at it', log: '' };
-    } finally {
-        rmSync(work, { recursive: true, force: true });
     }
+    // The answer first: nothing that goes wrong after it is the build's
     await ask('log', 'PUT', result.log);
     if (result.page) {
         await ask('page', 'PUT', result.page);
@@ -314,6 +326,15 @@ async function main() {
     } else {
         await ask('failed', 'POST', JSON.stringify({ message: result.message }));
         console.log(`builder: ${name} failed: ${result.message}`);
+    }
+    agent.destroy();
+    // In a machine made for the build, this goes with the machine. On a
+    // developer's, a program that just ended can still hold a file of it
+    // (Windows): what's left then is the system's to clear.
+    try {
+        rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+        // Left in the system's temporary folder
     }
 }
 

@@ -30,7 +30,10 @@ export function localBuilders({ env = {}, quiet = true } = {}) {
                 windowsHide: true,
             });
             running.set(id, child);
-            child.on('exit', () => running.delete(id));
+            child.on('exit', (code, signal) => {
+                running.delete(id);
+                if (!quiet && (code || signal)) console.error(`builders: the builder of ${build} ended with ${signal || code}`);
+            });
             child.on('error', () => running.delete(id));
             return id;
         },
