@@ -277,12 +277,14 @@ compares the two after every step.
   (`b3AbsW4` of -0, and `b3NegV`), whose results only feed comparisons. A new
   use that keeps one would show in the test.
 - Joints, sensors, meshes and height fields go into an image as upstream
-  writes them, with the changes above. The package itself makes none;
-  `tide_box3d_parts` makes them all in Box3D by itself, to compare an image in
-  parts with the image written whole, which says nothing of other machines.
-  A check outside the tests (a mesh, a height field, a sensor and a joint,
-  restored before every step, on x64 and for the web) had the same bytes
-  everywhere.
+  writes them, with the changes above. Of those the package makes sensors, and
+  `tide_box3d_course` pins its match of them, in debug, in release and on the
+  web, with every image in parts compared with the image written whole. The
+  others it doesn't make; `tide_box3d_parts` makes them all in Box3D by
+  itself, to compare an image in parts with the image written whole, which
+  says nothing of other machines. A check outside the tests (a mesh, a height
+  field, a sensor and a joint, restored before every step, on x64 and for the
+  web) had the same bytes everywhere.
 - A restore clears the last step's events, and a body in the image still says
   which of them was its own (`b3Body.bodyMoveIndex`). `b3Body_SetAwake( false )`
   right after a restore, before a step, looks the event up and finds none:
@@ -293,12 +295,46 @@ compares the two after every step.
   height field or a compound that's made other than static: upstream's, and
   the package never sets a body's type.
 
+## What the package asks of it
+
+Nothing here is changed for these, but the package rests on them, and a new
+Box3D has to be read for them again:
+
+- **A shape is only reported to a sensor when both have `enableSensorEvents`**,
+  which is off unless a shape is made with it, for a sensor too. The package
+  makes every shape with it, so that a sensor sends `Touched` and `Parted`.
+  It's a bit of each shape's `flags` in the image. What a sensor does in a
+  step is written into its own arrays, which are a section an image in parts
+  writes whole every time, and into no body, shape or contact.
+- **Sensors see each other** (`b3SensorQueryCallback` has no check for it), so
+  the package makes its sensors in one collision group below zero
+  (`filter.groupIndex`), which Box3D never sets against each other: two that
+  overlap would each report the other, and their entities hear of it twice.
+- **What a sensor has in it is in the image** (its three arrays of visitors),
+  and the events of a step aren't: a world made from an image has the same
+  begins and ends to say after its next step as the world the image was taken
+  of. `tide_box3d_course` makes its world again before every tick to see that.
+- **`b3Body_SetTransform` doesn't wake a body, or what rests on it.** The
+  package wakes both when code moves a body, with `b3Body_SetAwake`, for the
+  ones that are asleep (`b3Body_GetContactData` says what touches a body;
+  there's no `b3Body_WakeTouching`). It isn't a call an image in parts
+  follows, so the next image is written whole.
+- **There's no call to wake every body** but turning sleeping off, which the
+  package does, and on again, when gravity changes (`b3World_EnableSleeping`):
+  not followed either, and everything is awake after it, so the next image is
+  written whole anyway. A world's gravity is in its image, which is how the
+  package tells a change.
+- **A body made with no shape weighs nothing**, so an impulse does nothing to
+  it: the package gives a new body's impulses once its shapes are on it, with
+  the calls it gives any impulse with, which are followed.
+
 ## Updating it
 
 Copy the two folders over, apply the changes again, and run `tide_box3d_stack`
-natively and for the web: its pinned hashes are of the simulation and of every
-image, so a field that isn't the same everywhere shows there. A new version
-steps differently, so the hashes change with it, and so do games' matches.
+and `tide_box3d_course` natively, in debug and release, and for the web: their
+pinned hashes are of the simulation and of every image, so a field that isn't
+the same everywhere shows there. A new version steps differently, so the
+hashes change with it, and so do games' matches.
 
 Then `tide_box3d_parts`, for the image in parts. Whatever upstream added that
 writes a body, a shape or a contact of a body that isn't awake has to say so
