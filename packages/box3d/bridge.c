@@ -14,6 +14,14 @@
 // since, hashed: Box3D's next state is its last and what's done to it, and
 // nothing else. So it costs what was done, and the image is never read to
 // name it.
+//
+// After a step, the image goes into the match as what changed of the last
+// one, where Box3D can say (b3t_image): the match's list keeps the rest, and
+// no copy of the image is kept here. What a world says changed is of the last
+// image it wrote, which was of the state its stamp names. The match that has
+// the world for a tick is at that stamp, so its list holds that image, byte
+// for byte, whichever match's list it was written into. A world made from an
+// image writes its next one whole.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -109,18 +117,28 @@ typedef struct world {
     uint64_t used;  // When a tick last had it
     int bases[B3_SNAPSHOT_SECTIONS]; // Where each section of its image goes: part of its state, as the image says them
     int image_size;                  // Its last image's, which is about the next one's: how much room to ask for
-    uint8_t *before; // Measuring: the last image, to count what changed of it
+    // Measuring and checking only: a copy of the last image, to count what changed of it and to see that
+    // what Box3D said changed is all that did. A match keeps none: its image is in its list.
+    uint8_t *before;
     int before_size;
+    bool before_good; // It's the world's last image
+    uint8_t *whole;   // Checking: the image written whole, to compare
+    int whole_size;
 } world;
 
 static world worlds[WORLDS];
 static uint64_t uses;
 static world *active; // The running tick's
 static bool shared;   // The running step's tasks go to other threads
+static int share_from = SHARED_BODIES; // A step with this many bodies awake is shared out
 static bool narrow;   // Worlds solve 4 contacts at a time, though the CPU can 8
 static int32_t shared_steps;
 static int32_t restores;
 static bool measuring; // No clock is read otherwise
+static bool checking;  // Every image written in parts is compared with the image written whole
+static bool always;    // ...and images are written in parts whatever is awake
+static int32_t images_whole;
+static int32_t images_in_parts;
 static uint64_t step_ns;
 static uint64_t image_ns;
 static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
@@ -190,12 +208,14 @@ static void make(world *w, const int workers)
     def.finishTask = finish;
     w->id = b3CreateWorld(&def);
     if (narrow) b3World_EnableSSE2Fallback(w->id, true);
+    if (always) b3World_SetSnapshotAwakeShare(w->id, 1);
     w->made = true;
     w->workers = workers;
     w->stamp = 0;
     w->chain = 0;
     memset(w->bases, 0, sizeof w->bases);
     w->image_size = 0;
+    w->before_good = false;
 }
 
 static void unmake(world *w)
@@ -300,6 +320,7 @@ void b3t_restore(const uint8_t *image, const int32_t size, const uint8_t *geomet
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b3GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
     w->image_size = size;
+    w->before_good = false; // Its next image is written whole
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
@@ -323,6 +344,7 @@ void b3t_forget(void)
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
         free(worlds[i].before);
+        free(worlds[i].whole);
         worlds[i] = (world){0};
     }
     active = NULL;
@@ -333,6 +355,33 @@ void b3t_forget(void)
 void b3t_narrow(const bool on)
 {
     narrow = on;
+}
+
+// For tests: every image that's written as what changed of the last one is
+// also taken whole, and the two compared. One byte apart ends the program,
+// saying where: the image is in the match's hash, and a player who joins makes
+// their world from it. With `whenever`, the worlds made from here on write
+// their images in parts whenever they can, where they'd write them whole
+// while most of their bodies are awake: more for the check to see.
+void b3t_check(const bool on, const bool whenever)
+{
+    checking = on;
+    always = on && whenever;
+}
+
+// For tests: a step is shared out over the tick's threads from this many
+// bodies awake, where it takes hundreds for that to pay. None is the usual.
+void b3t_share_from(const int32_t bodies)
+{
+    share_from = bodies > 0 ? bodies : SHARED_BODIES;
+}
+
+// How many images were written whole, and how many as what changed of the
+// last one, since the program started: tests read it to see they test both.
+void b3t_images(int32_t *whole, int32_t *in_parts)
+{
+    *whole = images_whole;
+    *in_parts = images_in_parts;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -501,7 +550,7 @@ int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravi
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
     b3World_SetGravity(w->id, vec(gravity));
-    shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= SHARED_BODIES;
+    shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     b3World_Step(w->id, dt, substeps);
@@ -535,48 +584,166 @@ static int place(world *w, const int *sizes, bool *moved)
     return end;
 }
 
-// The world's state into the match's list, which is then exactly it, and how
-// many bytes that is. Box3D writes it once, into room for a little more than
-// the last one took; a second time when it's more than that, or when a section
-// has to move.
+enum { BLOCK = 16384 }; // What a measured run counts the image's changes by
+
+// Which part of an image a byte is in, for what a failed check says: Box3D's
+// sections, in its order (world_snapshot.c).
+static const char *const sections[B3_SNAPSHOT_SECTIONS] = {
+    "settings and ids", "static and disabled sets", "awake set",   "sleeping sets", "bodies",       "shapes",
+    "fat bounds",       "contacts",                 "joints",      "sensors",       "islands",      "static tree",
+    "kinematic tree",   "dynamic tree",             "pairs",       "graph",         "names",
+};
+
+// A copy of the image a match's list is about to hold, which measuring and
+// checking go by.
+static void remember(world *w, const uint8_t *image, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    memcpy(w->before, image, (size_t)size);
+    w->before_size = size;
+    w->before_good = true;
+}
+
+// The parts Box3D says changed, over the copy of the last image: what the
+// match's list becomes. While measuring, the image's blocks that a part made
+// otherwise are counted.
+static void remember_parts(world *w, const b3SnapshotPart *parts, const int count, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    if (size > w->before_size) memset(w->before + w->before_size, 0, (size_t)(size - w->before_size)); // As a list grows
+    const int blocks = (size + BLOCK - 1) / BLOCK;
+    uint8_t *changed = measuring ? tide_alloc_zeroed((size_t)blocks, 1) : NULL;
+    if (changed) {
+        for (int at = w->before_size / BLOCK; at < blocks; at++) changed[at] = at * BLOCK + BLOCK > w->before_size;
+    }
+    for (int i = 0; i < count; i++) {
+        const b3SnapshotPart *part = &parts[i];
+        if (part->offset < 0 || part->offset + part->size > size) {
+            fprintf(stderr, "Box3D gave a part of its image that's outside it: %d bytes at %d of %d\n", part->size, part->offset, size);
+            abort();
+        }
+        for (int at = part->offset; changed && at < part->offset + part->size;) {
+            const int end = (at / BLOCK + 1) * BLOCK < part->offset + part->size ? (at / BLOCK + 1) * BLOCK : part->offset + part->size;
+            if (memcmp(w->before + at, part->bytes + (at - part->offset), (size_t)(end - at)) != 0) changed[at / BLOCK] = 1;
+            at = end;
+        }
+        memcpy(w->before + part->offset, part->bytes, (size_t)part->size);
+    }
+    for (int at = 0; changed && at < blocks; at++) blocks_changed += changed[at];
+    if (changed) blocks_in_all += (uint64_t)blocks;
+    free(changed);
+    w->before_size = size;
+}
+
+// The image written whole, against the one its parts made: the same bytes, or
+// the program ends, saying where the first one that isn't is.
+static void check(world *w, const int size)
+{
+    w->whole = tide_realloc(w->whole, (size_t)w->whole_size, (size_t)size);
+    w->whole_size = size;
+    int sizes[B3_SNAPSHOT_SECTIONS];
+    const int whole = b3World_CheckSnapshotAt(w->id, w->whole, size, w->bases, sizes);
+    if (whole == size && memcmp(w->whole, w->before, (size_t)size) == 0) return;
+    if (whole != size) {
+        fprintf(stderr, "Box3D's image in parts is %d bytes, and its image written whole %d\n", size, whole);
+        abort();
+    }
+    int first = 0;
+    int apart = 0;
+    for (int at = size - 1; at >= 0; at--) {
+        if (w->whole[at] == w->before[at]) continue;
+        first = at;
+        apart++;
+    }
+    int section = -1;
+    for (int i = 0; i < B3_SNAPSHOT_SECTIONS; i++) {
+        if (w->bases[i] <= first) section = i;
+    }
+    const int in = section < 0 ? first : first - w->bases[section];
+    fprintf(stderr, "Box3D's image in parts isn't its image written whole: %d bytes apart, the first at %d, which is byte %d of %s", apart,
+            first, in, section < 0 ? "its header" : sections[section]);
+    // The sections of things that each take the same room start with how many there are
+    int32_t count = 0;
+    if (section >= 0) memcpy(&count, w->whole + w->bases[section], sizeof count);
+    const int record = section == 4 ? 136 : section == 5 ? 208 : section == 7 ? 216 : 0; // A body, a shape, a contact
+    if (record && in >= 4 && in < 4 + count * record) {
+        fprintf(stderr, ": byte %d of %s %d", (in - 4) % record, section == 4 ? "body" : section == 5 ? "shape" : "contact", (in - 4) / record);
+    } else if (section == 7 && in >= 4 + count * 216 && in < 4 + count * (216 + 268)) {
+        fprintf(stderr, ": byte %d of the manifold of contact %d", (in - 4 - count * 216) % 268, (in - 4 - count * 216) / 268);
+    }
+    fprintf(stderr, " (%d of them). Written whole it's %02x, and in parts %02x\n", (int)count, w->whole[first], w->before[first]);
+    abort();
+}
+
+// The world's state into the match's list, and how many bytes that is.
+//
+// Where Box3D can say what changed of its last image, which the list holds,
+// the list keeps the rest: only what changed is written, and nothing is
+// compared but that (b3World_GetSnapshotParts, tide_list_out_keep). The image
+// is, byte for byte, the one written whole.
+//
+// Otherwise Box3D writes all of it into room for a little more than the last
+// one took, and the list is then exactly it; a second time when it's more
+// than that, or when a section has to move.
 int32_t b3t_image(tide_list_out *out)
 {
-    world *placed = active;
+    world *w = active;
     int sizes[B3_SNAPSHOT_SECTIONS] = {0};
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
-    int room = placed->image_size ? placed->image_size + placed->image_size / 16 + 4096 : 0;
+    const bool remembers = measuring || checking;
+    // The copy a measured or checked run goes by has to be the last image
+    if (w->image_size > 0 && (!remembers || w->before_good)) {
+        const b3SnapshotPart *parts;
+        int count;
+        const int size = b3World_GetSnapshotParts(w->id, w->bases, sizes, &parts, &count);
+        bool moved = false;
+        if (size != 0) place(w, sizes, &moved); // A section outgrew its place, or left too much of it: all of it again
+        if (size > 0 && !moved) {
+            tide_list_out_keep(out, (uint32_t)size);
+            for (int i = 0; i < count; i++) tide_list_out_part(out, (uint32_t)parts[i].offset, parts[i].bytes, (uint32_t)parts[i].size);
+            w->image_size = size;
+            images_in_parts++;
+            const uint64_t counting = measuring ? tide_time_now_ns() : 0;
+            if (measuring) image_ns += counting - began;
+            if (remembers) remember_parts(w, parts, count, size);
+            if (checking) check(w, size);
+            if (measuring) counting_ns += tide_time_now_ns() - counting;
+            return size;
+        }
+    }
+
+    int room = w->image_size ? w->image_size + w->image_size / 16 + 4096 : 0;
     uint8_t *image = room ? tide_list_out_room(out, (uint32_t)room) : NULL;
-    int size = b3World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+    int size = b3World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     bool moved;
-    const int after = place(placed, sizes, &moved);
+    const int after = place(w, sizes, &moved);
     if (moved || size > room) { // A section outgrew its place or left too much of it, or the image its room
         if (moved) size = after;
         if (size > room) {
             room = size;
             image = tide_list_out_room(out, (uint32_t)room);
         }
-        size = b3World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+        size = b3World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     }
     if (size <= 0) { // A shape the bridge never makes: Box3D has no image of a world with a compound
         fprintf(stderr, "Box3D has no image of this world\n");
         abort();
     }
     tide_list_out_count(out, (uint32_t)size);
-    placed->image_size = size;
+    w->image_size = size;
+    images_whole++;
     if (measuring) {
         const uint64_t counting = tide_time_now_ns();
         image_ns += counting - began;
-        world *w = active;
-        enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {
             const int n = size - at < BLOCK ? size - at : BLOCK;
             blocks_changed += at + n > w->before_size || memcmp(w->before + at, image + at, (size_t)n) != 0;
             blocks_in_all++;
         }
-        w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
-        memcpy(w->before, image, (size_t)size);
-        w->before_size = size;
+        remember(w, image, size);
         counting_ns += tide_time_now_ns() - counting;
+    } else if (checking) {
+        remember(w, image, size);
     }
     return size;
 }
