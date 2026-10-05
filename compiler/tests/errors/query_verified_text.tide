@@ -1,7 +1,0 @@
-// expect: 'title' is text of the confirmed match's, which a view doesn't read yet
-component Name { string title; }
-scene Main { }
-view Show(query (verified Name name) names)
-{
-    foreach (var row in names) Debug.Log(row.name.title);
-}

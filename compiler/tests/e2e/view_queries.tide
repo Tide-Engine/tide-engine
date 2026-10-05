@@ -30,6 +30,7 @@ component Name
 {
     string title;
     List<int> marks;
+    List<string> words;
 }
 
 component Player { }
@@ -61,7 +62,7 @@ event Rang
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Body { id = 1, position = float2(10, 0) }, Fighter { number = 1 }, Health, Name { title = "Ada", marks = [3, 4] });
+    Spawn(Body { id = 1, position = float2(10, 0) }, Fighter { number = 1 }, Health, Name { title = "Ada", marks = [3, 4], words = ["a", "bc"] });
     Spawn(Body { id = 2, position = float2(20, 0) }, Fighter { number = 2 }, Health);
     Spawn(Body { id = 3, position = float2(30, 0) }, Health); // No fighter
     Spawn(Body { id = 4, position = float2(40, 0) }, Fighter { number = 4 }, Health);
@@ -98,6 +99,12 @@ system Rise(mut Body body, Guard guard, with Fighter)
 system Note(Body body, Fighter fighter, mut Witness witness, Time time)
 {
     if (time.tick == 110) witness.y += body.position.y * fighter.number;
+}
+
+// A mark only a machine that hasn't heard of the shield gives
+system Remark(mut Name name, Guard guard, Time time)
+{
+    if (time.tick == 90 && !guard.up) name.marks.Add(5);
 }
 
 // One entity goes and another comes at tick 10, whatever the shield. Around
@@ -137,6 +144,9 @@ local singleton Seen
     int mismatch;     // ...whose values weren't the view's own
     int named;        // The ids of the bodies called Ada, added up
     int marks;        // Their marks, added up
+    int sureNamed;    // The same, as the server confirmed them
+    int sureMarks;
+    int sureWords;    // Their words that are "bc": text in a list, which comes as a copy
     // The world the server confirmed
     int confirmed;    // A bit for each id it has
     int sureHealth;   // Their health, added up
@@ -222,15 +232,28 @@ view Pairs(Body body, mut Seen seen, query (Body other, Fighter fighter) fighter
     }
 }
 
-// Text and lists of the world a view draws, through a row
-view Names(mut Seen seen, query (Name name, Body body) named)
+// Text and lists of the world a view draws, through a row, and of the world
+// the server confirmed: each is read from its own world's heap
+view Names(mut Seen seen, query (Name name, Body body) named, query (verified Name name, verified Body body) sure)
 {
     seen.named = 0;
     seen.marks = 0;
+    seen.sureNamed = 0;
+    seen.sureMarks = 0;
+    seen.sureWords = 0;
     foreach (var row in named)
     {
         if (row.name.title == "Ada") seen.named += row.body.id;
         foreach (var mark in row.name.marks) seen.marks += mark;
+    }
+    foreach (var row in sure)
+    {
+        if (row.name.title == "Ada") seen.sureNamed += row.body.id;
+        foreach (var mark in row.name.marks) seen.sureMarks += mark;
+        foreach (var word in row.name.words)
+        {
+            if (word == "bc") seen.sureWords += 1;
+        }
     }
 }
 

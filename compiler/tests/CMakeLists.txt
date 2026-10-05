@@ -72,6 +72,7 @@ tide_e2e_test(local_events) # Local handlers of the match's events: heard once, 
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
+tide_e2e_test(verified_heap) # ...its text, lists, maps, sets and grids, from its own heap
 tide_e2e_test(view_queries) # Queries in views and local handlers: blended, `verified`, or as an event's tick left them
 tide_e2e_test(enums)
 tide_e2e_test(scenes)
