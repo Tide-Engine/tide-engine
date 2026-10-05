@@ -56,9 +56,20 @@ struct tt_Surface {
     vec4 m_tint;
     float m_gain;
 };
-float tide_f(float x) { return x; }
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
 void ts_Tint(tt_Corner t_vertex, inout vec4 t_color) {
-    float t_gain = max(dot(t_vertex.m_normal, (-tide_u0.xyz)), tide_f(0.1));
+    float t_gain = tide_max1(dot(t_vertex.m_normal, (-tide_u0.xyz)), tide_f(0.1));
     t_color = (tt_Surface(tide_f0, tide_f1.x).m_tint * (tt_Surface(tide_f0, tide_f1.x).m_gain * t_gain));
     if ((tide_g0.x == 0)) {
         t_color.a = 0.5;
@@ -105,14 +116,25 @@ struct tt_Surface {
     m_tint: vec4f,
     m_gain: f32,
 }
-fn tide_f(x: f32) -> f32 { return x; }
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
 fn ts_Place(t_vertex: ptr<function, tt_Corner>) {
     (*t_vertex).m_position = ((*t_vertex).m_position + tide_n4.xyz);
     (*t_vertex).m_normal = (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_vertex).m_normal, 0.0)).xyz;
 }
 
 fn ts_Tint(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
-    var t_gain: f32 = max(dot(t_vertex.m_normal, (-tide_block.tide_u0.xyz)), tide_f(0.1));
+    var t_gain: f32 = tide_max1(dot(t_vertex.m_normal, (-tide_block.tide_u0.xyz)), tide_f(0.1));
     (*t_color) = (tt_Surface(tide_f0, tide_f1.x).m_tint * (tt_Surface(tide_f0, tide_f1.x).m_gain * t_gain));
     if ((tide_g0.x == 0)) {
         (*t_color).a = 0.5;

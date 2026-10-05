@@ -85,6 +85,8 @@ if (Math.Hash(int2(x, y)) % 4 == 0) field.cells[x, y] = Material.Sand;
 
 Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value changes every bit of the result. With the match's seed, [`Time.seed`](#the-match-s-seed), no two matches get the same: `Math.Hash(int3(x, y, time.seed))`.
 
+It gives the same numbers in a [frag or vert](../game/shaders.md#math), so a pattern drawn from it is the same on every GPU. Only a `long`'s hash stays on the CPU.
+
 ## Random numbers
 
 `Math.Hash` keeps no state. A `Random` does: it's a random number generator whose state is 8 bytes of data, which live wherever the game puts them. Each `Next` call gives a number and steps the state.
@@ -220,3 +222,12 @@ Unity.Mathematics has two, `normalize` and `normalizesafe`. Tide has one, and it
 :::
 
 Everywhere else, results match Unity.Mathematics. The transcendental functions (`Sin`, `Exp`, `Pow` and the others) are Tide's own, accurate to about 1 ulp, and give the same bits everywhere.
+
+## On the GPU
+
+Everything on this page works in a [frag or vert](../game/shaders.md#math) too, unless it makes no sense there: the types, what builds them, and every `Math` function, quaternions and matrix inverses included. The same function runs in a system and in a frag, and gives the same answer up to how the GPU rounds.
+
+- `Math.Hash` is integers, so the GPU's number is exactly the CPU's.
+- Floats follow the same formulas with the GPU's own rounding, which differs from one GPU to the next, most for big numbers. They're only ever drawn: nothing a GPU works out reaches the match.
+- It's forgiving in the same ways: `Normalize`, `Min`, `Max`, `Clamp` and `Saturate` do there what [Forgiving with bad values](#forgiving-with-bad-values) says.
+- `Math.Hash` of a `long` is the one function that isn't there, as a GPU's ints are 32 bits. `Math.Hash(int2(int(x), int(x >> 32)))` is the same number as `Math.Hash(x)`: split the long on the CPU, and hash its halves in the frag.

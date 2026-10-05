@@ -25,8 +25,12 @@ struct tt_BoxVertex {
     vec3 m_normal;
     vec2 m_uv;
 };
-float tide_f(float x) { return x; }
-int tide_i(int x) { return x; }
+float tide_f(float x) {
+    return x;
+}
+int tide_i(int x) {
+    return x;
+}
 void tf_Brighten(inout vec3 t_rgb, float t_by) {
     t_rgb = (t_rgb * t_by);
 }
@@ -73,14 +77,25 @@ struct tt_BoxVertex {
 struct tt_Sun {
     vec3 m_direction;
 };
-float tide_f(float x) { return x; }
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
 vec3 tide_normalize3(vec3 v) {
     float l = dot(v, v);
     if (l > 1.17549435e-38) { return v * inversesqrt(l); }
     return vec3(0.0);
 }
 float tf_Lit(vec3 t_normal, vec3 t_toward) {
-    return max(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
+    return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
 }
 
 vec3 tf_Direction(tt_Sun t_sun) {
@@ -150,12 +165,25 @@ struct tt_BoxVertex {
 struct tt_Sun {
     m_direction: vec3f,
 }
-fn tide_f(x: f32) -> f32 { return x; }
-fn tide_i(x: i32) -> i32 { return x; }
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
 fn tide_normalize3(v: vec3f) -> vec3f {
-    let l = dot(v, v);
+    var l: f32 = dot(v, v);
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
-    return vec3f();
+    return vec3f(0.0);
 }
 fn tf_Brighten(t_rgb: ptr<function, vec3f>, t_by: f32) {
     (*t_rgb) = ((*t_rgb) * t_by);
@@ -174,7 +202,7 @@ fn ts_Wave(t_vertex: ptr<function, tt_BoxVertex>) {
 }
 
 fn tf_Lit(t_normal: vec3f, t_toward: vec3f) -> f32 {
-    return max(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
+    return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
 }
 
 fn tf_Direction(t_sun: tt_Sun) -> vec3f {
