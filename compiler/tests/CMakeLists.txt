@@ -41,7 +41,7 @@ tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(input)
 tide_e2e_test(crossplatform)
-tide_e2e_test(evaluation_order)
+tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(views)
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases

@@ -110,6 +110,32 @@ Engine-owned singleton instances, such as `Time` and `Session`, stay read-only w
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 
+## Order
+
+A `mut` parameter and a `mut` method change something of the caller's, so it matters when they run. Tide runs an expression left to right, on every platform:
+
+```csharp
+int Next(mut Counter counter)
+{
+    counter.n += 1;
+    return counter.n;
+}
+
+system Count(mut Counter counter, mut Log log)
+{
+    log.both = Pack(Next(counter), Next(counter));  // The first Next runs first
+    log.before = Pack(counter.n, Next(counter));    // counter.n as it was before Next
+    log.after = Pack(Next(counter), counter.n);     // ...and as Next left it
+    counter.n += Next(counter);                     // Adds to what counter.n was
+}
+```
+
+- Arguments, operands, a vector's parts and a value's fields (`Pair { a = Next(counter), b = Next(counter) }`) all go in the order they're written, through any functions in between.
+- A value is read where it's written. A read-only argument is a copy made then, a list too.
+- A method reads the value it's called on as it runs, once its arguments are worked out: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out.
+- The right of `&&` and `||` and the sides of `?:` still only run when they would.
+- A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
+
 ## Actions
 
 A function's last parameter can be an `Action`: code the caller writes in braces after the call. The function runs it by calling it, as many times as it likes, including none.

@@ -965,9 +965,9 @@ static void line_reset(gen *g)
 
 static void gen_expr(gen *g, sb *o, const expr *e);
 
-// Generates `e` into a fresh string. Tide expressions have no side effects,
-// so an expression that's needed several times (a vector's components) can
-// simply be repeated.
+// Generates `e` into a fresh string. What has side effects in a statement runs
+// before it, into temporaries (see hoist_ordered), so an expression that's
+// needed several times (a vector's components) can simply be repeated.
 static const char *expr_text(gen *g, const expr *e)
 {
     sb b = {0};
@@ -980,7 +980,7 @@ static const char *expr_text(gen *g, const expr *e)
 static void gen_as(gen *g, sb *o, expr *e, const type want)
 {
     const type have = e->type;
-    if (e->kind == E_CONDITIONAL && (want.kind != have.kind || want.decl != have.decl)) {
+    if (e->kind == E_CONDITIONAL && !e->hoisted && (want.kind != have.kind || want.decl != have.decl)) {
         // Convert each side, so literals stay literals: (c ? 1.0f : 0.0f).
         sb_put(o, "(");
         gen_expr(g, o, e->cond);
@@ -1312,6 +1312,7 @@ static bool takes_where(const param *p)
 // copied as it's taken, so no two variables share a list.
 static bool is_fresh(const expr *e)
 {
+    if (e->kept) return true; // Read before its statement, into a copy of its own
     if (e->kind == E_METHOD && e->call == CALL_WORLD) return false; // world.Get<Health>(e): out of that entity's row
     return e->kind == E_CALL || e->kind == E_METHOD || e->kind == E_LIST || e->kind == E_LITERAL || e->kind == E_DEFAULT;
 }
@@ -1640,7 +1641,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
                 continue;
             }
             const bool widen = is_float && type_is_int_based(arg->type);
-            if (arg->kind == E_MEMBER && arg->swizzle_len > 1) {
+            if (arg->kind == E_MEMBER && arg->swizzle_len > 1 && !arg->hoisted) {
                 // A swizzle argument: read its components straight from the source vector.
                 const char *access = object_access(g, arg->object);
                 for (int k = 0; k < dim; k++) {
@@ -2028,9 +2029,13 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_put(o, ", tide_this");
         args++;
     }
-    // A read-only list argument is passed as it is, unless a mut argument could
-    // change it during the call: then it's a copy.
+    // A read-only list argument is passed as it is, unless a mut argument, or
+    // the value a mut method is called on, could change it during the call:
+    // then it's a copy.
     bool mut_list = false;
+    for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
+        mut_list |= type_has_list(m->owner->fields.items[i].type);
+    }
     for (int i = 0; i < e->args.count && i < m->params.count; i++) {
         mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
     }
@@ -2147,10 +2152,8 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
-    if (e->hoisted && (e->kind == E_BINARY || e->kind == E_UNARY || e->kind == E_CONDITIONAL
-                       || e->io_operation
-                       || (e->call == CALL_DRAW && e->type.kind != TY_VOID))) {
-        sb_put(o, e->hoisted); // Already ran, before the statement: a unit, or an operator that calls C
+    if (e->hoisted) {
+        sb_put(o, e->hoisted); // Already ran, or was read, before the statement (see hoist_ordered)
         return;
     }
     if (e->bind == BIND_CONST) {
@@ -3167,7 +3170,8 @@ static const expr *task_start(const expr *e)
     return NULL;
 }
 
-static void hoist_spawns(gen *g, expr *a, expr *b);
+static void hoist_spawns(gen *g, expr *e);
+static void hoist_arguments(gen *g, const expr *call);
 
 // Starts a task: its frame, with the arguments, runs until it first waits,
 // then waits in its world's table. It belongs to the entity the code runs
@@ -3177,7 +3181,7 @@ static void gen_task_start(gen *g, const expr *call)
     sb *o = &g->c;
     const decl *fn = call->method;
     const bool local = starts_local(g);
-    for (int i = 0; i < call->args.count; i++) hoist_spawns(g, call->args.items[i], NULL);
+    hoist_arguments(g, call);
     line(g, o, "{ // " STR_FMT, STR_ARG(fn->qualified));
     g->indent++;
     line(g, o, "%s tide_start = {0};", type_cname(task_of(g, fn)->frame));
@@ -3214,15 +3218,32 @@ static void gen_task_start(gen *g, const expr *call)
 // arguments, an operator's operands and an initializer's fields unspecified.
 // What has side effects keeps its order: spawns (which allocate entity IDs),
 // calls that draw or use the GUI (widgets appear in the order they're called),
-// and calls to C (which may keep state), with the functions, methods and
-// operators that make them. A statement runs them first, into temporaries, in
-// source order: children before the expression that uses them, siblings left
-// to right.
+// calls to C (which may keep state), with the functions, methods and
+// operators that make them, and calls that write: what they're passed as
+// `mut`, or the value a `mut` method is called on. A statement runs them
+// first, into temporaries, in source order: children before the expression
+// that uses them, siblings left to right.
+//
+// A call that writes changes what the code beside it reads. So in a statement
+// with one (`strict`), a value worked out before it that it could change is
+// read first too, in its turn among the others, into a temporary of its own
+// (`read`); and one worked out after it has it run before the statement even
+// when nothing else does (`forced`).
 //
 // The right of && and ||, and the sides of ?:, only run sometimes. The checker
-// keeps spawns and widgets out of them; when they call C, the whole && or ?:
-// is a unit, which runs as if statements with its own parts in order inside.
-typedef VEC(expr *) expr_list;
+// keeps spawns and widgets out of them; when they hold something that keeps
+// its order, the whole && or ?: is a unit, which runs as if statements with
+// its own parts in order inside.
+typedef struct ordered_item {
+    expr *e;
+    bool read; // A value read ahead of a call that writes, rather than something with side effects
+} ordered_item;
+
+typedef struct ordering {
+    VEC(ordered_item) items;
+    bool strict;
+    bool forced;
+} ordering;
 
 static bool is_spawn(const expr *e)
 {
@@ -3242,96 +3263,419 @@ static bool is_unwrap(const expr *e)
     return e->kind == E_COALESCE || e->kind == E_IS || e->kind == E_TRY || e->kind == E_DEFAULTED;
 }
 
-static bool holds_ordered(expr *e);
-
-static void collect_ordered(expr *e, expr_list *out)
+// Whether calling `m` changes something of its caller's: what it takes as
+// `mut`, or the value a `mut` method is called on.
+static bool routine_writes(const decl *m)
 {
-    if (!e) return;
+    if (!m) return false;
+    if (m->is_mut_method) return true;
+    for (int i = 0; i < m->params.count; i++) {
+        if (m->params.items[i].mode == PARAM_MUT) return true;
+    }
+    return false;
+}
+
+// Whether `e` itself, a call or an operator, writes something the code around
+// it can read.
+static bool writes(const expr *e)
+{
+    if (e->kind == E_BINARY || e->kind == E_UNARY) return routine_writes(e->method);
+    if (e->kind != E_CALL && e->kind != E_METHOD) return false;
+    switch (e->call) {
+    case CALL_FUNCTION:
+    case CALL_METHOD: return routine_writes(e->method);
+    case CALL_GUI: return e->arg_mut != 0;
+    case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
+    case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
+    case CALL_GRID: return true; // Clear
+    default: return false;
+    }
+}
+
+// Whether a call that writes is somewhere in `e`.
+static bool holds_writer(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT) { // What it waits for runs as a task (see gen_await): only its arguments are the statement's
+        for (int i = 0; i < e->lhs->args.count; i++) {
+            if (holds_writer(e->lhs->args.items[i])) return true;
+        }
+        return false;
+    }
+    if (writes(e) || holds_writer(e->object) || holds_writer(e->lhs) || holds_writer(e->rhs) || holds_writer(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (holds_writer(e->args.items[i])) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (holds_writer(e->inits.items[i].value)) return true;
+    }
+    return false;
+}
+
+// Whether a call runs before its statement when anything does: it has side
+// effects, and gives a value a temporary can hold.
+static bool call_keeps_order(const expr *e)
+{
+    if (is_spawn(e)) return true;
+    if (e->type.kind == TY_VOID) return false;
+    if (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation || e->io_operation) return true;
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c)) {
+        return true;
+    }
+    return writes(e);
+}
+
+// A struct's operator that keeps its order: it calls C, or writes.
+static bool operator_keeps_order(const expr *e)
+{
+    return e->method && (e->method->calls_c || routine_writes(e->method));
+}
+
+static bool settled(const expr *e);
+
+static bool all_settled(const expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        if (!settled(e->args.items[i])) return false;
+    }
+    return true;
+}
+
+// Whether a call only works its value out from its operands: a constructor,
+// a function of Math or of text, or a function or method of the game's that
+// has no side effects, which only sees what it's given.
+static bool call_settled(const expr *e)
+{
+    if (e->call == CALL_CONSTRUCT) return all_settled(e);
+    if (e->kind != E_METHOD) { // IsDead() inside a method reads the value the method runs on
+        return e->call == CALL_FUNCTION && !e->method->owner && all_settled(e);
+    }
+    switch (e->call) {
+    case CALL_BUILTIN: {
+        const expr *owner = e->object;
+        if (!owner || owner->kind != E_NAME || e->resource_operation || e->io_operation) return false;
+        const bool math = str_eq_c(owner->name, "Math") || str_eq_c(owner->name, "quaternion") || str_eq_c(owner->name, "Color")
+                       || str_eq_c(owner->name, "float2x2") || str_eq_c(owner->name, "float3x3")
+                       || str_eq_c(owner->name, "float4x4");
+        return math && all_settled(e);
+    }
+    case CALL_FUNCTION: return !e->method->owner && all_settled(e); // Combat.Heal(...)
+    case CALL_METHOD:
+    case CALL_TEXT:
+    case CALL_LIST: // The ones that only read: the others keep their order
+    case CALL_MAP: return settled(e->object) && all_settled(e);
+    default: return false; // The World, the frame's cameras: what they read isn't an operand
+    }
+}
+
+// Whether `e`'s value is the same wherever in its statement it's worked out:
+// it reads nothing a call there could write. What keeps its order is, since
+// its value waits in a temporary.
+static bool settled(const expr *e)
+{
+    if (!e) return true;
+    // Constants; Devices and the draw list, which nothing in Tide writes
+    if (e->bind == BIND_CONST || e->type.kind == TY_RECORD || e->type.kind == TY_DRAW_LIST) return true;
     switch (e->kind) {
+    case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
+    case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
+        return true;
+    case E_NAME:
+        // A local that isn't mut never changes. A query's row reads the world as it is.
+        if (e->bind == BIND_LOCAL) return e->local && !e->local->is_mut && !e->local->query;
+        // A function's read-only parameter is its own copy, but a list, which may be its caller's
+        if (e->bind == BIND_PARAM) {
+            const param *p = e->param;
+            return p->function_param && !p->task_ref && p->mode != PARAM_MUT && !type_has_list(p->type);
+        }
+        return e->bind != BIND_FIELD; // A type's name and the like: no value at all
     case E_MEMBER:
-        collect_ordered(e->object, out);
-        break;
-    case E_METHOD:
-    case E_CALL:
-        if (e->kind == E_METHOD) collect_ordered(e->object, out);
-        for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
-        if (is_spawn(e)
-            || (e->type.kind != TY_VOID
-                && (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation
-                    || e->io_operation
-                    || ((e->call == CALL_FUNCTION || e->call == CALL_METHOD)
-                        && (e->method->draws || e->method->is_extern || e->method->calls_c))))) {
-            vec_push(*out, e);
-        }
-        break;
-    case E_LITERAL:
-        for (int i = 0; i < e->inits.count; i++) collect_ordered(e->inits.items[i].value, out);
-        break;
-    case E_BINARY:
-        collect_ordered(e->lhs, out);
-        if (e->op != T_AND && e->op != T_OR) {
-            collect_ordered(e->rhs, out);
-            if (e->method && e->method->calls_c) vec_push(*out, e); // A struct's operator that calls C
-        } else if (holds_ordered(e->rhs)) {
-            vec_push(*out, e);
-        }
-        break;
+        if (e->enum_member || e->c_constant) return true;
+        if (e->local_field || e->typed_text || e->edge != EDGE_NONE) return false;
+        return settled(e->object);
+    case E_INDEX:
+        return settled(e->object) && settled(e->lhs);
     case E_UNARY:
-        collect_ordered(e->lhs, out);
-        if (e->method && e->method->calls_c) vec_push(*out, e);
-        break;
+    case E_BINARY: // A struct's operator only sees its operands
+        return operator_keeps_order(e) || (settled(e->lhs) && settled(e->rhs));
     case E_CONDITIONAL:
-        collect_ordered(e->cond, out);
-        if (holds_ordered(e->lhs) || holds_ordered(e->rhs)) vec_push(*out, e);
-        break;
+        return settled(e->cond) && settled(e->lhs) && settled(e->rhs);
+    case E_LITERAL:
+        for (int i = 0; i < e->inits.count; i++) {
+            if (!settled(e->inits.items[i].value)) return false;
+        }
+        return true;
     case E_INTERP:
     case E_LIST:
-        for (int i = 0; i < e->args.count; i++) collect_ordered(e->args.items[i], out);
+        return all_settled(e);
+    case E_CALL:
+    case E_METHOD:
+        if (call_keeps_order(e)) return true;
+        if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
+            // Local fields come by address, beside the value (has_fields_ptr)
+            for (int i = 0; i < e->method->params.count; i++) {
+                if (has_fields_ptr(&e->method->params.items[i])) return false;
+            }
+        }
+        return call_settled(e);
+    }
+    return false;
+}
+
+// How an expression takes an operand.
+typedef enum operand_role {
+    TAKEN, // A value, worked out in its turn
+    USED,  // A variable, or a part of one, which the expression reads as it runs, once its operands are worked out
+    PLACE, // A variable, or a part of one, which the expression takes by address
+} operand_role;
+
+typedef struct operand {
+    expr *e;
+    operand_role role;
+} operand;
+
+typedef VEC(operand) operand_list;
+
+// Whether `e` names a variable, or a part of one: a field, an element.
+static bool is_place(const expr *e)
+{
+    while (e->kind == E_MEMBER || e->kind == E_INDEX) e = e->object;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM || e->bind == BIND_FIELD);
+}
+
+// A variable an expression reads by value: when it runs. Anything else it's
+// given there is a value worked out in its turn.
+static operand_role use_of(const expr *e)
+{
+    return is_place(e) ? USED : TAKEN;
+}
+
+static void operand_push(operand_list *ops, expr *e, const operand_role role)
+{
+    const operand op = {e, role};
+    vec_push(*ops, op);
+}
+
+// A value an expression takes. A literal's are its fields' values: they're
+// what's worked out, and code reads them where they're written (gen_value).
+static void take(operand_list *ops, expr *e)
+{
+    if (!e) return;
+    if (e->kind != E_LITERAL) {
+        operand_push(ops, e, TAKEN);
+        return;
+    }
+    for (int i = 0; i < e->inits.count; i++) take(ops, e->inits.items[i].value);
+}
+
+// A call's operands: the value a method is called on, then its arguments.
+static void call_operands(expr *e, operand_list *ops)
+{
+    const decl *m = e->call == CALL_FUNCTION || e->call == CALL_METHOD ? e->method : NULL;
+    if (e->kind == E_METHOD) {
+        switch (e->call) {
+        case CALL_METHOD: operand_push(ops, e->object, m->is_mut_method ? PLACE : use_of(e->object)); break;
+        case CALL_LIST:
+        case CALL_MAP:
+        case CALL_GRID: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
+        case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
+        case CALL_TEXT:
+        case CALL_ADD:
+        case CALL_REMOVE:
+        case CALL_DESTROY:
+        case CALL_SEND: take(ops, e->object); break;
+        default:
+            if (e->targeted || e->resource_operation) take(ops, e->object); // A render target
+            break; // Math, Scene, GUI and the like: a name, no value
+        }
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        expr *arg = e->args.items[i];
+        operand_role role = TAKEN;
+        if (m && i < m->params.count) {
+            const param *p = &m->params.items[i];
+            if (p->mode == PARAM_MUT) {
+                role = PLACE;
+            } else if (m->is_extern && p->mode == PARAM_IN && arg->type.kind == p->type.kind && arg->type.decl == p->type.decl
+                       && addressable(arg)) {
+                role = USED; // C reads it where it is (gen_extern_call)
+            }
+        } else if (e->call == CALL_GUI && (e->arg_mut & (1u << i))) {
+            role = PLACE;
+        }
+        if (role == TAKEN) take(ops, arg);
+        else operand_push(ops, arg, role);
+    }
+}
+
+// Whether a temporary can hold a value of type `t`.
+static bool can_keep(const type t)
+{
+    switch (t.kind) {
+    case TY_ERROR: case TY_VOID: case TY_GRID: case TY_ACTION: case TY_WORLD: case TY_QUERY: return false;
+    default: return true;
+    }
+}
+
+static void collect_ordered(expr *e, ordering *out, bool later);
+
+// An expression's operands, in the order they're worked out, with what keeps
+// its order in each. In a statement with a call that writes, a value that
+// such a call in a later operand could change is read in its turn, into a
+// temporary. One that such a call in an earlier operand could have changed is
+// read after it, and so is a variable the expression reads as it runs: then
+// those calls run before the statement. `later`: a call that writes runs after
+// these operands, outside them.
+static void collect_operands(ordering *out, const operand_list *ops, const bool later)
+{
+    int first = -1; // The operands that hold calls that write, from the first to the last
+    int last = -1;
+    for (int i = 0; out->strict && i < ops->count; i++) {
+        if (!holds_writer(ops->items[i].e)) continue;
+        if (first < 0) first = i;
+        last = i;
+    }
+    for (int i = 0; i < ops->count; i++) {
+        expr *e = ops->items[i].e;
+        const bool after = later || i < last;
+        if (ops->items[i].role != TAKEN) {
+            collect_ordered(e, out, after);
+            if (ops->items[i].role == USED && first >= 0 && (first != i || last != i)) out->forced = true;
+            continue;
+        }
+        const int had = out->items.count;
+        collect_ordered(e, out, false);
+        if (!out->strict) continue;
+        if (out->items.count > had && out->items.items[out->items.count - 1].e == e) continue; // It waits in a temporary already
+        if (settled(e)) continue;
+        if (after && can_keep(e->type)) {
+            const ordered_item item = {e, true};
+            vec_push(out->items, item);
+        } else if (after || (first >= 0 && first < i)) {
+            out->forced = true;
+        }
+    }
+}
+
+static bool holds_ordered(expr *e);
+
+// What keeps its order in `e`, in the order it runs. `later`: `e` is a
+// variable or a part of one, and a call that writes runs after its own
+// operands (an element's index) are worked out.
+static void collect_ordered(expr *e, ordering *out, const bool later)
+{
+    if (!e) return;
+    operand_list ops = {0};
+    switch (e->kind) {
+    case E_MEMBER: {
+        const int had = out->items.count;
+        collect_ordered(e->object, out, later);
+        // A swizzle reads each component from its vector, which is written out again for each
+        if (e->swizzle_len > 1 && out->items.count > had) out->forced = true;
         break;
-    case E_INDEX:
-        collect_ordered(e->object, out);
-        collect_ordered(e->lhs, out);
+    }
+    case E_METHOD:
+    case E_CALL: {
+        call_operands(e, &ops);
+        collect_operands(out, &ops, false);
+        const decl *m = e->call == CALL_FUNCTION || e->call == CALL_METHOD ? e->method : NULL;
+        // IsDead(Hurt(1)) in a method: the value it runs on is read as it's called
+        for (int i = 0; out->strict && m && m->owner && e->kind == E_CALL && !m->is_mut_method && i < e->args.count; i++) {
+            if (holds_writer(e->args.items[i])) out->forced = true;
+        }
+        // A vector made from vectors reads each one's components from its text, written out again for each
+        for (int i = 0; e->call == CALL_CONSTRUCT && e->ctor == CTOR_COMPONENTS && i < e->args.count; i++) {
+            expr *arg = e->args.items[i];
+            if (type_dim(arg->type) >= 2 && holds_ordered(arg)) out->forced = true;
+        }
+        if (call_keeps_order(e)) {
+            const ordered_item item = {e, false};
+            vec_push(out->items, item);
+        }
+        break;
+    }
+    case E_LITERAL:
+        take(&ops, e);
+        collect_operands(out, &ops, false);
+        break;
+    case E_BINARY:
+    case E_UNARY:
+    case E_CONDITIONAL: {
+        const bool unit = is_unit(e);
+        take(&ops, e->kind == E_CONDITIONAL ? e->cond : e->lhs);
+        if (!unit) take(&ops, e->rhs);
+        collect_operands(out, &ops, false);
+        // A unit: its other parts are its own, as they only run sometimes
+        const bool ordered = !unit ? operator_keeps_order(e)
+                           : (e->kind == E_CONDITIONAL && holds_ordered(e->lhs)) || holds_ordered(e->rhs);
+        if (ordered) {
+            const ordered_item item = {e, false};
+            vec_push(out->items, item);
+        }
+        break;
+    }
+    case E_INTERP:
+    case E_LIST:
+        for (int i = 0; i < e->args.count; i++) take(&ops, e->args.items[i]);
+        collect_operands(out, &ops, false);
+        break;
+    case E_INDEX: // The element is read once its index is worked out
+        operand_push(&ops, e->object, use_of(e->object));
+        take(&ops, e->lhs);
+        collect_operands(out, &ops, later);
         break;
     case E_COALESCE: // Its right side is its own: it only runs when the left fails
     case E_IS:
     case E_TRY:
     case E_DEFAULTED:
-        collect_ordered(e->lhs, out);
-        vec_push(*out, e);
+    case E_AWAIT: {
+        if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
+            for (int i = 0; i < e->lhs->args.count; i++) take(&ops, e->lhs->args.items[i]);
+        } else {
+            take(&ops, e->lhs);
+        }
+        collect_operands(out, &ops, false);
+        const ordered_item item = {e, false};
+        vec_push(out->items, item);
         break;
-    case E_AWAIT: // The call's arguments first, then the wait
-        for (int i = 0; i < e->lhs->args.count; i++) collect_ordered(e->lhs->args.items[i], out);
-        vec_push(*out, e);
-        break;
+    }
     default:
         break;
     }
 }
 
-static bool holds_ordered(expr *e)
+// What keeps its order in a statement's expression.
+static ordering order_of(expr *e)
 {
-    expr_list found = {0};
-    collect_ordered(e, &found);
-    return found.count > 0;
+    ordering o = {0};
+    o.strict = holds_writer(e);
+    collect_ordered(e, &o, false);
+    return o;
 }
 
-static bool must_hoist(const expr_list *ordered);
+static bool holds_ordered(expr *e)
+{
+    const ordering found = order_of(e);
+    return found.items.count > 0;
+}
+
+static bool must_hoist(const ordering *ordered);
 
 // Whether a part that runs only sometimes needs its own calls put in order.
 static bool part_must_hoist(expr *e)
 {
-    expr_list ordered = {0};
-    collect_ordered(e, &ordered);
+    const ordering ordered = order_of(e);
     return must_hoist(&ordered);
 }
 
 // Whether a statement's spawns and calls go before it, in order: it spawns, C
-// would pick the order of two of them, or a unit's parts would.
-static bool must_hoist(const expr_list *ordered)
+// would pick the order of two of them, or of one and something read beside
+// it, or a unit's parts would.
+static bool must_hoist(const ordering *ordered)
 {
-    if (ordered->count > 1) return true;
-    for (int i = 0; i < ordered->count; i++) {
-        expr *e = ordered->items[i];
+    if (ordered->forced || ordered->items.count > 1) return true;
+    for (int i = 0; i < ordered->items.count; i++) {
+        expr *e = ordered->items.items[i].e;
         if (is_spawn(e) || is_unwrap(e) || e->kind == E_AWAIT) return true;
         if (!is_unit(e)) continue;
         if (e->kind == E_BINARY ? part_must_hoist(e->rhs) : part_must_hoist(e->lhs) || part_must_hoist(e->rhs)) {
@@ -3344,8 +3688,7 @@ static bool must_hoist(const expr_list *ordered)
 // Whether hoist_spawns runs anything of `e` before its statement.
 static bool needs_hoisting(expr *e)
 {
-    expr_list ordered = {0};
-    collect_ordered(e, &ordered);
+    const ordering ordered = order_of(e);
     return must_hoist(&ordered);
 }
 
@@ -3353,20 +3696,28 @@ static void hoist_unit(gen *g, expr *e, const char *name);
 static void hoist_unwrap(gen *g, expr *e);
 static bool wrapped_in_parens(const char *text);
 
-// Runs what keeps its order in a statement's expressions (in the order given)
-// before it, into temporaries the statement then reads.
-static void hoist_spawns(gen *g, expr *a, expr *b)
+// Runs what keeps its order (in the order given) before its statement, into
+// temporaries the statement then reads.
+static void hoist_ordered(gen *g, const ordering *ordered)
 {
-    expr_list ordered = {0};
-    collect_ordered(a, &ordered);
-    collect_ordered(b, &ordered);
     // Code copied into several calls is generated again each time.
-    for (int i = 0; i < ordered.count; i++) ordered.items[i]->hoisted = NULL;
-    if (!must_hoist(&ordered)) return;
-    for (int i = 0; i < ordered.count; i++) {
-        expr *e = ordered.items[i];
+    for (int i = 0; i < ordered->items.count; i++) {
+        ordered->items.items[i].e->hoisted = NULL;
+        ordered->items.items[i].e->kept = false;
+    }
+    if (!must_hoist(ordered)) return;
+    for (int i = 0; i < ordered->items.count; i++) {
+        expr *e = ordered->items.items[i].e;
         sb name = {0};
-        if (is_spawn(e)) {
+        if (ordered->items.items[i].read) { // As it is now, with its lists copied, so nothing shares them
+            sb_printf(&name, "tide_read%d", g->call_temps++);
+            indent(g, &g->c);
+            sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
+            gen_value_of(g, &g->c, e, e->type);
+            sb_put(&g->c, ";\n");
+            task_declare(g, name.data, e->type);
+            e->kept = true;
+        } else if (is_spawn(e)) {
             sb_printf(&name, "tide_spawned%d", g->spawn_temps++);
             indent(g, &g->c);
             sb_printf(&g->c, "%stide_entity %s = ", mutable_locals ? "" : "const ", name.data);
@@ -3397,6 +3748,53 @@ static void hoist_spawns(gen *g, expr *a, expr *b)
     }
 }
 
+// A statement's expression: what keeps its order in it runs before it.
+static void hoist_spawns(gen *g, expr *e)
+{
+    const ordering ordered = order_of(e);
+    hoist_ordered(g, &ordered);
+}
+
+// The arguments of a task's start, which each go into its frame in a statement
+// of their own: what keeps its order in any of them runs before the first.
+static void hoist_arguments(gen *g, const expr *call)
+{
+    ordering ordered = {0};
+    operand_list ops = {0};
+    for (int i = 0; i < call->args.count; i++) {
+        if (call->method->params.items[i].task_ref) continue; // A component's name: the task gets it itself
+        ordered.strict |= holds_writer(call->args.items[i]);
+        take(&ops, call->args.items[i]);
+    }
+    collect_operands(&ordered, &ops, false);
+    hoist_ordered(g, &ordered);
+}
+
+// An assignment's. What its target runs (an element's index) comes first; a
+// compound one then reads what the target holds; then the value is worked out.
+static void hoist_assign(gen *g, const stmt *s)
+{
+    ordering ordered = {0};
+    const bool target_writes = holds_writer(s->target);
+    const bool value_writes = holds_writer(s->value);
+    ordered.strict = target_writes || value_writes;
+    collect_ordered(s->target, &ordered, value_writes);
+    if (s->op != T_ASSIGN) {
+        // The target is written out twice, to read and to write: what it runs waits in temporaries
+        if (ordered.items.count > 0) ordered.forced = true;
+        if (value_writes) { // What it held before the value's calls wrote
+            const ordered_item item = {s->target, true};
+            vec_push(ordered.items, item);
+        }
+    }
+    const int had = ordered.items.count;
+    collect_ordered(s->value, &ordered, false);
+    // A value read after a call in the target wrote
+    const bool waits = ordered.items.count > had && ordered.items.items[ordered.items.count - 1].e == s->value;
+    if (target_writes && !waits && !settled(s->value)) ordered.forced = true;
+    hoist_ordered(g, &ordered);
+}
+
 // A unit, before its statement: && and || as an if that runs the right side
 // only when it decides, and ?: as an if/else, with each part's own calls in
 // order inside. Its value goes in `name`.
@@ -3412,7 +3810,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
         g->indent++;
         const int mark = task_mark(g);
         task_declare(g, name, (type){TY_BOOL, NULL}); // Its own, while the right side waits
-        hoist_spawns(g, e->rhs, NULL);
+        hoist_spawns(g, e->rhs);
         task_pop(g, mark);
         indent(g, o);
         sb_printf(o, "%s = ", name);
@@ -3431,7 +3829,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
         expr *value = side == 0 ? e->lhs : e->rhs;
         g->indent++;
         const int mark = task_mark(g);
-        hoist_spawns(g, value, NULL);
+        hoist_spawns(g, value);
         task_pop(g, mark);
         indent(g, o);
         sb_printf(o, "%s = ", name);
@@ -3566,7 +3964,7 @@ static void hoist_unwrap(gen *g, expr *e)
     line(g, o, "} else {");
     g->indent++;
     const int mark = task_mark(g); // Its value isn't set until the right side is done
-    hoist_spawns(g, e->rhs, NULL);
+    hoist_spawns(g, e->rhs);
     task_pop(g, mark);
     indent(g, o);
     sb_printf(o, "%s = ", name.data);
@@ -3851,16 +4249,16 @@ static void gen_stmt(gen *g, const stmt *s)
         declare_bindings(g, s->cond);
     }
     switch (s->kind) {
-    case S_VAR: hoist_spawns(g, s->value, NULL); break;
+    case S_VAR: hoist_spawns(g, s->value); break;
     case S_EXPR:
-        if (!task_start(s->value)) hoist_spawns(g, s->value, NULL);
+        if (!task_start(s->value)) hoist_spawns(g, s->value);
         break;
-    case S_ASSIGN: hoist_spawns(g, s->target, s->value); break;
+    case S_ASSIGN: hoist_assign(g, s); break;
     case S_IF:
-    case S_SWITCH: hoist_spawns(g, s->cond, NULL); break;
+    case S_SWITCH: hoist_spawns(g, s->cond); break;
     case S_RETURN:
     case S_FAIL:
-    case S_FOREACH: hoist_spawns(g, s->value, NULL); break; // A foreach's list is made once, before it
+    case S_FOREACH: hoist_spawns(g, s->value); break; // A foreach's list is made once, before it
     default: break;
     }
 
@@ -3962,7 +4360,7 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "while (true) {");
             g->indent++;
             declare_bindings(g, s->cond); // Names `is` gives, for the body
-            hoist_spawns(g, s->cond, NULL);
+            hoist_spawns(g, s->cond);
             line(g, o, "if (!(%s)) break;", expr_text(g, s->cond));
         } else {
             const char *cond = s->cond ? expr_text(g, s->cond) : "true";
@@ -4223,7 +4621,17 @@ static void gen_stmt(gen *g, const stmt *s)
     }
 
     case S_ASSIGN: {
-        const expr *target = s->target;
+        expr *target = s->target;
+        // A compound one reads its target first: where a call in its value
+        // writes, that's the copy made before it (hoist_assign), and the
+        // target itself is only where the result goes.
+        expr before = *target;
+        expr *left = target;
+        if (target->kept) {
+            target->hoisted = NULL;
+            target->kept = false;
+            left = &before;
+        }
         if (target->kind == E_INDEX && (target->object->type.kind == TY_GRID || target->object->type.kind == TY_LIST)
             && in_window(g, target)) { // Into the step's window, or its task's copy of its elements
             indent(g, o);
@@ -4231,7 +4639,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_window_index(g, o, target);
             sb_put(o, "] = ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_put(o, ";\n");
             break;
         }
@@ -4248,7 +4656,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_expr(g, o, target->lhs);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             if (g->par_loop) sb_put(o, ");\n");
             else sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
@@ -4271,7 +4679,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_as(g, o, target->lhs, map->fields.items[0].type);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_value_of(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
@@ -4283,7 +4691,7 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_expr(g, o, target->lhs);
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             sb_printf(o, ", %s);\n", place_where(g, target->object));
             break;
         }
@@ -4312,7 +4720,7 @@ static void gen_stmt(gen *g, const stmt *s)
                 sb_put(o, "), ");
             }
             if (s->op == T_ASSIGN) gen_value_of(g, o, s->value, target->type);
-            else gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
             if (ref) sb_put(o, ");\n");
             else sb_printf(o, ", %s);\n", place_where(g, target));
             break;
@@ -4328,7 +4736,7 @@ static void gen_stmt(gen *g, const stmt *s)
         if (s->op == T_ASSIGN) {
             gen_as(g, o, s->value, target->type);
         } else {
-            gen_binary(g, o, compound_op(s->op), s->target, s->value, target->type, s->operator_decl);
+            gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
         }
         sb_put(o, ";");
         if (target->kind == E_MEMBER && target->swizzle_len > 1) {

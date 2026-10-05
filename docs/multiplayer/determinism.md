@@ -28,7 +28,7 @@ NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. T
 
 Everything that could run in a different order does so in a fixed one:
 
-- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere.
+- Expressions run left to right, as in C#, so spawns and entity IDs come out the same everywhere, and so does what a function changes through a `mut` parameter and what's read beside it.
 - Systems run in one order (see [Systems](../game/systems.md#order)), and structural changes and events apply in the order they were made.
 - Running systems in parallel will never change results: thread timing never decides the order of anything that can be seen.
 
