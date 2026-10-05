@@ -79,8 +79,19 @@ try {
     let next = 0;
     const pending = new Map();
     const errors = [];
+    // The examples' pages as they finished loading, in order: each one's
+    // address, whether it was only being downloaded ahead (`#download`), and
+    // what came over the network for it.
+    const asked = new Map();
+    const loads = [];
     socket.addEventListener('message', ({ data }) => {
         const message = JSON.parse(data);
+        if (message.method === 'Network.requestWillBeSent' && message.params.request.url.includes('/examples/')) {
+            const { url, urlFragment } = message.params.request;
+            asked.set(message.params.requestId, { url, ahead: urlFragment === '#download' });
+        } else if (message.method === 'Network.loadingFinished' && asked.has(message.params.requestId)) {
+            loads.push({ ...asked.get(message.params.requestId), bytes: message.params.encodedDataLength });
+        }
         if (message.id) {
             const request = pending.get(message.id);
             if (request) {
@@ -120,6 +131,7 @@ try {
     }
     await command('Page.enable');
     await command('Runtime.enable');
+    await command('Network.enable');
     await command('Page.addScriptToEvaluateOnNewDocument', { source: `
         window.__draws = 0;
         for (const name of ['drawArraysInstanced', 'drawElementsInstanced', 'drawArrays', 'drawElements']) {
@@ -152,13 +164,39 @@ try {
     const rendering = (count) => Array.from({ length: count }, (_, i) => `${frame(i)}?.contentWindow.__draws > 5`).join(' && ');
     const visited = new Set();
     let held = false;  // Whether one was checked to stay stopped...
-    let scrolled = false; // ...and one to stop off screen and start again in view
+    let scrolled = false; // ...one to stop off screen and start again in view...
+    let waited = false; // ...one to load before it's in view, and wait there...
+    let wheeled = false; // ...one to leave the page its wheel, and take the keyboard at a click...
+    let ahead = false; // ...and one to be downloaded before it's scrolled to
+    // Where something is in the window, and a real click there.
+    const inside = (which, x, y) => evaluate(`(() => { const r = ${which}.getBoundingClientRect(); return { x: r.x + ${x}, y: r.y + ${y} }; })()`);
+    const press = async (at) => {
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
+        for (const type of ['mousePressed', 'mouseReleased']) {
+            await command('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1 });
+        }
+    };
+    const focused = 'example.querySelector("iframe").classList.contains("focused")';
     for (const page of pages) {
         // The page's `backend=` goes on to its games.
         await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
         await until(`location.pathname === '${page}' && document.querySelector('.tide-example')`, `${page} page`);
         const ids = await evaluate(`Array.from(document.querySelectorAll('.tide-example'), e => e.dataset.exampleSrc.split('/')[2])`);
         const sourced = new Set(); // The examples whose source this page shows
+        // Once the page has loaded, the browser downloads its examples: the
+        // last one's too, screens further down, with nothing scrolled. The
+        // frame that later shows it has its page from the browser's cache.
+        let downloaded = null;
+        if (!only && !ahead && await evaluate(`[...document.querySelectorAll('.tide-example')].at(-1).getBoundingClientRect().top > 3 * innerHeight`)) {
+            const last = `/examples/${ids.at(-1)}/`;
+            const deadline = Date.now() + 20000;
+            while (!(downloaded = loads.find((load) => load.ahead && load.url.includes(last)))) {
+                assert.ok(Date.now() < deadline, `Timed out: ${page} downloads its last example ahead`);
+                await new Promise((done) => setTimeout(done, 50));
+            }
+            assert.ok(downloaded.bytes > 100000, `${ids.at(-1)}: downloaded ahead`);
+            await until('document.querySelectorAll("body > iframe").length === 0', `${ids.at(-1)}: in a frame that's gone once it has`);
+        }
         for (const [index, id] of ids.entries()) {
             visited.add(id);
             await evaluate(`window.example = document.querySelectorAll('.tide-example')[${index}];`);
@@ -172,11 +210,50 @@ try {
             if (only && !only.has(id)) continue;
             const players = await evaluate('example.querySelectorAll(".example-viewport").length');
             const match = await evaluate('example.dataset.exampleMatch !== undefined');
-            // It starts by itself once it's in view, with no button pressed.
+            // It starts by itself once it's in view, with no button pressed,
+            // and its frame shows once its game has drawn.
             await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
-            await until('example.querySelector("iframe")', `${id}: starts in view`);
+            await until('example.querySelector("iframe")', `${id}: loads`);
+            assert.equal(await evaluate(`${frame(0)}.classList.contains('shown') && !(${frame(0)}.contentWindow.__draws > 0)`), false, `${id}: unseen before it draws`);
+            await until('example.querySelector("iframe.shown")', `${id}: starts in view`);
             assert.ok((await evaluate(`${frame(0)}.src`)).includes(`backend=${backend}`), `${id}: the page's backend`);
             await until(rendering(players), `${id}: actual rendering`);
+            await until(`example.querySelectorAll("iframe.shown").length === ${players}`, `${id}: every frame shows`);
+            if (downloaded && index === ids.length - 1) {
+                ahead = true;
+                const shown = loads.find((load) => !load.ahead && load.url === downloaded.url);
+                assert.ok(shown && shown.bytes < downloaded.bytes / 10, `${id}: its frame has its page from the cache (${shown?.bytes} bytes of ${downloaded.bytes})`);
+            }
+            // One further down the page, within a screen of this one, has
+            // loaded already, and waits to be in view to start.
+            const next = `[...document.querySelectorAll('.tide-example iframe')].find(f => !example.contains(f) && f.getBoundingClientRect().top >= innerHeight)`;
+            if (!waited && await evaluate(`!!${next}`)) {
+                waited = true;
+                await evaluate(`window.waiting = ${next}`);
+                await until('typeof waiting.contentWindow.Tide?.start === "function"', `${id}: the next example loads`);
+                const draws = await evaluate(`${frame(0)}.contentWindow.__draws`);
+                await until(`${frame(0)}.contentWindow.__draws > ${draws + 20}`, `${id}: frames meanwhile`);
+                assert.equal(await evaluate('waiting.isConnected && !waiting.classList.contains("shown") && waiting.contentWindow.__draws'), 0, `${id}: the next example waits`);
+            }
+            if (!wheeled && players === 1) {
+                // The wheel over a game scrolls the page, whoever has the focus.
+                wheeled = true;
+                const middle = await inside(frame(0), 150, 200);
+                for (const clicked of [false, true]) {
+                    if (clicked) {
+                        // A click gives the game the keyboard, which shows, until one elsewhere.
+                        await press(middle);
+                        await until(focused, `${id}: a click gives it the focus`);
+                    }
+                    const before = await evaluate('scrollY');
+                    await command('Input.dispatchMouseEvent', { type: 'mouseWheel', x: middle.x, y: middle.y, deltaX: 0, deltaY: 60 });
+                    await until(`scrollY > ${before}`, `${id}: the wheel over it scrolls the page${clicked ? ', after a click on it too' : ''}`);
+                    await evaluate(`scrollTo(0, ${before})`);
+                    await until(`scrollY === ${before}`, `${id}: back where it was`);
+                }
+                await press(await inside('example.querySelector(".example-heading")', 20, 10));
+                await until(`!${focused}`, `${id}: a click elsewhere takes the focus back`);
+            }
             for (let i = 0; i < players; i++) {
                 assert.equal(await evaluate(`${frame(i)}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
             }
@@ -233,8 +310,9 @@ try {
                 })()`);
                 const pixels = async () => (await command('Page.captureScreenshot', {
                     // Compare the circles alone; a focused checkbox has its
-                    // own visual state even after the value is restored.
-                    clip: { x: rect.x, y: rect.pageY + rect.height - 128, width: rect.width, height: 90, scale: 1 },
+                    // own visual state even after the value is restored, and
+                    // so has the frame, around its edge, once it's clicked.
+                    clip: { x: rect.x + 8, y: rect.pageY + rect.height - 128, width: rect.width - 16, height: 90, scale: 1 },
                 })).data;
                 const settle = async () => {
                     await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x - 20, y: rect.y + 72 });
@@ -268,9 +346,9 @@ try {
                 // More than a screen away, it stops, and it starts again in view.
                 scrolled = true;
                 await evaluate('scrollTo(0, 0)');
-                await until('example.querySelectorAll("iframe").length === 0 && example.querySelector(".example-status").textContent.includes("off screen")', `${id}: stops off screen`);
+                await until('example.querySelectorAll("iframe").length === 0', `${id}: stops off screen`);
                 await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
-                await until(`example.querySelector("iframe") && ${rendering(players)}`, `${id}: starts again in view`);
+                await until(`example.querySelector("iframe.shown") && ${rendering(players)}`, `${id}: starts again in view`);
             }
             await evaluate('example.querySelector("[data-example-stop]").click();');
             assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: stop`);
@@ -287,22 +365,66 @@ try {
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');
     assert.deepEqual([...written].sort(), built);
-    if (!only) assert.ok(held && scrolled, 'Stopping, and leaving the screen, were checked');
+    if (!only) assert.ok(held && scrolled && waited && wheeled && ahead, 'Stopping, leaving the screen, waiting out of view, the wheel and downloading ahead were checked');
     await command('Page.navigate', { url: `${origin}/game/shaders` });
     await until(`location.pathname === '/game/shaders' && document.querySelector('.tide-example')`, 'shaders page');
-    await evaluate(`window.example = document.querySelector('.tide-example'); example.dataset.exampleSrc = '/examples/missing/'; example.querySelector('[data-example-run]').click();`);
-    await until('example.querySelector(".example-status").textContent.includes("unavailable") || (example.querySelector("[data-example-run]").click(), false)', 'missing build message');
+    // A build of the docs without its games: what loads isn't one, and the
+    // example says so. The game that's there starts first, so its button
+    // says Restart, and starting it over is what loads the missing one.
+    await evaluate(`window.example = document.querySelector('.tide-example'); example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
+    await until('example.querySelector("[data-example-run]").textContent === "Restart"', 'a game to start over');
+    await evaluate(`example.dataset.exampleSrc = '/examples/missing/'; example.querySelector('[data-example-run]').click();`);
+    await until('example.querySelector(".example-status").textContent.includes("unavailable")', 'missing build message');
     assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0);
     await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true, 'mobile page fits');
     assert.equal(await evaluate('getComputedStyle(example.querySelector(".example-columns")).gridTemplateColumns.split(" ").length'), 1, 'mobile example stacks');
     // Start a game, then navigate through Svelte's client router to another page.
     await evaluate(`example.dataset.exampleSrc = '/examples/shaders/?backend=${backend}'; example.querySelector('[data-example-run]').click();`);
     await until('example.querySelector("iframe")?.contentWindow.__draws > 5', 'navigation setup');
+    {
+        // On a phone, a finger that swipes down the page scrolls it from a
+        // game too. A tap on the game gives it the touchscreen, swipes and
+        // all, until a tap on the page elsewhere.
+        await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
+        const gestures = 'example.querySelector("iframe").contentDocument.querySelector("canvas").style.touchAction';
+        // A finger down on the game, 160 pixels up the screen, and off: how
+        // far the page scrolled with it. The browser scrolls with the fingers
+        // it's sent, a move at a time, not with a gesture made up whole.
+        const swipe = async () => {
+            const at = await inside('example.querySelector("iframe")', 150, 260);
+            const before = await evaluate('scrollY');
+            await command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] });
+            for (let up = 10; up <= 160; up += 10) {
+                await command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: at.x, y: at.y - up }] });
+                await evaluate('new Promise(done => requestAnimationFrame(done))');
+            }
+            await command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            await evaluate('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))');
+            const moved = await evaluate(`scrollY - ${before}`);
+            await evaluate(`scrollTo(0, ${before})`);
+            return moved;
+        };
+        const tap = async (at) => {
+            await command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] });
+            await command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        };
+        assert.equal(await evaluate(gestures), 'pan-y pinch-zoom');
+        assert.ok(await swipe() > 100, 'a swipe that starts on a game scrolls the page');
+        assert.equal(await evaluate(`${gestures} === 'pan-y pinch-zoom' && !${focused}`), true, 'which gives the game nothing');
+        await tap(await inside('example.querySelector("iframe")', 150, 260));
+        await until(`${gestures} === 'none' && ${focused}`, 'a tap gives the game the touchscreen');
+        assert.equal(await swipe(), 0, 'whose swipes are then its own');
+        // Its controls are on screen, above it: the gap between its buttons and its link.
+        await tap(await inside('example.querySelector(".example-controls")', 200, 28));
+        await until(`${gestures} === 'pan-y pinch-zoom' && !${focused}`, 'a tap elsewhere gives the page its scrolling back');
+        assert.ok(await swipe() > 100, 'and a swipe on the game scrolls the page again');
+    }
     await evaluate(`window.previousFrame = example.querySelector('iframe'); document.querySelector('a[href="/game/gui"]').click();`);
     await until('location.pathname === "/game/gui" && document.querySelectorAll(".tide-example").length > 1', 'client navigation');
     assert.equal(await evaluate('previousFrame.isConnected'), false, 'navigation disposes frame');
-    assert.equal(await evaluate('document.querySelectorAll(".tide-example iframe").length'), 0, 'nothing out of view runs on the new page');
+    assert.equal(await evaluate(`[...document.querySelectorAll('.tide-example iframe')].every(f => !(f.contentWindow.__draws > 0) || f.getBoundingClientRect().top < innerHeight)`), true, 'nothing out of view runs on the new page');
     // Two players stack on a phone too.
     await command('Page.navigate', { url: `${origin}/multiplayer/matches` });
     await until(`location.pathname === '/multiplayer/matches' && document.querySelector('.tide-pair')`, 'matches page');

@@ -1,8 +1,8 @@
 # Falling sand
 
-Sand, water and walls that everyone in a room paints into at once, built for the web from the code below. Click it to give it the mouse and keyboard.
+Sand, water and walls that everyone in a room paints into at once, built for the web from the code below. Click it to give it the keyboard. On a touchscreen, tap it first: until then a swipe on it scrolls this page, and after, it paints.
 
-<iframe class="demo-frame square-ish" src="/sand/" title="Tide sand" allow="fullscreen"></iframe>
+<iframe class="demo-frame square-ish" src="/sand/?embedded" title="Tide sand" allow="fullscreen"></iframe>
 
 | | Mouse and keyboard |
 |---|---|

@@ -133,12 +133,14 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     fill(&t, &entities, 40);
     tide_table_copy(&snapshot, &t, &columns);
     const uint64_t before = tide_table_hash(1, &t, &columns);
+    const uint8_t *was[1];
     uint8_t *lanes[1];
+    TIDE_CHECK(tide_table_lanes_shared(&t, &columns, 1, 1, 1));
 
     // Written as they were: nothing moves
-    tide_table_lanes_reserve(16 * 8 + 16);
-    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
     TIDE_CHECK(lanes[0] != tide_page_data(t.pages[1 * 2 + 1])); // A copy, since the snapshot shares the page
+    TIDE_CHECK(was[0] == lanes[0]);                             // ...which is read where it's written
     for (uint32_t i = 0; i < 16; i++) {
         float *p = (float *)(lanes[0] + i * 8);
         p[0] = (float)(16 + i);
@@ -150,7 +152,7 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
 
     // One row changed: this table's own page, the snapshot's as it was
-    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
     ((float *)(lanes[0] + 4 * 8))[0] = 100.0f;
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
     TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]);
@@ -160,9 +162,64 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     TIDE_CHECK(tide_table_hash(1, &snapshot, &columns) == before);
 
     // A page the table alone has is written in place
-    tide_table_lanes_begin(&t, &columns, 1, 1, 1, lanes);
-    TIDE_CHECK(lanes[0] == tide_page_data(t.pages[1 * 2 + 1]));
+    TIDE_CHECK(!tide_table_lanes_shared(&t, &columns, 1, 1, 1));
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
+    TIDE_CHECK(lanes[0] == tide_page_data(t.pages[1 * 2 + 1]) && was[0] == lanes[0]);
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+
+    tide_table_free(&t, &columns);
+    tide_table_free(&snapshot, &columns);
+    tide_entities_free(&entities);
+}
+
+// A loop that writes every row reads a lane where it is and writes it apart:
+// nothing is copied first, and a page that comes out as it was stays.
+TIDE_TEST(table_lanes_are_written_apart)
+{
+    tide_table t = {0};
+    tide_table snapshot = {0};
+    tide_entities entities = {0};
+    fill(&t, &entities, 40);
+    tide_table_copy(&snapshot, &t, &columns);
+    const uint64_t before = tide_table_hash(1, &t, &columns);
+    const uint8_t *was[1];
+    uint8_t *lanes[1];
+
+    // Every row written as it was: the shared page stays, and its hash
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
+    TIDE_CHECK(was[0] == tide_page_data(t.pages[1 * 2 + 1])); // Read where it is
+    TIDE_CHECK(lanes[0] != was[0]);                           // ...and written somewhere else
+    for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(t.pages[1 * 2 + 1] == snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX);
+    TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
+
+    // Every row written, one of them otherwise: the page that was written is the table's
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
+    for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
+    ((float *)(lanes[0] + 4 * 8))[0] = 100.0f;
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(tide_page_data(t.pages[1 * 2 + 1]) == lanes[0]);
+    TIDE_CHECK(position(&t, 20)[0] == 100.0f && position(&t, 21)[0] == 21.0f && position(&t, 39)[0] == 39.0f);
+    TIDE_CHECK(position(&snapshot, 20)[0] == 20.0f);
+    TIDE_CHECK(tide_table_hash(1, &snapshot, &columns) == before);
+
+    // The same with a page the table alone has: apart too, as a loop that asks reads and writes two places
+    const tide_page *own = t.pages[1 * 2 + 1];
+    const uint64_t changed = tide_table_hash(1, &t, &columns);
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
+    TIDE_CHECK(was[0] == tide_page_data(own) && lanes[0] != was[0]);
+    for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(t.pages[1 * 2 + 1] == own && tide_table_hash(1, &t, &columns) == changed); // As it was: it stays
+    tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
+    for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
+    ((float *)(lanes[0] + 5 * 8))[1] = 7.0f;
+    tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
+    TIDE_CHECK(position(&t, 21)[1] == 7.0f && position(&t, 20)[0] == 100.0f && position(&t, 22)[0] == 22.0f);
+    TIDE_CHECK(tide_table_hash(1, &t, &columns) != changed);
 
     tide_table_free(&t, &columns);
     tide_table_free(&snapshot, &columns);

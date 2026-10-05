@@ -2,7 +2,7 @@
 
 A small 2D arena game inspired by Rounds, made with Tide. Jump, aim, shoot and block, then build a stronger fighter between rounds. Click the game to give it the mouse and keyboard.
 
-<iframe class="demo-frame duel" src="/duel/" title="Tide duel" allow="fullscreen"></iframe>
+<iframe class="demo-frame duel" src="/duel/?embedded" title="Tide duel" allow="fullscreen"></iframe>
 
 [Open it on a page of its own](/duel/).
 
@@ -36,6 +36,8 @@ The bottom right corner shows the frame rate, and your ping in a friend's match.
 | Block | Tap the block area in the bottom right |
 
 To jump again, lower your finger or lift it and start a new upward swipe.
+
+In this page, a swipe on the game scrolls the page until you tap the game, and again once you tap the page somewhere else. The game [on a page of its own](/duel/) has every touch from the start.
 
 ### Upgrades
 
