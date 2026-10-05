@@ -181,7 +181,8 @@ typedef struct field {
     type type;
     expr *default_value; // Constant expression, or NULL for zero.
     loc type_at; // The type's name (the last part if it's qualified)
-    VEC(attribute) attributes; // [Clamp], [Min] and [Max] on input and struct fields
+    VEC(attribute) attributes; // Bounds, [Snap], and view correction roles
+    int view_correction; // 0: ordinary interpolation, 1: [Position], 2: [Rotation]
     loc type_qual_at; // Where the type starts: its namespace if it's qualified
     bool hidden; // The engine's own, in generated C only: a scene's visibility and players
     int leaf;    // In the device records: 1 + where its values start among its record's (a value is one)
@@ -423,6 +424,8 @@ typedef struct decl {
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
+    bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
+    loc frame_time_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -508,7 +511,7 @@ typedef enum is_pattern {
 
 typedef enum builtin_call {
     CALL_NONE,
-    CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...)
+    CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw2D.Circle(...): calls c_callee with the view's draw list first
     CALL_SPAWN,
@@ -558,6 +561,7 @@ typedef enum ctor_form {
     CTOR_PLAYER,         // PlayerID(index)
     CTOR_COLOR,          // Color(r, g, b) or Color(r, g, b, a)
     CTOR_RECT,           // Rect(x, y, width, height)
+    CTOR_ENUM,           // Card(number), Combat.Stance(number): the enum's value with that number; type_decl is the enum
 } ctor_form;
 
 typedef enum binding_kind {
@@ -603,7 +607,7 @@ struct expr {
     binding_kind bind;
     param *param;       // BIND_PARAM
     stmt *local;        // BIND_LOCAL: the S_VAR declaring it
-    decl *type_decl;    // BIND_TYPE, E_LITERAL's type, and CALL_SEND's event
+    decl *type_decl;    // BIND_TYPE, E_LITERAL's type, CALL_SEND's event, and CTOR_ENUM's enum
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
 
     // E_MEMBER, E_METHOD
@@ -622,7 +626,7 @@ struct expr {
     // E_CALL, E_METHOD
     VEC(expr *) args;
     builtin_call call;
-    ctor_form ctor;         // CALL_CONSTRUCT
+    ctor_form ctor;         // CALL_CONSTRUCT; CTOR_ENUM even where the checker refused the conversion
     const char *c_callee;   // CALL_BUILTIN
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called

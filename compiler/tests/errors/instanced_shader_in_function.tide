@@ -9,7 +9,7 @@ void DrawBatch(List<Vertex3> vertices, List<int> indices, List<BatchItem> instan
 {
     Draw3D.Instanced(vertices, indices, instances, Tint);
 }
-view Frame()
+view Show()
 {
     DrawBatch([], [], []);
 }

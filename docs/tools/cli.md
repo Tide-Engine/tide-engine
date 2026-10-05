@@ -114,7 +114,7 @@ While `tide run` plays a game, saving a `.tide` file rebuilds it, and so does sa
 
 Carrying the game over works like this:
 
-- Every field of the same name keeps its value. An `int` field that became a `float` is converted, and so is an int vector that became a float vector of the same size. An enum field keeps its member by name.
+- Every field of the same name keeps its value. An `int` field that became a `float` is converted, and so is an int vector that became a float vector of the same size. An enum field keeps its member by name; a value that's none of its members (see [From a number](../language/basics.md#from-a-number)) gets the field's default.
 - A new field gets its declared default. So does a field whose type changed to one it doesn't convert to, like `float2` to `float3`. New text and list fields start empty.
 - Renaming a field is removing it and adding a new one: its value is lost.
 - An entity keeps its ID. When you remove a component, entities that had it keep their other components. An entity whose remaining components can't exist together in the new code is dropped.
