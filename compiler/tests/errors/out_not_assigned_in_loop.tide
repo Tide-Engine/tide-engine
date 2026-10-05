@@ -1,0 +1,12 @@
+// expect: 'FirstOver' returns here without assigning its 'index'
+// A loop may have nothing to go through: what it assigns isn't assigned after it
+scene Main { }
+bool FirstOver(List<int> values, int least, out int index)
+{
+    foreach (var value in values)
+    {
+        index = value;
+        if (value > least) return true;
+    }
+    return false;
+}

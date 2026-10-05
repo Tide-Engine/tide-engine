@@ -456,8 +456,15 @@
           }
         },
         {
-          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is; extern int Write(out List<byte> bytes): a list C makes. A name anywhere else: Buffer out, out.size",
-          "match": "(?:(?<=[(,])|^)\\s*(in|out)(?=\\s+[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
+          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is; bool TryHalf(int value, out int half): a parameter the call makes, a function's, a method's or an extern function's. A word of its own where a parameter starts, before its type and its name. A name anywhere else: Buffer out, out.size, out is Stats made",
+          "match": "(?:(?<=[(,])|^)\\s*(in|out)(?=\\s+(?!is\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" }
+          }
+        },
+        {
+          "comment": "TryHalf(8, out var half), out Health health, out mut var half, out half, out body.hits, out _, half: out var h: the argument for an 'out' parameter. A word of its own where an argument starts, before the variable the call makes. A name anywhere else: Write(out), Write(out, 1), out + 1, out is Stats made",
+          "match": "(?:(?<=[(,:])|^)\\s*(out)(?=\\s+(?!is\\b)[A-Za-z_])",
           "captures": {
             "1": { "name": "storage.modifier.tide" }
           }

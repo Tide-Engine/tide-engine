@@ -379,6 +379,39 @@ const cases = {
             ['Player', 'entity.name.type'],
         ]],
     ],
+    "out is a modifier before a parameter's type and before the argument for one": [
+        ['bool TryHalf(int value, out int half)', [
+            ['TryHalf', 'entity.name.function'], ['out', 'storage.modifier'], ['int', 'storage.type.primitive', 2], ['half', '!storage'],
+        ]],
+        ['bool TryFind(Entity target, out Combat.Health? found', [
+            ['out', 'storage.modifier'], ['Combat', 'entity.name.type'], ['Health', 'entity.name.type'], ['?', 'keyword.operator.optional'],
+            ['out', 'storage.modifier', 2], ['Map', 'support.class'], ['found', '!storage'],
+        ]],
+        ['bool TryPower(int least, out int found)', [['TryPower', 'entity.name.function'], ['out', 'storage.modifier']]],
+        ['out List<int> halves)', [['out', 'storage.modifier'], ['List', 'support.class'], ['halves', '!storage']]],
+        ['if (TryHalf(8, out var declared))', [['out', 'storage.modifier'], ['var', 'storage.type.var'], ['declared', '!storage']]],
+        ['TryHalf(8, out Health typed);', [['out', 'storage.modifier'], ['Health', 'entity.name.type'], ['typed', '!storage']]],
+        ['TryHalf(8, out mut var changed);', [['out', 'storage.modifier'], ['mut', 'storage.modifier'], ['var', 'storage.type.var']]],
+        ['TryHalf(8, out existing);', [['out', 'storage.modifier'], ['existing', '!storage']]],
+        ['TryHalf(8, out body.hits);', [['out', 'storage.modifier'], ['body', '!storage'], ['hits', '!storage']]],
+        ['TryHalf(8, out _);', [['out', 'storage.modifier'], ['_', '!storage']]],
+        ['TryHalf(value: 8, half: out var named);', [
+            ['value', 'variable.parameter'], ['half', 'variable.parameter'], [':', 'punctuation.separator.colon', 2],
+            ['out', 'storage.modifier'], ['var', 'storage.type.var'], ['named', '!storage'],
+        ]],
+        ['out var wrapped);', [['out', 'storage.modifier'], ['var', 'storage.type.var']]],
+        ['if (scores.TryGet(key, out var score))', [['TryGet', 'entity.name.function.call'], ['out', 'storage.modifier'], ['var', 'storage.type.var']]],
+    ],
+    'out is a name anywhere else': [
+        ['mut Set<int> out = [];', [['mut', 'storage.modifier'], ['Set', 'support.class'], ['out', '!storage.modifier']]],
+        ['Write(out);', [['out', '!storage.modifier']]],
+        ['Write(out, 1);', [['out', '!storage.modifier']]],
+        ['Write(1, out);', [['out', '!storage.modifier']]],
+        ['out.Add(out.count + 1);', [['out', '!storage.modifier'], ['out', '!storage.modifier', 2]]],
+        ['var either = on ? 1 : out;', [['out', '!storage.modifier']]],
+        ['if (out is Stats made) return;', [['out', '!storage.modifier'], ['is', 'keyword.operator.expression.is']]],
+        ['Write(count: out);', [['count', 'variable.parameter'], ['out', '!storage.modifier']]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {

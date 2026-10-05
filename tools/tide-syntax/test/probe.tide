@@ -295,3 +295,34 @@ void Proving()
     mut verified tally = default;
     verified = tally;
 }
+
+// out: a word of its own before a parameter's type and before the argument for one; a name anywhere else.
+bool TryHalf(int value, out int half) { half = value / 2; return value % 2 == 0; }
+bool TryFind(Entity target, out Combat.Health? found, out Map<int, float> scores) { return false; }
+struct Pile
+{
+    bool TryPower(int least, out int found) { found = 3; return true; }
+}
+void Halving(
+    int value,
+    out List<int> halves)
+{
+    if (TryHalf(8, out var declared)) { }
+    TryHalf(8, out Health typed);
+    TryHalf(8, out mut var changed);
+    TryHalf(8, out existing);
+    TryHalf(8, out body.hits);
+    TryHalf(8, out _);
+    TryHalf(value: 8, half: out var named);
+    TryHalf(9,
+        out var wrapped);
+    if (scores.TryGet(key, out var score)) { }
+    mut Set<int> out = [];
+    Write(out);
+    Write(out, 1);
+    Write(1, out);
+    out.Add(out.count + 1);
+    var either = on ? 1 : out;
+    if (out is Stats made) return;
+    Write(count: out);
+}

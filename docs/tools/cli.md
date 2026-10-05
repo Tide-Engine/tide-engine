@@ -164,13 +164,15 @@ A game's web page takes the same from its address, so a link can say which match
 |---|---|
 | `?host` | As `--host`: the game opens its match, in a room |
 | `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room |
-| `?lag=100` | The page sends its packets to the room's players 100 milliseconds late, to see a match as on a slow connection with both players at one desk |
+| `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
 
 A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
 
 Such a page starts a game that waits by calling the frame's `Tide.start()`. With `?wait` or without, it gives a promise that's kept once the game has drawn its first frame, so the page can keep the frame out of sight until there's something in it. These docs load an example as you scroll near it, and start it when it's in view.
+
+A page can have the browser download a game before any frame shows it: it loads the game's page once in a frame nobody sees, with `#download` after the address, and removes that frame once it has loaded. Nothing runs in it, and the frame that shows the game later finds its page in the browser's cache. A plain `fetch` of the page doesn't do that: browsers keep a frame's page apart from what a script fetches.
 
 With `?embedded`, the wheel always scrolls the page around the game. On a touchscreen, a swipe that starts on the game scrolls the page too, until the player taps the game: the tap reaches the game, and from then on so does every touch, swipes included, until the player taps the page somewhere else.
 

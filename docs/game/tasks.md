@@ -110,7 +110,7 @@ system StartDash(mut Body body, Controls controls)
 }
 ```
 
-An async function's `mut` parameters are its components and singletons; it can't keep the caller's other variables while it waits, so it returns what it works out instead.
+An async function's `mut` parameters are its components and singletons; it can't keep the caller's other variables while it waits, so it returns what it works out instead. For the same reason it has no `out` parameters: a struct returns several values.
 
 ## When tasks go on, and when they end
 

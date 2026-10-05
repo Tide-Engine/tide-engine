@@ -1,0 +1,9 @@
+// expect: 'out' goes before an argument for an 'out' parameter, and nothing here takes one
+// expect: remove 'out'
+scene Main { }
+singleton Tally { float total; }
+system Run(mut Tally tally)
+{
+    mut var x = 3.0;
+    tally.total = Math.Max(out x, 1);
+}

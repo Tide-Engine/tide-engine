@@ -599,3 +599,39 @@ system RollsInOrder(mut Rolls r)
     r.before = State(r.random.state, r.random.NextInt(10));
     r.after = Rolled(r.random.NextInt(10), r.random.state);
 }
+
+// A call that makes a variable through `out` is a call that writes: it runs in
+// its turn among what's read beside it, the variable it makes included.
+singleton Outs
+{
+    Tally t;
+    int after;  // The call, then what it made
+    int before; // A variable read before the call that makes it anew, and after
+    int pair;   // Two calls, each making its own, then both read
+    int same;   // One variable made twice: the second call's
+    int passed; // An argument worked out before the call that changes it
+    Map<int, int> scores;
+    int looked;
+}
+
+// The tally's next number, and its square through `made`.
+int Count(mut Tally t, out int made)
+{
+    t.n += 1;
+    made = t.n * t.n;
+    return t.n;
+}
+
+system OutsInOrder(mut Outs o)
+{
+    o.t = Tally { };
+    o.after = Count(o.t, out var first) * 10 + first;
+    mut var seen = 7;
+    o.before = seen * 100 + Count(o.t, out seen) * 10 + seen;
+    o.pair = Pack3(Count(o.t, out var a), Count(o.t, out var b), a + b);
+    o.same = Pack(Count(o.t, out seen), Count(o.t, out seen)) * 100 + seen;
+    o.passed = Pack3(seen, Count(o.t, out seen), seen);
+    o.scores[4] = 40;
+    mut var score = 1;
+    o.looked = score * 1000 + (o.scores.TryGet(4, out score) ? 100 : 0) + score;
+}

@@ -12,16 +12,24 @@
 // TIDE_PROGRAM holds the program as base64 (cmake/web_page.mjs, or the tide
 // command). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
 // is `backend=` in the page's address. For a page with rooms (below), `relay`
-// is another relay's address and `lag` a delay for what it sends, and the page
-// reads `Tide.room`, the code of the room the program is in. For a game shown
-// in a frame of another page, `wait` holds the program until that page calls
-// `Tide.start()`, and `embedded` leaves that page its scrolling (both below).
+// is another relay's address and `lag` the round trip its player is to have,
+// and the page reads `Tide.room`, the code of the room the program is in. For
+// a game shown in a frame of another page, `wait` holds the program until that
+// page calls `Tide.start()`, and `embedded` leaves that page its scrolling
+// (both below).
 //
 // The lines between the `tide run` markers below are for hot reloading, in the
 // page `tide run --web` serves; the pages made to ship leave them out.
 
 (async () => {
     'use strict';
+    // `#download` after the page's address: the page is only being downloaded,
+    // by a page that will show the game in a frame later. It loads the game's
+    // page once in a frame nobody sees, so the frame it shows finds the page
+    // in the browser's cache, which keeps a frame's page apart from what a
+    // script fetches. Nothing runs. It's after the `#`, which is no part of
+    // the address a cache goes by.
+    if (location.hash === '#download') return;
     const config = typeof Tide !== 'undefined' ? Tide : {};
     const canvas = config.canvas || document.getElementById('canvas');
     const print = config.print || (text => console.log(text));
@@ -677,10 +685,15 @@
     // its host, and introduces the others to it.
 
     const relayUrl = config.relay || 'wss://relay.tide-engine.dev';
-    // `Tide.lag`, or `lag=` in the page's address: what this page sends its
-    // room's players leaves that many milliseconds late, to see a match as on
-    // a slow connection with both players at one desk. The page can change it
-    // while the game runs. `Tide.room` is the code of the room the program
+    // `Tide.lag`, or `lag=` in the page's address: the round trip to its
+    // match's server this page's player is to have, in milliseconds, to see a
+    // match as on a slow connection with both players at one desk. It's the
+    // whole trip, there and back, and what the trip takes already is part of
+    // it: the page adds what's missing (`added`), half to what it sends and
+    // half to what it receives, so a lag of 100 reads as a ping of 100, not as
+    // 100 more than it was. A page that hosts adds nothing: its machine runs
+    // the server, and each player who joined says its own. The page can change
+    // it while the game runs. `Tide.room` is the code of the room the program
     // hosts or joined ("" for none), for the page to show or to link to.
     if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
     Object.defineProperty(config, 'room', { configurable: true, enumerable: true,
@@ -700,6 +713,10 @@
             number: ++rooms, hosting, code, failed: false, reachable: true, connected: false, opened: performance.now(),
             ws: null, announced: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
             key: key || (hosting ? newKey() : ''), moving: !!key, moved: 0,
+            // `Tide.lag`: what the page adds to a round trip and since when,
+            // what a trip takes with nothing added, once one was measured,
+            // and whether the program heard from the room since it last said
+            added: 0, addedSince: 0, rest: 0, measured: false, heard: false,
         };
         if (/^[2-9A-HJ-NP-Z]{6}$/.test(code)) {
             connectRelay(room);
@@ -717,6 +734,19 @@
         room = null;
         if (r.ws) r.ws.close();
         for (const peer of r.peers.values()) peer.pc.close();
+    }
+
+    // The milliseconds this page adds to a round trip in room `r` now, for its
+    // player to have the one `Tide.lag` says: none while the trip takes that
+    // long by itself.
+    function added(r) {
+        const lag = r.hosting ? 0 : Math.min(Number(config.lag) || 0, 2000);
+        const add = Math.max(Math.round(lag - r.rest), 0);
+        if (add !== r.added) {
+            r.added = add;
+            r.addedSince = performance.now();
+        }
+        return add;
     }
 
     // The match in room `r`, which this program hosts, ended: the relay keeps
@@ -890,9 +920,14 @@
             // relay tells the host this one left, and a host that hasn't
             // caught up with its own end yet takes it for a player who gave up
             if (!r.hosting && r.ws) r.ws.close();
-            if (room === r && r.inbox.length < 4096 && event.data instanceof ArrayBuffer) {
-                r.inbox.push([peer.number, new Uint8Array(event.data)]);
-            }
+            if (room !== r || !(event.data instanceof ArrayBuffer)) return;
+            const arrive = () => {
+                if (room === r && r.inbox.length < 4096) r.inbox.push([peer.number, new Uint8Array(event.data)]);
+            };
+            // The way back's half of what `Tide.lag` adds
+            const late = Math.floor(added(r) / 2);
+            if (late > 0) setTimeout(arrive, late);
+            else arrive();
         };
         channel.onclose = () => dropPeer(r, peer);
         peer.channel = channel;
@@ -970,11 +1005,12 @@
             // Like UDP, what can't go now is lost, and so is what would queue up
             if (channel && channel.readyState === 'open' && channel.bufferedAmount < 262144) {
                 const bytes = u8().slice(ptr, ptr + size);
-                const lag = Math.min(Number(config.lag) || 0, 2000);
-                if (lag > 0) {
+                // The way there's half of what `Tide.lag` adds
+                const late = Math.ceil(added(room) / 2);
+                if (late > 0) {
                     setTimeout(() => {
                         if (channel.readyState === 'open' && channel.bufferedAmount < 262144) channel.send(bytes);
-                    }, lag);
+                    }, late);
                 } else channel.send(bytes);
             }
         },
@@ -987,8 +1023,30 @@
                 if (bytes.length > capacity || bytes.length === 0) continue; // Longer ones are dropped
                 view().setUint32(fromPtr, from, true);
                 u8().set(bytes, ptr);
+                room.heard = true;
                 return bytes.length;
             }
+        },
+        // The round trip the program measures to its room's host, in
+        // milliseconds (0 for none), which it says every frame: what `Tide.lag`
+        // is to make it. Less what the page adds, a trip is what one takes by
+        // itself, if all of it went with what's added now: it set out after
+        // that last changed. The program counts time by its frames, each up to
+        // a frame's work behind the page's clock, so a trip that set out
+        // within 50 ms of the change doesn't count. Nor does one said again
+        // with nothing heard since. Frames come when they come, so trips
+        // differ by a frame's length: the page goes by what they take on
+        // the whole.
+        room_ping(ping) {
+            const r = room;
+            if (!r) return;
+            const add = added(r);
+            const heard = r.heard;
+            r.heard = false;
+            if (!heard || !(ping > 0) || performance.now() - ping - 50 <= r.addedSince) return;
+            const rest = Math.max(ping - add, 0);
+            r.rest = r.measured ? r.rest + (rest - r.rest) / 8 : rest;
+            r.measured = true;
         },
     });
 

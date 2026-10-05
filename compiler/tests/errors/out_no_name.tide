@@ -1,0 +1,9 @@
+// expect: expected the name of the variable 'out' declares, like 'out var health', found ')'
+scene Main { }
+singleton Tally { int total; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally) { TryHalf(8, out var); }

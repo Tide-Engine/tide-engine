@@ -1,0 +1,11 @@
+// expect: 'left' is read before it's assigned
+scene Main { }
+struct Bag
+{
+    int size;
+    bool Pour(int amount, out int left)
+    {
+        left += size - amount;
+        return left >= 0;
+    }
+}

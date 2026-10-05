@@ -84,7 +84,7 @@ event(Spawned) Setup(with Main)
 // A function passes its caller's list on, wherever that is
 void Fill(mut List<byte> into, int count, int seed)
 {
-    c_out_bytes(into, count, seed);
+    c_out_bytes(out into, count, seed);
 }
 
 // Lists in locals, which are in the scratch area. Returns how many of its 8 checks passed.
@@ -92,21 +92,21 @@ int Locals(int count, int seed)
 {
     mut var passed = 0;
     mut List<byte> made = [];
-    var said = c_out_bytes(made, count, seed); // From empty
+    var said = c_out_bytes(out made, count, seed); // From empty
     if (said == count && made.count == count && c_right_bytes(made, made.count, seed) == count) passed += 1;
-    c_out_bytes(made, 7, seed + 1); // Fewer
+    c_out_bytes(out made, 7, seed + 1); // Fewer
     if (made.count == 7 && c_right_bytes(made, 7, seed + 1) == 7) passed += 1;
-    c_out_bytes(made, count * 2, seed + 2); // More
+    c_out_bytes(out made, count * 2, seed + 2); // More
     if (made.count == count * 2 && c_right_bytes(made, made.count, seed + 2) == count * 2) passed += 1;
-    c_out_silent(made, count, seed); // Never said how many
+    c_out_silent(out made, count, seed); // Never said how many
     if (made.count == 0) passed += 1;
     mut List<byte> three = [1, 2, 3]; // One that held something: none of it stays
-    c_out_bytes(three, 5, seed);
+    c_out_bytes(out three, 5, seed);
     if (three.count == 5 && c_right_bytes(three, 5, seed) == 5) passed += 1;
-    c_out_nothing(three);
+    c_out_nothing(out three);
     if (three.count == 0 && three[0] == 0) passed += 1;
     mut Holder holder = Holder { tag = 9 }; // In a struct
-    c_out_bytes(holder.bytes, count, seed);
+    c_out_bytes(out holder.bytes, count, seed);
     if (holder.tag == 9 && holder.bytes.count == count && c_right_bytes(holder.bytes, count, seed) == count) passed += 1;
     Fill(made, 11, seed); // Through a function
     if (made.count == 11 && c_right_bytes(made, 11, seed) == 11) passed += 1;
@@ -116,31 +116,31 @@ int Locals(int count, int seed)
 // Each entity's own list: as many bytes as the host asks for times its seed
 system Each(mut Blob blob, Job job)
 {
-    if (job.op == 15) c_out_bytes(blob.bytes, job.count * blob.seed, blob.seed);
+    if (job.op == 15) c_out_bytes(out blob.bytes, job.count * blob.seed, blob.seed);
 }
 
 system Run(mut Store store, mut Job job)
 {
     var op = job.op;
     job.op = 0;
-    if (op == 1) store.said = c_out_bytes(store.image, job.count, job.seed);
-    else if (op == 2) store.said = c_out_cells(store.cells, job.count, job.seed);
-    else if (op == 3) store.said = c_out_poked(store.image, job.count, job.seed, job.extra);
-    else if (op == 4) c_out_twice(store.image, job.extra, job.count, job.seed);
-    else if (op == 5) c_out_said(store.image, job.count, job.extra, job.seed);
-    else if (op == 6) c_out_silent(store.image, job.count, job.seed);
-    else if (op == 7) c_out_nothing(store.image);
-    else if (op == 8) job.result = c_out_doubled(store.halves, store.halves.count, store.doubles);
+    if (op == 1) store.said = c_out_bytes(out store.image, job.count, job.seed);
+    else if (op == 2) store.said = c_out_cells(out store.cells, job.count, job.seed);
+    else if (op == 3) store.said = c_out_poked(out store.image, job.count, job.seed, job.extra);
+    else if (op == 4) c_out_twice(out store.image, job.extra, job.count, job.seed);
+    else if (op == 5) c_out_said(out store.image, job.count, job.extra, job.seed);
+    else if (op == 6) c_out_silent(out store.image, job.count, job.seed);
+    else if (op == 7) c_out_nothing(out store.image);
+    else if (op == 8) job.result = c_out_doubled(store.halves, store.halves.count, out store.doubles);
     else if (op == 9) Fill(store.image, job.count, job.seed);
-    else if (op == 10) c_out_bytes(store.held.bytes, job.count, job.seed);
+    else if (op == 10) c_out_bytes(out store.held.bytes, job.count, job.seed);
     else if (op == 11) job.result = Locals(job.count, job.seed);
     else if (op == 12)
     {
         // A call that makes a list is a call that writes: what a statement reads of the list before the call is
         // as it was, and what it reads after is as C left it
-        c_out_bytes(store.image, 3, 1);
-        var before = store.image.count * 10 + c_out_bytes(store.image, 5, 1);
-        var after = c_out_bytes(store.image, 4, 1) * 10 + store.image.count;
+        c_out_bytes(out store.image, 3, 1);
+        var before = store.image.count * 10 + c_out_bytes(out store.image, 5, 1);
+        var after = c_out_bytes(out store.image, 4, 1) * 10 + store.image.count;
         job.result = before * 100 + after;
     }
     else if (op == 13)
@@ -152,7 +152,7 @@ system Run(mut Store store, mut Job job)
     {
         // A copy taken out of the match's list is the code's own: C makes it anew, and the match's stays
         mut var copy = store.image;
-        c_out_bytes(copy, job.count, job.seed);
+        c_out_bytes(out copy, job.count, job.seed);
         job.result = copy.count == job.count && c_right_bytes(copy, copy.count, job.seed) == job.count ? 1 : 0;
     }
 }
@@ -162,6 +162,6 @@ view Show(mut Shown screen)
 {
     var op = screen.op;
     screen.op = 0;
-    if (op == 1) screen.said = c_out_bytes(screen.image, screen.count, screen.seed);
-    else if (op == 7) c_out_nothing(screen.image);
+    if (op == 1) screen.said = c_out_bytes(out screen.image, screen.count, screen.seed);
+    else if (op == 7) c_out_nothing(out screen.image);
 }
