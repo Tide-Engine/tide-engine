@@ -1,0 +1,7 @@
+// expect: Draw has no function 'Fade'
+scene Main { }
+
+view Show()
+{
+    Draw.Fade(0.5);
+}

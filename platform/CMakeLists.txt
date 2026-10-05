@@ -373,6 +373,17 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-refused" refused)
     endif()
 
+    # The standard host's stats (tide/stats.h), in such a run: a drawer that
+    # starts as one line, which a script's click, tap and F8 open and close,
+    # and whose presses never reach the game.
+    tide_add_game(tide_platform_stats SOURCES tests/stats.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_stats
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stats.mjs" $<TARGET_FILE:tide_platform_stats>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_stats-run")
+        set_tests_properties(tide_platform_stats PROPERTIES LABELS gpu TIMEOUT 120)
+    endif()
+
     # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
     # shell and a build server have it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
@@ -445,6 +456,14 @@ if(TIDE_WEB)
     target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
     tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
     tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
+
+    # ...and its stats (tide/stats.h): a drawer that a game's setting shows
+    # closed, which F8, a click and a tap open and close, whose presses the
+    # game never reads, and for which nothing is measured while it's closed.
+    tide_add_game(tide_platform_web_stats SOURCES tests/stats.tide NAME game HOST tests/web_stats.c)
+    target_link_libraries(tide_platform_web_stats PRIVATE tide_platform)
+    tide_web_page(tide_platform_web_stats SHELL web/test_shell.html)
+    tide_add_web_test(tide_platform_web_stats TARGET tide_platform_web_stats)
 
     # Two players in a room: a relay on this machine, and WebRTC between two
     # frames of one page, in real time rather than the other tests' virtual time.

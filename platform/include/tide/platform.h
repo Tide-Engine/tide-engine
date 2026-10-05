@@ -84,8 +84,8 @@ void tide_platform_open_headless(const tide_headless_desc *desc);
 // isn't an event, or when the window isn't headless.
 bool tide_platform_input(const char *event);
 
-// The frame a headless window last drew (tide_platform_draw, and the overlay
-// over it), whole: `*width` by `*height` pixels of 4 bytes each (red, green,
+// The frame a headless window last drew (tide_platform_draw, and what was
+// drawn over it), whole: `*width` by `*height` pixels of 4 bytes each (red, green,
 // blue, alpha), rows from the top, which stay until the next call. A window
 // shows no alpha, and what's in it here is what drawing left there. NULL
 // before the first frame, and for a window that isn't headless.
@@ -175,6 +175,12 @@ void tide_platform_copy(const char *text);
 // its lines against the right edge. For debug overlays such as frame rates.
 void tide_platform_draw_overlay(const char *text);
 
+// Draws `list` over the frame tide_platform_draw drew, and leaves what that
+// frame left as it is: its camera (tide_platform_world_to_screen) and its
+// count of draw calls. For what a host shows over a game, like its stats
+// (tide/stats.h), which aren't the game's drawing.
+void tide_platform_draw_over(const tide_draw_list *list);
+
 // Frames per second, averaged over the last frames.
 int tide_platform_fps(void);
 
@@ -190,8 +196,10 @@ const char *tide_platform_renderer(void);
 // the operating system's permissions. Browser paths stay in its app's roots.
 const tide_io *tide_platform_io_init(const char *app_id);
 
-// How many draw calls the last list drawn took (tide_platform_draw), the
-// overlay's aside: a run of shapes, of text, or of one mesh's instances is one.
+// How many draw calls the last list drawn took (tide_platform_draw), aside
+// from what was drawn over it (tide_platform_draw_overlay,
+// tide_platform_draw_over): a run of shapes, of text, or of one mesh's
+// instances is one.
 uint32_t tide_platform_draw_calls(void);
 
 // How much memory the program has, in bytes, as the system counts it: what it

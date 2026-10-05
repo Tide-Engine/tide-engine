@@ -15,6 +15,7 @@ foreach(source IN LISTS TIDE_DOC_SOURCES)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE_DIR:${target}>/${target}.html" "${destination}/index.html"
             DEPENDS ${target}
+            COMMENT "Staging the docs' ${id} example"
             VERBATIM)
         add_dependencies(docs_examples ${target}_page)
     else()

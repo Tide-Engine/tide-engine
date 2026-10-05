@@ -85,6 +85,19 @@ view RoomCode(Session session)
 }
 ```
 
+Here are two machines, side by side. Each frame below is the game on its own, starting in its menu, in no match:
+
+1. In one, press **Start a match**: it plays alone, with its match closed. Move the pointer over the frame to steer its player.
+2. Press **Open**. Its room's code shows, and **Copy code** puts it on the clipboard.
+3. In the other frame, type the code into the field, or click the field and paste, and press **Join**. Both players are now in one match, each frame showing it from its own machine.
+4. Try **Close** and then **Leave** and **Join** again: a closed match turns the player away, and its menu says why. **Kick all** sends a message along, and **End** ends the match for both.
+
+::: tide-players rooms Open a room, and join it
+
+<<< @/examples/rooms.tide
+
+:::
+
 The relay, a server of ours, only introduces players to each other. Their packets then go straight between them, over WebRTC, which finds a way through their routers. When their networks can't connect directly, a TURN server carries the packets instead. The host's machine picks the code itself, so there's nothing to wait for. If another room had it first, the host picks another before anyone could read it out, and `Session.room` changes. It's `""` while the relay can't be reached, and the room opens again once it can: players already in keep playing, and only joining needs the relay.
 
 ## Where this machine stands

@@ -540,6 +540,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->groups[0] = (tide_gui_group){
         .id = ROOT_ID, .kind = VERTICAL, .room = screen.x, .stretch = root ? root->natural : 0.0f, .anchor = -1};
     tide_draw_reset(&g->list);
+    tide_draw_set_screen(&g->list); // In the screen's pixels, whatever list it's added to
 }
 
 void tide_gui_end(tide_gui *g, tide_draw_list *draw)
@@ -586,9 +587,7 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
     g->view = 0;
 
     if (g->list.count > 0) {
-        tide_draw_to(draw, 0, 0, 0);
-        if (draw->clipped) tide_draw_no_clip(draw); // Whatever the views clipped, the GUI isn't
-        tide_draw_screen(draw);
+        // Whatever the views left set, the GUI isn't drawn with: the list starts from the defaults
         tide_draw_append(draw, &g->list);
     }
 }
@@ -868,13 +867,13 @@ static tide_float2 place(const tide_gui *g, int32_t anchor, const tide_float2 si
 // Disabled block, only its widgets fade.
 static uint32_t panel(tide_gui *g, const tide_rect r)
 {
-    const uint32_t index = g->list.count;
+    const uint32_t before = g->list.count;
     // With round corners it's a shape, which the list leaves out while it has
     // no size: an area that isn't sized yet stands in as a pixel.
     const bool round = g->theme.radius > 0.0f;
     const tide_rect sized = {r.x, r.y, round ? max_f(r.width, 1.0f) : r.width, round ? max_f(r.height, 1.0f) : r.height};
     paint(g, sized, g->theme.panel, g->theme.radius);
-    return g->list.count > index ? index : UINT32_MAX;
+    return g->list.count > before ? g->list.count - 1u : UINT32_MAX; // The panel itself: a frame's first comes after its screen
 }
 
 int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)

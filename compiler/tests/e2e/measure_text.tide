@@ -23,7 +23,7 @@ float2 Measure(string text, float size)
 
 view Show(mut Probe probe)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     probe.screen = Draw2D.MeasureText(probe.label, 10);
     probe.lines = Draw2D.MeasureText("ab\ncdef", 10);
     probe.nothing = Draw2D.MeasureText(probe.label, 0);
@@ -32,11 +32,11 @@ view Show(mut Probe probe)
     probe.centered = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
     Draw2D.Text(probe.label, probe.centered, 20, Color.white);
 
-    Draw2D.Camera(float2(2, 3), 5);
+    Draw2D.SetCamera(float2(2, 3), 5);
     probe.world = Draw2D.MeasureText(probe.label, 0.5);
     probe.helper = Measure("ab" + "cd", 0.25);
 
-    probe.panel.Camera(float2(0), 4);
+    probe.panel.SetCamera(float2(0), 4);
     probe.target = probe.panel.MeasureText(probe.label, 2);
     probe.after = Draw2D.MeasureText(probe.label, 0.5);
 }

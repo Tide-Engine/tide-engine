@@ -2,6 +2,7 @@
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
@@ -59,6 +60,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     vec4 tide_u0;
     ivec4 tide_v0;
 };
@@ -126,6 +128,8 @@ void ts_Shade(tt_BoxVertex t_vertex, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Shade(tt_BoxVertex(vec3(0.0), tide_s1, tide_s2), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -133,6 +137,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
     tide_u0: vec4f,
     tide_v0: vec4i,
 }
@@ -258,6 +263,10 @@ fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
     tide_g0 = in.tide_g0;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Shade(tt_BoxVertex(vec3f(), in.tide_s1, in.tide_s2), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 

@@ -1050,6 +1050,31 @@ static stmt *parse_stmt(parser *p)
             s->value->block = parse_block(p);
             return s;
         }
+        // Calls listed with commas before one block: Draw.Blend(Blend.Add), Draw2D.Clip(panel) { ... }. It
+        // means what nesting them in that order does: each one's block is the call after it.
+        if (s->kind == S_EXPR && at(p, T_COMMA) && (s->value->kind == E_CALL || s->value->kind == E_METHOD)) {
+            stmt *last = s;
+            while (accept(p, T_COMMA)) {
+                const token *start = peek(p);
+                stmt *next = parse_simple(p);
+                if (next->kind != S_EXPR || (next->value->kind != E_CALL && next->value->kind != E_METHOD)) {
+                    diag_error(start->at, "only calls that take a block are listed with commas, before the block they share");
+                    diag_note("like 'Draw.Blend(Blend.Add), Draw2D.Clip(panel) { ... }'; a statement ends with ';'");
+                    longjmp(p->fail, 1);
+                }
+                last->value->block = next;
+                last->value->stacked = true;
+                last = next;
+            }
+            last->value->stacked = true;
+            if (!at(p, T_LBRACE)) {
+                diag_error(peek(p)->at, "calls listed with commas share the block after the last one: expected '{'");
+                diag_note("a call that takes no block ends with ';'");
+                longjmp(p->fail, 1);
+            }
+            last->value->block = parse_block(p);
+            return s;
+        }
         expect(p, T_SEMI, "';'");
         return s;
     }

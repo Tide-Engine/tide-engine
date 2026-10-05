@@ -30,22 +30,22 @@ static tide_float2 target_size(const tide_draw_list *d, const tide_float2 window
     return tide_target_size_logical(target->size, window_size);
 }
 
-// The last 2D camera or screen command is what commands recorded now draw
-// through. A 3D camera never changes it, nor does it depend on a rendered frame.
+// The destination's 2D camera or screen, as it's set, is what commands recorded
+// now draw through. A 3D camera never changes it, nor does it depend on a rendered frame.
 static bool camera2(const tide_draw_list *d, const tide_float2 screen, tide_float2 *center, float *scale, bool *pixels)
 {
     *center = tide_f2(0.0f, 0.0f);
     *scale = 1.0f;
     *pixels = false;
-    if (!d->camera_2d) return true;
-    const tide_draw_command *c = &d->commands[d->camera_2d - 1u];
-    if (c->kind == TIDE_DRAW_SCREEN) {
+    if (!d->place.camera_2d) return true;
+    const tide_draw_camera_data *c = &d->cameras[d->place.camera_2d - 1u];
+    if (c->screen) {
         *pixels = true;
         return true;
     }
-    if (!finite2(c->a) || !tide_is_finite_f(c->b.x)) return false;
-    *center = c->a;
-    *scale = c->b.x > 0.0f ? screen.y / (2.0f * c->b.x) : 1.0f;
+    if (!finite2(c->center) || !tide_is_finite_f(c->size)) return false;
+    *center = c->center;
+    *scale = c->size > 0.0f ? screen.y / (2.0f * c->size) : 1.0f;
     return tide_is_finite_f(*scale) && *scale > 0.0f;
 }
 
@@ -95,7 +95,9 @@ tide_float2 tide_draw_guess_text(const char *text, const float size, const tide_
 }
 
 // Match the renderer: text is drawn as many times bigger as the camera has
-// pixels to a unit, and fitted to pixels at that size, so it's measured there.
+// pixels to a unit, and a transform scales it, and fitted to pixels at that
+// size, so it's measured there. Text a transform turns or stretches is laid
+// out as it would be upright at the transform's mean scale.
 tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, const float size,
                                    const unsigned char *font, const tide_float2 window_size,
                                    const tide_measure_fn measure)
@@ -107,6 +109,8 @@ tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, co
     float scale;
     bool pixels;
     if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (d->place.moved & TIDE_DRAW_MOVED) scale *= d->place.scale;
+    if (!tide_is_finite_f(scale) || !(scale > 0.0f)) return zero;
     // Where it's drawn: the window, or the target the commands recorded next go to, at its own scale
     const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(
         text, size * scale, d->target ? &d->targets[d->target - 1u].size : NULL, font);
@@ -120,10 +124,10 @@ static bool camera3(const tide_draw_list *d, const tide_float2 screen, tide_floa
 {
     if (!screen_valid(screen)) return false;
     bool fit = true;
-    if (d->camera_3d) {
-        const tide_draw_command *c = &d->commands[d->camera_3d - 1u];
-        *matrix = d->matrices[c->camera.matrix];
-        fit = c->camera.fit != 0;
+    if (d->place.camera_3d) {
+        const tide_draw_camera_3d_data *c = &d->cameras_3d[d->place.camera_3d - 1u];
+        *matrix = c->matrix;
+        fit = c->fit != 0;
     } else {
         *matrix = tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     }

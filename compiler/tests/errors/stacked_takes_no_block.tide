@@ -1,0 +1,10 @@
+// expect: 'Debug.Log' doesn't take a block
+scene Main { }
+
+view Show()
+{
+    Debug.Log("fade"),
+    Draw.Tint(Color.red)
+    {
+    }
+}

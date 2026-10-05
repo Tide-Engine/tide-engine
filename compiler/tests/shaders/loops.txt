@@ -2,6 +2,7 @@
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     ivec4 tide_v0;
 };
 uniform sampler2D pixels0;
@@ -23,6 +24,7 @@ void main() {
 layout(std140) uniform uniforms {
     mat4 tide_camera;
     vec4 tide_screen;
+    vec4 tide_tint;
     ivec4 tide_v0;
 };
 uniform sampler2D pixels0;
@@ -64,6 +66,8 @@ void ts_Spread(tt_Corner t_corner, inout vec4 t_color) {
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Spread(tt_Corner(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -71,6 +75,7 @@ void main() {
 struct tide_uniforms {
     tide_camera: mat4x4f,
     tide_screen: vec4f,
+    tide_tint: vec4f,
     tide_v0: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
@@ -128,6 +133,10 @@ fn ts_Spread(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Spread(tt_Corner(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+    }
     return tide_color;
 }
 

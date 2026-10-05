@@ -14,15 +14,9 @@ export interface Group {
     items: Link[];
 }
 
-export const nav: (Link & { match: string })[] = [
-    { text: 'Guide', link: '/guide', match: '/guide' },
-    { text: 'Game', link: '/game/entities', match: '/game/' },
-    { text: 'Multiplayer', link: '/multiplayer/matches', match: '/multiplayer/' },
-    { text: 'Language', link: '/language/basics', match: '/language/' },
-    { text: 'Tools', link: '/tools/cli', match: '/tools/' },
-    { text: 'Spec', link: '/spec', match: '/spec' },
-    { text: 'Demo', link: '/guide/sand', match: '/guide/sand' },
-];
+// The header's one link: the sidebar's groups are all the docs', which start
+// at the guide.
+export const docs: Link = { text: 'Docs', link: '/guide' };
 
 // A group is one subject, and its pages are in a folder of that subject:
 // `game/` is what a game is made of, the match (Simulation) and what one
@@ -35,6 +29,7 @@ export const sidebar: Group[] = [
             { text: 'Introduction', link: '/guide' },
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first game', link: '/guide/first-game' },
+            { text: 'Live examples', link: '/guide/examples' },
             { text: 'Falling sand', link: '/guide/sand' },
             { text: 'Duel', link: '/guide/duel' },
         ],

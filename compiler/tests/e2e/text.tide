@@ -30,7 +30,7 @@ void Label(string text, float2 at, Anchor anchor, Font font)
 
 view Show(mut Probe probe)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("plain", float2(1, 2), 10, Color.white);
     Draw2D.Text("anchored", float2(3, 4), 11, Color.white, Anchor.MiddleCenter);
     Draw2D.Text("bold", float2(5, 6), 12, Color.white, Font.Bold);
@@ -53,11 +53,11 @@ view Show(mut Probe probe)
     probe.chosen = Draw2D.MeasureText("abcd", 10, weight);
 
     // Under a camera, an anchor's position is in the world
-    Draw2D.Camera(float2(2, 3), 5);
+    Draw2D.SetCamera(float2(2, 3), 5);
     Draw2D.Text("world", float2(-1, 1.5), 0.5, Color.white, Anchor.UpperRight, Font.Bold);
 
     // A render target takes both, and measures in a weight
-    probe.panel.Camera(float2(0), 4);
+    probe.panel.SetCamera(float2(0), 4);
     probe.panel.Text("panel", float2(1, 1), 2, Color.white, Anchor.MiddleRight, Font.Bold);
     probe.target = probe.panel.MeasureText("abcd", 2, Font.Bold);
 }

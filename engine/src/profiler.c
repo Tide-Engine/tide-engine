@@ -293,8 +293,8 @@ void tide_profiler_draw(const tide_profiler *p, tide_draw_list *list, const tide
     const float panel_width = beside ? 2.0f * width + gap + 2.0f * PAD : width + 2.0f * PAD;
     const float panel_height = (float)rows * PITCH - (PITCH - BAR) + 2.0f * PAD + (beside ? 0.0f : gap);
 
-    if (list->clipped) tide_draw_no_clip(list); // A view's clip isn't the panel's
-    tide_draw_screen(list);
+    tide_draw_defaults(list); // What a view left set isn't the panel's
+    tide_draw_set_screen(list);
     rect(list, MARGIN, MARGIN, panel_width, panel_height, (tide_color){0.05f, 0.06f, 0.08f, 0.88f});
     const float x = MARGIN + PAD, y = MARGIN + PAD;
     draw_column(p, FRAME, list, x, y, width, measure);

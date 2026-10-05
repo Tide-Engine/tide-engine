@@ -27,18 +27,27 @@ typedef struct gen_frame {
     const char *prefix;          // Its locals' and parameters' C names start with it
     const char *end;             // The label its `return` goes to
     bool end_used;
-    int containers;              // GUI containers open when it started
+    int containers;              // Containers open when it started (see gen_open)
     struct gen_frame *caller;    // The frame the call is in; NULL for the routine's own code
     const decl *caller_routine;
     const stmt *block;           // The block written after the call
 } gen_frame;
+
+// A block that something closes when it ends, however it's left: a GUI
+// container's (tide_gui_close) or a draw setting's (tide_draw_pop). Each kind
+// closes with the ones opened inside it, so leaving several at once closes the
+// outermost of each.
+typedef struct gen_open {
+    const char *mark; // The variable its close takes
+    bool draw;        // A draw setting's, rather than the GUI's
+} gen_open;
 
 // A switch or loop being generated: what `break` and `continue` go to. In a
 // block copied into a call, C's break and continue would go to the function's
 // own loop or switch if it's closer, so they jump to the labels instead.
 typedef struct gen_target {
     const gen_frame *frame; // Whose code it is
-    int containers;         // GUI containers open when it started
+    int containers;         // Containers open when it started
     bool loop;
     bool plain_continue;    // A while: C's continue goes on to its next round (a for's runs its step first)
     const char *end;        // After it
@@ -94,7 +103,7 @@ typedef struct gen {
     bool has_scene;      // The body being generated has tide_scene: the scene of the entity it runs for
     bool scene_local;    // ...an entity of the local world
     gen_frame *frame;    // Inlined code being generated, or NULL for the routine's own
-    VEC(const char *) containers; // GUI containers open: the variable each one's tide_gui_close takes
+    VEC(gen_open) containers; // The GUI containers and draw settings whose blocks are open
     VEC(gen_target) targets;
     int labels;          // Names made up so far (inlined calls, containers, switches), numbered per program
     int sites;           // GUI calls so far: each one's place in the program, for its widget ID
@@ -2259,13 +2268,20 @@ static void gen_window_index(gen *g, sb *o, const expr *index)
 
 // Every ordinary Draw call names the window; a receiver names its target.
 // The receiver is evaluated once, while the runtime keeps its camera and clip.
+// Draw's own settings (Draw.Blend) are no destination's: they select none.
 static void gen_draw_list(gen *g, sb *o, const expr *e)
 {
+    if (!e->targeted && e->draw_dims == 0) {
+        sb_put(o, "tide_draw");
+        return;
+    }
     sb_put(o, "tide_draw_render_target(tide_draw, ");
     if (e->targeted) gen_expr(g, o, e->object);
     else sb_put(o, "(tide_render_target){.id = TIDE_RENDER_WINDOW}");
     sb_put(o, ")");
 }
+
+static void gen_builtin_call(gen *g, sb *o, const expr *e);
 
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
@@ -2659,8 +2675,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 sb_put(o, ", ");
                 gen_as(g, o, arg, e->arg_want.items[i]);
                 if (arg->type.kind == TY_GRID) sb_printf(o, ", &%s", grid_shape_name(arg->type.decl));
-                filter |= arg->type.kind == TY_ENUM;
+                filter |= arg->type.kind == TY_ENUM && !sh->blit; // A blit's is how it blends, which it always takes
             }
+            if (sh->blit && e->args.count < 4) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->textured && !filter) sb_put(o, ", TIDE_FILTER_BILINEAR");
             for (int b = 0; b < sh->bound.count; b++) {
                 // The view's own parameter of it: the one that isn't `verified`, where it takes it both ways
@@ -2721,50 +2738,60 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 && (str_eq_c(e->name, "GetFiles") || str_eq_c(e->name, "GetDirectories") || str_eq_c(e->name, "Delete"))) sb_put(o, ", false");
             sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW) {
-            // Draw2D.Shape goes through the helper that turns a Shape into a tide_shape
-            const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
-            sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
-            // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
-            const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
-            if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
-            else if (receiver) gen_expr(g, o, e->object);
-            // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
-            const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
-            const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
-            bool anchored = false, weighted = false;
-            for (int i = 0; i < e->args.count; i++) {
-                if (i || e->call == CALL_DRAW || receiver) sb_put(o, ", ");
-                const type want = e->arg_want.items[i];
-                if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
-                    if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
-                    sb_put(o, "tide_font_file(");
-                    gen_as(g, o, e->args.items[i], want);
-                    sb_put(o, ")");
-                    weighted = true;
-                    continue;
-                }
-                if (text_at && want.kind == TY_ENUM && want.decl == g->prog->anchor) {
-                    sb_put(o, "(tide_anchor)");
-                    anchored = true;
-                }
-                if (want.kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
-                else gen_as(g, o, e->args.items[i], want);
-            }
-            if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
-            if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
-                                        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
-                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
-            }
-            if (e->call == CALL_BUILTIN && strcmp(e->c_callee, "tide_draw_screen_flip") == 0) { // Screen.Flip: in the window
-                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
-            }
-            if (e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText")) { // As the frame's renderer draws text
-                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height), tide_ui->measure");
-            }
-            sb_put(o, ")");
+            gen_builtin_call(g, o, e);
         }
         break;
     }
+}
+
+// Math.Dot(a, b), Draw2D.Circle(center, radius, color): c_callee, with the
+// frame's draw list first for a call that draws.
+static void gen_builtin_call(gen *g, sb *o, const expr *e)
+{
+    // Draw2D.Shape goes through the helper that turns a Shape into a tide_shape
+    const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
+    sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
+    // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
+    const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
+    if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
+    else if (receiver) gen_expr(g, o, e->object);
+    // Draw2D.Transform(offset, rotation): its arguments as the one value the setting takes
+    if (e->c_pack) sb_printf(o, ", %s(", e->c_pack);
+    // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
+    const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
+    const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
+    bool anchored = false, weighted = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (i || (!e->c_pack && (e->call == CALL_DRAW || receiver))) sb_put(o, ", ");
+        const type want = e->arg_want.items[i];
+        if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
+            if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
+            sb_put(o, "tide_font_file(");
+            gen_as(g, o, e->args.items[i], want);
+            sb_put(o, ")");
+            weighted = true;
+            continue;
+        }
+        if (text_at && want.kind == TY_ENUM && want.decl == g->prog->anchor) {
+            sb_put(o, "(tide_anchor)");
+            anchored = true;
+        }
+        if (want.kind == TY_STRING) gen_c_text(g, o, e->args.items[i]);
+        else gen_as(g, o, e->args.items[i], want);
+    }
+    if (e->c_pack) sb_put(o, ")");
+    if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
+    if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
+                                || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
+        sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
+    }
+    if (e->call == CALL_BUILTIN && strcmp(e->c_callee, "tide_draw_screen_flip") == 0) { // Screen.Flip: in the window
+        sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
+    }
+    if (e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText")) { // As the frame's renderer draws text
+        sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height), tide_ui->measure");
+    }
+    sb_put(o, ")");
 }
 
 // e.Add(...), e.Remove(...), e.Destroy(): the entity expression is evaluated once.
@@ -4050,16 +4077,34 @@ static const char *unwrapped_place(gen *g, expr *e)
     return name.data;
 }
 
+// The statements that close every container opened since there were `from`
+// of them, each ended with "; ": the outermost of the GUI's and of the draw
+// settings', which close the ones inside them. NULL when there's none.
+static const char *closing(const gen *g, const int from)
+{
+    const char *gui = NULL, *draw = NULL;
+    for (int i = from; i < g->containers.count; i++) {
+        const gen_open *c = &g->containers.items[i];
+        if (c->draw && !draw) draw = c->mark;
+        if (!c->draw && !gui) gui = c->mark;
+    }
+    if (!gui && !draw) return NULL;
+    sb out = {0};
+    if (gui) sb_printf(&out, "tide_gui_close(tide_ui, %s); ", gui);
+    if (draw) sb_printf(&out, "tide_draw_pop(tide_draw, %s); ", draw);
+    return out.data;
+}
+
 // Leaves the function being generated with `value`, C text of its result type,
-// closing the GUI containers its own code opened first. For `try`, which is
+// closing the containers its own code opened first. For `try`, which is
 // never in a copy of a function that takes an Action.
 static void gen_leave(gen *g, const char *value)
 {
     sb *o = &g->c;
-    const char *close = g->containers.count > 0 ? g->containers.items[0] : NULL;
+    const char *close = closing(g, 0);
     indent(g, o);
     if (close) {
-        sb_printf(o, "{ %s = %s; tide_gui_close(tide_ui, %s); return tide_result; }\n",
+        sb_printf(o, "{ %s = %s; %sreturn tide_result; }\n",
                   const_decl(g->routine->result, "tide_result"), value, close);
     } else {
         sb_printf(o, "return %s;\n", value);
@@ -4312,7 +4357,8 @@ static void gen_container(gen *g, const expr *e)
         line(g, o, "if (%s >= 0) {", depth);
         g->indent++;
     }
-    vec_push(g->containers, depth);
+    const gen_open open = {depth, false};
+    vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
     line(g, o, "tide_gui_close(tide_ui, %s);", depth);
@@ -4320,6 +4366,27 @@ static void gen_container(gen *g, const expr *e)
         g->indent--;
         line(g, o, "}");
     }
+    g->indent--;
+    line(g, o, "}");
+}
+
+// Draw.Blend(Blend.Add) { ... }: sets it, runs the block, and puts back what
+// it found, and what every setting the block left open found.
+static void gen_setting(gen *g, const expr *e)
+{
+    sb *o = &g->c;
+    const char *mark = made_up(g, "set");
+    line(g, o, "{");
+    g->indent++;
+    indent(g, o);
+    sb_printf(o, "const uint32_t %s = ", mark);
+    gen_builtin_call(g, o, e);
+    sb_put(o, ";\n");
+    const gen_open open = {mark, true};
+    vec_push(g->containers, open);
+    gen_body_stmt(g, e->block);
+    g->containers.count--;
+    line(g, o, "tide_draw_pop(tide_draw, %s);", mark);
     g->indent--;
     line(g, o, "}");
 }
@@ -4702,9 +4769,8 @@ static void gen_stmt(gen *g, const stmt *s)
             target--;
         }
         gen_target *t = &g->targets.items[target];
-        if (g->containers.count > t->containers) {
-            line(g, o, "tide_gui_close(tide_ui, %s);", g->containers.items[t->containers]);
-        }
+        const char *left = closing(g, t->containers);
+        if (left) line(g, o, "%s", left);
         bool innermost = true; // Nothing C's break or continue would go to first
         for (int i = target + 1; i < g->targets.count; i++) innermost &= !is_break && !g->targets.items[i].loop;
         if (is_break && innermost && !t->multi_loop) {
@@ -4745,9 +4811,9 @@ static void gen_stmt(gen *g, const stmt *s)
         // Containers the code opened close first. In copied code, return goes
         // to the end of the copy.
         const int base = g->frame ? g->frame->containers : 0;
-        const char *close = g->containers.count > base ? g->containers.items[base] : NULL;
+        const char *close = closing(g, base);
         if (g->frame) {
-            if (close) line(g, o, "tide_gui_close(tide_ui, %s);", close);
+            if (close) line(g, o, "%s", close);
             line(g, o, "goto %s;", g->frame->end);
             g->frame->end_used = true;
         } else if (s->value || (g->routine && g->routine->result.kind == TY_FAILABLE)) {
@@ -4760,10 +4826,10 @@ static void gen_stmt(gen *g, const stmt *s)
             if (failable && s->value) sb_put(o, ".value = ");
             if (s->value) gen_value_of(g, o, s->value, g->routine->return_type);
             if (failable) sb_printf(o, "%s.ok = true}", s->value ? ", " : "");
-            if (close) sb_printf(o, "; tide_gui_close(tide_ui, %s); return tide_result; }\n", close);
+            if (close) sb_printf(o, "; %sreturn tide_result; }\n", close);
             else sb_put(o, ";\n");
         } else {
-            if (close) line(g, o, "tide_gui_close(tide_ui, %s);", close);
+            if (close) line(g, o, "%s", close);
             line(g, o, g->in_input ? "return tide_self;" : "return;");
         }
         break;
@@ -4777,14 +4843,14 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "return TIDE_TASK_DONE;");
             break;
         }
-        const char *close = g->containers.count > 0 ? g->containers.items[0] : NULL;
+        const char *close = closing(g, 0);
         indent(g, o);
         if (close) sb_printf(o, "{ %s = ", const_decl(g->routine->result, "tide_result"));
         else sb_put(o, "return ");
         sb_printf(o, "(%s){.error = ", c_type(g->routine->result));
         gen_value_of(g, o, s->value, g->routine->fails);
         sb_put(o, "}");
-        if (close) sb_printf(o, "; tide_gui_close(tide_ui, %s); return tide_result; }\n", close);
+        if (close) sb_printf(o, "; %sreturn tide_result; }\n", close);
         else sb_put(o, ";\n");
         break;
     }
@@ -4959,6 +5025,8 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, ");\n");
         } else if (s->value->call == CALL_GUI && s->value->block) {
             gen_container(g, s->value);
+        } else if (s->value->call == CALL_DRAW && s->value->block && (s->value->gui & DRAW_BLOCK)) {
+            gen_setting(g, s->value);
         } else if (s->value->call == CALL_FUNCTION && s->value->method->takes_action) {
             gen_inline(g, s->value);
         } else if (s->value->call == CALL_ACTION) {
@@ -13426,7 +13494,7 @@ static void gen_shaders(gen *g)
         if (sh->direct_texture && !sh->source_grid) sb_put(o, ", tide_texture_ref tide_texture");
         else if (sh->textured || sh->source_grid) sb_put(o, ", tide_grid tide_texture, const tide_grid_shape *tide_shape");
         if (sh->textured) sb_put(o, ", int32_t tide_filter");
-        if (sh->blit) sb_put(o, ", tide_render_target tide_destination");
+        if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *d = sh->bound.items[b];
             sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
@@ -13519,7 +13587,7 @@ static void gen_shaders(gen *g)
             snprintf(mask, sizeof mask, "0x%xu | (tide_filter != TIDE_FILTER_POINT ? 0x%xu : 0u)", blended, 1u << draw_texture);
         else snprintf(mask, sizeof mask, "0x%xu", blended);
         if (sh->blit)
-            sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, %s, %s, tide_textures, %s);\n}\n\n",
+            sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, (tide_blend)tide_over, %s, %s, tide_textures, %s);\n}\n\n",
                       s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
         else if (sh->instanced)
             sb_printf(o, "    tide_draw_mesh_shaded_instances(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, "

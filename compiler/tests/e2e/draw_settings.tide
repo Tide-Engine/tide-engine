@@ -1,0 +1,215 @@
+// Draw settings: each around a block and set for the views that follow, blocks
+// listed with commas, blocks left early, a target's own, a shader's, and a
+// blit's blend.
+
+scene Main { }
+
+enum Trouble
+{
+    Hidden,
+}
+
+local singleton Look
+{
+    RenderTarget target;
+    bool leave; // The blocks are left early
+    int left;   // How far Early got
+}
+
+void Hide(bool yes) fails Trouble
+{
+    if (yes) fail Trouble.Hidden;
+}
+
+// A function with a block of its own, as a game's containers are.
+void Framed(float2 at, Action content)
+{
+    Draw2D.Transform(at)
+    {
+        content();
+    }
+}
+
+// Blocks around draws: what each found is back after it.
+view Blocks()
+{
+    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Rect(float2(1, 0), float2(1, 1), Color.white);
+        Draw.Tint(Color(1, 0.5, 0.5, 0.5))
+        {
+            Draw2D.Rect(float2(2, 0), float2(1, 1), Color.white);
+        }
+    }
+    Draw2D.Rect(float2(3, 0), float2(1, 1), Color.white);
+
+    // Listed with commas: the same as each inside the one before
+    Draw.Blend(Blend.Multiply),
+    Draw.Tint(Color(0.5, 1, 1, 1)),
+    Draw2D.Transform(float2(10, 20), 0, 2),
+    Draw2D.Clip(Rect(0, 0, 100, 100))
+    {
+        Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+        Draw2D.Clip(Rect(50, 50, 100, 100))
+        {
+            Draw2D.Circle(float2(0, 0), 1, Color.white);
+        }
+    }
+    Draw2D.Rect(float2(4, 0), float2(1, 1), Color.white);
+
+    // A function of the game's that takes a block joins the list
+    Framed(float2(100, 0)),
+    Draw.Tint(Color.red)
+    {
+        Draw2D.Rect(float2(1, 0), float2(1, 1), Color.white);
+    }
+}
+
+// Left early, a block still puts back what it found.
+view Early(mut Look look)
+{
+    Draw.Tint(Color.green),
+    Draw2D.Transform(float2(0, 100))
+    {
+        look.left = 1;
+        if (look.leave) return;
+        look.left = 2;
+    }
+    Draw2D.Rect(float2(9, 9), float2(1, 1), Color.white);
+}
+
+void Guarded(bool leave) fails Trouble
+{
+    Draw.Blend(Blend.Add),
+    Draw2D.Clip(Rect(0, 0, 1, 1))
+    {
+        try Hide(leave); // Its error leaves through both
+        Draw2D.Rect(float2(0, 5), float2(1, 1), Color.white);
+    }
+}
+
+void Failing(bool leave) fails Trouble
+{
+    Draw.Tint(Color.blue)
+    {
+        if (leave) fail Trouble.Hidden;
+    }
+}
+
+int Counted(bool leave)
+{
+    Draw2D.Transform(float2(7, 7))
+    {
+        if (leave) return 1;
+    }
+    return 2;
+}
+
+view AfterEarly(Look look)
+{
+    Guarded(look.leave)!;
+    Failing(look.leave)!;
+    var counted = Counted(look.leave);
+    for (var i = 0; i < 3; i++)
+    {
+        Draw.Tint(Color.red)
+        {
+            if (i == 0) continue;
+            if (i == 2) break;
+        }
+    }
+    // Nothing is left set, however the blocks were left
+    Draw2D.Rect(float2(counted, 0), float2(1, 1), Color.white);
+}
+
+frag Plain(Vertex vertex, mut Color color)
+{
+    color = vertex.color;
+}
+
+// A mesh through a frag is tinted, blended and moved as the draw says.
+view Shaded()
+{
+    Draw.Tint(Color(0.25, 0.5, 1, 1)),
+    Draw.Blend(Blend.Add),
+    Draw2D.Transform(float2(3, 4))
+    {
+        Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
+    }
+}
+
+// Set, each holds for the views that follow.
+view Sets()
+{
+    Draw.SetBlend(Blend.Add);
+    Draw.SetTint(Color(1, 1, 0, 1));
+    Draw2D.SetTransform(float2(5, 5), 0, float2(2, 3));
+    Draw2D.SetClip(Rect(1, 2, 3, 4));
+    Draw2D.SetCamera(float2(8, 9), 10);
+}
+
+view Follows()
+{
+    Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // The screen, for a label: the camera is back after it
+    Draw2D.Screen()
+    {
+        Draw2D.Text("label", float2(4, 4), 8, Color.white);
+    }
+    Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // Set inside a block, it's for the rest of the block
+    Draw.Tint(Color.white)
+    {
+        Draw.SetTint(Color.blue);
+        Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+    }
+    Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // With no arguments, a Set puts back what each frame starts with
+    Draw.SetBlend();
+    Draw.SetTint();
+    Draw2D.SetTransform();
+    Draw2D.SetClip();
+    Draw2D.SetCamera();
+    Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+}
+
+// Where draws land is each destination's own.
+view Targets(Look look)
+{
+    look.target.SetCamera(float2(1, 2), 3);
+    look.target.Clip(Rect(0, 0, 2, 2)),
+    look.target.Transform(float2(1, 1))
+    {
+        look.target.Rect(float2(0, 0), float2(1, 1), Color.white);
+        Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
+    }
+    look.target.Rect(float2(3, 3), float2(1, 1), Color.white);
+    look.target.SetTransform(float4x4.Translate(float3(0, 0, 5)));
+    look.target.SetScreen();
+    look.target.SetCamera();
+    look.target.SetTransform();
+    Draw3D.Transform(float4x4.Translate(float3(1, 0, 0)))
+    {
+        Draw3D.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Camera(float3(0, 0, -5), quaternion.identity, 60),
+    Draw3D.Transform(float4x4.Translate(float3(0, 2, 0)))
+    {
+        Draw3D.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+    }
+}
+
+frag Copy(Vertex vertex, mut Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
+}
+
+// A blit is its destination's, whatever is set: it replaces, or blends as it's told.
+view Blits(Look look)
+{
+    Draw.SetBlend(Blend.Multiply);
+    Draw.SetTint(Color.red);
+    Draw.Blit(look.target.color, Draw.window, Copy);
+    Draw.Blit(look.target.color, Draw.window, Blend.Add, Copy);
+}

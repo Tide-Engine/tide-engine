@@ -17,6 +17,7 @@
 #include "tide/platform.h"
 #include "tide/profiler.h"
 #include "tide/session.h"
+#include "tide/stats.h"
 #include "tide/time.h"
 
 typedef struct tide_run_desc {
@@ -25,9 +26,13 @@ typedef struct tide_run_desc {
     int width;              // Starting window size in pixels; default 960 x 540
     int height;
     int tick_rate;          // Ticks per second, over the game's tickRate setting; 0 for that, or else 60
-    // Show the stats in a corner, as the game's `stats` setting does: the frame rate, what a frame's work takes,
+    // Show the stats in the bottom right corner, as the game's `stats` setting does: a drawer (tide/stats.h), one
+    // line with the frame rate, which a click or a tap on it or F8 opens to the rest: what a frame's work takes,
     // ping, bandwidth, tick, entity count, threads, memory, what draws, its draw calls and the slowest systems
     bool stats;
+    // ...and they start open, for whoever asked to read them, as `tide run --stats` does. They start closed
+    // without it: what a game's players get of them is the one line.
+    bool stats_open;
     // The debug views are on, as with the game's debugViews setting or
     // --debug-views on the command line: F7 shows the profiler (tide/profiler.h)
     bool debug_views;
@@ -124,7 +129,7 @@ static tide_devices tide_run_devices;
 static tide_draw_list tide_run_draw;
 static tide_gui tide_run_gui;
 // The profiler, and in it how long each system and view took, measured while
-// it's shown or the stats overlay is
+// it's shown or the stats' drawer is open
 static tide_profiler tide_run_profiler;
 static bool tide_run_profiling; // The profiler is shown
 static bool tide_run_f7;        // F7 was held at the last frame
@@ -148,21 +153,52 @@ static double tide_run_now; // Seconds since the program started
 static bool tide_run_dropped;
 // Host migration: when this machine went to its match's room again, or 0
 static double tide_run_migrating_since;
-// The stats overlay (tide_run_stats): frames, their work and bytes over the
-// last second, counted from when it began, with the session's totals then.
+// The stats (tide_run_stats): their drawer, which is open or closed whatever
+// build of the game runs, and what the host draws it into, over the frame.
+static tide_stats tide_run_drawer;
+static tide_draw_list tide_run_over;
+// ...and its numbers: frames, their work and bytes over the last second,
+// counted from when it began, with the session's totals then.
 static double tide_run_stats_since;
 static uint32_t tide_run_stats_frames;
-static uint64_t tide_run_stats_work; // Nanoseconds the frames' work took: not the overlay, nor the wait for the display
+// Nanoseconds the frames' work took, not the drawer nor the wait for the
+// display, and how many frames that's of: the ones the drawer was open for
+static uint64_t tide_run_stats_work;
+static uint32_t tide_run_stats_worked;
 static uint64_t tide_run_stats_sent, tide_run_stats_received;
+static bool tide_run_stats_known;                       // There's a frame rate to show: the drawer shows from then
 static double tide_run_fps, tide_run_up, tide_run_down; // A second, over the last one
-static double tide_run_work_ms;                         // A frame's work, over the last second
+static double tide_run_work_ms;                         // A frame's work, over the last second; under 0 until it's known
 static uint64_t tide_run_memory;                        // tide_platform_memory, as of then
 
-// Whether the stats overlay shows: the host asked for it (--stats, STATS), or
-// the game's `stats` setting does.
+// Whether the stats show: the host asked for them (--stats, STATS), or the
+// game's `stats` setting does.
 static inline bool tide_run_stats(void)
 {
     return tide_run_settings.stats || tide_run_game->game->stats;
+}
+
+// The stats' drawer, once a frame, right after the devices are polled and
+// before anything reads them: a click or a tap on it, or F8, opens it and
+// closes it. The game sees the key too. The press of a click is the drawer's,
+// which tide_run_sample and the frame's GUI then never see. Closed, it shows
+// what the host knows anyway, so nothing is measured for it: what its list
+// shows is, from when it opens.
+static inline void tide_run_drawer_input(const bool stats)
+{
+    if (!stats) {
+        tide_stats_off(&tide_run_drawer);
+        tide_run_stats_known = false; // Counted from nothing when they're back
+        tide_run_stats_since = tide_run_now;
+        tide_run_stats_frames = tide_run_stats_worked = 0;
+        tide_run_stats_work = 0;
+        return;
+    }
+    const bool f8 = tide_run_devices.keyboard.f8.held;
+    if (!tide_stats_input(&tide_run_drawer, &tide_run_devices, tide_platform_screen_size(), f8)) return;
+    if (!tide_run_drawer.open) return;
+    tide_run_work_ms = -1.0; // No frame was timed yet
+    tide_run_memory = tide_platform_memory();
 }
 
 // This machine's input for one tick.
@@ -173,6 +209,7 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     if (!tide_run_game->sample_input) return;
     tide_devices sampled = tide_run_devices;
     tide_gui_hide(&tide_run_gui, &sampled); // A click on a button isn't the game's
+    tide_stats_hide(&tide_run_drawer, &sampled); // ...nor one on the stats
     tide_run_game->sample_input(&sampled, tide_run_local, input);
     tide_devices_consume(&tide_run_devices);
 }
@@ -330,6 +367,8 @@ static inline uint32_t tide_run_whole(int *i, const char *flag, const uint32_t m
 static inline void tide_run_configure(const tide_run_desc *desc)
 {
     tide_run_settings = *desc;
+    tide_run_drawer.open = desc->stats_open;
+    tide_run_work_ms = -1.0; // No frame was timed yet
     if (!tide_run_settings.title) tide_run_settings.title = tide_run_game->game->title;
     if (!tide_run_settings.title) tide_run_settings.title = tide_run_settings.game_name;
     if (!tide_run_settings.title) tide_run_settings.title = "Tide";
@@ -433,7 +472,9 @@ static inline void tide_run_debug_views(void)
     }
     if (!on) tide_run_profiling = false;
     tide_run_f7 = f7;
-    tide_profile *profile = tide_run_stats() || tide_run_profiling ? &tide_run_profiler.profile : NULL;
+    // The stats list the slowest systems while their drawer is open
+    const bool listed = tide_run_stats() && tide_run_drawer.open;
+    tide_profile *profile = listed || tide_run_profiling ? &tide_run_profiler.profile : NULL;
     tide_platform_jobs_profile(profile);
     tide_run_alone.profile = profile;
     tide_run_gui.profile = tide_run_profiling ? profile : NULL;
@@ -561,14 +602,16 @@ static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
     const tide_host_game *game = tide_run_game;
-    const uint64_t began = tide_time_now_ns();
     // Asked every frame: a reload can bring the setting, or take it away
     const bool stats = tide_run_stats();
+    // What a frame's work takes is in the stats' list: timed while their drawer is open
+    const uint64_t began = stats && tide_run_drawer.open ? tide_time_now_ns() : 0;
     tide_run_debug_views();
     // Where the frame's time goes, part by part, while the profiler is shown
     tide_profiler *profiler = tide_run_profiling ? &tide_run_profiler : NULL;
     tide_profiler_begin(profiler, seconds);
     tide_platform_poll(&tide_run_devices);
+    tide_run_drawer_input(stats);
     tide_run_now += seconds;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
 
@@ -602,7 +645,15 @@ static inline int tide_run_frame(void *user, const float seconds)
     const tide_view_worlds view = tide_session_view(s);
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
-    tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
+    // The GUI and the views read the devices, less a press that's on the stats
+    const tide_devices *seen = &tide_run_devices;
+    tide_devices kept;
+    if (tide_stats_pressed(&tide_run_drawer)) {
+        kept = tide_run_devices;
+        tide_stats_hide(&tide_run_drawer, &kept);
+        seen = &kept;
+    }
+    tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
@@ -617,57 +668,54 @@ static inline int tide_run_frame(void *user, const float seconds)
 
     if (stats) {
         tide_run_stats_frames++;
-        tide_run_stats_work += tide_time_now_ns() - began;
+        if (began) {
+            tide_run_stats_work += tide_time_now_ns() - began;
+            tide_run_stats_worked++;
+        }
         const double span = tide_run_now - tide_run_stats_since;
-        if (span >= 1.0) {
+        // Once a second, and the first time sooner, so the stats aren't long in showing
+        if (span >= (tide_run_stats_known ? 1.0 : 0.25)) {
             const uint64_t sent = status.sent_bytes, received = status.received_bytes;
             tide_run_fps = tide_run_stats_frames / span;
-            tide_run_work_ms = (double)tide_run_stats_work * 1e-6 / tide_run_stats_frames;
+            if (tide_run_stats_worked) tide_run_work_ms = (double)tide_run_stats_work * 1e-6 / tide_run_stats_worked;
             tide_run_up = sent >= tide_run_stats_sent ? (double)(sent - tide_run_stats_sent) / span : 0.0;
             tide_run_down = received >= tide_run_stats_received ? (double)(received - tide_run_stats_received) / span : 0.0;
-            tide_run_memory = tide_platform_memory();
+            if (tide_run_drawer.open) tide_run_memory = tide_platform_memory();
+            tide_run_stats_known = true;
             tide_run_stats_since = tide_run_now;
-            tide_run_stats_frames = 0;
+            tide_run_stats_frames = tide_run_stats_worked = 0;
             tide_run_stats_work = 0;
             tide_run_stats_sent = sent;
             tide_run_stats_received = received;
         }
+    } else {
+        tide_run_stats_sent = status.sent_bytes;
+        tide_run_stats_received = status.received_bytes;
     }
-    if (stats && match) {
+    if (stats && tide_run_stats_known) {
+        // Closed, the drawer shows the frame rate and the ping: what's only in its list isn't asked for
+        const bool open = tide_run_drawer.open;
         const tide_jobs *jobs = tide_platform_jobs(); // What the session ticks on
-        char text[512];
-        char delay[32] = "";
-        char memory[32] = ""; // Where the system says
-        const double megabytes = (double)tide_run_memory / (1024.0 * 1024.0);
-        if (status.client.delay_ticks) snprintf(delay, sizeof delay, "\ndelay %u ticks", (unsigned)status.client.delay_ticks);
-        if (tide_run_memory) snprintf(memory, sizeof memory, "\nmemory %.0f MB", megabytes);
-        int n = snprintf(text, sizeof text,
-                         "%.0f fps\ncpu %.1f ms\nping %u ms%s\nup %.1f KB/s\ndown %.1f KB/s\ntick %d\n%u entities\n"
-                         "threads %u%s\n%s\n%u draw calls",
-                         tide_run_fps, tide_run_work_ms, (unsigned)status.client.ping_ms, delay, tide_run_up / 1024.0,
-                         tide_run_down / 1024.0, (int)game->tick(match), (unsigned)game->entity_count(match),
-                         jobs ? (unsigned)jobs->threads : 1u, memory, tide_platform_renderer(),
-                         (unsigned)tide_platform_draw_calls());
-        // The three systems that took longest in the last tick. Keep zero-time
-        // rows too: a short system can fall below the clock's resolution, and
-        // dropping its row would move every stat above it.
-        const tide_profile_time *times = tide_run_profiler.profile.systems.items;
-        const uint32_t count = tide_run_profiler.profile.systems.count;
-        bool shown[3] = {false, false, false};
-        uint32_t slow[3] = {0, 0, 0};
-        for (int k = 0; k < 3 && n > 0 && (size_t)n < sizeof text; k++) {
-            uint32_t best = UINT32_MAX;
-            for (uint32_t s = 0; s < count; s++) {
-                bool taken = false;
-                for (int j = 0; j < k; j++) taken |= shown[j] && slow[j] == s;
-                if (!taken && times[s].name[0] && (best == UINT32_MAX || times[s].ms > times[best].ms)) best = s;
-            }
-            if (best == UINT32_MAX) break;
-            shown[k] = true;
-            slow[k] = best;
-            n += snprintf(text + n, sizeof text - (size_t)n, "\n%s %.2f ms", times[best].name, times[best].ms);
-        }
-        tide_platform_draw_overlay(text);
+        const tide_stats_values values = {
+            .fps = tide_run_fps,
+            .work_ms = tide_run_work_ms,
+            .threads = jobs ? jobs->threads : 1u,
+            .memory = tide_run_memory,
+            .renderer = tide_platform_renderer(),
+            .draw_calls = tide_platform_draw_calls(),
+            .match = match != NULL,
+            .remote = match && !status.server,
+            .ping_ms = status.client.ping_ms,
+            .delay_ticks = status.client.delay_ticks,
+            .up = tide_run_up,
+            .down = tide_run_down,
+            .tick = open && match ? game->tick(match) : 0,
+            .entities = open && match ? game->entity_count(match) : 0u,
+            .profile = &tide_run_profiler.profile,
+        };
+        tide_draw_reset(&tide_run_over);
+        tide_stats_draw(&tide_run_drawer, &values, &tide_run_over, tide_platform_screen_size(), tide_platform_measure_text);
+        tide_platform_draw_over(&tide_run_over);
     }
 
     if (game->command && game->command_sent) {

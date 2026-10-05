@@ -124,7 +124,11 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
                    Color(0, 0.005, 0.02, 0.5 * near));
     }
 
-    GlowOn(scene, center, body.radius * 0.75, 34, Fade(color, 0.2));
+    // Its own light, which adds to the room's
+    Draw.Blend(Blend.Add)
+    {
+        GlowOn(scene, center, body.radius * 0.75, 34, Fade(color, 0.2));
+    }
 
     // Shots drop, so this machine's fighter is shown where its next one goes:
     // up to the first platform in its way, or the first fighter still up, as
@@ -172,7 +176,10 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
     if (fighter.recoil > 0.55)
     {
         var bright = (fighter.recoil - 0.55) / 0.45;
-        GlowOn(scene, tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
+        Draw.Blend(Blend.Add)
+        {
+            GlowOn(scene, tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
+        }
     }
 
     OvalOn(scene, center, float2(wide, tall), Shade(color, 0.26), Shade(color, -0.3), 2.5, UI_OUTLINE);
@@ -199,7 +206,10 @@ view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel d
     {
         var spent = 1 - Math.Saturate(fighter.blockLeft / 0.22);
         var reach = body.radius + 9 + 4 * EaseOut(spent * 2);
-        GlowOn(scene, center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
+        Draw.Blend(Blend.Add)
+        {
+            GlowOn(scene, center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
+        }
         OvalOn(scene, center, float2(reach), Fade(Color.white, 0.2), Fade(color, 0.1), 2.6, Fade(Color.white, 0.95));
         scene.WireCircle(center, reach + 4.5, 1.6, Fade(color, 0.85));
     }
@@ -254,8 +264,12 @@ view PaintBullets(Body body, mut Bullet bullet, mut Fx fx, Lens lens)
         bullet.trail = body.position;
     }
 
-    scene.Line(bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
-    GlowOn(scene, body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
+    // The light it trails and gives off adds to what's behind it; the shot itself covers it
+    Draw.Blend(Blend.Add)
+    {
+        scene.Line(bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
+        GlowOn(scene, body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
+    }
     scene.Line(body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
     scene.Line(body.position - direction * 5 * heft, body.position, (body.radius + 0.5) * heft, Mix(color, Color.white, 0.85));
 }

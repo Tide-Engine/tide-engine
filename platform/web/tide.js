@@ -11,7 +11,9 @@
 // onAbort, checkGL, backend }` (all optional) before this script, and
 // TIDE_PROGRAM holds the program as base64 (cmake/web_page.mjs, or the tide
 // command). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
-// is `backend=` in the page's address.
+// is `backend=` in the page's address. For a page with rooms (below), `relay`
+// is another relay's address and `lag` a delay for what it sends, and the page
+// reads `Tide.room`, the code of the room the program is in.
 //
 // The lines between the `tide run` markers below are for hot reloading, in the
 // page `tide run --web` serves; the pages made to ship leave them out.
@@ -92,10 +94,20 @@
     }
 
     // The program's arguments are the page's. `debug-views` in the page's
-    // address is --debug-views, as for a desktop game started with it
+    // address is --debug-views, as for a desktop game started with it, and
+    // `host` and `join=K7QF2M` are --host and --join K7QF2M: a page that shows
+    // a game, or a link to one, says which match it's in. The page's own
+    // arguments go first, and win.
     const words = [...(config.arguments || [])];
-    if (new URLSearchParams(location.search).has('debug-views') && !words.includes('--debug-views')) {
+    const address = new URLSearchParams(location.search);
+    if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
+    }
+    if (!words.some(word => word === '--host' || word === '--join' || word === '--connect')) {
+        // A code is letters and digits: the program says what's wrong with one that isn't a room's
+        const code = (address.get('join') || '').replace(/[^0-9a-z]/gi, '');
+        if (code) words.push('--join', code);
+        else if (address.has('host')) words.push('--host');
     }
     const args = ['program', ...words].map(a => encoder.encode(a + '\0'));
 
@@ -589,6 +601,14 @@
     // its host, and introduces the others to it.
 
     const relayUrl = config.relay || 'wss://relay.tide-engine.dev';
+    // `Tide.lag`, or `lag=` in the page's address: what this page sends its
+    // room's players leaves that many milliseconds late, to see a match as on
+    // a slow connection with both players at one desk. The page can change it
+    // while the game runs. `Tide.room` is the code of the room the program
+    // hosts or joined ("" for none), for the page to show or to link to.
+    if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
+    Object.defineProperty(config, 'room', { configurable: true, enumerable: true,
+        get: () => room && !room.failed && room.reachable ? room.code : '' });
     const CODE_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // No look-alikes: 0 and O, 1 and I
     let room = null;
     let rooms = 0; // Rooms opened so far, which numbers them
@@ -873,7 +893,13 @@
             const channel = peer && peer.open ? peer.channel : null;
             // Like UDP, what can't go now is lost, and so is what would queue up
             if (channel && channel.readyState === 'open' && channel.bufferedAmount < 262144) {
-                channel.send(u8().slice(ptr, ptr + size));
+                const bytes = u8().slice(ptr, ptr + size);
+                const lag = Math.min(Number(config.lag) || 0, 2000);
+                if (lag > 0) {
+                    setTimeout(() => {
+                        if (channel.readyState === 'open' && channel.bufferedAmount < 262144) channel.send(bytes);
+                    }, lag);
+                } else channel.send(bytes);
             }
         },
         room_receive(number, fromPtr, ptr, capacity) {
@@ -968,6 +994,7 @@
         glBindTexture: (target, t) => gl.bindTexture(target, get('texture', t)),
         glBindVertexArray: v => gl.bindVertexArray(get('vertexArray', v)),
         glBlendFunc: (s, d) => gl.blendFunc(s, d),
+        glBlendFuncSeparate: (s, d, sa, da) => gl.blendFuncSeparate(s, d, sa, da),
         glBufferData(target, size, ptr, usage) {
             if (ptr) gl.bufferData(target, u8(), usage, ptr, size);
             else gl.bufferData(target, size, usage);
@@ -1267,7 +1294,16 @@
     }
     let reader = null; // A 2D canvas, which a target is drawn into to read it back without waiting
 
+    // tide_gpu_blend: by its alpha, added, what's there times it, or in its place (none)
     const alphaBlend = { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' };
+    const blends = [
+        { color: alphaBlend, alpha: alphaBlend },
+        { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } },
+        { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' },
+          alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
+        undefined,
+    ];
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1356,7 +1392,7 @@
                 layout: pipelineLayouts[b.textures],
                 vertex: { module, entryPoint: 'vertex', buffers },
                 fragment: { module, entryPoint: 'fragment', targets: [{ format: gpuFormat,
-                    blend: b.blend === 0 ? { color: alphaBlend, alpha: alphaBlend } : undefined }] },
+                    blend: blends[b.blend] }] },
                 primitive: { topology: 'triangle-list', cullMode: 'none' }, // Either side of a triangle draws
                 depthStencil: { format: 'depth24plus', depthWriteEnabled: b.depth !== 0,
                     depthCompare: b.depth === 1 ? 'less-equal' : 'always' },

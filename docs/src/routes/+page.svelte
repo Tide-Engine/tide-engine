@@ -32,13 +32,15 @@
         </div>
     </section>
 
-    <section class="features" aria-label="Features">
-        {#each data.features as feature (feature.title)}
-            <div class="feature">
-                <h2>{feature.title}</h2>
-                <p>{feature.details}</p>
-            </div>
-        {/each}
+    <section aria-label="Features">
+        <dl class="features">
+            {#each data.features as feature (feature.title)}
+                <div class="feature">
+                    <dt>{feature.title}</dt>
+                    <dd>{feature.details}</dd>
+                </div>
+            {/each}
+        </dl>
     </section>
 
     <section class="prose more">
@@ -47,7 +49,12 @@
 </main>
 
 <style>
+    /* Under the hero the page keeps to two columns: names, and what's said
+       of them. */
     main {
+        --names: 280px;
+        --gutter: 48px;
+
         max-width: 1152px;
         margin: 0 auto;
         padding: 0 48px 128px;
@@ -78,7 +85,7 @@
     }
 
     .name {
-        color: var(--brand-2);
+        color: var(--brand-fill);
     }
 
     .tagline {
@@ -109,12 +116,12 @@
     }
 
     .button.brand {
-        background: var(--brand-3);
-        color: #ffffff;
+        background: var(--brand-fill);
+        color: var(--brand-text);
     }
 
     .button.brand:hover {
-        background: var(--brand-2);
+        background: var(--brand-fill-hover);
     }
 
     .button.alt {
@@ -141,35 +148,59 @@
     }
 
     .features {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
+        margin: 0;
+        border-top: 1px solid var(--divider);
     }
 
     .feature {
-        padding: 24px;
-        border: 1px solid var(--bg-soft);
-        border-radius: 12px;
-        background: var(--bg-soft);
+        display: grid;
+        grid-template-columns: var(--names) minmax(0, 1fr);
+        column-gap: var(--gutter);
+        padding: 20px 0;
+        border-bottom: 1px solid var(--divider);
     }
 
-    .feature h2 {
-        margin: 0;
-        font-size: 16px;
+    dt {
+        font-size: 17px;
         font-weight: 600;
-        line-height: 24px;
+        line-height: 28px;
     }
 
-    .feature p {
-        margin: 8px 0 0;
+    dd {
+        max-width: 640px;
+        margin: 0;
         color: var(--text-2);
-        font-size: 14px;
-        line-height: 24px;
+        line-height: 28px;
     }
 
+    /* What follows the list goes on as a row of it: its heading among the
+       names, the rest beside it. */
     .more {
-        max-width: 760px;
-        margin: 32px auto 0;
+        position: relative;
+        max-width: 720px;
+        margin-left: calc(var(--names) + var(--gutter));
+        padding-top: 20px;
+    }
+
+    .more :global(h2:first-child) {
+        position: absolute;
+        top: 20px;
+        left: calc(-1 * (var(--names) + var(--gutter)));
+        width: var(--names);
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-size: 17px;
+        line-height: 28px;
+        letter-spacing: 0;
+    }
+
+    .more :global(h2:first-child .anchor) {
+        top: 0;
+    }
+
+    .more :global(h2:first-child + *) {
+        margin-top: 0;
     }
 
     @media (max-width: 959px) {
@@ -190,8 +221,18 @@
             height: 160px;
         }
 
-        .features {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+        .feature {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .more {
+            margin-left: 0;
+        }
+
+        .more :global(h2:first-child) {
+            position: static;
+            width: auto;
+            margin-bottom: 4px;
         }
     }
 
@@ -206,10 +247,6 @@
 
         .tagline {
             font-size: 18px;
-        }
-
-        .features {
-            grid-template-columns: 1fr;
         }
     }
 </style>
