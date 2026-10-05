@@ -1171,7 +1171,7 @@ static void index_program(void)
     }
 
     // In source order, one per position: the first found there.
-    qsort(A.occs.items, (size_t)A.occs.count, sizeof(occurrence), occ_order);
+    if (A.occs.count > 0) qsort(A.occs.items, (size_t)A.occs.count, sizeof(occurrence), occ_order); // None is no array to hand it
     int n = 0;
     for (int i = 0; i < A.occs.count; i++) {
         if (n > 0 && loc_cmp(A.occs.items[n - 1].at, A.occs.items[i].at) == 0) continue;
@@ -9036,8 +9036,9 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
 
         sb text = {0};
         for (int piece = 0; piece < pieces; piece++) {
-            const fmt_item *from = &items->items[starts[piece]];
-            const fmt_item *to = &items->items[starts[piece + 1]];
+            // A line with no items has no array of them to point into
+            const fmt_item *from = items->items ? &items->items[starts[piece]] : NULL;
+            const fmt_item *to = items->items ? &items->items[starts[piece + 1]] : NULL;
 
             int last_tok = -1;
             for (const fmt_item *item = from; item < to; item++) {

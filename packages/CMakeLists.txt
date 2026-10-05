@@ -11,6 +11,12 @@ add_library(tide_box2d STATIC ${box2d_sources})
 # otherwise there
 target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
+if(TIDE_SANITIZE)
+    # As it came, it hands memset no array where it has none to clear (0
+    # bytes of it), which the sanitizer would stop on: that check is off for
+    # its sources, like its warnings. The rest stays on.
+    target_compile_options(tide_box2d PRIVATE -fno-sanitize=nonnull-attribute)
+endif()
 
 tide_add_game(tide_box2d_stack SOURCES box2d/box2d.tide box2d/bridge.c box2d/test/stack.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/stack_test.c)
@@ -29,6 +35,9 @@ file(GLOB box3d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box
 add_library(tide_box3d STATIC ${box3d_sources})
 target_link_libraries(tide_box3d PRIVATE tide_flags)
 target_compile_options(tide_box3d PRIVATE -w)
+if(TIDE_SANITIZE)
+    target_compile_options(tide_box3d PRIVATE -fno-sanitize=nonnull-attribute)
+endif()
 
 tide_add_game(tide_box3d_stack SOURCES box3d/box3d.tide box3d/bridge.c box3d/test/stack.tide NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/stack_test.c)

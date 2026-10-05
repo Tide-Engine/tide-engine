@@ -1,0 +1,96 @@
+// expect: ints 2147483647 -2147483648 -2147483648 0 0 0 0 -2147483648 0
+// expect: shifts 2 -2147483648 -1 -1 1 0 2
+// expect: longs 9223372036854775807 -9223372036854775808 -9223372036854775808 0 0 -9223372036854775808 0 2 -1
+// expect: from floats 0 2147483647 -2147483648 2147483647 -2147483648 0 9223372036854775807 -9223372036854775808 0
+// expect: bytes 0 255 0 255 44 0 255 1
+// expect: steps -2147483648 2147483647 0 255 -9223372036854775808
+// expect: vectors (-2147483648, 0) (0, 0) (0, 0) (2147483647, -2147483648, 0)
+// expect: math 2147483647 -2147483648 -2147483648 -9223372036854775808 2147483647 0 3
+// expect: floats NaN Infinity -Infinity 0 NaN 0
+// expect: enums High 77 -1 other other
+
+// Arithmetic that C leaves undefined, with the numbers that reach it: every
+// one of these has an answer in Tide, the same on every machine.
+
+enum Kind { None, Low, High }
+
+singleton Numbers
+{
+    int most = 2147483647;
+    int least = 0x80000000;
+    int zero;
+    int minusOne = -1;
+    long mostLong = 9223372036854775807;
+    long leastLong = -9223372036854775807L - 1L;
+    long zeroLong;
+    long minusOneLong = -1L;
+    float nan;
+    float big = 1e30;
+    bool done;
+}
+
+scene Main { }
+
+string Name(Kind kind)
+{
+    switch (kind)
+    {
+        case Kind.None: return "none";
+        case Kind.Low: return "low";
+        case Kind.High: return "high";
+    }
+    return "other";
+}
+
+system Run(mut Numbers n)
+{
+    if (n.done) return;
+    n.done = true;
+    n.nan = (n.zero * 1.0) / (n.zero * 1.0);
+    var inf = n.big * n.big;
+
+    // Overflow wraps; nothing divides by zero, or the lowest int by -1, into a trap
+    Debug.Log($"ints {n.most + n.zero} {n.most + 1} {n.least - n.zero} {n.most / n.zero} {n.most % n.zero} "
+        + $"{n.least % n.minusOne} {n.least * 2} {n.least / n.minusOne} {n.most * 2 + 2}");
+
+    // A shift by too much or by a negative uses the count's low bits
+    Debug.Log($"shifts {1 << (n.most - 2147483614)} {1 << (n.zero - 1)} {n.minusOne >> 40} {n.least >> 31} "
+        + $"{1 << (n.least + n.zero)} {n.most >> (n.zero - 1)} {1L << (n.zero + 65)}");
+
+    Debug.Log($"longs {n.mostLong + n.zeroLong} {n.mostLong + 1L} {n.leastLong - n.zeroLong} {n.mostLong / n.zeroLong} "
+        + $"{n.leastLong % n.minusOneLong} {n.leastLong / n.minusOneLong} {n.leastLong * 2L} {1L << (n.zero + 65)} {n.minusOneLong >> 70}");
+
+    // A float that isn't an int's is the nearest one, and NaN is 0
+    Debug.Log($"from floats {int(n.nan)} {int(inf)} {int(-inf)} {int(n.big)} {int(-n.big)} {long(n.nan)} {long(inf)} "
+        + $"{long(-n.big)} {int(n.nan * 0)}");
+
+    Debug.Log($"bytes {byte(n.nan)} {byte(inf)} {byte(-inf)} {byte(n.most)} {byte(300)} {byte(n.least)} "
+        + $"{byte(n.minusOne)} {byte(n.mostLong - 254L)}");
+
+    mut var up = n.most;
+    up++;
+    mut var down = n.least;
+    down--;
+    mut byte wraps = 255;
+    wraps++;
+    mut byte under = 0;
+    under--;
+    mut var far = n.mostLong;
+    far += 1L;
+    Debug.Log($"steps {up} {down} {wraps} {under} {far}");
+
+    var corner = int2(n.most, n.least);
+    var cube = int3(n.most, n.least, n.zero);
+    Debug.Log($"vectors {corner + int2(1, n.least)} {corner / int2(n.zero, n.zero)} {corner % int2(n.zero, n.minusOne)} "
+        + $"{cube * int3(1, 1, n.most)}");
+
+    Debug.Log($"math {Math.Abs(n.most)} {Math.Abs(n.least)} {-n.least} {Math.Abs(n.leastLong)} "
+        + $"{Math.Clamp(5, n.most, n.least)} {Math.Sign(n.zero)} {Math.Max(3, n.least)}");
+
+    Debug.Log($"floats {n.nan} {inf} {-inf} {Math.Clamp(n.nan, 0.0, 1.0)} {Math.Sqrt(-1.0 - n.zero)} {Math.Min(n.nan, 0.0)}");
+
+    // An enum made of a number no member has: its number, and no case of a switch
+    var odd = Kind(n.zero + 77);
+    var under2 = Kind(n.minusOne);
+    Debug.Log($"enums {Kind(2)} {odd} {under2} {Name(odd)} {Name(under2)}");
+}

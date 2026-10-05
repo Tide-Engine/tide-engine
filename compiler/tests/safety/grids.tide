@@ -1,0 +1,100 @@
+// expect: reads 0 0 0 0 0 0 0 0
+// expect: writes 7 0 0 1 2 3 4 9 0 5
+// expect: cubes 1 2 0 6 2.5
+// expect: sizes (100, 50) (0, 0) (8, 8, 8) (0, 3) (0, 0)
+// expect: walks 10 512 4 0
+// expect: cleared 0 0 0
+
+// Grids read and written anywhere: outside their size, at the ints' limits on
+// open axes, in grids too big to list their chunks, and after they're cleared
+// or made anew.
+
+struct Cell
+{
+    int id;
+    float heat;
+}
+
+singleton Field
+{
+    Grid2<int> sized = Grid2(100, 50);
+    Grid2<int> open;
+    Grid3<byte> cube = Grid3(8, 8, 8);
+    Grid3<int> openCube;
+    Grid2<Cell> cells;
+    Grid2<int> huge = Grid2(2000000000, 2000000000);
+    Grid2<int> strip = Grid2(2147483647, 1);
+    int most = 2147483647;
+    int least = 0x80000000;
+    bool done;
+}
+
+scene Main { }
+
+system Run(mut Field f)
+{
+    if (f.done) return;
+    f.done = true;
+    var top = int2(f.most, f.most);
+    var bottom = int2(f.least, f.least);
+
+    Debug.Log($"reads {f.sized[-1, 0]} {f.sized[100, 0]} {f.sized[top]} {f.sized[bottom]} {f.open[top]} {f.open[bottom]} "
+        + $"{f.cube[int3(f.most, f.least, 8)]} {f.huge[top]}");
+
+    // Outside a size, a write does nothing; on an open axis, any int is a place
+    f.sized[-1, -1] = 5;
+    f.sized[100, 50] = 5;
+    f.sized[top] = 5;
+    f.sized[bottom] = 5;
+    f.sized[99, 49] = 7;
+    f.open[top] = 1;
+    f.open[bottom] = 2;
+    f.open[f.most, f.least] = 3;
+    f.open[0, 0] = 4;
+    f.huge[1999999999, 1999999999] = 9;
+    f.huge[2000000000, 0] = 1;
+    f.strip[2147483646, 0] = 5;
+    f.strip[f.most, 0] = 6;
+    f.strip[0, 1] = 6;
+    Debug.Log($"writes {f.sized[99, 49]} {f.sized[-1, -1]} {f.sized[100, 50]} {f.open[top]} {f.open[bottom]} "
+        + $"{f.open[f.most, f.least]} {f.open[0, 0]} {f.huge[1999999999, 1999999999]} {f.huge[2000000000, 0]} "
+        + $"{f.strip[2147483646, 0]}");
+
+    f.openCube[int3(f.most, f.most, f.most)] = 1;
+    f.openCube[int3(f.least, f.least, f.least)] = 2;
+    f.cube[int3(8, 0, 0)] = 3;
+    f.cube[int3(7, 7, 7)] = 6;
+    f.cells[top] = Cell { id = 1, heat = 2.5 };
+    f.cells[bottom] = Cell { };
+    Debug.Log($"cubes {f.openCube[int3(f.most, f.most, f.most)]} {f.openCube[int3(f.least, f.least, f.least)]} "
+        + $"{f.cube[int3(8, 0, 0)]} {f.cube[int3(7, 7, 7)]} {f.cells[top].heat}");
+
+    // A size under 0 is an open axis
+    var old = f.sized.size;
+    f.sized = Grid2(-5, 3);
+    f.sized[int2(f.least, 2)] = 1;
+    f.sized[int2(0, 3)] = 1;
+    var odd = f.sized.size;
+    f.sized = Grid2(0, 0);
+    Debug.Log($"sizes {old} {f.open.size} {f.cube.size} {odd} {f.sized.size}");
+
+    // Going through them in order: an open grid's cells where it has chunks, at the limits too
+    mut var sum = 0;
+    foreach (var at in f.open) sum += f.open[at];
+    mut var count = 0;
+    foreach (var at in f.cube) count += 1;
+    mut var corners = 0;
+    foreach (var at in f.openCube)
+    {
+        if (f.openCube[at] != 0) corners += f.openCube[at] + 1;
+    }
+    mut var none = 0;
+    foreach (var at in f.sized) none += 1;
+    Debug.Log($"walks {sum} {count} {corners - 1} {none}");
+
+    f.open.Clear();
+    f.cube.Clear();
+    f.huge = Grid2(1, 1);
+    f.huge[1999999999, 1999999999] = 9;
+    Debug.Log($"cleared {f.open[top]} {f.cube[int3(7, 7, 7)]} {f.huge[1999999999, 1999999999]}");
+}
