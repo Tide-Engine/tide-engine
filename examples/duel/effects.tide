@@ -354,7 +354,7 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
     // Motes that rise through the room, one to a cell of a wider grid, each in its own place there
     var drift = (here + float2(Math.Sin(time * 0.3 + here.y * 0.01) * 12, -time * 14)) / 110;
     var home = Math.Floor(drift);
-    var luck = Math.Frac(Math.Sin(Math.Dot(home, float2(127.1, 311.7))) * 43758.5);
+    var luck = Math.Hash(int2(home)) / 2147483648.0; // 0 to 1, the same for a cell on every GPU
     var place = float2(luck, Math.Frac(luck * 57.3)) * 0.7 + 0.15;
     var mote = Math.Saturate((1.5 + luck - Math.Length(Math.Frac(drift) - place) * 110) * scale);
     paint = paint + Color(0.55, 0.66, 1) * (mote * Math.Step(0.45, luck) * (0.2 + 0.2 * Math.Sin(time * 1.3 + luck * 40)));
