@@ -47,9 +47,9 @@ static uint32_t lane_of(const tide_rows *rows, const char *function, const tide_
              (unsigned)component, (unsigned)c->size);
     }
     if (offset % 4u != 0 || offset >= c->size) {
-        stop(rows, function, "offset %llu isn't where a 4-byte field of component %u (%u bytes) starts: pass offsetof(its "
+        stop(rows, function, "offset %u isn't where a 4-byte field of component %u (%u bytes) starts: pass offsetof(its "
                              "struct, the field) of a float, an int or an int enum, and read the others with tide_rows_get",
-             (unsigned long long)offset, (unsigned)component, (unsigned)c->size);
+             (unsigned)offset, (unsigned)component, (unsigned)c->size);
     }
     return (uint32_t)(offset / 4u);
 }

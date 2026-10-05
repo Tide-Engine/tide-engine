@@ -314,7 +314,7 @@ void game_move(tide_rows *rows, const Time *time)
 }
 ```
 
-To the rest of the game it's the system its declaration says. It runs for the entities its parameters pick, it takes `[Stage]`, `[Before]` and `[After]`, and [the schedule](../game/schedule.md) has it wait for the systems it shares data with, and they for it, by what it declares: what it takes `mut` is written, and the rest is read. `tide schedule` and the editors show it as `Move  (per entity, in C)`. Nothing warns about a parameter it doesn't use, as its code can't be read.
+To the rest of the game it's the system its declaration says. It runs for the entities its parameters pick, it takes `[Stage]`, `[Before]` and `[After]`, and [the schedule](../game/schedule.md) has it wait for the systems it shares data with, and they for it, by what it declares: what it takes `mut` is written, and the rest is read. `tide schedule` shows it as `Move  (per entity, in C)`, and the editors' line above it says `in C`. Nothing warns about a parameter it doesn't use, as its code can't be read.
 
 ### What C is called with
 
@@ -346,6 +346,7 @@ Nothing is copied to read: an array is the match's own memory. Writing is asked 
 - The match shares what a tick doesn't change with its snapshots, and a client keeps one of every tick it predicts. Asking for an array to write is what makes that field's memory the match's own to change. C that asks for 2 of a component's 20 fields touches those 2.
 - A field that comes out as it was is shared again once C returns. So is a row `tide_rows_set` puts back as it was read: it writes the columns that differ, and asks for no other.
 - An array to write has what's there in it, and is the field from then on: read through it too. An array of the same field that was asked for to read before it may no longer be the one the run writes.
+- Every array is good until C returns, and no longer.
 
 A field that holds text, a list, a map, a set or a grid is a handle into the match's memory: C leaves those as they are.
 

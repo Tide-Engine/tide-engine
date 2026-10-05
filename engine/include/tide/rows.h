@@ -44,7 +44,8 @@
 //
 // An array to write has what's there in it, and is the field from then on: C
 // reads it through that pointer too. An array of the same field that was asked
-// for to read before it may no longer be the one the run writes.
+// for to read before it may no longer be the one the run writes. Every array
+// is the run's: good until the function returns, and no longer.
 //
 // What C does with the rows has to come out the same on every machine and on
 // any number of threads, as everything C does (see tide/jobs.h): a run only
@@ -87,7 +88,7 @@ static inline uint32_t tide_rows_count(const tide_rows *rows)
     return rows->count;
 }
 
-// Each row's entity.
+// Each row's entity: NULL for a run of no rows.
 const tide_entity *tide_rows_entities(const tide_rows *rows);
 
 // The array of a 4-byte field of component `component`, a value a row:
