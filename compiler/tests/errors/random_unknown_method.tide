@@ -1,0 +1,7 @@
+// expect: Random has no method 'NextFloat4'
+singleton Deck { Random random; float last; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.last = deck.random.NextFloat4();
+}

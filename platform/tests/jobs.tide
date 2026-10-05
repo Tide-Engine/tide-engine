@@ -1,7 +1,7 @@
 // A busy match for running ticks on threads: systems that split their
 // entities across threads and others alongside them, changes and events
-// recorded on many threads, spawns on one thread and on many, and text read
-// while other text changes.
+// recorded on many threads, spawns on one thread and on many, text read
+// while other text changes, and random numbers rolled on every thread.
 
 component Body
 {
@@ -112,6 +112,10 @@ event(Spawned) Setup(with Main)
     for (var i = 0; i < 300; i++)
     {
         Spawn(Orbit { angle = float(i), radius = 1 + float(i % 7) });
+    }
+    for (var i = 0; i < 5000; i++)
+    {
+        Spawn(Drifter { });
     }
 }
 
@@ -363,4 +367,36 @@ system Order(Time time, mut Swarm swarm)
             swarm.bodies[i + 1] = a;
         }
     }
+}
+
+// A generator for each drifter, which the engine seeded as it spawned: they
+// roll on every thread at once, each from its own, so the rolls are the same
+// as on one thread
+component Drifter
+{
+    Random random;
+    float2 heading;
+    int rolls;
+}
+
+// Shed by drifters, on threads: spawned with handles that aren't final yet,
+// and seeded once they are
+component Ember
+{
+    Random random;
+    Entity of;
+    int first;
+}
+
+system Drift(mut Drifter drifter)
+{
+    drifter.heading = drifter.random.NextFloat2Direction() * drifter.random.NextFloat(0.5, 2);
+    drifter.rolls += drifter.random.NextInt(1, 7);
+    if (drifter.random.NextInt(200) == 0) Spawn(Ember { of = this });
+}
+
+system Glow(mut Ember ember)
+{
+    if (ember.first == 0) ember.first = 1 + ember.random.NextInt(1000000);
+    else if (ember.random.NextInt(50) == 0) this.Destroy();
 }

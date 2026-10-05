@@ -102,6 +102,7 @@ typedef struct gen {
     const expr *raw_place; // A text field being generated as the tide_text it is, not read as text
     uint64_t game_hash;    // Of the header: tells builds of different games apart
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
+    bool compound;        // The statement being generated is a compound assignment (+=): its value is worked out beside a read of its target
     const decl *blending;  // The view whose run function is being generated: its blended parameters are copies
     bool list_caches;      // The function being generated has tide_lc, a cache for each list type (gen_grid_caches)
     VEC(task_info) tasks;  // Every async function and handler that runs, callees before what awaits them
@@ -398,6 +399,50 @@ static void text_paths(const decl *d, const char *prefix, path_list *out)
     }
 }
 
+// The Random fields of `d`'s values, as member paths from `prefix`: "random",
+// "stats.dice". The engine seeds the ones a game leaves at their default
+// (gen_seeding). Those in lists are the game's to seed.
+static void random_paths(const program *prog, const decl *d, const char *prefix, path_list *out)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->type.kind != TY_STRUCT) continue;
+        sb path = {0};
+        sb_printf(&path, "%s%s", prefix, field_cname(f));
+        if (f->type.decl == prog->random) {
+            const heap_path p = {path.data, NULL, NULL, NULL};
+            vec_push(*out, p);
+        } else {
+            sb_put(&path, ".");
+            random_paths(prog, f->type.decl, path.data, out);
+        }
+    }
+}
+
+// Seeds the Random fields nothing seeded (tide_random_seed_place, tide/random.h)
+// of component or singleton `d`'s value at `value`, an lvalue as C: from the
+// match's seed and tick (0 and 0 in the local world, which has neither), the
+// entity (as C; the null entity for a singleton) and which of its fields each
+// is, so no two generators of a match start alike, and a tick run again seeds
+// them the same. `w` is the world, as C.
+static void gen_seeding(const gen *g, sb *o, const char *indent_text, const decl *d, const char *value, const bool local,
+                        const char *w, const char *entity)
+{
+    path_list paths = {0};
+    random_paths(g->prog, d, "", &paths);
+    for (int i = 0; i < paths.count; i++) {
+        sb from = {0};
+        if (local) sb_put(&from, "0u, 0u");
+        else sb_printf(&from, "(uint32_t)%s->Time.seed, (uint32_t)%s->Time.tick", w, w);
+        // Which field it is: its component's or singleton's number (a local part's is the one it's of), then
+        // its place among that one's generators
+        const decl *of = d->part_of ? d->part_of : d;
+        const int place = (d->kind == DECL_SINGLETON ? 0x10000 : 0) | (d->part_of ? 0x20000 : 0) | (of->index << 8);
+        sb_printf(o, "%stide_random_seed_place(&%s.%s, %s, %s, %du);\n", indent_text, value, paths.items[i].path, from.data, entity,
+                  place + i);
+    }
+}
+
 // The match entity fields of `d`'s values, as member paths from `prefix`:
 // "target", "stats.owner". Those in lists are in the heap, which systems that
 // split their entities don't change.
@@ -512,6 +557,7 @@ static void name_program(gen *g)
 {
     const program *prog = g->prog;
     for (int i = 0; i < prog->decls.count; i++) prog->decls.items[i]->gen_name = make_cname(prog->decls.items[i]);
+    prog->random->gen_name = prog->random->c_name; // tide/random.h's tide_random, which its functions take
     for (int i = 0; i < prog->local_parts.count; i++) { // A component's or singleton's local fields: <Name>_local
         decl *part = prog->local_parts.items[i];
         sb b = {0};
@@ -2477,6 +2523,19 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
             }
             sb_put(o, ")");
+        } else if (e->call == CALL_RANDOM) { // random.NextInt(6): the generator first, by address, as the call steps it
+            if (e->hoisted) {
+                sb_put(o, e->hoisted); // Already ran, before the statement
+            } else {
+                sb_printf(o, "%s(&(", e->c_callee);
+                gen_expr(g, o, e->object);
+                sb_put(o, ")");
+                for (int i = 0; i < e->args.count; i++) {
+                    sb_put(o, ", ");
+                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                }
+                sb_put(o, ")");
+            }
         } else if (e->call == CALL_DRAW && e->shader) {
             // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
@@ -3200,6 +3259,23 @@ static bool is_unwrap(const expr *e)
 
 static bool holds_ordered(expr *e);
 
+// A call that changes what it's called with: a Random's method, which steps
+// its generator, or a function or method that changes a mut argument or the
+// value it's called on. C picks the order of two calls in one expression, and
+// of a call and a read of what it changes, so these run before their
+// statement, in source order (see changes_inside).
+static bool call_changes(const expr *e)
+{
+    if (e->kind != E_CALL && e->kind != E_METHOD) return false;
+    if (e->call == CALL_RANDOM) return true;
+    if ((e->call != CALL_FUNCTION && e->call != CALL_METHOD) || !e->method) return false;
+    if (e->method->is_mut_method) return true;
+    for (int i = 0; i < e->method->params.count; i++) {
+        if (e->method->params.items[i].mode == PARAM_MUT) return true;
+    }
+    return false;
+}
+
 static void collect_ordered(expr *e, expr_list *out)
 {
     if (!e) return;
@@ -3214,7 +3290,7 @@ static void collect_ordered(expr *e, expr_list *out)
         if (is_spawn(e)
             || (e->type.kind != TY_VOID
                 && (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation
-                    || e->io_operation
+                    || e->io_operation || call_changes(e)
                     || ((e->call == CALL_FUNCTION || e->call == CALL_METHOD)
                         && (e->method->draws || e->method->is_extern || e->method->calls_c))))) {
             vec_push(*out, e);
@@ -3297,12 +3373,34 @@ static bool must_hoist(const expr_list *ordered)
     return false;
 }
 
+// Whether a statement's expression `root` has a call in it that changes what
+// it's called with (call_changes), other than `root` itself: then the rest of
+// the expression may read what the call changes, in an order C picks, so the
+// statement's calls go before it. A call that's the whole expression runs
+// where it is.
+static bool changes_inside(expr *root)
+{
+    expr_list ordered = {0};
+    collect_ordered(root, &ordered);
+    for (int i = 0; i < ordered.count; i++) {
+        expr *e = ordered.items[i];
+        if (e != root && call_changes(e)) return true;
+        // A part that runs only sometimes, which collect_ordered leaves to its unit
+        if (e->kind == E_BINARY && (e->op == T_AND || e->op == T_OR) && (call_changes(e->rhs) || changes_inside(e->rhs))) return true;
+        if (e->kind == E_CONDITIONAL
+            && (call_changes(e->lhs) || changes_inside(e->lhs) || call_changes(e->rhs) || changes_inside(e->rhs))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Whether hoist_spawns runs anything of `e` before its statement.
 static bool needs_hoisting(expr *e)
 {
     expr_list ordered = {0};
     collect_ordered(e, &ordered);
-    return must_hoist(&ordered);
+    return must_hoist(&ordered) || (e && changes_inside(e));
 }
 
 static void hoist_unit(gen *g, expr *e, const char *name);
@@ -3318,7 +3416,8 @@ static void hoist_spawns(gen *g, expr *a, expr *b)
     collect_ordered(b, &ordered);
     // Code copied into several calls is generated again each time.
     for (int i = 0; i < ordered.count; i++) ordered.items[i]->hoisted = NULL;
-    if (!must_hoist(&ordered)) return;
+    // `total += Bump(counter)` reads its target beside the call, so the call isn't alone there
+    if (!must_hoist(&ordered) && !(a && changes_inside(a)) && !(b && (changes_inside(b) || (g->compound && call_changes(b))))) return;
     for (int i = 0; i < ordered.count; i++) {
         expr *e = ordered.items[i];
         sb name = {0};
@@ -3811,7 +3910,11 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_EXPR:
         if (!task_start(s->value)) hoist_spawns(g, s->value, NULL);
         break;
-    case S_ASSIGN: hoist_spawns(g, s->target, s->value); break;
+    case S_ASSIGN:
+        g->compound = s->op != T_ASSIGN;
+        hoist_spawns(g, s->target, s->value);
+        g->compound = false;
+        break;
     case S_IF:
     case S_SWITCH: hoist_spawns(g, s->cond, NULL); break;
     case S_RETURN:
@@ -4363,6 +4466,11 @@ static void gen_stmt(gen *g, const stmt *s)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
+        } else if (s->value->call == CALL_RANDOM) { // random.NextInt();: a number nobody reads, which still steps it
+            indent(g, o);
+            sb_put(o, "(void)");
+            gen_expr(g, o, s->value);
+            sb_put(o, ";\n");
         } else if (s->value->kind == E_METHOD) {
             gen_method(g, s->value);
         } else {
@@ -4712,6 +4820,7 @@ static void gen_header(gen *g)
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n\n");
+    if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
     sb_printf(o, "#define TIDE_GAME_PLAYERS %uu\n\n", (unsigned)(prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT));
@@ -4731,7 +4840,9 @@ static void gen_header(gen *g)
     }
 
     if (prog->structs.count > 0) sb_put(o, "// Structs, each after the ones it contains\n\n");
-    for (int i = 0; i < prog->structs.count; i++) gen_type(g, o, prog->structs.items[i]);
+    for (int i = 0; i < prog->structs.count; i++) {
+        if (prog->structs.items[i] != prog->random) gen_type(g, o, prog->structs.items[i]); // Random is tide/random.h's
+    }
     for (int i = 0; i < prog->maps.count; i++) { // What a foreach over a map gives: its key and its value
         if (!prog->maps.items[i]->entry) continue;
         if (i == 0 || !prog->maps.items[i - 1]->entry) sb_put(o, "// Maps' entries\n\n");
@@ -4956,6 +5067,12 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_world_init(tide_world *w, float dt);\n\n");
     sb_put(o, "// The same, starting the match in `start`'s scene instead (NULL: Main).\n");
     sb_put(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start);\n\n");
+    if (prog->uses_seed) {
+        sb_put(o, "// The same, with the match's seed, Time.seed (its low 31 bits): what the machine that\n");
+        sb_put(o, "// starts a match picks for it, so no two matches go the same. The two above start\n");
+        sb_put(o, "// with seed 0, so a run repeats.\n");
+        sb_put(o, "void tide_world_start_seeded(tide_world *w, float dt, const tide_start *start, uint32_t seed);\n\n");
+    }
     sb_put(o, "// Runs every system once, in declaration order, then applies structural changes.\n");
     sb_put(o, "// With no scene left, it loads Main again if it's the match's.\n");
     sb_put(o, "void tide_world_tick(tide_world *w);\n\n");
@@ -5939,14 +6056,19 @@ static void gen_local_fields(gen *g)
         sb_printf(o, "// A row for an entity that has none, born as `born`, with the defaults, its own\n");
         sb_printf(o, "TIDE_HELPER uint32_t tide_attach_%s(tide_local *l, const tide_entity e, const uint32_t born)\n{\n", type);
         sb_printf(o, "    const uint32_t row = tide_attached_add(&l->%s, %s, e, born);\n", table, columns);
-        if (has_defaults(part)) {
+        path_list generators = {0};
+        random_paths(prog, part, "", &generators);
+        if (has_defaults(part) || generators.count) {
             sb_printf(o, "    %s *v = tide_attached_cell(&l->%s, %s, row);\n", type, table, columns);
+        }
+        if (has_defaults(part)) {
             if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
             sb_put(o, "    *v = ");
             gen_value(g, o, part, NULL, 0);
             sb_put(o, ";\n");
             if (text) sb_printf(o, "    tide_own_%s(v, TIDE_IN_LOCAL);\n    tide_scratch_reset(mark);\n", type);
         }
+        gen_seeding(g, o, "    ", part, "(*v)", true, "l", "e"); // Its generators: the entity's own
         sb_put(o, "    return row;\n}\n\n");
 
         sb_printf(o, "bool tide_has_%s(const tide_local *local, tide_entity e)\n{\n", type);
@@ -6295,6 +6417,8 @@ static void gen_apply(gen *g, const bool local)
             if (!arch_stores(g, a, i)) continue;
             sb value = {0};
             sb_printf(&value, "c->data.spawn%d.values.%s", a, type_cname(prog->components.items[i]));
+            // Its generators the spawn left unseeded: the entity's own, now that its handle is final
+            gen_seeding(g, o, "        ", prog->components.items[i], value.data, local, "w", "c->entity");
             if (comp_sparse(g, i)) { // Given, or not: the row has it when it was
                 sb_printf(o, "        if (c->data.spawn%d.values.tide_has_%s) { %s = 1; %s; }\n", a, type_cname(prog->components.items[i]),
                           presence_cell(g, "w", a, i, "row", true), comp_put(g, "w", a, i, "row", value.data));
@@ -6337,7 +6461,14 @@ static void gen_apply(gen *g, const bool local)
     for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
         if (!has_component(prog->added_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
         const char *comp = type_cname(prog->components.items[comp_i]);
-        sb_printf(o, "    case %d: // %s\n        switch (loc.archetype) {\n", comp_i, comp);
+        sb_printf(o, "    case %d: // %s\n", comp_i, comp);
+        {
+            // Its generators the Add left unseeded: seeded as it's added, like a spawn's
+            sb added = {0};
+            sb_printf(&added, "c->data.%s", comp);
+            gen_seeding(g, o, "        ", prog->components.items[comp_i], added.data, local, "w", "c->entity");
+        }
+        sb_put(o, "        switch (loc.archetype) {\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) != local) continue;
             const comp_mask mask = prog->archetypes.items[a];
@@ -7910,6 +8041,14 @@ static bool attaches_first(const param *p)
     return p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type));
 }
 
+// Whether a component's local fields have generators the engine seeds (gen_seeding).
+static bool seeds_fields(const gen *g, const decl *part)
+{
+    path_list paths = {0};
+    random_paths(g->prog, part, "", &paths);
+    return paths.count > 0;
+}
+
 // Before a view runs for row tide_i: its component parameter `p`'s local
 // fields, as tide_lf<i>. They're where the local world keeps them, for an
 // entity something was written for (its row in tide_fields_<Component>), and
@@ -7935,6 +8074,18 @@ static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
     if (p->mode != PARAM_MUT) {
         sb_printf(o, "%sconst %s *tide_lf%d = tide_lr%d != TIDE_ATTACHED_NONE ? (const %s *)tide_attached_get(&tide_l->%s, %s, tide_lr%d) "
                      ": &tide_fresh%d;\n", pad, type, i, i, type, table, columns, i, i);
+        return;
+    }
+    if (seeds_fields(g, part)) {
+        // Its generators start as the entity's own, the same each frame until the
+        // view rolls one: tide_lz<i> is what's there untouched, which isn't kept
+        sb name = {0};
+        sb_printf(&name, "tide_ln%d", i);
+        sb_printf(o, "%s%s tide_ln%d = tide_fresh%d;\n%s%s *tide_lf%d = &tide_ln%d;\n", pad, type, i, i, pad, type, i, i);
+        gen_seeding(g, o, pad, part, name.data, true, "tide_l", "tide_ent[tide_i]");
+        sb_printf(o, "%sconst %s tide_lz%d = tide_ln%d;\n", pad, type, i, i);
+        sb_printf(o, "%sif (tide_lr%d != TIDE_ATTACHED_NONE) tide_lf%d = tide_attached_cell(&tide_l->%s, %s, tide_lr%d);\n", pad, i, i,
+                  table, columns, i);
         return;
     }
     sb_printf(o, "%s%s tide_ln%d;\n%s%s *tide_lf%d = &tide_ln%d;\n", pad, type, i, pad, type, i, i);
@@ -7972,8 +8123,8 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT || !has_fields_ptr(p) || attaches_first(p)) continue;
         const decl *part = local_part_of(p->type);
-        sb_printf(&g->c, "%sif (tide_lr%d == TIDE_ATTACHED_NONE && memcmp(&tide_ln%d, &tide_fresh%d, sizeof tide_ln%d) != 0) {\n", pad, i,
-                  i, i, i);
+        sb_printf(&g->c, "%sif (tide_lr%d == TIDE_ATTACHED_NONE && memcmp(&tide_ln%d, &tide_%s%d, sizeof tide_ln%d) != 0) {\n", pad, i,
+                  i, seeds_fields(g, part) ? "lz" : "fresh", i, i);
         sb_printf(&g->c, "%s    *(%s *)tide_attached_cell(&tide_l->%s, %s, tide_attached_add(&tide_l->%s, %s, tide_ent[tide_i], "
                          "tide_entity_born(&tide_w->entities, tide_ent[tide_i]))) = tide_ln%d;\n%s}\n", pad, type_cname(part),
                   fields_table(part), fields_columns(part), fields_table(part), fields_columns(part), i, pad);
@@ -9824,23 +9975,37 @@ static void gen_api(gen *g)
     const char *use_match = prog->uses_heap ? "    tide_text_use(&w->heap, NULL);\n" : "";
     sb_put(o, "void tide_world_init(tide_world *w, float dt)\n{\n    tide_world_start(w, dt, NULL);\n}\n\n");
     // Time.tickRate is 1 / dt to the nearest, and 0 for a dt no rate fits
-    sb_printf(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start)\n{\n    tide_world_free(w);\n%s"
+    // A game with a seed (Time.seed) starts with one: the machine that starts
+    // the match picks it (tide_game.start). Started plainly, it's 0, so a run repeats.
+    if (prog->uses_seed) {
+        sb_put(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start)\n{\n"
+                  "    tide_world_start_seeded(w, dt, start, 0u);\n}\n\n");
+    }
+    sb_printf(o, "void %s(tide_world *w, float dt, const tide_start *start%s)\n{\n    tide_world_free(w);\n%s"
                  "    w->Time.dt = dt;\n"
                  "    w->Time.tickRate = dt >= 1e-9f ? (int32_t)(1.0f / dt + 0.5f) : 0;\n",
-              use_match);
+              prog->uses_seed ? "tide_world_start_seeded" : "tide_world_start", prog->uses_seed ? ", uint32_t seed" : "", use_match);
+    // From 0 to 2147483647, like Math.Hash's, so % of it never goes negative
+    if (prog->uses_seed) sb_put(o, "    w->Time.seed = (int32_t)(seed & 0x7FFFFFFFu);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
-        if (d->is_local || !has_defaults(d)) continue;
-        // Defaults with text, lists or grids are made in the scratch area, which
-        // the world's own copy leaves as it was
-        if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
-        sb_printf(o, "    w->%s = ", type_cname(d));
-        gen_value(g, o, d, NULL, 0);
-        sb_put(o, ";\n");
-        if (decl_has_text(d)) {
-            sb_printf(o, "    tide_own_%s(&w->%s, TIDE_IN_MATCH);\n", type_cname(d), type_cname(d));
-            sb_put(o, "    tide_scratch_reset(tide_mark);\n    }\n");
+        if (d->is_local || d == prog->time) continue;
+        if (has_defaults(d)) {
+            // Defaults with text, lists or grids are made in the scratch area, which
+            // the world's own copy leaves as it was
+            if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
+            sb_printf(o, "    w->%s = ", type_cname(d));
+            gen_value(g, o, d, NULL, 0);
+            sb_put(o, ";\n");
+            if (decl_has_text(d)) {
+                sb_printf(o, "    tide_own_%s(&w->%s, TIDE_IN_MATCH);\n", type_cname(d), type_cname(d));
+                sb_put(o, "    tide_scratch_reset(tide_mark);\n    }\n");
+            }
         }
+        // Its generators that no default seeds: the match's seed does
+        sb value = {0};
+        sb_printf(&value, "w->%s", type_cname(d));
+        gen_seeding(g, o, "    ", d, value.data, false, "w", "(tide_entity){0}");
     }
     if (prog->input) {
         // The defaults go through the same checks as any input, so even before
@@ -9954,15 +10119,21 @@ static void gen_api(gen *g)
     if (world_heap(prog, true)) sb_put(o, "    tide_text_use(NULL, &local->heap);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
-        if (!d->is_local || !has_defaults(d)) continue;
-        if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
-        sb_printf(o, "    local->%s = ", type_cname(d));
-        gen_value(g, o, d, NULL, 0);
-        sb_put(o, ";\n");
-        if (decl_has_text(d)) {
-            sb_printf(o, "    tide_own_%s(&local->%s, TIDE_IN_LOCAL);\n", type_cname(d), type_cname(d));
-            sb_put(o, "    tide_scratch_reset(tide_mark);\n    }\n");
+        if (!d->is_local) continue;
+        if (has_defaults(d)) {
+            if (decl_has_text(d)) sb_put(o, "    {\n    const uint32_t tide_mark = tide_scratch_mark();\n");
+            sb_printf(o, "    local->%s = ", type_cname(d));
+            gen_value(g, o, d, NULL, 0);
+            sb_put(o, ";\n");
+            if (decl_has_text(d)) {
+                sb_printf(o, "    tide_own_%s(&local->%s, TIDE_IN_LOCAL);\n", type_cname(d), type_cname(d));
+                sb_put(o, "    tide_scratch_reset(tide_mark);\n    }\n");
+            }
         }
+        // Its generators that no default seeds: each a sequence of its own, the same every run
+        sb value = {0};
+        sb_printf(&value, "local->%s", type_cname(d));
+        gen_seeding(g, o, "    ", d, value.data, true, "local", "(tide_entity){0}");
     }
     if (prog->main->is_local) {
         sb_printf(o, "    tide_cmd_load%d(local, (tide_spawn%d){.%s = ", prog->main_archetype, prog->main_archetype,
@@ -10921,7 +11092,13 @@ static void gen_game_api(gen *g)
               disconnected, field_cname(&prog->disconnected->fields.items[0]));
 
     sb_put(o, "// The game, as sessions run it\n\n");
-    sb_put(o, "static void tide_game_start(void *w, float dt, const void *start)\n{\n    tide_world_start(w, dt, start);\n}\n\n");
+    if (prog->uses_seed) {
+        sb_put(o, "static void tide_game_start(void *w, float dt, const void *start, uint32_t seed)\n{\n"
+                  "    tide_world_start_seeded(w, dt, start, seed);\n}\n\n");
+    } else { // A game with no seed: its matches start the same whatever the server picked
+        sb_put(o, "static void tide_game_start(void *w, float dt, const void *start, uint32_t seed)\n{\n"
+                  "    (void)seed;\n    tide_world_start(w, dt, start);\n}\n\n");
+    }
     sb_put(o, "static void tide_game_tick(void *w, const tide_jobs *jobs)\n{\n    tide_world_tick_on(w, jobs);\n}\n\n");
     sb_put(o, "static void tide_game_copy(void *to, const void *from)\n{\n    tide_world_copy(to, from);\n}\n\n");
     sb_put(o, "static uint64_t tide_game_hash(const void *w)\n{\n    return tide_world_hash(w);\n}\n\n");
@@ -11009,6 +11186,7 @@ static void gen_game_api(gen *g)
     }
     sb_put(o, "    .ended = tide_game_ended,\n");
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");
+    if (prog->uses_seed) sb_put(o, "    .seeded = true,\n");
     sb_put(o, "    .max_players = TIDE_GAME_PLAYERS,\n"); // In the header too: the world's inputs are as many
     if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"
                                            "    .command_sequence = tide_game_command_sequence,\n"

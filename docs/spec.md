@@ -328,7 +328,7 @@ event(Spawned) Setup(with Main)
 
 ### Evaluation order
 
-- Expressions evaluate left to right, like C#: operands, arguments and field initializers run in source order. `Spawn` and calls to C are the only expressions with side effects today, so this is what makes entity IDs, and what C keeps, come out the same on every platform. `Spawn(Pair { a = Spawn(Thing), b = Spawn(Thing) })` spawns `a`'s Thing, then `b`'s, then the Pair.
+- Expressions evaluate left to right, like C#: operands, arguments and field initializers run in source order. `Spawn`, calls to C and calls that change what they're given (a `mut` argument, the value a `mut` method is called on, a `Random`'s rolls: see Functions and blocks under Provisional) are the expressions with side effects, so this is what makes entity IDs, what C keeps and what's rolled come out the same on every platform. `Spawn(Pair { a = Spawn(Thing), b = Spawn(Thing) })` spawns `a`'s Thing, then `b`'s, then the Pair.
 - `cond ? a : b` runs the condition first, then only the side it picks, as in C#.
 
 ### Archetypes
@@ -393,6 +393,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
   - `t` is `tick * dt`, worked out from the tick each time and never added to, so it doesn't drift. Views see it blended between ticks like any float of the match, so it moves every frame, in the frags and verts they draw through too.
   - A float holds about 7 digits, so `t` gets coarser as the match goes on: after a day its steps are about 8 milliseconds. What has to be exact counts in `tick`.
   - `tickRate` is 1 / `dt` to the nearest whole number: the `tickRate` setting, or the rate the machine that runs the match gave it.
+  - `Time` also has `int seed`, the match's seed: see Random numbers.
 - `Debug.Log(text)` prints a line for whoever runs the game: the terminal under `tide run`, the browser's console on the web, the system's log on Android. `Debug.Assert(condition)` and `Debug.Assert(condition, text)` stop the program when the condition is false, naming the file, the line and the source line, and the text. Both go anywhere, and neither changes the match, so it stays the same on every machine with or without them. A tick a client runs again after a rollback logs again: a log of match state is best prefixed with `Time.tick`.
 
 ### Syntax
@@ -406,6 +407,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - In the block, `return` ends the caller, as if the block were written there, and `break` ends the caller's switch, even if the function runs the block inside a switch of its own. `return` in the function's own code ends the function.
 - A function that takes an Action is copied into each call in generated C, with its locals renamed, so its names never hide the caller's in the block.
 - A `mut string` parameter is the caller's text, a local's or a field's, which the function changes.
+- **Calls that change what they're given.** A call that returns a value and changes something of its caller's (a function with a `mut` parameter, a `mut` method, a `Random`'s method) runs before the rest of its statement, and several of them in source order: `int2(Bump(counter), Bump(counter))` bumps for x first, on every platform, where C would pick. A call that is its statement's whole value runs where it is (`x = Bump(counter);`). So in a statement that also reads what such a call changes, the read sees the value after the call: `counter.n + Bump(counter)` adds the bumped `n` twice, where C# would read `n` first. Parts that only run sometimes keep that: the right of `&&` and `||`, the sides of `?:`, and a loop's condition each round.
 - Operators and their precedence follow C#. Comments are `//` and `/* */`.
 - Source files are UTF-8, and a byte order mark at the start is skipped. Names are ASCII: other characters only go in comments and text.
 
@@ -536,6 +538,41 @@ float2 flat = trs.position.xz;
 Implemented, awaiting approval:
 
 - `Math.Hash` gives an int from 0 to 2147483647, so `%` never goes negative. It's xxHash32 of the value's bytes (little-endian, seed 0) without the top bit: what Unity's `math.hash` gives for a block of memory. Unity's `math.hash` on vectors is a cheaper mix whose low bits follow the input's, so `& 3` of it makes stripes; Tide's differs from it on purpose.
+
+## Random numbers
+
+The owner asked for these on 2026-10-05: random numbers whose state is ECS data ("we likely want it to be a component") and a seed for the match that's "random every time and new joiners get". Everything below is how that was built, and none of it is approved yet.
+
+### Provisional
+
+Implemented, awaiting approval:
+
+- **`Random` is a built-in value, a struct with one field, `long state`.** It's a generator's whole state: 8 bytes, aligned to 8. It goes wherever a struct goes: a field of a component, a singleton, a struct, an event or local state, a local, a parameter, a list's element. Nothing is global: there's no `Random.NextInt()` on the type, which is an error that says where a generator lives.
+- **A value, not a built-in component.** A component's state can only be an entity's, and a game also needs a generator for the match (in a singleton) and for effects (in local state), so the value has to exist either way; a built-in component would be one more name for one of its homes. With the value, a game's own component is that home, and it says which systems share a sequence: `component Wanderer { Random random; }` and `system Wander(mut Wanderer wanderer)`. The built-in component would read `Spawn(Enemy { }, Random { })` and `system Wander(mut Random random, mut Body body)`, and every system that rolls for an entity would then write the same component, so none of them would run side by side.
+- **Methods**, following Unity.Mathematics' `Random` with Tide's naming: `NextInt()`, `NextInt(max)`, `NextInt(min, max)`, `NextFloat()`, `NextFloat(max)`, `NextFloat(min, max)`, `NextBool()`, `NextFloat2()`, `NextFloat2(min, max)`, `NextFloat3()`, `NextFloat3(min, max)`, `NextFloat2Direction()`, `NextFloat3Direction()` and `NextQuaternionRotation()`. Ranges include their start and exclude their end.
+  - Where Tide's differ from Unity's: `NextInt()` is from 0 to 2147483647, as `Math.Hash` is, where Unity's can be negative; a range with nothing in it gives its start (`NextInt(0)` is 0, `NextFloat(2, 1)` is 2); `NextFloat(min, max)` never gives `max`, where Unity's can by rounding; and any state works, where Unity's refuses 0.
+  - Each call steps the generator once for each number it gives, whatever its arguments.
+- **Each method changes the generator**, so it's called on one the code can change, by the rules of a struct's `mut` methods: a `mut` parameter's field, a `mut var`, a field of `this` in a `mut` method. Through a read-only parameter it's an error that offers `mut`. A list's element is a copy: take it out, roll, put it back. So a system that rolls says `mut` for the component or singleton the generator is in, and the schedule follows from that as for any write: no new rule.
+- **`Random(seed)`** makes a generator for a seed, an `int` or a `long`. It's a constant expression when its seed is, so it's a field's default: `Random fixed = Random(42);`. Seeds are mixed, so neighbours (1, 2, 3) give unrelated sequences, and no seed gives state 0. `Random { state = n }` sets the state as it is.
+- **The generator** is PCG32 (PCG-XSH-RR 64/32), which gives the 32 bits of the state it stepped to. Ints in a range are those 32 bits scaled down (multiply and shift), floats 24 bits of them over 2^24, and the directions go through `Math.Sin` and `Math.Cos`. Everything is integer arithmetic or exact float operations, so it's the same on every platform (`tide/random.h`).
+- **A state of 0 is a generator nothing seeded.** It rolls like any other, but the same numbers as every other one at 0.
+- **The engine seeds what the game left at 0**, in components and singletons, where they're fields or in a struct that's a field (not in lists, maps or grids):
+  - A component's, as its entity spawns, and as the component is added: from the match's seed, the tick, the entity's handle and which field it is. The seeding happens as the spawn or the add applies, at the end of the tick, when a handle a split system gave is final. So a tick run again after a rollback seeds the same, twins spawned in one tick differ, and a component added twice rolls differently each time.
+  - A match singleton's, as the match starts, from the match's seed and which field it is.
+  - In the local world there's no seed: a local component's is seeded from its entity's handle, a local singleton's from which field it is, and a `local Random` field of a match component from the match entity's handle. They're the same every run.
+  - A generator code sets to 0 later isn't seeded again.
+- **`Time.seed`** is the match's seed: an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`). It's a field of `Time`, so it's the world's: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks) it's 0, so a run repeats exactly.
+- **A game that uses none of it is what it was.** `Time` only has `seed` in a game that reads it or has a `Random` in the match's components or singletons, and only such a game's header has `tide_world_start_seeded(w, dt, start, seed)` and includes `tide/random.h`. Other games' worlds, hashes, headers and traffic don't change. A game that only rolls in local state has no seed in its match either.
+- **Hot reload**: a `Random` field is a struct with a `long`, so its state carries over by name like any field. One a reload adds starts at 0 on the entities that are there already, like any new field at its default: they roll alike until they're spawned again.
+- **Every player can read the seed** until scenes hide state from players (see Scenes): it's in the world, which every machine has whole.
+
+### Open
+
+- Whether the engine should also offer the built-in component the owner leaned to, beside the value (`mut Random random` in a system, for games that want one sequence an entity).
+- Whether `Time` is where the seed belongs, or a singleton of its own for what a match is (`Match.seed`).
+- A seed the game picks for a match, like a world's seed a player types: `Session.Start(scene, seed)`. Today the game keeps it in a field of its own and seeds its generators with `Random(seed)`.
+- What seeds a generator a hot reload adds to entities that exist.
+- Vectors of ints (`NextInt2`...), a `long`, and picking from a list or shuffling one.
 
 ## Constants
 
@@ -1330,7 +1367,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - The camera isn't given: a game keeps where its camera is in its own state, which a frag takes like any singleton.
   - **`pixel.Discard()`** (to confirm) leaves the pixel undrawn, its depth too, and ends the frag there. It's a statement of its own, in the frag itself.
   - `source.Sample(uv[, filter])` reads a `Grid2<Color>` or `Texture` field of a component/singleton parameter, or a direct read-only `Texture` parameter. `Filter.Bilinear` is the default and blends between pixels; `Filter.Point` reads the nearest. The filter is written there: the GPU is told how the texture is read before any pixel runs. UVs go from (0, 0) at the top-left outer corner to (1, 1) past the bottom-right pixel, with edge clamping. A grid with no size samples white. Verts sample too.
-  - What the GPU runs: bools, ints, floats, vectors, matrices, colors, enums, and structs of those; locals; `if`; `?:` between numbers, vectors and colors; `for` loops that count (a variable of the loop's own, compared with a bound, that only its step changes), with `break` and `continue`; `return;`; the game's functions, methods and operators; `Math`'s functions on numbers, vectors and matrices, but `Inverse` and `Hash`; constructors, constants and `default`. `Math.Normalize` gives zero for a zero vector there too; the rest of `Math` is the GPU's own.
+  - What the GPU runs: bools, ints, floats, vectors, matrices, colors, enums, and structs of those; locals; `if`; `?:` between numbers, vectors and colors; `for` loops that count (a variable of the loop's own, compared with a bound, that only its step changes), with `break` and `continue`; `return;`; the game's functions, methods and operators; `Math`'s functions on numbers, vectors and matrices, but `Inverse` and `Hash`; constructors, constants and `default`. No `Random`: a generator's state is the CPU's, and a frag or vert that rolls, makes one or takes one is an error that says to roll in the view. `Math.Normalize` gives zero for a zero vector there too; the rest of `Math` is the GPU's own.
   - Not there yet: `while`, `switch`, quaternion math, and the functions that build quaternions and matrices (`float4x4.TRS`).
   - Never there: lists, maps and sets, text, entities and players, `byte`, `long`, `Rect`, `this`, spawning, sending and the other changes to the world, `Draw2D`, `Draw3D`, the GUI, `Screen`, `Devices`, `Cursor`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. Each is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
   - A function a frag or vert calls takes `mut` parameters as anywhere, and a call that changes a variable is a statement of its own there.

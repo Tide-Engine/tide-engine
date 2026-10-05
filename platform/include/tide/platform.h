@@ -137,6 +137,12 @@ uint32_t tide_platform_draw_calls(void);
 // where the system doesn't say.
 uint64_t tide_platform_memory(void);
 
+// 64 bits from the system's random number generator, which nobody could guess:
+// what a session makes the seeds of the matches it starts from
+// (tide_session_desc.entropy), so no two go the same. 0 if the system gives
+// none.
+uint64_t tide_platform_entropy(void);
+
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
 

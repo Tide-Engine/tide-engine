@@ -113,6 +113,8 @@ view Show(Devices devices)
     Vertex corner = default;
     Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
     Vertex3 corner3 = default;
+    Random dice = Random(7);
+    var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     if (!Cursor.locked) Cursor.Lock();

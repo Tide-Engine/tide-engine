@@ -150,7 +150,7 @@ typedef struct signature {
     int gui;                 // GUI_ID and GUI_CONTAINER
 } signature;
 
-#define MAX_SIGNATURES 288
+#define MAX_SIGNATURES 320
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -271,6 +271,38 @@ static void build_signatures(void)
     describe(add("Math", "Hash", (type){TY_INT, NULL}, "tide_hash_l", 1, (type){TY_LONG, NULL}, T_NONE, T_NONE), "value",
              "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: xxHash32 of the "
              "long's 8 bytes, without the top bit.");
+
+    // A Random's methods: tide/random.h, with the generator first, by address,
+    // as each steps it. Formulas follow Unity.Mathematics' Random.
+    const type r_int = {TY_INT, NULL};
+    describe(add("Random", "NextInt", r_int, "tide_random_next_int", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A random int from 0 to 2147483647, like `Math.Hash`'s, so `%` never goes negative.");
+    describe(add("Random", "NextInt", r_int, "tide_random_next_int_below", 1, r_int, T_NONE, T_NONE), "max",
+             "A random int from 0 up to `max`, `max` excluded: `NextInt(6)` is 0 to 5. 0 when `max` isn't above 0.");
+    describe(add("Random", "NextInt", r_int, "tide_random_next_int_between", 2, r_int, r_int, T_NONE), "min, max",
+             "A random int from `min` up to `max`, `max` excluded: `NextInt(1, 7)` is a die. `min` when `max` isn't above it.");
+    describe(add("Random", "NextFloat", T_F, "tide_random_next_float", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A random float from 0 up to 1, 1 excluded.");
+    describe(add("Random", "NextFloat", T_F, "tide_random_next_float_below", 1, T_F, T_NONE, T_NONE), "max",
+             "A random float from 0 up to `max`, `max` excluded. 0 when `max` isn't above 0.");
+    describe(add("Random", "NextFloat", T_F, "tide_random_next_float_between", 2, T_F, T_F, T_NONE), "min, max",
+             "A random float from `min` up to `max`, `max` excluded. `min` when `max` isn't above it.");
+    describe(add("Random", "NextBool", T_BOOL, "tide_random_next_bool", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "True or false, each as likely.");
+    describe(add("Random", "NextFloat2", T_F2, "tide_random_next_float2", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A float2 with each component from 0 up to 1: a point in the unit square.");
+    describe(add("Random", "NextFloat2", T_F2, "tide_random_next_float2_between", 2, T_F2, T_F2, T_NONE), "min, max",
+             "A float2 with each component from `min`'s up to `max`'s: a point in a rectangle.");
+    describe(add("Random", "NextFloat3", T_F3, "tide_random_next_float3", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A float3 with each component from 0 up to 1: a point in the unit cube.");
+    describe(add("Random", "NextFloat3", T_F3, "tide_random_next_float3_between", 2, T_F3, T_F3, T_NONE), "min, max",
+             "A float3 with each component from `min`'s up to `max`'s: a point in a box.");
+    describe(add("Random", "NextFloat2Direction", T_F2, "tide_random_next_float2_direction", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A float2 of length 1, every direction as likely.");
+    describe(add("Random", "NextFloat3Direction", T_F3, "tide_random_next_float3_direction", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A float3 of length 1, every direction as likely.");
+    describe(add("Random", "NextQuaternionRotation", T_Q, "tide_random_next_quaternion_rotation", 0, T_NONE, T_NONE, T_NONE), NULL,
+             "A rotation, every one as likely.");
 
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
@@ -892,7 +924,8 @@ type resolve_builtin_call(const str owner, expr *e)
             suggest_replacement(e->name, "Normalize");
             return (type){TY_ERROR, NULL};
         }
-        diag_error(e->at, STR_FMT " has no function '" STR_FMT "'", STR_ARG(owner), STR_ARG(e->name));
+        diag_error(e->at, STR_FMT " has no %s '" STR_FMT "'", STR_ARG(owner), str_eq_c(owner, "Random") ? "method" : "function",
+                   STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         for (size_t i = 0; i < COMPONENTWISE_COUNT && str_eq_c(owner, "Math"); i++) {
             suggest_consider_c(&s, componentwise[i].name);

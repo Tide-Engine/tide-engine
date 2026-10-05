@@ -30,3 +30,62 @@ event(Spawned) Setup(with Main)
     // A method call: the entity on the left spawns before the one in the arguments.
     Spawn(Thing { id = 5 }).Add(Link { target = Spawn(Thing { id = 6 }) });
 }
+
+// Calls that change what they're called with run in source order too, each
+// before the rest of its statement: C picks the order of two calls in one
+// expression, and platforms pick differently.
+struct Counter
+{
+    int n;
+
+    mut int Next()
+    {
+        n += 1;
+        return n;
+    }
+}
+
+singleton Order
+{
+    Counter counter;
+    int functions;
+    int methods;
+    int2 vector;
+    int nested;
+    int conditions;
+    int skipped;
+    int looped;
+    Random random;
+    float2 rolled;
+    int digits;
+}
+
+int Bump(mut Counter counter)
+{
+    counter.n += 1;
+    return counter.n;
+}
+
+int Digits(int tens, int ones)
+{
+    return tens * 10 + ones;
+}
+
+event(Spawned) Count(with Main, mut Order order)
+{
+    order.functions = Bump(order.counter) * 10 + Bump(order.counter);
+    order.methods = order.counter.Next() * 10 + order.counter.Next();
+    order.vector = int2(Bump(order.counter), Bump(order.counter));
+    order.nested = Digits(Bump(order.counter), Digits(Bump(order.counter), Bump(order.counter)));
+    // A condition's calls, left to right, and the right of && only when the left holds
+    if (Bump(order.counter) == 10 && Bump(order.counter) == 11) order.conditions = Bump(order.counter);
+    var never = order.counter.n < 0;
+    order.skipped = (never && Bump(order.counter) > 0) ? 1 : (order.counter.n == 12 ? 2 : 3);
+    // A loop's condition, each round
+    while (Bump(order.counter) < 16) order.looped += 1;
+
+    // A Random's rolls, the same: x is rolled first
+    order.random = Random(1);
+    order.rolled = float2(order.random.NextFloat(), order.random.NextFloat());
+    order.digits = Digits(order.random.NextInt(10), order.random.NextInt(10));
+}

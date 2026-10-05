@@ -46,3 +46,33 @@ TIDE_TEST(evaluation_order_method_object_before_arguments)
     TIDE_REQUIRE(tide_has_Link(&world, slot(6)));
     TIDE_CHECK(tide_entity_equal(l.target, slot(7)));
 }
+
+// Functions and methods that change a mut argument, or the value they're
+// called on: two in one expression run left to right.
+TIDE_TEST(evaluation_order_changing_calls_left_to_right)
+{
+    tide_world_init(&world, 1.0f);
+    const Order o = world.Order;
+    TIDE_CHECK(o.functions == 12);
+    TIDE_CHECK(o.methods == 34);
+    TIDE_CHECK(o.vector.x == 5 && o.vector.y == 6);
+    TIDE_CHECK(o.nested == 7 * 10 + (8 * 10 + 9));
+    TIDE_CHECK(o.conditions == 12);
+    TIDE_CHECK(o.skipped == 2); // The right side of && never ran
+    TIDE_CHECK(o.looped == 3 && o.counter.n == 16);
+}
+
+// A Random's methods step it, so they're calls like those: the same numbers,
+// in the same places, as rolling one after another.
+TIDE_TEST(evaluation_order_rolls_left_to_right)
+{
+    tide_world_init(&world, 1.0f);
+    tide_random r = tide_random_seeded(1);
+    const float x = tide_random_next_float(&r);
+    const float y = tide_random_next_float(&r);
+    const int32_t tens = tide_random_next_int_below(&r, 10);
+    const int32_t ones = tide_random_next_int_below(&r, 10);
+    TIDE_CHECK(world.Order.rolled.x == x && world.Order.rolled.y == y);
+    TIDE_CHECK(world.Order.digits == tens * 10 + ones);
+    TIDE_CHECK(world.Order.random.state == r.state);
+}

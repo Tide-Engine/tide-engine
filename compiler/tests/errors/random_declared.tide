@@ -1,0 +1,3 @@
+// expect: 'Random' is built into the engine
+struct Random { int state; }
+scene Main { }

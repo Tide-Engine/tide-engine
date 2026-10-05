@@ -1,0 +1,6 @@
+// expect: 'Time' is managed by the engine and is read-only
+scene Main { }
+system Reseed(mut Time time)
+{
+    time.seed = 5;
+}
