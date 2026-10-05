@@ -35,6 +35,10 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // Box3D's own math, SIMD or not, and its image, byte for byte.
 #define SETTLED_HASH UINT64_C(0x11977ec9eea11889)
 #define IMAGES_HASH UINT64_C(0x6f9377ec24191d93)
+// Where the crates are and how fast, at each of the 300 ticks: the simulation
+// alone. A change to what the image holds of a world moves the two above and
+// leaves this one; a change to how the world steps moves all three.
+#define BODIES_HASH UINT64_C(0xace1f5d330399dd5)
 
 static tide_world a;
 static tide_world b;
@@ -65,6 +69,21 @@ static void images_since(int32_t *whole, int32_t *in_parts)
     *in_parts = now_in_parts - were_in_parts;
 }
 
+// Where each crate is and how fast, as its component says, into `hash`.
+static uint64_t places(const tide_world *w, uint64_t hash)
+{
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_has_Crate(w, e)) continue;
+        const Box3D_Body body = tide_get_Box3D_Body(w, e);
+        const float place[13] = {body.position.x,        body.position.y,        body.position.z,        body.rotation.value.x, body.rotation.value.y,
+                                 body.rotation.value.z,  body.rotation.value.w,  body.velocity.x,        body.velocity.y,       body.velocity.z,
+                                 body.angularVelocity.x, body.angularVelocity.y, body.angularVelocity.z};
+        hash = tide_hash_more(hash, place, sizeof place);
+    }
+    return hash;
+}
+
 TIDE_TEST(box3d_steps_a_match)
 {
     // Twice: as this CPU solves contacts, 8 at a time where it has AVX2, and 4
@@ -84,10 +103,12 @@ TIDE_TEST(box3d_steps_a_match)
         // Every tick's image, not only the last: a byte that differs somewhere and
         // then doesn't (a field one platform's solver leaves behind) shows here
         uint64_t images = 0;
+        uint64_t bodies = 0;
         for (int t = 0; t < 300; t++) {
             tide_world_tick(&a);
             const uint64_t hash = tide_world_hash(&a); // The image is in it
             images = tide_hash_more(images, &hash, sizeof hash);
+            bodies = places(&a, bodies);
         }
         int crates = 0;
         int resting = 0;
@@ -106,10 +127,11 @@ TIDE_TEST(box3d_steps_a_match)
         TIDE_CHECK(crates == 22); // 12 stacked, 8 thrown, 1 pushed, 1 capsule: the doomed one went
         TIDE_CHECK(a.Box3D_Physics.bodies == 24 && a.Box3D_Physics.shapes == 24);
         TIDE_CHECK(a.Tally.touched > 20 && a.Tally.parted > 0);
-        printf("    the world's hash is %016llx, and its 300 images' %016llx\n", (unsigned long long)tide_world_hash(&a),
-               (unsigned long long)tide_hash_end(images));
+        printf("    the world's hash is %016llx, its 300 images' %016llx, and its bodies' %016llx\n",
+               (unsigned long long)tide_world_hash(&a), (unsigned long long)tide_hash_end(images), (unsigned long long)tide_hash_end(bodies));
         TIDE_CHECK(tide_world_hash(&a) == SETTLED_HASH);
         TIDE_CHECK(tide_hash_end(images) == IMAGES_HASH);
+        TIDE_CHECK(tide_hash_end(bodies) == BODIES_HASH);
         images_since(&whole, &in_parts);
         printf("    %d of its images were written whole, and %d as what changed of the one before\n", (int)whole, (int)in_parts);
         TIDE_CHECK(whole > 0 && in_parts > (narrow ? 20 : 250)); // Both ways are in the pinned hashes
