@@ -1,0 +1,3 @@
+// expect: describes a match field
+local component Body { [Rotation] float angle; }
+scene Main {}

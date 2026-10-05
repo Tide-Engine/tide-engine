@@ -1,0 +1,3 @@
+// expect: [Position] takes no arguments
+component Body { [Position(1)] float2 position; }
+scene Main {}
