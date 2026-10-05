@@ -11080,7 +11080,10 @@ static bool needs_repair(const decl *d)
     }
     for (int i = 0; i < d->fields.count; i++) {
         const field *f = &d->fields.items[i];
-        if (has_floats(f->type) || has_enums(f->type) || f->attributes.count > 0) return true;
+        if (has_floats(f->type) || has_enums(f->type)) return true;
+        for (int k = 0; k < f->attributes.count; k++) { // [Absolute] says how the field is guessed, and bounds nothing
+            if (!str_eq_c(f->attributes.items[k].name, "Absolute")) return true;
+        }
         if (f->type.kind == TY_RECORD) return true; // The devices
         if (f->type.kind == TY_STRUCT && needs_repair(f->type.decl)) return true;
     }
@@ -11090,6 +11093,26 @@ static bool needs_repair(const decl *d)
 static bool input_needs_repair(const decl *input)
 {
     return needs_repair(input);
+}
+
+// [Absolute] on an input's field: its default isn't rest, so a guess of
+// another player's input keeps it, however long the guess goes on.
+static bool field_absolute(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Absolute")) return true;
+    }
+    return false;
+}
+
+// Whether a guess of this input has anything to let go of: a field that isn't
+// [Absolute], the devices match code reads among them.
+static bool input_lets_go(const decl *input)
+{
+    for (int i = 0; i < input->fields.count; i++) {
+        if (!field_absolute(&input->fields.items[i])) return true;
+    }
+    return false;
 }
 
 // Replaces each NaN or infinite float of a value with the same float of `def`,
@@ -13486,6 +13509,31 @@ static void gen_game_api(gen *g)
         sb_printf(o, "static void tide_game_world_input(const void *w, uint32_t slot, void *input)\n{\n"
                      "    *(%s *)input = ((const tide_world *)w)->inputs[slot < TIDE_SERVER_INPUT ? slot : TIDE_SERVER_INPUT];\n}\n\n",
                   in);
+        // What a client's guess of the other players' inputs comes to once it
+        // has gone on long enough: the defaults, but for the [Absolute] fields,
+        // through the steps any input takes. The tick before is given the same
+        // input, so the tick sees no button go up.
+        if (input_lets_go(input)) {
+            sb_printf(o, "static bool tide_game_let_go_inputs(void *world, const tide_player_set *keep)\n{\n"
+                         "    tide_world *w = world;\n    const %s tide_declared = ", in);
+            gen_value(g, o, input, NULL, 0);
+            sb_printf(o, ";\n    bool changed = false;\n"
+                         "    for (uint32_t i = 0; i <= TIDE_SERVER_INPUT; i++) {\n"
+                         "        if (tide_players_has(keep, i)) continue;\n"
+                         "        %s tide_guess = tide_declared;\n", in);
+            for (int i = 0; i < input->fields.count; i++) {
+                const field *f = &input->fields.items[i];
+                if (field_absolute(f)) sb_printf(o, "        tide_guess.%s = w->inputs[i].%s;\n", field_cname(f), field_cname(f));
+            }
+            if (input_needs_repair(input) || input->sanitize) {
+                sb_put(o, "        tide_guess = ");
+                gen_incoming_input(g, o, "tide_guess");
+                sb_put(o, ";\n");
+            }
+            sb_put(o, "        if (memcmp(&tide_guess, &w->inputs[i], sizeof tide_guess) == 0) continue;\n"
+                      "        w->inputs[i] = tide_guess;\n        w->previous_inputs[i] = tide_guess;\n"
+                      "        changed = true;\n    }\n    return changed;\n}\n\n");
+        }
     }
     const uint32_t bytes = (bits + 7u) / 8u; // As a delta, the most an input can take
     sb_put(o, "const tide_game tide_game_api = {\n");
@@ -13506,6 +13554,7 @@ static void gen_game_api(gen *g)
         sb_put(o, "    .write_input = tide_game_write_input,\n    .read_input = tide_game_read_input,\n");
         sb_put(o, "    .write_input_delta = tide_game_write_input_delta,\n    .read_input_delta = tide_game_read_input_delta,\n");
         sb_put(o, "    .world_input = tide_game_world_input,\n");
+        if (input_lets_go(input)) sb_put(o, "    .let_go_inputs = tide_game_let_go_inputs,\n");
     }
     sb_put(o, "    .ended = tide_game_ended,\n");
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");

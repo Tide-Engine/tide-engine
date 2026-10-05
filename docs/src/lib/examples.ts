@@ -6,7 +6,7 @@ interface GamePage {
     lag?: number;
     /** The least that can be: the ping while nothing was added, once the game measured it so. */
     minLag?: number;
-    /** Starts a program that waited for it. Done once its first frame is drawn. */
+    /** Starts a program that waited for it. Done once it has drawn something. */
     start?: () => Promise<void>;
 }
 

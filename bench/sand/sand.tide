@@ -38,9 +38,11 @@ local singleton Canvas
 
 input Brush
 {
-    int x;
-    int y;
-    Material material;
+    // Where the brush is and what it paints with, not what the player is doing:
+    // what another machine guesses of them stays, where `down` is let go
+    [Absolute] int x;
+    [Absolute] int y;
+    [Absolute] Material material;
     bool down;
 
     // The pointer paints: the left button, or a finger. The right button erases.
