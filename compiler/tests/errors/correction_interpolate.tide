@@ -1,0 +1,9 @@
+// expect: are not supported with its custom Interpolate
+struct Position { [Position] float2 value; }
+struct Wrapper
+{
+    Position position;
+    Wrapper Interpolate(Wrapper from, Wrapper to, float t) { return t < 0.5 ? from : to; }
+}
+component Body { Wrapper state; }
+scene Main {}

@@ -1,0 +1,3 @@
+// expect: [Position] works on float and floating-point vectors, not float4x4
+component Body { [Position] float4x4 transform; }
+scene Main {}

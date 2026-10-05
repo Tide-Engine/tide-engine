@@ -330,6 +330,8 @@ TIDE_TEST(lsp_field_attributes)
     const char *names = complete("input PlayerInput\n{\n    [$] float move;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(names, "Clamp") && offers(names, "Min") && offers(names, "Max"));
     TIDE_CHECK(!offers(names, "Before"));
+    const char *roles = complete("component Body\n{\n    [$] float2 position;\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(roles, "Position") && offers(roles, "Rotation"));
     const char *bounds = complete("input PlayerInput\n{\n    [Clamp(float2(0, 0), $)] float2 aim;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(bounds, "Math") && offers(bounds, "float2"));
 
