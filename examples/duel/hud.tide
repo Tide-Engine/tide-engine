@@ -140,11 +140,10 @@ view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session sess
     if (tag != "")
         Panel(float2(tagAt + tagWidth * 0.5, top + 5), float2(tagWidth, 14), 7, mine ? color : Color(0.16, 0.2, 0.32),
               mine ? color : Color(0.16, 0.2, 0.32), 0, Color.clear);
-    // Its cards as this machine has them: a list isn't read from the confirmed match yet
-    for (var i = 0; i < fighter.build.cards.count; i++)
+    for (var i = 0; i < sure.build.cards.count; i++)
     {
         var gem = float2((blue ? tagAt + tagWidth + 13 : tagAt - 13) + inward * i * 14, top + 5);
-        var tint = CardColor(fighter.build.cards[i]);
+        var tint = CardColor(sure.build.cards[i]);
         Draw2D.RoundRect(gem, float2(9.5, 9.5), 2, Math.PI * 0.25, UI_OUTLINE);
         Draw2D.RoundRect(gem, float2(7, 7), 1.5, Math.PI * 0.25, tint);
         Draw2D.Circle(gem + float2(-1, -1.5), 1.2, Fade(Color.white, 0.8));

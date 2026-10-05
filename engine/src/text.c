@@ -927,12 +927,17 @@ tide_str tide_str_replace(const tide_str a, const tide_str from, const tide_str 
 #define TEXT_WHERE(at) ((at) >> 30)
 #define TEXT_OFFSET(at) ((at) & 0x3FFFFFFFu)
 
-TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[2];
+TIDE_THREAD_LOCAL tide_heap *tide_world_heaps[4]; // By `where`: the scratch area's stays NULL
 
 void tide_text_use(tide_heap *match_heap, tide_heap *local_heap)
 {
     tide_world_heaps[TIDE_IN_MATCH] = match_heap;
     tide_world_heaps[TIDE_IN_LOCAL] = local_heap;
+}
+
+void tide_text_use_verified(const tide_heap *verified_heap)
+{
+    tide_world_heaps[TIDE_IN_VERIFIED] = (tide_heap *)(uintptr_t)verified_heap; // Read only (tide_heap_read)
 }
 
 static tide_str view_block(const tide_heap *heap, const uint32_t offset)
@@ -955,7 +960,7 @@ tide_str tide_text_view(const tide_text t)
         const tide_block *b = (const tide_block *)(uintptr_t)tide_scratch_at(offset);
         return (tide_str){(const char *)(b + 1), (int32_t)b->a, (int32_t)b->b};
     }
-    const tide_heap *heap = tide_heap_of(where);
+    const tide_heap *heap = tide_heap_read(where);
     return heap ? view_block(heap, offset) : TIDE_STR_EMPTY;
 }
 

@@ -32,7 +32,9 @@ struct tt_Corner {
     vec2 m_position;
     vec2 m_uv;
 };
-int tide_i(int x) { return x; }
+int tide_i(int x) {
+    return x;
+}
 int tf_Twice(int t_n) {
     return (t_n * 2);
 }
@@ -84,7 +86,9 @@ struct tt_Corner {
     m_position: vec2f,
     m_uv: vec2f,
 }
-fn tide_i(x: i32) -> i32 { return x; }
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
 fn tf_Twice(t_n: i32) -> i32 {
     return (t_n * 2);
 }
