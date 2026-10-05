@@ -7,11 +7,6 @@
 // Draw2D.Text's anchor and weight, and Draw2D.MeasureText's weight, as the
 // draw list and the renderer's measure get them.
 
-// The bold weight's file is in the platform layer's library, which this host,
-// drawing nothing, doesn't link: the game's C names the file (it says
-// Font.Bold), so the host stands in for it.
-const unsigned char tide_font_bold_ttf[4] = {0, 1, 0, 0};
-
 static bool close_to(const float a, const float b)
 {
     const float d = a - b;
