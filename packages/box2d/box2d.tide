@@ -86,6 +86,7 @@ singleton Physics
     int shapes;
     long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
     int size; // The image's bytes; the list keeps what room it had
+    bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
     List<byte> image; // Box2D's whole state after the last step
     List<long> gone; // Bodies whose entities were destroyed, until the next step
     Map<long, Entity> owners; // Each body's entity
@@ -174,7 +175,10 @@ system AttachCircles(Body body, mut Circle circle, mut Physics physics)
 // The step, and Box2D's state after it into the match.
 system Step(Time time, mut Physics physics)
 {
-    physics.stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    physics.moved = stamp != physics.stamp;
+    if (!physics.moved) return;
+    physics.stamp = stamp;
     physics.size = WriteImage(physics.image, physics.image.count);
     if (physics.size > physics.image.count)
     {
@@ -191,12 +195,12 @@ system Step(Time time, mut Physics physics)
 // Where the step left each body.
 system Leave(mut Body body, Physics physics)
 {
-    ReadBody(body, physics.stamp);
+    if (physics.moved) ReadBody(body, physics.stamp);
 }
 
 system Report(Physics physics)
 {
-    int count = CountTouches(physics.stamp);
+    int count = physics.moved ? CountTouches(physics.stamp) : 0;
     for (int i = 0; i < count; i++)
     {
         Contact contact = ReadTouch(i);

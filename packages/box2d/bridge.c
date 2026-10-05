@@ -91,6 +91,8 @@ typedef struct world {
     int64_t stamp;  // The state it's at: 0 for an empty one nothing stepped
     uint64_t chain; // The stamp, and what the running tick did to the world since
     uint64_t used;  // When a tick last had it
+    uint8_t *before; // Measuring: the last image, to count what changed of it
+    int before_size;
 } world;
 
 static world worlds[WORLDS];
@@ -102,6 +104,8 @@ static int32_t restores;
 static bool measuring; // No clock is read otherwise
 static uint64_t step_ns;
 static uint64_t image_ns;
+static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
+static uint64_t blocks_in_all;
 
 // ---------------------------------------------------------------------------
 // Box2D's tasks are the tick's (tide/jobs.h)
@@ -258,6 +262,7 @@ void b2t_forget(void)
 {
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
+        free(worlds[i].before);
         worlds[i] = (world){0};
     }
     active = NULL;
@@ -285,6 +290,17 @@ void b2t_measure(uint64_t *step, uint64_t *image)
     *image = image_ns;
     step_ns = 0;
     image_ns = 0;
+}
+
+// Of the images since the last call, how many of their 16 KiB blocks changed
+// from one image to the next, and how many there were: what a match's
+// snapshots can't share, and what's hashed again.
+void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all)
+{
+    *changed = blocks_changed;
+    *in_all = blocks_in_all;
+    blocks_changed = 0;
+    blocks_in_all = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +409,9 @@ int32_t b2t_circle(const int64_t on, circle *s)
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
+    // Nothing awake, and nothing done to the world since its last step: a step
+    // would leave it as it is. The stamp stays, which says so.
+    if (w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
@@ -418,6 +437,18 @@ int32_t b2t_image(uint8_t *image, const int32_t count)
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     const int size = b2World_GetSnapshot(active->id, count > 0 ? image : NULL, count);
     if (measuring) image_ns += tide_time_now_ns() - began;
+    if (measuring && size <= count) {
+        world *w = active;
+        enum { BLOCK = 16384 };
+        for (int at = 0; at < size; at += BLOCK) {
+            const int n = size - at < BLOCK ? size - at : BLOCK;
+            blocks_changed += at + n > w->before_size || memcmp(w->before + at, image + at, (size_t)n) != 0;
+            blocks_in_all++;
+        }
+        w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+        memcpy(w->before, image, (size_t)size);
+        w->before_size = size;
+    }
     return size;
 }
 
@@ -427,6 +458,11 @@ void b2t_pull(body *b, const int64_t stamp)
     if (b->id == 0) return;
     const b2BodyId id = body_of(active, b->id);
     if (!b2Body_IsValid(id)) return;
+    // Asleep, and the component says so already: where it is, and that it's still
+    const bool still = b->velocity.x == 0 && b->velocity.y == 0 && b->spin == 0 && b->step_velocity.x == 0 && b->step_velocity.y == 0
+                       && b->step_spin == 0;
+    const bool there = b->position.x == b->step_position.x && b->position.y == b->step_position.y && b->angle == b->step_angle;
+    if (still && there && !b2Body_IsAwake(id)) return;
     const b2Pos at = b2Body_GetPosition(id);
     const b2Vec2 velocity = b2Body_GetLinearVelocity(id);
     b->position = (tide_float2){(float)at.x, (float)at.y};

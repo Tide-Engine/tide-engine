@@ -29,6 +29,7 @@ singleton Size
 {
     int crates = 12;
     int made;
+    bool calm; // Nothing is pushed any more: what's there comes to rest
 }
 
 system Stack(mut Size size)
@@ -47,7 +48,7 @@ event(Spawned) Build(with Main)
     Spawn(Body { type = BodyType.Static, position = float2(0, -0.5) }, Box { size = float2(4000, 1) });
     for (int i = 0; i < 8; i++)
     {
-        Spawn(Body { position = float2(-6 + 0.4 * i, 4 + i), velocity = float2(3, 0), bullet = i == 0 },
+        Spawn(Body { position = float2(-6 + 0.4 * i, 4 + i), velocity = float2(3, 0), bullet = i == 0, linearDamping = 0.5, angularDamping = 0.5 },
               Circle { radius = 0.3, bounce = 0.4 }, Crate);
     }
     Spawn(Body { position = float2(-10, 0.5), fixedRotation = true }, Box, Crate, Pushed);
@@ -56,8 +57,9 @@ event(Spawned) Build(with Main)
 
 // Code moves a body by writing its component: a shove every so often, and
 // once, somewhere else altogether
-system Push(mut Body body, mut Pushed pushed)
+system Push(mut Body body, mut Pushed pushed, Size size)
 {
+    if (size.calm) return;
     pushed.ticks += 1;
     if (pushed.ticks % 40 == 0) body.impulse = float2(4, 3);
     if (pushed.ticks == 150)

@@ -20,13 +20,14 @@ void b2t_forget(void);
 int32_t b2t_shared_steps(void);
 int32_t b2t_restores(void);
 void b2t_measure(uint64_t *step, uint64_t *image);
+void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all);
 
 #define DT (1.0f / 60.0f)
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x67b258d8e593363c)
-#define IMAGES_HASH UINT64_C(0xa7297934073a507c)
+#define SETTLED_HASH UINT64_C(0x702c3b06c79c06fc)
+#define IMAGES_HASH UINT64_C(0x93583282f09da0cd)
 
 static tide_world a;
 static tide_world b;
@@ -152,6 +153,44 @@ TIDE_TEST(box2d_joins)
     free(bytes);
     tide_world_free(&a);
     tide_world_free(&b);
+}
+
+// What a tick costs, and where it goes, with everything moving, with a little
+// moving, and at rest: nothing checked but that rest costs next to nothing,
+// as times are the machine's.
+static void cost(tide_world *w, const char *what, const int ticks)
+{
+    uint64_t step;
+    uint64_t image;
+    uint64_t changed;
+    uint64_t in_all;
+    b2t_measure(&step, &image);
+    b2t_measure_blocks(&changed, &in_all);
+    const uint64_t began = tide_time_now_ns();
+    for (int i = 0; i < ticks; i++) tide_world_tick(w);
+    const uint64_t took = tide_time_now_ns() - began;
+    b2t_measure(&step, &image);
+    b2t_measure_blocks(&changed, &in_all);
+    printf("    %-22s a tick takes %.3f ms: %.3f Box2D's step, %.3f its image, %.3f the rest; %.0f%% of the image changes\n", what,
+           (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
+           (double)(took - step - image) / (ticks * 1e6), in_all ? 100.0 * (double)changed / (double)in_all : 0.0);
+}
+
+TIDE_TEST(box2d_costs)
+{
+    enum { CRATES = 2400 };
+    b2t_forget();
+    start(&a, CRATES);
+    cost(&a, "everything moving:", 120);
+    tick(&a, 600); // The stacks settle and sleep; one crate is still pushed around
+    cost(&a, "one crate pushed:", 240);
+    a.Size.calm = true;
+    tick(&a, 600);
+    const uint64_t stamp = (uint64_t)a.Box2D_Physics.stamp;
+    cost(&a, "at rest:", 240);
+    TIDE_CHECK((uint64_t)a.Box2D_Physics.stamp == stamp && !a.Box2D_Physics.moved); // Nothing stepped, and nothing was written
+    printf("    %d crates; the image is %d bytes\n", CRATES, (int)a.Box2D_Physics.size);
+    tide_world_free(&a);
 }
 
 #ifdef BOX2D_TEST_JOBS
