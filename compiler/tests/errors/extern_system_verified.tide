@@ -1,0 +1,4 @@
+// expect: the match is the same on every machine, so a system has nothing 'verified' to read
+scene Main { }
+component Body { float x; }
+extern system Move(verified Body body);

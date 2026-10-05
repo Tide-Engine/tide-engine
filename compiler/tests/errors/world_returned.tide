@@ -1,0 +1,5 @@
+// expect: the World is a parameter, of systems, views, event handlers and the functions they pass it to: 'system Name(World world)'
+// expect: it's no value to keep or return: read what's needed through it, like 'world.Get<Health>(entity)'
+component Health { int value; }
+scene Main { }
+World Same(World world) { return world; }

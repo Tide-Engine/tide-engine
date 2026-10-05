@@ -1,0 +1,8 @@
+// expect: TryGet gives a copy of the component, and 'Canvas' has a grid in it, which can't be copied
+component Canvas { Grid2<int> cells = Grid2(8, 8); }
+component Painter { Entity canvas; bool has; }
+scene Main { }
+system Read(mut Painter painter, World world)
+{
+    painter.has = world.TryGet<Canvas>(painter.canvas, out _);
+}

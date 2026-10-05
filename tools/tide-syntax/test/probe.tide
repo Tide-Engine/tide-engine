@@ -40,6 +40,7 @@ extern float Noise(float x, float y);
 extern void Fill(in Stats stats, mut List<float> values);
 extern int Write(out List<byte> bytes, Buffer out);
 extern void DrawUI(DrawList list);
+extern system MoveInC(mut Stats stats, Time time, without Frozen);
 RenderTarget scene; Texture image;
 Draw.Blit(scene.color, Draw.window, Blur);
 const List<int> NONE = [];

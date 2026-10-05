@@ -1,0 +1,5 @@
+// expect: 'Twice' takes int for 'value', not World
+component Health { int value; }
+scene Main { }
+int Twice(int value) { return value * 2; }
+system Read(mut Health health, World world) { health.value = Twice(world); }

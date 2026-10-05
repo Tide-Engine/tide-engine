@@ -431,3 +431,177 @@ TIDE_TEST(list_out_writes_what_differs)
     tide_text_use(&world.heap, NULL);
     tide_heap_free(&snapshot.heap);
 }
+
+// The page a heap has a list in chunks' element `i` in.
+static const tide_page *page_of(const tide_heap *heap, const tide_list l, const int32_t i)
+{
+    uint32_t place;
+    const uint32_t chunk = tide_list_chunk(tide_heap_block(heap, l.at & 0x3FFFFFFFu), (uint32_t)i, sizeof(int32_t), &place);
+    return heap->page[chunk >> TIDE_HEAP_PAGE_SHIFT];
+}
+
+// What C's parts point at has to be good after C returned: not a function's own variables.
+static int32_t given[60000];
+
+// `count` numbers from `value` up, in `given` from `at` on: a part's elements.
+static const int32_t *numbers(const uint32_t at, const uint32_t count, const int32_t value)
+{
+    for (uint32_t i = 0; i < count; i++) given[at + i] = value + (int32_t)i;
+    return given + at;
+}
+
+// What C does with a tide_list_out it keeps: the list is `count` long, as it was but for `said` numbers from `value`
+// up, at `first`.
+static void patch(tide_list *l, const uint32_t where, const uint32_t count, const uint32_t first, const uint32_t said, const int32_t value)
+{
+    tide_list_out out;
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, count);
+    tide_list_out_part(&out, first, numbers(0, said, value), said);
+    tide_list_out_end(&out, l, where);
+}
+
+// A list C keeps is what it was, as long as C said, but for the parts C gave: and only the chunks a part made
+// otherwise are written.
+TIDE_TEST(list_out_keeps_what_it_holds)
+{
+    start();
+    const int32_t per = (int32_t)(TIDE_LIST_CHUNK / sizeof(int32_t));
+    const uint32_t count = (uint32_t)(8 * per);
+    make(&world.scores, TIDE_IN_MATCH, count, 0, count);
+    list_world snapshot = {0};
+    snapshot.scores = world.scores;
+    tide_heap_copy(&snapshot.heap, &world.heap);
+    const uint64_t before = tide_heap_hash(0, &world.heap);
+
+    // No part, and parts that say what's there already: nothing is written
+    tide_list_out out;
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, count);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(tide_list_count(world.scores) == (int32_t)count && pages_apart(&world.heap, &snapshot.heap) == 0);
+    patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(5 * per + 9), 40, 5 * per + 9);
+    patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(2 * per - 20), (uint32_t)(2 * per), 2 * per - 20); // Over three chunks
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0 && tide_heap_hash(0, &world.heap) == before);
+
+    // In the middle of a chunk: that chunk, and no other
+    patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(5 * per + 9), 3, -50);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 1 && tide_heap_hash(0, &world.heap) != before);
+    TIDE_CHECK(counts_up(world.scores, 0, 5 * per + 9, 0) && counts_up(world.scores, 5 * per + 9, 5 * per + 12, -50));
+    TIDE_CHECK(counts_up(world.scores, 5 * per + 12, (int32_t)count, 5 * per + 12));
+
+    // Over a chunk's end, where only what's past it is otherwise: the second chunk alone
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, count);
+    numbers(0, 20, 2 * per - 10);
+    given[15] = -7;
+    tide_list_out_part(&out, (uint32_t)(2 * per - 10), given, 20);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 2 && at(world.scores, 2 * per + 5) == -7);
+    TIDE_CHECK(page_of(&world.heap, world.scores, 2 * per - 5) == page_of(&snapshot.heap, world.scores, 2 * per - 5));
+    TIDE_CHECK(page_of(&world.heap, world.scores, 2 * per + 5) != page_of(&snapshot.heap, world.scores, 2 * per + 5));
+
+    // A whole chunk, and the start of one: what's after the part in its chunk is as it was
+    patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(6 * per), (uint32_t)per, 1000);
+    patch(&world.scores, TIDE_IN_MATCH, count, (uint32_t)(3 * per), 12, 2000);
+    TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 4);
+    TIDE_CHECK(counts_up(world.scores, 6 * per, 7 * per, 1000) && counts_up(world.scores, 7 * per, 8 * per, 7 * per));
+    TIDE_CHECK(counts_up(world.scores, 3 * per, 3 * per + 12, 2000) && counts_up(world.scores, 3 * per + 12, 5 * per + 9, 3 * per + 12));
+    TIDE_CHECK(counts_up(world.scores, 0, 2 * per + 5, 0));
+
+    // The snapshot has what the list had
+    tide_text_use(&snapshot.heap, NULL);
+    TIDE_CHECK(tide_list_count(snapshot.scores) == (int32_t)count && counts_up(snapshot.scores, 0, (int32_t)count, 0));
+    TIDE_CHECK(tide_heap_hash(0, &snapshot.heap) == before);
+    tide_text_use(&world.heap, NULL);
+    tide_heap_free(&snapshot.heap);
+
+    // Longer: zeros where it grew, and a part there. Shorter: the rest gone, and a part past the end left out
+    make(&world.scores, TIDE_IN_MATCH, count, 0, count);
+    patch(&world.scores, TIDE_IN_MATCH, count + (uint32_t)per, count + 4u, 6, 77);
+    TIDE_CHECK(tide_list_count(world.scores) == 9 * per && counts_up(world.scores, 0, (int32_t)count, 0));
+    TIDE_CHECK(zeros(world.scores, (int32_t)count, (int32_t)count + 4) && counts_up(world.scores, (int32_t)count + 4, (int32_t)count + 10, 77));
+    TIDE_CHECK(zeros(world.scores, (int32_t)count + 10, 9 * per));
+    patch(&world.scores, TIDE_IN_MATCH, (uint32_t)(3 * per + 5), (uint32_t)(3 * per), 100, -200); // Five of them are within it
+    TIDE_CHECK(tide_list_count(world.scores) == 3 * per + 5 && counts_up(world.scores, 0, 3 * per, 0));
+    TIDE_CHECK(counts_up(world.scores, 3 * per, 3 * per + 5, -200) && at(world.scores, 3 * per + 5) == -999);
+    TIDE_CHECK((tide_block_at(world.scores.at)->b & ~TIDE_LIST_CHUNKED) == 4u);
+    patch(&world.scores, TIDE_IN_MATCH, (uint32_t)(3 * per + 5), (uint32_t)(4 * per), 10, 1); // All of it past the end
+    TIDE_CHECK(tide_list_count(world.scores) == 3 * per + 5 && counts_up(world.scores, 3 * per, 3 * per + 5, -200));
+    tide_list_resize(&world.scores, 9 * per, sizeof(int32_t), TIDE_IN_MATCH);
+    TIDE_CHECK(zeros(world.scores, 3 * per + 5, 9 * per)); // What went left zeros
+
+    // Many parts, in the order they're given: a later one over an earlier one
+    make(&world.scores, TIDE_IN_MATCH, count, 0, count);
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, count);
+    for (uint32_t k = 0; k < 500; k++) tide_list_out_part(&out, 37u * k, numbers(k, 1, -(int32_t)k), 1);
+    tide_list_out_part(&out, 37u * 20u, numbers(600, 2, 9000), 2);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    bool right = true;
+    for (int32_t i = 0; i < (int32_t)count; i++) {
+        const int32_t expected = i == 37 * 20 ? 9000 : i == 37 * 20 + 1 ? 9001 : i % 37 == 0 && i / 37 < 500 ? -(i / 37) : i;
+        right &= at(world.scores, i) == expected;
+    }
+    TIDE_CHECK(right);
+
+    // Of keeping and asking for room, what C said last stands
+    make(&world.scores, TIDE_IN_MATCH, 100, 0, 100);
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_part(&out, 0, numbers(0, 4, 50), 4); // Not keeping yet: nothing
+    int32_t *room = tide_list_out_room(&out, 10);
+    for (int32_t i = 0; i < 10; i++) room[i] = -i;
+    tide_list_out_count(&out, 10);
+    tide_list_out_keep(&out, 100);
+    tide_list_out_part(&out, 2, numbers(10, 3, 500), 3);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(tide_list_count(world.scores) == 100 && counts_up(world.scores, 0, 2, 0) && counts_up(world.scores, 2, 5, 500));
+    TIDE_CHECK(counts_up(world.scores, 5, 100, 5));
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, 100);
+    tide_list_out_part(&out, 2, numbers(0, 3, 900), 3);
+    room = tide_list_out_room(&out, 6); // The parts were of the list it kept
+    for (int32_t i = 0; i < 6; i++) room[i] = 40 + i;
+    tide_list_out_count(&out, 6);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(tide_list_count(world.scores) == 6 && counts_up(world.scores, 0, 6, 40));
+
+    // How long it is can be said after, too; none is none; and more than a list holds leaves it as long as it is
+    tide_list_out_begin(&out, sizeof(int32_t));
+    tide_list_out_keep(&out, 6);
+    tide_list_out_count(&out, 9);
+    tide_list_out_part(&out, 7, numbers(0, 2, 70), 2);
+    tide_list_out_end(&out, &world.scores, TIDE_IN_MATCH);
+    TIDE_CHECK(tide_list_count(world.scores) == 9 && counts_up(world.scores, 0, 6, 40) && at(world.scores, 6) == 0);
+    TIDE_CHECK(counts_up(world.scores, 7, 9, 70));
+    patch(&world.scores, TIDE_IN_MATCH, 0x7FFFFFFFu, 0, 1, 3);
+    TIDE_CHECK(tide_list_count(world.scores) == 9 && at(world.scores, 0) == 3 && at(world.scores, 1) == 41);
+    patch(&world.scores, TIDE_IN_MATCH, 0, 0, 4, 1);
+    TIDE_CHECK(tide_list_count(world.scores) == 0);
+    patch(&world.other, TIDE_IN_MATCH, 5, 1, 2, 8); // From empty
+    TIDE_CHECK(tide_list_count(world.other) == 5 && at(world.other, 0) == 0 && counts_up(world.other, 1, 3, 8) && zeros(world.other, 3, 5));
+
+    // A list that's no world's: in the scratch area, whose memory is whatever was there
+    const uint32_t mark = tide_scratch_mark();
+    memset(tide_scratch_memory(1u << 16), 0xEE, 1u << 16);
+    tide_scratch_reset(mark);
+    tide_list local = {0};
+    make(&local, TIDE_IN_SCRATCH, 50, 5, 50);
+    patch(&local, TIDE_IN_SCRATCH, 3000, 60, 4, -1);
+    TIDE_CHECK(local.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(local) == 3000 && counts_up(local, 0, 50, 5));
+    TIDE_CHECK(zeros(local, 50, 60) && counts_up(local, 60, 64, -1) && zeros(local, 64, 3000));
+    patch(&local, TIDE_IN_SCRATCH, 20, 18, 9, 33);
+    TIDE_CHECK(tide_list_count(local) == 20 && counts_up(local, 0, 18, 5) && counts_up(local, 18, 20, 33));
+    // One that names a world's list keeps a copy of its own, and the world's stays: as long, longer and shorter
+    make(&world.scores, TIDE_IN_MATCH, 30000, 0, 30000);
+    for (int32_t round = 0; round < 3; round++) {
+        const uint32_t to = round == 0 ? 30000u : round == 1 ? 31000u : 12000u;
+        tide_list named = world.scores;
+        patch(&named, TIDE_IN_SCRATCH, to, 10, 5, -9);
+        TIDE_CHECK(named.at >> 30 == TIDE_IN_SCRATCH && tide_list_count(named) == (int32_t)to);
+        TIDE_CHECK(counts_up(named, 0, 10, 0) && counts_up(named, 10, 15, -9) && counts_up(named, 15, to < 30000u ? (int32_t)to : 30000, 15));
+        TIDE_CHECK(zeros(named, 30000, (int32_t)to));
+        TIDE_CHECK(tide_list_count(world.scores) == 30000 && counts_up(world.scores, 0, 30000, 0));
+    }
+    tide_scratch_reset(mark);
+}

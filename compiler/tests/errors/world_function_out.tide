@@ -1,0 +1,5 @@
+// expect: the World is the caller's, passed as it is: it can't be 'out'
+// expect: take it as 'World world' to read through it, or 'mut World world' to set through it
+component Health { int value; }
+scene Main { }
+bool Alive(Entity target, out World world) { return world.Has<Health>(target); }
