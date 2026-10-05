@@ -1,0 +1,3 @@
+// expect: 'Frame' is built into the language
+struct Frame { int index; }
+scene Main { }

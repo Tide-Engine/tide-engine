@@ -1,0 +1,12 @@
+// expect: 'Dim' reads Frame.dt, which only local code can read
+float Fade(float glow)
+{
+    return glow - Frame.dt;
+}
+float Dim(float glow) { return Fade(glow) * 0.5; }
+scene Main { }
+singleton Lamp { float glow = 1; }
+system Burn(mut Lamp lamp)
+{
+    lamp.glow = Dim(lamp.glow);
+}

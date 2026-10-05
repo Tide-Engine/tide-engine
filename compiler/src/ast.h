@@ -423,6 +423,8 @@ typedef struct decl {
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
+    bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
+    loc frame_time_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called

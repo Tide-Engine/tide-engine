@@ -1,0 +1,7 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't read Frame.dt
+scene Main { }
+frag Pulse(Vertex vertex, mut Color color)
+{
+    color = vertex.color * Frame.dt;
+}
+view DrawIt() { Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Pulse); }

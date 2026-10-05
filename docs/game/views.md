@@ -509,6 +509,65 @@ component Body
 
 `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has one.
 
+## A frame's length
+
+Frames come at the display's rate: 60 a second on one screen, 144 on another, fewer when the machine is busy. What a view animates of its own, like particles, a menu that slides in or a camera's shake, moves by time rather than by frames. `Frame.dt` is the seconds since the previous frame started:
+
+```csharp
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+}
+
+local singleton Sparks
+{
+    List<Spark> list;
+}
+
+view DrawSparks(mut Sparks sparks)
+{
+    mut var i = 0;
+    while (i < sparks.list.count)
+    {
+        mut var spark = sparks.list[i];
+        spark.age += Frame.dt;
+        if (spark.age >= spark.life)
+        {
+            sparks.list.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 9.8 * Frame.dt;
+        spark.position += spark.velocity * Frame.dt;
+        sparks.list[i] = spark;
+        Draw2D.Circle(spark.position, 0.1 * (1 - spark.age / spark.life), Color.yellow);
+        i++;
+    }
+}
+```
+
+- **It's this machine's, not the match's.** It's there with no match, in a menu and while connecting, where a view that takes `Time` doesn't run. In a match it's the same value, whatever the tick rate.
+- **The match has `Time`.** What's in the match moves by `time.dt`, a tick's length, in systems. A view draws the match as it is, already [blended](#smooth-at-any-tick-rate) to the frame, and uses `Frame.dt` for what it adds on top. A system that reads `Frame.dt` is an error that says so.
+- **It's the frame's real length.** A frame after the window was dragged, or the page was hidden, is as long as that took. Clamp it where a big step would show: `var dt = Math.Min(Frame.dt, 0.05);`.
+- **There's no clock beside it.** A float of seconds gets coarser as it grows: after four and a half hours it counts in steps of 2 milliseconds, and whatever it animates starts to judder. Add `Frame.dt` up into a field of your own instead, and wrap it where what it drives repeats:
+
+```csharp
+local singleton Spinner
+{
+    float turn; // Radians, always under a full turn
+}
+
+view Spin(mut Spinner spinner)
+{
+    spinner.turn += Frame.dt * 4;
+    if (spinner.turn > Math.TAU) spinner.turn -= Math.TAU;
+}
+```
+
+Views read `Frame.dt`, and so does the rest of [local code](./local-state.md#time): the functions they call, local handlers and local tasks.
+
 ## Reading this machine's devices
 
 Views take `Devices devices` to read this machine's input devices for the frame: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. A view that wants the mouse for itself [locks the cursor](#looking-around). What the GUI is using is hidden from them, and so is what another view [claimed](./gui.md#widgets-of-your-own) for widgets of its own. They read [what's typed](./input.md#typed-text) too, as `devices.keyboard.text`. Helpers take the devices or a part of them as an explicit parameter. A helper that reads `keyboard.text` needs the frame, so only views and the functions they call can call it.
