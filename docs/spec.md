@@ -1395,8 +1395,9 @@ input PlayerInput
 
 - Drawing is immediate mode: code records drawing commands every frame.
 - Views never change the match. They can change local state (see Local state).
-- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks, so motion is smooth even at 20 ticks per second. They draw up to a tick late for it.
-- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
+- Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between two ticks, so motion is smooth even at 20 ticks per second.
+- They draw this moment: the two ticks are the last one that ran and the one that's coming, which the engine runs early with this machine's input as `Sample` would give it now, and runs again when that changes before the tick's time comes. What a player does shows in the frame that reads it, at any tick rate. No code takes part: nothing in the language says it, and a game is written as if views read the match as it is. A key counts for the whole tick it's read in, as ever, so what it moves starts as far along as that tick has gone by.
+- Floats are blended by default: every float, vector, quaternion and color a view reads of the match, `Time.t` among them. Ints, bools, enums, entities and text are as the later of the two ticks has them. `[Snap]` on a field keeps it out of blending, for angles that wrap and values that jump:
 
 ```csharp
 component Body
