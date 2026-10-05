@@ -1122,10 +1122,15 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     for (int i = 0; c && i < c->objects.count; i++) arg(&a, c->objects.items[i]);
     for (int i = 0; c && i < c->link.count; i++) arg(&a, c->link.items[i]);
     for (int i = 0; i < b->engine.count; i++) arg(&a, b->engine.items[i]);
-    // The prebuilt platform layer (see platform/CMakeLists.txt).
+    // The prebuilt platform layer (see platform/CMakeLists.txt). A library of
+    // the game has none of it, as its host does. But for the bold weight's
+    // file, which is data: a game that says Font.Bold names it in its C, and
+    // the linker takes that one object out of the platform layer's library,
+    // as it does for a program. A game that doesn't is linked without the
+    // library, so that nothing else can come from it.
     char *lib_dir = path_join(b->root, opts->web ? "lib/web" : "lib/native");
     char *platform_lib = format("%s/lib%s.a", lib_dir, "tide_platform");
-    if (!shared) arg(&a, platform_lib);
+    if (!shared || b->info.bold) arg(&a, platform_lib);
     arg(&a, "-o");
     arg(&a, output);
     arg_list(&a, opts->release ? release_flags : debug_flags);
