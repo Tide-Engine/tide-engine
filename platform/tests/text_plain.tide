@@ -7,7 +7,7 @@ scene Main { }
 view Words()
 {
     Draw2D.Clear(Color(0.07, 0.08, 0.11));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var weight = Font.Regular;
     Draw2D.Text("Regular", float2(20, 20), 24, Color.white);
     Draw2D.Text("in the middle", float2(Screen.width, Screen.height) * 0.5, 24, Color.white, Anchor.MiddleCenter);

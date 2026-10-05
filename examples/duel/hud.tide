@@ -41,7 +41,7 @@ Color CardColor(Card card)
 [Stage(PaintStages.Hud)]
 view PaintScore(verified Duel duel, Flow flow)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     if (duel.attract) return;
     var middle = Screen.width * 0.5;
     // A narrow screen, or a low one, has less room over the arena

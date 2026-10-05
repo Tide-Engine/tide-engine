@@ -31,7 +31,7 @@ view DrawField(Field field, mut Canvas canvas)
     canvas.scale = scale;
     canvas.size = size;
     // The camera's middle is the window's, so the field's lands on canvas.middle
-    Draw2D.Camera(float2(size, size) * 0.5 + (screen * 0.5 - canvas.middle) / scale, screen.y * 0.5 / scale);
+    Draw2D.SetCamera(float2(size, size) * 0.5 + (screen * 0.5 - canvas.middle) / scale, screen.y * 0.5 / scale);
 
     Draw2D.Rect(float2(size, size) * 0.5, float2(size, size), Color(0.1, 0.1, 0.14));
     for (var y = 0; y < size; y++)
