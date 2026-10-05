@@ -46,7 +46,6 @@ component Body
 // A box on the entity's body, `size` wide and high around `offset`.
 component Box
 {
-    long id;
     float2 size = float2(1, 1);
     float2 offset;
     float density = 1;
@@ -58,7 +57,6 @@ component Box
 // A circle on the entity's body.
 component Circle
 {
-    long id;
     float radius = 0.5;
     float2 offset;
     float density = 1;
@@ -66,6 +64,13 @@ component Circle
     float bounce;
     bool sensor;
 }
+
+// The package's own: the entity's box, or its circle, is on its body in Box2D
+[Sparse]
+component BoxMade { }
+
+[Sparse]
+component CircleMade { }
 
 // Two bodies started touching, or stopped: sent to each, with the other.
 event Touched
@@ -112,10 +117,10 @@ extern void RemoveBodies(List<long> bodies, int count);
 extern int SyncBody(mut Body body);
 
 [NativeName("b2t_box")]
-extern int AttachBox(long body, mut Box box);
+extern int AttachBox(long body, in Box box);
 
 [NativeName("b2t_circle")]
-extern int AttachCircle(long body, mut Circle circle);
+extern int AttachCircle(long body, in Circle circle);
 
 [NativeName("b2t_step")]
 extern long StepWorld(float dt, int substeps, float2 gravity);
@@ -124,7 +129,7 @@ extern long StepWorld(float dt, int substeps, float2 gravity);
 extern int WriteImage(mut List<byte> image, int count);
 
 [NativeName("b2t_pull")]
-extern void ReadBody(mut Body body, long stamp);
+extern bool ReadBody(mut Body body, long stamp);
 
 [NativeName("b2t_touches")]
 extern int CountTouches(long stamp);
@@ -146,30 +151,41 @@ system Begin(mut Physics physics)
 
 // New bodies are made, and what code wrote into a body since the last step
 // goes to Box2D.
-system Enter(mut Body body, mut Physics physics)
+//
+// These systems read their components and write them back through the World,
+// for the few entities there's something to write for. A component taken as
+// `mut` is copied and compared for every entity a system runs for, whatever it
+// does, once a snapshot shares the world's pages, as a client's do every tick:
+// most bodies, most ticks, have nothing written.
+system Enter(mut Physics physics, mut World world, with Body)
 {
+    var body = world.Get<Body>(this);
     // A body nothing wrote to since the last step costs these comparisons, and no call
     bool moved = body.position.x != body.stepPosition.x || body.position.y != body.stepPosition.y || body.angle != body.stepAngle;
     bool pushed = body.velocity.x != body.stepVelocity.x || body.velocity.y != body.stepVelocity.y || body.spin != body.stepSpin;
     bool nudged = body.impulse.x != 0 || body.impulse.y != 0 || body.turn != 0;
     if (body.id == 0 || moved || pushed || nudged)
     {
-        if (SyncBody(body) != 0)
+        mut var next = body;
+        if (SyncBody(next) != 0)
         {
             physics.bodies += 1;
-            physics.owners[body.id] = this;
+            physics.owners[next.id] = this;
         }
+        world.Set<Body>(this, next);
     }
 }
 
-system AttachBoxes(Body body, mut Box box, mut Physics physics)
+system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
 {
-    if (box.id == 0) physics.shapes += AttachBox(body.id, box);
+    physics.shapes += AttachBox(body.id, box);
+    this.Add(BoxMade);
 }
 
-system AttachCircles(Body body, mut Circle circle, mut Physics physics)
+system AttachCircles(Body body, Circle circle, mut Physics physics, without CircleMade)
 {
-    if (circle.id == 0) physics.shapes += AttachCircle(body.id, circle);
+    physics.shapes += AttachCircle(body.id, circle);
+    this.Add(CircleMade);
 }
 
 // The step, and Box2D's state after it into the match.
@@ -192,10 +208,14 @@ system Step(Time time, mut Physics physics)
     }
 }
 
-// Where the step left each body.
-system Leave(mut Body body, Physics physics)
+// Where the step left each body that it moved.
+system Leave(Physics physics, mut World world, with Body)
 {
-    if (physics.moved) ReadBody(body, physics.stamp);
+    if (physics.moved)
+    {
+        mut var next = world.Get<Body>(this);
+        if (ReadBody(next, physics.stamp)) world.Set<Body>(this, next);
+    }
 }
 
 system Report(Physics physics)
