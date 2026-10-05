@@ -337,6 +337,25 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-refused" refused)
     endif()
 
+    # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
+    # shell and a build server have it): no window shows, a game or a host
+    # that only its window's closing would end doesn't start, and a stop shows
+    # no dialog. None of that needs a window. That a run with no window and a
+    # test's hidden window go as they do without the variable does, as
+    # tide_platform_draw does.
+    add_executable(tide_platform_hidden tests/hidden.c)
+    target_include_directories(tide_platform_hidden PRIVATE src)
+    target_link_libraries(tide_platform_hidden PRIVATE tide_platform)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_hidden
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden.mjs" $<TARGET_FILE:tide_platform_hidden>
+                $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-refused")
+        add_test(NAME tide_platform_hidden_runs
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden.mjs" $<TARGET_FILE:tide_platform_hidden>
+                $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-runs" runs)
+        set_tests_properties(tide_platform_hidden_runs PROPERTIES LABELS gpu TIMEOUT 120)
+    endif()
+
     # The cursor's lock on desktop: only a window with the focus holds it, and
     # a test's window, hidden, never has it. It needs a desktop session, as
     # tide_platform_draw does.

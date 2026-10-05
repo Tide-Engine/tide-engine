@@ -178,9 +178,20 @@ Something has to end a run nobody can close: `--frames`, or the script's `quit`.
 |---|---|
 | 0 | The run ended at `--frames` or `quit`, and its pictures were written |
 | 1 | A picture couldn't be written. Folders aren't made for it |
-| 2 | An option or a line of the script is wrong: nothing ran, and the message names what to fix |
+| 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
 A game `tide build` made takes the same options itself, so a build server needs no `tide`: `build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
+
+### Where nobody watches
+
+Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a window, or to close one: on a build server, or in the shell of an agent that works on your machine while you do. Any value but nothing or `0` counts. No Tide game shows a window there, however it's started:
+
+- A run with no window goes as ever: `--frames`, `--capture` and `--script`.
+- Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
+- `tide run --web` serves the page and opens no browser.
+- A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
+
+A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.
 
 ### Scripts
 

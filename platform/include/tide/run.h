@@ -44,6 +44,10 @@
 // 1 when a picture can't be written, and with 2, having started nothing,
 // when a flag or a line of the script is wrong. Desktop only.
 //
+// Where nobody watches (TIDE_HIDDEN in the environment: tide/page.h), a game
+// shows no window, so a run with one is refused the same way, with exit code
+// 2 and what to give it instead.
+//
 // The loop itself is in tide/host.h, which runs the game through
 // tide_host_game_api, made here from the game's header.
 
