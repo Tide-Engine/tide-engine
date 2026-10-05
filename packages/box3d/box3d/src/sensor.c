@@ -447,5 +447,7 @@ void b3DestroySensor( b3World* world, b3Shape* sensorShape )
 		b3Sensor* movedSensor = b3Array_Get( world->sensors, sensorShape->sensorIndex );
 		b3Shape* otherSensorShape = b3Array_Get( world->shapes, movedSensor->shapeId );
 		otherSensorShape->sensorIndex = sensorShape->sensorIndex;
+		// Tide: another sensor's shape, anywhere in the world (see b3SnapTrack)
+		b3SnapTouchShape( world, movedSensor->shapeId );
 	}
 }

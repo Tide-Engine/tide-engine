@@ -394,7 +394,11 @@ typedef struct decl {
     struct decl *local_part; // Its local fields, or NULL when it has none
     struct decl *part_of;    // A local part: the component or singleton it's of
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
-    const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
+    // `extern system Move(mut Position position, Time time);`: a DECL_SYSTEM written in C, with no body. C is
+    // called for each run of rows the system's filters admit, with their components as arrays (tide/rows.h) and
+    // the singletons it takes; to the schedule it's the system its signature says
+    bool extern_system;
+    const char *c_name; // Records: the C struct name. Extern functions and systems: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
     // Overloads, as in C#: functions that share a name, a type's methods that
     // do, and systems, views, handlers, frags and verts that do. Their
