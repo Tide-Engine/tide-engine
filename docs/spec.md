@@ -2432,10 +2432,13 @@ Not built yet. **Decided** is what the owner agreed (2026-10-05); the design pro
 
 - A mod is a package that someone other than a game's developer adds to it. It builds as packages do: its files compile with the game's, as one program, so a mod's code is game code, with the same language, storage, schedule and speed. There's no scripting layer, nothing is interpreted, and games carry no runtime for mods.
 - Mods are built by a service we run, beside the relay and hosting, not on players' machines: it has the game's source and the mods', builds the game with them for each platform, and signs what it built. A game runs only builds signed for it.
-- Every machine of a match runs the same build, as ever. A player who joins a match with other mods gets its build from the service, never from the match's host.
+- Every machine of a match runs the same build, as ever, its local code included: mods never differ between the players of a match, not even ones that only change views, since a view can show a player what gives them an advantage.
+- A player who joins a match with other mods gets its build from the service, never from the match's host. The game is told first, with the mods' names and where they're from, so that it can ask its player ("this match runs these mods"), who then knows that code from outside the game is about to be downloaded. It joins once local code says yes, and nothing is fetched before that.
+- A build's mods are a set: the order they're listed in changes nothing, since what would depend on it is an error.
 - A mod is Tide alone: no `extern`, no C or C++ files, no libraries.
 - `virtual` before a declaration says it can be replaced, as in C#, and `override` before another replaces it. Both are always written: nothing is replaced by having the same name, and nothing can be replaced that its developer didn't mark. It happens while compiling: what was replaced isn't in the build, and an override costs what the code it replaced would.
 - An override matches by name and by parameters, both: the parameters' types, a system's filters among them, as overloads are told apart. Two systems can have the same parameters and filters under different names, and several declarations can share a name, so neither alone says which is meant.
+- An override takes the place of what it replaces: its stage, its `[Before]` and `[After]`, and every reference to its name. Nothing calls the code that was replaced, for now (see Open).
 - Two mods that replace the same declaration are an error that names both.
 
 ```csharp
@@ -2469,9 +2472,8 @@ The language:
 
 - `virtual` and `override` go where `local` and `async` do, on declarations with a body: systems, views, handlers, functions, methods, frags and verts. They're keywords only there.
 - An override that matches nothing `virtual` is an error that lists what the name has.
-- An override takes the place of what it replaces: its stage, its `[Before]` and `[After]`, and every reference to its name. It writes none of those itself. It can differ in `mut`, and the schedule is worked out from what's built.
+- An override writes no `[Stage]`, `[Before]` or `[After]` of its own. It can differ in `mut`, and the schedule is worked out from what's built.
 - The two words aren't only for mods: an override is in another package than what it replaces, and a game's own packages can use both, as an expansion would. A mod can mark its own declarations `virtual`, for the mods that need it.
-- Nothing calls the code that was replaced (C#'s `base`), at first.
 - Declarations of data aren't replaced: components, singletons, events, enums, scenes, the input, the settings. A mod adds components of its own to the game's entities, as any code does.
 - A mod sees every declaration of the game's, as a package does (see Open, Access control). It declares what a package can, less `extern`. The packages it needs are mods too, or come with tide, or are ones the game lists itself: only those last two can have C.
 
@@ -2486,9 +2488,9 @@ What a mod's code reaches:
 The game:
 
 - With the `mods` setting, a game runs another build of itself as a library on desktop and a program on the web, loaded as `tide run`'s host loads one, with nothing watched or carried over. It has the game's public key in it.
-- A build is named by what it's made from: the game's published version, its mods in order, each at its commit, and tide's version. The platform isn't part of the name: a build's generated C is the same everywhere, so its players share matches across platforms as they do now.
+- A build is named by what it's made from: the game's published version, its mods, each at its commit, and tide's version. The mods are sorted first, so the same set listed in another order is the same build. The platform isn't part of the name: a build's generated C is the same everywhere, so its players share matches across platforms as they do now.
 - Local code asks for a build by its mods, written as `tide.packages` writes packages. The game gets it, checks it, and starts it in the running one's place: the match and the local state start over. The command line takes the same. The names are to pick.
-- A room says which build its match runs, and a server on an address says it as it refuses a hello. A game about to join another build's match is told first, with the mods' names and sources, and joins once local code says yes: then it gets the build, starts it, and joins. It's what a game makes its prompt from ("this match runs these mods"), drawn with its own GUI, as the engine brings no dialog; a game can also say yes by itself, as one whose developer lists its mods might. Nothing is fetched before the yes, and a game that handles none of it joins no such match: the join ends with a reason of its own.
+- A room says which build its match runs, and a server on an address says it as it refuses a hello. That's what a game about to join is told from. Once local code says yes, it gets the build, starts it, and joins. The prompt is the game's, drawn with its own GUI, as the engine brings no dialog. A game that handles none of it joins no such match: the join ends with a reason of its own.
 - Host migration and hosted servers need nothing new: every machine has the build, and the service builds a hosted server's with the rest.
 
 The service:
@@ -2499,7 +2501,7 @@ The service:
 - Builds run in machines made for one build, with no network while they compile (packages are fetched before, by commit) and limits on time, memory and what they write.
 - A build is made once for each platform, the first time one is asked for, and kept by its name.
 - Signatures are ECDSA on P-256 over a SHA-256 of the build's name, its platform and its file. A game checks one with the code it has for WebRTC (`rtc_p256_verify`), a page with the browser's own, every time a build is loaded, not only when it's fetched. The service keeps each game's key.
-- Before loading a build, a game asks the service whether it still stands. The answer is signed and good for a day, so a build runs offline that long. A revoked build is deleted. The developer revokes, and so do we.
+- Revoking is how a build that turned out harmful stops running on machines that already have it. So before a game loads a build it has, it asks the service whether the build is still allowed. It keeps the answer for a while, a day as proposed, and asks again after that: within that time the build runs with no network, and a build revoked meanwhile may still run. A shorter time stops a bad build sooner, and keeps modded play from starting sooner when a player is offline or the service is down. A revoked build is deleted. The developer revokes, and so do we.
 - It's billed to the game: builds, what's kept and what's downloaded.
 
 The sandbox:
@@ -2509,7 +2511,7 @@ The sandbox:
 - WebAssembly is the sandbox where the platform runs it itself: browsers. On desktop it would mean a runtime in every game, ours to write or someone else's, and mod code slower than the game's, which the first decision rules out.
 - Phones: Apple's and Google's stores forbid native code downloaded after installing, as far as we know (to check before building). Their own web views may run WebAssembly, so a modded game could be its web build there.
 
-The order proposed:
+The order to do the work in, proposed:
 
 1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in.
 2. Memory safety as a tested promise (see Open, at the end).
@@ -2520,10 +2522,9 @@ The order proposed:
 Questions:
 
 - Whether a game can also open every declaration at once, without a `virtual` on each.
-- Whether an override can call what it replaced.
-- Whether a game is asked before it joins another build's match, to prompt its player, as proposed above.
+- `base()` in an override, to call what it replaced: maybe later.
+- Whether a game can say yes for its player before joining another build's match. The engine can't tell that a game asked, so a prompt nobody can skip would be the host's own, drawn over the game as the stats are.
 - Whether scenes and singletons' defaults can be replaced, which is how a mod would change `Main`.
-- Whether mods can differ between the machines of a match when they only change local code (views, frags, local state): today one hash covers a build's match and local code alike.
 - What else a mod's code can't call, beyond `Session.Connect` and `Clipboard.Copy`.
 - How long a build runs offline before the service is asked again.
 - Whether a modded game on a phone is its web build in the system's web view.
