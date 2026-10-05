@@ -269,12 +269,17 @@ typedef struct tide_client_desc {
     tide_address server;
     tide_sample_fn sample; // NULL for a game without an input
     void *user;
-    // Ticks its inputs reach the server early at the least: 0 on the server's
-    // machine, 1 or more over a network. The client keeps the least the server
-    // says at this, so they're as early as the network's unevenness needs and
-    // no earlier: each tick more is a tick later that the others see this
-    // player, and a tick further that it runs ahead of them.
+    // Ticks its inputs wait at the server at the least, before their tick
+    // runs: 0 on the server's machine, 1 or more over a network. The server
+    // says how long they waited, and the client keeps the least of that at
+    // this, so they're as early as the network's unevenness needs and no
+    // earlier: all of that wait is time later that the others see this player,
+    // and time further that it runs ahead of them.
     uint32_t lead;
+    // ...or one of this machine's frames, where that's less than `lead` ticks,
+    // and a 60th of a second where its frames are shorter: what a player over
+    // a network wants in a match of fewer ticks a second than frames.
+    bool lead_frame;
     uint64_t cookie;       // From an earlier connection to this server, to be the same player again; 0 for none
     bool knew_kick;        // ...which kicked it, as it heard: the server lets it in again (see tide_server_kick)
     const tide_jobs *jobs; // Threads to run ticks on (tide/jobs.h), or NULL: this one
@@ -312,7 +317,7 @@ typedef struct tide_client_status {
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
-    int32_t early_ticks;           // How early this machine's inputs reach the server, in ticks, as it last said
+    float early_ms;                // How long this machine's inputs waited at the server before their ticks ran, as it last said: under 0, too late
     uint32_t late_ticks;           // Ticks the server ran without this machine's input, which came too late, so far
     uint32_t again_ticks;          // Predicted ticks it ran again so far, after one went otherwise than it guessed
     uint32_t resyncs;              // Times its world diverged and the server sent it again
