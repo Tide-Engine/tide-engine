@@ -1,0 +1,6 @@
+// expect: no 'Mix' takes (int, int)
+scene Main { }
+singleton Log { float total; }
+float Mix(float a, string label) { return a + label.length; }
+float Mix(float a, bool on) { return on ? a : 0; }
+system Run(mut Log log) { log.total = Mix(1, 3); }

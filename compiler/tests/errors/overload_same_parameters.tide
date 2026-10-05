@@ -1,0 +1,4 @@
+// expect: 'Damage' is already declared with these parameters
+scene Main { }
+float Damage(float base, float multiplier) { return base * multiplier; }
+float Damage(float amount, float scale = 1) { return amount * scale; }

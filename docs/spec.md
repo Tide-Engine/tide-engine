@@ -117,9 +117,9 @@ system Hurt(mut Unit unit)
 - A method returns a value with `return value;`, on every path, unless it returns `void`.
 - A method sees its fields, its parameters and `Math`. It can't spawn, change entities or draw: systems do.
 - A component's method has `this`: the entity whose component it's called on. A method that uses it, itself or through another of its methods, can only be called on a component the code runs for, a parameter of a system, view or handler: a copy belongs to no entity. A struct's methods and `Interpolate` have no `this`.
-- Methods can't share a name, even with different parameters, and a method can't share one with a field.
+- Methods can share a name when their parameters differ, as functions can (see Default values, named arguments and overloads). A method can't share one with a field.
 - Singletons and inputs have no methods (an input has `Sample` and `Sanitize`): keep the data and its methods in a struct, and the struct in them.
-- Parameters work as in functions.
+- Parameters work as in functions: they can have default values, and calls can name them.
 
 ```csharp
 struct Stats
@@ -151,7 +151,8 @@ system Burn(mut Unit unit)
 - Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations. Ordinary helpers can't read `session.room` or format a whole `Session` as text; pass the room code as a separate `string`.
 - Functions follow the rules of methods: they see their parameters and `Math`, can't spawn or change entities, and return a value on every path unless they return `void`.
 - A function can draw and use the GUI. Then only views, and other functions like it, can call it, as with `Draw2D` and `Draw3D`.
-- Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace.
+- Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace but other functions, whose parameters tell them apart (see Default values, named arguments and overloads).
+- A parameter can have a default value, which a call can leave out, and a call can pass arguments by name: see the same section.
 - A function's last parameter can be an `Action`: code the caller writes in braces after the call, `Section("Audio") { ... }`. A function takes at most one, always last, and it's always written after the call, never inside the parentheses.
 - The function runs the block by calling it, `content();`, as many times as it chooses, including none. The block runs as if it were written at the call: it sees the caller's locals and parameters, and what it reads and writes counts toward the caller's signature.
 - A function that takes an `Action` is inlined where it's called, so blocks cost nothing and need no closures. It can't call itself, directly or through other functions, and a block can only be run, not stored.
@@ -184,6 +185,62 @@ system Regenerate(mut Unit unit)
 {
     Heal(unit.stats, 0.5);
 }
+```
+
+### Default values, named arguments and overloads
+
+**Following C# here is agreed.** So is how a shared name is written where nothing calls it: with its parameters' types, and it has to be one declaration's. The points marked Provisional are picks the owner hasn't confirmed.
+
+- **Default values.** A function's or method's parameter can have one: `float Damage(float base, float multiplier = 1, bool crit = false)`. A call can leave such a parameter out, and it gets the default.
+  - They're the last parameters, as in C#: after one with a default, each has one. An `Action` still comes last: it isn't an argument.
+  - Provisional: a default is a constant expression, as a field's is (see Field defaults), and `null` for a `T?`. It can't read another parameter.
+  - Provisional: only plain values take one. A `mut` parameter is the caller's variable, a component or a singleton is the caller's own, and the devices, a `DrawList` and rendering resources are passed: none of them can be left out. An `Entity`'s only default is `default`, the null entity. Operators and `Interpolate` take none.
+  - Parameters of systems, views, handlers, frags and verts take none: the engine supplies them, and nothing calls them.
+  - An `extern` function's parameters take them too: C is passed the default like any argument.
+- **Named arguments.** A call can pass an argument by its parameter's name, `Damage(10, crit: true)`, which lets it leave out the ones before. Struct values keep `=` (`Body { position = p }`), as in C#.
+  - Arguments without a name come first, in the parameters' order. After a named one, each is named, in any order: `Damage(crit: true, base: 5)`.
+  - Each parameter is given once, and every parameter without a default is given.
+  - Arguments are worked out in the order written, whatever order the parameters are in (see Evaluation order).
+  - Provisional: `default` as an argument stays the type's default, as in C#, not the parameter's.
+  - The engine's functions take names too, where their parameters have names: `Draw2D.Circle(center: p, radius: 2, color: Color.red)`, `Session.Connect(address: host, port: 7001)`, `Debug.Assert(ok, message: "lost")`. What a call leaves out of them is at the end. Constructors (`float3(...)`), `Spawn`, `Send`, `Add`, `Remove`, a list's and a map's methods, the `World`'s methods, the component-wise `Math` functions and `Draw2D.Mesh` and its kin take their arguments in order.
+- **Overloads.** Functions can share a name, and so can a type's methods, when their parameters differ: `Damage(float base, float multiplier = 1)` and `Damage(float base, Weapon weapon)`.
+  - What tells them apart is their parameters' types, in order. Names, `mut` and defaults don't: two declarations that differ only in those are an error.
+  - A call picks by its arguments, as in C#. Each one that could take them is a candidate. One is better than another when no argument goes to it worse and at least one goes better: an argument's own type is better than one it converts to, and of two types it converts to, the one that converts to the other (an `int` over a `float`, for a `byte`). When that leaves two the same, the one the call wrote every parameter of is better than one that fills defaults in. A call that fits none, or fits two equally, is an error that lists them.
+  - `default`, `null`, `[a, b]` and a grid's size take their type from the parameter, so they don't pick: the other arguments do.
+  - Provisional: `extern` functions that share a name each say which C function they are, with `[NativeName]`, since C has one function of a name.
+  - A function still shares its name with nothing else in its namespace (a type, a system, a constant), and a method with no field.
+- **Systems, views, handlers, frags and verts** can share a name the same way. Nothing calls them, so the name is written with its parameters where it's used:
+  - `[After(Move(Position, Velocity, with Player))]`: the parameters' types in order, with the filters (`with`, `without`, `with ownership`, and a query as `query(Body, with Fighter)`) and a view's `verified` (`Bar(verified Health)`), and neither names nor `mut`. A handler's trigger isn't among them: it's written before the name.
+  - A mesh's vert and frag are named the same way: `Draw2D.Mesh(vertices, indices, Tint(Vertex, Color))`.
+  - A name alone is fine while only one declaration has it, as it always was. When several share it, the name alone is an error that lists them as they're written, and so is a parameter list that isn't exactly one's. A name written with parameters is checked against them even when it's the only one.
+  - Tools show a shared name with its parameters: `tidec --schedule`, the profiler's rows, the language server.
+- Provisional: in generated C, a declaration that shares its name goes on with its parameters' types (`tide_function_Damage_float_Weapon`). One alone keeps the name it had, so code that shares no names generates the C it always did.
+
+```csharp
+float Damage(float base, float multiplier = 1, bool crit = false)
+{
+    return crit ? base * multiplier * 2 : base * multiplier;
+}
+
+float Damage(float base, Weapon weapon)
+{
+    return base + weapon.power;
+}
+
+system Strike(mut Unit unit, Weapon weapon)
+{
+    unit.health -= Damage(10);              // multiplier 1, no crit
+    unit.health -= Damage(10, crit: true);  // By name, past multiplier
+    unit.health -= Damage(10, weapon);      // The other one
+}
+```
+
+```csharp
+system Move(mut Position position, Velocity velocity, with Player) { ... }
+system Move(mut Position position, Velocity velocity, with Enemy) { ... }
+
+[After(Move(Position, Velocity, with Player)), Before(Move(Position, Velocity, with Enemy))]
+system Aim(mut Turret turret, Position position) { ... }
 ```
 
 ### Operators
@@ -423,6 +480,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - A read-only argument is a copy made in its turn, a list's too: `Total(items, Push(items, 4))` totals the list as it was. A `mut` method given its own value's list (`bag.Absorb(bag.items)`) gets a copy as well.
 - A list's, a map's and a set's changes that give a value (`items.Remove(x)`, `seen.Add(k)`) are calls that write, and so are widgets that change what they're given (`GUILayout.Toggle(title, open)`) and C functions with a `mut` parameter.
 - A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
+- Arguments passed by name are worked out in the order the call writes them, not the parameters': in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`. A default the call leaves out is a constant, so it has no turn.
 
 ### Functions and blocks
 
@@ -471,6 +529,7 @@ event(Spawned) Setup(with Main)
 
 - Files compile in order of their paths, compared byte by byte. Systems run in that order, then in the order they're declared within a file. Views, which draw once per frame, follow the same rules among themselves; later views draw on top.
 - `[Before(X)]` makes a system run before `X`, and `[After(X)]` after it. They take any number of systems (`[After(Gravity, Collisions)]`), with qualified names when needed (`[After(Physics.Gravity)]`).
+- Where several systems share a name, it's written with the parameters of the one meant, as types: `[After(Move(Position, Velocity, with Player))]`. A shared name alone is an error that lists them (see Default values, named arguments and overloads).
 - An enum can define named phases: `[Stage(TickStages.Simulation)]` assigns a declaration to a phase, and `[Stage(TickStages.Simulation, 10)]` gives it an offset within that phase. The offset is an `int` known while compiling, like an enum value: an integer literal, an integer constant, or integer operations on them. It defaults to 0 and can be negative. Each declaration has at most one `Stage`.
 - Phases follow the enum members' declaration order, regardless of their numeric values. Lower offsets run before higher ones within a phase; offsets never move work into another phase. Equal offsets keep the default order unless declaration constraints change it.
 - `Before` and `After` can name enum members too, mixed with declaration names: `[After(TickStages.Simulation, Gravity)]`. A phase reference means before all of that phase or after all of it, including every offset. Empty phases keep their place in the order. Different enums define independent phase orders; explicit declaration constraints can connect them.
