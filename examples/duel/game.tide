@@ -46,19 +46,15 @@ component Fighter
     int round;
     int match;
 
-    // What this machine's views remember of it between frames (see paint.tide)
-    local int seenRound;
-    local float shownHealth;
+    // How this machine shows it: what its local handlers set as things happen
+    // to it (heard.tide), and its views let settle (paint.tide)
     local float chip;         // Health the last hits took, which its bar lets go of slowly
     local float hit;          // A flash that fades
     local float squash;       // Wider than tall above 0, taller than wide under it
     local float squashSpeed;
-    local float arrive;       // 0 to 1 as it pops in at a round's start
+    local float arrive = 1;   // 0 to 1 as it pops in at a round's start
     local float recoil;
-    local float air;          // Seconds off the ground
     local float puff;         // Until the next dust at its feet
-    local float seenCooldown;
-    local float seenBlock;
 }
 
 component Platform { float2 center; float2 half; }
@@ -74,12 +70,7 @@ component Bullet
     float lifetime = 4;
     int round;
 
-    // Where this machine's views last saw it, for its trail and its bounces
-    local bool seen;
-    local int seenBounces;
-    local int seenSide;
-    local float2 seenAt;
-    local float2 seenVelocity;
+    // Where this machine's trail of it has got to
     local float2 trail;
 }
 
@@ -183,6 +174,22 @@ input Controls
 }
 
 event Hit { float damage; float2 impulse; int round; }
+
+// What happened, for whoever shows it. Nothing in the match handles these:
+// each machine's local handlers do (heard.tide), so they cost the match
+// nothing, and a machine with nobody to show them to doesn't even record them.
+event Hurt { float damage; float2 push; bool fatal; } // A hit that counted, to the fighter it hit
+event Fired { }                                       // To the fighter that fired
+event Raised { }                                      // ...that put its shield up
+event Jumped { }
+event Landed { float speed; }                         // How fast it was falling
+event Entered { }                                     // To a fighter, as it starts a round
+event Bounced { float2 at; float2 normal; bool blocked; int side; } // To a shot, off a wall or a shield: `side` is whose it was
+event Impact { float2 at; float2 normal; float2 direction; int side; } // A shot ended on something
+event PhaseBegan { Phase phase; }
+event RoundWon { int side; }                          // -1 when both went down
+event MatchBegan { }
+
 command ChooseCard { int round; int slot; }
 command Rematch { int match; }
 command Practice { int match; }
@@ -307,6 +314,7 @@ event(PlayerJoined joined) Join(mut Duel duel, mut World world)
     // Two players start their match. One alone is at the menu.
     duel.attract = duel.bluePlayer == default || duel.orangePlayer == default;
     NewMatch(duel);
+    Send(MatchBegan { });
 }
 
 event(PlayerLeft left) Leave(mut Duel duel, mut World world)
@@ -326,6 +334,7 @@ event(PlayerLeft left) Leave(mut Duel duel, mut World world)
     // Whoever stays is back at the menu, rather than facing a bot at once
     duel.attract = true;
     NewMatch(duel);
+    Send(MatchBegan { });
 }
 
 command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fighter, mut Duel duel)
@@ -337,6 +346,7 @@ command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fi
     duel.round += 1;
     duel.phase = Phase.Countdown;
     duel.timer = 1.2;
+    Send(PhaseBegan { phase = Phase.Countdown });
 }
 
 command(Rematch request, PlayerID sender) PlayAgain(mut Duel duel)
@@ -344,6 +354,7 @@ command(Rematch request, PlayerID sender) PlayAgain(mut Duel duel)
     if (duel.phase != Phase.Finished || request.match != duel.match || duel.attract) return;
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     NewMatch(duel);
+    Send(MatchBegan { });
 }
 
 command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
@@ -352,6 +363,7 @@ command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     duel.attract = false;
     NewMatch(duel);
+    Send(MatchBegan { });
 }
 
 // Practice ends when its player says so. Two players have no menu to go back
@@ -363,6 +375,7 @@ command(ToMenu request, PlayerID sender) BackToMenu(mut Duel duel)
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
     duel.attract = true;
     NewMatch(duel);
+    Send(MatchBegan { });
 }
 
 // Health changes settle at the end of the previous tick, so simultaneous
@@ -372,7 +385,9 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
     if (duel.phase == Phase.Countdown)
     {
         duel.timer -= time.dt;
-        if (duel.timer <= 0) duel.phase = Phase.Fight;
+        if (duel.timer > 0) return;
+        duel.phase = Phase.Fight;
+        Send(PhaseBegan { phase = Phase.Fight });
         return;
     }
     if (duel.phase == Phase.Draft)
@@ -384,7 +399,9 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
     {
         // Behind the menu, the next match starts by itself
         duel.timer = Math.Max(0, duel.timer - time.dt);
-        if (duel.attract && duel.timer <= 0) NewMatch(duel);
+        if (!duel.attract || duel.timer > 0) return;
+        NewMatch(duel);
+        Send(MatchBegan { });
         return;
     }
     mut var blueAlive = false;
@@ -400,20 +417,25 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
         duel.round += 1;
         duel.phase = Phase.Countdown;
         duel.timer = 1.2;
+        Send(RoundWon { side = -1 });
+        Send(PhaseBegan { phase = Phase.Countdown });
         return;
     }
     if (blueAlive) duel.scoreBlue += 1;
     else duel.scoreOrange += 1;
+    Send(RoundWon { side = blueAlive ? 0 : 1 });
     if (duel.scoreBlue >= WINS || duel.scoreOrange >= WINS)
     {
         duel.phase = Phase.Finished;
         duel.timer = 3.5;
+        Send(PhaseBegan { phase = Phase.Finished });
         return;
     }
     duel.draftSide = blueAlive ? 1 : 0;
     Deal(duel);
     duel.phase = Phase.Draft;
     duel.timer = 1;
+    Send(PhaseBegan { phase = Phase.Draft });
 }
 
 system BotDraft(mut Fighter fighter, mut Duel duel)
@@ -424,6 +446,7 @@ system BotDraft(mut Fighter fighter, mut Duel duel)
     duel.round += 1;
     duel.phase = Phase.Countdown;
     duel.timer = 1.2;
+    Send(PhaseBegan { phase = Phase.Countdown });
 }
 
 system ResetFighters(Duel duel, mut Body body, mut Fighter fighter)
@@ -445,6 +468,7 @@ system ResetFighters(Duel duel, mut Body body, mut Fighter fighter)
     body.previous = body.position;
     body.velocity = float2(0);
     this.Snap();
+    this.Send(Entered { });
 }
 
 system Drive(Controls input, Duel duel, Time time, World world, mut Body body, mut Fighter fighter,
@@ -487,14 +511,20 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
     if (Math.LengthSq(aim) > 0.001) fighter.aim = Math.Normalize(aim);
     var targetSpeed = move * fighter.build.speed;
     body.velocity.x += Math.Clamp(targetSpeed - body.velocity.x, -1700 * time.dt, 1700 * time.dt);
-    if (jump && fighter.grounded) body.velocity.y = 600;
+    if (jump && fighter.grounded)
+    {
+        body.velocity.y = 600;
+        this.Send(Jumped { });
+    }
     if (block && fighter.blockCooldown <= 0)
     {
         fighter.blockLeft = 0.22;
         fighter.blockCooldown = 2;
+        this.Send(Raised { });
     }
     if (!fire || fighter.fireCooldown > 0) return;
     fighter.fireCooldown = fighter.build.reload;
+    this.Send(Fired { });
     for (var i = 0; i < fighter.build.pellets; i++)
     {
         var angle = (i - (fighter.build.pellets - 1) * 0.5) * 0.14;
@@ -513,6 +543,8 @@ system MoveFighters(Duel duel, Time time, mut Body body, mut Fighter fighter, qu
     body.previous = body.position;
     if (duel.phase != Phase.Fight || fighter.health <= 0) return;
     body.velocity.y -= 1100 * time.dt;
+    var airborne = !fighter.grounded;
+    var falling = -body.velocity.y;
     fighter.grounded = false;
     mut var remaining = time.dt;
     for (var iteration = 0; iteration < 4; iteration++)
@@ -534,6 +566,7 @@ system MoveFighters(Duel duel, Time time, mut Body body, mut Fighter fighter, qu
         if (closest.normal.y > 0.5) fighter.grounded = true;
         remaining *= 1 - closest.fraction;
     }
+    if (airborne && fighter.grounded) this.Send(Landed { speed = falling });
 }
 
 system MoveBullets(Duel duel, Time time, mut Body body, mut Bullet bullet,
@@ -583,17 +616,21 @@ system MoveBullets(Duel duel, Time time, mut Body body, mut Bullet bullet,
             return;
         }
         body.position += delta * closest.fraction + closest.normal * 0.03;
+        var direction = Math.Normalize(body.velocity);
         if (target != default && !blocked)
         {
-            target.Send(Hit { damage = bullet.damage, impulse = Math.Normalize(body.velocity) * bullet.knockback, round = bullet.round });
+            target.Send(Hit { damage = bullet.damage, impulse = direction * bullet.knockback, round = bullet.round });
+            Send(Impact { at = body.position, normal = closest.normal, direction = direction, side = bullet.side });
             this.Destroy();
             return;
         }
         if (target == default && bullet.bounces <= 0)
         {
+            Send(Impact { at = body.position, normal = closest.normal, direction = direction, side = bullet.side });
             this.Destroy();
             return;
         }
+        this.Send(Bounced { at = body.position, normal = closest.normal, blocked = target != default, side = bullet.side });
         if (target == default) bullet.bounces -= 1;
         else
         {
@@ -609,6 +646,8 @@ system MoveBullets(Duel duel, Time time, mut Body body, mut Bullet bullet,
 event(Hit hit) TakeHit(mut Fighter fighter, mut Body body, Duel duel)
 {
     if (duel.phase != Phase.Fight || hit.round != duel.round || fighter.health <= 0) return;
+    var taken = Math.Min(fighter.health, hit.damage);
     fighter.health = Math.Max(0, fighter.health - hit.damage);
     body.velocity += hit.impulse;
+    this.Send(Hurt { damage = taken, push = Math.Normalize(hit.impulse), fatal = fighter.health <= 0 });
 }
