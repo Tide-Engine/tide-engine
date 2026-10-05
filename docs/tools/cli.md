@@ -169,6 +169,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
 - **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
 - **The window's size and scale are what you asked for,** whatever the display is.
+- **The match's seed is 0.** In a window, [`Time.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same.
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
 
@@ -178,9 +179,20 @@ Something has to end a run nobody can close: `--frames`, or the script's `quit`.
 |---|---|
 | 0 | The run ended at `--frames` or `quit`, and its pictures were written |
 | 1 | A picture couldn't be written. Folders aren't made for it |
-| 2 | An option or a line of the script is wrong: nothing ran, and the message names what to fix |
+| 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
 A game `tide build` made takes the same options itself, so a build server needs no `tide`: `build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
+
+### Where nobody watches
+
+Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a window, or to close one: on a build server, or in the shell of an agent that works on your machine while you do. Any value but nothing or `0` counts. No Tide game shows a window there, however it's started:
+
+- A run with no window goes as ever: `--frames`, `--capture` and `--script`.
+- Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
+- `tide run --web` serves the page and opens no browser.
+- A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
+
+A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.
 
 ### Scripts
 

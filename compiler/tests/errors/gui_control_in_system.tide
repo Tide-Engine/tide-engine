@@ -1,0 +1,4 @@
+// expect: The GUI can only be used in views, and in functions they call
+scene Main { }
+system Cards() { var card = GUI.Control(Rect(0, 0, 100, 60)); if (card.clicked) Send(Picked { }); }
+event Picked { }

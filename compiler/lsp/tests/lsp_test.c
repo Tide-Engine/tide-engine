@@ -778,6 +778,40 @@ TIDE_TEST(lsp_shapes)
 #undef SHAPE_VIEW
 }
 
+// Text at an anchor and in a weight: every version of Draw2D.Text, and the built-in Font
+TIDE_TEST(lsp_text_anchor_and_font)
+{
+    start();
+#define TEXT_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anchor.MiddleCenter, Font.Bold);\n"
+                            "    Font weight = Font.Regular;\n"
+                            "    var size = Draw2D.MeasureText(\"DUEL\", 88, weight);\n"
+                            "    Draw2D.Text(\"DUEL\", size, 88, Color.white, weight);"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *weights = complete(TEXT_VIEW("    var weight = Font.$"));
+    TIDE_CHECK(offers(weights, "Regular") && offers(weights, "Bold"));
+
+    open_document(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
+    const char *text = request("textDocument/hover");
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Font font)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font)"));
+    TIDE_CHECK(has(text, "Anchor.MiddleCenter") && has(text, "Font.Bold"));
+    open_document(TEXT_VIEW("    var size = Draw2D.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw2D.Rect(size, size, Color.white);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font) -> float2"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
+    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
+
+    // Its C, which takes both
+    TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
+                   "void tide_draw_text_at("));
+#undef TEXT_VIEW
+}
+
 static const char *hover_at(const int line, const int character)
 {
     return request_at("file:///test.tide", "textDocument/hover", line, character, "");
@@ -2042,11 +2076,41 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
 
-    // Claims, for widgets a view draws itself
+    // Claims, for widgets that read the devices themselves
     const char *claims = complete("scene Main { }\nview V()\n{\n    GUI.$\n}\n");
     TIDE_CHECK(offers(claims, "ClaimPointer"));
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
+
+    // A widget a view draws itself, and the look of the GUI's own
+    TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));
+    TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}")); // The one that takes a block
+#define CONTROL_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(CONTROL_VIEW("    GUI.Navigate();\n    var card = GUI.Con$trol(Rect(0, 0, 200, 200));\n"
+                               "    if (card.clicked || card.pressed && card.hovered) GUI.SetTheme(GUITheme { radius = 4 });\n"
+                               "    GUI.Theme(GUITheme { hot = Color.red, fieldHot = Color.red })\n    {\n"
+                               "        GUI.Label(Rect(0, 0, 10, 10), card.focused ? \"on\" : \"off\");\n    }"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *control = request("textDocument/hover");
+    TIDE_CHECK(has(control, "GUI.Control(Rect rect) -> GUIControl"));
+    TIDE_CHECK(has(control, "the GUI handles its input as a button's, and draws nothing"));
+    const char *said = complete(CONTROL_VIEW("    var card = GUI.Control(Rect(0, 0, 200, 200));\n    var on = card.$"));
+    TIDE_CHECK(offers(said, "hovered") && offers(said, "pressed") && offers(said, "focused") && offers(said, "clicked"));
+    TIDE_CHECK(has(said, "a press on it let go on it"));
+    const char *looks = complete(CONTROL_VIEW("    GUI.SetTheme(GUITheme { $ });"));
+    TIDE_CHECK(offers(looks, "text") && offers(looks, "panel") && offers(looks, "control") && offers(looks, "hot"));
+    TIDE_CHECK(offers(looks, "pressed") && offers(looks, "field") && offers(looks, "fieldHot") && offers(looks, "accent"));
+    TIDE_CHECK(offers(looks, "radius"));
+    open_document(CONTROL_VIEW("    GUI.Set$Theme(GUITheme { });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.SetTheme(GUITheme theme)"));
+    open_document(CONTROL_VIEW("    GUI.The$me(GUITheme { })\n    {\n    }"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.Theme(GUITheme theme, Block content)"));
+    open_document(CONTROL_VIEW("    var look = GUIThe$me { radius = 4 };\n    GUI.SetTheme(look);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "a theme names what it changes"));
+    // One form says the other's name
+    open_document(CONTROL_VIEW("    GUI.Theme(GUITheme { });"));
+    TIDE_CHECK(has(last_sent(), "GUI.Theme takes a block") && has(last_sent(), "GUI.SetTheme(...)"));
+#undef CONTROL_VIEW
     open_document("scene Main { }\nview V()\n{\n    GUI.Claim$Pointer();\n    GUI.ClaimKeyboard();\n    GUI.ShowKeyboard();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *claim = request("textDocument/hover");
@@ -2067,6 +2131,16 @@ TIDE_TEST(lsp_gui)
 
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
+
+    // Screen.Flip: a device's position, from the bottom left, as the screen's, from the top left
+    const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
+    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
+    TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
+    open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw2D.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *flip = request("textDocument/hover");
+    TIDE_CHECK(has(flip, "Screen.Flip(float2 position) -> float2"));
+    TIDE_CHECK(has(flip, "counted from the screen's other edge"));
 
     // The cursor's lock: views ask for it and read whether it holds, and so
     // do the functions they call; the input's Sample only reads; the match

@@ -1,0 +1,4 @@
+// expect: a list can't hold grids
+// expect: grids stay where they're made: in components, singletons and scenes
+scene Main { }
+component Layers { List<Grid2<int>> layers; }
