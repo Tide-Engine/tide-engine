@@ -403,8 +403,12 @@ float tide_clamp1(float a, float b, float c) {
 vec3 tide_clamp3(vec3 a, vec3 b, vec3 c) {
     return vec3(tide_clamp1(a.x, b.x, c.x), tide_clamp1(a.y, b.y, c.y), tide_clamp1(a.z, b.z, c.z));
 }
+float tide_saturate1(float a) {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
 float tide_smoothstep1(float a, float b, float c) {
-    float t = tide_clamp1((c - a) / (b - a), 0.0, 1.0);
+    float t = tide_saturate1((c - a) / (b - a));
     return t * t * (3.0 - 2.0 * t);
 }
 float tide_pow1(float a, float b) {
@@ -424,7 +428,7 @@ void ts_Calm(tt_SkyVertex t_vertex, inout vec4 t_color) {
     float t_least = tide_min1(tide_u5.w, tide_f(2.0));
     vec2 t_most = tide_max2(t_vertex.m_uv, vec2(tide_f(0.5)));
     vec3 t_held = tide_clamp3(tide_u1.xyz, vec3(tide_f(0.0)), vec3(tide_f(1.0)));
-    float t_eased = tide_smoothstep1(tide_f(1.0), tide_f(0.0), tide_clamp1(t_least, 0.0, 1.0));
+    float t_eased = tide_smoothstep1(tide_f(1.0), tide_f(0.0), tide_saturate1(t_least));
     float t_raised = tide_pow1((tide_u5.w - tide_f(2.0)), tide_f(2.0));
     float t_turned = tide_atan2_1((t_vertex.m_uv.y - tide_f(0.5)), (t_vertex.m_uv.x - tide_f(0.5)));
     int t_capped = max(tide_i(0), min(tide_i(9), tide_v0.x));
@@ -491,8 +495,12 @@ fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
 fn tide_clamp3(a: vec3f, b: vec3f, c: vec3f) -> vec3f {
     return vec3f(tide_clamp1(a.x, b.x, c.x), tide_clamp1(a.y, b.y, c.y), tide_clamp1(a.z, b.z, c.z));
 }
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
 fn tide_smoothstep1(a: f32, b: f32, c: f32) -> f32 {
-    var t: f32 = tide_clamp1((c - a) / (b - a), 0.0, 1.0);
+    var t: f32 = tide_saturate1((c - a) / (b - a));
     return t * t * (3.0 - 2.0 * t);
 }
 fn tide_pow1(a: f32, b: f32) -> f32 {
@@ -676,7 +684,7 @@ fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     var t_least: f32 = tide_min1(tide_block.tide_u5.w, tide_f(2.0));
     var t_most: vec2f = tide_max2(t_vertex.m_uv, vec2f(tide_f(0.5)));
     var t_held: vec3f = tide_clamp3(tide_block.tide_u1.xyz, vec3f(tide_f(0.0)), vec3f(tide_f(1.0)));
-    var t_eased: f32 = tide_smoothstep1(tide_f(1.0), tide_f(0.0), tide_clamp1(t_least, 0.0, 1.0));
+    var t_eased: f32 = tide_smoothstep1(tide_f(1.0), tide_f(0.0), tide_saturate1(t_least));
     var t_raised: f32 = tide_pow1((tide_block.tide_u5.w - tide_f(2.0)), tide_f(2.0));
     var t_turned: f32 = tide_atan2_1((t_vertex.m_uv.y - tide_f(0.5)), (t_vertex.m_uv.x - tide_f(0.5)));
     var t_capped: i32 = max(tide_i(0), min(tide_i(9), tide_block.tide_v0.x));

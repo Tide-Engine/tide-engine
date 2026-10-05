@@ -42,7 +42,7 @@ enum { STAGE_VERT, STAGE_FRAG };
 // what Math does that the shader languages don't, or don't do as the CPU
 // does (helper_text). Each comes after the ones it calls.
 enum {
-    FAMILY_MIN, FAMILY_MAX, FAMILY_CLAMP, FAMILY_SMOOTHSTEP, FAMILY_POW, FAMILY_ATAN2, FAMILY_COUNT
+    FAMILY_MIN, FAMILY_MAX, FAMILY_CLAMP, FAMILY_SATURATE, FAMILY_SMOOTHSTEP, FAMILY_POW, FAMILY_ATAN2, FAMILY_COUNT
 };
 
 enum {
@@ -368,8 +368,8 @@ static void put_zero(emit *em, const type t)
 // line of its own, a statement a line, a local declared with its type and a
 // value, no '?:', no parameter assigned to, and atan2 for the atan of two.
 
-static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "smoothstep", "pow", "atan2_"};
-static const int family_args[FAMILY_COUNT] = {2, 2, 3, 3, 2, 2};
+static const char *const family_names[FAMILY_COUNT] = {"min", "max", "clamp", "saturate", "smoothstep", "pow", "atan2_"};
+static const int family_args[FAMILY_COUNT] = {2, 2, 3, 1, 3, 2, 2};
 
 // A family's function of one number: its vectors go component by component.
 static const char *const family_scalars[FAMILY_COUNT] = {
@@ -392,9 +392,14 @@ static const char *const family_scalars[FAMILY_COUNT] = {
     "    if (tide_nan(a)) { return b; }\n"
     "    return tide_max1(b, tide_min1(c, a));\n"
     "}\n",
+    // 0 for NaN. Past that the languages' own clamp says what it does, between bounds the right way around
+    "float tide_saturate1(float a) {\n"
+    "    if (tide_nan(a)) { return 0.0; }\n"
+    "    return clamp(a, 0.0, 1.0);\n"
+    "}\n",
     // The languages' own is undefined from an edge down to a lower one
     "float tide_smoothstep1(float a, float b, float c) {\n"
-    "    float t = tide_clamp1((c - a) / (b - a), 0.0, 1.0);\n"
+    "    float t = tide_saturate1((c - a) / (b - a));\n"
     "    return t * t * (3.0 - 2.0 * t);\n"
     "}\n",
     // The languages' own is undefined under 0: a whole power of a number under 0 is that of the number over 0, with its sign
@@ -673,8 +678,10 @@ static void need(emit *em, const int h)
         } else if (family == FAMILY_CLAMP) {
             need(em, family_helper(FAMILY_MIN, 1));
             need(em, family_helper(FAMILY_MAX, 1));
+        } else if (family == FAMILY_SATURATE) {
+            need(em, H_NAN);
         } else if (family == FAMILY_SMOOTHSTEP) {
-            need(em, family_helper(FAMILY_CLAMP, 1));
+            need(em, family_helper(FAMILY_SATURATE, 1));
         }
         return;
     }
@@ -1383,11 +1390,7 @@ static void ex_math(emit *em, const expr *e)
         put_arg(em, e, 0);
         sb_put(em->o, "))");
     } else if (str_eq_c(e->name, "Saturate")) {
-        need(em, family_helper(FAMILY_CLAMP, dim));
-        sb_printf(em->o, "tide_clamp%d(", dim);
-        put_arg(em, e, 0);
-        if (dim == 1) sb_put(em->o, ", 0.0, 1.0)");
-        else sb_printf(em->o, ", %s(0.0), %s(1.0))", float_ty(em, dim), float_ty(em, dim));
+        put_family_call(em, e, FAMILY_SATURATE, dim);
     } else if (str_eq_c(e->name, "SmoothStep")) {
         put_family_call(em, e, FAMILY_SMOOTHSTEP, dim);
     } else if (str_eq_c(e->name, "Pow")) {
