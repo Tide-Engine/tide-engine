@@ -42,3 +42,17 @@ endif()
 add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
 # A step in 3D is several of Box2D's, and a web build has no SIMD for it
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
+
+# Its image written as what changed of the last one, against the image written
+# whole: a match of its own, so that the one above keeps its pinned hashes, and
+# Box3D by itself.
+tide_add_game(tide_box3d_parts SOURCES box3d/box3d.tide box3d/bridge.c box3d/test/yard.tide NAME yard
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/parts_test.c)
+target_include_directories(tide_box3d_parts PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_parts PRIVATE tide_box3d)
+if(TARGET tide_platform)
+    target_compile_definitions(tide_box3d_parts PRIVATE BOX3D_TEST_JOBS)
+    target_link_libraries(tide_box3d_parts PRIVATE tide_platform)
+endif()
+add_test(NAME tide_box3d_parts COMMAND tide_box3d_parts)
+set_tests_properties(tide_box3d_parts PROPERTIES TIMEOUT 300)

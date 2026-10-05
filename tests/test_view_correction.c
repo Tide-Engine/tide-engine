@@ -215,6 +215,10 @@ static uint64_t correction_clock(void)
     return correction_clock_ns;
 }
 
+// Whether the client draws the tick that's coming (tide_client_desc.peek): what
+// it marks as drawn is then that tick and the last it ran.
+static bool correction_peeking;
+
 static correction_result correction_run(bool callback, bool mark, bool changing, bool budget, bool resync, bool burst)
 {
     correction_copies = correction_frees = correction_borrowed_freed = 0;
@@ -228,8 +232,8 @@ static correction_result correction_run(bool callback, bool mark, bool changing,
         .transports = {tide_loopback_endpoint(net, 1)}}, 0);
     tide_client *client = tide_client_create(&(tide_client_desc){.game = &correction_game,
         .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
-        .sample = correction_sample_zero, .lead = 8, .user = &observer,
-        .correct_views = callback ? correction_observe : NULL,
+        .sample = correction_sample_zero, .peek = correction_peeking ? correction_sample_zero : NULL, .lead = 8,
+        .user = &observer, .correct_views = callback ? correction_observe : NULL,
         .now_ns = budget ? correction_clock : NULL, .resim_budget = 0.001}, 0);
     // Keep this machine's input constant; its user pointer belongs to the
     // observer. The other player's changing input is what it cannot predict.
@@ -322,6 +326,27 @@ TIDE_TEST(view_corrections_keep_reconstructed_endpoints_when_a_burst_confirms_pa
     TIDE_CHECK(result.corrections > 10u);
     TIDE_CHECK(result.resets == 1u);
     TIDE_CHECK(result.borrowed_freed == result.corrections * 2u);
+}
+
+// The tick that's coming is one of the two drawn: put right with the others,
+// it's a correction like theirs, from what was drawn of it.
+TIDE_TEST(view_corrections_take_the_tick_thats_coming_as_drawn)
+{
+    correction_peeking = true;
+    const correction_result result = correction_run(true, true, true, false, false, false);
+    const correction_result delayed = correction_run(true, true, true, true, false, false);
+    const correction_result burst = correction_run(true, true, true, false, false, true);
+    const correction_result resynced = correction_run(true, true, false, false, true, false);
+    const correction_result quiet = correction_run(true, true, false, false, false, false);
+    correction_peeking = false;
+    TIDE_CHECK(result.corrections > 10u);
+    TIDE_CHECK(result.resets == 1u);
+    TIDE_CHECK(result.borrowed_freed == result.corrections * 2u);
+    TIDE_CHECK(delayed.delay > 0u && delayed.corrections > 3u && delayed.borrowed_freed == delayed.corrections * 2u);
+    TIDE_CHECK(burst.catchups > 0u && burst.corrections > 10u && burst.resets == 1u);
+    TIDE_CHECK(burst.borrowed_freed == burst.corrections * 2u);
+    TIDE_CHECK(resynced.resyncs == 1u && resynced.resets == 2u && resynced.corrections == 0u);
+    TIDE_CHECK(quiet.corrections == 0u); // Nothing went otherwise: nothing to put right
 }
 
 static void correction_observe_reset(void *user, const tide_view_correction *correction)

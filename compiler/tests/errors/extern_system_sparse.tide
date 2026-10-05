@@ -1,0 +1,8 @@
+// expect: a system written in C can't take a sparse component yet, and 'Stunned' is one
+// expect: which entities have it is told row by row, and C is handed whole runs of rows: write the system in Tide, which can call C for each entity, 'system Wake(...) { ... }'
+scene Main { }
+[Sparse]
+component Stunned { float left; }
+component Body { float x; }
+extern system Wake(mut Stunned stunned, Body body);
+event(Spawned) Setup(with Main) { Spawn(Body { x = 1 }); }
