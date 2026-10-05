@@ -65,7 +65,8 @@ view Background()
     Draw2D.WireRect(float2(0), float2(360), Color(0.24, 0.25, 0.27));
 }
 
-view DrawBalls(Body body, with Ball)
+// A mod can draw the ball its own way: virtual says this can be replaced.
+virtual view DrawBalls(Body body, with Ball)
 {
     Draw2D.Circle(body.position, body.radius, Color(0.98, 0.44, 0.52));
 }
