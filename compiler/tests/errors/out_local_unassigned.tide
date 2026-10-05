@@ -1,0 +1,14 @@
+// expect: 'half' isn't assigned here: the call that makes it may not have run
+// expect: read 'half' where that call ran, like in the 'if' it's the condition of
+scene Main { }
+singleton Tally { int total; bool ready; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally)
+{
+    if (tally.ready && TryHalf(8, out var half)) tally.total = half;
+    tally.total += half;
+}

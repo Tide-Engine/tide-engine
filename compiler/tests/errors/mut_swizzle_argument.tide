@@ -1,0 +1,6 @@
+// expect: a swizzle of several components is a copy, so 'Bump' can't change it
+// expect: take it out, change it, and put it back: 'mut var part = v.xy; ...; v.xy = part;'
+scene Main { }
+singleton Tally { float3 v; }
+void Bump(mut float2 pair) { pair.x += 1; }
+system Run(mut Tally tally) { Bump(tally.v.yz); }

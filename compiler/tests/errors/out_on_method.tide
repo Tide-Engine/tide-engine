@@ -1,8 +1,0 @@
-// expect: only extern functions take 'out' parameters
-// expect: a Tide method changes its caller's variable as 'mut List<int> into'
-scene Main { }
-struct Bag
-{
-    int size;
-    void Pour(out List<int> into) { into.Add(size); }
-}

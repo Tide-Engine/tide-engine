@@ -154,6 +154,7 @@ C often takes pointers. Tide has none, and no pointer arithmetic: the parameter 
 | Parameter | C gets |
 | --- | --- |
 | `mut T x` | `T *`: the caller's variable, which C can change |
+| `out T x` | `T *`: the caller's variable, which C makes (see [Out parameters](#out-parameters)) |
 | `in T x` | `const T *`: the caller's variable, read-only, with no copy (a copy for a value that's no variable's) |
 | `List<T> xs` | `const T *`: the list's elements, NULL when it's empty. Pass `xs.count` too |
 | `mut List<T> xs` | `T *`: the elements, which C can change, but not how many there are |
@@ -211,16 +212,42 @@ Tide's types have no padding the compiler adds, so a C struct with the same fiel
 
 C functions can't `fail` (see [Errors](../language/errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
 
+### Out parameters
+
+An extern function has [`out` parameters](../language/functions.md#out-parameters) as a Tide function does, for C that gives a value back through a pointer:
+
+```csharp
+extern bool Raycast(float2 from, float2 to, out Hit hit);
+
+system Aim(mut Turret turret)
+{
+    if (Raycast(turret.position, turret.target, out var hit)) turret.range = hit.distance;
+}
+```
+
+```c
+bool Raycast(tide_float2 from, tide_float2 to, hit *out)
+{
+    ...
+    *out = (hit){.distance = distance};
+    return true;
+}
+```
+
+To C it's the pointer a `mut` parameter is. The difference is Tide's: the call says `out`, can declare the variable right there, and passes nothing in for C to read. C is trusted to write it. A variable C leaves alone keeps what it held, which for one declared at the call is its type's default.
+
+Text can't be `out`, as C can't make Tide's text: C returns it. A list can, in its own way:
+
 ### Lists C makes
 
-With `mut List<T>`, C changes the elements a list has. With `out List<T>`, as C#'s `out`, C makes the list: its elements, and how many there are. What the list held isn't passed, so nothing of it is copied for C.
+With `mut List<T>`, C changes the elements a list has. With `out List<T>`, C makes the list: its elements, and how many there are. What the list held isn't passed, so nothing of it is copied for C.
 
 ```csharp
 extern int WriteImage(out List<byte> image);
 
 system Save(mut Physics physics)
 {
-    physics.size = WriteImage(physics.image);
+    physics.size = WriteImage(out physics.image);
 }
 ```
 
@@ -243,7 +270,7 @@ Once C returns, the list is exactly those elements, however many it had: more, f
 
 A world's list is written piece by piece, and only the pieces whose bytes differ from what the list had. So a big list that comes out mostly the same costs little: the pieces that didn't change aren't hashed again, and stay shared with the snapshots rollback keeps.
 
-The argument is a list the code can change, as for `mut`, with no word at the call: a field of a `mut` component or singleton, or a `mut` local. Only `extern` functions take `out`, and only for lists, of the elements a list goes to C with.
+The argument is a list the code can change, with `out` before it, as for any `out` parameter: a field of a `mut` component or singleton, a `mut` local, or one declared there with `out var`. Its elements are what a list goes to C with.
 
 ## Drawing from C
 

@@ -1,0 +1,4 @@
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+scene Main { }
+singleton Store { int size; }
+event(Spawned) Setup(with Main, out Store store) { store.size = 1; }

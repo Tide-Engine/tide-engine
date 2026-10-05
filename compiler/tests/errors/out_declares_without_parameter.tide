@@ -1,0 +1,5 @@
+// expect: 'out' goes before an argument for an 'out' parameter, and nothing here takes one
+// expect: declare the variable in a statement of its own, like 'var x = ...;', and pass it as it is
+scene Main { }
+singleton Tally { float total; }
+system Run(mut Tally tally) { tally.total = Math.Max(out var x, 1); }
