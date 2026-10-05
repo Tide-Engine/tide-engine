@@ -486,6 +486,50 @@ B3_API b3RecQueryHit b3RecPlayer_GetFrameQueryHit( const b3RecPlayer* player, in
 
 /**@}*/ // recording
 
+/**
+ * @defgroup snapshot Snapshot
+ * @brief Tide: a world's whole state as bytes, and a world back from them (see src/TIDE.md, and
+ * world_snapshot.c). Upstream has images inside its recordings only.
+ *
+ * An image is its header, a table of where each section starts, and the sections there, zeros between them.
+ * The hulls, meshes and height fields its shapes have aren't in it: it names them by number, and the world
+ * keeps each once, in the order images first named them, which b3World_GetSnapshotGeometry writes. A world
+ * comes back from both. An image is the same bytes for the same state on every platform, and so is the
+ * geometry. A world with a compound shape has no image.
+ * @{
+ */
+
+/// The sections of an image.
+#define B3_SNAPSHOT_SECTIONS 17
+
+/// The bytes before the first section: the least its base can be.
+B3_API int b3GetSnapshotHead( void );
+
+/// Write a snapshot with each section at its base, and each section's size into @p sizes. With no bases, the
+/// image is one run of bytes.
+/// @return The image's size, with nothing past @p capacity written. Or -1 when a section ran past the next
+///         one's base: the sizes are right, the image isn't one, and the caller places the sections again.
+///         Or 0 for a world that has no image.
+B3_API int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// Where an image's sections start. False for an image that has none.
+B3_API bool b3GetSnapshotBases( const uint8_t* image, int size, int* bases );
+
+/// Write the geometry the world's images name. It's only ever added to: what was written before is the start
+/// of what's written now.
+/// @return Its size, with nothing written when that's more than @p capacity.
+B3_API int b3World_GetSnapshotGeometry( b3WorldId worldId, uint8_t* geometry, int capacity );
+
+/// Restore a world in place from an image and the geometry it names. The world keeps its id, and so do the
+/// bodies, shapes and joints in the image. Host wiring is kept: tasks, callbacks, and user data on the world.
+/// User data on bodies, shapes and joints isn't in an image and comes back null.
+/// @return true on success. For bytes that are no image, or no geometry, the world is left unchanged. A
+///         corrupt payload detected after the rebuild begins returns false and leaves the world unusable, so
+///         the caller must destroy it.
+B3_API bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const uint8_t* geometry, int geometrySize );
+
+/**@}*/ // snapshot
+
 /** @} */ // world
 
 /**

@@ -27,7 +27,12 @@ typedef struct b3JointEdge
 // Map from b3JointId to b3Joint in the solver sets
 typedef struct b3Joint
 {
-	void* userData;
+	// Tide: 8 bytes on every platform, so a world's image is laid out the same on 32-bit ones (see ../TIDE.md)
+	union
+	{
+		void* userData;
+		uint64_t userDataBits;
+	};
 
 	// index of simulation set stored in b3World
 	// B3_NULL_INDEX when slot is free

@@ -29,6 +29,7 @@
 #include "box3d/collision.h"
 #include "box3d/types.h"
 
+#include <stddef.h>
 #include <string.h>
 
 // Snapshot image magic 'BNS3' and version
@@ -38,10 +39,46 @@
 #define B3_SNAP_FLAG_VALIDATION 0x1u
 #define B3_SNAP_FLAG_DOUBLE_PRECISION 0x2u
 
+// Tide: an image in sections (see ../TIDE.md). After the header there's a table of where each section starts,
+// and each is written there, with zeros between one's end and the next one's start. So a section that grows or
+// shrinks a little leaves the others where they were, and an image differs from the one before it where the
+// world does. Upstream's image is one run of bytes, whose every byte moves when an early part changes size.
+#define B3_SNAP_FLAG_SECTIONS 0x4u
+enum
+{
+	b3_sectionConfig,		// World scalars and the id pools
+	b3_sectionFixedSets,	// The static and the disabled solver sets
+	b3_sectionAwakeSet,
+	b3_sectionSleepingSets,
+	b3_sectionBodies,
+	b3_sectionShapes,
+	b3_sectionFatAABBs,
+	b3_sectionContacts,
+	b3_sectionJoints,
+	b3_sectionSensors,
+	b3_sectionIslands,
+	b3_sectionStaticTree,
+	b3_sectionKinematicTree,
+	b3_sectionDynamicTree,
+	b3_sectionPairs,
+	b3_sectionGraph,
+	b3_sectionNames,
+	b3_sectionCount,
+};
+_Static_assert( b3_sectionCount == B3_SNAPSHOT_SECTIONS, "the sections of an image, as box3d.h counts them" );
+_Static_assert( b3_bodyTypeCount == 3, "a tree a section" );
+
+// Tide: how an image is laid out beyond what upstream's is (see ../TIDE.md), which goes into the layout hash:
+// an image of another making is refused, upstream's own included.
+#define B3_SNAP_TIDE_FORMAT 1u
+
 // Layout hash over all POD-copied structs + key constants.
 // Changing a struct size updates this, catching ABI drift early.
 static uint32_t b3ComputeLayoutHash( void )
 {
+	// Tide: only the structs that go into an image as their bytes, which are laid out the same on
+	// 32-bit and 64-bit platforms (see ../TIDE.md). Upstream also mixes in the structs that hold
+	// pointers, written field by field, and sizeof( void* ), which keeps an image to one pointer width.
 	uint32_t h = 2166136261u;
 #define MIX( x )                                                                                                                 \
 	h ^= (uint32_t)( x );                                                                                                        \
@@ -54,28 +91,58 @@ static uint32_t b3ComputeLayoutHash( void )
 	MIX( sizeof( b3Manifold ) )
 	MIX( sizeof( b3Joint ) )
 	MIX( sizeof( b3JointSim ) )
-	MIX( sizeof( b3Island ) )
 	MIX( sizeof( b3IslandSim ) )
 	MIX( sizeof( b3ContactLink ) )
 	MIX( sizeof( b3JointLink ) )
-	MIX( sizeof( b3Sensor ) )
 	MIX( sizeof( b3Visitor ) )
-	MIX( sizeof( b3SolverSet ) )
-	MIX( sizeof( b3GraphColor ) )
-	MIX( sizeof( b3DynamicTree ) )
 	MIX( sizeof( b3TreeNode ) )
 	MIX( sizeof( b3TreeProxy ) )
 	MIX( sizeof( b3SetItem ) )
-	MIX( sizeof( b3IdPool ) )
 	MIX( sizeof( b3SurfaceMaterial ) )
 	MIX( sizeof( b3ContactSpec ) )
 	MIX( sizeof( b3TriangleCache ) )
+	MIX( sizeof( b3Capacity ) )
 	MIX( B3_GRAPH_COLOR_COUNT )
 	MIX( b3_bodyTypeCount )
-	MIX( sizeof( void* ) )
+	MIX( B3_SNAP_TIDE_FORMAT )
 #undef MIX
 	return h;
 }
+
+// Tide: what the writer below takes these structs to be, on every platform: where their pointers are, and
+// where the bytes are that no field owns. An image has zeros in both (b3SnapZero), as what's there in memory
+// is whatever was there before, which is another thing on another machine. If one of these fires, a struct
+// changed: bring the offsets in b3SerializeWorld back in line with it.
+_Static_assert( sizeof( b3Body ) == 136 && offsetof( b3Body, userDataBits ) == 0 && offsetof( b3Body, generation ) == 128,
+				"b3Body changed" );
+_Static_assert( sizeof( b3Joint ) == 72 && offsetof( b3Joint, userDataBits ) == 0 && offsetof( b3Joint, collideConnected ) == 66,
+				"b3Joint changed" );
+_Static_assert( sizeof( b3Filter ) == 24 && offsetof( b3Filter, groupIndex ) == 16, "b3Filter changed" );
+_Static_assert( sizeof( b3Shape ) == 208 && offsetof( b3Shape, materialsBits ) == 120 && offsetof( b3Shape, filter ) == 128 &&
+					offsetof( b3Shape, userDataBits ) == 152 && offsetof( b3Shape, userShapeBits ) == 160 &&
+					offsetof( b3Shape, flags ) == 174 && offsetof( b3Shape, geometryBits ) == 176,
+				"b3Shape changed" );
+_Static_assert( sizeof( b3Contact ) == 216 && offsetof( b3Contact, manifoldsBits ) == 72 && offsetof( b3Contact, friction ) == 144 &&
+					offsetof( b3Contact, convexContact ) == 152 && offsetof( b3Contact, restitution ) == 192,
+				"b3Contact changed" );
+_Static_assert( sizeof( b3ContactCache ) == 16 && sizeof( b3SimplexCache ) == 16 && offsetof( b3SimplexCache, indexB ) == 10,
+				"b3ContactCache changed" );
+_Static_assert( sizeof( b3TriangleCache ) == 20 && offsetof( b3TriangleCache, cache ) == 4, "b3TriangleCache changed" );
+_Static_assert( sizeof( b3ManifoldPoint ) == 56 && offsetof( b3ManifoldPoint, persisted ) == 52 && sizeof( b3Manifold ) == 268 &&
+					B3_MAX_MANIFOLD_POINTS == 4,
+				"b3Manifold changed" );
+_Static_assert( sizeof( b3BodyState ) == 64 && offsetof( b3BodyState, padding1 ) == 12 && offsetof( b3BodyState, padding2 ) == 28,
+				"b3BodyState changed" );
+_Static_assert( sizeof( b3JointSim ) == 444 && offsetof( b3JointSim, fixedRotation ) == 180 &&
+					offsetof( b3JointSim, distanceJoint ) == 184,
+				"b3JointSim changed" );
+_Static_assert( sizeof( b3Visitor ) == 8 && offsetof( b3Visitor, generation ) == 4, "b3Visitor changed" );
+_Static_assert( sizeof( b3SetItem ) == 16 && offsetof( b3SetItem, hash ) == 8, "b3SetItem changed" );
+_Static_assert( sizeof( b3ContactSpec ) == 12 && offsetof( b3ContactSpec, manifoldCount ) == 8, "b3ContactSpec changed" );
+_Static_assert( sizeof( b3BodySim ) == 216 && sizeof( b3TreeNode ) == 32 && sizeof( b3TreeProxy ) == 24 &&
+					sizeof( b3SurfaceMaterial ) == 40 && sizeof( b3ContactLink ) == 12 && sizeof( b3JointLink ) == 12 &&
+					sizeof( b3IslandSim ) == 4 && sizeof( b3Capacity ) == 20 && sizeof( b3AABB ) == 24,
+				"a struct an image holds as its bytes changed" );
 
 typedef struct b3SnapHeader
 {
@@ -92,6 +159,9 @@ typedef struct b3SnapReader
 	int cursor;
 	int size;
 	bool ok;
+	// Tide: an image in sections says where each starts
+	bool sectioned;
+	int bases[b3_sectionCount];
 } b3SnapReader;
 
 static void b3SnapRCheck( b3SnapReader* r, int need )
@@ -99,6 +169,48 @@ static void b3SnapRCheck( b3SnapReader* r, int need )
 	if ( need < 0 || (int64_t)r->cursor + (int64_t)need > (int64_t)r->size )
 	{
 		r->ok = false;
+	}
+}
+
+// Tide: the next section starts here. Its size goes to the caller who asked, and with a table of bases the
+// writing goes on from this one's, over zeros. A section that ran past the next one's base says so, and from
+// there on the image is only measured, as one run of bytes: the caller places the sections again.
+static void b3SnapSection( b3RecBuffer* buf, int section )
+{
+	if ( buf->sizes != NULL && buf->section > 0 )
+	{
+		buf->sizes[buf->section - 1] = buf->size - buf->sectionStart;
+	}
+
+	if ( buf->bases != NULL && buf->overran == false && section < b3_sectionCount )
+	{
+		int base = buf->bases[section];
+		if ( buf->size > base )
+		{
+			buf->overran = true;
+			buf->countOnly = true;
+		}
+		else if ( buf->countOnly || base > buf->capacity )
+		{
+			buf->countOnly = true;
+			buf->size = base;
+		}
+		else
+		{
+			memset( buf->data + buf->size, 0, (size_t)( base - buf->size ) );
+			buf->size = base;
+		}
+	}
+
+	buf->section = section + 1;
+	buf->sectionStart = buf->size;
+}
+
+static void b3SnapSeek( b3SnapReader* r, int section )
+{
+	if ( r->sectioned && r->ok )
+	{
+		r->cursor = r->bases[section];
 	}
 }
 
@@ -143,6 +255,24 @@ static void b3SnapW_Bytes( b3RecBuffer* buf, const void* src, int n )
 	b3RecBufAppend( buf, src, n );
 }
 
+// Tide: zeros over `size` bytes at `offset` in each of the `count` things of `stride` bytes that were written
+// from `start` on: the bytes of a struct that no field owns, and its pointers. Nothing, when they were only
+// counted.
+static void b3SnapZero( b3RecBuffer* buf, int start, int count, int stride, int offset, int size )
+{
+	if ( buf->countOnly || count <= 0 )
+	{
+		return;
+	}
+
+	uint8_t* at = buf->data + start + offset;
+	for ( int i = 0; i < count; ++i )
+	{
+		memset( at, 0, (size_t)size );
+		at += stride;
+	}
+}
+
 // Bounds check before allocating from image
 static bool b3SnapCheckCount( const b3SnapReader* r, int count, int memSize, int minStreamBytes )
 {
@@ -167,6 +297,20 @@ static bool b3SnapCheckCount( const b3SnapReader* r, int count, int memSize, int
 		{                                                                                                                        \
 			b3SnapW_Bytes( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                    \
 		}                                                                                                                        \
+	}                                                                                                                            \
+	while ( 0 )
+
+// Tide: a POD array whose elements have `holeSize` bytes at `holeOffset` that no field owns
+#define b3SerPodArrayZero( buf, arr, holeOffset, holeSize )                                                                      \
+	do                                                                                                                           \
+	{                                                                                                                            \
+		b3SnapW_I32( buf, ( arr ).count );                                                                                       \
+		int podStart = ( buf )->size;                                                                                            \
+		if ( ( arr ).count > 0 )                                                                                                 \
+		{                                                                                                                        \
+			b3SnapW_Bytes( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                    \
+		}                                                                                                                        \
+		b3SnapZero( buf, podStart, ( arr ).count, (int)sizeof( *( arr ).data ), holeOffset, holeSize );                          \
 	}                                                                                                                            \
 	while ( 0 )
 
@@ -244,7 +388,10 @@ static void b3SerHashSet( b3RecBuffer* buf, const b3HashSet* hs )
 	b3SnapW_U32( buf, hs->count );
 	if ( hs->capacity > 0 )
 	{
+		int start = buf->size;
 		b3SnapW_Bytes( buf, hs->items, (int)( hs->capacity * sizeof( b3SetItem ) ) );
+		// Tide: after an item's hash
+		b3SnapZero( buf, start, (int)hs->capacity, (int)sizeof( b3SetItem ), 12, 4 );
 	}
 }
 
@@ -374,13 +521,28 @@ static void b3DesTree( b3SnapReader* r, b3DynamicTree* tree )
 	b3SnapR_Bytes( r, tree->proxies, proxyCapacity * (int)sizeof( b3TreeProxy ) );
 }
 
+// Tide: body states, whose two padding floats the 4-wide and 8-wide solvers write zeros to and the scalar
+// one leaves alone: zeros in an image, whichever solved
+static void b3SerBodyStates( b3RecBuffer* buf, const b3SolverSet* set )
+{
+	b3SnapW_I32( buf, set->bodyStates.count );
+	int start = buf->size;
+	if ( set->bodyStates.count > 0 )
+	{
+		b3SnapW_Bytes( buf, set->bodyStates.data, set->bodyStates.count * (int)sizeof( b3BodyState ) );
+	}
+	b3SnapZero( buf, start, set->bodyStates.count, (int)sizeof( b3BodyState ), 12, 4 );
+	b3SnapZero( buf, start, set->bodyStates.count, (int)sizeof( b3BodyState ), 28, 4 );
+}
+
 // Solver set: setIndex + 4 arrays (note: contactIndices is int array, not contactSims)
 static void b3SerSolverSet( b3RecBuffer* buf, const b3SolverSet* set )
 {
 	b3SnapW_I32( buf, set->setIndex );
 	b3SerPodArray( buf, set->bodySims );
-	b3SerPodArray( buf, set->bodyStates );
-	b3SerPodArray( buf, set->jointSims );
+	b3SerBodyStates( buf, set );
+	// Tide: after a joint's fixedRotation
+	b3SerPodArrayZero( buf, set->jointSims, 181, 3 );
 	b3SerPodArray( buf, set->contactIndices );
 	b3SerPodArray( buf, set->islandSims );
 }
@@ -422,6 +584,11 @@ static void b3DesNames( b3SnapReader* r, b3NameCache* cache )
 		return;
 	}
 
+	// Tide: the image's names and no others, in its order: a world that had names of its own would write
+	// them into its next image, which a world made from nothing wouldn't
+	b3DestroyNameCache( cache );
+	*cache = b3CreateNameCache();
+
 	b3Array_Reserve( cache->entries, count );
 	for ( int i = 0; i < count; ++i )
 	{
@@ -446,9 +613,10 @@ static void b3SerGraphColor( b3RecBuffer* buf, const b3GraphColor* color, bool i
 	{
 		b3SerBitSet( buf, &color->bodySet );
 	}
-	b3SerPodArray( buf, color->jointSims );
+	// Tide: after a joint's fixedRotation, and after a contact spec's manifoldCount
+	b3SerPodArrayZero( buf, color->jointSims, 181, 3 );
 	b3SerPodArray( buf, color->convexContacts );
-	b3SerPodArray( buf, color->contacts );
+	b3SerPodArrayZero( buf, color->contacts, 10, 2 );
 	// wideConstraints / manifoldConstraints / contactConstraints are transient, not serialized
 }
 
@@ -519,100 +687,446 @@ static void b3DesWorldConfig( b3SnapReader* r, b3World* world )
 	world->enableRestitutionPropagation = ( flags & 0x10u ) != 0;
 }
 
+// Tide: the geometry a world's images name (see ../TIDE.md). An image says which hull, mesh or height field a
+// shape has by a number, and this is what the numbers are: each geometry once, in the order images first
+// named them, which is the same on every machine as images are taken of the same worlds. It's only ever
+// added to, so what's written of it (b3World_GetSnapshotGeometry) only ever grows at its end.
+//
+// Upstream keeps this in a recording, beside the images. Here it's the world's own, as an image goes into a
+// match and the geometry has to go there with it: a machine that has only the match makes the world from both.
+typedef struct b3SnapGeometryEntry
+{
+	// The geometry's own hash of itself, which finds it
+	uint64_t hash;
+	// b3GeometryKind
+	int kind;
+	int byteCount;
+	// The world's copy
+	uint8_t* bytes;
+	// Where a shape last had it: the same again isn't compared again
+	const void* source;
+	// The next entry in its bucket, or B3_NULL_INDEX
+	int next;
+} b3SnapGeometryEntry;
+
+typedef struct b3SnapGeometry
+{
+	b3SnapGeometryEntry* entries;
+	int count;
+	int capacity;
+	// The first entry of each hash, by its low bits
+	int* buckets;
+	int bucketCount;
+	// What b3World_GetSnapshotGeometry writes
+	int byteCount;
+	// The last one asked for of each kind, which the next shape often has too
+	const void* lastData[3];
+	int lastId[3];
+} b3SnapGeometry;
+
+// Hulls, meshes and height fields start alike: a version, their hash, and further on their size. A compound's
+// bytes hold a tree with its pointers, which is another layout where pointers are another width, so an image
+// can't name one.
+_Static_assert( b3_geometryHull == 0 && b3_geometryMesh == 1 && b3_geometryHeightField == 2, "the kinds an image names" );
+_Static_assert( offsetof( b3HullData, hash ) == 8 && offsetof( b3MeshData, hash ) == 8 && offsetof( b3HeightFieldData, hash ) == 8,
+				"geometry starts with its version and its hash" );
+
+// As it's written: its kind, its size, its bytes, and zeros to the next multiple of 8
+static int b3SnapGeometryRecordSize( int byteCount )
+{
+	return 8 + ( ( byteCount + 7 ) & ~7 );
+}
+
+static b3SnapGeometry* b3GetSnapGeometry( b3World* world )
+{
+	if ( world->snapGeometry == NULL )
+	{
+		b3SnapGeometry* geometry = b3Alloc( sizeof( b3SnapGeometry ) );
+		memset( geometry, 0, sizeof( b3SnapGeometry ) );
+		world->snapGeometry = geometry;
+	}
+	return world->snapGeometry;
+}
+
+static void b3SnapGeometryRehash( b3SnapGeometry* geometry, int bucketCount )
+{
+	b3Free( geometry->buckets, (size_t)geometry->bucketCount * sizeof( int ) );
+	geometry->buckets = b3Alloc( (size_t)bucketCount * sizeof( int ) );
+	geometry->bucketCount = bucketCount;
+	for ( int i = 0; i < bucketCount; ++i )
+	{
+		geometry->buckets[i] = B3_NULL_INDEX;
+	}
+	for ( int i = 0; i < geometry->count; ++i )
+	{
+		b3SnapGeometryEntry* entry = geometry->entries + i;
+		int bucket = (int)( entry->hash & (uint64_t)( bucketCount - 1 ) );
+		entry->next = geometry->buckets[bucket];
+		geometry->buckets[bucket] = i;
+	}
+}
+
+// A copy of the bytes, as the next entry
+static int b3SnapGeometryAdd( b3SnapGeometry* geometry, int kind, const void* data, int byteCount, const void* source )
+{
+	if ( geometry->count == geometry->capacity )
+	{
+		int capacity = geometry->capacity == 0 ? 8 : 2 * geometry->capacity;
+		geometry->entries = b3GrowAlloc( geometry->entries, geometry->capacity * (int)sizeof( b3SnapGeometryEntry ),
+										 capacity * (int)sizeof( b3SnapGeometryEntry ) );
+		geometry->capacity = capacity;
+	}
+
+	int id = geometry->count;
+	b3SnapGeometryEntry* entry = geometry->entries + id;
+	entry->kind = kind;
+	entry->byteCount = byteCount;
+	entry->bytes = b3Alloc( (size_t)byteCount );
+	memcpy( entry->bytes, data, (size_t)byteCount );
+	memcpy( &entry->hash, entry->bytes + 8, sizeof( uint64_t ) );
+	entry->source = source;
+	entry->next = B3_NULL_INDEX;
+	geometry->count += 1;
+	geometry->byteCount += b3SnapGeometryRecordSize( byteCount );
+
+	if ( 2 * geometry->count > geometry->bucketCount )
+	{
+		b3SnapGeometryRehash( geometry, geometry->bucketCount == 0 ? 16 : 2 * geometry->bucketCount );
+	}
+	else
+	{
+		int bucket = (int)( entry->hash & (uint64_t)( geometry->bucketCount - 1 ) );
+		entry->next = geometry->buckets[bucket];
+		geometry->buckets[bucket] = id;
+	}
+	return id;
+}
+
+// Only the first `count` entries stay
+static void b3SnapGeometryTruncate( b3SnapGeometry* geometry, int count )
+{
+	if ( count >= geometry->count )
+	{
+		return;
+	}
+
+	for ( int i = count; i < geometry->count; ++i )
+	{
+		b3SnapGeometryEntry* entry = geometry->entries + i;
+		geometry->byteCount -= b3SnapGeometryRecordSize( entry->byteCount );
+		b3Free( entry->bytes, (size_t)entry->byteCount );
+	}
+	geometry->count = count;
+	if ( geometry->bucketCount > 0 )
+	{
+		b3SnapGeometryRehash( geometry, geometry->bucketCount );
+	}
+}
+
+// Which entry a shape's geometry is: the one with its bytes, or a new one
+static uint32_t b3SnapGeometryId( b3World* world, int kind, const void* data, int byteCount )
+{
+	b3SnapGeometry* geometry = b3GetSnapGeometry( world );
+	if ( geometry->lastData[kind] == data )
+	{
+		return (uint32_t)geometry->lastId[kind];
+	}
+
+	uint64_t hash;
+	memcpy( &hash, (const uint8_t*)data + 8, sizeof( uint64_t ) );
+
+	int id = B3_NULL_INDEX;
+	if ( geometry->bucketCount > 0 )
+	{
+		int index = geometry->buckets[hash & (uint64_t)( geometry->bucketCount - 1 )];
+		for ( ; index != B3_NULL_INDEX; index = geometry->entries[index].next )
+		{
+			b3SnapGeometryEntry* entry = geometry->entries + index;
+			if ( entry->hash != hash || entry->kind != kind || entry->byteCount != byteCount )
+			{
+				continue;
+			}
+
+			// The hash is how it's found, and the bytes are how it's known, compared once for each place a
+			// shape has them: a mesh is megabytes, and an image is taken every step
+			if ( entry->source == data || memcmp( entry->bytes, data, (size_t)byteCount ) == 0 )
+			{
+				entry->source = data;
+				id = index;
+				break;
+			}
+		}
+	}
+
+	if ( id == B3_NULL_INDEX )
+	{
+		id = b3SnapGeometryAdd( geometry, kind, data, byteCount, data );
+	}
+
+	geometry->lastData[kind] = data;
+	geometry->lastId[kind] = id;
+	return (uint32_t)id;
+}
+
+void b3DestroySnapshotGeometry( b3World* world )
+{
+	b3SnapGeometry* geometry = world->snapGeometry;
+	if ( geometry == NULL )
+	{
+		return;
+	}
+
+	b3SnapGeometryTruncate( geometry, 0 );
+	b3Free( geometry->entries, (size_t)geometry->capacity * sizeof( b3SnapGeometryEntry ) );
+	b3Free( geometry->buckets, (size_t)geometry->bucketCount * sizeof( int ) );
+	b3Free( geometry, sizeof( b3SnapGeometry ) );
+	world->snapGeometry = NULL;
+}
+
+// Whether these bytes are geometry as b3World_GetSnapshotGeometry writes it, whole
+static bool b3SnapGeometryIsValid( const uint8_t* bytes, int size )
+{
+	if ( size < 0 || ( size > 0 && bytes == NULL ) )
+	{
+		return false;
+	}
+
+	int cursor = 0;
+	while ( cursor < size )
+	{
+		if ( size - cursor < 8 )
+		{
+			return false;
+		}
+
+		uint32_t kind, byteCount;
+		memcpy( &kind, bytes + cursor, 4 );
+		memcpy( &byteCount, bytes + cursor + 4, 4 );
+		if ( byteCount > (uint32_t)( size - cursor - 8 ) || b3SnapGeometryRecordSize( (int)byteCount ) > size - cursor )
+		{
+			return false;
+		}
+
+		// Each kind says its version first, and its own size further on
+		const uint8_t* data = bytes + cursor + 8;
+		uint64_t version = 0;
+		int32_t ownByteCount = -1;
+		if ( kind == b3_geometryHull && byteCount >= sizeof( b3HullData ) )
+		{
+			version = B3_HULL_VERSION;
+			memcpy( &ownByteCount, data + offsetof( b3HullData, byteCount ), 4 );
+		}
+		else if ( kind == b3_geometryMesh && byteCount >= sizeof( b3MeshData ) )
+		{
+			version = B3_MESH_VERSION;
+			memcpy( &ownByteCount, data + offsetof( b3MeshData, byteCount ), 4 );
+		}
+		else if ( kind == b3_geometryHeightField && byteCount >= sizeof( b3HeightFieldData ) )
+		{
+			version = B3_HEIGHT_FIELD_VERSION;
+			memcpy( &ownByteCount, data + offsetof( b3HeightFieldData, byteCount ), 4 );
+		}
+		else
+		{
+			return false;
+		}
+
+		if ( memcmp( data, &version, 8 ) != 0 || ownByteCount != (int32_t)byteCount )
+		{
+			return false;
+		}
+
+		cursor += b3SnapGeometryRecordSize( (int)byteCount );
+	}
+	return true;
+}
+
+// The world's geometry becomes what these bytes say, which were checked. What it has of it already stays
+// where it is: its entries are the same up to where the two part, as both only ever grow.
+static void b3SnapGeometryLoad( b3World* world, const uint8_t* bytes, int size )
+{
+	b3SnapGeometry* geometry = b3GetSnapGeometry( world );
+	memset( geometry->lastData, 0, sizeof( geometry->lastData ) );
+
+	int cursor = 0;
+	int index = 0;
+	while ( cursor < size )
+	{
+		uint32_t kind, byteCount;
+		memcpy( &kind, bytes + cursor, 4 );
+		memcpy( &byteCount, bytes + cursor + 4, 4 );
+		const uint8_t* data = bytes + cursor + 8;
+
+		if ( index < geometry->count )
+		{
+			b3SnapGeometryEntry* entry = geometry->entries + index;
+			if ( entry->kind != (int)kind || entry->byteCount != (int)byteCount || memcmp( entry->bytes, data, byteCount ) != 0 )
+			{
+				b3SnapGeometryTruncate( geometry, index );
+			}
+			else
+			{
+				// The shapes that had it are gone
+				entry->source = NULL;
+			}
+		}
+
+		if ( index == geometry->count )
+		{
+			b3SnapGeometryAdd( geometry, (int)kind, data, (int)byteCount, NULL );
+		}
+
+		index += 1;
+		cursor += b3SnapGeometryRecordSize( (int)byteCount );
+	}
+	b3SnapGeometryTruncate( geometry, index );
+}
+
+// Tide: a shape's geometry as an image has it, in the 32 bytes the shape's own takes. A sphere and a capsule
+// are themselves, and what a shape has a pointer to is its number among the world's geometry, with a mesh's
+// scale after it. The rest is zeros.
+_Static_assert( sizeof( b3Capsule ) == 28 && sizeof( b3Sphere ) == 16, "a shape's geometry in an image" );
+#define B3_SNAP_GEOMETRY_SIZE 32
+
+// Tide: a shape with a material array of its own has this where its pointer was, and its materials after
+// the shapes
+#define B3_SNAP_OWNS_MATERIALS 1u
+
 // Shapes carry pointer fields: materials, userData, userShape, and the geometry union.
-// Serialize the POD scalars with pointers nulled, then the owned materials array, then geometry.
-// A single material lives inline in the struct image.
+// Tide: all the shapes as their bytes, with zeros for the pointers and for what no field owns, and the
+// geometry as above. Then the material arrays of the shapes that own one, in the shapes' order. So a shape
+// keeps its place whatever the others are, where upstream writes each shape's materials and geometry right
+// after it, and they differ in size.
 // Hull/mesh/heightField/compound are interned into the recording registry; sphere/capsule inline.
+// Tide: or, with no recording, into the world's own.
 static void b3SerShapes( b3RecBuffer* buf, b3World* world, b3Recording* rec )
 {
 	int count = world->shapes.count;
 	b3SnapW_I32( buf, count );
 
+	int start = buf->size;
+	const int stride = (int)sizeof( b3Shape );
+	if ( count > 0 )
+	{
+		b3SnapW_Bytes( buf, world->shapes.data, count * stride );
+	}
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, filter ) + 20, 4 );
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, userDataBits ), 8 );
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, userShapeBits ), 8 );
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Shape, flags ) + 1, 1 );
+
+	if ( world->snapGeometry != NULL )
+	{
+		b3SnapGeometry* geometry = world->snapGeometry;
+		memset( geometry->lastData, 0, sizeof( geometry->lastData ) );
+	}
+
 	for ( int i = 0; i < count; ++i )
 	{
-		b3Shape shape = world->shapes.data[i];
-		bool isLive = ( shape.id == i );
-
-		// Null out pointer fields before writing the raw struct
-		shape.materials = NULL;
-		shape.userData = NULL;
-		shape.userShape = NULL;
-		// Zero the geometry union so free-slot images have deterministic bytes
-		if ( !isLive )
-		{
-			memset( &shape.capsule, 0, sizeof( shape.capsule ) );
-		}
-		b3SnapW_Bytes( buf, &shape, sizeof( b3Shape ) );
-
-		if ( !isLive )
-		{
-			// Free slot: no materials or geometry
-			b3SnapW_I32( buf, 0 );	// materialCount
-			b3SnapW_I32( buf, -1 ); // geometry kind sentinel
-			continue;
-		}
-
-		// Owned material array. Only multi material meshes and compounds have one. A single material
-		// already rode along inline in the struct image, so write a zero length for it.
 		const b3Shape* src = world->shapes.data + i;
-		if ( src->materials != NULL )
+		bool isLive = ( src->id == i );
+
+		uint64_t owns = 0;
+		uint8_t geo[B3_SNAP_GEOMETRY_SIZE] = { 0 };
+
+		// A free slot has neither: zeros, so free-slot images have deterministic bytes
+		if ( isLive )
 		{
-			b3SnapW_I32( buf, src->materialCount );
-			b3SnapW_Bytes( buf, src->materials, src->materialCount * (int)sizeof( b3SurfaceMaterial ) );
-		}
-		else
-		{
-			b3SnapW_I32( buf, 0 );
+			// Only multi material meshes and compounds have an array. A single material already rode along
+			// inline in the struct image.
+			owns = src->materials != NULL ? B3_SNAP_OWNS_MATERIALS : 0;
+
+			uint32_t gid = 0;
+			switch ( src->type )
+			{
+				case b3_sphereShape:
+					memcpy( geo, &src->sphere, sizeof( b3Sphere ) );
+					break;
+				case b3_capsuleShape:
+					memcpy( geo, &src->capsule, sizeof( b3Capsule ) );
+					break;
+				case b3_hullShape:
+					gid = rec != NULL ? b3RecInternHull( rec, src->hull )
+									  : b3SnapGeometryId( world, b3_geometryHull, src->hull, src->hull->byteCount );
+					memcpy( geo, &gid, 4 );
+					break;
+				case b3_meshShape:
+					gid = rec != NULL ? b3RecInternMesh( rec, src->mesh.data )
+									  : b3SnapGeometryId( world, b3_geometryMesh, src->mesh.data, src->mesh.data->byteCount );
+					memcpy( geo, &gid, 4 );
+					memcpy( geo + 4, &src->mesh.scale, sizeof( b3Vec3 ) );
+					break;
+				case b3_heightShape:
+					gid = rec != NULL ? b3RecInternHeightField( rec, src->heightField )
+									  : b3SnapGeometryId( world, b3_geometryHeightField, src->heightField,
+														  src->heightField->byteCount );
+					memcpy( geo, &gid, 4 );
+					break;
+				case b3_compoundShape:
+					if ( rec != NULL )
+					{
+						gid = b3RecInternCompound( rec, src->compound );
+					}
+					else
+					{
+						// Tide: a compound's bytes aren't the same on every machine (see b3SnapGeometry)
+						buf->failed = true;
+					}
+					memcpy( geo, &gid, 4 );
+					break;
+				default:
+					// A live shape must have a known geometry type. Fail loudly rather than emit a shape
+					// with no geometry that would silently lose its collision on restore.
+					B3_ASSERT( false );
+					buf->failed = true;
+					break;
+			}
 		}
 
-		// Geometry
-		switch ( src->type )
+		if ( buf->countOnly == false )
 		{
-			case b3_sphereShape:
-				b3SnapW_I32( buf, (int)b3_sphereShape );
-				b3SnapW_Bytes( buf, &src->sphere, sizeof( b3Sphere ) );
-				break;
-			case b3_capsuleShape:
-				b3SnapW_I32( buf, (int)b3_capsuleShape );
-				b3SnapW_Bytes( buf, &src->capsule, sizeof( b3Capsule ) );
-				break;
-			case b3_hullShape:
-			{
-				b3SnapW_I32( buf, (int)b3_hullShape );
-				uint32_t gid = b3RecInternHull( rec, src->hull );
-				b3SnapW_U32( buf, gid );
-				break;
-			}
-			case b3_meshShape:
-			{
-				b3SnapW_I32( buf, (int)b3_meshShape );
-				uint32_t gid = b3RecInternMesh( rec, src->mesh.data );
-				b3SnapW_U32( buf, gid );
-				b3SnapW_Bytes( buf, &src->mesh.scale, sizeof( b3Vec3 ) );
-				break;
-			}
-			case b3_heightShape:
-			{
-				b3SnapW_I32( buf, (int)b3_heightShape );
-				uint32_t gid = b3RecInternHeightField( rec, src->heightField );
-				b3SnapW_U32( buf, gid );
-				break;
-			}
-			case b3_compoundShape:
-			{
-				b3SnapW_I32( buf, (int)b3_compoundShape );
-				uint32_t gid = b3RecInternCompound( rec, src->compound );
-				b3SnapW_U32( buf, gid );
-				break;
-			}
-			default:
-				// A live shape must have a known geometry type. Fail loudly rather than emit a shape
-				// with no geometry that would silently lose its collision on restore.
-				B3_ASSERT( false );
-				b3SnapW_I32( buf, -1 );
-				break;
+			uint8_t* at = buf->data + start + i * stride;
+			memcpy( at + offsetof( b3Shape, materialsBits ), &owns, 8 );
+			memcpy( at + offsetof( b3Shape, geometryBits ), geo, B3_SNAP_GEOMETRY_SIZE );
 		}
 	}
+
+	for ( int i = 0; i < count; ++i )
+	{
+		const b3Shape* src = world->shapes.data + i;
+		if ( src->id == i && src->materials != NULL )
+		{
+			b3SnapW_Bytes( buf, src->materials, src->materialCount * (int)sizeof( b3SurfaceMaterial ) );
+		}
+	}
+}
+
+// Tide: the bytes of the geometry an image names by `id`, of the kind a shape of that type has: the
+// recording's, or the world's own. NULL, and the read fails, when there's no such geometry.
+static const uint8_t* b3SnapGeometryBytes( b3SnapReader* r, b3World* world, b3RecReader* rdr, uint32_t id, int kind )
+{
+	if ( !r->ok )
+	{
+		return NULL;
+	}
+
+	if ( rdr != NULL )
+	{
+		if ( id >= (uint32_t)rdr->slotCount )
+		{
+			r->ok = false;
+			return NULL;
+		}
+		return rdr->slots[id].bytes;
+	}
+
+	const b3SnapGeometry* geometry = world->snapGeometry;
+	if ( geometry == NULL || id >= (uint32_t)geometry->count || geometry->entries[id].kind != kind )
+	{
+		r->ok = false;
+		return NULL;
+	}
+	return geometry->entries[id].bytes;
 }
 
 static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
@@ -652,15 +1166,30 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 	b3Array_Resize( world->shapes, count );
 	memset( world->shapes.data, 0, (size_t)count * sizeof( b3Shape ) );
 
+	// Tide: all the shapes, then each one's geometry from where it is in its bytes
+	if ( count > 0 )
+	{
+		b3SnapR_Bytes( r, world->shapes.data, count * (int)sizeof( b3Shape ) );
+	}
+
 	for ( int i = 0; i < count && r->ok; ++i )
 	{
 		b3Shape* dst = world->shapes.data + i;
-		b3SnapR_Bytes( r, dst, sizeof( b3Shape ) );
-		// Pointer fields were written as NULL; set them cleanly
+
+		uint8_t geo[B3_SNAP_GEOMETRY_SIZE];
+		memcpy( geo, dst->geometryBits, B3_SNAP_GEOMETRY_SIZE );
+		uint32_t gid;
+		memcpy( &gid, geo, 4 );
+
+		// Pointer fields were written as zeros, or as a mark; set them cleanly
+		bool ownsMaterials = dst->materialsBits == B3_SNAP_OWNS_MATERIALS;
+		dst->materialsBits = 0;
 		dst->materials = NULL;
+		dst->userDataBits = 0;
 		dst->userData = NULL;
+		dst->userShapeBits = 0;
 		dst->userShape = NULL;
-		memset( &dst->capsule, 0, sizeof( dst->capsule ) );
+		memset( dst->geometryBits, 0, sizeof( dst->geometryBits ) );
 
 		bool isLive = ( dst->id == i );
 
@@ -673,112 +1202,71 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 			savedUserShape[i] = NULL;
 		}
 
-		// Serializer writes: matCount, matData, geoKind, geoData
-		int matCount = b3SnapR_I32( r );
-
-		if ( !r->ok )
-		{
-			break;
-		}
-
 		if ( !isLive )
 		{
-			// Free slot: matCount=0, geoKind=-1
-			(void)matCount;
-			b3SnapR_I32( r ); // consume the geoKind sentinel
+			// Free slot: no materials or geometry
 			continue;
 		}
 
-		// Owned material array (written before geoKind in serializer). A zero length means the single
-		// material is already inline in the restored struct image, so leave materialCount as restored.
-		if ( matCount > 0 )
+		// The owned material array comes after the shapes; until then the count says how many
+		if ( ownsMaterials )
 		{
-			if ( b3SnapCheckCount( r, matCount, (int)sizeof( b3SurfaceMaterial ), (int)sizeof( b3SurfaceMaterial ) ) == false )
+			if ( dst->materialCount <= 0 || b3SnapCheckCount( r, dst->materialCount, (int)sizeof( b3SurfaceMaterial ),
+															  (int)sizeof( b3SurfaceMaterial ) ) == false )
 			{
 				r->ok = false;
 				break;
 			}
-			dst->materialCount = matCount;
-			dst->materials = (b3SurfaceMaterial*)b3Alloc( (size_t)matCount * sizeof( b3SurfaceMaterial ) );
-			b3SnapR_Bytes( r, dst->materials, matCount * (int)sizeof( b3SurfaceMaterial ) );
+			dst->materials = (b3SurfaceMaterial*)b3Alloc( (size_t)dst->materialCount * sizeof( b3SurfaceMaterial ) );
+			memset( dst->materials, 0, (size_t)dst->materialCount * sizeof( b3SurfaceMaterial ) );
 		}
-		else
-		{
-			dst->materials = NULL;
-		}
-
-		int geoKind = b3SnapR_I32( r );
 
 		// Geometry
-		switch ( (b3ShapeType)geoKind )
+		switch ( dst->type )
 		{
 			case b3_sphereShape:
-				b3SnapR_Bytes( r, &dst->sphere, sizeof( b3Sphere ) );
+				memcpy( &dst->sphere, geo, sizeof( b3Sphere ) );
 				break;
 			case b3_capsuleShape:
-				b3SnapR_Bytes( r, &dst->capsule, sizeof( b3Capsule ) );
+				memcpy( &dst->capsule, geo, sizeof( b3Capsule ) );
 				break;
 			case b3_hullShape:
 			{
-				uint32_t gid = b3SnapR_U32( r );
-				if ( !r->ok )
+				const uint8_t* bytes = b3SnapGeometryBytes( r, world, rdr, gid, b3_geometryHull );
+				if ( bytes == NULL )
 				{
-					break;
-				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
-				{
-					r->ok = false;
 					break;
 				}
 				// Hull is cloned into the world DB; pass raw bytes directly
-				b3RegistrySlot* slot = rdr->slots + gid;
-				dst->hull = b3AddHullToDatabase( world, (const b3HullData*)slot->bytes );
+				dst->hull = b3AddHullToDatabase( world, (const b3HullData*)bytes );
 				break;
 			}
 			case b3_meshShape:
 			{
-				uint32_t gid = b3SnapR_U32( r );
-				b3Vec3 scale;
-				b3SnapR_Bytes( r, &scale, sizeof( b3Vec3 ) );
-				if ( !r->ok )
+				const uint8_t* bytes = b3SnapGeometryBytes( r, world, rdr, gid, b3_geometryMesh );
+				if ( bytes == NULL )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
-				{
-					r->ok = false;
-					break;
-				}
-				b3RegistrySlot* slot = rdr->slots + gid;
 				// Mesh is a self-contained blob used by reference; point straight at the pristine bytes.
-				dst->mesh.data = (const b3MeshData*)slot->bytes;
-				dst->mesh.scale = scale;
+				dst->mesh.data = (const b3MeshData*)bytes;
+				memcpy( &dst->mesh.scale, geo + 4, sizeof( b3Vec3 ) );
 				break;
 			}
 			case b3_heightShape:
 			{
-				uint32_t gid = b3SnapR_U32( r );
-				if ( !r->ok )
+				const uint8_t* bytes = b3SnapGeometryBytes( r, world, rdr, gid, b3_geometryHeightField );
+				if ( bytes == NULL )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
-				{
-					r->ok = false;
-					break;
-				}
-				b3RegistrySlot* slot = rdr->slots + gid;
 				// Self-contained blob used by reference; point straight at the pristine bytes.
-				dst->heightField = (const b3HeightFieldData*)slot->bytes;
+				dst->heightField = (const b3HeightFieldData*)bytes;
 				break;
 			}
 			case b3_compoundShape:
 			{
-				uint32_t gid = b3SnapR_U32( r );
-				if ( !r->ok )
-				{
-					break;
-				}
+				// Tide: only a recording has compounds (see b3SnapGeometry)
 				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
 				{
 					r->ok = false;
@@ -802,6 +1290,16 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 		}
 	}
 
+	// Tide: the material arrays of the shapes that own one
+	for ( int i = 0; i < count && r->ok; ++i )
+	{
+		b3Shape* dst = world->shapes.data + i;
+		if ( dst->id == i && dst->materials != NULL )
+		{
+			b3SnapR_Bytes( r, dst->materials, dst->materialCount * (int)sizeof( b3SurfaceMaterial ) );
+		}
+	}
+
 	// Release handles for shapes that are gone or were replaced this restore, so the host pool and any
 	// GPU resources they pinned do not leak across seeks.
 	if ( savedUserShape != NULL )
@@ -818,55 +1316,91 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 	}
 }
 
+// Tide: a manifold as an image has it: zeros after each point's `persisted`
+static void b3SerManifolds( b3RecBuffer* buf, const b3Manifold* manifolds, int count )
+{
+	int start = buf->size;
+	b3SnapW_Bytes( buf, manifolds, count * (int)sizeof( b3Manifold ) );
+	for ( int point = 0; point < B3_MAX_MANIFOLD_POINTS; ++point )
+	{
+		b3SnapZero( buf, start, count, (int)sizeof( b3Manifold ), point * (int)sizeof( b3ManifoldPoint ) + 53, 3 );
+	}
+}
+
 // Contact serialization. b3Contact is not fully POD:
 // - manifolds: heap array of b3Manifold, allocated via b3AllocateManifolds
 // - meshContact.triangleCache: heap b3Array, active when b3_simMeshContact flag is set
-// Serialize: raw struct (with nulled manifolds/triangleCache), then manifolds, then triangleCache.
+// Tide: all the contacts as their bytes, with zeros for their pointers and for what no field owns. Then a
+// manifold for each: its first one, or zeros when it has none, so that a contact that starts or stops
+// touching leaves every other where it was. Then what only mesh contacts have, in the contacts' order: their
+// other manifolds, and their triangle caches. Upstream writes each contact's manifolds right after it.
 static void b3SerContacts( b3RecBuffer* buf, b3World* world )
 {
 	int count = world->contacts.count;
 	b3SnapW_I32( buf, count );
 
+	int start = buf->size;
+	const int stride = (int)sizeof( b3Contact );
+	if ( count > 0 )
+	{
+		b3SnapW_Bytes( buf, world->contacts.data, count * stride );
+	}
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Contact, manifoldsBits ), 8 );
+	b3SnapZero( buf, start, count, stride, (int)offsetof( b3Contact, friction ) + 4, 4 );
+
+	const int cache = (int)offsetof( b3Contact, convexContact );
+	const int cacheEnd = (int)offsetof( b3Contact, restitution );
+	if ( buf->countOnly == false )
+	{
+		for ( int i = 0; i < count; ++i )
+		{
+			uint8_t* at = buf->data + start + i * stride;
+			if ( world->contacts.data[i].flags & b3_simMeshContact )
+			{
+				// The triangle cache's array
+				memset( at + cache, 0, 16 );
+			}
+			else
+			{
+				// After a simplex cache's indices, and past the cache: what's there is a mesh contact's
+				memset( at + cache + 14, 0, (size_t)( cacheEnd - cache - 14 ) );
+			}
+		}
+	}
+
+	static const b3Manifold zeroManifold = { 0 };
 	for ( int i = 0; i < count; ++i )
 	{
 		const b3Contact* c = world->contacts.data + i;
-		bool isLive = ( c->contactId == i );
+		bool has = c->contactId == i && c->manifoldCount > 0 && c->manifolds != NULL;
+		b3SerManifolds( buf, has ? c->manifolds : &zeroManifold, 1 );
+	}
 
-		// Write raw struct with pointer fields zeroed
-		b3Contact copy = *c;
-		copy.manifolds = NULL;
-		if ( copy.flags & b3_simMeshContact )
+	for ( int i = 0; i < count; ++i )
+	{
+		const b3Contact* c = world->contacts.data + i;
+		if ( c->contactId != i )
 		{
-			copy.meshContact.triangleCache.data = NULL;
-			copy.meshContact.triangleCache.count = 0;
-			copy.meshContact.triangleCache.capacity = 0;
-		}
-		b3SnapW_Bytes( buf, &copy, sizeof( b3Contact ) );
-
-		if ( !isLive )
-		{
-			// Free slot: no heap data
-			b3SnapW_I32( buf, 0 ); // manifoldCount
-			// No triangleCache
 			continue;
 		}
 
-		// Manifolds
-		b3SnapW_I32( buf, c->manifoldCount );
-		if ( c->manifoldCount > 0 && c->manifolds != NULL )
+		if ( c->manifoldCount > 1 && c->manifolds != NULL )
 		{
-			b3SnapW_Bytes( buf, c->manifolds, c->manifoldCount * (int)sizeof( b3Manifold ) );
+			b3SerManifolds( buf, c->manifolds + 1, c->manifoldCount - 1 );
 		}
 
 		// Mesh triangleCache
 		if ( c->flags & b3_simMeshContact )
 		{
 			b3SnapW_I32( buf, c->meshContact.triangleCache.count );
+			int cacheStart = buf->size;
 			if ( c->meshContact.triangleCache.count > 0 )
 			{
 				b3SnapW_Bytes( buf, c->meshContact.triangleCache.data,
 							   c->meshContact.triangleCache.count * (int)sizeof( b3TriangleCache ) );
 			}
+			// After a simplex cache's indices
+			b3SnapZero( buf, cacheStart, c->meshContact.triangleCache.count, (int)sizeof( b3TriangleCache ), 18, 2 );
 		}
 	}
 }
@@ -874,7 +1408,8 @@ static void b3SerContacts( b3RecBuffer* buf, b3World* world )
 static void b3DesContacts( b3SnapReader* r, b3World* world )
 {
 	int count = b3SnapR_I32( r );
-	if ( r->ok && b3SnapCheckCount( r, count, (int)sizeof( b3Contact ), (int)sizeof( b3Contact ) ) == false )
+	if ( r->ok &&
+		 b3SnapCheckCount( r, count, (int)sizeof( b3Contact ), (int)sizeof( b3Contact ) + (int)sizeof( b3Manifold ) ) == false )
 	{
 		r->ok = false;
 	}
@@ -885,47 +1420,62 @@ static void b3DesContacts( b3SnapReader* r, b3World* world )
 
 	b3Array_Resize( world->contacts, count );
 	memset( world->contacts.data, 0, (size_t)count * sizeof( b3Contact ) );
+	if ( count > 0 )
+	{
+		b3SnapR_Bytes( r, world->contacts.data, count * (int)sizeof( b3Contact ) );
+	}
 
 	for ( int i = 0; i < count && r->ok; ++i )
 	{
 		b3Contact* dst = world->contacts.data + i;
-		b3SnapR_Bytes( r, dst, sizeof( b3Contact ) );
+		dst->manifoldsBits = 0;
 		dst->manifolds = NULL;
 		if ( dst->flags & b3_simMeshContact )
 		{
+			dst->meshContact.triangleCacheBits[0] = 0;
+			dst->meshContact.triangleCacheBits[1] = 0;
 			dst->meshContact.triangleCache.data = NULL;
 			dst->meshContact.triangleCache.count = 0;
 			dst->meshContact.triangleCache.capacity = 0;
 		}
 
 		bool isLive = ( dst->contactId == i );
+		int manifoldCount = dst->manifoldCount;
 
-		int manifoldCount = b3SnapR_I32( r );
-
-		if ( !r->ok )
-		{
-			break;
-		}
-
+		// Tide: its first manifold, which is zeros when it has none
 		if ( isLive && manifoldCount > 0 )
 		{
-			if ( b3SnapCheckCount( r, manifoldCount, (int)sizeof( b3Manifold ), (int)sizeof( b3Manifold ) ) == false )
+			if ( b3SnapCheckCount( r, manifoldCount, (int)sizeof( b3Manifold ), 0 ) == false )
 			{
 				r->ok = false;
 				break;
 			}
 			dst->manifolds = b3AllocateManifolds( world, manifoldCount );
-			dst->manifoldCount = manifoldCount;
-			b3SnapR_Bytes( r, dst->manifolds, manifoldCount * (int)sizeof( b3Manifold ) );
+			b3SnapR_Bytes( r, dst->manifolds, (int)sizeof( b3Manifold ) );
 		}
 		else
 		{
-			dst->manifolds = NULL;
+			b3Manifold none;
+			b3SnapR_Bytes( r, &none, (int)sizeof( b3Manifold ) );
 			dst->manifoldCount = 0;
+		}
+	}
+
+	for ( int i = 0; i < count && r->ok; ++i )
+	{
+		b3Contact* dst = world->contacts.data + i;
+		if ( dst->contactId != i )
+		{
+			continue;
+		}
+
+		if ( dst->manifoldCount > 1 )
+		{
+			b3SnapR_Bytes( r, dst->manifolds + 1, ( dst->manifoldCount - 1 ) * (int)sizeof( b3Manifold ) );
 		}
 
 		// Mesh triangleCache
-		if ( isLive && ( dst->flags & b3_simMeshContact ) )
+		if ( dst->flags & b3_simMeshContact )
 		{
 			int cacheCount = b3SnapR_I32( r );
 			if ( !r->ok )
@@ -1026,9 +1576,18 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 #if defined( BOX3D_DOUBLE_PRECISION )
 	hdr.flags |= B3_SNAP_FLAG_DOUBLE_PRECISION;
 #endif
+	if ( buf->bases != NULL )
+	{
+		hdr.flags |= B3_SNAP_FLAG_SECTIONS;
+	}
 	b3SnapW_Bytes( buf, &hdr, (int)sizeof( hdr ) );
+	if ( buf->bases != NULL )
+	{
+		b3SnapW_Bytes( buf, buf->bases, b3_sectionCount * (int)sizeof( int ) );
+	}
 
 	// World scalars
+	b3SnapSection( buf, b3_sectionConfig );
 	b3SerWorldConfig( buf, world );
 
 	// 6 id pools (Box3D has no chainIdPool)
@@ -1040,46 +1599,73 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 	b3SerIdPool( buf, &world->solverSetIdPool );
 
 	// Solver sets
+	b3SnapSection( buf, b3_sectionFixedSets );
 	int setCount = world->solverSets.count;
 	b3SnapW_I32( buf, setCount );
 	for ( int i = 0; i < setCount; ++i )
 	{
+		if ( i == b3_awakeSet )
+		{
+			b3SnapSection( buf, b3_sectionAwakeSet );
+		}
+		else if ( i == b3_firstSleepingSet )
+		{
+			b3SnapSection( buf, b3_sectionSleepingSets );
+		}
 		b3SerSolverSet( buf, world->solverSets.data + i );
 	}
+	if ( setCount <= b3_awakeSet )
+	{
+		b3SnapSection( buf, b3_sectionAwakeSet );
+	}
+	if ( setCount <= b3_firstSleepingSet )
+	{
+		b3SnapSection( buf, b3_sectionSleepingSets );
+	}
 
-	// Sparse body array (userData is host wiring, zero it on the copy)
+	// Sparse body array (userData is host wiring, zero it)
+	// Tide: all 8 bytes of it, and what's after a body's generation
+	b3SnapSection( buf, b3_sectionBodies );
 	{
 		int bodyCount = world->bodies.count;
 		b3SnapW_I32( buf, bodyCount );
-		for ( int i = 0; i < bodyCount; ++i )
+		int start = buf->size;
+		if ( bodyCount > 0 )
 		{
-			b3Body elem = world->bodies.data[i];
-			elem.userData = NULL;
-			b3SnapW_Bytes( buf, &elem, sizeof( b3Body ) );
+			b3SnapW_Bytes( buf, world->bodies.data, bodyCount * (int)sizeof( b3Body ) );
 		}
+		b3SnapZero( buf, start, bodyCount, (int)sizeof( b3Body ), (int)offsetof( b3Body, userDataBits ), 8 );
+		b3SnapZero( buf, start, bodyCount, (int)sizeof( b3Body ), 130, 6 );
 	}
 
 	// Shape sparse array with geometry interning
+	b3SnapSection( buf, b3_sectionShapes );
 	b3SerShapes( buf, world, rec );
 
+	b3SnapSection( buf, b3_sectionFatAABBs );
 	b3SerPodArray( buf, world->fatAABBs );
 
 	// Contact sparse array with manifold and mesh triangleCache
+	b3SnapSection( buf, b3_sectionContacts );
 	b3SerContacts( buf, world );
 
 	// Joint sparse array (userData scrubbed)
+	// Tide: all 8 bytes of it, and what's after a joint's collideConnected
+	b3SnapSection( buf, b3_sectionJoints );
 	{
 		int jointCount = world->joints.count;
 		b3SnapW_I32( buf, jointCount );
-		for ( int i = 0; i < jointCount; ++i )
+		int start = buf->size;
+		if ( jointCount > 0 )
 		{
-			b3Joint elem = world->joints.data[i];
-			elem.userData = NULL;
-			b3SnapW_Bytes( buf, &elem, sizeof( b3Joint ) );
+			b3SnapW_Bytes( buf, world->joints.data, jointCount * (int)sizeof( b3Joint ) );
 		}
+		b3SnapZero( buf, start, jointCount, (int)sizeof( b3Joint ), (int)offsetof( b3Joint, userDataBits ), 8 );
+		b3SnapZero( buf, start, jointCount, (int)sizeof( b3Joint ), 67, 5 );
 	}
 
 	// Sensors: shapeId + 3 inner arrays each
+	b3SnapSection( buf, b3_sectionSensors );
 	{
 		int sensorCount = world->sensors.count;
 		b3SnapW_I32( buf, sensorCount );
@@ -1087,13 +1673,15 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 		{
 			b3Sensor* s = world->sensors.data + i;
 			b3SnapW_I32( buf, s->shapeId );
-			b3SerPodArray( buf, s->hits );
-			b3SerPodArray( buf, s->overlaps1 );
-			b3SerPodArray( buf, s->overlaps2 );
+			// Tide: after a visitor's generation
+			b3SerPodArrayZero( buf, s->hits, 6, 2 );
+			b3SerPodArrayZero( buf, s->overlaps1, 6, 2 );
+			b3SerPodArrayZero( buf, s->overlaps2, 6, 2 );
 		}
 	}
 
 	// Islands: 4 scalars + 3 inner arrays each
+	b3SnapSection( buf, b3_sectionIslands );
 	{
 		int islandCount = world->islands.count;
 		b3SnapW_I32( buf, islandCount );
@@ -1114,23 +1702,30 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 	b3BroadPhase* bp = &world->broadPhase;
 	for ( int t = 0; t < b3_bodyTypeCount; ++t )
 	{
+		b3SnapSection( buf, b3_sectionStaticTree + t );
 		b3SerTree( buf, &bp->trees[t] );
 	}
+	b3SnapSection( buf, b3_sectionPairs );
 	b3SerHashSet( buf, &bp->pairSet );
 
 	// Constraint graph
+	b3SnapSection( buf, b3_sectionGraph );
 	b3ConstraintGraph* graph = &world->constraintGraph;
 	for ( int c = 0; c < B3_GRAPH_COLOR_COUNT; ++c )
 	{
 		b3SerGraphColor( buf, &graph->colors[c], c == B3_OVERFLOW_INDEX );
 	}
 
+	b3SnapSection( buf, b3_sectionNames );
 	b3SerNames( buf, &world->names );
+	b3SnapSection( buf, b3_sectionCount ); // Tide: the last one's size
 
 	return buf->size - startSize;
 }
 
-bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3RecReader* rdr )
+// Tide: checks an image's header and readies a reader past it, with where its sections start. False for
+// bytes that are no image of this build's, with nothing else done.
+static bool b3OpenSnapshotImage( const uint8_t* data, int size, b3SnapReader* r )
 {
 	if ( data == NULL || size < (int)sizeof( b3SnapHeader ) )
 	{
@@ -1162,17 +1757,47 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		return false;
 	}
 
-	b3SnapReader readerStorage;
-	b3SnapReader* r = &readerStorage;
 	r->data = data;
 	r->cursor = (int)sizeof( b3SnapHeader );
 	r->size = size;
 	r->ok = true;
 
+	// Tide: where its sections start, each after the one before it and inside the image
+	r->sectioned = ( hdr.flags & B3_SNAP_FLAG_SECTIONS ) != 0;
+	if ( r->sectioned )
+	{
+		b3SnapR_Bytes( r, r->bases, (int)sizeof( r->bases ) );
+		int last = r->cursor;
+		for ( int i = 0; i < b3_sectionCount && r->ok; ++i )
+		{
+			if ( r->bases[i] < last || r->bases[i] > size )
+			{
+				r->ok = false;
+			}
+			last = r->bases[i];
+		}
+		if ( r->ok == false )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3RecReader* rdr )
+{
+	b3SnapReader readerStorage;
+	b3SnapReader* r = &readerStorage;
+	if ( b3OpenSnapshotImage( data, size, r ) == false )
+	{
+		return false;
+	}
+
 	// Free existing per-object heap before overwriting
 	b3FreeLiveSimElements( world );
 
 	// 1. World scalars
+	b3SnapSeek( r, b3_sectionConfig );
 	b3DesWorldConfig( r, world );
 
 	// 2. 6 id pools; destroy the pre-created sets' pool state first
@@ -1194,6 +1819,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		b3Array_Destroy( set->islandSims );
 	}
 
+	b3SnapSeek( r, b3_sectionFixedSets );
 	int setCount = b3SnapR_I32( r );
 	if ( r->ok && b3SnapCheckCount( r, setCount, (int)sizeof( b3SolverSet ), 6 * (int)sizeof( int ) ) == false )
 	{
@@ -1205,6 +1831,14 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		memset( world->solverSets.data, 0, (size_t)setCount * sizeof( b3SolverSet ) );
 		for ( int i = 0; i < setCount; ++i )
 		{
+			if ( i == b3_awakeSet )
+			{
+				b3SnapSeek( r, b3_sectionAwakeSet );
+			}
+			else if ( i == b3_firstSleepingSet )
+			{
+				b3SnapSeek( r, b3_sectionSleepingSets );
+			}
 			b3DesSolverSet( r, world->solverSets.data + i );
 		}
 	}
@@ -1215,6 +1849,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	// 4. Body sparse array
+	b3SnapSeek( r, b3_sectionBodies );
 	{
 		int bodyCount = b3SnapR_I32( r );
 		if ( r->ok && b3SnapCheckCount( r, bodyCount, (int)sizeof( b3Body ), (int)sizeof( b3Body ) ) == false )
@@ -1224,9 +1859,13 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		if ( r->ok )
 		{
 			b3Array_Resize( world->bodies, bodyCount );
+			if ( bodyCount > 0 )
+			{
+				b3SnapR_Bytes( r, world->bodies.data, bodyCount * (int)sizeof( b3Body ) );
+			}
 			for ( int i = 0; i < bodyCount; ++i )
 			{
-				b3SnapR_Bytes( r, world->bodies.data + i, sizeof( b3Body ) );
+				world->bodies.data[i].userDataBits = 0;
 				world->bodies.data[i].userData = NULL;
 			}
 		}
@@ -1238,6 +1877,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	// 5. Shape sparse array
+	b3SnapSeek( r, b3_sectionShapes );
 	b3DesShapes( r, world, rdr );
 
 	if ( !r->ok )
@@ -1245,6 +1885,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		return false;
 	}
 
+	b3SnapSeek( r, b3_sectionFatAABBs );
 	b3DesPodArray( r, world->fatAABBs );
 
 	if ( !r->ok )
@@ -1253,6 +1894,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	// 6. Contact sparse array
+	b3SnapSeek( r, b3_sectionContacts );
 	b3DesContacts( r, world );
 
 	if ( !r->ok )
@@ -1261,6 +1903,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	// 7. Joint sparse array
+	b3SnapSeek( r, b3_sectionJoints );
 	{
 		int jointCount = b3SnapR_I32( r );
 		if ( r->ok && b3SnapCheckCount( r, jointCount, (int)sizeof( b3Joint ), (int)sizeof( b3Joint ) ) == false )
@@ -1270,15 +1913,20 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		if ( r->ok )
 		{
 			b3Array_Resize( world->joints, jointCount );
+			if ( jointCount > 0 )
+			{
+				b3SnapR_Bytes( r, world->joints.data, jointCount * (int)sizeof( b3Joint ) );
+			}
 			for ( int i = 0; i < jointCount; ++i )
 			{
-				b3SnapR_Bytes( r, world->joints.data + i, sizeof( b3Joint ) );
+				world->joints.data[i].userDataBits = 0;
 				world->joints.data[i].userData = NULL;
 			}
 		}
 	}
 
 	// 8. Sensors
+	b3SnapSeek( r, b3_sectionSensors );
 	{
 		b3Array_Destroy( world->sensors );
 		b3Array_Create( world->sensors );
@@ -1308,6 +1956,7 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	// 9. Islands
+	b3SnapSeek( r, b3_sectionIslands );
 	{
 		b3Array_Destroy( world->islands );
 		b3Array_Create( world->islands );
@@ -1345,13 +1994,16 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 
 		for ( int t = 0; t < b3_bodyTypeCount; ++t )
 		{
+			b3SnapSeek( r, b3_sectionStaticTree + t );
 			b3DesTree( r, &bp->trees[t] );
 		}
+		b3SnapSeek( r, b3_sectionPairs );
 		b3DesHashSet( r, &bp->pairSet );
 		// The gathered moved siblings are per step scratch and stay at the shell's NULL
 	}
 
 	// 11. Constraint graph
+	b3SnapSeek( r, b3_sectionGraph );
 	{
 		b3ConstraintGraph* graph = &world->constraintGraph;
 		for ( int c = 0; c < B3_GRAPH_COLOR_COUNT; ++c )
@@ -1360,7 +2012,122 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		}
 	}
 
+	b3SnapSeek( r, b3_sectionNames );
 	b3DesNames( r, &world->names );
 
+	// Tide: events are a step's, and aren't in an image. A world restored in place has the ones its last
+	// step left, which the world the image was taken of may not have had: none, as a world made from
+	// nothing has.
+	b3Array_Clear( world->bodyMoveEvents );
+	b3Array_Clear( world->sensorBeginEvents );
+	b3Array_Clear( world->sensorEndEvents[0] );
+	b3Array_Clear( world->sensorEndEvents[1] );
+	b3Array_Clear( world->contactBeginEvents );
+	b3Array_Clear( world->contactEndEvents[0] );
+	b3Array_Clear( world->contactEndEvents[1] );
+	b3Array_Clear( world->contactHitEvents );
+	b3Array_Clear( world->jointEvents );
+
 	return r->ok;
+}
+
+// Tide: a world's image, and the world back from one, as calls of their own (see ../TIDE.md). Upstream has
+// both inside its recording only.
+int b3GetSnapshotHead( void )
+{
+	return (int)sizeof( b3SnapHeader ) + b3_sectionCount * (int)sizeof( int );
+}
+
+int b3World_GetSnapshotAt( b3WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+
+	// Serializing mid step would capture an inconsistent, in-flight world
+	B3_ASSERT( world->locked == false );
+	if ( world->locked )
+	{
+		return 0;
+	}
+
+	// Straight into the caller's memory, once: what doesn't fit is counted and not written
+	b3RecBuffer buf = { 0 };
+	buf.data = image;
+	buf.capacity = image != NULL ? capacity : 0;
+	buf.fixed = true;
+	buf.bases = bases;
+	buf.sizes = sizes;
+	b3SerializeWorld( world, &buf, NULL );
+	if ( buf.failed )
+	{
+		return 0;
+	}
+	return buf.overran ? -1 : buf.size;
+}
+
+bool b3GetSnapshotBases( const uint8_t* image, int size, int* bases )
+{
+	b3SnapReader reader;
+	if ( b3OpenSnapshotImage( image, size, &reader ) == false || reader.sectioned == false )
+	{
+		return false;
+	}
+	memcpy( bases, reader.bases, sizeof( reader.bases ) );
+	return true;
+}
+
+int b3World_GetSnapshotGeometry( b3WorldId worldId, uint8_t* geometry, int capacity )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	const b3SnapGeometry* own = world->snapGeometry;
+	if ( own == NULL )
+	{
+		return 0;
+	}
+
+	if ( geometry == NULL || capacity < own->byteCount )
+	{
+		return own->byteCount;
+	}
+
+	uint8_t* at = geometry;
+	for ( int i = 0; i < own->count; ++i )
+	{
+		const b3SnapGeometryEntry* entry = own->entries + i;
+		uint32_t kind = (uint32_t)entry->kind;
+		uint32_t byteCount = (uint32_t)entry->byteCount;
+		int recordSize = b3SnapGeometryRecordSize( entry->byteCount );
+		memset( at, 0, (size_t)recordSize );
+		memcpy( at, &kind, 4 );
+		memcpy( at + 4, &byteCount, 4 );
+		memcpy( at + 8, entry->bytes, (size_t)entry->byteCount );
+		at += recordSize;
+	}
+	return own->byteCount;
+}
+
+bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const uint8_t* geometry, int geometrySize )
+{
+	// Validate what can be before touching the world, so bytes that are no image leave it intact
+	b3SnapReader reader;
+	if ( b3OpenSnapshotImage( image, size, &reader ) == false || b3SnapGeometryIsValid( geometry, geometrySize ) == false )
+	{
+		return false;
+	}
+
+	b3World* world = b3GetWorldFromId( worldId );
+
+	// Restoring mid step would corrupt an in-flight solve
+	B3_ASSERT( world->locked == false );
+	if ( world->locked )
+	{
+		return false;
+	}
+
+	// Point of no return. The slot, generation, and host wiring are kept, so held ids resolve into the
+	// rebuilt world. A truncated payload past here leaves the world unusable and the caller must destroy it.
+	// The shapes let go of their geometry first, as some of it may go.
+	b3FreeLiveSimElements( world );
+	b3SnapGeometryLoad( world, geometry, geometrySize );
+
+	return b3DeserializeIntoShell( image, size, world, NULL );
 }

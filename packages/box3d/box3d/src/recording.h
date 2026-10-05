@@ -83,6 +83,18 @@ typedef struct b3RecBuffer
 	int capacity;
 	int size;
 	bool countOnly;
+	// Tide: `data` is the caller's, as big as it is. What doesn't fit is counted and not written (see ../TIDE.md)
+	bool fixed;
+	// Tide: an image in sections (see world_snapshot.c). Where each starts, when the caller says; each one's
+	// size, when it asks; the section being written, plus one, and where it started; and whether one ran into
+	// the next.
+	const int* bases;
+	int* sizes;
+	int section;
+	int sectionStart;
+	bool overran;
+	// Tide: a shape whose geometry an image can't name was met, so what's written is no image
+	bool failed;
 } b3RecBuffer;
 
 // Geometry kinds for the trailing registry section

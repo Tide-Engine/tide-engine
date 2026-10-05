@@ -23,6 +23,7 @@
 #include "simd.h"
 #include "solver.h"
 #include "solver_set.h"
+#include "world_snapshot.h"
 
 #include "box3d/box3d.h"
 #include "box3d/constants.h"
@@ -486,6 +487,9 @@ void b3DestroyWorld( b3WorldId worldId )
 	world->hullDatabase = NULL;
 
 	b3DestroyNameCache( &world->names );
+
+	// Tide: the geometry its images named, which the shapes of a restored world were using
+	b3DestroySnapshotGeometry( world );
 
 	b3Array_Destroy( world->shapes );
 	b3Array_Destroy( world->fatAABBs );

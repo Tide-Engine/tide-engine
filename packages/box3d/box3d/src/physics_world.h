@@ -189,6 +189,10 @@ typedef struct b3World
 	// type into this header.
 	void* hullDatabase;
 
+	// Tide: the geometry this world's images name, each once (b3SnapGeometry in world_snapshot.c). NULL
+	// until an image is taken or restored.
+	void* snapGeometry;
+
 	// Name cache for shape and body names. This works with recording.
 	b3NameCache names;
 

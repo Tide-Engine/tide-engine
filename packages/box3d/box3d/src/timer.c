@@ -588,15 +588,20 @@ void b3Sleep( int milliseconds )
 	( (void)( milliseconds ) );
 }
 
+// Tide: a lock that locks, on a platform this file doesn't know: Tide's web target is one (WASI, where upstream
+// only knows Emscripten), and it has threads. Upstream's lock here does nothing, and the narrow phase's workers
+// take manifolds from one allocator under it, so two of them took the same one and a world stepped on threads
+// was another world than on one (see ../TIDE.md). It spins, which is all a web page's main thread may do, and
+// what it guards is a few instructions.
 typedef struct b3Mutex
 {
-	int dummy;
+	int held;
 } b3Mutex;
 
 b3Mutex* b3CreateMutex( void )
 {
 	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
-	m->dummy = 42;
+	m->held = 0;
 	return m;
 }
 
@@ -608,12 +613,25 @@ void b3DestroyMutex( b3Mutex* m )
 
 void b3LockMutex( b3Mutex* m )
 {
+#if defined( __GNUC__ ) || defined( __clang__ )
+	while ( __atomic_exchange_n( &m->held, 1, __ATOMIC_ACQUIRE ) != 0 )
+	{
+		while ( __atomic_load_n( &m->held, __ATOMIC_RELAXED ) != 0 )
+		{
+		}
+	}
+#else
 	(void)m;
+#endif
 }
 
 void b3UnlockMutex( b3Mutex* m )
 {
+#if defined( __GNUC__ ) || defined( __clang__ )
+	__atomic_store_n( &m->held, 0, __ATOMIC_RELEASE );
+#else
 	(void)m;
+#endif
 }
 
 typedef struct b3Semaphore

@@ -79,14 +79,17 @@ static inline b3FloatW4 b3MulAddW4( b3FloatW4 a, b3FloatW4 b, b3FloatW4 c )
 	return vaddq_f32( a, vmulq_f32( b, c ) );
 }
 
+// Tide: the least and the greatest as SSE2 gives them (minps, maxps): a where it's less, or greater, and
+// else b, so the second of two that are equal. Neon's own (vminq_f32, vmaxq_f32) take -0 for less than 0,
+// which leaves other zeros in a world's image than x64 does for the same simulation (see ../TIDE.md).
 static inline b3FloatW4 b3MinW4( b3FloatW4 a, b3FloatW4 b )
 {
-	return vminq_f32( a, b );
+	return vbslq_f32( vcltq_f32( a, b ), a, b );
 }
 
 static inline b3FloatW4 b3MaxW4( b3FloatW4 a, b3FloatW4 b )
 {
-	return vmaxq_f32( a, b );
+	return vbslq_f32( vcgtq_f32( a, b ), a, b );
 }
 
 // clamp a to [-b, b]
@@ -228,9 +231,10 @@ B3_FORCE_INLINE bool b3OverlapV( const b3AABB* a, const b3AABB* b )
 
 B3_FORCE_INLINE b3AABBV b3UnionAABBV( b3AABBV a, b3AABBV b )
 {
+	// Tide: as SSE2 does, for the same reason as b3MinW4
 	b3AABBV result;
-	result.lower = vminq_f32( a.lower, b.lower );
-	result.upper = vmaxq_f32( a.upper, b.upper );
+	result.lower = vbslq_f32( vcltq_f32( a.lower, b.lower ), a.lower, b.lower );
+	result.upper = vbslq_f32( vcgtq_f32( a.upper, b.upper ), a.upper, b.upper );
 	return result;
 }
 
