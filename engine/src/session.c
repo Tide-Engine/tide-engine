@@ -1354,10 +1354,15 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     }
     const float dt = desc->dt > 0.0f ? desc->dt : 1.0f / (float)s->desc.tick_rate;
     // A match's seed, in a game that has one: from the system where the host
-    // has it to give, so no two matches go the same; 31 bits, as Time.seed is
-    if (!desc->world && g->seeded && desc->entropy) {
-        const uint64_t entropy = desc->entropy();
-        s->seed = (uint32_t)(entropy ^ (entropy >> 32)) & 0x7FFFFFFFu;
+    // has it to give, so no two matches go the same, or else the one the host
+    // picked; 31 bits, as Time.seed is
+    if (!desc->world && g->seeded) {
+        s->seed = desc->seed;
+        if (desc->entropy) {
+            const uint64_t entropy = desc->entropy();
+            s->seed = (uint32_t)(entropy ^ (entropy >> 32));
+        }
+        s->seed &= 0x7FFFFFFFu;
     }
     if (desc->world) g->copy_world(s->world, desc->world);
     else g->start(s->world, dt, desc->start, s->seed);
@@ -2944,6 +2949,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         .players = players,
         .jobs = s->desc.jobs,
         .entropy = s->desc.entropy,
+        .seed = s->desc.seed,
     };
     s->server = tide_server_create(&server, now);
     const tide_client_desc client = {

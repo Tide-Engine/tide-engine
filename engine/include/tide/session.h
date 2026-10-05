@@ -136,9 +136,9 @@ typedef struct tide_game {
     bool pure_start;
     // The world has a seed, Time.seed: the game reads it, or has generators
     // (Random) the engine seeds from it. A server picks one for each match it
-    // starts, from its desc's `entropy`, and tells the players who start the
-    // match themselves (pure_start). A game without one starts the same
-    // whatever the seed, and nothing is picked or sent for it.
+    // starts, from its desc's `entropy` or else its `seed`, and tells the
+    // players who start the match themselves (pure_start). A game without one
+    // starts the same whatever the seed, and nothing is picked or sent for it.
     bool seeded;
     // The game's settings (`settings { ... }`), 0 or NULL where it sets none
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
@@ -234,9 +234,12 @@ typedef struct tide_server_desc {
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // 64 bits nobody could guess, from the system, for the seed of the match
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
-    // is 0, and a run repeats exactly (tests and benchmarks). A match that
-    // goes on from `world` keeps the seed it has.
+    // is `seed`, and a run repeats exactly (tests and benchmarks). A match
+    // that goes on from `world` keeps the seed it has.
     uint64_t (*entropy)(void);
+    // With no entropy, the seed of the match it starts (Time.seed): its low 31
+    // bits. 0 unless the host picked one.
+    uint32_t seed;
 } tide_server_desc;
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
@@ -354,7 +357,8 @@ typedef struct tide_session_desc {
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
-    uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're 0
+    uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're `seed`
+    uint32_t seed;             // With no entropy, the seed of every match it starts: 0 unless the host picked one
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
 } tide_session_desc;
 
