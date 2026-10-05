@@ -213,12 +213,33 @@ void tide_list_unflatten(tide_list l, void *flat, uint32_t size, bool changes, b
 //         tide_list_out_count(image, written);
 //         return (int)written;
 //     }
+//
+// C that knows which elements changed can say only those, and the list keeps
+// the rest: nothing of what it keeps is written, compared or hashed again,
+// which is what a big list that changes a little every tick wants.
+//
+//     int PatchImage(tide_list_out *image)
+//     {
+//         tide_list_out_keep(image, 4096);             // As it was, this long
+//         tide_list_out_part(image, 128, changed, 16); // ...but for these 16
+//         return 4096;
+//     }
+
+// Elements C gives for part of a list that keeps the rest.
+typedef struct tide_list_part {
+    uint32_t first;       // The first element they go to
+    uint32_t count;       // ...and how many there are
+    const void *elements; // Side by side, in C's memory
+} tide_list_part;
 
 typedef struct tide_list_out {
     void *room;     // What C fills: memory of the engine's, kept for the next call
     uint32_t size;  // An element's bytes
     uint32_t asked; // The elements there's room for
     uint32_t count; // ...and how many of them the list gets
+    bool keeps;     // The list keeps what it holds, is `count` long, and has `parts` written over it
+    uint32_t parts_count;
+    tide_list_part *parts; // Memory of the engine's too
 } tide_list_out;
 
 // Memory for `count` elements side by side, for C to fill; what's in it is
@@ -231,12 +252,27 @@ void *tide_list_out_room(tide_list_out *out, uint32_t count);
 // most the room last asked for. Never called: the list is empty.
 void tide_list_out_count(tide_list_out *out, uint32_t count);
 
+// The other way: the list keeps the elements it holds, and is `count` long
+// once C returns. The ones past that go, and the ones it gains are zeros.
+// Room asked for before is let go, as asking for room lets this go: of the
+// two, what C said last stands.
+void tide_list_out_keep(tide_list_out *out, uint32_t count);
+
+// After tide_list_out_keep: the `count` elements from `first` on are the ones
+// at `elements`, side by side. They're read once C has returned, so they're
+// in memory that's still good then, which nothing changes meanwhile: C's own,
+// not the function's variables. Parts are written in the order they're given,
+// a later one over an earlier one, and what's past the list's count is left
+// out.
+void tide_list_out_part(tide_list_out *out, uint32_t first, const void *elements, uint32_t count);
+
 // For generated code, around the call: begin sets `out` up for elements of
 // `size` bytes, and end makes the list `l`, which is at `where`, what C said,
 // and lets the room go. A world's list is written chunk by chunk and only
 // where its bytes differ, so a chunk that comes out the same stays shared
 // with the world's snapshots and isn't hashed again; the chunks past the new
-// count go back to the heap.
+// count go back to the heap. A list that keeps what it holds has only its
+// parts compared, each with the elements it goes over.
 void tide_list_out_begin(tide_list_out *out, uint32_t size);
 void tide_list_out_end(tide_list_out *out, tide_list *l, uint32_t where);
 

@@ -24,3 +24,10 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 
 // Tide: frees the geometry a world's images name, with the world.
 void b3DestroySnapshotGeometry( b3World* world );
+
+// Tide: frees what follows a world's images (b3SnapTrack in physics_world.h), with the world.
+void b3DestroySnapshotTrack( b3World* world );
+
+// Tide: what b3RecBufReserve does for a buffer that writes an image as its parts: memory for a copy of the
+// bytes, as a part at where the buffer is in the image.
+uint8_t* b3SnapPartsReserve( b3RecBuffer* buf, int size );

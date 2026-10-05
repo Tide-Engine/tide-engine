@@ -80,16 +80,21 @@ TIDE_TEST(jobs_threads_change_nothing)
     TIDE_CHECK(atomic_load(&jobs_tasks_elsewhere) > 0);
 
     // C's workers that wait for each other in stages (jobs_tasks.c) sleep while
-    // they wait, where the pool's threads can, and are woken for each stage:
-    // one that wasn't would have held the tick up for good. Elsewhere they
-    // never sleep
-    for (int t = 0; t < 20000 && jobs->more && atomic_load(&jobs_tasks_slept) == 0; t++) {
+    // they wait, on the web, and are woken for each stage: one that wasn't
+    // would have held the tick up for good. Elsewhere they never sleep, as
+    // there the CPU's pause and the system's yield do for a wait
+#ifdef __wasm__
+    const bool waits_sleep = true;
+#else
+    const bool waits_sleep = false;
+#endif
+    for (int t = 0; t < 20000 && waits_sleep && atomic_load(&jobs_tasks_slept) == 0; t++) {
         tide_world_tick(&one);
         tide_world_tick_on(&many, jobs);
         TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
     }
     printf("    %d of their waits slept\n", atomic_load(&jobs_tasks_slept));
-    TIDE_CHECK(jobs->more ? atomic_load(&jobs_tasks_slept) > 0 : atomic_load(&jobs_tasks_slept) == 0);
+    TIDE_CHECK(waits_sleep ? atomic_load(&jobs_tasks_slept) > 0 : atomic_load(&jobs_tasks_slept) == 0);
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
     // Entities spawned on many threads: every handle kept is the real one

@@ -1,0 +1,4 @@
+// expect: 'Time' is managed by the engine and is read-only
+scene Main { }
+component Body { float x; }
+extern system Move(mut Body body, mut Time time);
