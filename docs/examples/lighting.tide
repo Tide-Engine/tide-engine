@@ -1,0 +1,77 @@
+settings { title = "Lighting"; }
+
+local scene Main { }
+
+// A vertex of our own: the engine has no lighting, so the normal is ours.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+local singleton Globe
+{
+    List<Corner> corners;
+    List<int> faces;
+    float turn;
+    float lightAngle = 0.8;
+    float shine = 40;
+    bool bands;
+}
+
+// Once for each pixel: its normal, blended across the triangle, against a light.
+frag Lit(Corner corner, mut Color color, Instance instance, Globe globe)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 toLight = Math.Normalize(float3(Math.Cos(globe.lightAngle), 0.6, -Math.Sin(globe.lightAngle)));
+    mut float diffuse = Math.Max(Math.Dot(normal, toLight), 0);
+    if (globe.bands) diffuse = Math.Floor(diffuse * 4) / 4; // Steps, as a cartoon's
+    float3 halfway = Math.Normalize(toLight + float3(0, 0, -1));
+    float glint = Math.Pow(Math.Max(Math.Dot(normal, halfway), 0), globe.shine);
+    // A checker from where the pixel is on the mesh, so its turning shows.
+    float tile = Math.Floor(corner.position.y * 3) + Math.Floor(Math.Atan2(corner.position.z, corner.position.x) * 6 / Math.PI);
+    Color paint = Math.Frac(tile * 0.5) < 0.25 ? Color(0.25, 0.6, 1) : Color(0.16, 0.42, 0.85);
+    color = paint * (0.12 + diffuse * 0.88) + Color(1, 1, 1, 0) * glint;
+}
+
+view Show(mut Globe globe)
+{
+    if (globe.corners.count == 0)
+    {
+        // A sphere of rings, built once. Each corner's normal is its position.
+        for (var ring = 0; ring <= 16; ring++)
+        {
+            for (var step = 0; step <= 32; step++)
+            {
+                float across = step * Math.TAU / 32;
+                float down = ring * Math.PI / 16;
+                var at = float3(Math.Sin(down) * Math.Cos(across), Math.Cos(down), Math.Sin(down) * Math.Sin(across));
+                globe.corners.Add(Corner { position = at, normal = at });
+                if (ring < 16 && step < 32)
+                {
+                    int first = ring * 33 + step;
+                    globe.faces.Add(first);
+                    globe.faces.Add(first + 33);
+                    globe.faces.Add(first + 1);
+                    globe.faces.Add(first + 1);
+                    globe.faces.Add(first + 33);
+                    globe.faces.Add(first + 34);
+                }
+            }
+        }
+    }
+    globe.turn += Math.Min(Frame.dt, 0.05) * 0.4;
+    if (globe.turn > Math.TAU) globe.turn -= Math.TAU;
+
+    Draw2D.Clear(Color(0.03, 0.04, 0.07));
+    Draw3D.Camera(float3(0, -0.32, -4.4), quaternion.identity, 45);
+    var spin = quaternion.AxisAngle(float3(0, 1, 0), globe.turn);
+    Draw3D.Mesh(globe.corners, globe.faces, float4x4.TRS(float3(0), spin, float3(1)), Lit);
+
+    GUILayout.Area(Rect(12, Screen.height - 124, Screen.width - 24, 112))
+    {
+        GUILayout.Slider("Light", globe.lightAngle, 0, Math.TAU);
+        GUILayout.Slider("Shine", globe.shine, 2, 80);
+        GUILayout.Toggle("Bands", globe.bands);
+    }
+}

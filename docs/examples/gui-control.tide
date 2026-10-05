@@ -1,0 +1,42 @@
+settings { title = "Controls"; }
+
+local scene Main { }
+
+local singleton Draft { int picked = -1; }
+
+Color Shade(Color color, float light)
+{
+    return Color(color.r * light, color.g * light, color.b * light);
+}
+
+view Cards(mut Draft draft)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Screen();
+    var width = (Screen.width - 64) / 3;
+    for (var slot = 0; slot < 3; slot++)
+    {
+        // The GUI handles the rect's input as a button's, and draws nothing.
+        var rect = Rect(16 + slot * (width + 16), 64, width, 200);
+        var card = GUI.Control(rect);
+
+        // Showing hover, focus and a press is the view's.
+        var lit = card.hovered || card.focused;
+        var lift = card.pressed && card.hovered ? 3 : lit ? -5 : 0;
+        var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5 + lift);
+        var size = float2(rect.width, rect.height);
+        var tint = slot == 0 ? Color(0.3, 0.8, 1) : slot == 1 ? Color(0.7, 0.5, 1) : Color(1, 0.65, 0.3);
+        var picked = draft.picked == slot;
+        Draw2D.Shape(Shape { center = center + float2(0, 8), size = size, radius = 14, color = Color(0, 0, 0, 0.5), soft = 14 });
+        Draw2D.Shape(Shape { center = center, size = size, radius = 14,
+                             color = Shade(tint, lit ? 0.55 : 0.3), color2 = Shade(tint, 0.12),
+                             outline = picked ? 3 : 1.5, outlineColor = picked || card.focused ? Color.white : tint });
+        Draw2D.Circle(center - float2(0, 30), width * 0.24, tint);
+        Draw2D.Text($"Card {slot + 1}", center + float2(0, 50), 16, Color.white, Anchor.MiddleCenter);
+        if (card.clicked) draft.picked = slot;
+    }
+    Draw2D.Text(draft.picked < 0 ? "Pick a card" : $"You picked card {draft.picked + 1}",
+                float2(Screen.width * 0.5, 30), 20, Color.white, Anchor.MiddleCenter);
+    Draw2D.Text("The pointer, or Tab and Enter", float2(Screen.width * 0.5, 296), 13, Color(0.6, 0.68, 0.78), Anchor.MiddleCenter);
+    if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Put it back")) draft.picked = -1;
+}

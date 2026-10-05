@@ -1,0 +1,54 @@
+settings { title = "Textures"; }
+
+local scene Main { }
+
+// A grid of colors is a texture. There's nothing to create, upload or free.
+local singleton Canvas
+{
+    Grid2<Color> pixels = Grid2(16, 16);
+    bool ready;
+    bool point = true;
+    float hue;
+}
+
+view Paint(Devices devices, mut Canvas canvas)
+{
+    Draw2D.Clear(Color(0.04, 0.07, 0.12));
+    Draw2D.Camera(float2(0), 1.4);
+    if (!canvas.ready)
+    {
+        foreach (var at in canvas.pixels)
+            canvas.pixels[at] = (at.x + at.y) % 2 == 0 ? Color(0.1, 0.14, 0.22) : Color(0.14, 0.2, 0.3);
+        canvas.ready = true;
+    }
+
+    // The quad covers -1 to 1, and the grid's first row is its top one.
+    var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (devices.pointer.press.pressed && Math.Abs(pointer.x) < 1 && Math.Abs(pointer.y) < 1)
+    {
+        canvas.hue += Frame.dt * 2;
+        var cell = int2(Math.Floor((pointer + 1) * 8));
+        canvas.pixels[cell.x, 15 - cell.y] = Color(0.6 + 0.4 * Math.Sin(canvas.hue), 0.6 + 0.4 * Math.Sin(canvas.hue + 2),
+                                                   0.6 + 0.4 * Math.Sin(canvas.hue + 4));
+    }
+
+    List<Vertex> corners = [
+        Vertex { position = float2(-1, 1), uv = float2(0, 0) },
+        Vertex { position = float2(1, 1), uv = float2(1, 0) },
+        Vertex { position = float2(1, -1), uv = float2(1, 1) },
+        Vertex { position = float2(-1, -1), uv = float2(0, 1) },
+    ];
+    // The next frame draws whatever the cells hold by then.
+    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], canvas.pixels, canvas.point ? Filter.Point : Filter.Bilinear);
+
+    Draw2D.Screen();
+    Draw2D.Text("Drag on the grid to paint its cells", float2(16, 14), 16, Color.white);
+    GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
+    {
+        GUILayout.Horizontal()
+        {
+            GUILayout.Toggle("Filter.Point", canvas.point);
+            if (GUILayout.Button("Clear")) canvas.ready = false;
+        }
+    }
+}

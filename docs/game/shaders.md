@@ -147,6 +147,14 @@ frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun 
 }
 ```
 
+The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal turned into the world by `instance.transform`, against a light the slider moves. **Bands** rounds the light to steps, in the same frag.
+
+::: tide-example lighting Lighting, in a frag
+
+<<< @/examples/lighting.tide
+
+:::
+
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
@@ -281,6 +289,14 @@ view GrassField(Foliage foliage, Models models)
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
 - Textures, filters, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
+
+Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.
+
+::: tide-example instances A list of motes, in one draw
+
+<<< @/examples/instances.tide
+
+:::
 
 An ordinary instance parameter is supplied only by `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
 

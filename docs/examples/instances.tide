@@ -1,0 +1,72 @@
+settings { title = "Instances"; }
+
+local scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+// One of these for each copy of the mesh. No entities are involved.
+struct Mote
+{
+    float2 center;
+    float size;
+    float phase;
+    Color tint;
+}
+
+local singleton Swarm
+{
+    List<Corner> quad;
+    List<int> faces;
+    List<Mote> motes;
+    Random random;
+    int count = 600;
+    float clock;
+}
+
+// The GPU runs this for each corner of each mote, with that mote's own fields.
+vert Place(mut Corner corner, Mote mote, Swarm swarm)
+{
+    float angle = swarm.clock + mote.phase;
+    float2 drift = float2(Math.Cos(angle), Math.Sin(angle * 1.7)) * 0.25;
+    corner.position = mote.center + drift + corner.position * mote.size;
+}
+
+// And this for each pixel: a soft dot, from how far the pixel is from the middle.
+frag Glow(Corner corner, mut Color color, Mote mote)
+{
+    float away = Math.Length(corner.uv - 0.5) * 2;
+    color = mote.tint;
+    color.a = Math.Saturate(1 - away) * Math.Saturate(1 - away);
+}
+
+view Show(mut Swarm swarm)
+{
+    if (swarm.quad.count == 0)
+    {
+        swarm.quad = [Corner { position = float2(-1, -1), uv = float2(0, 0) }, Corner { position = float2(1, -1), uv = float2(1, 0) },
+                      Corner { position = float2(1, 1), uv = float2(1, 1) }, Corner { position = float2(-1, 1), uv = float2(0, 1) }];
+        swarm.faces = [0, 1, 2, 0, 2, 3];
+    }
+    // The list is ordinary state: add to it and the next frame draws more.
+    while (swarm.motes.count < swarm.count)
+    {
+        swarm.motes.Add(Mote { center = swarm.random.NextFloat2(float2(-1.8, -1.6), float2(1.8, 1.9)),
+                               size = swarm.random.NextFloat(0.05, 0.16), phase = swarm.random.NextFloat(Math.TAU),
+                               tint = Color(swarm.random.NextFloat(0.3, 1), swarm.random.NextFloat(0.5, 1), 1) });
+    }
+    while (swarm.motes.count > swarm.count) swarm.motes.RemoveAt(swarm.motes.count - 1);
+    swarm.clock += Math.Min(Frame.dt, 0.05);
+    if (swarm.clock > Math.TAU * 10) swarm.clock -= Math.TAU * 10;
+
+    Draw2D.Clear(Color(0.03, 0.04, 0.08));
+    Draw2D.Camera(float2(0), 2.2);
+    Draw2D.Instanced(swarm.quad, swarm.faces, swarm.motes, Place, Glow); // One draw, however many
+
+    Draw2D.Screen();
+    Draw2D.Text($"{swarm.motes.count} motes, in one draw", float2(16, 14), 16, Color.white);
+    GUI.IntSlider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Motes", swarm.count, 1, 5000);
+}

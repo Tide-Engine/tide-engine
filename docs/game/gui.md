@@ -178,6 +178,14 @@ A theme is set in one of two ways, as every setting of a frame is:
 - `GUI.Theme(theme) { ... }` wraps a block: the widgets in it have the theme, and the look it found is back when the block ends.
 - `GUI.SetTheme(theme)` stays: for the widgets that follow, in this view and the views after it, until it's set again or the frame ends.
 
+The buttons below pick a theme, and the slider its corners. The menu under them is in a `GUI.Theme` block, so it takes the theme; the buttons and the slider aren't, and keep the look every frame starts with.
+
+::: tide-example gui-theme A theme around a block
+
+<<< @/examples/gui-theme.tide
+
+:::
+
 Every frame starts from the default look, so a view that sets a theme sets it every frame, and a game that sets none looks as the GUI always did. A theme a block doesn't name fields of takes those from the defaults, not from the theme around it: keep a theme in a `const` or a singleton and change a copy of it to build one on another.
 
 An area's panel has the look it opened with. The [stats overlay and the debug views](../tools/cli.md) aren't the GUI's widgets, and keep their own look whatever a game sets.
@@ -253,6 +261,14 @@ view Cards(mut Draft draft)
     }
 }
 ```
+
+The cards below are three controls, drawn from [smooth shapes](./views.md#smooth-shapes). Hover one, press it, and let go on it or off it. Then click the game and press Tab: the focus moves through the cards and on to the GUI's own button, and Enter picks.
+
+::: tide-example gui-control Cards that are controls
+
+<<< @/examples/gui-control.tide
+
+:::
 
 `GUI.Control(rect)` returns a `GUIControl`, which says what the player is doing with the rect:
 

@@ -151,6 +151,14 @@ view DrawFighter(Body body, mut Fighter fighter)
 
 A local handler changes [local state](./local-state.md) and never the match. Like every handler it can't draw: it leaves what happened where views find it, in a local singleton, in local entities, or in the [local fields](./local-state.md#local-fields) of the entity the event was sent to.
 
+Tap a ball below, three times. Each tap reaches the match as a command, whose handler sends the ball a `Hit`. The match's handler of `Hit` takes a health off, and a local one makes the ball flash, through a local field. A ball that meets a wall sends `Bounced` to the world: nothing in the match handles it, and a local handler makes sparks of it. The third hit destroys the ball, and `Destroyed` has two handlers too: the match's spawns another ball, and a local one bursts where the ball was.
+
+::: tide-example events Events, and what a machine shows of them
+
+<<< @/examples/events.tide
+
+:::
+
 ### What they take
 
 - **The event**, as a match handler does. One that doesn't read it leaves its name out.
