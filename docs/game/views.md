@@ -144,7 +144,7 @@ view DrawFighter(Body body, with Fighter, query (Platform box) platforms)
 
 The view's own parameters still pick the entities it runs for, and the query picks the ones it goes through for each: neither filters the other. Inside the `foreach`, `entry.box` is that platform's `Platform`, to read, and `entry.entity` is its handle. The syntax and the filters are a system's: bindings, `with` and `without`. A view with only queries runs once a frame.
 
-- **Rows are what the view sees.** They're [blended](#smooth-at-any-tick-rate) between ticks like the view's own parameters, with corrections smoothed the same way: the row of the view's own entity has the values its parameters have. An entity that wasn't there last tick is as it is, and one that's gone is in no row.
+- **Rows are what the view sees.** They're [blended](#smooth-at-any-tick-rate) between the last two ticks like the view's own parameters, with corrections smoothed the same way: the row of the view's own entity has the values its parameters have. An entity that wasn't there last tick is as it is, and one that's gone is in no row.
 - **`verified` works in a query** as it does on a view's own parameters (see [Confirmed state](#confirmed-state)). `query (verified Health health) confirmed` goes through the confirmed world's entities, as its last tick has them. A query with bindings or filters of both worlds, `query (Body body, verified Health sure) both`, takes the entities that are in both: the same entity, and not only the same handle. `with verified Dead` and `without verified Dead` filter there too.
 - **A query is all the match's or all this machine's.** A view goes through local entities too, like its own sparks: `query (Spark spark) sparks`. Those are as they are now, with what views earlier in the frame wrote, and `entry.entity` is a `LocalEntity`.
 - **Rows are read-only, and have the match's fields.** A binding can't be `mut`, and an entity's [local fields](./local-state.md#local-fields) are read and written by a view that runs for that entity.
@@ -913,13 +913,11 @@ Only views, and the functions they call, call `Cursor.Lock()`. They read `Cursor
 
 ## Smooth at any tick rate
 
-Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between two ticks. So motion is smooth even at 20 ticks per second.
+Views draw at whatever frame rate the game renders, not the tick rate, and see the match blended between its last two ticks. So motion is smooth even at 20 ticks per second, at the cost of drawing up to a tick late.
 
-They draw this moment, not a tick ago. The two ticks are the last one that ran and the one that's coming, which the engine runs early with this machine's input as it is right now, and runs again if that changes before the tick's time comes. So what a player does shows in the frame that reads it, at any tick rate: nothing waits for the next tick, and nothing is drawn a tick behind. Your code doesn't take part in any of it: systems, the input's `Sample` and views are written as ever.
+Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as they are at the latest tick. An entity that wasn't there last tick is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
 
-Every float, vector, quaternion and color a view reads of the match is blended, `Time.t` among them. Ints, bools, enums, entities and text are as the later of the two ticks has them. An entity that wasn't there the tick before is drawn as it is. What a view reads [`verified`](#confirmed-state) isn't blended: it's as the last tick the server confirmed has it.
-
-The match below ticks only five times a second. Both discs are the same position: the amber one is an ordinary field, which the view sees blended between ticks, and the teal one a `[Snap]` field, drawn as the later tick has it.
+The match below ticks only five times a second. Both discs are the same position: the amber one is an ordinary field, which the view sees blended between ticks, and the teal one a `[Snap]` field, drawn as the last tick left it.
 
 ::: tide-example tick-rate Five ticks a second, drawn every frame
 

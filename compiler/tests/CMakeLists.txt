@@ -136,7 +136,7 @@ tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
-tide_e2e_test(coming) # The tick that's coming: what a player does shows in the frame that reads it
+tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
 tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime

@@ -268,17 +268,13 @@ typedef struct tide_client_desc {
     tide_transport transport;
     tide_address server;
     tide_sample_fn sample; // NULL for a game without an input
-    // What `sample` would give now, taking nothing from the devices: this
-    // machine's input for the tick that's coming, which hasn't been sampled.
-    // With it, a client that predicts runs that tick too, a tick early, and
-    // runs it again when the input changes before its time comes; views blend
-    // towards it (tide_client_view), so they draw this moment, and what a
-    // player does shows in the frame that reads it. NULL: the newest tick
-    // views draw is the last one run, a tick ago. A game without an input
-    // never has it called, and still has to say it to be drawn so.
-    tide_sample_fn peek;
     void *user;
-    uint32_t lead;         // Ticks its inputs should reach the server early: 0 on the server's machine, 2 or more over a network
+    // Ticks its inputs reach the server early at the least: 0 on the server's
+    // machine, 1 or more over a network. The client keeps the least the server
+    // says at this, so they're as early as the network's unevenness needs and
+    // no earlier: each tick more is a tick later that the others see this
+    // player, and a tick further that it runs ahead of them.
+    uint32_t lead;
     uint64_t cookie;       // From an earlier connection to this server, to be the same player again; 0 for none
     bool knew_kick;        // ...which kicked it, as it heard: the server lets it in again (see tide_server_kick)
     const tide_jobs *jobs; // Threads to run ticks on (tide/jobs.h), or NULL: this one
@@ -316,6 +312,8 @@ typedef struct tide_client_status {
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
+    int32_t early_ticks;           // How early this machine's inputs reach the server, in ticks, as it last said
+    uint32_t late_ticks;           // Ticks the server ran without this machine's input, which came too late, so far
     uint32_t again_ticks;          // Predicted ticks it ran again so far, after one went otherwise than it guessed
     uint32_t resyncs;              // Times its world diverged and the server sent it again
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
@@ -323,13 +321,10 @@ typedef struct tide_client_status {
     char message[TIDE_MESSAGE_BYTES]; // With TIDE_DISCONNECT_KICKED: the server's message
 } tide_client_status;
 
-// What views draw: two worlds a tick apart, and how far this moment is between
-// them (0 to 1), to blend them, so they draw smoothly at any tick rate. With a
-// `peek` (tide_client_desc), `current` is the tick that's coming, run early,
-// and `previous` the last tick run: views draw this moment. Without one,
-// they're the last two ticks run, and views draw a tick ago. `previous` is
-// NULL right after the world arrives. `verified` is the last world the server
-// confirmed: an entity
+// What views draw: the latest tick's world, the one before it, and how far
+// this moment is between them (0 to 1), to blend them. Views draw a tick late
+// that way, but smoothly at any tick rate. `previous` is NULL right after the
+// world arrives. `verified` is the last world the server confirmed: an entity
 // in neither it nor `current` is gone for good, where one only `current` lost
 // may be back once the server says how the tick went, so what this machine
 // keeps for the match's entities (their local fields) goes by both.
@@ -371,7 +366,6 @@ typedef struct tide_session_desc {
     const tide_game *game;
     uint32_t tick_rate; // The matches it starts: 0 for the game's at the time (tide_game.tick_rate), or else 60
     tide_sample_fn sample;
-    tide_sample_fn peek;      // For its clients to draw this moment (tide_client_desc.peek), or NULL
     void *user;
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL

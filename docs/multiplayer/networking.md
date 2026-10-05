@@ -23,7 +23,7 @@ An input that didn't change, or didn't arrive, keeps its last value, on every ma
 
 ## Prediction and rollback
 
-Clients have no input delay. A client runs ahead of the server by about half the round trip, plus a small margin, so its inputs arrive in time for the tick they're meant for. Its own input applies at once, and only other players' inputs are guessed, by repeating their last one. In a game without an input there's nothing to get there in time, so clients keep the small lead they joined with.
+Clients have no input delay. A client runs ahead of the server by about half the round trip, plus a small margin, so its inputs arrive in time for the tick they're meant for. The margin is as small as the connection allows: the server says how early each player's inputs arrive, and a client sends them only as early as the network's worst moments need, a tick at the least, since every tick an input waits at the server is a tick later that the other players see it. Its own input applies at once, and only other players' inputs are guessed, by repeating their last one. In a game without an input there's nothing to get there in time, so clients keep the small lead they joined with.
 
 A client keeps a snapshot of every tick from the last one the server confirmed, the **verified tick**, to the one it's predicting. When the server's tick arrives:
 
@@ -61,7 +61,7 @@ A world goes over the network page by page, as a delta: each page is either the 
 
 ## Views and prediction
 
-Views draw the predicted world, blended between the last tick it ran and the one that's coming, which it runs early with this machine's input as it is (see [Views](../game/views.md#smooth-at-any-tick-rate)): this moment, so this machine's own input shows in the frame that reads it. A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
+Views draw the predicted world, blended between its last two ticks (see [Views](../game/views.md#smooth-at-any-tick-rate)). A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
 
 ### Predicted and confirmed
 
