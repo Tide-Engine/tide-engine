@@ -156,6 +156,26 @@ block('details', (tokens, idx) => {
     return `<details class="callout details"><summary>${escape(title || 'Details')}</summary>\n`;
 });
 
+// The code is included from the same .tide file CMake builds for the frame.
+// Frames start only when requested, so reading a page starts no games.
+block('tide-example', (tokens, idx) => {
+    const token = tokens[idx];
+    if (token.nesting !== 1) {
+        return '</div></div></section>\n';
+    }
+    const match = /^tide-example\s+([a-z][a-z0-9-]*)\s+(.+)$/.exec(token.info.trim());
+    if (!match) throw new Error('Use ::: tide-example <file-name> <title>');
+    const [, id, title] = match;
+    const src = `/examples/${id}/`;
+    return `<section class="tide-example" data-example-src="${src}" aria-label="${escape(title)}">
+<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example</span></div>
+<div class="example-columns"><div class="example-preview">
+<div class="example-controls"><button type="button" data-example-run>Run example</button><button type="button" data-example-stop disabled>Stop</button><a href="${src}" target="_blank" rel="noreferrer">Open separately</a></div>
+<div class="example-viewport"></div><p class="example-status" role="status">Run the example to try it here.</p>
+<noscript><p>Enable JavaScript to run it here, or open the example separately.</p></noscript>
+</div><div class="example-source">\n`;
+});
+
 // Tabs over the fences inside, each named by its fence's `[label]`. Radio
 // buttons pick the tab, so they work before the page's script loads.
 block('code-group', (tokens, idx, _options, env) => {

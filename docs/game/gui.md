@@ -51,6 +51,14 @@ Widgets have no IDs to write. They're told apart by where they're called from an
 | `ColorField(label, mut Color value)` | A swatch, and fields for r, g, b and a |
 | `GUILayout.Space(size)` | Empty space |
 
+Try typing a name, changing the circles, and counting clicks. Turn on **Disable Click** to see how `GUI.Disabled` keeps a button visible while stopping it from acting. Reset restores the local defaults.
+
+::: tide-example gui-controls Try the controls
+
+<<< @/examples/gui-controls.tide
+
+:::
+
 **Containers** take a block (see [Actions](../language/functions.md#actions)):
 
 | Container | What it does |
@@ -91,6 +99,14 @@ Positions and sizes are in pixels, as on a web page, so widgets keep their size 
 ## Modals
 
 While a modal is up, it has the focus, the widgets outside it don't work, and the game and views get nothing from the devices. Back (Escape or the gamepad's east button) closes it. The modal drawn last is on top. A [locked cursor](./views.md#looking-around) comes back while one is up, since its widgets need the pointer.
+
+The buttons below sit side by side in a `Horizontal`, while the labels stack in a `Vertical`. Open the modal and try choosing a color outside it: the choice count stays still until the modal closes. Its toggle can still change the guide around the shape.
+
+::: tide-example gui-layout Layout and modal focus
+
+<<< @/examples/gui-layout.tide
+
+:::
 
 ## Disabled widgets
 

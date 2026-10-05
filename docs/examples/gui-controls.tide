@@ -1,0 +1,54 @@
+local singleton Controls
+{
+    string name = "Tide";
+    bool outline;
+    bool disabled;
+    float radius = 28;
+    int circles = 2;
+    int clicks;
+}
+
+local scene Main { }
+
+view TryControls(mut Controls controls)
+{
+    Draw2D.Clear(Color(0.05, 0.07, 0.11));
+    Draw2D.Screen();
+
+    GUILayout.Area(Rect(12, 12, Screen.width - 24, 250))
+    {
+        GUILayout.TextField("Name", controls.name);
+        GUILayout.Toggle("Outline", controls.outline);
+        GUILayout.Slider("Radius", controls.radius, 12, 28);
+        GUILayout.IntSlider("Circles", controls.circles, 1, 4);
+        GUILayout.Toggle("Disable Click", controls.disabled);
+        GUILayout.Horizontal()
+        {
+            GUI.Disabled(controls.disabled)
+            {
+                if (GUILayout.Button("Click")) controls.clicks += 1;
+            }
+            if (GUILayout.Button("Reset"))
+            {
+                controls.name = "Tide";
+                controls.outline = false;
+                controls.disabled = false;
+                controls.radius = 28;
+                controls.circles = 2;
+                controls.clicks = 0;
+            }
+        }
+        GUILayout.Label($"Clicks: {controls.clicks}");
+    }
+
+    // These Draw2D calls read the values the widgets just edited.
+    for (var i = 0; i < controls.circles; i++)
+    {
+        var center = float2(Screen.width * 0.5 + (i - (controls.circles - 1) * 0.5) * 64,
+                            Screen.height - 76);
+        if (controls.outline) Draw2D.WireCircle(center, controls.radius, Color(0.4, 0.8, 1));
+        else Draw2D.Circle(center, controls.radius, Color(0.4, 0.8, 1));
+    }
+    Draw2D.Clip(Rect(12, Screen.height - 38, Screen.width - 24, 24));
+    Draw2D.Text(controls.name, float2(24, Screen.height - 34), 18, Color.white);
+}

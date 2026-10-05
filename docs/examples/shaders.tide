@@ -1,0 +1,73 @@
+scene Main { }
+
+struct RibbonVertex
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Ribbon
+{
+    List<RibbonVertex> vertices;
+    List<int> indices;
+    float amplitude = 0.3;
+    float speed = 1.5;
+    float bands = 6;
+    float phase;
+    bool animate = true;
+}
+
+// The GPU changes its copy of each vertex, leaving the mesh list untouched.
+vert Wave(mut RibbonVertex vertex, Ribbon ribbon)
+{
+    vertex.position.y += Math.Sin(vertex.uv.x * 6.283185 + ribbon.phase) * ribbon.amplitude;
+}
+
+// UVs blend across each triangle, giving every pixel its own stripe color.
+frag Stripes(RibbonVertex vertex, mut Color color, Ribbon ribbon)
+{
+    float stripe = 0.5 + 0.5 * Math.Sin(vertex.uv.x * ribbon.bands * 6.283185);
+    color = Color(0.15 + stripe * 0.7, 0.7 + stripe * 0.2, 0.9 - stripe * 0.6);
+}
+
+view Preview(mut Ribbon ribbon)
+{
+    if (ribbon.vertices.count == 0)
+    {
+        // A strip of quads supplies enough vertices for the vert to bend.
+        for (int i = 0; i <= 48; i++)
+        {
+            float u = i / 48.0;
+            float x = (u - 0.5) * 3;
+            ribbon.vertices.Add(RibbonVertex { position = float2(x, -0.2), uv = float2(u, 0) });
+            ribbon.vertices.Add(RibbonVertex { position = float2(x, -0.9), uv = float2(u, 1) });
+            if (i < 48)
+            {
+                int start = i * 2;
+                ribbon.indices.Add(start);
+                ribbon.indices.Add(start + 1);
+                ribbon.indices.Add(start + 2);
+                ribbon.indices.Add(start + 2);
+                ribbon.indices.Add(start + 1);
+                ribbon.indices.Add(start + 3);
+            }
+        }
+    }
+
+    GUILayout.Area(Anchor.UpperLeft)
+    {
+        GUILayout.Slider("Wave height", ribbon.amplitude, 0, 0.6);
+        GUILayout.Slider("Speed", ribbon.speed, 0, 4);
+        GUILayout.Slider("Stripes", ribbon.bands, 1, 12);
+        GUILayout.Toggle("Animate", ribbon.animate);
+    }
+    if (ribbon.animate)
+    {
+        ribbon.phase += Math.Min(Frame.dt, 0.05) * ribbon.speed;
+        if (ribbon.phase > 6.283185) ribbon.phase -= 6.283185;
+    }
+
+    Draw2D.Clear(Color(0.055, 0.065, 0.09));
+    Draw2D.Camera(float2(0, 0.3), 2.2);
+    Draw2D.Mesh(ribbon.vertices, ribbon.indices, Wave, Stripes);
+}

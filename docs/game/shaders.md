@@ -31,6 +31,14 @@ view DrawBox(Box box, Models models)
 
 Their parameters say what they read, and the engine supplies it. There's nothing to bind, upload or declare twice, and no shader language to learn: tidec writes the shaders, for every GPU Tide draws with, and they always compile.
 
+Change the wave height to move the mesh's vertices, and the stripe count to change what each pixel computes. Both shaders read the same local singleton the sliders edit. Turn off animation to inspect a frame.
+
+::: tide-example shaders A frag and a vert
+
+<<< @/examples/shaders.tide
+
+:::
+
 ## Your own vertex
 
 A mesh's vertices are a list of a struct, and the struct can be yours:

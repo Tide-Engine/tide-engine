@@ -25,6 +25,14 @@ So `ClampPlayer` runs for every entity that has a `Transform` and a `Player`, an
 
 Keeping what a system touches (its access) apart from which entities it picks (its filters) is what lets the engine run systems side by side safely: two systems that only filter on the same component never wait for each other.
 
+Only the green row has `Moving` without `Frozen`, so only those entities match `Move`. Their positions change by `time.dt` in the match, and views draw the result. The button sends a command to pause or resume the match's movement.
+
+::: tide-example systems Component filters in motion
+
+<<< @/examples/systems.tide
+
+:::
+
 Other parameters:
 
 - **Singletons**, read or `mut`, like components: `system Score(mut Stats stats, Rules rules)`.
