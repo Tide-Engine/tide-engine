@@ -2434,6 +2434,7 @@ Not built yet. **Decided** is what the owner agreed (2026-10-05); the design pro
 - Mods are built by a service we run, beside the relay and hosting, not on players' machines: it has the game's source and the mods', builds the game with them for each platform, and signs what it built. A game runs only builds signed for it.
 - Every machine of a match runs the same build, as ever, its local code included: mods never differ between the players of a match, not even ones that only change views, since a view can show a player what gives them an advantage.
 - A player who joins a match with other mods gets its build from the service, never from the match's host. The game is told first, with the mods' names and where they're from, so that it can ask its player ("this match runs these mods"), who then knows that code from outside the game is about to be downloaded. It joins once local code says yes, and nothing is fetched before that.
+- That prompt is the game's own, in its look and its language. The engine draws none and enforces none: it can't tell whether a game asked, one of its own wouldn't fit the game, and it isn't what keeps a player safe. A game whose code never says yes joins no such match, so none skips the prompt by accident. For mods a developer listed, whether to ask is the game's choice, as the developer approved them. For mods from anyone, telling the player is a condition of the service, which turns such mods off for a game that doesn't.
 - A build's mods are a set: the order they're listed in changes nothing, since what would depend on it is an error.
 - A mod is Tide alone: no `extern`, no C or C++ files, no libraries.
 - `virtual` before a declaration says it can be replaced, as in C#, and `override` before another replaces it. Both are always written: nothing is replaced by having the same name, and nothing can be replaced that its developer didn't mark. It happens while compiling: what was replaced isn't in the build, and an override costs what the code it replaced would.
@@ -2490,7 +2491,7 @@ The game:
 - With the `mods` setting, a game runs another build of itself as a library on desktop and a program on the web, loaded as `tide run`'s host loads one, with nothing watched or carried over. It has the game's public key in it.
 - A build is named by what it's made from: the game's published version, its mods, each at its commit, and tide's version. The mods are sorted first, so the same set listed in another order is the same build. The platform isn't part of the name: a build's generated C is the same everywhere, so its players share matches across platforms as they do now.
 - Local code asks for a build by its mods, written as `tide.packages` writes packages. The game gets it, checks it, and starts it in the running one's place: the match and the local state start over. The command line takes the same. The names are to pick.
-- A room says which build its match runs, and a server on an address says it as it refuses a hello. That's what a game about to join is told from. Once local code says yes, it gets the build, starts it, and joins. The prompt is the game's, drawn with its own GUI, as the engine brings no dialog. A game that handles none of it joins no such match: the join ends with a reason of its own.
+- A room says which build its match runs, and a server on an address says it as it refuses a hello. That's what a game about to join is told from. Once local code says yes, it gets the build, starts it, and joins. A join nothing said yes to ends with a reason of its own.
 - Host migration and hosted servers need nothing new: every machine has the build, and the service builds a hosted server's with the rest.
 
 The service:
@@ -2523,7 +2524,6 @@ Questions:
 
 - Whether a game can also open every declaration at once, without a `virtual` on each.
 - `base()` in an override, to call what it replaced: maybe later.
-- Whether a game can say yes for its player before joining another build's match. The engine can't tell that a game asked, so a prompt nobody can skip would be the host's own, drawn over the game as the stats are.
 - Whether scenes and singletons' defaults can be replaced, which is how a mod would change `Main`.
 - What else a mod's code can't call, beyond `Session.Connect` and `Clipboard.Copy`.
 - How long a build runs offline before the service is asked again.
