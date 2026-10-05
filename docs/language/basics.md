@@ -163,7 +163,7 @@ Operators and their precedence follow C#, including compound assignments (`+=`, 
 
 `??`, `is`, `!` after a value and `try` unwrap what a function that can fail gives, and `T?` values (see [Errors](./errors.md)).
 
-Expressions run left to right: operands, arguments and field values in the order they're written. That's part of what makes every machine spawn the same entities with the same IDs.
+Expressions run left to right: operands, arguments and field values in the order they're written, on every platform. That's part of what makes every machine spawn the same entities with the same IDs, and it holds for calls that change what they're given too: in `Pack(Next(counter), Next(counter))` the first `Next` runs first, and in `Pack(counter.n, Next(counter))` `counter.n` is read before `Next` changes it (see [Functions](./functions.md#order)).
 
 So what happens in order, `Spawn`, `Scene.Load` and the GUI's widgets, can't go where it would only run sometimes, or again and again: on the right of `&&` or `||`, in a side of `?:`, or in a loop's condition or a `for`'s step. Spawn into a local first, or use `if` and `else`.
 
