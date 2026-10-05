@@ -110,37 +110,79 @@ static bool generic_name(const str name)
         || str_eq_c(name, "Grid3");
 }
 
+// Where a type is written: on its own, or as what a generic type takes in <>.
+typedef enum type_place {
+    PLACE_OWN,
+    PLACE_LIST,      // List<here>
+    PLACE_MAP_KEY,   // Map<here, V>
+    PLACE_MAP_VALUE, // Map<K, here>
+    PLACE_SET,       // Set<here>
+    PLACE_GRID,      // Grid2<here>, Grid3<here>
+} type_place;
+
+// A generic type inside another's <>, like List<List<int>>: nothing takes one
+// yet, so it's refused where it starts, with what to write instead. `key` is
+// the key type of the map it's a value of.
+static _Noreturn void refuse_nested(parser *p, const qname inner, const type_place place, const str key)
+{
+    const bool grid = str_eq_c(inner.text, "Grid2") || str_eq_c(inner.text, "Grid3");
+    const char *one = grid ? "grid" : str_eq_c(inner.text, "List") ? "list" : str_eq_c(inner.text, "Map") ? "map" : "set";
+    if (place == PLACE_MAP_KEY || place == PLACE_SET) {
+        diag_error(inner.at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s",
+                   place == PLACE_SET ? "set" : "map", one);
+    } else if (place == PLACE_GRID) {
+        diag_error(inner.at, "a grid's cells can't be %ss", one);
+        if (grid) diag_note("grids stay where they're made: in components, singletons and scenes");
+        else diag_note("cells are plain values, side by side in their chunk: keep the %s elsewhere, and a number for it in the cell", one);
+    } else if (grid) {
+        diag_error(inner.at, "a %s can't hold grids", place == PLACE_LIST ? "list" : "map");
+        diag_note("grids stay where they're made: in components, singletons and scenes");
+    } else {
+        // What holds an entity for each instead: List<Entity>, or Map<K, Entity>
+        char entities[160];
+        if (place == PLACE_LIST) snprintf(entities, sizeof entities, "List<Entity>");
+        else snprintf(entities, sizeof entities, "Map<" STR_FMT ", Entity>", STR_ARG(key));
+        diag_error(inner.at, "a %s can't hold %ss yet", place == PLACE_LIST ? "list" : "map", one);
+        if (place == PLACE_LIST && strcmp(one, "list") == 0) {
+            diag_note("keep every element in one list, with a 'List<int>' of where each inner list starts; or keep each "
+                      "inner list in a component, on an entity of its own, and hold the entities: '%s'", entities);
+        } else {
+            diag_note("keep each %s in a component, on an entity of its own, and hold the entities: '%s'", one, entities);
+        }
+    }
+    longjmp(p->fail, 1);
+}
+
 // A type: a name, maybe qualified, or a generic one like List<T>, whose text
-// is "List<T>" ("Map<K, V>" for a map, with that comma and space).
-static qname parse_type(parser *p, const char *what)
+// is "List<T>" ("Map<K, V>" for a map, with that comma and space). `place` is
+// where it's written, and `key` its map's key type when it's a map's value.
+static qname parse_type_in(parser *p, const char *what, const type_place place, const str key)
 {
     qname q = parse_qname(p, what);
     if (!at(p, T_LT) || !generic_name(q.text)) return q;
+    if (place != PLACE_OWN) refuse_nested(p, q, place, key);
+    const str none = {NULL, 0};
     if (str_eq_c(q.text, "Map") || str_eq_c(q.text, "Set")) {
         const bool map = str_eq_c(q.text, "Map");
         advance(p);
-        const qname key = parse_type(p, map ? "the map's key type, like 'Map<int, string>'" : "the set's key type, like 'Set<int>'");
+        const qname key_type = parse_type_in(p, map ? "the map's key type, like 'Map<int, string>'" : "the set's key type, like 'Set<int>'",
+                                             map ? PLACE_MAP_KEY : PLACE_SET, none);
         qname value = {0};
         if (map) {
             expect(p, T_COMMA, "',' between the map's key and value types, like 'Map<int, string>'");
-            value = parse_type(p, "the map's value type, like 'Map<int, string>'");
-        }
-        if (at(p, T_SHR)) { // List<Map<...>>, Map<K, Set<...>>: one inside another
-            diag_error(peek(p)->at, "a list or a map can't hold lists or maps yet");
-            diag_note("hold structs that have the lists instead");
-            longjmp(p->fail, 1);
+            value = parse_type_in(p, "the map's value type, like 'Map<int, string>'", PLACE_MAP_VALUE, key_type.text);
         }
         expect(p, T_GT, map ? "'>' after the map's value type" : "'>' after the set's key type");
-        const int len = q.text.len + key.text.len + (map ? value.text.len + 4 : 2);
+        const int len = q.text.len + key_type.text.len + (map ? value.text.len + 4 : 2);
         char *text = arena_alloc((size_t)len + 1);
-        if (map) snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ", " STR_FMT ">", STR_ARG(q.text), STR_ARG(key.text), STR_ARG(value.text));
-        else snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(key.text));
+        if (map) snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ", " STR_FMT ">", STR_ARG(q.text), STR_ARG(key_type.text), STR_ARG(value.text));
+        else snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(key_type.text));
         q.text = (str){text, len};
         return q;
     }
     if (!str_eq_c(q.text, "List")) { // Grid2<T> and Grid3<T>
         advance(p);
-        const qname cell = parse_type(p, "the grid's cell type, like 'Grid2<int>'");
+        const qname cell = parse_type_in(p, "the grid's cell type, like 'Grid2<int>'", PLACE_GRID, none);
         expect(p, T_GT, "'>' after the grid's cell type");
         const int len = cell.text.len + 7;
         char *text = arena_alloc((size_t)len + 1);
@@ -149,17 +191,17 @@ static qname parse_type(parser *p, const char *what)
         return q;
     }
     advance(p);
-    const qname element = parse_type(p, "the list's element type, like 'List<int>'");
-    if (at(p, T_SHR)) {
-        diag_error(peek(p)->at, "a list can't hold lists yet");
-        diag_note("hold structs that have the lists instead");
-        longjmp(p->fail, 1);
-    }
+    const qname element = parse_type_in(p, "the list's element type, like 'List<int>'", PLACE_LIST, none);
     expect(p, T_GT, "'>' after the list's element type");
     char *text = arena_alloc((size_t)element.text.len + 7);
     snprintf(text, (size_t)element.text.len + 7, "List<" STR_FMT ">", STR_ARG(element.text));
     q.text = (str){text, element.text.len + 6};
     return q;
+}
+
+static qname parse_type(parser *p, const char *what)
+{
+    return parse_type_in(p, what, PLACE_OWN, (str){NULL, 0});
 }
 
 // A declared type, which can be T?: a value or nothing. Its text ends with '?'.
