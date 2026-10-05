@@ -82,3 +82,92 @@ TIDE_TEST(box3d_orders_a_games_systems)
     TIDE_CHECK(late.velocity.x == 2.0f && near(late.position.x, DT));
     tide_world_free(&a);
 }
+
+// ---------------------------------------------------------------------------
+// What a view sees
+
+static tide_world b;
+static tide_world previous;
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+
+static void put(tide_world *w, has_fn *has, const Box3D_Body body)
+{
+    tide_set_Box3D_Body(w, the(w, has), body);
+}
+
+// How alike two rotations are: 1 for the same one, less for others
+static float alike(const tide_quaternion p, const tide_quaternion q)
+{
+    return tide_abs_f(tide_dot_q(tide_normalize_q(p), tide_normalize_q(q)));
+}
+
+TIDE_TEST(box3d_views_see_a_body_between_two_ticks)
+{
+    start(&a, Case_Turning);
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    tick(&a, 40);
+    tide_world_copy(&previous, &a);
+    tide_world_tick(&a);
+    const tide_quaternion was = body_of(&previous, tide_has_Spinner).rotation;
+    const tide_quaternion is = body_of(&a, tide_has_Spinner).rotation;
+    tide_draw_reset(&draw);
+    tide_frame(&a, &previous, 0.5f, NULL, &local, &draw, &gui);
+    // Halfway between the two ticks, it's turned half of what it turned between them
+    TIDE_CHECK(alike(was, is) < 0.99999f);
+    TIDE_CHECK(near(alike(local.Seen.rotation, was), alike(local.Seen.rotation, is)));
+    TIDE_CHECK(alike(local.Seen.rotation, was) > alike(was, is));
+    TIDE_CHECK(near(local.Seen.position.y, 5.0f));
+    tide_local_free(&local);
+    tide_world_free(&a);
+    tide_world_free(&previous);
+}
+
+// The match says a body is somewhere else than this machine drew it, as the
+// server does of what a client predicted: what a view sees doesn't jump there.
+// It's where it was drawn, and gets to where the match says over a few frames.
+TIDE_TEST(box3d_views_glide_through_a_correction)
+{
+    start(&a, Case_Turning);
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    tick(&a, 30);
+    tide_world_copy(&previous, &a);
+    tide_world_tick(&a);
+    const Box3D_Body drawn = body_of(&a, tide_has_Spinner);
+    tide_draw_reset(&draw);
+    tide_frame(&a, &previous, 1.0f, NULL, &local, &draw, &gui);
+    TIDE_CHECK(local.Seen.position.x == drawn.position.x && alike(local.Seen.rotation, drawn.rotation) > 0.99999f);
+
+    // The same tick as the server had it: a meter to the side, and turned a radian more, around another axis
+    tide_world_copy(&b, &a);
+    Box3D_Body said = drawn;
+    said.position.x += 1.0f;
+    said.rotation = tide_mul_q(tide_axisangle_q(tide_f3(0.0f, 1.0f, 0.0f), 1.0f), drawn.rotation);
+    put(&b, tide_has_Spinner, said);
+    const uint64_t hash = tide_world_hash(&b);
+    const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false};
+    tide_local_correct(&local, &correction);
+    tide_draw_reset(&draw);
+    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    printf("    drawn at %g, and said to be at %g and turned a radian more: a view sees it at %g, turned %g of the way", (double)drawn.position.x,
+           (double)said.position.x, (double)local.Seen.position.x,
+           (double)(2.0f * tide_acos_f(tide_min_f(1.0f, alike(local.Seen.rotation, drawn.rotation)))));
+    TIDE_CHECK(near(local.Seen.position.x, drawn.position.x) && alike(local.Seen.rotation, drawn.rotation) > 0.9999f);
+    // ...and halfway there 75 ms later
+    tide_local_frame_time(&local, 0.075f);
+    tide_draw_reset(&draw);
+    tide_frame(&b, &previous, 1.0f, NULL, &local, &draw, &gui);
+    const float turned = 2.0f * tide_acos_f(tide_min_f(1.0f, alike(local.Seen.rotation, drawn.rotation)));
+    printf(", then at %g and %g\n", (double)local.Seen.position.x, (double)turned);
+    TIDE_CHECK(near(local.Seen.position.x, drawn.position.x + 0.5f) && tide_abs_f(turned - 0.5f) < 0.01f);
+    TIDE_CHECK(near(alike(local.Seen.rotation, drawn.rotation), alike(local.Seen.rotation, said.rotation)));
+    // None of it is the match's: the world is as the server said
+    TIDE_CHECK(tide_world_hash(&b) == hash && body_of(&b, tide_has_Spinner).position.x == said.position.x);
+    tide_local_free(&local);
+    tide_world_free(&a);
+    tide_world_free(&b);
+    tide_world_free(&previous);
+}

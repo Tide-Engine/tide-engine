@@ -32,12 +32,16 @@ enum BodyType
 
 // A rigid body. Its place and speeds are Box3D's after each step, and a system
 // that writes them moves the body: the next step starts from what they say.
+//
+// Where it is and how it's turned are said to be that, for views: when the
+// server corrects where this machine had a body, they see it get there over a
+// few frames, turning the short way. It changes nothing of the match.
 component Body
 {
     long id; // Box3D's own handle: 0 until the body's first step
     BodyType type = BodyType.Dynamic;
-    float3 position;
-    quaternion rotation = quaternion.identity;
+    [Position] float3 position;
+    [Rotation] quaternion rotation = quaternion.identity;
     float3 velocity;
     float3 angularVelocity; // Around each axis, in radians a second
     float3 impulse; // Given to the body at the next step, once
