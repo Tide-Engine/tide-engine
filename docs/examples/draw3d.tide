@@ -26,7 +26,7 @@ view Scenery(Devices devices, mut Orbit orbit)
     // The camera looks along its rotation's +z, from 14 units behind the middle.
     var rotation = quaternion.Euler(float3(orbit.pitch, orbit.yaw, 0));
     Draw2D.Clear(Color(0.45, 0.68, 0.95));
-    Draw3D.Camera(float3(0, 1, 0) - Math.Forward(rotation) * 14, rotation, orbit.fieldOfView);
+    Draw3D.SetCamera(float3(0, 1, 0) - Math.Forward(rotation) * 14, rotation, orbit.fieldOfView);
 
     // 3D draws hide each other by depth, whatever order they come in.
     Draw3D.Plane(float3(0, 0, 0), float2(11, 11), Color(0.13, 0.3, 0.42));
@@ -42,7 +42,7 @@ view Scenery(Devices devices, mut Orbit orbit)
     Draw3D.Sphere(float3(0, 4.2, 0), 0.7, Color(1, 0.8, 0.35));
     Draw3D.Cylinder(float3(0, 3, 0), 0.08, 1.6, Color.white);
 
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Drag to turn the camera", float2(16, 14), 16, Color.white);
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Field of view", orbit.fieldOfView, 25, 90);
 }

@@ -69,7 +69,7 @@ system Run(mut Runner runner, Round round, Time time)
 view Track(Round round)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0, -0.2), 2.3);
+    Draw2D.SetCamera(float2(0, -0.2), 2.3);
     Draw2D.WireCircle(float2(0), 1.5, 0.03, Color(0.18, 0.24, 0.32));
     var word = round.count > 0 ? $"{round.count}" : round.running ? "GO" : "";
     Draw2D.Text(word, float2(0), 0.9, Color.white, Anchor.MiddleCenter, Font.Bold);
@@ -85,7 +85,7 @@ view Runners(Runner runner, Round round, Devices devices)
 
 view Controls(Round round)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text(round.running ? "Tap a runner to make it dash" : "A round is a task that waits",
                 float2(16, 14), 16, Color.white);
     GUI.Disabled(round.busy)

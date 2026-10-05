@@ -53,7 +53,7 @@ float2 Seat(int seat)
 view Backdrop(Roster roster)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text($"Commands the match refused: {roster.refused}", float2(16, Screen.height - 30), 14, Color(0.6, 0.68, 0.78));
 }
 

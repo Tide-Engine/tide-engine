@@ -56,7 +56,7 @@ system Spread(mut Heat heat)
 view Show(Devices devices, Heat heat, mut Brush brush)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(SIZE * 0.5, SIZE * 0.5 + 2), SIZE * 0.58); // A cell is one unit
+    Draw2D.SetCamera(float2(SIZE * 0.5, SIZE * 0.5 + 2), SIZE * 0.58); // A cell is one unit
     var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
     brush.cell = int2(Math.Floor(pointer));
     brush.down = devices.pointer.press.pressed && pointer.x >= 0 && pointer.x < SIZE && pointer.y >= 0 && pointer.y < SIZE;
@@ -67,6 +67,6 @@ view Show(Devices devices, Heat heat, mut Brush brush)
         float hot = heat.cells[at] / 4000.0;
         if (hot > 0.004) Draw2D.Rect(float2(at) + 0.5, float2(1), Color(Math.Sqrt(hot), hot * hot * 0.9 + 0.05, 0.25 - hot * 0.2));
     }
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Drag to heat the cells", float2(16, 14), 16, Color.white);
 }

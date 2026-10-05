@@ -13,7 +13,7 @@ local singleton Label
 view Show(mut Label label)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     var at = float2(Screen.width * 0.5, Screen.height * 0.3);
     var anchor = Anchor(label.anchor);
     var font = label.bold ? Font.Bold : Font.Regular;

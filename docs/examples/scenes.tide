@@ -59,7 +59,7 @@ local singleton Count { int balls; }
 view Buttons(Slots slots, mut Count count)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0, 0.2), 2.2);
+    Draw2D.SetCamera(float2(0, 0.2), 2.2);
     count.balls = 0;
     for (var slot = 0; slot < 3; slot++)
     {
@@ -79,6 +79,6 @@ view Balls(Ball ball, mut Count count)
 
 view Total(Count count)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text($"{count.balls} balls, in the rooms that are loaded", float2(16, 14), 16, Color.white);
 }

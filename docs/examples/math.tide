@@ -41,7 +41,7 @@ view Graph(mut Plot plot)
     if (plot.x > 1) plot.x -= 1;
 
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0.62, 0.42), 0.85); // The graph goes from (0, 0) to (1, 1)
+    Draw2D.SetCamera(float2(0.62, 0.42), 0.85); // The graph goes from (0, 0) to (1, 1)
     Draw2D.WireRect(float2(0.5), float2(1), Color(0.18, 0.24, 0.32));
     for (var i = 0; i < 96; i++)
     {
@@ -56,7 +56,7 @@ view Graph(mut Plot plot)
     // The same number, moving something.
     Draw2D.Circle(float2(1.25, y), 0.06, Color(1, 0.65, 0.3));
 
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text(Formula(plot.curve), float2(16, 14), 15, Color.white);
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
     {

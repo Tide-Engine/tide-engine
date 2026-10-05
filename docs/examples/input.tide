@@ -75,12 +75,12 @@ view Drag(Devices devices, mut Stick stick)
 view DrawHero(Hero hero)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0, 1), 2.2);
+    Draw2D.SetCamera(float2(0, 1), 2.2);
     Draw2D.Line(float2(-2.2, -0.3), float2(2.2, -0.3), 0.04, Color(0.18, 0.24, 0.32));
     Draw2D.RoundRect(hero.position + float2(0, 0.05), float2(0.5, 0.7), 0.16, Color(0.3, 0.8, 1));
     Draw2D.Line(hero.position + float2(0, 0.6), hero.position + float2(hero.move.x * 0.6, 0.6), 0.06, Color(1, 0.65, 0.3));
 
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text($"move.x = {hero.move.x:F1}   jump = {hero.jump}   jumps: {hero.jumps}", float2(16, 14), 16, Color.white);
     Draw2D.Text("Click here, then A and D or the arrows, and space.\nOn a touchscreen, drag sideways, and up to jump.",
                 float2(16, Screen.height - 46), 13, Color(0.6, 0.68, 0.78));

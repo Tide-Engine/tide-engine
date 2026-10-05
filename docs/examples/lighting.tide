@@ -64,7 +64,7 @@ view Show(mut Globe globe)
     if (globe.turn > Math.TAU) globe.turn -= Math.TAU;
 
     Draw2D.Clear(Color(0.03, 0.04, 0.07));
-    Draw3D.Camera(float3(0, -0.32, -4.4), quaternion.identity, 45);
+    Draw3D.SetCamera(float3(0, -0.32, -4.4), quaternion.identity, 45);
     var spin = quaternion.AxisAngle(float3(0, 1, 0), globe.turn);
     Draw3D.Mesh(globe.corners, globe.faces, float4x4.TRS(float3(0), spin, float3(1)), Lit);
 

@@ -5,7 +5,7 @@ local singleton ShapeSettings { float amount = 0.65; }
 view Shapes(ShapeSettings settings)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0), 3.6);
+    Draw2D.SetCamera(float2(0), 3.6);
     // A shadow and a card with a gradient, rounded corners and an outline.
     Draw2D.Shape(Shape { center = float2(-1.2, -0.08), size = float2(2, 2.6), radius = 0.2,
                          color = Color(0, 0, 0, 0.6), soft = 0.3 });
@@ -27,7 +27,7 @@ view Shapes(ShapeSettings settings)
 
 view Controls(mut ShapeSettings settings)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Shapes, gradients and outlines", float2(16, 14), 18, Color.white);
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Amount", settings.amount, 0, 1);
 }
