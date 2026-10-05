@@ -222,7 +222,10 @@ void tide_touch_event(tide_touchscreen *s, tide_touch_phase phase, uint32_t sour
 void tide_pointer_poll(tide_devices *d, bool mouse_used);
 
 // After sampling input: buttons restart from their current state, mouse
-// delta and scroll reset to zero, and lifted fingers leave their slots.
+// delta and scroll reset to zero, and lifted fingers leave their slots. A
+// host also calls it at the end of a frame in which nothing could sample, as
+// outside a match: or the first sample that comes reads everything pressed
+// since the last one, however long ago.
 void tide_devices_consume(tide_devices *d);
 
 // touches[i] in generated code: an empty touch past the last.
