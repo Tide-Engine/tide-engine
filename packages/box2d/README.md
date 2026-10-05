@@ -51,15 +51,29 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 }
 ```
 
-(`test/stack.tide` is a game like this one, which the package's tests run.)
+(`test/stack.tide` is a game like this one, which the package's tests run, and `test/course.tide` one with a sensor, a body spawned with an impulse, a system before the step and bodies at rest that code moves.)
 
-- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `fixedRotation` and `bullet`, which are read when the body is made. After each step the first four are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once.
+- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `fixedRotation` and `bullet`, which are read when the body is made. After each step the first four are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once: the ones a body is spawned with at its first, once its shapes are on it.
+- A body at rest is asleep, and whatever code writes into it wakes it: a speed, an impulse, and a `position` or an `angle` too, which also wake what was touching it.
+- `position` is a `[Position]` and `angle` a `[Rotation]`, for views: they see a body turn the short way through half a turn, where its angle goes from pi to -pi, and get to where the server says it is over a few frames when this machine predicted otherwise.
 - **`Box`** and **`Circle`** are shapes on the entity's body: `size` or `radius`, `offset`, `density`, `friction`, `bounce`, `sensor`.
-- **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`.
-- **`Physics`** is the world: `gravity` and `substeps`.
+- **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`, once for each pair of shapes. A shape with `sensor` stops nothing, and sends them for the shapes that come into it and leave it, static bodies' too; two sensors say nothing of each other. When the other entity was destroyed while they touched, `Parted` comes with `default` for it.
+- **`Physics`** is the world: `gravity` and `substeps`. A gravity that changes wakes every body.
 - An entity that's destroyed takes its body with it.
 
-The package's systems run before the game's, in this order: bodies and shapes that are new are made and what code wrote goes to Box2D, the world steps, and bodies' components get where it left them. So a game's systems read this tick's positions, and what they write is the next step's.
+The package's systems run before the game's, in this order: bodies and shapes that are new are made and what code wrote goes to Box2D, the world steps, bodies' components get where it left them, and the events are sent. So a game's systems read this tick's positions, and what they write is the next step's.
+
+They're one stage, `PhysicsStages.Step`. A system that has to write into this tick's step says `[Before(PhysicsStages.Step)]`, and runs before all of them:
+
+```csharp
+[Before(PhysicsStages.Step)]
+system Walk(PlayerInput input, mut Body body, with Player)
+{
+    body.velocity.x = input.move.x * 4;
+}
+```
+
+That's the one way. The package's own systems (`Enter`, `Simulate`, `Leave` and the rest) each say where they are in the stage, so nothing a game orders its systems by moves them, and they aren't for a game to name: a system put among them writes after bodies have gone to Box2D and before they come back, and the step's own is written over it. `test/order.tide` is a game that orders its systems each way, with the order that comes of it in `test/order.txt`.
 
 ## How it holds a match
 
@@ -68,7 +82,8 @@ Box2D keeps its world in C's memory, outside the match, where rollbacks, joins, 
 - **Everything that changes Box2D's world goes through the match**, which is why code moves a body by writing its component, and never calls Box2D. The stamp is the stamp before it and everything done to the world since, hashed: Box2D's next state is its last and what's done to it, so the image is never read to name it.
 - **The image is in the match's hash**, so it's the same bytes on every machine for the same state, 32-bit web builds and 64-bit desktops alike, whatever their SIMD. Box2D doesn't promise that by itself: `box2d/TIDE.md` lists the changes that took. `tide_box2d_stack` pins the simulation's hash and every tick's image on each platform.
 - **The image is in sections that keep their place**, so what changes of it from tick to tick is what changed in the world, and the match's snapshots share the rest. As Box2D writes it, a contact that starts or ends moves every byte after it.
-- **A world at rest isn't stepped.** Nothing awake and nothing written to any body: there's no step and no image, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
+- **A world at rest isn't stepped.** Nothing awake, nothing written to any body and the gravity it had: there's no step and no image, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
+- **What a sensor has in it is in the image too**, so a world made from one says the same of its sensors after its next step. Box2D writes it with two bytes of every entry that are whatever was in memory: the package's copy writes zeros there (`box2d/TIDE.md`).
 
 ## What it costs
 
@@ -93,6 +108,7 @@ Measured on a release build, 2,400 crates in stacks (an image of 2.5 MB), one th
 ## Not there yet
 
 - Joints, chains, polygons other than boxes, capsules, ray casts and overlap tests.
+- `Touched` and `Parted` don't say which shape of an entity's it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
 - A body's `type` and the fields read when it's made don't follow later changes, and a shape's don't either.
 - Removing `Body` from an entity that stays leaves its body in the world.
 - Reading the world from views.

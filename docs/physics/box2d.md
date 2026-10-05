@@ -38,7 +38,7 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 
 - `Build` makes the world out of entities: each has a `Body`, and a `Box` or a `Circle` for its shape. The floor and the walls are `Static`, and the crates are dynamic, as a body is unless it says otherwise.
 - Nothing in the game moves a crate. The package's systems step the world every tick, and write where each body is into its `Body`.
-- The views draw from the same components: `body.position` and `body.angle`, with the size its `Box` or `Circle` says.
+- The views draw from the same components: `body.position` and `body.angle`, with the size its `Box` or `Circle` says. A ball has a spoke, so that its turning shows.
 - A tap is a [command](../game/commands.md). `DropBall` spawns a body where the tap was. `KickCrate` writes the crate's `impulse`, and the next step pushes it.
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
@@ -72,6 +72,8 @@ component Body
 
 After each step, `position`, `angle`, `velocity` and `spin` are where Box2D left the body, with `angle` between -π and π. Code reads them like any component's fields, and [writing them moves the body](#moving-a-body).
 
+[Views](../game/views.md) see a body between its last two ticks, as they see any component. The package says what two of the fields are, for that: `position` is a `[Position]` and `angle` a `[Rotation]` (see [correction smoothing](../game/views.md#provisional-correction-smoothing)). So a view sees a body turn the short way through half a turn, where its angle goes from π to -π, and what it reads there can be a little past π. And when the server corrects where this machine had predicted a body, a view sees it get there over a few frames, where it would jump. Neither changes anything of the match.
+
 `type` and the fields from `gravityScale` down are read when the body is made, so they're set where the entity is spawned. Changing them later does nothing yet.
 
 The rest of the component is the package's own, and not for a game to write: `id` is Box2D's handle to the body, 0 until its first step, and `stepPosition`, `stepAngle`, `stepVelocity` and `stepSpin` are where the last step left it, which is how the package tells what code wrote since.
@@ -97,7 +99,7 @@ component Box
     float density = 1;          // Its weight for its area
     float friction = 0.6;       // How much it grips: 0 for ice
     float bounce;               // 0 for no bounce, 1 for all of it
-    bool sensor;                // Bodies pass through it
+    bool sensor;                // Bodies pass through it, and it says which
 }
 
 component Circle
@@ -117,6 +119,8 @@ An entity has one `Box` at most, and one `Circle`, and both can be on the same b
 
 A shape is read once, when it's put on its body, the tick after it's spawned or added. Changing its component later does nothing yet.
 
+A shape with `sensor` touches nothing and reports what's in it: see [Sensors](#sensors).
+
 ## Moving a body
 
 Code moves a body by writing its `Body`, and never by calling Box2D. After each step the package writes where every body is into its component, and before the next one it looks at each for what code changed since, and tells Box2D.
@@ -128,6 +132,12 @@ system Jump(PlayerInput input, mut Body body, with Player)
 {
     if (input.jump.down) body.impulse = float2(0, 5);
 }
+```
+
+An entity can be spawned with one, which pushes it at its first step, as soon as its shapes are on it:
+
+```csharp
+Spawn(Body { position = muzzle, impulse = aim * 3 }, Circle { radius = 0.1 }, Shot);
 ```
 
 A speed that code decides is written every tick. The other half of the vector stays Box2D's:
@@ -168,10 +178,14 @@ system Sweep(mut Body body, with Lift)
 }
 ```
 
-Two things to know:
+### Bodies at rest
 
-- **A new body's `impulse` is lost.** A body is made before its shapes are on it, when it weighs nothing, so an `impulse` or a `turn` in the `Spawn` itself does nothing. Give a new body a `velocity` instead, or its impulse a tick later.
-- **A body at rest is asleep.** Box2D stops moving a body that has come to rest, until something touches it or pushes it. Writing its `velocity`, its `spin`, an `impulse` or a `turn` wakes it. Writing its `position` or its `angle` moves it and leaves it asleep, so a crate at rest that's put in the air hangs there until it's woken: give it a small `impulse` along with its new place.
+Box2D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or pushes it. Whatever code writes into a sleeping body wakes it:
+
+- A `velocity` or a `spin` that isn't zero, an `impulse` or a `turn`.
+- A `position` or an `angle`: the body is moved and wakes, so a crate at rest that's put in the air falls. What was touching it wakes too: a platform that's moved away, a static one as well, drops what stood on it.
+
+A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)).
 
 ## When things happen in a tick
 
@@ -184,9 +198,25 @@ The package's systems run before the game's, as every [package's](../tools/packa
 
 So a system of the game's reads this tick's positions, and what it writes goes into the next tick's step. The same goes for what an event's or a command's handler writes, at the end of the tick. An entity spawned in a tick has its body made at the start of the next, and is in that tick's step.
 
-::: warning Leave the package's systems where they are
-`tide schedule` lists them as `Box2D.Enter`, `Box2D.Step`, `Box2D.Leave` and the rest. Don't name one in a `[Before]` of a system of the game's, to get in ahead of the step: they keep their order among themselves only by where they're declared, and `[Before(Step)]` moves `Step` itself to after the systems that follow it.
-:::
+### Before the step
+
+A system that has to write into this tick's step says so. The package's systems are one [named phase](../game/systems.md#named-phases), `PhysicsStages.Step`, and a system that's `Before` it runs before everything in the list above:
+
+```csharp
+[Before(PhysicsStages.Step)]
+system Walk(PlayerInput input, mut Body body, with Player)
+{
+    body.velocity.x = input.move.x * 4;
+}
+```
+
+What `Walk` writes is the speed this tick steps with, a tick sooner than without the attribute. What it reads of a body is where the last tick's step left it.
+
+That's the one way to get in ahead of the step, and a few things follow from how [systems are ordered](../game/systems.md#order):
+
+- **A system that doesn't say runs after the step**, in a game where none says `Before`. Once one does, the systems written above it in the game's files run before the step too, as the package now waits for a system that comes after them. `[After(PhysicsStages.Step)]` on a system holds it after the step whatever the others say: write it on one that has to read where this tick's step left things.
+- **`[Before(Step)]` is an error**, as no system has that name: the phase is what to name.
+- **The package's own systems aren't for a game to name.** `tide schedule` lists them, `Box2D.Enter`, `Box2D.Simulate`, `Box2D.Leave` and the rest, and they keep their order whatever a game orders its systems by. But a system that's put among them, with `[Before(Box2D.Simulate)]` say, runs after what code wrote has gone to Box2D and before the bodies come back: where it writes a body's place or its speed, the step's own is written over it.
 
 A tick is one step, so a match at the default 60 ticks a second steps a 60th of a second at a time, which is what Box2D is tuned for. A lower `tickRate` makes each step longer and the world less steady.
 
@@ -213,7 +243,34 @@ event(Touched touched) Land(World world, with Ball)
 
 They're [events](../game/events.md) like any other: a handler runs for the entity the event was sent to, when that entity has the components the handler takes, at the end of the tick whose step found the touch. A [local handler](../game/events.md#local-handlers) hears them too, on each machine, for a sound or a spark.
 
-When the other entity was destroyed while they touched, `Parted` still comes, and its `other` is no entity: `parted.other == default`.
+They're sent once for each pair of shapes that touch, so a body whose `Box` and `Circle` are both on the floor hears `Touched` twice.
+
+When the other entity was destroyed while they touched, `Parted` still comes, and its `other` is no entity: `parted.other == default`. Which entity it was isn't said.
+
+### Sensors
+
+A shape with `sensor = true` stops nothing: bodies pass through it. It sends the same two events, `Touched` when a body's shape comes into it and `Parted` when it leaves, to its own entity and to the other's:
+
+```csharp
+component Goal { int score; }
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float2(8, 1) }, Box { size = float2(1, 2), sensor = true }, Goal);
+}
+
+// Runs for the goal: what came in is `touched.other`.
+event(Touched touched) Score(mut Goal goal, World world)
+{
+    if (world.Has<Ball>(touched.other)) goal.score += 1;
+}
+```
+
+- A sensor reports every body's shape that's in it: one on a body that never moves too, so a sensor under a character's feet says when it stands on the ground. A body that's in it from the start is reported at its first step.
+- It can be on a body that moves, alone or beside the shapes the body touches with. It reports nothing of its own body's shapes.
+- A sensor doesn't report another sensor.
+- It has a weight like any shape, by its `density`: give it 0 where it's beside the shapes its body touches with, and shouldn't add to them.
+- What's in a sensor is looked at once a step, where things are after it. A small body that's fast enough to cross a thin sensor between two steps may come and go unreported: make such a sensor thick.
 
 ## The world
 
@@ -238,7 +295,7 @@ event(Spawned) Setup(mut Physics physics, with Main)
 }
 ```
 
-A new gravity doesn't wake bodies that are [asleep](#moving-a-body): they stay where they are until something wakes them.
+A new gravity wakes every body that's [asleep](#bodies-at-rest), so that what was at rest feels it. A game that changes it every tick has nothing at rest.
 
 The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `gone` and `owners` are how the package keeps Box2D's state in the match.
 
@@ -277,7 +334,6 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 ## Not there yet
 
 - Joints, chains, polygons other than boxes, capsules, ray casts and overlap tests.
-- A sensor reports nothing: no `Touched` or `Parted` is sent for a shape with `sensor`.
+- `Touched` and `Parted` don't say which shape of an entity's it was, and a parting from an entity that was destroyed doesn't say which entity.
 - A body's `type` and the fields read when it's made don't follow later changes, and a shape's fields don't either.
 - Removing `Body` from an entity that stays leaves its body in the world.
-- Views see a `Body` blended between ticks like any component, with nothing more: its fields have no [correction smoothing](../game/views.md#provisional-correction-smoothing), and `angle` blends as a plain number. For the frame in which a turning body passes half a turn, where its angle goes from π to -π, the blend is somewhere between the two and the body is drawn turned wrong.
