@@ -25,6 +25,7 @@
 #include "box2d/collision.h"
 #include "box2d/types.h"
 
+#include <stddef.h>
 #include <string.h>
 
 // Snapshot image magic and version
@@ -289,6 +290,24 @@ static bool b2SnapCheckCount( const b2SnapReader* r, int count, int memSize, int
 		}                                                                                                                        \
 	}                                                                                                                            \
 	while ( 0 )
+
+// Tide: a sensor's visitors, each as its two fields with zeros after them. A b2Visitor has two bytes that no
+// field owns, which are whatever was in memory where its array grew: written as the array's bytes, as
+// upstream does, they made an image of a world with something in a sensor other bytes from one run to the
+// next (see ../TIDE.md). The reader takes them as the array's bytes, as before.
+_Static_assert( sizeof( b2Visitor ) == 8 && offsetof( b2Visitor, generation ) == 4, "b2Visitor changed" );
+
+static void b2SerVisitors( b2RecBuffer* buf, const b2Visitor* visitors, int count )
+{
+	b2SnapW_I32( buf, count );
+	for ( int i = 0; i < count; ++i )
+	{
+		uint8_t bytes[sizeof( b2Visitor )] = { 0 };
+		memcpy( bytes, &visitors[i].shapeId, sizeof( int ) );
+		memcpy( bytes + offsetof( b2Visitor, generation ), &visitors[i].generation, sizeof( uint16_t ) );
+		b2SnapW_Bytes( buf, bytes, (int)sizeof( bytes ) );
+	}
+}
 
 // Id pool: nextIndex + freeArray
 static void b2SerIdPool( b2RecBuffer* buf, const b2IdPool* pool )
@@ -653,9 +672,10 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	{
 		b2Sensor* s = world->sensors.data + i;
 		b2SnapW_I32( buf, s->shapeId );
-		b2SerPodArray( buf, s->hits );
-		b2SerPodArray( buf, s->overlaps1 );
-		b2SerPodArray( buf, s->overlaps2 );
+		// Tide: without the bytes of a visitor that no field owns
+		b2SerVisitors( buf, s->hits.data, s->hits.count );
+		b2SerVisitors( buf, s->overlaps1.data, s->overlaps1.count );
+		b2SerVisitors( buf, s->overlaps2.data, s->overlaps2.count );
 	}
 
 	// Islands: POD scalars + 3 inner arrays per slot

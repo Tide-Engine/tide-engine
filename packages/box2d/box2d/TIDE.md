@@ -28,6 +28,13 @@ state, and one machine's has to load on another.
   which is what a restore makes of it. Upstream writes the capacity the tree
   has, so a world that was restored wrote other bytes from then on than one
   that never was.
+- **`snapshot.c`: a sensor's visitors are written field by field, with zeros
+  after** (`b2SerVisitors`). A `b2Visitor` is a shape's index and its
+  generation, 6 bytes of 8, and the other two are whatever was in memory where
+  its array grew. Upstream writes the arrays as their bytes, so the image of a
+  world with something in a sensor was other bytes from one run to the next:
+  the package's match of sensors had another hash of its images in a debug
+  build than in a release one. The reader takes them as before.
 - **`contact_solver_wide.inl`: a contact point's `normalVelocity`** is set for
   the contacts that use it (restitution, or hit events) and zero for the rest,
   as the overflow solver does. Upstream decides for a whole block of contacts
@@ -79,9 +86,37 @@ And one is for threads on the web, where upstream only knows Emscripten:
   a page's own, it goes on with the loop. A world steps the same either way,
   as it does with any number of workers.
 
+## What the package asks of it
+
+Nothing here is changed for these, but the package rests on them, and a new
+Box2D has to be read for them again:
+
+- **A shape is only reported to a sensor when both have `enableSensorEvents`**,
+  which is off unless a shape is made with it, for a sensor too. The package
+  makes every shape with it, so that a sensor sends `Touched` and `Parted`.
+  It's a byte of each shape in the image.
+- **Sensors see each other** (`b2SensorQueryCallback` has no check for it), so
+  the package makes its sensors in one collision group below zero
+  (`filter.groupIndex`), which Box2D never sets against each other: two that
+  overlap would each report the other, and their entities hear of it twice.
+- **What a sensor has in it is in the image** (its three arrays of visitors),
+  and the events of a step aren't: a world made from an image has the same
+  begins and ends to say after its next step as the world the image was taken
+  of. `tide_box2d_course` makes its world again before every tick to see that.
+- **`b2Body_SetTransform` doesn't wake a body, or what rests on it.** The
+  package wakes both when code moves a body (`b2Body_SetAwake`,
+  `b2Body_WakeTouching`).
+- **There's no call to wake every body** but turning sleeping off, which the
+  package does, and on again, when gravity changes (`b2World_EnableSleeping`).
+  A world's gravity is in its image, which is how the package tells a change.
+- **A body made with no shape weighs nothing**, so an impulse does nothing to
+  it: the package gives a new body's impulses once its shapes are on it.
+
 ## Updating it
 
 Copy the two folders over, apply the changes again, and run `tide_box2d_stack`
-natively and for the web: its pinned hashes are of the simulation and of every
-image, so a field that isn't the same everywhere shows there. A new version
-steps differently, so the hashes change with it, and so do games' matches.
+and `tide_box2d_course` natively, in debug and release, and for the web: their
+pinned hashes are of the simulation and of every image, so a field that isn't
+the same everywhere shows there, and bytes that are whatever was in memory
+show between a debug build and a release one. A new version steps differently,
+so the hashes change with it, and so do games' matches.

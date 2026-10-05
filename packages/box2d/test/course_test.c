@@ -278,3 +278,108 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
     TIDE_CHECK(stays(&a));
     tide_world_free(&a);
 }
+
+// ---------------------------------------------------------------------------
+// Sensors
+
+// The match of sensors after its 330 ticks, on every platform and in every
+// configuration: what a sensor holds of its visitors is in Box2D's image.
+#define SENSORS_HASH UINT64_C(0xf587a9d17df7731b)
+#define SENSORS_IMAGES_HASH UINT64_C(0x0e32b536d4918e19)
+
+enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
+
+static Heard heard_by(const tide_world *w, has_fn *has)
+{
+    return tide_get_Heard(w, the(w, has));
+}
+
+// The match of sensors, with every tick's hash: the bait goes from its trap at
+// one tick and the snare from around its prey at another. With `again`, C's
+// world is made from the match's image before every tick. `at_look` is the
+// world as it was while the probe was still falling.
+static void play_sensors(tide_world *w, uint64_t *hashes, const bool again, tide_world *at_look)
+{
+    start(w, Case_Sensors);
+    for (int i = 0; i < SENSOR_TICKS; i++) {
+        w->Course.spring = i == SPRING;
+        w->Course.release = i == RELEASE;
+        if (again) b2t_forget();
+        tide_world_tick(w);
+        hashes[i] = tide_world_hash(w);
+        if (i == LOOK && at_look) tide_world_copy(at_look, w);
+    }
+}
+
+TIDE_TEST(box2d_sensors_report)
+{
+    static uint64_t went[SENSOR_TICKS];
+    play_sensors(&a, went, false, &previous);
+
+    // While the probe was still falling: everything else had happened
+    const tide_world *w = &previous;
+    const Heard gate = heard_by(w, tide_has_Gate);
+    const Heard fence = heard_by(w, tide_has_Fence);
+    const Heard marble = heard_by(w, tide_has_Marble);
+    const Heard shelf = heard_by(w, tide_has_Shelf);
+    const Heard probe = heard_by(w, tide_has_Probe);
+    const Heard floor = heard_by(w, tide_has_Floor);
+    const Heard trap = heard_by(w, tide_has_Trap);
+    const Heard bait = heard_by(w, tide_has_Bait);
+    printf("    the gate heard %d come and %d go, the marble %d and %d, the probe %d and %d, the shelf %d and %d, the floor %d and %d\n",
+           (int)gate.touched, (int)gate.parted, (int)marble.touched, (int)marble.parted, (int)probe.touched, (int)probe.parted,
+           (int)shelf.touched, (int)shelf.parted, (int)floor.touched, (int)floor.parted);
+    // The marble fell through the gate: each heard the other come and go, once
+    TIDE_CHECK(gate.touched == 1 && gate.parted == 1 && gate.gone == 0);
+    TIDE_CHECK(tide_entity_equal(gate.last, the(w, tide_has_Marble)));
+    // ...and landed on the floor, which is the second thing it touched
+    TIDE_CHECK(marble.touched == 2 && marble.parted == 1);
+    TIDE_CHECK(tide_entity_equal(marble.last, the(w, tide_has_Floor)));
+    TIDE_CHECK(body_of(w, tide_has_Marble).position.y < 1.0f);
+    // A sensor doesn't report another: the fence crosses the gate, and heard nothing
+    TIDE_CHECK(fence.touched == 0 && fence.parted == 0);
+    // A sensor that moves reports the bodies it passes through, static ones too: the shelf, then the floor
+    TIDE_CHECK(probe.touched == 2 && probe.parted == 2 && shelf.touched == 1 && shelf.parted == 1);
+    TIDE_CHECK(tide_entity_equal(shelf.last, the(w, tide_has_Probe)) && tide_entity_equal(probe.last, the(w, tide_has_Floor)));
+    TIDE_CHECK(body_of(w, tide_has_Probe).position.y < -2.0f); // Nothing stopped it
+    // A body that's in a sensor from its first step is reported, and stays so while it rests there
+    TIDE_CHECK(trap.touched == 1 && trap.parted == 0 && tide_entity_equal(trap.last, the(w, tide_has_Bait)));
+    TIDE_CHECK(bait.touched == 2 && bait.parted == 0);
+    // The floor heard the marble, the probe, the bait and the prey, and the probe leave
+    TIDE_CHECK(floor.touched == 4 && floor.parted == 1);
+
+    // After it all: the bait went from inside its trap, and the snare from around its prey. Each that stayed
+    // heard a parting, from no entity
+    const Heard trap_after = heard_by(&a, tide_has_Trap);
+    const Heard prey = heard_by(&a, tide_has_Prey);
+    TIDE_CHECK(trap_after.touched == 1 && trap_after.parted == 1 && trap_after.gone == 1);
+    TIDE_CHECK(tide_entity_equal(trap_after.last, (tide_entity){0}));
+    TIDE_CHECK(prey.touched == 2 && prey.parted == 1 && prey.gone == 1);
+    // ...and so did the floor, which the bait stood on: a solid shape's parting comes the same way
+    const Heard floor_after = heard_by(&a, tide_has_Floor);
+    TIDE_CHECK(floor_after.touched == 4 && floor_after.parted == 2 && floor_after.gone == 1);
+    TIDE_CHECK(a.Box2D_Physics.bodies == 10 && a.Box2D_Physics.shapes == 10);
+    TIDE_CHECK(!a.Box2D_Physics.moved); // And it all came to rest
+    TIDE_CHECK(stays(&a));
+
+    uint64_t images = 0;
+    for (int i = 0; i < SENSOR_TICKS; i++) images = tide_hash_more(images, &went[i], sizeof went[i]);
+    printf("    the world's hash is %016llx, and its %d images' %016llx\n", (unsigned long long)went[SENSOR_TICKS - 1], (int)SENSOR_TICKS,
+           (unsigned long long)tide_hash_end(images));
+    TIDE_CHECK(went[SENSOR_TICKS - 1] == SENSORS_HASH);
+    TIDE_CHECK(tide_hash_end(images) == SENSORS_IMAGES_HASH);
+
+    // What a sensor holds is in the image: a world made from it again before every tick hears the same, at
+    // the same ticks
+    static uint64_t again[SENSOR_TICKS];
+    const int32_t before = b2t_restores();
+    play_sensors(&b, again, true, NULL);
+    TIDE_CHECK(b2t_restores() - before == SENSOR_TICKS - 1); // All but the first, which has no image to make it from
+    for (int i = 0; i < SENSOR_TICKS; i++) {
+        if (again[i] != went[i]) printf("    tick %d came out different\n", i);
+        TIDE_REQUIRE(again[i] == went[i]);
+    }
+    tide_world_free(&a);
+    tide_world_free(&b);
+    tide_world_free(&previous);
+}
