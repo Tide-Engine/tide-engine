@@ -102,7 +102,7 @@ local event(Disconnected gone) Say(mut Menu menu)
 
 view Point(Devices devices, mut Aim aim)
 {
-    Draw2D.Camera(float2(0, 0.6), 2.4);
+    Draw2D.SetCamera(float2(0, 0.6), 2.4);
     aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
 }

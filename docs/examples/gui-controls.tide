@@ -13,7 +13,7 @@ local scene Main { }
 view TryControls(mut Controls controls)
 {
     Draw2D.Clear(Color(0.05, 0.07, 0.11));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
 
     GUILayout.Area(Rect(12, 12, Screen.width - 24, 250))
     {
@@ -49,6 +49,6 @@ view TryControls(mut Controls controls)
         if (controls.outline) Draw2D.WireCircle(center, controls.radius, Color(0.4, 0.8, 1));
         else Draw2D.Circle(center, controls.radius, Color(0.4, 0.8, 1));
     }
-    Draw2D.Clip(Rect(12, Screen.height - 38, Screen.width - 24, 24));
+    Draw2D.SetClip(Rect(12, Screen.height - 38, Screen.width - 24, 24));
     Draw2D.Text(controls.name, float2(24, Screen.height - 34), 18, Color.white);
 }

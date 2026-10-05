@@ -14,7 +14,7 @@ local singleton Canvas
 view Paint(Devices devices, mut Canvas canvas)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0), 1.4);
+    Draw2D.SetCamera(float2(0), 1.4);
     if (!canvas.ready)
     {
         foreach (var at in canvas.pixels)
@@ -41,7 +41,7 @@ view Paint(Devices devices, mut Canvas canvas)
     // The next frame draws whatever the cells hold by then.
     Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], canvas.pixels, canvas.point ? Filter.Point : Filter.Bilinear);
 
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Drag on the grid to paint its cells", float2(16, 14), 16, Color.white);
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
     {

@@ -38,7 +38,7 @@ command(SetRunning change, PlayerID sender) Run(mut Demo demo)
 view Background()
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0), 3);
+    Draw2D.SetCamera(float2(0), 3);
     for (var i = -1; i <= 1; i++)
         Draw2D.Line(float2(-2.1, i), float2(2.1, i), 0.025, Color(0.18, 0.24, 0.32));
 }
@@ -63,7 +63,7 @@ view Labels(Demo demo)
     var first = Draw2D.WorldToScreen(float2(0, 1));
     var second = Draw2D.WorldToScreen(float2(0, 0));
     var third = Draw2D.WorldToScreen(float2(0, -1));
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Systems run every tick", float2(16, 14), 18, Color.white);
     Draw2D.Text("with Moving, without Frozen", float2(16, first.y - 34), 14, Color(0.35, 0.9, 0.65));
     Draw2D.Text("Moving + Frozen: excluded", float2(16, second.y - 34), 14, Color(1, 0.65, 0.3));

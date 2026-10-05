@@ -51,7 +51,7 @@ system Follow(Steer steer, mut Body body, Time time)
 view Point(Devices devices, mut Aim aim)
 {
     Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0, 0.3), 2.4);
+    Draw2D.SetCamera(float2(0, 0.3), 2.4);
     aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
 }
@@ -77,7 +77,7 @@ view Mine(Body body, with ownership)
 
 view Hud(Session session)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
                 float2(12, 10), 15, Color.white);
     Draw2D.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.6, 0.68, 0.78));

@@ -68,6 +68,6 @@ view Preview(mut Ribbon ribbon)
     }
 
     Draw2D.Clear(Color(0.055, 0.065, 0.09));
-    Draw2D.Camera(float2(0, 0.3), 2.2);
+    Draw2D.SetCamera(float2(0, 0.3), 2.2);
     Draw2D.Mesh(ribbon.vertices, ribbon.indices, Wave, Stripes);
 }
