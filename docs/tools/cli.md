@@ -172,6 +172,8 @@ A page that shows a game in a frame of the same site reads the frame's `Tide.roo
 
 Such a page starts a game that waits by calling the frame's `Tide.start()`. With `?wait` or without, it gives a promise that's kept once the game has drawn its first frame, so the page can keep the frame out of sight until there's something in it. These docs load an example as you scroll near it, and start it when it's in view.
 
+A page can have the browser download a game before any frame shows it: it loads the game's page once in a frame nobody sees, with `#download` after the address, and removes that frame once it has loaded. Nothing runs in it, and the frame that shows the game later finds its page in the browser's cache. A plain `fetch` of the page doesn't do that: browsers keep a frame's page apart from what a script fetches.
+
 With `?embedded`, the wheel always scrolls the page around the game. On a touchscreen, a swipe that starts on the game scrolls the page too, until the player taps the game: the tap reaches the game, and from then on so does every touch, swipes included, until the player taps the page somewhere else.
 
 ## Without a window

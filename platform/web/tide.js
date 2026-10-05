@@ -22,6 +22,13 @@
 
 (async () => {
     'use strict';
+    // `#download` after the page's address: the page is only being downloaded,
+    // by a page that will show the game in a frame later. It loads the game's
+    // page once in a frame nobody sees, so the frame it shows finds the page
+    // in the browser's cache, which keeps a frame's page apart from what a
+    // script fetches. Nothing runs. It's after the `#`, which is no part of
+    // the address a cache goes by.
+    if (location.hash === '#download') return;
     const config = typeof Tide !== 'undefined' ? Tide : {};
     const canvas = config.canvas || document.getElementById('canvas');
     const print = config.print || (text => console.log(text));
