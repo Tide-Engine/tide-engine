@@ -9540,7 +9540,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);

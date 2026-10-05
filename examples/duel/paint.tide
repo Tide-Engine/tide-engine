@@ -1,5 +1,5 @@
 // The arena as this machine shows it: platforms, fighters and shots, each a
-// handful of shapes (shapes.tide), and the effects they set off (effects.tide).
+// handful of Draw2D's shapes, and the effects they set off (effects.tide).
 // Views can't change the match. What they keep of a fighter or a shot between
 // frames is in its local fields.
 const Color UI_BACKGROUND = Color(0.027, 0.035, 0.07);
@@ -16,22 +16,22 @@ Color FighterColor(int side)
 }
 
 [Stage(PaintStages.Arena)]
-view PaintArena(mut Shapes shapes)
+view PaintArena()
 {
     // Shade where the room meets its walls
-    Inset(shapes, float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
+    Inset(float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
 }
 
 [Stage(PaintStages.Platforms)]
-view PaintPlatforms(Platform platform, mut Fx fx, mut Shapes shapes)
+view PaintPlatforms(Platform platform, mut Fx fx)
 {
     fx.slabs.Add(Slab { center = platform.center, half = platform.half });
     var size = platform.half * 2;
     var wall = platform.half.y > platform.half.x;
     var frame = wall || platform.half.x > 300;
     if (!frame)
-        GlowBox(shapes, platform.center + float2(0, -9), size - float2(14, 6), 6, 26, Color(0, 0.005, 0.02, 0.5));
-    Panel(shapes, platform.center, size, frame ? 4 : 7, Color(0.19, 0.26, 0.42), Color(0.085, 0.115, 0.215),
+        GlowBox(platform.center + float2(0, -9), size - float2(14, 6), 6, 26, Color(0, 0.005, 0.02, 0.5));
+    Panel(platform.center, size, frame ? 4 : 7, Color(0.19, 0.26, 0.42), Color(0.085, 0.115, 0.215),
           1.6, Color(0.3, 0.41, 0.62));
 
     // The side that faces the room is lit
@@ -48,13 +48,13 @@ view PaintPlatforms(Platform platform, mut Fx fx, mut Shapes shapes)
         from.y = platform.center.y - platform.half.y + 2.4;
         to.y = from.y;
     }
-    GlowLine(shapes, from, to, 2, 15, Color(0.45, 0.68, 1, 0.2));
-    Capsule(shapes, from, to, 2.2, Color(0.66, 0.83, 1, 0.92));
+    GlowLine(from, to, 2, 15, Color(0.45, 0.68, 1, 0.2));
+    Draw2D.Line(from, to, 2.2, Color(0.66, 0.83, 1, 0.92));
 }
 
 [Stage(PaintStages.Fighters)]
 view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Session session, Devices devices,
-    Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
+    Canvas canvas, mut Fx fx, mut Sky sky)
 {
     // The latest tick's, where health drops at once. What a view reads of the
     // match slides between ticks, which is right for drawing and late for a hit.
@@ -186,11 +186,11 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
     if (ground > -9000)
     {
         var near = Math.Saturate(1 - (feet.y - ground) / 240);
-        GlowOval(shapes, float2(body.position.x, ground + 1), float2(wide * (0.5 + near * 0.45), 2.2 + near), 5,
+        GlowOval(float2(body.position.x, ground + 1), float2(wide * (0.5 + near * 0.45), 2.2 + near), 5,
                  Color(0, 0.005, 0.02, 0.5 * near));
     }
 
-    Glow(shapes, center, body.radius * 0.75, 34, Fade(color, 0.2));
+    Glow(center, body.radius * 0.75, 34, Fade(color, 0.2));
 
     // Shots drop, so this machine's fighter is shown where its next one goes
     if (mine && (duel.phase == Phase.Fight || duel.phase == Phase.Countdown) && !canvas.touchAim)
@@ -203,32 +203,32 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
             var hit = Strike(fx, at, speed * 0.04, 3);
             if (hit.fraction <= 1) break;
             at += speed * 0.04;
-            Disc(shapes, at, 2.4 - i * 0.14, Fade(Mix(color, Color.white, 0.5), 0.5 - i * 0.05));
+            Draw2D.Circle(at, 2.4 - i * 0.14, Fade(Mix(color, Color.white, 0.5), 0.5 - i * 0.05));
         }
         if (!canvas.gamepadAim)
         {
             // Devices count pixels from the bottom, and the screen from the top
             var pointer = Draw2D.ScreenToWorld(float2(devices.pointer.position.x, Screen.height - devices.pointer.position.y));
-            Ring(shapes, pointer, 8, 3.4, Fade(UI_OUTLINE, 0.6));
-            Ring(shapes, pointer, 7.6, 1.7, Fade(Color.white, 0.9));
-            Disc(shapes, pointer, 1.6, Color.white);
+            Draw2D.WireCircle(pointer, 8, 3.4, Fade(UI_OUTLINE, 0.6));
+            Draw2D.WireCircle(pointer, 7.6, 1.7, Fade(Color.white, 0.9));
+            Draw2D.Circle(pointer, 1.6, Color.white);
         }
     }
 
     // The gun, which kicks back as it fires
     var grip = center + aim * (body.radius * 0.4 - fighter.recoil * 6);
     var tip = center + aim * ((body.radius + 15) * grow - fighter.recoil * 7);
-    Capsule(shapes, grip, tip, 10, UI_OUTLINE);
-    Capsule(shapes, grip, tip, 5.6, Color(0.82, 0.87, 0.96));
-    Capsule(shapes, tip - aim * 5, tip, 5.6, Color.white);
+    Draw2D.Line(grip, tip, 10, UI_OUTLINE);
+    Draw2D.Line(grip, tip, 5.6, Color(0.82, 0.87, 0.96));
+    Draw2D.Line(tip - aim * 5, tip, 5.6, Color.white);
     if (fighter.recoil > 0.55)
     {
         var bright = (fighter.recoil - 0.55) / 0.45;
-        Glow(shapes, tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
+        Glow(tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
     }
 
-    Oval(shapes, center, float2(wide, tall), Shade(color, 0.26), Shade(color, -0.3), 2.5, UI_OUTLINE);
-    Oval(shapes, center + float2(-wide * 0.3, tall * 0.44), float2(wide * 0.34, tall * 0.2),
+    Oval(center, float2(wide, tall), Shade(color, 0.26), Shade(color, -0.3), 2.5, UI_OUTLINE);
+    Oval(center + float2(-wide * 0.3, tall * 0.44), float2(wide * 0.34, tall * 0.2),
          Fade(Color.white, 0.36), Fade(Color.white, 0.08), 0, Color.clear);
 
     // Its eyes follow its aim, and shut when it's hit
@@ -238,12 +238,12 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
     for (var eye = -1; eye <= 1; eye += 2)
     {
         var at = face + perpendicular * (eye * 5.7 * grow);
-        Oval(shapes, at, float2(4.5, 4.5 * open) * grow, Color.white, Color(0.82, 0.87, 0.96), 0, Color.clear);
-        if (open > 0.5) Disc(shapes, at + aim * 1.6, 2.2 * grow, UI_OUTLINE);
+        Oval(at, float2(4.5, 4.5 * open) * grow, Color.white, Color(0.82, 0.87, 0.96), 0, Color.clear);
+        if (open > 0.5) Draw2D.Circle(at + aim * 1.6, 2.2 * grow, UI_OUTLINE);
     }
     var hand = center + aim * (wide * 0.92 - fighter.recoil * 4);
-    Oval(shapes, hand, float2(4.8, 4.8) * grow, Shade(color, 0.1), Shade(color, -0.35), 1.7, UI_OUTLINE);
-    if (fighter.hit > 0) Oval(shapes, center, float2(wide, tall), Fade(Color.white, fighter.hit * 0.85),
+    Oval(hand, float2(4.8, 4.8) * grow, Shade(color, 0.1), Shade(color, -0.35), 1.7, UI_OUTLINE);
+    if (fighter.hit > 0) Oval(center, float2(wide, tall), Fade(Color.white, fighter.hit * 0.85),
                               Fade(Color.white, fighter.hit * 0.85), 0, Color.clear);
 
     // Its shield: up for a moment, then an arc that fills as it comes back
@@ -251,44 +251,44 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
     {
         var spent = 1 - Math.Saturate(fighter.blockLeft / 0.22);
         var reach = body.radius + 9 + 4 * EaseOut(spent * 2);
-        Glow(shapes, center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
-        Oval(shapes, center, float2(reach), Fade(Color.white, 0.2), Fade(color, 0.1), 2.6, Fade(Color.white, 0.95));
-        Ring(shapes, center, reach + 4.5, 1.6, Fade(color, 0.85));
+        Glow(center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
+        Oval(center, float2(reach), Fade(Color.white, 0.2), Fade(color, 0.1), 2.6, Fade(Color.white, 0.95));
+        Draw2D.WireCircle(center, reach + 4.5, 1.6, Fade(color, 0.85));
     }
     else if (fighter.blockCooldown > 0)
     {
-        Arc(shapes, center, body.radius + 8.5, 1.9, 0, 1 - fighter.blockCooldown / 2, Fade(color, 0.5));
+        Draw2D.Arc(center, body.radius + 8.5, Math.PI * 0.5, -Math.TAU * (1 - fighter.blockCooldown / 2), 1.9, Fade(color, 0.5));
     }
 
     // Its health, over its head: what a hit took lingers in white
     var bar = center + float2(0, tall + 16);
     var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
     var before = Math.Saturate((latest.health + fighter.chip) / fighter.build.maxHealth);
-    Panel(shapes, bar, float2(52, 10), 5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.2, Fade(UI_OUTLINE, 0.9));
+    Panel(bar, float2(52, 10), 5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.2, Fade(UI_OUTLINE, 0.9));
     if (before > health)
-        Box(shapes, bar + float2((before - 1) * 23, 0), float2(46 * before, 5), 2.5, Fade(Color.white, 0.92));
+        Draw2D.RoundRect(bar + float2((before - 1) * 23, 0), float2(46 * before, 5), 2.5, Fade(Color.white, 0.92));
     if (health > 0.01)
-        Panel(shapes, bar + float2((health - 1) * 23, 0), float2(46 * health, 5), 2.5, Shade(color, 0.42), Shade(color, -0.08),
+        Panel(bar + float2((health - 1) * 23, 0), float2(46 * health, 5), 2.5, Shade(color, 0.42), Shade(color, -0.08),
               0, Color.clear);
     if (fighter.fireCooldown > 0.04 && duel.phase == Phase.Fight)
     {
         var ready = 1 - Math.Saturate(fighter.fireCooldown / fighter.build.reload);
-        Box(shapes, bar + float2((ready - 1) * 23, -7.5), float2(46 * ready, 2), 1, Fade(UI_INK, 0.5));
+        Draw2D.RoundRect(bar + float2((ready - 1) * 23, -7.5), float2(46 * ready, 2), 1, Fade(UI_INK, 0.5));
     }
 
     // Which one is this machine's, while there's time to look
     if (mine && duel.phase == Phase.Countdown)
     {
         var mark = bar + float2(0, 13 + Math.Sin(fx.now * 7) * 2.5);
-        Capsule(shapes, mark + float2(-7, 8), mark, 4.2, UI_OUTLINE);
-        Capsule(shapes, mark + float2(7, 8), mark, 4.2, UI_OUTLINE);
-        Capsule(shapes, mark + float2(-7, 8), mark, 2.4, Color.white);
-        Capsule(shapes, mark + float2(7, 8), mark, 2.4, Color.white);
+        Draw2D.Line(mark + float2(-7, 8), mark, 4.2, UI_OUTLINE);
+        Draw2D.Line(mark + float2(7, 8), mark, 4.2, UI_OUTLINE);
+        Draw2D.Line(mark + float2(-7, 8), mark, 2.4, Color.white);
+        Draw2D.Line(mark + float2(7, 8), mark, 2.4, Color.white);
     }
 }
 
 [Stage(PaintStages.Bullets)]
-view PaintBullets(Body body, mut Bullet bullet, mut Fx fx, mut Shapes shapes)
+view PaintBullets(Body body, mut Bullet bullet, mut Fx fx)
 {
     var color = FighterColor(bullet.side);
     var speed = Math.Length(body.velocity);
@@ -352,8 +352,8 @@ view PaintBullets(Body body, mut Bullet bullet, mut Fx fx, mut Shapes shapes)
 
     // A shot that hits harder looks it
     var heft = Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7);
-    Capsule(shapes, bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
-    Glow(shapes, body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
-    Capsule(shapes, body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
-    Capsule(shapes, body.position - direction * 5 * heft, body.position, (body.radius + 0.5) * heft, Mix(color, Color.white, 0.85));
+    Draw2D.Line(bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
+    Glow(body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
+    Draw2D.Line(body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
+    Draw2D.Line(body.position - direction * 5 * heft, body.position, (body.radius + 0.5) * heft, Mix(color, Color.white, 0.85));
 }

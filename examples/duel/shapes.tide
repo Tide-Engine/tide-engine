@@ -1,107 +1,9 @@
-// Everything the duel draws, but its text, is one shape: a box with round
-// corners. A frag works out how far each pixel is from the box's edge, so the
-// same quad is a panel, a pill, a disc, a ring, an arc, a line or a glow, with
-// smooth edges at any size. Views add shapes to a list, and a flush draws the
-// whole list at once.
-struct Corner
-{
-    float2 position; // A corner of a square from -1 to 1
-    float2 spot;     // Where the pixel is from the shape's middle, once placed
-}
-
-struct Shape
-{
-    float4 box;                       // Its middle, and half its size
-    float4 form = float4(1, 0, 0, 1); // Its turn's cos and sin, its corners' radius (under 0: an ellipse), how wide its edge fades
-    float4 line = float4(0, 0, 1, 0); // Its outline's width, an arc's start and length in turns, and its edge: 0 sharp, 1 a glow, 2 inset
-    Color fill = Color.white;         // Towards +y
-    Color fill2 = Color.white;        // Towards -y
-    Color edge = Color.clear;         // Its outline
-}
-
-local singleton Shapes
-{
-    List<Corner> quad;
-    List<int> faces;
-    List<Shape> list;
-    float pixel = 1; // A pixel's width in the units shapes are given in: edges fade over one
-}
-
-vert PlaceShape(mut Corner corner, Shape shape)
-{
-    // Room for an edge that fades outwards
-    var reach = shape.box.zw + (shape.line.w > 1.5 ? 0 : shape.form.w) + 1;
-    var spot = corner.position * reach;
-    corner.spot = spot;
-    corner.position = shape.box.xy + float2(spot.x * shape.form.x - spot.y * shape.form.y,
-                                            spot.x * shape.form.y + spot.y * shape.form.x);
-}
-
-frag PaintShape(Corner corner, mut Color color, Shape shape)
-{
-    var half = shape.box.zw;
-    var fade = Math.Max(shape.form.w, 0.0001);
-    mut var distance = 0.0;
-    if (shape.form.z < 0)
-    {
-        // Near enough for an ellipse that's almost a circle
-        distance = (Math.Length(corner.spot / half) - 1) * Math.Min(half.x, half.y);
-    }
-    else
-    {
-        var radius = Math.Min(shape.form.z, Math.Min(half.x, half.y));
-        var out = Math.Abs(corner.spot) - half + radius;
-        distance = Math.Length(Math.Max(out, float2(0))) + Math.Min(Math.Max(out.x, out.y), 0) - radius;
-    }
-
-    mut var cover = Math.Saturate(0.5 - distance / fade);
-    if (shape.line.w > 1.5)
-    {
-        // Clear in the middle, and its color towards the edge
-        var near = Math.Saturate(1 + distance / fade);
-        cover = near * near * Math.Saturate(0.5 - distance);
-    }
-    else if (shape.line.w > 0.5)
-    {
-        var near = Math.Saturate(1 - distance / fade);
-        cover = near * near;
-    }
-
-    var up = Math.Saturate(corner.spot.y / Math.Max(half.y, 0.0001) * 0.5 + 0.5);
-    mut var paint = shape.fill2 + (shape.fill - shape.fill2) * up;
-    if (shape.line.x > 0)
-    {
-        var inside = Math.Saturate(0.5 - (distance + shape.line.x) / Math.Min(fade, shape.line.x));
-        paint = shape.edge + (paint - shape.edge) * inside;
-    }
-    if (shape.line.z < 0.999)
-    {
-        // Counted clockwise from straight up, as a clock's hand goes
-        var turn = Math.Atan2(corner.spot.x, corner.spot.y) / Math.TAU;
-        var along = Math.Frac(turn - shape.line.y + 2);
-        if (along > shape.line.z) cover = 0;
-    }
-    color = Color(paint.r, paint.g, paint.b, paint.a * cover);
-}
-
-// A view draws the shapes added so far, then starts over:
-//
-//     Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-//     shapes.list.Clear();
-//
-// What it draws next, like text, is then over them.
-void StartShapes(mut Shapes shapes, float pixel)
-{
-    if (shapes.quad.count == 0)
-    {
-        shapes.quad = [Corner { position = float2(-1, -1) }, Corner { position = float2(1, -1) },
-                       Corner { position = float2(1, 1) }, Corner { position = float2(-1, 1) }];
-        shapes.faces = [0, 1, 2, 0, 2, 3];
-    }
-    shapes.list.Clear();
-    shapes.pixel = pixel;
-}
-
+// The duel is drawn with the engine's shapes: round rects, circles, ellipses,
+// thick lines and arcs, with smooth edges at any size, in the order they're
+// written, text among them. Most of it is a `Draw2D` call. These are the few
+// shapes the game draws again and again that take a `Shape` to say: a fill
+// that goes from one color to another under an outline, and edges that fade
+// into a glow or a shadow.
 Color Fade(Color color, float alpha)
 {
     return Color(color.r, color.g, color.b, color.a * alpha);
@@ -120,104 +22,48 @@ Color Shade(Color color, float amount)
     return Color(mixed.r, mixed.g, mixed.b, color.a);
 }
 
-void Box(mut Shapes shapes, float2 center, float2 size, float radius, Color color)
+// A box whose fill goes from `top` to `bottom`, with an outline.
+void Panel(float2 center, float2 size, float radius, Color top, Color bottom, float outline, Color edge)
 {
-    shapes.list.Add(Shape { box = float4(center, size * 0.5), form = float4(1, 0, radius, shapes.pixel),
-                            fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = top, color2 = bottom,
+                         outline = outline, outlineColor = edge });
 }
 
-// A box whose color goes from `top` to `bottom`, with an outline.
-void Panel(mut Shapes shapes, float2 center, float2 size, float radius, Color top, Color bottom, float outline, Color edge)
+// An ellipse, the same way.
+void Oval(float2 center, float2 radii, Color top, Color bottom, float outline, Color edge)
 {
-    shapes.list.Add(Shape { box = float4(center, size * 0.5), form = float4(1, 0, radius, shapes.pixel),
-                            line = float4(outline, 0, 1, 0), fill = top, fill2 = bottom, edge = edge });
-}
-
-// A panel on the screen, where y goes down: `top` is the color at its top.
-void Plate(mut Shapes shapes, float2 center, float2 size, float radius, Color top, Color bottom, float outline, Color edge)
-{
-    shapes.list.Add(Shape { box = float4(center, size * 0.5), form = float4(1, 0, radius, shapes.pixel),
-                            line = float4(outline, 0, 1, 0), fill = bottom, fill2 = top, edge = edge });
-}
-
-void Tilted(mut Shapes shapes, float2 center, float2 size, float radius, float angle, Color color)
-{
-    shapes.list.Add(Shape { box = float4(center, size * 0.5),
-                            form = float4(Math.Cos(angle), Math.Sin(angle), radius, shapes.pixel),
-                            fill = color, fill2 = color });
-}
-
-void Disc(mut Shapes shapes, float2 center, float radius, Color color)
-{
-    shapes.list.Add(Shape { box = float4(center, float2(radius)), form = float4(1, 0, radius, shapes.pixel),
-                            fill = color, fill2 = color });
-}
-
-void Oval(mut Shapes shapes, float2 center, float2 radii, Color top, Color bottom, float outline, Color edge)
-{
-    shapes.list.Add(Shape { box = float4(center, radii), form = float4(1, 0, -1, shapes.pixel),
-                            line = float4(outline, 0, 1, 0), fill = top, fill2 = bottom, edge = edge });
-}
-
-void Ring(mut Shapes shapes, float2 center, float radius, float width, Color color)
-{
-    shapes.list.Add(Shape { box = float4(center, float2(radius)), form = float4(1, 0, radius, shapes.pixel),
-                            line = float4(width, 0, 1, 0), fill = Fade(color, 0), fill2 = Fade(color, 0), edge = color });
-}
-
-// Part of a ring: from `start`, clockwise from straight up, for `sweep`, both in turns.
-void Arc(mut Shapes shapes, float2 center, float radius, float width, float start, float sweep, Color color)
-{
-    if (sweep <= 0) return;
-    shapes.list.Add(Shape { box = float4(center, float2(radius)), form = float4(1, 0, radius, shapes.pixel),
-                            line = float4(width, start, Math.Min(sweep, 1), 0),
-                            fill = Fade(color, 0), fill2 = Fade(color, 0), edge = color });
-}
-
-void Capsule(mut Shapes shapes, float2 from, float2 to, float width, Color color)
-{
-    var along = to - from;
-    var length = Math.Length(along);
-    var direction = length > 0.0001 ? along / length : float2(1, 0);
-    shapes.list.Add(Shape { box = float4((from + to) * 0.5, length * 0.5 + width * 0.5, width * 0.5),
-                            form = float4(direction.x, direction.y, width * 0.5, shapes.pixel),
-                            fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = top, color2 = bottom,
+                         outline = outline, outlineColor = edge });
 }
 
 // Light that fades over `spread` from a disc's edge.
-void Glow(mut Shapes shapes, float2 center, float radius, float spread, Color color)
+void Glow(float2 center, float radius, float spread, Color color)
 {
-    shapes.list.Add(Shape { box = float4(center, float2(radius)), form = float4(1, 0, radius, spread),
-                            line = float4(0, 0, 1, 1), fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = float2(radius * 2), radius = radius, color = color, soft = spread });
 }
 
-void GlowLine(mut Shapes shapes, float2 from, float2 to, float width, float spread, Color color)
+void GlowLine(float2 from, float2 to, float width, float spread, Color color)
 {
+    // A pill as long as the line and its round ends, turned along it
     var along = to - from;
-    var length = Math.Length(along);
-    var direction = length > 0.0001 ? along / length : float2(1, 0);
-    shapes.list.Add(Shape { box = float4((from + to) * 0.5, length * 0.5 + width * 0.5, width * 0.5),
-                            form = float4(direction.x, direction.y, width * 0.5, spread),
-                            line = float4(0, 0, 1, 1), fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = (from + to) * 0.5, size = float2(Math.Length(along) + width, width),
+                         radius = width * 0.5, rotation = Math.Atan2(along.y, along.x), color = color, soft = spread });
 }
 
-void GlowBox(mut Shapes shapes, float2 center, float2 size, float radius, float spread, Color color)
+void GlowBox(float2 center, float2 size, float radius, float spread, Color color)
 {
-    shapes.list.Add(Shape { box = float4(center, size * 0.5), form = float4(1, 0, radius, spread),
-                            line = float4(0, 0, 1, 1), fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = spread });
 }
 
-// Clear in the middle, and `color` over `spread` towards the box's edge.
-void Inset(mut Shapes shapes, float2 center, float2 size, float radius, float spread, Color color)
+void GlowOval(float2 center, float2 radii, float spread, Color color)
 {
-    shapes.list.Add(Shape { box = float4(center, size * 0.5), form = float4(1, 0, radius, spread),
-                            line = float4(0, 0, 1, 2), fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = radii * 2, ellipse = true, color = color, soft = spread });
 }
 
-void GlowOval(mut Shapes shapes, float2 center, float2 radii, float spread, Color color)
+// Clear in the middle, and `color` over `spread` inwards from the box's edge.
+void Inset(float2 center, float2 size, float radius, float spread, Color color)
 {
-    shapes.list.Add(Shape { box = float4(center, radii), form = float4(1, 0, -1, spread),
-                            line = float4(0, 0, 1, 1), fill = color, fill2 = color });
+    Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = color, soft = -spread });
 }
 
 // Text with its middle at `center`, on the screen, where y goes down.

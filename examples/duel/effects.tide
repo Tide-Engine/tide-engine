@@ -91,6 +91,12 @@ local singleton Fx
     List<Shot> shots;
 }
 
+// A corner of the backdrop's quad, from (0, 0) to (1, 1).
+struct Corner
+{
+    float2 position;
+}
+
 // What the backdrop's frag reads.
 local singleton Sky
 {
@@ -258,7 +264,7 @@ void Impact(mut Fx fx, float2 at, float2 velocity, Color color)
 // The frame's clock, camera and backdrop, before anything else draws. It's
 // this machine's, so it goes on with no match, while one is being joined.
 [Stage(PaintStages.Prepare)]
-view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
+view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky)
 {
     // A frame after a stall is a step, not a leap
     fx.dt = Math.Min(Frame.dt, 0.05);
@@ -297,7 +303,6 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Shapes shapes)
 
     var zoom = 1 + fx.kick * 0.035 * fx.calm;
     Draw2D.Camera(fx.shake, screen.y * 0.5 / (canvas.scale * zoom));
-    StartShapes(shapes, 1 / (canvas.scale * zoom));
 }
 
 vert PlaceSky(mut Corner corner, Sky sky)
@@ -368,10 +373,9 @@ frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
     color = Color(paint.r, paint.g, paint.b, 1);
 }
 
-// Everything in the arena was added as shapes, in order. The effects go over
-// them, and it's all drawn at once.
+// The effects go over everything in the arena, which drew before them.
 [Stage(PaintStages.Effects)]
-view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
+view PaintEffects(mut Fx fx, mut Sky sky)
 {
     // A shot that this frame didn't draw is gone: it hit something
     mut var s = 0;
@@ -401,8 +405,8 @@ view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
         }
         fx.streaks[t] = streak;
         var left = 1 - streak.age / streak.life;
-        GlowLine(shapes, streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
-        Capsule(shapes, streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
+        GlowLine(streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
+        Draw2D.Line(streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
         t++;
     }
 
@@ -420,7 +424,7 @@ view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
         fx.waves[w] = wave;
         var along = wave.age / wave.life;
         var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
-        Ring(shapes, wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
+        Draw2D.WireCircle(wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
         w++;
     }
 
@@ -468,30 +472,28 @@ view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
         {
             var speed = Math.Length(bit.velocity);
             var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
-            GlowLine(shapes, tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
-            Capsule(shapes, tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
+            GlowLine(tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
+            Draw2D.Line(tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
         }
         else if (bit.kind == BitKind.Puff)
         {
-            Disc(shapes, bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
+            Draw2D.Circle(bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
         }
         else if (bit.kind == BitKind.Dot)
         {
-            Disc(shapes, bit.position, bit.size * 0.5 * (bit.gravity > 0 ? Math.Min(1, left * 3) : left),
+            Draw2D.Circle(bit.position, bit.size * 0.5 * (bit.gravity > 0 ? Math.Min(1, left * 3) : left),
                  Fade(bit.color, Math.Min(1, left * 2.5)));
         }
         else if (bit.kind == BitKind.Shell)
         {
-            Tilted(shapes, bit.position, float2(bit.size * 2.3, bit.size), 1, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 4)));
+            Draw2D.RoundRect(bit.position, float2(bit.size * 2.3, bit.size), 1, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 4)));
         }
         else
         {
-            Tilted(shapes, bit.position, float2(bit.size), bit.size * 0.28, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 3)));
+            Draw2D.RoundRect(bit.position, float2(bit.size), bit.size * 0.28, bit.spin * bit.age, Fade(bit.color, Math.Min(1, left * 3)));
         }
     }
 
-    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-    shapes.list.Clear();
 
     // Numbers, over everything in the arena
     mut var l = 0;
@@ -523,10 +525,9 @@ view PaintEffects(mut Fx fx, mut Sky sky, mut Shapes shapes)
 // Light over the whole screen, after the menus: a flash, a hit's red edges,
 // and paper for the winner.
 [Stage(PaintStages.Overlay)]
-view PaintOverlay(mut Fx fx, mut Shapes shapes)
+view PaintOverlay(mut Fx fx)
 {
     Draw2D.Screen();
-    shapes.pixel = 1;
     var screen = float2(Screen.width, Screen.height);
 
     mut var i = 0;
@@ -549,14 +550,12 @@ view PaintOverlay(mut Fx fx, mut Shapes shapes)
         var left = 1 - bit.age / bit.life;
         // Paper turns as it falls, so it's seen from its side now and then
         var turned = Math.Abs(Math.Sin(bit.spin * bit.age * 0.5)) * 0.8 + 0.2;
-        Tilted(shapes, bit.position, float2(bit.size * 1.5, bit.size * turned), 1.5, bit.spin * bit.age * 0.3,
+        Draw2D.RoundRect(bit.position, float2(bit.size * 1.5, bit.size * turned), 1.5, bit.spin * bit.age * 0.3,
                Fade(bit.color, Math.Min(1, left * 3)));
     }
 
     if (fx.hurt > 0.01)
-        Inset(shapes, screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
+        Inset(screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
     if (fx.flash > 0.01)
-        Box(shapes, screen * 0.5, screen, 0, Fade(fx.flashColor, fx.flash * fx.calm));
-    Draw2D.Instanced(shapes.quad, shapes.faces, shapes.list, PlaceShape, PaintShape);
-    shapes.list.Clear();
+        Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash * fx.calm));
 }
