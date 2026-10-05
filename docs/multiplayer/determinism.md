@@ -33,7 +33,7 @@ A match that rolls dice still has to roll the same ones on every machine. In Tid
 - **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
 - **Seeded by the match.** The machine that starts a match picks its seed, `Time.seed`, from the system's random number generator, so no two matches go the same. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
 
-Where nothing picks a seed (tests, benchmarks, a world a C host starts itself) it's 0, so a run repeats exactly.
+Where nothing picks a seed (tests, benchmarks, a world a C host starts itself, a game run [without a window](../tools/cli.md#without-a-window)) it's 0, so a run repeats exactly.
 
 ## Order
 

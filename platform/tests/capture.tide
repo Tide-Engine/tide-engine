@@ -8,6 +8,13 @@ component Mover
     int steps;
 }
 
+// What the match rolls, with a generator the engine seeds from the match's seed
+component Dice
+{
+    Random random;
+    int spot; // 1 to 12 once it rolled, in its first tick
+}
+
 input Keys
 {
     bool right;
@@ -22,13 +29,18 @@ scene Main { }
 
 event(Spawned) Setup(with Main)
 {
-    Spawn(Mover, Owner { player = PlayerID(0) });
+    Spawn(Mover, Dice, Owner { player = PlayerID(0) });
 }
 
 // The match's side: the D key, through the input, moves the mover 50 steps at most.
 system Step(Keys keys, mut Mover mover)
 {
     if (keys.right && mover.steps < 50) mover.steps += 1;
+}
+
+system Roll(mut Dice dice)
+{
+    if (dice.spot == 0) dice.spot = 1 + dice.random.NextInt(12);
 }
 
 local singleton Seen
@@ -45,18 +57,23 @@ view Background()
     Draw2D.Clear(Color(0, 0, 1));
 }
 
-// The match's seed, which is 0 in a run with no window, so that it repeats: a
-// block that's elsewhere for any other.
-view Seed(Time time)
-{
-    Draw2D.Screen();
-    Draw2D.Rect(float2(20 + time.seed % 128 * 2, 140), float2(20, 20), Color(1, 0, 1));
-}
-
 view Movers(Mover mover)
 {
     Draw2D.Screen();
     Draw2D.Rect(float2(20 + mover.steps * 4, 180), float2(20, 20), Color(1, 0, 0));
+}
+
+// What's the match's own to pick: its seed, whose low bits are a block's color
+// (black for seed 0), and a roll, which is how far right a small block is. A
+// run with no window starts its match with seed 0, so both are the same in
+// every run.
+view Rolled(Dice dice, Time time)
+{
+    Draw2D.Screen();
+    var seed = time.seed;
+    Draw2D.Rect(float2(280, 100), float2(20, 20),
+                Color(float(seed & 255) / 255, float((seed >> 8) & 255) / 255, float((seed >> 16) & 255) / 255));
+    Draw2D.Rect(float2(20 + dice.spot * 20, 130), float2(10, 10), Color(1, 0, 1));
 }
 
 view Panel(Devices devices, mut Seen seen)
