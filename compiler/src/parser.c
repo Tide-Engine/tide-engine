@@ -778,6 +778,7 @@ static bool at_decl_start_or_function(const parser *p, const bool functions)
         && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
+    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_SYSTEM && str_eq_c(t->text, "extern")) return true; // extern system
     if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
         && (peek_at(p, 1)->kind == T_COMPONENT || peek_at(p, 1)->kind == T_SINGLETON || peek_at(p, 1)->kind == T_SYSTEM)) {
         return true;
@@ -1359,6 +1360,15 @@ static void parse_routine_rest(parser *p, decl *m, const token *name)
 // game's C files or libraries define.
 static decl *parse_extern(parser *p)
 {
+    // `extern view Name(...)` and `extern event(Hit hit) Name(...)`: C can be a system, and nothing else the engine runs
+    const bool view = str_eq_c(peek(p)->text, "view") && peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind == T_LPAREN;
+    const bool handler = (str_eq_c(peek(p)->text, "event") || str_eq_c(peek(p)->text, "command")) && peek_at(p, 1)->kind == T_LPAREN;
+    if (view || handler) {
+        diag_error(peek(p)->at, "%s can't be written in C yet: only a system can, 'extern system Name(...);'",
+                   view ? "a view" : "an event handler");
+        diag_note("write it in Tide, and call C from it: 'extern' functions take what it reads");
+        longjmp(p->fail, 1);
+    }
     const qname ret = parse_decl_type(p, "return type");
     const token *name = expect_ident(p, "function name");
     decl *m = new_decl(DECL_FUNCTION, name);
@@ -1746,6 +1756,27 @@ static decl *parse_system(parser *p, const bool is_view)
     return d;
 }
 
+// extern system Move(mut Position position, Velocity velocity, Time time);: a
+// system written in C, which the game's C files or libraries define. It's
+// declared as a system is, with no body: C gets its rows' components as arrays
+// (tide/rows.h). The `system` keyword is next.
+static decl *parse_extern_system(parser *p)
+{
+    advance(p);
+    const token *name = expect_ident(p, "system name");
+    decl *d = new_decl(DECL_SYSTEM, name);
+    d->extern_system = true;
+    parse_query_params(p, d);
+    if (at(p, T_LBRACE)) {
+        diag_error(peek(p)->at, "an extern system has no body: its code is in C");
+        diag_note("end it with ';', like 'extern system Move(mut Position position, Time time);', or remove 'extern' to write "
+                  "it in Tide");
+        longjmp(p->fail, 1);
+    }
+    d->end = expect(p, T_SEMI, "';' after the extern system: its code is in C")->at;
+    return d;
+}
+
 // frag Shade(BoxVertex vertex, mut Color color, Sun sun) { ... } and
 // vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
 static decl *parse_shader(parser *p, const bool is_frag)
@@ -2007,6 +2038,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p, false);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_handler(&p, true);
+        else if (t->kind == T_IDENT && at(&p, T_SYSTEM) && str_eq_c(t->text, "extern")) d = parse_extern_system(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "extern")) d = parse_extern(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "const")) d = parse_const(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "external")) {

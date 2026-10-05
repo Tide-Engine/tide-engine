@@ -1,4 +1,5 @@
-// expect: NativeName names the C function of an extern function, and 'Move' isn't one
+// expect: NativeName names the C function of an extern function or system, and 'Move' isn't one
+// expect: a system written in C is declared with no body: 'extern system Move(...);'
 scene Main { }
 [NativeName("move")]
 system Move() { }

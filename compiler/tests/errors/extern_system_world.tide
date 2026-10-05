@@ -1,0 +1,5 @@
+// expect: a system written in C can't take the World yet: it's handed the rows of the entities it runs for
+// expect: to reach other entities, write the system in Tide and pass C what it reads: 'system Seek(World world) { ... }'
+scene Main { }
+component Body { float x; }
+extern system Seek(mut Body body, World world);
