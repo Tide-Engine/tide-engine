@@ -1,0 +1,6 @@
+// expect: a system written in C can't read the input yet
+// expect: a system written in Tide reads it into a component, which C then gets as an array
+scene Main { }
+component Body { float x; }
+input Pad { float x; }
+extern system Steer(mut Body body, Pad pad);

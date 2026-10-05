@@ -116,6 +116,8 @@ add_subdirectory(compiler)
 # The relay (relay/), on Node's own test runner, wherever there's Node.
 if(TIDE_NODE)
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs")
+    # The build service (builds/), the same way, with a tide that stands in for one.
+    add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
 endif()
 
 if(TIDE_PLATFORM)

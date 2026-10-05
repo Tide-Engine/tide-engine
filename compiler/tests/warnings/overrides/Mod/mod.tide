@@ -1,0 +1,15 @@
+namespace Mod;
+
+using Game;
+
+// It leaves `log` alone, as written: no warning
+override system Move(mut Body body, mut Log log)
+{
+    body.x += 2;
+}
+
+// It reads `log` and never writes it: the one warning
+override system Count(mut Log log, Time time)
+{
+    if (log.count > 100) return;
+}

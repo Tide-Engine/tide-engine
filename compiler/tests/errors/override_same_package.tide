@@ -1,0 +1,20 @@
+// expect: an override is in another package than what it replaces, and 'Move' is in the game too
+// expect: change the declaration itself
+component Position { float value; }
+
+virtual system Move(mut Position position)
+{
+    position.value += 1;
+}
+
+override system Move(mut Position position)
+{
+    position.value += 2;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position);
+}
+
+scene Main { }

@@ -54,6 +54,7 @@ typedef enum occ_kind {
     // `out` before a parameter's type (a declaration, with `param` the one it's on), or before an argument, with
     // `param` the parameter it's for where the game declares one, and `local` the variable the argument declares
     OCC_OUT,
+    OCC_REPLACE,  // `virtual` or `override` before a declaration, with `decl` the declaration
 } occ_kind;
 
 typedef struct occurrence {
@@ -102,6 +103,10 @@ static struct {
     VEC(diagnostic) diags;
     VEC(occurrence) occs;
     VEC(const expr *) calls; // Calls of the game's methods and functions, for inlay hints
+    // Every declaration a file writes outside a type. The program's own list has what's built: an override
+    // where what it replaced was, and nothing of what was replaced. This one has both, each where its file
+    // has it, and an override of a method, which the program keeps in the method's type.
+    VEC(const decl *) written;
 } A;
 
 // The document requests are about.
@@ -227,12 +232,12 @@ static str last_part(str text);
 static void collect_suggestion(void *user, const str wrong, const str best)
 {
     (void)user;
-    if (A.diags.count == 0 || best.len == 0) return;
+    if (A.diags.count == 0) return;
     for (int f = 0; f < A.file_count; f++) {
         const afile *file = &A.files[f];
         if (wrong.ptr < file->src.text || wrong.ptr + wrong.len > file->src.text + file->src.len) continue;
-        // Combat.Helth for Health: its last part
-        const str written = memchr(best.ptr, '.', (size_t)best.len) ? wrong : last_part(wrong);
+        // Combat.Helth for Health: its last part. Nothing in its place: the whole of it goes
+        const str written = best.len == 0 || memchr(best.ptr, '.', (size_t)best.len) ? wrong : last_part(wrong);
         int line = 0;
         while (line + 1 < file->lines.count && file->lines.items[line + 1] <= written.ptr) line++;
         diagnostic *d = &A.diags.items[A.diags.count - 1];
@@ -259,6 +264,36 @@ static void add_occ(occurrence o)
 {
     o.order = A.occs.count;
     if (o.at.line > 0 && o.len > 0) vec_push(A.occs, o);
+}
+
+// A type's method as the type's body writes it: where an override replaced
+// one, the program has the override there, and the source the one replaced.
+static const decl *method_written(const decl *m)
+{
+    return m->replaces ? m->replaces : m;
+}
+
+// Whether a name finds `d`: an override that found nothing to replace declares
+// none, and nothing can name it.
+static bool has_name(const decl *d)
+{
+    return !d->is_override || d->placed;
+}
+
+// What an override and the declaration it replaced are, as one thing a name
+// means: the one that was replaced.
+static const decl *replaced_or_self(const decl *d)
+{
+    return d && d->replaces ? d->replaces : d;
+}
+
+static void list_written(void)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) vec_push(A.written, A.prog->decls.items[i]);
+    for (int i = 0; i < A.prog->replaced.count; i++) {
+        const decl *v = A.prog->replaced.items[i];
+        vec_push(A.written, v->owner ? v->replaced_by : v); // A method that was replaced is in its type's body
+    }
 }
 
 // A type written by name: of a field, parameter or local.
@@ -987,6 +1022,26 @@ static void signature_refs(const sig_item *items, const int count)
     }
 }
 
+// `virtual` and `override` before a declaration, and what an override's name
+// is written with: the namespace of what it replaces, or a method's type.
+static void replace_refs(const decl *d)
+{
+    if (d->virtual_at.line > 0) {
+        add_occ((occurrence){.at = d->virtual_at, .len = 7, .kind = OCC_REPLACE, .decl = d, .name = str_from("virtual")});
+    }
+    if (d->override_at.line == 0) return;
+    add_occ((occurrence){.at = d->override_at, .len = 8, .kind = OCC_REPLACE, .decl = d, .name = str_from("override")});
+    const str name = last_part(d->override_name);
+    if (name.len == d->override_name.len) return;
+    const str before = {d->override_name.ptr, d->override_name.len - name.len - 1};
+    const int name_token = token_at(d->at);
+    if (d->owner && name_token >= 2) { // Combat.Stats.Hurt: the type, maybe with its namespace
+        type_ref(d->override_qual_at, A.files[d->at.file].toks[name_token - 2].at, before, type_of_decl(d->owner));
+    } else if (!d->owner) {
+        namespace_parts(d->override_qual_at, before, false);
+    }
+}
+
 // In source order, and at one position in the order they were found: qsort
 // leaves ties in any order.
 static int occ_order(const void *a, const void *b)
@@ -1006,11 +1061,13 @@ static void index_program(void)
         for (int k = 0; k < u->usings.count; k++) namespace_parts(u->using_at.items[k], u->usings.items[k], false);
     }
 
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin) continue;
-        // Scheduling attributes: declarations or an enum and its phase member.
-        for (int a = 0; a < d->attributes.count; a++) {
+        replace_refs(d);
+        // Scheduling attributes: declarations or an enum and its phase member. An override in place has
+        // those of what it replaced, which are walked with that one, where they're written
+        for (int a = 0; a < (d->placed ? 0 : d->attributes.count); a++) {
             const attribute *at = &d->attributes.items[a];
             add_occ((occurrence){.at = at->at, .len = at->name.len, .kind = OCC_ATTRIBUTE, .name = at->name});
             for (int k = 0; k < d->attributes.items[a].args.count; k++) {
@@ -1044,8 +1101,10 @@ static void index_program(void)
             walk_code = NULL;
             continue;
         }
-        if (d->kind == DECL_FUNCTION) {
+        if (d->kind == DECL_FUNCTION || d->kind == DECL_METHOD) { // A method here is an override of one, outside its type
+            walk_fields_of = d->owner;
             walk_routine(d);
+            walk_fields_of = NULL;
             continue;
         }
         if (d->kind == DECL_CONST) {
@@ -1092,7 +1151,10 @@ static void index_program(void)
                                  .name = str_from("Sanitize")});
             walk_stmt(d->sanitize);
         }
-        for (int k = 0; k < d->methods.count; k++) walk_routine(d->methods.items[k]);
+        for (int k = 0; k < d->methods.count; k++) {
+            replace_refs(method_written(d->methods.items[k]));
+            walk_routine(method_written(d->methods.items[k]));
+        }
         walk_fields_of = NULL;
     }
 
@@ -1164,6 +1226,7 @@ void analysis_run(const analysis_file *files, const int count)
     diag_set_sink(NULL, NULL);
     diag_set_suggestion_sink(NULL, NULL);
 
+    list_written();
     index_program();
 }
 
@@ -1356,7 +1419,9 @@ static const char *decl_keyword(const decl *d)
 // and "local component" for what's local.
 static const char *decl_what(const decl *d)
 {
-    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler" : decl_keyword(d);
+    const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
+                     : d->extern_system                        ? "extern system" // Written in C
+                                                               : decl_keyword(d);
     if (!d->is_local) return what;
     sb b = {0};
     sb_printf(&b, "local %s", what);
@@ -1391,6 +1456,8 @@ static void format_param(const param *p, sb *out)
 static void format_header(const decl *d, sb *out)
 {
     int first = 0;
+    if (d->is_virtual) sb_put(out, "virtual ");
+    if (d->is_override) sb_put(out, "override ");
     if (d->is_local) sb_put(out, "local ");
     if (d->is_async) sb_put(out, "async ");
     if (d->is_handler && d->params.count > 0) {
@@ -1403,13 +1470,28 @@ static void format_header(const decl *d, sb *out)
         sb_printf(out, ") " STR_FMT "(", STR_ARG(d->name));
         first = d->is_command ? 2 : 1;
     } else {
-        sb_printf(out, "%s " STR_FMT "(", decl_keyword(d), STR_ARG(d->name));
+        sb_printf(out, "%s%s " STR_FMT "(", d->extern_system ? "extern " : "", decl_keyword(d), STR_ARG(d->name));
     }
     for (int i = first; i < d->params.count; i++) {
         if (i > first) sb_put(out, ", ");
         format_param(&d->params.items[i], out);
     }
     sb_put(out, ")");
+}
+
+// Which of an extern system's parameters `p` is, as its C function counts
+// them: its components from 0 (tide/rows.h), and its singletons from 0, each
+// an argument after the rows. -1 for a filter.
+static int extern_param_number(const decl *sys, const param *p)
+{
+    int number = 0;
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *q = &sys->params.items[i];
+        if (q->mode != PARAM_READ && q->mode != PARAM_MUT) continue;
+        if (q == p) return number;
+        if (q->type.kind == p->type.kind) number++;
+    }
+    return -1;
 }
 
 // What the engine's own events are for.
@@ -1430,8 +1512,9 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
 // `mut void Damage(float amount)`: a method's or function's signature.
 static void format_routine(const decl *m, sb *out)
 {
-    sb_printf(out, "%s%s%s" STR_FMT " " STR_FMT "(", m->is_extern ? "extern " : "", m->is_async ? "async " : "",
-              m->is_mut_method ? "mut " : "", STR_ARG(m->return_type_name), STR_ARG(m->name));
+    sb_printf(out, "%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
+              m->is_extern ? "extern " : "", m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
+              STR_ARG(m->return_type_name), STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         if (i) sb_put(out, ", ");
         format_param(&m->params.items[i], out);
@@ -2229,6 +2312,8 @@ static void describe_out_param(const param *p, const decl *of, sb *out)
 }
 
 // Markdown for a hover over `o`.
+static void describe_replacing(const occurrence *o, sb *out);
+
 static void describe(const occurrence *o, sb *out)
 {
     sb code = {0};
@@ -2303,10 +2388,27 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     case OCC_SYSTEM:
+        if (o->decl->extern_system && o->decl->c_name && !str_eq_c(o->decl->name, o->decl->c_name)) {
+            sb_printf(&code, "[NativeName(\"%s\")]\n", o->decl->c_name);
+        }
         format_header(o->decl, &code);
         code_block(out, code.data);
         if (is_shader(o->decl)) { // Where it's declared, and where a Draw2D.Mesh names it
             describe_shader(o->decl, out);
+            break;
+        }
+        if (o->decl->extern_system) { // Its code is C's: what C is called with, and how the tick takes it
+            sb_printf(out, "\n\nA system written in C: the C function `%s`, which the game's C files or libraries define. ",
+                      o->decl->c_name ? o->decl->c_name : "?");
+            if (o->decl->per_entity) {
+                sb_put(out, "It's called once per tick for each run of rows of the entities that match, a chunk of them or a "
+                            "piece of one, and reads and writes their components as arrays (`tide/rows.h`), a field a lane. ");
+            } else {
+                sb_put(out, "It's called once per tick, with no rows. ");
+            }
+            sb_put(out, "The singletons it takes follow the rows, each a pointer. The tick takes it to read and write what "
+                        "its declaration says.");
+            describe_order(o->decl, out);
             break;
         }
         if (o->decl->is_handler && o->decl->event) {
@@ -2452,6 +2554,20 @@ static void describe(const occurrence *o, sb *out)
                       o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
             const decl *code_of = decl_of_param(o->param);
             if (code_of) describe_world(code_of, out);
+            break;
+        }
+        // An extern system's: which of the rows' components it is, or which pointer after them
+        if (of && of->extern_system && o->param->type.kind == TY_COMPONENT && extern_param_number(of, o->param) >= 0) {
+            const int number = extern_param_number(of, o->param);
+            sb_printf(out, "\n\nComponent %d of the rows C is handed, %s: `tide_rows_floats%s(rows, %d, offsetof(...))` is a "
+                           "field of it as an array, a value a row, and `tide_rows_get` a row's whole component.",
+                      number, o->param->mode == PARAM_MUT ? "which it can change" : "read-only",
+                      o->param->mode == PARAM_MUT ? "_mut" : "", number);
+            break;
+        }
+        if (of && of->extern_system && o->param->type.kind == TY_SINGLETON && extern_param_number(of, o->param) >= 0) {
+            sb_printf(out, "\n\nSingleton, %s: C gets a pointer to it, argument %d after the rows.",
+                      o->param->mode == PARAM_MUT ? "writable" : "read-only", extern_param_number(of, o->param) + 1);
             break;
         }
         if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
@@ -2693,7 +2809,7 @@ static void describe(const occurrence *o, sb *out)
             {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
-             "The C function the extern function after it calls, when its name isn't the function's own."},
+             "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -2722,6 +2838,57 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     }
+    case OCC_REPLACE:
+        code_block(out, str_to_cstr(o->name));
+        if (str_eq_c(o->name, "virtual")) {
+            sb_put(out, "\n\nAnother package can replace this declaration, with an `override` of the same name and "
+                        "parameters: the parameters' types in order, with their filters. Nothing is replaced that isn't marked.");
+        } else {
+            sb_put(out, "\n\nReplaces the `virtual` declaration of this name and these parameters, in another package. "
+                        "It's built in that one's place: where it is in the order, with its Stage, Before and After, and "
+                        "under its name, for everything that names it.");
+        }
+        break;
+    }
+    describe_replacing(o, out);
+}
+
+// What a package is to a reader: "package Fast", or "the game".
+static const char *package_text(const decl *d)
+{
+    const char *package = d->unit && d->unit->src ? d->unit->src->package : NULL;
+    if (!package) return "the game";
+    sb text = {0};
+    sb_printf(&text, "package %s", package);
+    return text.data;
+}
+
+// A declaration with its type, when it's a method: "Combat.Move", "Combat.Stats.IsDead".
+static const char *code_name(const decl *d)
+{
+    sb text = {0};
+    if (d->owner) sb_printf(&text, STR_FMT "." STR_FMT, STR_ARG(d->owner->qualified), STR_ARG(d->name));
+    else sb_printf(&text, STR_FMT, STR_ARG(d->qualified.len ? d->qualified : d->name));
+    return text.data;
+}
+
+// What an override replaced and what replaced a declaration, after what the
+// declaration is: on its name, a reference to it, and the word before it.
+static void describe_replacing(const occurrence *o, sb *out)
+{
+    const decl *d = o->decl;
+    if (!d || (o->kind != OCC_SYSTEM && o->kind != OCC_FUNCTION && o->kind != OCC_METHOD && o->kind != OCC_REPLACE)) return;
+    if (!out->data) return;
+    if (d->replaces) {
+        sb_printf(out, "\n\nOverrides `%s` of %s: this is what's built under that name, and what was there isn't in the "
+                       "build.", code_name(d->replaces), package_text(d->replaces));
+    } else if (d->replaced_by) {
+        sb_printf(out, "\n\n**Replaced** by %s's override: this code isn't in the build. It's still checked for errors.",
+                  package_text(d->replaced_by));
+    } else if (d->is_virtual && o->kind != OCC_REPLACE) {
+        sb_put(out, "\n\n`virtual`: another package can replace it. Nothing does.");
+    } else if (d->is_virtual) {
+        sb_put(out, "\n\nNothing replaces it.");
     }
 }
 
@@ -2794,8 +2961,12 @@ static void describe_order(const decl *d, sb *out)
 }
 
 // ---------------------------------------------------------------------------
-// Code lenses: above each system, its stage and why it waits, and above each
-// local handler of a match event, when it hears it
+// Code lenses: above each system, its stage and why it waits, above each
+// local handler of a match event, when it hears it, and above a declaration
+// an override replaced, and the override, which is which
+
+static const char *package_text(const decl *d);
+static const char *code_name(const decl *d);
 
 // A lens with `title` above `d`'s name. It only says: it runs no command.
 static void write_lens(jbuf *out, int *written, const decl *d, const char *title)
@@ -2840,6 +3011,7 @@ void analysis_code_lenses(jbuf *out)
         if (d->at.file != A.doc || d->stage == 0) continue;
         sb title = {0};
         sb_printf(&title, "stage %d", d->stage);
+        if (d->extern_system) sb_put(&title, " \u00B7 in C"); // Scheduled by what it declares: its code isn't read
         put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
@@ -2867,6 +3039,21 @@ void analysis_code_lenses(jbuf *out)
         const decl *d = A.prog->views.items[i];
         sb title = {0};
         if (d->at.file == A.doc && put_world_lens(&title, d, "")) write_lens(out, &written, d, title.data);
+    }
+    // What replaces a virtual declaration, above it, and what an override replaces
+    for (int i = 0; i < A.prog->replaced.count; i++) {
+        const decl *v = A.prog->replaced.items[i];
+        const decl *o = v->replaced_by;
+        if (v->at.file == A.doc) {
+            sb title = {0};
+            sb_printf(&title, "replaced by %s: not in the build", package_text(o));
+            write_lens(out, &written, v, title.data);
+        }
+        if (o->at.file == A.doc) {
+            sb title = {0};
+            sb_printf(&title, "replaces %s of %s", code_name(v), package_text(v));
+            write_lens(out, &written, o, title.data);
+        }
     }
     // The program's handlers rather than each event's listeners, which the
     // checker only lists once the game has no errors
@@ -2951,9 +3138,10 @@ void analysis_set_can_create_files(const bool can)
 // change the order they run in, which follows the files.
 static void move_to_file_action(const int line, jbuf *out, int *written)
 {
-    for (int i = 0; can_create_files && i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; can_create_files && i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != A.doc || d->kind == DECL_SYSTEM || d->kind == DECL_CONST) continue;
+        if (d->is_override) continue; // It's where its package has it, and names what it replaces from there
         // Its lines: the attributes and comments just above it, to its closing brace.
         int first = d->at.line;
         for (int a = 0; a < d->attributes.count; a++) {
@@ -3230,7 +3418,14 @@ static void suggestion_actions(const int start_line, const int end_line, jbuf *o
         const diagnostic *d = &A.diags.items[i];
         if (d->fix_len == 0 || d->fix_at.file != A.doc || d->at.line - 1 < start_line || d->at.line - 1 > end_line) continue;
         sb title = {0};
-        sb_printf(&title, "Change to '" STR_FMT "'", STR_ARG(d->fix));
+        if (d->fix.len > 0) {
+            sb_printf(&title, "Change to '" STR_FMT "'", STR_ARG(d->fix));
+        } else { // What's written goes: a word, with the space after it
+            const char *text = DOC->lines.items[d->fix_at.line - 1] + d->fix_at.col - 1;
+            int len = d->fix_len;
+            while (len > 0 && (text[len - 1] == ' ' || text[len - 1] == '\t')) len--;
+            sb_printf(&title, "Remove '%.*s'", len, text);
+        }
         const loc end = {d->fix_at.line, d->fix_at.col + d->fix_len, d->fix_at.file};
         quick_fix(out, written, title.data, true, d, d->fix_at, end, str_to_cstr(d->fix));
     }
@@ -3336,6 +3531,40 @@ static void assign_first_actions(const fix *f, jbuf *out, int *written)
     quick_fix_edits(out, written, title.data, false, d, &edits);
 }
 
+// Where a declaration's header starts: its first word, before its name (`system`,
+// `local`, a function's type), past a handler's trigger.
+static loc header_start(const decl *d)
+{
+    const afile *f = &A.files[d->at.file];
+    int i = token_at(d->at);
+    if (i < 0) return (loc){0, 0, 0};
+    int depth = 0;
+    while (i > 0) {
+        const tok_kind k = f->toks[i - 1].kind;
+        if (k == T_RPAREN) depth++;
+        else if (k == T_LPAREN) depth--;
+        else if (depth == 0 && (k == T_RBRACE || k == T_SEMI || k == T_RBRACKET || k == T_LBRACE)) break;
+        i--;
+    }
+    return f->toks[i].at;
+}
+
+// `virtual` before the declaration an override names, which may be in another
+// file, or `override` before one that repeats a virtual declaration.
+static void replace_word_action(const fix *f, jbuf *out, int *written)
+{
+    const decl *d = f->method;
+    const loc start = header_start(d);
+    if (start.line == 0) return;
+    const bool virtual = f->kind == FIX_ADD_VIRTUAL;
+    text_edits edits = {0};
+    vec_push(edits, ((text_edit){start, start, virtual ? "virtual " : "override "}));
+    sb title = {0};
+    if (virtual) sb_printf(&title, "Mark '" STR_FMT "' virtual", STR_ARG(d->name));
+    else sb_printf(&title, "Make it an override of '" STR_FMT "'", STR_ARG(d->qualified));
+    quick_fix_edits(out, written, title.data, true, diagnostic_at(f->at), &edits);
+}
+
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
 {
     jb_put(out, "[");
@@ -3360,6 +3589,10 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
         if (f->kind == FIX_UNUSED_LOCAL) continue; // Nothing to offer: the note says what to do
         if (f->kind == FIX_ASSIGN_FIRST) {
             assign_first_actions(f, out, &written);
+            continue;
+        }
+        if (f->kind == FIX_ADD_VIRTUAL || f->kind == FIX_ADD_OVERRIDE) {
+            replace_word_action(f, out, &written);
             continue;
         }
         const param *p = f->param;
@@ -3513,7 +3746,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             break;
         }
         case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
-        case FIX_ASSIGN_FIRST:
+        case FIX_ASSIGN_FIRST: case FIX_ADD_VIRTUAL: case FIX_ADD_OVERRIDE:
             continue; // Their own actions, above
         }
         quick_fix(out, &written, title.data, preferred, fixed, start, end, text.data ? text.data : "");
@@ -3607,11 +3840,19 @@ void analysis_definition(const char *uri, const int line, const int character, j
         if (o->kind == OCC_FIELD && o->decl && !o->decl->builtin) {
             target = o->field->at;
             len = o->field->name.len;
+        } else if (o->kind == OCC_REPLACE) { // `override`: what it replaces; `virtual`: what replaces it
+            const decl *d = o->decl->replaces ? o->decl->replaces : o->decl->replaced_by;
+            if (d) {
+                target = d->at;
+                len = d->name.len;
+            }
         } else if ((o->kind == OCC_TYPE || o->kind == OCC_SYSTEM || o->kind == OCC_CONST
                     || (is_routine(o->decl) && o->kind != OCC_THIS))
                    && o->decl && !o->decl->builtin) {
-            target = o->decl->at;
-            len = o->decl->name.len;
+            // An override's own name is the name of what it replaces: from there, to that one
+            const decl *d = o->declaration && o->decl->replaces ? o->decl->replaces : o->decl;
+            target = d->at;
+            len = d->name.len;
         } else if (o->kind == OCC_PARAM) {
             target = o->param->name_at;
             len = o->param->name.len;
@@ -3670,8 +3911,8 @@ void analysis_symbols(jbuf *out)
 {
     jb_put(out, "[");
     int written = 0;
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != A.doc) continue; // This document's declarations
         const int kind = symbol_kind(d);
         const loc start = {d->at.line, 1, d->at.file};
@@ -3716,7 +3957,7 @@ void analysis_symbols(jbuf *out)
             jb_put(out, "}");
         }
         for (int k = 0; k < d->methods.count; k++) {
-            const decl *m = d->methods.items[k];
+            const decl *m = method_written(d->methods.items[k]);
             sb detail = {0};
             format_routine(m, &detail);
             if (!first_child) jb_put(out, ",");
@@ -3831,11 +4072,19 @@ void analysis_type_definition(const int line, const int character, jbuf *out)
 }
 
 // An event's handlers, and the input's Sample and Sanitize: the code that
-// gives it its behavior.
+// gives it its behavior. A virtual declaration's is its override.
 void analysis_implementation(const int line, const int character, jbuf *out)
 {
     const occurrence *o = occurrence_at(from_lsp(line, character));
     const decl *d = NULL;
+    if (o && o->decl && (o->kind == OCC_SYSTEM || o->kind == OCC_REPLACE || is_routine(o->decl))
+        && (o->decl->is_virtual || o->decl->is_override)) {
+        const decl *built = o->decl->replaced_by ? o->decl->replaced_by : o->decl->replaces ? o->decl : NULL;
+        jb_put(out, "[");
+        if (built) write_location(out, built->at, built->name.len);
+        jb_put(out, "]");
+        return;
+    }
     if (o && o->kind == OCC_TYPE) d = o->decl;
     else if (o && o->kind == OCC_PARAM) d = o->param->type.decl; // A handler's event
     if (!d || (d->kind != DECL_EVENT && d->kind != DECL_INPUT)) {
@@ -3882,18 +4131,18 @@ typedef struct caller {
 // The code whose body holds `at`; its decl is NULL where there's none.
 static caller caller_at(const loc at)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin) continue;
         for (int k = 0; k < d->methods.count; k++) {
-            const decl *m = d->methods.items[k];
+            const decl *m = method_written(d->methods.items[k]);
             if (block_contains(m->body, at)) return (caller){m, m->body, m->name, m->at};
         }
         if (d->kind == DECL_INPUT && block_contains(d->body, at)) return (caller){d, d->body, str_from("Sample"), d->body_at};
         if (d->kind == DECL_INPUT && block_contains(d->sanitize, at)) {
             return (caller){d, d->sanitize, str_from("Sanitize"), d->sanitize_at};
         }
-        if ((d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || is_shader(d)) && block_contains(d->body, at)) {
+        if ((d->kind == DECL_SYSTEM || is_routine(d) || is_shader(d)) && block_contains(d->body, at)) {
             return (caller){d, d->body, d->name, d->at};
         }
     }
@@ -4105,15 +4354,16 @@ static void select_decl(const decl *d, const stmt *body, const loc at, span_list
 // The spans around `at`, outermost first.
 static void selection_spans(const loc at, span_list *spans)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin || d->at.file != at.file) continue;
         const int before = spans->count;
-        select_decl(d, d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || is_shader(d) ? d->body : NULL, at, spans);
+        select_decl(d, d->kind == DECL_SYSTEM || is_routine(d) || is_shader(d) ? d->body : NULL, at, spans);
         if (spans->count == before) continue;
         for (int k = 0; k < d->methods.count; k++) {
-            select_decl(d->methods.items[k], d->methods.items[k]->body, at, spans);
-            select_in_stmt(d->methods.items[k]->body, at, spans);
+            const decl *m = method_written(d->methods.items[k]);
+            select_decl(m, m->body, at, spans);
+            select_in_stmt(m->body, at, spans);
         }
         if (d->kind == DECL_INPUT) { // Sample and Sanitize, from their names
             for (int k = 0; k < 2; k++) {
@@ -4498,14 +4748,14 @@ static void workspace_symbol(jbuf *out, int *written, const str name, const int 
 
 void analysis_workspace_symbols(const char *query, jbuf *out, int *written)
 {
-    for (int i = 0; A.prog && i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; A.prog && i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         if (d->builtin) continue;
         const int kind = symbol_kind(d);
-        const str ns = d->unit ? d->unit->ns : (str){"", 0};
+        const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
         if (fuzzy_match(d->name, query)) workspace_symbol(out, written, d->name, kind, d->at, d->name.len, ns);
         for (int k = 0; k < d->methods.count; k++) {
-            const decl *m = d->methods.items[k];
+            const decl *m = method_written(d->methods.items[k]);
             if (m->is_operator || !fuzzy_match(m->name, query)) continue;
             workspace_symbol(out, written, m->name, SYMBOL_METHOD, m->at, m->name.len, d->qualified);
         }
@@ -4627,6 +4877,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_OWNERSHIP: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_VERIFIED: *type = ST_KEYWORD; *mods = 0; break;
     case OCC_OUT: *type = ST_KEYWORD; *mods = 0; break; // A word only before a parameter's type and before an argument
+    case OCC_REPLACE: *type = ST_KEYWORD; *mods = 0; break; // `virtual` and `override`, words only before a declaration
     }
 }
 
@@ -4706,10 +4957,12 @@ void analysis_semantic_tokens(jbuf *out)
         classify(o, &t.type, &t.mods);
         vec_push(toks, t);
     }
-    // `frag` and `vert` are words only where a declaration starts, before its name
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
-        const int name = is_shader(d) && d->at.file == A.doc ? token_at(d->at) : -1;
+    // `frag` and `vert` are words only where a declaration starts, before its name, which an override
+    // can write with a namespace
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
+        int name = is_shader(d) && d->at.file == A.doc ? token_at(d->at) : -1;
+        while (name >= 2 && DOC->toks[name - 1].kind == T_DOT && DOC->toks[name - 2].kind == T_IDENT) name -= 2;
         if (name < 1) continue;
         const token *word = &DOC->toks[name - 1];
         const semantic_token t = {word->at.line - 1, utf16_col(word->at), word->text.len, ST_KEYWORD, 0};
@@ -4923,10 +5176,10 @@ static void collect_list(stmt *const *stmts, const int count, const loc at, scop
 static scope scope_at(const loc at)
 {
     scope sc = {0};
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         for (int k = 0; k < d->methods.count; k++) {
-            const decl *m = d->methods.items[k];
+            const decl *m = method_written(d->methods.items[k]);
             if (!block_contains(m->body, at)) continue;
             sc.decl = m;
             sc.fields_of = m->is_operator ? NULL : d;
@@ -4936,7 +5189,7 @@ static scope scope_at(const loc at)
         if (d->builtin || (!block_contains(d->body, at) && !sanitize)) continue;
         sc.decl = d;
         sc.in_input = d->kind == DECL_INPUT;
-        sc.fields_of = sc.in_input ? d : NULL;
+        sc.fields_of = sc.in_input ? d : d->kind == DECL_METHOD ? d->owner : NULL; // An override of a method: its type's
         sc.in_sanitize = sanitize;
         collect_locals(sanitize ? d->sanitize : d->body, at, &sc);
     }
@@ -5457,7 +5710,7 @@ static const unit *doc_unit(void)
 // Can the current document name `d` without its namespace?
 static bool visible_by_name(const decl *d)
 {
-    const str ns = d->unit ? d->unit->ns : (str){"", 0};
+    const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
     if (ns.len == 0) return true;
     const unit *u = doc_unit();
     if (!u) return false;
@@ -5595,7 +5848,7 @@ static void complete_systems(completion *c, const bool views)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_SYSTEM && d->is_view == views) {
+        if (d->kind == DECL_SYSTEM && d->is_view == views && has_name(d)) {
             item(c, name_for(d), CK_FUNCTION, views ? "view" : "system", NULL, NULL);
         }
     }
@@ -5643,7 +5896,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
     }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (!d->unit || !str_eq(d->unit->ns, ns)) continue;
+        if (!decl_home(d) || !str_eq(decl_home(d)->ns, ns) || !has_name(d)) continue;
         if (order == ORDER_NONE && d->kind == DECL_SYSTEM) continue;
         if (order == ORDER_REFS && d->kind != DECL_SYSTEM && d->kind != DECL_ENUM) continue;
         if (order == ORDER_PHASE && d->kind != DECL_ENUM) continue;
@@ -5873,7 +6126,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     }
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_FUNCTION) complete_routine(c, d, name_for(d));
+        if (d->kind == DECL_FUNCTION && has_name(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
 
@@ -5978,14 +6231,155 @@ static void complete_declarations(completion *c)
          "async event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
     item(c, "extern", CK_SNIPPET, "extern Type Name(parameters);",
          "A function written in C, which the game's C files or libraries define.", "extern ${1:void} ${2:Name}($3);");
+    item(c, "extern system", CK_SNIPPET, "extern system Name(mut Component value);",
+         "A system written in C: called once a tick for each run of rows of the entities that match, with their components as "
+         "arrays (tide/rows.h) and the singletons it takes.",
+         "extern system ${1:Name}(${2:mut Component value});");
     item(c, "const", CK_SNIPPET, "const Type NAME = value;", "A value code reads by name, the same on every machine.",
          "const ${1:int} ${2:NAME} = $0;");
     item(c, "settings", CK_SNIPPET, "settings { name = value; }", "The engine's settings for the game, like its tickRate.",
          "settings\n{\n    $0\n}");
+    item(c, "virtual", CK_KEYWORD, "virtual system Name(parameters) { ... }",
+         "Before a declaration with code: another package can replace it, with an `override` of the same name and parameters.",
+         NULL);
+    item(c, "override", CK_KEYWORD, "override system Name(parameters) { ... }",
+         "Before a declaration with code: it replaces the `virtual` one of that name and those parameters, in another package.",
+         NULL);
     item(c, "namespace", CK_KEYWORD, "namespace Name;", "The namespace of everything in this file. Goes at the top.",
          "namespace ${1:Name};");
     item(c, "using", CK_KEYWORD, "using Name;", "Names from another namespace, without writing it. Goes at the top.",
          "using ${1:Name};");
+}
+
+// What `virtual` goes before: the declarations with code.
+static void complete_code_declarations(completion *c)
+{
+    item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
+    item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
+         "view ${1:Name}($2)\n{\n    $0\n}");
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }", NULL,
+         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+    item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }", NULL,
+         "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
+    item(c, "event handler", CK_SNIPPET, "event(Event e) Name(parameters) { ... }", NULL,
+         "event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "local event handler", CK_SNIPPET, "local event(Event e) Name(parameters) { ... }", NULL,
+         "local event(${1:Event} ${2:e}) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "command handler", CK_SNIPPET, "command(Command payload, PlayerID sender) Name(parameters) { ... }", NULL,
+         "command(${1:Command} ${2:payload}, PlayerID sender) ${3:Name}($4)\n{\n    $0\n}");
+    item(c, "function", CK_SNIPPET, "Type Name(parameters) { ... }", NULL, "${1:void} ${2:Name}($3)\n{\n    $0\n}");
+    item(c, "async function", CK_SNIPPET, "async Type Name(parameters) { ... }", NULL,
+         "async ${1:void} ${2:Name}($3)\n{\n    $0\n}");
+}
+
+// A type as the current document writes it, for a declaration it's about to
+// write: Health, or Combat.Health where it can't name it alone.
+static void put_type_here(sb *out, const type t, const str written)
+{
+    switch (t.kind) {
+    case TY_OPTIONAL:
+        put_type_here(out, t.decl->fields.items[0].type, (str){"", 0});
+        sb_put(out, "?");
+        return;
+    case TY_LIST: case TY_SET: case TY_GRID:
+        sb_put(out, t.kind == TY_LIST ? "List<" : t.kind == TY_SET ? "Set<" : t.decl->dims == 3 ? "Grid3<" : "Grid2<");
+        put_type_here(out, t.decl->fields.items[0].type, (str){"", 0});
+        sb_put(out, ">");
+        return;
+    case TY_MAP:
+        sb_put(out, "Map<");
+        put_type_here(out, t.decl->fields.items[0].type, (str){"", 0});
+        sb_put(out, ", ");
+        put_type_here(out, t.decl->fields.items[1].type, (str){"", 0});
+        sb_put(out, ">");
+        return;
+    case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_STRUCT: case TY_EVENT: case TY_ENUM:
+        sb_put(out, t.decl->builtin ? str_to_cstr(t.decl->name) : name_for(t.decl));
+        return;
+    case TY_ERROR: case TY_RECORD: case TY_WORLD: case TY_ACTION: case TY_DRAW_LIST: case TY_QUERY:
+        sb_printf(out, STR_FMT, STR_ARG(written)); // As its declaration writes it: the engine's own, the same everywhere
+        return;
+    default:
+        sb_put(out, type_name(t));
+        return;
+    }
+}
+
+static void put_param_here(sb *out, const param *p)
+{
+    if (p->mode == PARAM_QUERY) {
+        sb_put(out, "query (");
+        for (int i = 0; i < p->query.count; i++) {
+            if (i) sb_put(out, ", ");
+            put_param_here(out, &p->query.items[i]);
+        }
+        sb_printf(out, ") " STR_FMT, STR_ARG(p->name));
+        return;
+    }
+    sb_put(out, p->is_out ? "out " : p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_WITH ? "with "
+              : p->mode == PARAM_WITHOUT ? "without " : "");
+    if (p->verified) sb_put(out, "verified ");
+    if (p->ownership) sb_put(out, "ownership");
+    else put_type_here(out, p->type, p->type_name);
+    if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
+    if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text));
+}
+
+// After `override`: the virtual declarations of other packages that nothing
+// replaces yet, each as the override this file would write for it, with its
+// name as it's written from here and its signature filled in.
+static void complete_overrides(completion *c)
+{
+    const char *package = DOC->src.package;
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *v = k < 0 ? d : d->methods.items[k];
+            if (!v->is_virtual || v->builtin || !v->unit) continue;
+            const char *theirs = v->unit->src->package;
+            if (theirs == package || (theirs && package && strcmp(theirs, package) == 0)) continue; // Its own: it changes it there
+            sb header = {0};
+            int first = 0;
+            if (v->kind == DECL_SYSTEM && v->is_handler && v->params.count > 0) {
+                sb_printf(&header, "%s%s%s(", v->is_local ? "local " : "", v->is_async ? "async " : "",
+                          v->is_command ? "command" : "event");
+                put_param_here(&header, &v->params.items[0]);
+                if (v->is_command && v->params.count > 1) {
+                    sb_put(&header, ", ");
+                    put_param_here(&header, &v->params.items[1]);
+                }
+                sb_put(&header, ") ");
+                first = v->is_command ? 2 : 1;
+            } else if (v->kind == DECL_SYSTEM) {
+                sb_put(&header, v->is_view ? "view " : "system ");
+            } else if (v->kind == DECL_SHADER) {
+                sb_put(&header, v->is_frag ? "frag " : "vert ");
+            } else {
+                sb_printf(&header, "%s%s", v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
+                if (v->return_type.kind == TY_VOID) sb_put(&header, "void");
+                else put_type_here(&header, v->return_type, v->return_type_name);
+                sb_put(&header, " ");
+            }
+            if (v->owner) sb_printf(&header, "%s.", name_for(v->owner));
+            sb_printf(&header, "%s(", v->owner ? str_to_cstr(v->name) : name_for(v));
+            for (int j = first; j < v->params.count; j++) {
+                if (j > first) sb_put(&header, ", ");
+                put_param_here(&header, &v->params.items[j]);
+            }
+            sb_put(&header, ")");
+            if (v->fails.kind != TY_VOID && v->fails.kind != TY_ERROR) {
+                sb_put(&header, " fails ");
+                put_type_here(&header, v->fails, v->fails_name);
+            }
+            sb snippet = {0};
+            sb_printf(&snippet, "%s\n{\n    $0\n}", header.data);
+            sb detail = {0};
+            const char *of = theirs ? theirs : NULL;
+            if (of) sb_printf(&detail, "replaces package %s's", of);
+            else sb_put(&detail, "replaces the game's");
+            item(c, header.data, CK_SNIPPET, detail.data, NULL, snippet.data);
+        }
+    }
 }
 
 // "PlayerInput" -> "playerInput", the usual name for a parameter of that type.
@@ -6056,7 +6450,7 @@ static void complete_shaders(completion *c, const decl *vertex)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (!is_shader(d)) continue;
+        if (!is_shader(d) || !has_name(d)) continue;
         const type on = d->params.count > 0 ? d->params.items[0].type : (type){TY_ERROR, NULL};
         if (vertex && on.kind == TY_STRUCT && on.decl != vertex) continue;
         sb detail = {0};
@@ -6100,7 +6494,10 @@ static header_kind top_header(const int i)
     const token *name = &DOC->toks[i - 1];
     if (name->kind == T_IDENT && (str_eq_c(name->text, "event") || str_eq_c(name->text, "command"))) return HEADER_TRIGGER;
     if (i < 2) return HEADER_ROUTINE;
-    const token *keyword = &DOC->toks[i - 2];
+    int first = i - 1; // An override's name can be qualified: `override system Combat.Move(`
+    while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
+    if (first < 1) return HEADER_ROUTINE;
+    const token *keyword = &DOC->toks[first - 1];
     if (keyword->kind == T_RPAREN || keyword->kind == T_SYSTEM) return HEADER_SYSTEM; // event(Hit hit) TakeHit(
     if (keyword->kind == T_IDENT && (str_eq_c(keyword->text, "frag") || str_eq_c(keyword->text, "vert"))) return HEADER_SHADER;
     return keyword->kind == T_IDENT && str_eq_c(keyword->text, "view") ? HEADER_SYSTEM : HEADER_ROUTINE;
@@ -6168,10 +6565,21 @@ static bool after_fails(const int i)
     return false;
 }
 
+// `virtual` or `override` at column 1, before a declaration's word or a
+// function's type: `virtual system`, `override float Combat.Damage(`.
+static bool starts_replace_word(const int i)
+{
+    const token *t = &DOC->toks[i];
+    if (t->kind != T_IDENT || t->at.col != 1 || (!str_eq_c(t->text, "virtual") && !str_eq_c(t->text, "override"))) return false;
+    const tok_kind next = DOC->toks[i + 1].kind;
+    return next == T_IDENT || next == T_SYSTEM || next == T_MUT;
+}
+
 static bool starts_declaration(const int i)
 {
     const token *t = &DOC->toks[i];
     if (t->kind == T_COMPONENT || t->kind == T_SINGLETON || t->kind == T_SYSTEM) return true;
+    if (starts_replace_word(i)) return true;
     if (t->kind == T_LBRACKET && t->at.col == 1) return !attributes_before_field(DOC->toks, i); // Attributes
     if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_IDENT
         && (str_eq_c(t->text, "input") || str_eq_c(t->text, "view") || str_eq_c(t->text, "struct")
@@ -6625,7 +7033,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
     frame stack[64] = {{CTX_TOP, -1, HEADER_NONE}};
     int depth = 0;
     for (int i = 0; i <= last; i++) {
-        if (starts_declaration(i) && !(stack[depth].kind == CTX_DATA && starts_function(i))) {
+        // In a type's body a method starts no declaration, `virtual` before it or not
+        if (starts_declaration(i) && !(stack[depth].kind == CTX_DATA && (starts_function(i) || starts_replace_word(i)))) {
             depth = 0;
             if (DOC->toks[i].kind != T_LBRACKET) continue;
         }
@@ -6711,6 +7120,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
     case CTX_TOP:
         if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET) {
             complete_declarations(&c);
+        } else if (pk == T_IDENT && str_eq_c(prev->text, "override")) { // What there is to replace, each written out
+            complete_overrides(&c);
+        } else if (pk == T_IDENT && str_eq_c(prev->text, "virtual")) { // What can be replaced: code
+            complete_code_declarations(&c);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "using")) {
             complete_namespaces(&c, true);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "const")) { // What a constant can be
@@ -6722,7 +7135,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "byte", CK_KEYWORD, "One byte: members from 0 to 255", NULL, NULL);
             item(&c, "ushort", CK_KEYWORD, "Two bytes: members from 0 to 65535", NULL, NULL);
             item(&c, "int", CK_KEYWORD, "Four bytes, as an enum is without one", NULL, NULL);
-        } else if (pk == T_IDENT && str_eq_c(prev->text, "extern")) { // Its return type
+        } else if (pk == T_IDENT && str_eq_c(prev->text, "extern")) { // Its return type, or a system written in C
+            item(&c, "system", CK_SNIPPET, "extern system Name(mut Component value);",
+                 "A system written in C: called once a tick for each run of rows of the entities that match, with their "
+                 "components as arrays (tide/rows.h) and the singletons it takes.",
+                 "system ${1:Name}(${2:mut Component value});");
             item(&c, "void", CK_KEYWORD, "Returns nothing", NULL, NULL);
             complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY);
             complete_structs(&c);
@@ -6739,7 +7156,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "After", CK_FUNCTION, "[After(DeclarationOrPhase)]",
                  "Runs after the named declarations or entire enum phases.", "After($1)");
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
-                 "The C function the extern function after it calls, when its name isn't the function's own.",
+                 "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
         }
         break;
@@ -6819,6 +7236,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
         }
+        // extern system Move(...): a system's parameters, less what C can't be handed
+        const bool extern_system = is_extern && f.header == HEADER_SYSTEM;
+        if (extern_system) is_extern = false;
         if (f.header == HEADER_ROUTINE && !is_extern) {
             // void Heal(mut Stats stats): values, and for a function its Action
             const bool method = depth >= 1 && stack[depth - 1].kind == CTX_DATA;
@@ -6928,15 +7348,20 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (view) item(&c, "verified", CK_KEYWORD, "As the server confirmed it, not as this machine predicts it", NULL, NULL);
                 item(&c, "with", CK_KEYWORD, "Entities must have this component", NULL, NULL);
                 item(&c, "without", CK_KEYWORD, "Entities must not have this component", NULL, NULL);
-                item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
+                if (!extern_system) {
+                    item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
+                }
                 // Systems, views and local handlers take a second set of entities to go through
-                if (f.open >= 2 && !is_async && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
+                if (f.open >= 2 && !is_async && !extern_system
+                    && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");
                 }
             }
-            item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+            if (!extern_system) {
+                item(&c, "World", CK_CLASS, "Any entity's components, by its handle: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+            }
             complete_types(&c, true, true, pk != T_MUT);
             complete_namespaces(&c, false);
         } else if (pk == T_IDENT) {
@@ -6990,6 +7415,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                      "${1:void} ${2:Name}($3)\n{\n    $0\n}");
                 item(&c, "mut method", CK_SNIPPET, "mut void Name(parameters) { ... }", "Changes the fields.",
                      "mut void ${1:Name}($2)\n{\n    $0\n}");
+                item(&c, "virtual", CK_KEYWORD, "virtual Type Name(parameters) { ... }",
+                     "A method another package can replace, with an `override` written outside the type.", NULL);
             }
             if (is_struct) {
                 sb snippet = {0};
@@ -6999,6 +7426,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 item(&c, "operator", CK_SNIPPET, "Type operator +(Type a, Type b) { ... }", "Lets '+' and the others work on the struct.",
                      snippet.data);
             }
+        } else if (pk == T_IDENT && member_start && has_methods && str_eq_c(prev->text, "virtual")) { // Its method's type
+            item(&c, "void", CK_KEYWORD, "Returns nothing", NULL, NULL);
+            item(&c, "mut", CK_KEYWORD, "A method that changes the fields", NULL, NULL);
+            complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY);
+            complete_structs(&c);
+            complete_namespaces(&c, false);
         } else if (pk == T_IDENT && member_start && is_struct) {
             item(&c, "operator", CK_KEYWORD, "Type operator +(Type a, Type b)", NULL, NULL); // After the return type
         } else if (pk != T_IDENT || (last >= 1 && DOC->toks[last - 1].kind != T_LBRACE && DOC->toks[last - 1].kind != T_SEMI
@@ -7135,17 +7568,17 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_TYPE:
         if (a->backing || b->backing) return a->backing == b->backing && str_eq(a->name, b->name);
         return a->decl ? a->decl == b->decl : !b->decl && a->type.kind == b->type.kind;
-    case OCC_SYSTEM: return a->decl == b->decl;
+    case OCC_SYSTEM: return replaced_or_self(a->decl) == replaced_or_self(b->decl); // An override is what it replaced, by name
     case OCC_FIELD: return a->field == b->field;
     case OCC_PARAM: return a->param == b->param;
     case OCC_LOCAL: return a->local == b->local;
     case OCC_OWNER: return str_eq(a->owner, b->owner);
     case OCC_FUNCTION:
     case OCC_CONSTANT:
-        if (is_routine(a->decl) || is_routine(b->decl)) return a->decl == b->decl;
+        if (is_routine(a->decl) || is_routine(b->decl)) return replaced_or_self(a->decl) == replaced_or_self(b->decl);
         return str_eq(a->owner, b->owner) && str_eq(a->name, b->name);
     case OCC_METHOD: // A built-in one is what it's called on's: a list's Add isn't an entity's
-        if (is_routine(a->decl) || is_routine(b->decl)) return a->decl == b->decl;
+        if (is_routine(a->decl) || is_routine(b->decl)) return replaced_or_self(a->decl) == replaced_or_self(b->decl);
         return str_eq(a->name, b->name) && a->call == b->call && a->object_type.kind == b->object_type.kind;
     case OCC_MEMBER:
     case OCC_NAMESPACE:
@@ -7157,7 +7590,8 @@ static bool same_symbol(const occurrence *a, const occurrence *b)
     case OCC_DEFAULT:
     case OCC_OWNERSHIP:
     case OCC_VERIFIED:
-    case OCC_OUT: return false; // A keyword, not a symbol
+    case OCC_OUT:
+    case OCC_REPLACE: return false; // A keyword, not a symbol
     }
     return false;
 }
@@ -7236,6 +7670,8 @@ static const char *rename_target(const int line, const int character, const occu
         return "'verified' is a keyword before a parameter's type or a handler's event, so it can't be renamed.";
     case OCC_OUT:
         return "'out' is a keyword before a parameter's type or an argument, so it can't be renamed.";
+    case OCC_REPLACE:
+        return "'virtual' and 'override' are keywords before a declaration, so they can't be renamed.";
     case OCC_SETTING:
         return "Settings are the engine's, so they can't be renamed.";
     default:
@@ -7301,11 +7737,12 @@ static bool local_named(const stmt *s, const str name)
 // The system, view or input whose body declares `local`.
 static const decl *decl_of_local(const stmt *local)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         for (int k = 0; k < d->methods.count; k++) {
-            const stmt *body = d->methods.items[k]->body;
-            if (body && loc_cmp(body->at, local->at) < 0 && loc_cmp(local->at, body->end) < 0) return d->methods.items[k];
+            const decl *m = method_written(d->methods.items[k]);
+            const stmt *body = m->body;
+            if (body && loc_cmp(body->at, local->at) < 0 && loc_cmp(local->at, body->end) < 0) return m;
         }
         if (d->body && loc_cmp(d->body->at, local->at) < 0 && loc_cmp(local->at, d->body->end) < 0) return d;
         if (d->sanitize && loc_cmp(d->sanitize->at, local->at) < 0 && loc_cmp(local->at, d->sanitize->end) < 0) {
@@ -7318,8 +7755,8 @@ static const decl *decl_of_local(const stmt *local)
 // The system, view or input that declares `p`.
 static const decl *decl_of_param(const param *p)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
+    for (int i = 0; i < A.written.count; i++) {
+        const decl *d = A.written.items[i];
         for (int k = 0; k < d->params.count; k++) {
             if (&d->params.items[k] == p) return d;
             const param *query = &d->params.items[k];
@@ -7328,7 +7765,7 @@ static const decl *decl_of_param(const param *p)
             }
         }
         for (int m = 0; m < d->methods.count; m++) {
-            const decl *method = d->methods.items[m];
+            const decl *method = method_written(d->methods.items[m]);
             for (int k = 0; k < method->params.count; k++) {
                 if (&method->params.items[k] == p) return method;
             }
@@ -7353,6 +7790,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     // declarations, so parameters and locals can still take them.
     static const char *const contextual[] = {"input", "view", "struct", "event", "command", "enum", "scene", "local", "namespace",
                                              "using", "extern", "const", "frag", "vert", "async", "settings", "operator",
+                                             "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 14 };
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",

@@ -40,6 +40,20 @@ int tide_run_web(const char *root, const build_options *opts, bool open_page, co
 // prints until it ends. Returns 0 if it ran.
 int tide_run_android(const char *root, const build_options *opts, const char *const *args);
 
+// The folder tide keeps its work for the game in `folder` in: <folder>/.tide,
+// hidden like .git, and ignored by git. Made if it isn't there; malloc'd.
+char *tide_work_folder(const char *folder);
+
+// Every file a build reads from the game's folder: its tide.packages, its
+// .tide files, its C and C++ with their headers and its libraries, and those
+// of its packages in folders inside it (packages from git aren't its files:
+// they're named by their commit). Not what tide made there (.tide/, build/).
+// Paths from the folder, with forward slashes, in the same order on every
+// machine; `count` gets how many. malloc'd, as each path is. NULL after
+// saying what's wrong: its tide.packages, or a package in a folder outside
+// the game's.
+char **tide_game_sources(const char *folder, int *count);
+
 // Prints the schedule of the game in `folder` (see tidec --schedule), or with
 // `shaders`, the shaders its mesh draw calls draw through (tidec --shaders).
 bool tide_schedule(const char *folder, bool shaders);

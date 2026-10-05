@@ -1715,6 +1715,15 @@ struct tide_client {
     bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
     double tick_cost;       // Seconds one of its ticks takes, as last measured (tide_client_desc.now_ns)
     uint32_t again;         // Predicted ticks it ran again so far
+
+    // The tick that's coming (foresee): tick `ahead`, run early on the world
+    // before it, into the snapshot after it, with the input it was given
+    // then. `coming_stale` once the world before it changed since.
+    bool coming;
+    bool coming_stale;
+    uint8_t *coming_input;
+    uint32_t coming_capacity;
+    uint32_t coming_size;
     double slack_since;     // Since when it's had room to spare, to take delay back after a while
     double delay_hold_until; // No change of delay until then: the last one takes a round trip to show
 
@@ -1803,7 +1812,8 @@ static void reset_view_correction(tide_client *c)
 static bool presented_retained(const tide_client *c)
 {
     const uint32_t first = c->presented_previous ? c->presented_tick - 1u : c->presented_tick;
-    return c->loaded && c->presented_tick <= c->ahead && first >= c->first_tick
+    const uint32_t last = c->coming ? c->ahead + 1u : c->ahead; // The tick that's coming is drawn too (tide_client_view)
+    return c->loaded && c->presented_tick <= last && first >= c->first_tick
         && (c->verified == 0u || first >= c->verified - 1u)
         && c->ahead - first < c->ring;
 }
@@ -2278,7 +2288,8 @@ static bool room_ahead(tide_client *c)
         free(moved);
         return false;
     }
-    for (uint32_t t = c->verified > c->first_tick ? c->verified - 1u : c->verified; t <= c->ahead; t++) {
+    const uint32_t last = c->coming ? c->ahead + 1u : c->ahead; // The tick that's coming is the snapshot after `ahead`
+    for (uint32_t t = c->verified > c->first_tick ? c->verified - 1u : c->verified; t <= last; t++) {
         worlds[t % ring] = c->worlds[t % c->ring];
         moved[t % c->ring] = true;
     }
@@ -2411,6 +2422,7 @@ static void predict_again(tide_client *c)
         run_predicted(c, t);
     }
     c->again += c->ahead - c->verified;
+    c->coming_stale = true; // The tick that's coming follows a world that changed
 }
 
 // The tick its clock says it should have an input for by now.
@@ -2449,7 +2461,11 @@ static void load_snapshot(tide_client *c)
         reset_view_correction(c); // The replacement has no history at the displayed timestamp.
     } else capture_view_correction(c, tick);
     // Ahead of the world that came, it keeps its predicted ticks, which it runs again
-    if (!c->loaded || c->ahead < tick) c->verified = c->ahead = tick;
+    c->coming_stale = true;
+    if (!c->loaded || c->ahead < tick) {
+        c->verified = c->ahead = tick;
+        c->coming = false;
+    }
     if (c->sampled < c->ahead) c->sampled = c->ahead;
     void **slot = &c->worlds[tick % c->ring];
     free_world(g, *slot);
@@ -2515,11 +2531,76 @@ static void sample_input(tide_client *c)
     c->sampled++;
 }
 
-// Runs one tick ahead, with the input sampled for it.
+// This machine's input for `tick` as it's kept, or none: its size.
+static uint32_t kept_input(const tide_client *c, const uint32_t tick, const uint8_t **bytes)
+{
+    uint32_t size = 0;
+    *bytes = c->game->set_input ? own_input(c, tick, &size) : NULL;
+    return *bytes ? size : 0u;
+}
+
+// Runs one tick ahead, with the input sampled for it. The tick that was coming
+// is that tick already, when it was run with the input it turned out to have
+// and the world before it is as it was (foresee).
 static void predict(tide_client *c)
 {
-    run_predicted(c, c->ahead);
+    const uint8_t *own;
+    const uint32_t size = kept_input(c, c->ahead, &own);
+    const bool foreseen = c->coming && !c->coming_stale && size == c->coming_size
+                       && (!size || memcmp(own, c->coming_input, size) == 0);
+    if (!foreseen) run_predicted(c, c->ahead);
+    c->coming = false;
     c->ahead++;
+}
+
+// The tick that's coming: the one after the last it ran, which its clock
+// hasn't reached, run with this machine's input as it is now. Views blend
+// towards it from the last tick run, so they draw this moment: blending
+// between the last two ticks run draws a tick ago, and what a player does
+// then shows a tick or two after it's read. With it, it shows in the frame
+// that reads it, at any tick rate.
+//
+// It's a prediction like the others, of one tick more. The input is what
+// `sample` would give now, taking nothing from the devices (`peek`), or the
+// one sampled already, with an input delay. It runs again when that changes
+// before its time comes, which is no correction: the player did something.
+// It runs again when the world before it changes, which is one, as for any
+// tick the server put right. And when neither happens it is the tick, once
+// its time comes (predict): a tick is run once, as ever, only sooner.
+static void foresee(tide_client *c)
+{
+    const tide_game *g = c->game;
+    const uint32_t tick = c->ahead;
+    if (!c->desc.peek || !c->predicts || tick - c->verified >= c->w.prediction || !room_ahead(c)) {
+        c->coming = false;
+        return;
+    }
+    if (g->set_input && c->desc.sample && c->sampled <= tick) {
+        // Kept where its sample will be, which replaces it; only sampled ones are sent
+        c->desc.peek(c->desc.user, tick, c->input);
+        const uint32_t slot = tick % c->w.inputs;
+        const uint32_t packed = g->write_input(c->input, c->inputs + (size_t)slot * g->max_input_bytes, g->max_input_bytes);
+        c->input_tick[slot] = packed ? tick : UINT32_MAX;
+        c->input_size[slot] = (uint16_t)packed;
+    }
+    const uint8_t *own;
+    const uint32_t size = kept_input(c, tick, &own);
+    if (c->coming && !c->coming_stale && size == c->coming_size && (!size || memcmp(own, c->coming_input, size) == 0)) return;
+    if (size > c->coming_capacity) {
+        uint8_t *bytes = realloc(c->coming_input, size);
+        if (!bytes) {
+            c->coming = false;
+            return;
+        }
+        c->coming_input = bytes;
+        c->coming_capacity = size;
+    }
+    if (c->coming && c->coming_stale) capture_view_correction(c, tick + 1u);
+    run_predicted(c, tick);
+    if (size) memcpy(c->coming_input, own, size);
+    c->coming_size = size;
+    c->coming = true;
+    c->coming_stale = false;
 }
 
 static void play(tide_client *c)
@@ -2540,11 +2621,14 @@ static void play(tide_client *c)
         if (tick < c->ahead && !stale && as_predicted(c, f)) {
             ok = c->game->hash_world(world_at(c, tick + 1u)) == frame_hash(f);
         } else {
-            if (tick < c->ahead) capture_view_correction(c, tick + 1u);
+            if (tick < c->ahead || c->coming) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
             ok = apply_frame(c, world_at(c, tick + 1u), f);
             finish_view_rewrite(c, tick + 1u);
             stale |= tick + 1u < c->ahead;
+            // The tick that's coming follows a world that changed, or was this one, as the server ran it
+            if (tick < c->ahead) c->coming_stale = true;
+            else c->coming = false;
         }
         drop_frame(f);
         if (!ok) { // Diverged: ask for the world again, and keep predicting meanwhile
@@ -2578,6 +2662,7 @@ static void play(tide_client *c)
     const uint32_t short_of = c->sampled > c->delay ? c->sampled - c->delay : 0u;
     const uint32_t target = short_of > c->ahead ? short_of : c->ahead;
     for (uint32_t n = 0; c->predicts && c->ahead < target && n < 16u && room_ahead(c); n++) predict(c);
+    foresee(c);
 }
 
 // Its input delay (tide_prediction): how many ticks short of the ones it has
@@ -2825,6 +2910,7 @@ void tide_client_destroy(tide_client *c)
     }
     free(c->worlds);
     free(c->inputs);
+    free(c->coming_input);
     free(c->input);
     free(c->scratch);
     free(c->packet);
@@ -2888,6 +2974,12 @@ const void *tide_client_verified_world(const tide_client *c)
     return c->loaded ? world_at(c, c->verified) : NULL;
 }
 
+// The newest snapshot views draw: the tick that's coming, when there's one.
+static uint32_t shown_tick(const tide_client *c)
+{
+    return c->coming ? c->ahead + 1u : c->ahead;
+}
+
 tide_view_worlds tide_client_view(const tide_client *c)
 {
     if (!c->loaded) return (tide_view_worlds){0};
@@ -2898,8 +2990,10 @@ tide_view_worlds tide_client_view(const tide_client *c)
     double alpha = at - (double)c->ahead;
     if (alpha < 0.0) alpha = 0.0;
     if (alpha > 1.0) alpha = 1.0;
-    return (tide_view_worlds){world_at(c, c->ahead), c->ahead > c->first_tick ? world_at(c, c->ahead - 1u) : NULL,
-                              (float)alpha, world_at(c, c->verified)};
+    // Towards the tick that's coming, from the last it ran: this moment. Without one, a tick ago
+    const uint32_t top = shown_tick(c);
+    return (tide_view_worlds){world_at(c, top), top > c->first_tick ? world_at(c, top - 1u) : NULL, (float)alpha,
+                              world_at(c, c->verified)};
 }
 
 void tide_client_mark_presented(tide_client *c)
@@ -2908,7 +3002,7 @@ void tide_client_mark_presented(tide_client *c)
     const tide_view_worlds view = tide_client_view(c);
     c->presented = true;
     c->presented_previous = view.previous != NULL;
-    c->presented_tick = c->ahead;
+    c->presented_tick = shown_tick(c);
     c->presented_alpha = view.alpha;
 }
 
@@ -3053,6 +3147,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         .transport = tide_loopback_endpoint(s->loopback, 2),
         .server = tide_loopback_address(1),
         .sample = s->desc.sample,
+        .peek = s->desc.peek,
         .user = s->desc.user,
         .lead = 0, // Its inputs go straight in: the server ticks right after it
         .jobs = s->desc.jobs,
@@ -3128,6 +3223,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
         .transport = network,
         .server = server,
         .sample = s->desc.sample,
+        .peek = s->desc.peek,
         .user = s->desc.user,
         .lead = 2,
         .cookie = s->cookie,
@@ -3387,6 +3483,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         .transport = tide_loopback_endpoint(s->loopback, 2),
         .server = tide_loopback_address(1),
         .sample = s->desc.sample,
+        .peek = s->desc.peek,
         .user = s->desc.user,
         .lead = 0,
         .cookie = s->cookie, // This machine's player, as it was
@@ -3422,6 +3519,7 @@ void tide_session_set_game(tide_session *s, const tide_game *game)
     if (s->client) {
         s->client->desc.game = game;
         s->client->game = game;
+        s->client->coming = false; // The tick that's coming is this build's to run
     }
     // What the last build recorded is laid out its own way: the ticks it ran
     // and this one confirms as they were tell the handlers nothing
@@ -3609,6 +3707,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
         c->commands_need_world = true;
         c->need_snapshot = true;
     }
+    c->coming = false; // The old build's
     if (c->loaded) {
         c->ahead = c->verified;
         c->first_tick = c->verified; // Views don't blend from the old build's world
@@ -3620,6 +3719,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
 static void take_server_world(tide_client *c, const tide_server *s)
 {
     c->game->copy_world(world_at(c, s->tick), s->world);
+    c->coming = false;
     c->verified = s->tick;
     c->ahead = s->tick;
     c->first_tick = s->tick;

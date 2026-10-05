@@ -305,7 +305,7 @@ void analyze_parallelism(program *prog)
 // names it: Move(Position, with Player).
 void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from)
 {
-    const bool same_namespace = from && d->unit && from->unit && str_eq(d->unit->ns, from->unit->ns);
+    const bool same_namespace = from && decl_home(d) && decl_home(from) && str_eq(decl_home(d)->ns, decl_home(from)->ns);
     const str name = same_namespace || d->qualified.len == 0 ? d->name : d->qualified;
     sb_printf(out, "%s" STR_FMT "%s%s", quote, STR_ARG(name), d->signature ? d->signature + d->name.len : "", quote);
 }
@@ -457,6 +457,7 @@ void print_schedule(const program *prog, const char *game, sb *out)
         sb_printf(out, "stage %-2d ", sys->stage);
         put_decl_name(out, sys, "", NULL);
         sb_put(out, sys->per_entity ? "  (per entity" : "  (once");
+        if (sys->extern_system) sb_put(out, ", in C"); // Its code isn't Tide's: what it reads and writes is what it declares
         const int loops = parallel_loops(sys->body);
         if (loops) sb_printf(out, ", %d parallel loop%s", loops, loops == 1 ? "" : "s");
         sb_put(out, ")\n");

@@ -15,6 +15,7 @@
 // name it.
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,9 +23,11 @@
 
 #include "tide/jobs.h"
 #include "tide/list.h"
+#include "tide/map.h"
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/page.h"
+#include "tide/rows.h"
 #include "tide/time.h"
 
 #include "box2d/src/box2d/box2d.h"
@@ -74,7 +77,26 @@ typedef struct touch {
     bool began;
 } touch;
 
-_Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 && sizeof(touch) == 24,
+// Physics, with the padding it writes out. Its lists and its map are the
+// match's to read and write: C leaves them as they are.
+typedef struct physics {
+    tide_float2 gravity;
+    int32_t substeps;
+    int32_t bodies;
+    int32_t shapes;
+    uint8_t unused0[4];
+    int64_t stamp;
+    int32_t size;
+    bool moved;
+    uint8_t unused1[3];
+    tide_list image;
+    tide_list gone;
+    tide_map owners;
+    uint8_t unused2[4];
+} physics;
+
+_Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 && sizeof(touch) == 24
+                   && sizeof(physics) == 64 && offsetof(physics, moved) == 36,
                "box2d.tide's types changed: these are theirs");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
@@ -100,6 +122,39 @@ static world worlds[WORLDS];
 static uint64_t uses;
 static world *active; // The running tick's
 static bool shared;   // The running step's tasks go to other threads
+
+// The bodies the running tick's Enter made, in the order it made them, each
+// with its entity, for the system after it to take (b2t_made): the match keeps
+// whose each body is in a map, which is Tide's to write.
+typedef struct new_body {
+    int64_t body;
+    tide_entity entity;
+} new_body;
+
+static new_body *made;
+static int32_t made_count;
+static int32_t made_room;
+static int32_t made_taken;
+
+// Where the running tick's step left a body it moved: what b2t_leave writes
+// into the body's component, found by the body's index. The step says which
+// bodies those are (its move events), so Leave asks Box2D nothing for them,
+// and nothing for the ones it left alone.
+typedef struct left {
+    int64_t id;    // The body, with its generation
+    uint32_t step; // The step that left it there: `stepped`'s, or it's an older one's
+    bool awake;    // Still awake after it; one that fell asleep is asked for, the rare time it's wanted
+    float x;
+    float y;
+    float angle;
+    float vx;
+    float vy;
+    float spin;
+} left;
+
+static left *lefts;
+static uint32_t left_room;
+static uint32_t stepped; // Steps taken, by any world: the last one's number
 static int32_t shared_steps;
 static int32_t restores;
 static bool measuring; // No clock is read otherwise
@@ -223,6 +278,12 @@ static void note(const char what, const void *with, const size_t size)
 
 bool b2t_open(const int64_t stamp)
 {
+    // A tick starts here. The last one's new bodies each have their entity: Own goes through the bodies as Enter did
+    if (made_taken != made_count) {
+        fprintf(stderr, "Box2D: %d bodies were made last tick that no entity was given\n", (int)(made_count - made_taken));
+        abort();
+    }
+    made_count = made_taken = 0;
     const int workers = workers_now();
     for (int i = 0; i < WORLDS; i++) {
         world *w = &worlds[i];
@@ -286,6 +347,7 @@ void b2t_forget(void)
         worlds[i] = (world){0};
     }
     active = NULL;
+    made_count = made_taken = 0;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -331,7 +393,9 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
-int32_t b2t_body(body *b)
+// A body's component into Box2D: made, if it's new, or else what code wrote
+// into it since the last step. Whether it was made.
+static bool sync_body(body *b)
 {
     const world *w = active;
     const body was = *b;
@@ -389,6 +453,93 @@ int32_t b2t_body(body *b)
     return did & 1u;
 }
 
+// A run of bodies' fields, as the match keeps them: an array a field, a value
+// a body (tide/rows.h). Asked for again once a body was written, as what's
+// written may be other memory than what was read.
+typedef struct body_fields {
+    const int32_t *id; // A long is two fields: its low half, then its high
+    const int32_t *id_high;
+    const float *x;
+    const float *y;
+    const float *angle;
+    const float *vx;
+    const float *vy;
+    const float *spin;
+    const float *impulse_x;
+    const float *impulse_y;
+    const float *turn;
+    const float *step_x;
+    const float *step_y;
+    const float *step_angle;
+    const float *step_vx;
+    const float *step_vy;
+    const float *step_spin;
+} body_fields;
+
+static body_fields fields_of(const tide_rows *rows)
+{
+    return (body_fields){
+        .id = tide_rows_ints(rows, 0, offsetof(body, id)),
+        .id_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4),
+        .x = tide_rows_floats(rows, 0, offsetof(body, position.x)),
+        .y = tide_rows_floats(rows, 0, offsetof(body, position.y)),
+        .angle = tide_rows_floats(rows, 0, offsetof(body, angle)),
+        .vx = tide_rows_floats(rows, 0, offsetof(body, velocity.x)),
+        .vy = tide_rows_floats(rows, 0, offsetof(body, velocity.y)),
+        .spin = tide_rows_floats(rows, 0, offsetof(body, spin)),
+        .impulse_x = tide_rows_floats(rows, 0, offsetof(body, impulse.x)),
+        .impulse_y = tide_rows_floats(rows, 0, offsetof(body, impulse.y)),
+        .turn = tide_rows_floats(rows, 0, offsetof(body, turn)),
+        .step_x = tide_rows_floats(rows, 0, offsetof(body, step_position.x)),
+        .step_y = tide_rows_floats(rows, 0, offsetof(body, step_position.y)),
+        .step_angle = tide_rows_floats(rows, 0, offsetof(body, step_angle)),
+        .step_vx = tide_rows_floats(rows, 0, offsetof(body, step_velocity.x)),
+        .step_vy = tide_rows_floats(rows, 0, offsetof(body, step_velocity.y)),
+        .step_spin = tide_rows_floats(rows, 0, offsetof(body, step_spin)),
+    };
+}
+
+// The system Enter: new bodies are made, and what code wrote into a body since
+// the last step goes to Box2D. A body nothing wrote to costs these
+// comparisons, and nothing else. It runs on one thread, its rows in order
+// (it takes Physics to write), as what's done to the world is noted in order.
+void b2t_enter(tide_rows *rows, physics *p)
+{
+    (void)p;
+    const uint32_t count = tide_rows_count(rows);
+    const tide_entity *entities = tide_rows_entities(rows);
+    body_fields f = fields_of(rows);
+    for (uint32_t i = 0; i < count; i++) {
+        const bool moved = f.x[i] != f.step_x[i] || f.y[i] != f.step_y[i] || f.angle[i] != f.step_angle[i];
+        const bool pushed = f.vx[i] != f.step_vx[i] || f.vy[i] != f.step_vy[i] || f.spin[i] != f.step_spin[i];
+        const bool nudged = f.impulse_x[i] != 0 || f.impulse_y[i] != 0 || f.turn[i] != 0;
+        const bool is_new = f.id[i] == 0 && f.id_high[i] == 0;
+        if (!is_new && !moved && !pushed && !nudged) continue;
+        body b;
+        tide_rows_get(rows, 0, i, &b);
+        if (sync_body(&b)) {
+            if (made_count == made_room) {
+                const int32_t room = made_room ? made_room * 2 : 64;
+                made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
+                made_room = room;
+            }
+            made[made_count++] = (new_body){b.id, entities[i]};
+        }
+        tide_rows_set(rows, 0, i, &b); // Its id, and the impulses it was given, which are gone
+        f = fields_of(rows);
+    }
+}
+
+// The body the tick's Enter made for `entity`, once, or 0 for an entity whose
+// body it didn't make. Asked for each body in the order Enter went through
+// them, which is the order it made them in, so the next one made is the only
+// one to look at.
+int64_t b2t_made(const tide_entity entity)
+{
+    if (made_taken == made_count || !tide_entity_equal(made[made_taken].entity, entity)) return 0;
+    return made[made_taken++].body;
+}
+
 static b2ShapeDef shape_def(const float density, const float friction, const float bounce, const bool sensor)
 {
     b2ShapeDef def = b2DefaultShapeDef();
@@ -429,6 +580,42 @@ int32_t b2t_circle(const int64_t on, const circle *s)
 // ---------------------------------------------------------------------------
 // The step
 
+// Where the step that just ran left the bodies it moved, each found by its
+// index: Box2D says which those are, the ones that were awake for it, with
+// where each is now. One that's still awake has its speeds read too. One that
+// fell asleep is only marked: b2t_leave asks Box2D about those, if it has to.
+static void note_left(const world *w)
+{
+    if (++stepped == 0) { // Wrapped: no older step's is this one's
+        if (lefts) memset(lefts, 0, (size_t)left_room * sizeof *lefts);
+        stepped = 1;
+    }
+    const b2BodyEvents events = b2World_GetBodyEvents(w->id);
+    for (int i = 0; i < events.moveCount; i++) {
+        const b2BodyMoveEvent *event = &events.moveEvents[i];
+        const uint32_t index = (uint32_t)event->bodyId.index1;
+        if (index >= left_room) {
+            uint32_t room = left_room ? left_room : 1024u;
+            while (room <= index) room *= 2u;
+            lefts = tide_realloc(lefts, (size_t)left_room * sizeof *lefts, (size_t)room * sizeof *lefts);
+            memset(&lefts[left_room], 0, (size_t)(room - left_room) * sizeof *lefts);
+            left_room = room;
+        }
+        left *l = &lefts[index];
+        l->id = handle(event->bodyId.index1, event->bodyId.generation);
+        l->step = stepped;
+        l->awake = !event->fellAsleep;
+        if (!l->awake) continue;
+        const b2Vec2 velocity = b2Body_GetLinearVelocity(event->bodyId);
+        l->x = (float)event->transform.p.x;
+        l->y = (float)event->transform.p.y;
+        l->angle = b2Rot_GetAngle(event->transform.q);
+        l->vx = velocity.x;
+        l->vy = velocity.y;
+        l->spin = b2Body_GetAngularVelocity(event->bodyId);
+    }
+}
+
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
@@ -445,6 +632,7 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     b2World_Step(w->id, dt, substeps);
     shared = false;
     if (measuring) step_ns += tide_time_now_ns() - began;
+    note_left(w);
 
     const uint64_t stamp = tide_hash_end(w->chain);
     w->stamp = stamp ? (int64_t)stamp : 1; // 0 is a match nothing stepped
@@ -515,31 +703,109 @@ int32_t b2t_image(tide_list_out *out)
     return size;
 }
 
-// Where the step left the body, into its component. False when that's where
-// the component has it already.
-bool b2t_pull(body *b, const int64_t stamp)
+// The fields the step leaves a body's place and speeds in, to write: the ones
+// code reads and writes, and the package's own, which say where the last step
+// left it.
+typedef struct body_places {
+    float *x;
+    float *y;
+    float *angle;
+    float *vx;
+    float *vy;
+    float *spin;
+    float *step_x;
+    float *step_y;
+    float *step_angle;
+    float *step_vx;
+    float *step_vy;
+    float *step_spin;
+} body_places;
+
+static body_places places_of(tide_rows *rows)
 {
-    (void)stamp;
-    if (b->id == 0) return false;
-    const b2BodyId id = body_of(active, b->id);
-    if (!b2Body_IsValid(id)) return false;
-    // Asleep, and the component says so already: where it is, and that it's still
-    const bool still = b->velocity.x == 0 && b->velocity.y == 0 && b->spin == 0 && b->step_velocity.x == 0 && b->step_velocity.y == 0
-                       && b->step_spin == 0;
-    const bool there = b->position.x == b->step_position.x && b->position.y == b->step_position.y && b->angle == b->step_angle;
-    if (still && there && !b2Body_IsAwake(id)) return false;
-    const body was = *b;
-    const b2Pos at = b2Body_GetPosition(id);
-    const b2Vec2 velocity = b2Body_GetLinearVelocity(id);
-    b->position = (tide_float2){(float)at.x, (float)at.y};
-    b->angle = b2Rot_GetAngle(b2Body_GetRotation(id));
-    b->velocity = (tide_float2){velocity.x, velocity.y};
-    b->spin = b2Body_GetAngularVelocity(id);
-    b->step_position = b->position;
-    b->step_angle = b->angle;
-    b->step_velocity = b->velocity;
-    b->step_spin = b->spin;
-    return memcmp(&was, b, sizeof was) != 0;
+    return (body_places){
+        .x = tide_rows_floats_mut(rows, 0, offsetof(body, position.x)),
+        .y = tide_rows_floats_mut(rows, 0, offsetof(body, position.y)),
+        .angle = tide_rows_floats_mut(rows, 0, offsetof(body, angle)),
+        .vx = tide_rows_floats_mut(rows, 0, offsetof(body, velocity.x)),
+        .vy = tide_rows_floats_mut(rows, 0, offsetof(body, velocity.y)),
+        .spin = tide_rows_floats_mut(rows, 0, offsetof(body, spin)),
+        .step_x = tide_rows_floats_mut(rows, 0, offsetof(body, step_position.x)),
+        .step_y = tide_rows_floats_mut(rows, 0, offsetof(body, step_position.y)),
+        .step_angle = tide_rows_floats_mut(rows, 0, offsetof(body, step_angle)),
+        .step_vx = tide_rows_floats_mut(rows, 0, offsetof(body, step_velocity.x)),
+        .step_vy = tide_rows_floats_mut(rows, 0, offsetof(body, step_velocity.y)),
+        .step_spin = tide_rows_floats_mut(rows, 0, offsetof(body, step_spin)),
+    };
+}
+
+// The system Leave: where the step left each body, into its component, for the
+// bodies whose components don't say so already.
+//
+// A body the step moved is in what the step left (note_left), and is written
+// from there. Any other wasn't awake for it: asleep, static, or just fallen
+// asleep. Where its component says it's where the last step left it, and
+// still, there's nothing to write, and nothing is asked. Otherwise code moved
+// it and the step left it there, or it just came to rest: its component gets
+// what Box2D has, so that the next tick's Enter finds nothing written.
+//
+// The fields are only asked for to write once a body has something to write,
+// so a run of bodies at rest leaves every one of them shared with the match's
+// snapshots. Runs go to several threads at once: each reads what the step
+// left, and writes its own rows.
+void b2t_leave(tide_rows *rows, const physics *p)
+{
+    if (!p->moved) return; // Nothing stepped: every body is where its component says
+    const uint32_t count = tide_rows_count(rows);
+    body_fields f = fields_of(rows);
+    body_places to = {0};
+    bool writing = false;
+    for (uint32_t i = 0; i < count; i++) {
+        const int64_t id = (int64_t)((uint64_t)(uint32_t)f.id[i] | (uint64_t)(uint32_t)f.id_high[i] << 32);
+        if (id == 0) continue;
+        const uint32_t index = (uint32_t)f.id[i];
+        const left *l = index < left_room ? &lefts[index] : NULL;
+        float x;
+        float y;
+        float angle;
+        float vx;
+        float vy;
+        float spin;
+        if (l && l->step == stepped && l->id == id && l->awake) {
+            x = l->x;
+            y = l->y;
+            angle = l->angle;
+            vx = l->vx;
+            vy = l->vy;
+            spin = l->spin;
+        } else {
+            const bool still = f.vx[i] == 0 && f.vy[i] == 0 && f.spin[i] == 0 && f.step_vx[i] == 0 && f.step_vy[i] == 0
+                               && f.step_spin[i] == 0;
+            const bool there = f.x[i] == f.step_x[i] && f.y[i] == f.step_y[i] && f.angle[i] == f.step_angle[i];
+            if (still && there) continue;
+            const b2BodyId asked = body_of(active, id);
+            if (!b2Body_IsValid(asked)) continue;
+            const b2Pos at = b2Body_GetPosition(asked);
+            const b2Vec2 velocity = b2Body_GetLinearVelocity(asked);
+            x = (float)at.x;
+            y = (float)at.y;
+            angle = b2Rot_GetAngle(b2Body_GetRotation(asked));
+            vx = velocity.x;
+            vy = velocity.y;
+            spin = b2Body_GetAngularVelocity(asked);
+        }
+        if (!writing) { // What's written is what's read from here on
+            to = places_of(rows);
+            f = fields_of(rows);
+            writing = true;
+        }
+        to.x[i] = to.step_x[i] = x;
+        to.y[i] = to.step_y[i] = y;
+        to.angle[i] = to.step_angle[i] = angle;
+        to.vx[i] = to.step_vx[i] = vx;
+        to.vy[i] = to.step_vy[i] = vy;
+        to.spin[i] = to.step_spin[i] = spin;
+    }
 }
 
 int32_t b2t_touches(const int64_t stamp)

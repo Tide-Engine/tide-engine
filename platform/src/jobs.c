@@ -181,12 +181,19 @@ typedef pthread_cond_t pool_signal;
 // is open until the caller's own run of the work returns, which is once all
 // of it is done: a worker that wakes later has nothing left to do, so the
 // caller never waits for a worker to wake, only for the ones that joined.
+//
+// A worker the work returns on while the round is open found nothing to do
+// in it, and sleeps until it's called again: for another round, or back into
+// this one, when there's work for more threads than are at it (`more`, see
+// tide/jobs.h). A thread that looked for work the whole round through would
+// slow the ones that have it.
 typedef struct pool {
     tide_jobs jobs;
     pool_lock lock;
-    pool_signal start; // A round has started
-    pool_signal done;  // The last worker that joined it is done
-    uint64_t round;    // Rounds started
+    pool_signal start; // A call for workers
+    pool_signal done;  // The last worker in the round has left it
+    uint32_t calls;    // For workers, which they wait on: rounds started, and more asked into one
+    uint32_t asleep;   // Workers waiting for one, or about to
     bool open;         // The round takes workers
     uint32_t inside;   // Workers running the round's work
     void (*work)(void *context, uint32_t thread);
@@ -199,15 +206,19 @@ static bool made;
 static void worker_loop(const uint32_t thread)
 {
     pool *p = &the_pool;
-    uint64_t seen = 0;
+    uint32_t seen = 0;
+    LOCK(&p->lock);
     for (;;) {
-        LOCK(&p->lock);
-        while (p->round == seen) WAIT(&p->start, &p->lock);
-        seen = p->round;
-        if (!p->open) { // Over before it woke
-            UNLOCK(&p->lock);
-            continue;
-        }
+        // Counted asleep before it looks at the calls, and it has the lock
+        // from the look until it waits: whoever calls counts its call first
+        // and then looks for sleepers, so it either finds this one, and gets
+        // the lock once it waits, or this one sees the call (more)
+        __atomic_fetch_add(&p->asleep, 1u, __ATOMIC_SEQ_CST);
+        uint32_t calls;
+        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen) WAIT(&p->start, &p->lock);
+        __atomic_fetch_sub(&p->asleep, 1u, __ATOMIC_SEQ_CST);
+        seen = calls;
+        if (!p->open) continue; // Over before it woke
         p->inside++;
         void (*const work)(void *, uint32_t) = p->work;
         void *const context = p->context;
@@ -215,7 +226,6 @@ static void worker_loop(const uint32_t thread)
         work(context, thread);
         LOCK(&p->lock);
         if (--p->inside == 0 && !p->open) WAKE_ONE(&p->done);
-        UNLOCK(&p->lock);
     }
 }
 
@@ -241,14 +251,34 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
     p->context = context;
     p->open = true;
     p->inside = 0;
-    p->round++;
-    WAKE_ALL(&p->start);
+    __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
     UNLOCK(&p->lock);
+    WAKE_ALL(&p->start);
     work(context, 0);
     LOCK(&p->lock);
     p->open = false;
     while (p->inside) WAIT(&p->done, &p->lock);
     UNLOCK(&p->lock);
+}
+
+// Up to `count` of the workers that sleep come back into the round. Nothing
+// is asked of a pool whose workers are all awake: a worker on its way to
+// sleep sees the call counted, and looks again. The lock is taken and let go
+// before they're woken, so one that had looked already is waiting by then,
+// and none wakes only to wait for the lock.
+static void more(void *self, const uint32_t count)
+{
+    pool *p = self;
+    __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
+    const uint32_t asleep = __atomic_load_n(&p->asleep, __ATOMIC_SEQ_CST);
+    if (!asleep) return;
+    LOCK(&p->lock);
+    UNLOCK(&p->lock);
+    if (count >= asleep) {
+        WAKE_ALL(&p->start);
+    } else {
+        for (uint32_t i = 0; i < count; i++) WAKE_ONE(&p->start);
+    }
 }
 
 // The CPU's cores, not counting the second thread a core runs (SMT): two
@@ -300,7 +330,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, NULL}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     InitializeConditionVariable(&p->start);
