@@ -1,0 +1,3 @@
+// expect: 'z' comes after a parameter with a default, so it needs one too
+scene Main { }
+float Sum(float x, float y = 2, float z) { return x + y + z; }

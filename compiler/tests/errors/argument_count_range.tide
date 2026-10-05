@@ -1,0 +1,5 @@
+// expect: 'Damage' takes 1 to 3 arguments, not 4
+scene Main { }
+singleton Log { float total; }
+float Damage(float base, float multiplier = 1, bool crit = false) { return crit ? base * multiplier * 2 : base * multiplier; }
+system Run(mut Log log) { log.total = Damage(10, 2, true, 4); }

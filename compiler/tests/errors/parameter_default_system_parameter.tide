@@ -1,0 +1,4 @@
+// expect: the engine supplies these parameters, so they take no default
+scene Main { }
+component Health { float value = 100; }
+system Regen(mut Health health = Health { }) { health.value += 1; }

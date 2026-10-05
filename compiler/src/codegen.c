@@ -172,12 +172,29 @@ static const char *mangle(const str name)
 static const char *make_cname(const decl *d)
 {
     const str ns = d->unit ? d->unit->ns : (str){"", 0};
+    if (d->c_suffix) { // One of several that share the name: its parameters' types go on, Damage_float_Weapon
+        sb b = {0};
+        for (int i = 0; i < ns.len; i++) sb_putn(&b, ns.ptr[i] == '.' ? "_" : &ns.ptr[i], 1);
+        if (ns.len > 0) sb_put(&b, "_");
+        sb_printf(&b, STR_FMT "%s", STR_ARG(d->name), d->c_suffix);
+        return b.data;
+    }
     if (ns.len == 0) return mangle(d->name);
     char *out = arena_alloc((size_t)ns.len + (size_t)d->name.len + 2);
     for (int i = 0; i < ns.len; i++) out[i] = ns.ptr[i] == '.' ? '_' : ns.ptr[i];
     out[ns.len] = '_';
     memcpy(out + ns.len + 1, d->name.ptr, (size_t)d->name.len);
     return out;
+}
+
+// A system's or view's name as tools show it (the profiler's rows): with its
+// namespace, and with its parameters' types when others share its name.
+static str tool_name(const decl *d)
+{
+    if (!d->signature) return d->qualified;
+    sb b = {0};
+    sb_printf(&b, STR_FMT "%s", STR_ARG(d->qualified), d->signature + d->name.len);
+    return (str){b.data, (int)b.len};
 }
 
 // Generated code writes each name thousands of times, so every declaration
@@ -997,8 +1014,8 @@ static const char *routine_cname(const decl *m)
         int index = 0;
         while (m->owner->methods.items[index] != m) index++;
         sb_printf(&b, "tide_operator_%s_%s_%d", decl_cname(m->owner), operator_word(m), index);
-    } else if (m->owner) {
-        sb_printf(&b, "tide_method_%s_" STR_FMT, decl_cname(m->owner), STR_ARG(m->name));
+    } else if (m->owner) { // With its parameters' types when its type has other methods of the name
+        sb_printf(&b, "tide_method_%s_" STR_FMT "%s", decl_cname(m->owner), STR_ARG(m->name), m->c_suffix ? m->c_suffix : "");
     } else {
         sb_printf(&b, "tide_function_%s", decl_cname(m));
     }
@@ -3610,6 +3627,23 @@ static void take(operand_list *ops, expr *e)
     for (int i = 0; i < e->inits.count; i++) take(ops, e->inits.items[i].value);
 }
 
+// The place in `args` of the argument a call works out `n`th. They're worked
+// out in the order written, and `args` is in the parameters' order: names
+// can put them in another (arg_order), and the defaults of the parameters the
+// call left out, constants, come after.
+static int arg_in_turn(const expr *e, const int n)
+{
+    if (e->arg_order.count == 0) return n;
+    if (n < e->arg_order.count) return e->arg_order.items[n];
+    int left = n - e->arg_order.count;
+    for (int i = 0; i < e->args.count; i++) {
+        bool written = false;
+        for (int k = 0; k < e->arg_order.count; k++) written |= e->arg_order.items[k] == i;
+        if (!written && left-- == 0) return i;
+    }
+    return n;
+}
+
 // A call's operands: the value a method is called on, then its arguments.
 static void call_operands(expr *e, operand_list *ops)
 {
@@ -3634,7 +3668,8 @@ static void call_operands(expr *e, operand_list *ops)
             break; // Math, Scene, GUI and the like: a name, no value
         }
     }
-    for (int i = 0; i < e->args.count; i++) {
+    for (int n = 0; n < e->args.count; n++) {
+        const int i = arg_in_turn(e, n);
         expr *arg = e->args.items[i];
         operand_role role = TAKEN;
         if (m && i < m->params.count) {
@@ -3906,7 +3941,8 @@ static void hoist_arguments(gen *g, const expr *call)
 {
     ordering ordered = {0};
     operand_list ops = {0};
-    for (int i = 0; i < call->args.count; i++) {
+    for (int n = 0; n < call->args.count; n++) {
+        const int i = arg_in_turn(call, n);
         if (call->method->params.items[i].task_ref) continue; // A component's name: the task gets it itself
         ordered.strict |= holds_writer(call->args.items[i]);
         take(&ops, call->args.items[i]);
@@ -11807,7 +11843,7 @@ static void gen_api(gen *g)
             sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", settles ? "true" : "false");
             if (settles && settles_fields(sys)) sb_printf(o, "tide_settle_%s, ", name);
             else sb_put(o, "NULL, ");
-            gen_c_literal(o, sys->qualified, false); // Its name, for the profile
+            gen_c_literal(o, tool_name(sys), false); // Its name, for the profile
             sb_put(o, "},\n");
         }
         sb_put(o, "};\n\n");
@@ -11925,7 +11961,7 @@ static void gen_api(gen *g)
         sb_printf(o, "    tide_run_view_%s(w, previous, alpha, %slocal, draw, gui);\n", decl_cname(view),
                   view->takes_verified ? "verified ? verified : w, " : "");
         sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
-        gen_c_literal(o, view->qualified, false);
+        gen_c_literal(o, tool_name(view), false);
         sb_put(o, ", tide_at);\n");
     }
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
@@ -13145,7 +13181,8 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
         const task_info *ti = &g->tasks.items[i];
         if (!task_table_in(ti->fn, local)) continue;
         if (tasks++ == 0) sb_printf(o, "static const tide_layout_tasks tide_layout_%s_tasks[] = {\n", side);
-        sb_printf(o, "    {\"" STR_FMT " %016llX\", sizeof(tide_task_%s)},\n", STR_ARG(ti->fn->qualified),
+        // One of several that share a name goes with its parameters' types, so each keeps its own tasks
+        sb_printf(o, "    {\"" STR_FMT " %016llX\", sizeof(tide_task_%s)},\n", STR_ARG(tool_name(ti->fn)),
                   (unsigned long long)frame_fingerprint(g, ti), task_id(ti->fn));
     }
     if (tasks) sb_put(o, "};\n\n");
