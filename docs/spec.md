@@ -1433,7 +1433,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - The same entity is told by what each was born as, where this machine knows it of both, and by its handle otherwise (an entity that came with a world the server sent).
   - `mut` goes with it: `mut verified Health health` reads the confirmed `Health` and writes the entity's local fields, which are the entity's whichever world a parameter reads. A view that takes a component both ways reaches its local fields through the one that isn't `verified`; through the other it's an error that says so.
   - A view of the confirmed world's entities draws them as they are there: nothing it reads of them is blended, corrections aren't smoothed, and `this` is the confirmed entity. Its `World` is still the world it draws.
-  - Text, lists, maps, sets and grids of the confirmed world aren't read yet: naming one through a `verified` parameter is an error, and a copy of the value has them empty. They're read through a parameter that isn't `verified`.
+  - A `verified` value is whole: its text, lists, maps, sets and grids are the confirmed world's, read like any other's, through members, methods, loops, copies of the value and the functions it's passed to. Nothing of them is copied to read them, but the elements of a list or map whose elements hold text, which a view gets a copy of each time it runs. They're to read: like everything a view takes of the match, a change goes to a copy, in a local or in local state.
   - `verified World world` isn't built: an error that points to `verified` component parameters.
   - A frag or vert can't say `verified`: it reads what its view is given. The mesh's components are the view's own as it draws them (the ones that aren't `verified`, where it takes one both ways), and the confirmed ones in a view of the confirmed world's entities.
   - A function's parameter can't say it either: the view takes it `verified` and passes it on.
@@ -1571,7 +1571,7 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - **Blending confirmed state.** A `verified` value is as the last confirmed tick has it, so it steps at the tick rate. Showing other players from confirmed state, blended between confirmed ticks rather than predicted ahead (a competitive shooter wants their positions not extrapolated), needs that, and may belong at another level than a parameter's modifier.
-- `verified World`, and the confirmed world's text and lists.
+- `verified World`: the confirmed world's other entities, by their handles.
 - Views reading input, for example to draw where the local player aims before the tick runs.
 - GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.

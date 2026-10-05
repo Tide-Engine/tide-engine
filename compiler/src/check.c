@@ -4346,16 +4346,6 @@ static bool heard_value(const checker *c, const expr *e)
     return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
 }
 
-// Whether a value is a view's `verified` parameter, or a field of one: the
-// confirmed world's, whose heap isn't the one the view reads text from.
-static bool verified_value(const checker *c, const expr *e)
-{
-    const decl *sys = c->method ? NULL : c->system;
-    if (!sys || sys->kind != DECL_SYSTEM || !sys->is_view) return false;
-    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
-    return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->verified;
-}
-
 // Text, a list, a map, a set or a grid: what a world keeps in its heap.
 static bool kept_in_heap(const type t)
 {
@@ -4657,13 +4647,6 @@ static type check_member(checker *c, expr *e)
                     diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
                               "sets and grids stay in the match: send what it needs of them in a field of another type, or "
                               "read them in a view");
-                    return T_ERR;
-                }
-                if (verified_value(c, e->object) && kept_in_heap(f->type)) {
-                    diag_error(e->at, "'" STR_FMT "' is %s of the confirmed match's, which a view doesn't read yet",
-                               STR_ARG(f->name), heap_what(f->type));
-                    diag_note("a 'verified' parameter gives the confirmed world's numbers, vectors, enums and entities; its "
-                              "text, lists, maps, sets and grids are read through a parameter that isn't 'verified'");
                     return T_ERR;
                 }
                 e->field = f;
@@ -9324,6 +9307,8 @@ static void check_params(const checker *c, decl *sys)
         }
 
         if (p->verified && p->mode != PARAM_EVENT && !check_verified_param(sys, p, d)) p->verified = false;
+        // What the confirmed world keeps in its heap is read there, and elements with text come as copies in the scratch area
+        if (p->verified && p->mode != PARAM_EVENT && d && decl_holds_text(d)) c->prog->uses_text = true;
         if (p->mode == PARAM_SENDER) {
             if (!str_eq_c(p->type_name, "PlayerID")) {
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
