@@ -348,7 +348,7 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu,
     if (duel.attract || duel.phase == Phase.Draft || duel.phase == Phase.Finished) return;
     Draw2D.Screen();
     shapes.pixel = 1;
-    var slim = Screen.height < 520 && Screen.width >= 720;
+    var slim = Screen.height < 640 && Screen.width >= 720;
     var two = duel.bluePlayer != default && duel.orangePlayer != default;
     var rect = slim ? Rect(Screen.width - 82, Screen.height - 34, 68, 26)
                     : Rect(Screen.width - 84, Screen.width < 720 ? 6 : 11, 68, 26);
