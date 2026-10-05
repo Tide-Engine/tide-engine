@@ -1,0 +1,4 @@
+// expect: C functions can't take the World yet
+component Health { int value; }
+scene Main { }
+extern bool Alive(Entity target, World world);

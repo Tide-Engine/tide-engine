@@ -1,0 +1,8 @@
+// expect: TryGet takes the component in '<>': 'world.TryGet<Health>(entity, out var value)'
+component Health { int value; }
+component Healer { Entity patient; bool has; }
+scene Main { }
+system Read(mut Healer healer, World world)
+{
+    healer.has = world.TryGet(healer.patient, out var health);
+}

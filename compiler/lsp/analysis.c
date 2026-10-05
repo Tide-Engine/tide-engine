@@ -1318,10 +1318,12 @@ static const char *builtin_type_doc(const type_kind kind)
                          "and `foreach` or `parallel` through its cells. "
                          "Its size is given when it's made, `Grid2(1024, 1024)`; 0 or nothing is open.";
     case TY_WORLD: return "Any entity's components, by its handle, for a system, view or event handler that takes "
-                          "`World world`: `world.Get<Health>(entity)` is a copy of that entity's `Health` (its zero value "
-                          "when it has none), `world.Has<Health>(entity)` tells, and with `mut World`, "
-                          "`world.Set<Health>(entity, value)` puts one back. What the code reaches this way counts as "
-                          "access to every entity's component: the schedule shows it.";
+                          "`World world`, and for the functions and methods it passes it on to: "
+                          "`world.Get<Health>(entity)` is a copy of that entity's `Health` (its zero value "
+                          "when it has none), `world.Has<Health>(entity)` tells, `world.TryGet<Health>(entity, out var "
+                          "health)` is both in one, and with `mut World`, "
+                          "`world.Set<Health>(entity, value)` puts one back. What the code reaches this way, itself or "
+                          "through a function, counts as access to every entity's component: the schedule shows it.";
     default: return NULL;
     }
 }
@@ -1804,6 +1806,9 @@ static const method_form world_calls[] = {
      "counts as reading every entity's, so systems that write the component run before or after."},
     {"Has", "Has<T>(Entity entity) -> bool",
      "Whether the entity has the component. It counts as reading every entity's."},
+    {"TryGet", "TryGet<T>(Entity entity, out T value) -> bool",
+     "Whether the entity has the component, and through `out`, a copy of it, or the component's default when the "
+     "entity has none: `if (world.TryGet<Health>(target, out var health)) ...`. It counts as reading every entity's."},
     {"Set", "Set<T>(Entity entity, T value)",
      "Puts the component back on the entity, right away; nothing happens when the entity has none. It needs "
      "`mut World`, counts as writing every entity's, and keeps a system on one thread."},
@@ -2442,8 +2447,9 @@ static void describe(const occurrence *o, sb *out)
             break;
         }
         if (o->param->type.kind == TY_WORLD) {
-            sb_printf(out, "\n\nThe World: any entity's components by its handle, with `Get<T>(entity)`, `Has<T>(entity)` "
-                           "and%s `Set<T>(entity, value)`.", o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
+            sb_printf(out, "\n\nThe World: any entity's components by its handle, with `Get<T>(entity)`, `Has<T>(entity)`, "
+                           "`TryGet<T>(entity, out value)` and%s `Set<T>(entity, value)`.",
+                      o->param->mode == PARAM_MUT ? "" : ", when it's `mut`,");
             const decl *code_of = decl_of_param(o->param);
             if (code_of) describe_world(code_of, out);
             break;
@@ -5246,7 +5252,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             sb detail = {0};
             format_method(&forms[i], t, &detail);
             sb snippet = {0};
-            sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
+            if (strcmp(forms[i].name, "TryGet") == 0) sb_put(&snippet, "TryGet<${1:Component}>(${2:entity}, out var ${3:value})");
+            else sb_printf(&snippet, "%s<$1>($2)", forms[i].name);
             item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
         }
         return;
@@ -6399,7 +6406,16 @@ static out_argument out_argument_at(const int open, const int last, const loc at
 {
     const out_argument none = {OUT_NONE, false, {"", 0}, NULL, {TY_ERROR, NULL}};
     const token *toks = DOC->toks;
-    const int callee = open - 1;
+    int callee = open - 1;
+    str in_brackets = {"", 0}; // world.TryGet<Health>(: the component, which comes between the name and the '('
+    if (callee >= 3 && toks[callee].kind == T_GT && toks[callee - 1].kind == T_IDENT) {
+        int k = callee - 1;
+        while (k >= 2 && toks[k - 1].kind == T_DOT && toks[k - 2].kind == T_IDENT) k -= 2;
+        if (k >= 2 && toks[k - 1].kind == T_LT && toks[k - 2].kind == T_IDENT) {
+            in_brackets = toks[callee - 1].text;
+            callee = k - 2;
+        }
+    }
     if (callee < 0 || toks[callee].kind != T_IDENT) return none;
     // The argument's place among those written, and where it starts
     int place = 0;
@@ -6460,11 +6476,16 @@ static out_argument out_argument_at(const int open, const int last, const loc at
         const type t = o && o->call != CALL_NONE && o->object_type.kind != TY_ERROR ? o->object_type : receiver_type(callee - 1, at);
         size_t count;
         const method_form *forms = methods_of(t, &count);
-        const method_form *form = t.kind == TY_WORLD ? NULL : find_form(forms, count, name);
+        const method_form *form = find_form(forms, count, name);
+        const decl *component = NULL; // The World's: the component its type names
+        for (int i = 0; t.kind == TY_WORLD && !component && i < A.prog->components.count; i++) {
+            if (str_eq(A.prog->components.items[i]->name, in_brackets)) component = A.prog->components.items[i];
+        }
         sb label = {0};
         int starts[16];
         int ends[16];
-        if (form) format_method(form, t, &label);
+        if (form && t.kind == TY_WORLD) format_world_method(form, component, &label);
+        else if (form) format_method(form, t, &label);
         const int params = form ? label_split(label.data, starts, ends) : 0;
         for (int p = 0; p < params; p++) {
             const char *text = label.data + starts[p];
@@ -6482,6 +6503,7 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             type_text[word - text - 5] = '\0';
             found.type_text = type_text;
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
+            if (t.kind == TY_WORLD && component) found.type = type_of_decl(component); // ...or the World's: the component
         }
     }
     if (makes == 0) return none;
@@ -6809,6 +6831,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT || after_out) {
                 if (pk != T_MUT && !after_out && !operator_) {
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
+                    if (!is_async) {
+                        item(&c, "World", CK_CLASS, "Its caller's World, passed on: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+                    }
                     // An operator gives one value, and an async function goes on after its call returned
                     if (!is_async) {
                         item(&c, "out", CK_KEYWORD, "The caller's variable, which the call makes: assigned here on every path that returns",

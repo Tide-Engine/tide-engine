@@ -83,7 +83,7 @@ system Regenerate(mut Unit unit)
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
+Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. To read another entity's component, a function takes the [`World`](../game/systems.md#other-entities-the-world), which the system that calls it passes its own. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -210,7 +210,7 @@ system Halve(mut Pile pile, mut Tally tally)
 
 Functions, methods and [C functions](../c/functions.md#values-across) have `out` parameters. Systems, views, handlers, frags and verts don't, as the engine calls them and nothing would take what they make. Async functions don't either: their call returns before the task has made anything, so they return a struct instead. An `out` parameter has no default, and `out` doesn't tell functions that share a name apart.
 
-Maps have one built in: [`TryGet(key, out value)`](./text-and-lists.md#members-2).
+Maps have one built in, [`TryGet(key, out value)`](./text-and-lists.md#members-2), and so does the [World](../game/systems.md#other-entities-the-world): `world.TryGet<Health>(target, out var health)`.
 
 ## Order
 

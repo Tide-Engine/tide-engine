@@ -1,0 +1,325 @@
+// The World in functions and methods: a system, view or handler passes its
+// World on, and what the function reaches through it counts as its caller's,
+// through however many functions it goes. `world.TryGet<T>(entity, out value)`
+// is Has and Get in one. The host (world_functions_test.c) reads what each
+// case left.
+
+component Health
+{
+    int value = 10;
+    string name;
+}
+
+component Healer
+{
+    Entity patient;
+    bool has;
+    int found;
+    int seen;
+}
+
+component Medic
+{
+    Entity patient;
+}
+
+component Roster
+{
+    List<Entity> all;
+    int lowest;
+    int highest;
+}
+
+component Score
+{
+    int value;
+    Entity rival;
+    int seen;
+}
+
+component Copier
+{
+    Entity from;
+}
+
+component Caller
+{
+    Entity of;
+    int named;
+    int over;
+    int least;
+    int deep;
+}
+
+singleton Stats
+{
+    int total;
+    int picked;
+    int inlined;
+    int tried;
+    int missing;
+    Entity probe;
+    int order;
+    int after;
+    int hitSeen;
+    int later;
+}
+
+singleton Board
+{
+    List<int> slots;
+    Entity watched;
+}
+
+local component Spark
+{
+    int life = 3;
+}
+
+local singleton Seen
+{
+    int value;
+    int frames;
+    LocalEntity spark;
+    int life;
+}
+
+event Hit
+{
+    int damage;
+}
+
+scene Main { }
+
+// Whether there's one, and it or the default
+bool TryFind(Entity target, World world, out Health health)
+{
+    if (!world.Has<Health>(target))
+    {
+        health = default;
+        return false;
+    }
+    health = world.Get<Health>(target);
+    return true;
+}
+
+// Passed on, to another function that takes it
+int ValueOf(Entity target, World world)
+{
+    return TryFind(target, world, out var health) ? health.value : -1;
+}
+
+// A method's
+struct Picker
+{
+    int least;
+
+    bool Picks(Entity target, World world)
+    {
+        return world.Get<Health>(target).value >= least;
+    }
+}
+
+// With `mut`, it sets: another entity's component, its text into the world
+void HealBy(Entity target, int amount, mut World world)
+{
+    if (!world.TryGet<Health>(target, out mut var health)) return;
+    health.value += amount;
+    health.name = $"healed to {health.value}";
+    world.Set<Health>(target, health);
+}
+
+// A function that takes a block is copied into its call, its World with it
+void IfAlive(Entity target, World world, Action content)
+{
+    if (world.Has<Health>(target)) content();
+}
+
+// A comparison reads through the World of the function it's in
+void SortByHealth(mut List<Entity> entities, World world)
+{
+    entities.Sort(a, b)
+    {
+        return world.Get<Health>(a).value < world.Get<Health>(b).value;
+    }
+}
+
+int ScoreOf(Entity target, World world)
+{
+    return world.Get<Score>(target).value;
+}
+
+int Peek(Entity target, World world)
+{
+    return world.Get<Health>(target).value;
+}
+
+int Bump(Entity target, mut World world)
+{
+    mut var health = world.Get<Health>(target);
+    health.value += 1;
+    world.Set<Health>(target, health);
+    return health.value;
+}
+
+// Functions that share a name, one with the World and one without
+int Worth(Health health)
+{
+    return health.value;
+}
+
+int Worth(Entity target, World world)
+{
+    return world.Get<Health>(target).value;
+}
+
+// A default after it
+int Least(Entity target, World world, int floor = 3)
+{
+    return Math.Max(world.Get<Health>(target).value, floor);
+}
+
+// One that calls itself, its World with it
+int Deep(Entity target, World world, int depth)
+{
+    if (depth <= 0) return world.Get<Health>(target).value;
+    return Deep(target, world, depth - 1) + 1;
+}
+
+// This machine's entities, through the World of local code
+int LifeOf(LocalEntity spark, World world)
+{
+    return world.TryGet<Spark>(spark, out var found) ? found.life : 0;
+}
+
+void Fade(LocalEntity spark, mut World world)
+{
+    if (!world.TryGet<Spark>(spark, out mut var found)) return;
+    found.life -= 1;
+    world.Set<Spark>(spark, found);
+}
+
+event(Spawned) Setup(with Main, mut Stats stats, mut Board board)
+{
+    var a = Spawn(Health { value = 7, name = "a" });
+    var b = Spawn(Health { value = 20, name = "b" });
+    var c = Spawn(Health { value = 13, name = "c" });
+    stats.probe = Spawn(Health { value = 100, name = "d" });
+    Spawn(Healer { patient = a });
+    Spawn(Healer { }); // Nobody: there's none to find
+    Spawn(Roster { all = [b, a, c] });
+    Spawn(Medic { patient = b });
+    Spawn(Health { value = 1, name = "e" }, Copier { from = b });
+    var first = Spawn(Score { value = 5 });
+    Spawn(Score { value = 8, rival = first });
+    Spawn(Caller { of = c });
+    board.slots = [0, 0, 0, 0];
+    board.watched = a;
+    c.Send(Hit { damage = 1 });
+}
+
+system Look(mut Healer healer, World world, mut Stats stats)
+{
+    healer.has = TryFind(healer.patient, world, out var health);
+    healer.found = health.value;
+    healer.seen = ValueOf(healer.patient, world);
+    stats.total += healer.seen;
+    var picker = Picker { least = 5 };
+    if (picker.Picks(healer.patient, world)) stats.picked += 1;
+    IfAlive(healer.patient, world)
+    {
+        stats.inlined += 1;
+    }
+}
+
+system Mend(Medic medic, mut World world)
+{
+    HealBy(medic.patient, 2, world);
+}
+
+system Rank(mut Roster roster, World world)
+{
+    SortByHealth(roster.all, world);
+    roster.lowest = ValueOf(roster.all[0], world);
+    roster.highest = ValueOf(roster.all[2], world);
+}
+
+// Reads, through a function, a component it also changes: the rows it changed
+// earlier in this run, as on one thread
+system Race(mut Score score, World world)
+{
+    score.seen = ScoreOf(score.rival, world);
+    score.value += 1;
+}
+
+// A parallel loop's steps read through it too
+system Fill(mut Board board, World world)
+{
+    parallel (var i in board.slots)
+    {
+        board.slots[i] = ValueOf(board.watched, world) + i;
+    }
+}
+
+// A function that sets through the World is a call that writes: what's read
+// through it beside the call is read in its turn
+system Order(mut Stats stats, mut World world)
+{
+    stats.order = Peek(stats.probe, world) * 1000 + Bump(stats.probe, world);
+    stats.after = Bump(stats.probe, world) * 1000 + Peek(stats.probe, world);
+}
+
+system Try(Healer healer, World world, mut Stats stats)
+{
+    if (world.TryGet<Health>(healer.patient, out var health)) stats.tried += health.value;
+    else stats.missing += health.value;
+    world.TryGet<Health>(healer.patient, out _);
+}
+
+// Into this entity's own, which the system changes
+system Copy(mut Health health, Copier copier, World world)
+{
+    world.TryGet<Health>(copier.from, out health);
+}
+
+// By name, in another order than the parameters'; picked among overloads; with a default left out and given
+system Call(mut Caller caller, World world)
+{
+    if (TryFind(world: world, health: out var health, target: caller.of)) caller.named = health.value;
+    caller.over = Worth(caller.of, world) * 100 + Worth(Health { value = 2 });
+    caller.least = Least(caller.of, world) * 100 + Least(caller.of, world, floor: 50);
+    caller.deep = Deep(caller.of, world, 3);
+}
+
+event(Hit hit) OnHit(mut Health health, World world, mut Stats stats)
+{
+    stats.hitSeen = ValueOf(this, world);
+    health.value -= hit.damage;
+}
+
+// A task passes the World of its world on, before and after it waits
+async event(Hit hit) Later(mut Stats stats, World world, with Health)
+{
+    var before = ValueOf(this, world);
+    await Wait.Ticks(1);
+    stats.later = before * 100 + ValueOf(this, world);
+}
+
+view Show(Healer healer, World world, mut Seen seen)
+{
+    seen.value += ValueOf(healer.patient, world);
+}
+
+view Sparks(mut Seen seen, mut World world)
+{
+    if (seen.frames == 0)
+    {
+        seen.spark = Spawn(Spark { });
+    }
+    else
+    {
+        Fade(seen.spark, world);
+        seen.life = LifeOf(seen.spark, world);
+    }
+    seen.frames += 1;
+}

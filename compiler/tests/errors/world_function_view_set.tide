@@ -1,0 +1,7 @@
+// expect: a view reads the match, and 'Heal' changes 'Health' through its World
+// expect: views draw: a system changes the match
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }
+view Show(Healer healer, mut World world) { Heal(healer.patient, world); }
