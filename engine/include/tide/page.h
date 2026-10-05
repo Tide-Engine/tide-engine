@@ -84,11 +84,31 @@ static inline void tide_page_retain(tide_page *p)
     p->refs++;
 }
 
-// Lets go of `refs` references; the last one frees it. NULL does nothing.
+// Lets go of `refs` references; the last one lets go of the page
+// (tide_page_give). NULL does nothing.
 void tide_page_release(tide_page *p, uint32_t refs);
+
+// Memory for a page of `size` bytes, with whatever was there in it, header
+// and all: for a page whose every byte is about to be set. It's one that was
+// let go of, when there's one of that size, which costs no call and is still
+// in the CPU's caches; else it's new.
+tide_page *tide_page_take(uint32_t size);
+
+// Lets go of a page nothing refers to: it's kept for the next page of its
+// size, this thread's or another's, or freed when enough are kept.
+void tide_page_give(tide_page *p);
+
+// Frees the pages kept to hand out again, this thread's and the ones threads
+// share. For hot reloading, before a game's library is unloaded (tide/host.h).
+void tide_pages_free(void);
 
 // A copy of shared `p` to change, for tide_page_own.
 tide_page *tide_page_own_copy(tide_page *p, uint32_t mine, uint32_t keep);
+
+// The same, for whoever is about to write over all of the `bytes` from `from`
+// on: those aren't copied, and are whatever was in memory until they're
+// written.
+tide_page *tide_page_own_copy_around(tide_page *p, uint32_t mine, uint32_t keep, uint32_t from, uint32_t bytes);
 
 // `p` to change, through `mine` of its references: itself when nobody else
 // has it, or else a copy of its first `keep` bytes (the rest zero), which
