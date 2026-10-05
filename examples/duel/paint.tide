@@ -10,6 +10,7 @@ const Color UI_MUTED = Color(0.52, 0.62, 0.78);
 const Color UI_BLUE = Color(0.27, 0.72, 1);
 const Color UI_ORANGE = Color(1, 0.55, 0.26);
 const Color UI_OUTLINE = Color(0.02, 0.028, 0.065);
+const Color FIELD_INK = Color(0.045, 0.058, 0.118); // A field to type into, in the menu
 
 Color FighterColor(int side)
 {
