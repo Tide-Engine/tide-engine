@@ -18,15 +18,10 @@
 #include "stb_truetype.h"
 #pragma clang diagnostic pop
 
-// The font's file, which the build makes an array of (cmake/embed.cmake).
+// The regular weight's file, which the build makes an array of
+// (cmake/embed.cmake). The bold's is another array, which this file doesn't
+// name, so that a program only has it when its own code does (see font.h).
 extern const unsigned char tide_font_ttf[];
-
-static stbtt_fontinfo font;
-static bool started;
-static float em;          // Font units in the font's size: what text's size is
-static float baseline;    // From a line's top to its baseline, for text of size 1
-static float line;        // From one line's top to the next's
-static int advances[256]; // The first code points' advances in font units, which most text is
 
 // What glyphs are fitted to pixels by (see Fitting, below), in font units: the
 // heights letters share, which are their tops (the x-height, the capitals')
@@ -38,39 +33,73 @@ typedef struct zone {
     bool top;
 } zone;
 
-static zone zones[5];
-static int zone_count;
-static float zone_reach;
-static float usual_stem[2];
+// A weight of the font: its file, and what's measured of it once.
+typedef struct weight {
+    const unsigned char *file; // NULL until it's started
+    stbtt_fontinfo font;
+    uint16_t id;       // In its glyphs' keys: another whenever its file is
+    float em;          // Font units in the font's size: what text's size is
+    float baseline;    // From a line's top to its baseline, for text of size 1
+    float line;        // From one line's top to the next's
+    int advances[256]; // The first code points' advances in font units, which most text is
+    zone zones[5];
+    int zone_count;
+    float zone_reach;
+    float usual_stem[2];
+} weight;
 
-static void measure_fitting(void);
+static weight regular, bold;
+static uint16_t weight_ids;
 
-static int advance_of(const uint32_t codepoint)
+static void measure_fitting(weight *w);
+
+static weight *weight_of(const unsigned char *font);
+
+// The weight a code point is drawn in: the regular one, for one that `w` has
+// no glyph for. `*index` is its glyph there.
+static const weight *weight_with(const weight *w, const uint32_t codepoint, int *index)
 {
-    int advance = 0, bearing = 0;
-    stbtt_GetCodepointHMetrics(&font, (int)codepoint, &advance, &bearing);
-    return advance;
+    *index = stbtt_FindGlyphIndex(&w->font, (int)codepoint);
+    if (*index != 0 || w == &regular) return w;
+    w = weight_of(NULL);
+    *index = stbtt_FindGlyphIndex(&w->font, (int)codepoint);
+    return w;
 }
 
-static void start(void)
+// In font units of `w`'s, whichever weight the code point is drawn in.
+static int advance_of(const weight *w, const uint32_t codepoint)
 {
-    if (started) return;
-    started = true;
-    if (!stbtt_InitFont(&font, tide_font_ttf, stbtt_GetFontOffsetForIndex(tide_font_ttf, 0))) {
+    int index, advance = 0, bearing = 0;
+    const weight *with = weight_with(w, codepoint, &index);
+    stbtt_GetGlyphHMetrics(&with->font, index, &advance, &bearing);
+    return with == w ? advance : (int)((float)advance * w->em / with->em + 0.5f);
+}
+
+static weight *weight_of(const unsigned char *font)
+{
+    weight *w = font ? &bold : &regular;
+    const unsigned char *file = font ? font : tide_font_ttf;
+    if (w->file == file) return w;
+    // Its file is another than it was (a game's library that was built
+    // again has its own): nothing of the old one is read again, and the
+    // glyphs drawn from it are no longer found
+    *w = (weight){.file = file, .id = ++weight_ids};
+    if (!stbtt_InitFont(&w->font, file, stbtt_GetFontOffsetForIndex(file, 0))) {
         fprintf(stderr, "tide: the platform's font isn't one\n");
         abort();
     }
-    em = 1.0f / stbtt_ScaleForMappingEmToPixels(&font, 1.0f);
+    w->em = 1.0f / stbtt_ScaleForMappingEmToPixels(&w->font, 1.0f);
     int up = 0, down = 0, gap = 0;
-    stbtt_GetFontVMetrics(&font, &up, &down, &gap);
+    stbtt_GetFontVMetrics(&w->font, &up, &down, &gap);
     // A line is as tall as text's size. The font's own lines are taller, from
     // its ascent to its descent: that's in the size's middle, so capitals are
     // too, and what goes past (accents above, tails below) goes past evenly.
-    baseline = 0.5f + (float)(up + down) * 0.5f / em;
-    line = (float)(up - down + gap) / em;
-    if (line < 1.2f) line = 1.2f;
-    for (uint32_t c = 32; c < 256; c++) advances[c] = advance_of(c);
-    measure_fitting();
+    w->baseline = 0.5f + (float)(up + down) * 0.5f / w->em;
+    w->line = (float)(up - down + gap) / w->em;
+    if (w->line < 1.2f) w->line = 1.2f;
+    for (uint32_t c = 32; c < 256; c++) w->advances[c] = advance_of(w, c);
+    measure_fitting(w);
+    return w;
 }
 
 uint32_t tide_utf8_next(const char **text)
@@ -91,10 +120,9 @@ uint32_t tide_utf8_next(const char **text)
     return c ? c : 0xFFFDu;
 }
 
-float tide_font_baseline(void)
+float tide_font_baseline(const unsigned char *font)
 {
-    start();
-    return baseline;
+    return weight_of(font)->baseline;
 }
 
 int tide_font_pixels(const float size, const float scale, float *stretch)
@@ -112,22 +140,31 @@ int tide_font_pixels(const float size, const float scale, float *stretch)
 
 // A code point's advance at `pixels`: whole pixels, so every glyph of a text
 // lands on them. Nothing for control characters.
-static int advance_pixels(const uint32_t codepoint, const int pixels)
+static int advance_pixels(const weight *w, const uint32_t codepoint, const int pixels)
 {
-    const int units = codepoint < 256u ? advances[codepoint] : advance_of(codepoint);
-    return (int)((float)units * (float)pixels / em + 0.5f);
+    const int units = codepoint < 256u ? w->advances[codepoint] : advance_of(w, codepoint);
+    return (int)((float)units * (float)pixels / w->em + 0.5f);
 }
 
-float tide_font_pitch(const int pixels, const float stretch)
+int tide_font_advance(const unsigned char *font, const uint32_t codepoint, const int pixels)
 {
-    start();
-    return floorf(line * (float)pixels * stretch + 0.5f);
+    return advance_pixels(weight_of(font), codepoint, pixels);
 }
 
-void tide_font_size(const char *text, const float size, const float scale_x, const float scale_y, float *width,
-                    float *height)
+static float pitch_of(const weight *w, const int pixels, const float stretch)
 {
-    start();
+    return floorf(w->line * (float)pixels * stretch + 0.5f);
+}
+
+float tide_font_pitch(const unsigned char *font, const int pixels, const float stretch)
+{
+    return pitch_of(weight_of(font), pixels, stretch);
+}
+
+void tide_font_size(const unsigned char *font, const char *text, const float size, const float scale_x,
+                    const float scale_y, float *width, float *height)
+{
+    const weight *w = weight_of(font);
     *width = *height = 0.0f;
     if (!(size > 0.0f) || !(scale_x > 0.0f) || !(scale_y > 0.0f)) return;
     float stretch;
@@ -139,17 +176,17 @@ void tide_font_size(const char *text, const float size, const float scale_x, con
             across = 0;
             lines++;
         } else {
-            across += advance_pixels(c, pixels);
+            across += advance_pixels(w, c, pixels);
         }
     }
     *width = (float)(across > widest ? across : widest) * stretch / scale_x;
-    *height = size + (float)(lines - 1) * tide_font_pitch(pixels, stretch) / scale_y;
+    *height = size + (float)(lines - 1) * pitch_of(w, pixels, stretch) / scale_y;
 }
 
-float tide_font_measure(const char *text, const float size, const float scale)
+float tide_font_measure(const unsigned char *font, const char *text, const float size, const float scale)
 {
     float width, height;
-    tide_font_size(text, size, scale, scale, &width, &height);
+    tide_font_size(font, text, size, scale, scale, &width, &height);
     return width;
 }
 
@@ -166,16 +203,18 @@ static int row_x = 1, row_y = 1, row_height;
 static uint32_t atlas_version;
 static bool atlas_full;
 
-// The glyphs drawn so far, by code point and size: a hash table, a quarter
-// of it free at least.
+// The glyphs drawn so far, by code point, size and weight: a hash table, a
+// quarter of it free at least.
 static tide_font_glyph *glyphs;
 static uint32_t glyph_count, glyph_capacity;
 
 static uint32_t slot_of(const tide_font_glyph *table, const uint32_t capacity, const uint32_t codepoint,
-                        const uint16_t pixels)
+                        const uint16_t pixels, const uint16_t id)
 {
-    uint32_t i = (codepoint * 0x9E3779B1u ^ pixels * 0x85EBCA6Bu) & (capacity - 1u);
-    while (table[i].pixels && (table[i].codepoint != codepoint || table[i].pixels != pixels)) i = (i + 1u) & (capacity - 1u);
+    uint32_t i = (codepoint * 0x9E3779B1u ^ pixels * 0x85EBCA6Bu ^ id * 0xC2B2AE35u) & (capacity - 1u);
+    while (table[i].pixels && (table[i].codepoint != codepoint || table[i].pixels != pixels || table[i].weight != id)) {
+        i = (i + 1u) & (capacity - 1u);
+    }
     return i;
 }
 
@@ -184,7 +223,8 @@ static void grow_glyphs(void)
     const uint32_t capacity = glyph_capacity ? glyph_capacity * 2u : 256u;
     tide_font_glyph *table = tide_alloc_zeroed(capacity, sizeof(tide_font_glyph));
     for (uint32_t i = 0; i < glyph_capacity; i++) {
-        if (glyphs[i].pixels) table[slot_of(table, capacity, glyphs[i].codepoint, glyphs[i].pixels)] = glyphs[i];
+        const tide_font_glyph *g = &glyphs[i];
+        if (g->pixels) table[slot_of(table, capacity, g->codepoint, g->pixels, g->weight)] = *g;
     }
     free(glyphs);
     glyphs = table;
@@ -284,13 +324,13 @@ static void outline_point(outline *o, const int first, const float x, const floa
 }
 
 // False for a glyph with nothing to draw.
-static bool outline_of(const int index, outline *o)
+static bool outline_of(const stbtt_fontinfo *font, const int index, outline *o)
 {
     *o = (outline){0};
     stbtt_vertex *shape = NULL;
-    const int count = stbtt_GetGlyphShape(&font, index, &shape);
+    const int count = stbtt_GetGlyphShape(font, index, &shape);
     if (count <= 0) {
-        stbtt_FreeShape(&font, shape);
+        stbtt_FreeShape(font, shape);
         return false;
     }
     o->points = tide_alloc((size_t)count * CURVE_PIECES * sizeof(*o->points));
@@ -329,7 +369,7 @@ static bool outline_of(const int index, outline *o)
         x = (float)v->x;
         y = (float)v->y;
     }
-    stbtt_FreeShape(&font, shape);
+    stbtt_FreeShape(font, shape);
     if (o->contour_count == 0) {
         outline_free(o);
         return false;
@@ -439,9 +479,9 @@ static bool starts_stem(const edge *edges, const int i)
     return !edges[i].closes && edges[i].pair >= 0 && edges[edges[i].pair].pair == i;
 }
 
-static float widest_stem(const int axis)
+static float widest_stem(const weight *w, const int axis)
 {
-    return usual_stem[axis] > 0.0f ? usual_stem[axis] * 2.5f : em * 0.2f;
+    return w->usual_stem[axis] > 0.0f ? w->usual_stem[axis] * 2.5f : w->em * 0.2f;
 }
 
 static float round_to_pixel(const float pixels)
@@ -450,21 +490,21 @@ static float round_to_pixel(const float pixels)
 }
 
 // How many pixels thick a stem of `width` is at `scale`.
-static float stem_pixels(float width, const int axis, const float scale)
+static float stem_pixels(const weight *w, float width, const int axis, const float scale)
 {
-    const float usual = usual_stem[axis];
+    const float usual = w->usual_stem[axis];
     if (usual > 0.0f && fabsf(width - usual) <= usual * 0.25f) width = usual;
     const float pixels = round_to_pixel(width * scale);
     return pixels < 1.0f ? 1.0f : pixels;
 }
 
 // The height an edge at `at` is at, a top or a bottom: NULL for none.
-static const zone *zone_of(const float at, const bool top)
+static const zone *zone_of(const weight *w, const float at, const bool top)
 {
     const zone *nearest = NULL;
-    for (int i = 0; i < zone_count; i++) {
-        if (zones[i].top != top || fabsf(at - zones[i].at) > zone_reach) continue;
-        if (!nearest || fabsf(at - zones[i].at) < fabsf(at - nearest->at)) nearest = &zones[i];
+    for (int i = 0; i < w->zone_count; i++) {
+        if (w->zones[i].top != top || fabsf(at - w->zones[i].at) > w->zone_reach) continue;
+        if (!nearest || fabsf(at - w->zones[i].at) < fabsf(at - nearest->at)) nearest = &w->zones[i];
     }
     return nearest;
 }
@@ -476,30 +516,31 @@ static float zone_pixel(const zone *z, const float at, const float scale)
     return round_to_pixel(z->at * scale) + round_to_pixel((at - z->at) * scale);
 }
 
-static void add_zone(const float at, const bool top)
+static void add_zone(weight *w, const float at, const bool top)
 {
-    if (!zone_of(at, top)) zones[zone_count++] = (zone){at, top};
+    if (!zone_of(w, at, top)) w->zones[w->zone_count++] = (zone){at, top};
 }
 
-// The font's own measures, from letters that show them: start's.
-static void measure_fitting(void)
+// A weight's own measures, from letters that show them: weight_of's.
+static void measure_fitting(weight *w)
 {
-    zone_reach = em * 0.035f;
-    add_zone(0.0f, false);
+    const float em = w->em;
+    w->zone_reach = em * 0.035f;
+    add_zone(w, 0.0f, false);
     static const struct {
         char letter;
         bool top;
     } shown[] = {{'x', true}, {'H', true}, {'d', true}, {'p', false}};
     for (size_t i = 0; i < sizeof(shown) / sizeof(shown[0]); i++) {
-        const int index = stbtt_FindGlyphIndex(&font, shown[i].letter);
+        const int index = stbtt_FindGlyphIndex(&w->font, shown[i].letter);
         int left = 0, bottom = 0, right = 0, top = 0;
-        if (index && stbtt_GetGlyphBox(&font, index, &left, &bottom, &right, &top)) {
-            add_zone((float)(shown[i].top ? top : bottom), shown[i].top);
+        if (index && stbtt_GetGlyphBox(&w->font, index, &left, &bottom, &right, &top)) {
+            add_zone(w, (float)(shown[i].top ? top : bottom), shown[i].top);
         }
     }
     outline o;
-    const int index = stbtt_FindGlyphIndex(&font, 'o');
-    if (!index || !outline_of(index, &o)) return;
+    const int index = stbtt_FindGlyphIndex(&w->font, 'o');
+    if (!index || !outline_of(&w->font, index, &o)) return;
     for (int axis = 0; axis < 2; axis++) {
         edge edges[EDGES];
         const int count = edges_of(&o, axis, em * EDGE_SHORTEST, edges);
@@ -507,7 +548,7 @@ static void measure_fitting(void)
         for (int i = 0; i < count; i++) {
             if (!starts_stem(edges, i)) continue;
             const float width = edges[edges[i].pair].at - edges[i].at;
-            if (usual_stem[axis] == 0.0f || width < usual_stem[axis]) usual_stem[axis] = width;
+            if (w->usual_stem[axis] == 0.0f || width < w->usual_stem[axis]) w->usual_stem[axis] = width;
         }
     }
     outline_free(&o);
@@ -550,18 +591,18 @@ static int add_knot(knot *knots, const int count, const float at, const float to
 
 // The knots that fit an outline to pixels along `axis`, in pixels up it from
 // the pen or the baseline.
-static int fit(const outline *o, const int axis, const float scale, knot *knots)
+static int fit(const weight *w, const outline *o, const int axis, const float scale, knot *knots)
 {
     edge edges[EDGES];
-    const int edge_count = edges_of(o, axis, em * EDGE_SHORTEST, edges);
-    pair_edges(edges, edge_count, widest_stem(axis));
+    const int edge_count = edges_of(o, axis, w->em * EDGE_SHORTEST, edges);
+    pair_edges(edges, edge_count, widest_stem(w, axis));
     int count = 0;
 
     if (axis == 1) {
         // The heights letters share come first: edges at one, and the other
         // sides of their stems, as thick as those are
         for (int i = 0; i < edge_count; i++) {
-            const zone *z = zone_of(edges[i].at, edges[i].closes);
+            const zone *z = zone_of(w, edges[i].at, edges[i].closes);
             if (!z) continue;
             edges[i].placed = true;
             edges[i].pixel = zone_pixel(z, edges[i].at, scale);
@@ -570,7 +611,7 @@ static int fit(const outline *o, const int axis, const float scale, knot *knots)
             if (!starts_stem(edges, i)) continue;
             edge *a = &edges[i], *b = &edges[edges[i].pair];
             if (a->placed == b->placed) continue;
-            const float thick = stem_pixels(b->at - a->at, axis, scale);
+            const float thick = stem_pixels(w, b->at - a->at, axis, scale);
             if (a->placed) b->pixel = a->pixel + thick;
             else a->pixel = b->pixel - thick;
             a->placed = b->placed = true;
@@ -579,7 +620,7 @@ static int fit(const outline *o, const int axis, const float scale, knot *knots)
             if (edges[i].placed) count = add_knot(knots, count, edges[i].at, edges[i].pixel);
         }
         // A peak has no edge, and is at its height all the same
-        const zone *top = zone_of(o->high[1], true), *bottom = zone_of(o->low[1], false);
+        const zone *top = zone_of(w, o->high[1], true), *bottom = zone_of(w, o->low[1], false);
         if (top) count = add_knot(knots, count, o->high[1], zone_pixel(top, o->high[1], scale));
         if (bottom) count = add_knot(knots, count, o->low[1], zone_pixel(bottom, o->low[1], scale));
     }
@@ -591,7 +632,7 @@ static int fit(const outline *o, const int axis, const float scale, knot *knots)
     for (int i = 0; i < edge_count; i++) {
         if (!starts_stem(edges, i) || edges[i].placed) continue;
         edge *a = &edges[i], *b = &edges[edges[i].pair];
-        const float thick = stem_pixels(b->at - a->at, axis, scale);
+        const float thick = stem_pixels(w, b->at - a->at, axis, scale);
         const float middle = fitted(among, among_count, scale, (a->at + b->at) * 0.5f);
         a->pixel = round_to_pixel(middle - thick * 0.5f);
         b->pixel = a->pixel + thick;
@@ -609,24 +650,27 @@ static int fit(const outline *o, const int axis, const float scale, knot *knots)
     return count;
 }
 
-bool tide_font_glyph_for(const uint32_t codepoint, const int pixels, tide_font_glyph *out)
+bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, const int pixels, tide_font_glyph *out)
 {
-    start();
+    const weight *asked = weight_of(font);
     if (glyph_count * 4u >= glyph_capacity * 3u) grow_glyphs();
-    const uint32_t slot = slot_of(glyphs, glyph_capacity, codepoint, (uint16_t)pixels);
+    const uint32_t slot = slot_of(glyphs, glyph_capacity, codepoint, (uint16_t)pixels, asked->id);
     if (glyphs[slot].pixels) {
         *out = glyphs[slot];
         return true;
     }
-    tide_font_glyph g = {.codepoint = codepoint, .pixels = (uint16_t)pixels};
-    const float scale = (float)pixels / em;
-    g.advance = (int16_t)advance_pixels(codepoint, pixels);
+    tide_font_glyph g = {.codepoint = codepoint, .pixels = (uint16_t)pixels, .weight = asked->id};
+    g.advance = (int16_t)advance_pixels(asked, codepoint, pixels);
+    // Drawn from the weight that has it, fitted by that one's measures
+    int index;
+    const weight *w = weight_with(asked, codepoint, &index);
+    const float scale = (float)pixels / w->em;
 
     outline o;
-    if (outline_of(stbtt_FindGlyphIndex(&font, (int)codepoint), &o)) {
+    if (outline_of(&w->font, index, &o)) {
         // Its points where they're drawn, in pixels from the pen on the baseline, y down
         knot across[KNOTS], up[KNOTS];
-        const int across_count = fit(&o, 0, scale, across), up_count = fit(&o, 1, scale, up);
+        const int across_count = fit(w, &o, 0, scale, across), up_count = fit(w, &o, 1, scale, up);
         float furthest = 0.0f;
         for (int i = 0; i < o.point_count; i++) {
             float *p = o.points[i].at;
