@@ -5,7 +5,10 @@
 // browser WebGL 2 and WebGPU, whose device is then lost and found again.
 //
 // The game draws a 24 pixel square in the middle of 32 pixel cells, each
-// through another frag or vert: `cell` is a pixel in one.
+// through another frag or vert: `cell` is a pixel in one. Its frames are a
+// window of SIZE by SIZE logical pixels on a display of a scale of 1,
+// whatever the window that's open is (tide_platform_read_pixels_as): on a
+// phone, that's a screen of another shape.
 
 #include <stdio.h>
 #include <string.h>
@@ -83,6 +86,8 @@ static const check checks[] = {
     {0, 5, 0, 0, 0, 1, 0, "a frag's numbers, vectors, matrices, structs, functions and loops come out as on the CPU"},
     {1, 5, 0, 0, 0, 1, 0, "a vert reads its vertex's ints, samples a grid, and changes the color its pixels get"},
     {2, 5, 0, 0, 0, 1, 0, "and so do its matrices, int vectors, assignments, counting loops, structs in structs and the rest of Math"},
+    {3, 5, 0, 0, 0, 1, 0, "a frag of loops alone, which start under 0 or at what's worked out"},
+    {4, 5, 0, 0, 0.5f, 0.5f, 0, "a loop that starts under 0 samples a grid at each step"},
     // Instances of a 2D mesh
     {0, 6, 0, 0, 1, 0, 0, "three entities in one 2D draw: the vert puts each where its component says"},
     {1, 6, 0, 0, 0, 1, 0, "the second"},
@@ -133,7 +138,7 @@ static void run_checks(const char *when)
 {
     local.Art.targetPass = 0;
     tide_draw_reset(&list);
-    tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
     tide_gui_end(&gui, &list);
 
@@ -150,7 +155,7 @@ static void run_checks(const char *when)
     for (int i = 0; i < CHECKS; i++) {
         points[i] = tide_f2(16.0f + 32.0f * (float)checks[i].column + checks[i].dx, 16.0f + 32.0f * (float)checks[i].row + checks[i].dy);
     }
-    tide_platform_read_pixels(&list, points, CHECKS, got);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, CHECKS, got);
     for (int i = 0; i < CHECKS; i++) {
         const uint8_t want[3] = {byte(checks[i].r), byte(checks[i].g), byte(checks[i].b)};
         bool ok = true;
@@ -180,11 +185,11 @@ static void run_target_checks(const char *when)
     for (int pass = 1; pass <= 5; pass++) {
         local.Art.targetPass = pass;
         tide_draw_reset(&list);
-        tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
+        tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
         tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
         tide_gui_end(&gui, &list);
         uint32_t got[8];
-        tide_platform_read_pixels(&list, points, 8, got);
+        tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 8, got);
         bool ok = true;
         const uint32_t *wanted = pass == 1 || pass == 3 ? alpha : pattern;
         for (int p = 0; p < 8; p++) {
