@@ -277,9 +277,11 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
 }
 
 // What a name means as written in `from`. A qualified name (Combat.Health) is
-// exact. A plain one is looked up in the file's namespace, then its parents,
-// then the `using` namespaces, then the global namespace. If two `using`
-// namespaces both have it, *other gets the second: the name is ambiguous.
+// exact. A plain one is looked up in the file's namespace, then its parents
+// out to the global namespace, then the `using` namespaces, as in C#: what a
+// game declares itself is what its code means, whatever a namespace it
+// imports also has by that name. If two `using` namespaces both have it,
+// *other gets the second: the name is ambiguous.
 static decl *lookup(const program *prog, const unit *from, const str text, const name_kind kind, decl **other)
 {
     *other = NULL;
@@ -287,9 +289,10 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
     str name;
     if (split_qualified(text, &ns, &name)) return find_in(prog, ns, name, kind);
 
-    for (ns = from ? from->ns : global_ns; ns.len > 0;) {
+    for (ns = from ? from->ns : global_ns;;) {
         decl *d = find_in(prog, ns, text, kind);
         if (d) return d;
+        if (ns.len == 0) break; // The global namespace, which is around every other
         int dot = ns.len - 1;
         while (dot >= 0 && ns.ptr[dot] != '.') dot--;
         ns.len = dot < 0 ? 0 : dot;
@@ -300,7 +303,7 @@ static decl *lookup(const program *prog, const unit *from, const str text, const
         if (d && !found) found = d;
         else if (d && d != found && !*other) *other = d;
     }
-    return found ? found : find_in(prog, global_ns, text, kind);
+    return found;
 }
 
 static decl *find_named(const checker *c, const str name, const loc at, const name_kind kind)

@@ -23,7 +23,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 ### Style
 
-- The syntax is C#-like.
+- Tide is a language of its own, and isn't described as C#-like. C# inspired its syntax, and a rule below that follows C# says so.
 - Types, systems and methods use PascalCase: `Transform`, `MovePlayer`, `Spawn(...)`.
 - Fields, parameters and locals use camelCase: `trs.position`, not `trs.Position`.
 - Public properties use camelCase too, even static ones: `Color.red`, `quaternion.identity`. True constants use FULL_CASE: `Math.PI`, `Math.TAU`.
@@ -623,7 +623,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 - `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one namespace; files without one are in the global namespace. Namespaces can be dotted.
 - `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace` and `using` come before any declaration.
-- A plain name is looked up in the file's namespace, then the namespaces around it, then the `using` namespaces, then the global namespace. If two `using` namespaces both have it, it's ambiguous: write the namespace.
+- A plain name is looked up in the file's namespace, then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
 - In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
