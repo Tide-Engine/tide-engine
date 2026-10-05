@@ -7,6 +7,7 @@ typedef struct game_info {
     char title[256];  // The title setting, or "" without one
     char app_id[256]; // appId, likewise
     char version[64]; // version, likewise
+    bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
 } game_info;
 
 typedef struct codegen_options {

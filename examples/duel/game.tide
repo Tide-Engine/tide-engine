@@ -21,7 +21,7 @@ struct Build
     float gravity = 420; // How fast its shots drop
     int pellets = 1;
     int bounces;
-    int cards;           // The upgrades picked this match: 4 bits each, the first lowest
+    List<Card> cards;    // The upgrades picked this match, in order
 }
 
 component Body
@@ -212,21 +212,6 @@ Card Offer(Duel duel, int slot)
     return Card(slot == 0 ? duel.offers.x : slot == 1 ? duel.offers.y : duel.offers.z);
 }
 
-// How many upgrades a build has, and which the one at `index` was.
-int CardCount(Build build)
-{
-    mut var count = 0;
-    for (var left = build.cards; left > 0; left /= 16) count += 1;
-    return count;
-}
-
-Card CardAt(Build build, int index)
-{
-    mut var left = build.cards;
-    for (var i = 0; i < index; i++) left /= 16;
-    return Card(left % 16 - 1);
-}
-
 void ApplyCard(mut Build build, Card card)
 {
     if (card == Card.Vitality) build.maxHealth += 35;
@@ -255,10 +240,7 @@ void ApplyCard(mut Build build, Card card)
         build.damage *= 1.45;
         build.knockback *= 1.2;
     }
-    // Seven fit an int, and a match gives a fighter four at most
-    mut var place = 1;
-    for (var i = CardCount(build); i > 0; i--) place *= 16;
-    if (place < 268435456) build.cards += (int(card) + 1) * place;
+    build.cards.Add(card);
 }
 
 // Where to aim from `from` so a shot that drops lands on `to`: the flatter of

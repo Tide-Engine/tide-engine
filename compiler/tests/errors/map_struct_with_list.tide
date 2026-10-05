@@ -1,0 +1,14 @@
+// expect: a map can't hold 'Hand' yet: its 'cards' is a list
+// expect: keep all of their 'cards' in one list, and in each 'Hand' where its part starts and how many it has; or keep each 'Hand' in a component, on an entity of its own, and hold the entities: 'Map<PlayerID, Entity>'
+component Table
+{
+    Map<PlayerID, Hand> hands;
+}
+
+// Declared after the map that holds it
+struct Hand
+{
+    List<int> cards;
+}
+
+scene Main { }

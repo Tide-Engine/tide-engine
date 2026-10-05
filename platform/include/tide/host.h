@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "tide/layout.h"
+#include "tide/page.h"
 #include "tide/platform.h"
 #include "tide/profiler.h"
 #include "tide/session.h"
@@ -369,6 +370,15 @@ static inline void tide_run_open(const tide_run_desc *desc)
         tide_platform_open_headless(&tide_run_headless_desc);
         return;
     }
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    // A run nobody watches shows no window (tide_platform_open), and a game's
+    // closing is all that ends its run: it says what does without one
+    if (tide_hidden()) {
+        fprintf(stderr, "tide: TIDE_HIDDEN is set, so the game shows no window, and nothing else would end its run: give it "
+                        "--frames <n> (and --capture <file.png> for a picture of the last one), or --script <file>\n");
+        exit(2);
+    }
+#endif
     tide_platform_open(&(tide_window_desc){.title = tide_run_settings.title,
                                            .width = tide_run_settings.width,
                                            .height = tide_run_settings.height});
@@ -420,7 +430,9 @@ static inline tide_session *tide_run_new_session(void)
         // with no window has no clock, so it goes the same on every machine.
         .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
         .correct_views = tide_run_game->correct_views ? tide_run_correct_views : NULL,
-        .entropy = tide_platform_entropy, // A seed for each match it starts, so no two go the same
+        // A seed for each match it starts, so no two go the same: but in a run
+        // with no window, whose matches start with seed 0, so it repeats.
+        .entropy = tide_run_headless ? NULL : tide_platform_entropy,
     });
 }
 

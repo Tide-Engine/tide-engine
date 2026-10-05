@@ -122,6 +122,12 @@ tide_platform_draw(&draw);
 
 Asking for the cursor's lock isn't having it: the system decides, and `tide_platform_poll` says whether the window holds the cursor, as `devices.mouse.locked`, which `Cursor.locked` reads. A host that fills the devices itself sets it.
 
+The measure function a host gives the GUI takes the weight text is in, as the file of it: `tide_platform_measure_text(text, size, target, font)`, with `TIDE_FONT_REGULAR` or `TIDE_FONT_BOLD` (see [Text](../game/views.md#text)). The bold weight's file, `tide_font_bold_ttf`, is in the platform layer's library, in an object nothing there names, so a program only carries it when its code names it: the C of a game that says `Font.Bold` does. A host that runs such a game with no platform layer, like a server or a test, still has to link: with the platform layer's library, which gives it that one object, or by defining the array itself, as nothing draws with it there:
+
+```c
+const unsigned char tide_font_bold_ttf[4] = {0};
+```
+
 ### What local handlers hear
 
 A game's [local handlers](../game/events.md#local-handlers) of the match's events run at the start of `tide_frame`, with what the host handed the local state since the last one. Without `tide_local_events`, they never run.
@@ -166,7 +172,7 @@ These names are new, and may still change.
 :::
 
 - Frames draw into pixels of the platform's own, at the size and scale asked for, whatever the display is. `tide_platform_frame_pixels(&width, &height)` gives the last frame drawn, whole, with the overlay: 4 bytes a pixel (red, green, blue, alpha), rows from the top. `tide_platform_capture(path)` writes it as a PNG.
-- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock (`now_ns` left out of its desc), as the standard host's does in such a run.
+- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock and no entropy (`now_ns` and `entropy` left out of its desc, so its matches start with seed 0), as the standard host's does in such a run.
 - The devices are made up too: `tide_platform_poll` takes what the script says for the frame, and what `tide_platform_input` said, each event as a script's line has it without its frame (see [Scripts](../tools/cli.md#scripts)), never the system's:
 
   ```c
@@ -177,6 +183,8 @@ These names are new, and may still change.
 - `tide_platform_run` ends the program with exit code 0 after `frames` frames or at the script's `quit`, whichever is first, and with 1 when a picture couldn't be written. `tide_platform_open_headless` ends it with 2, having said why, when a line of the script is wrong or nothing ends the run.
 
 It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
+
+Where the `TIDE_HIDDEN` environment variable is set (see [Where nobody watches](../tools/cli.md#where-nobody-watches)), `tide_platform_open` shows no window either. A host that ends by itself, like a test, says so by opening its window `hidden`, and runs as ever. For any other window the program ends there, with exit code 2 and a message: only closing the window would end the run, and nobody could.
 
 ## Memory
 
