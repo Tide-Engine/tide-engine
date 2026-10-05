@@ -43,7 +43,15 @@ A world goes over the network page by page, as a delta: each page is either the 
 
 ## Views and prediction
 
-Views draw the predicted world, blended between its last two ticks (see [Views](../game/views.md#smooth-at-any-tick-rate)). A tick that's run again after a rollback just changes what the next frame draws.
+Views draw the predicted world, blended between its last two ticks (see [Views](../game/views.md#smooth-at-any-tick-rate)). A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
+
+### Provisional correction smoothing
+
+**Provisional.** Match fields marked `[Position]` or `[Rotation]` retain local presentation error across a prediction correction and remove it over time. `[Position]` uses additive error for floats and floating-point vectors. `[Rotation]` uses the shortest wrapped angular error for a float in radians, or relative rotational error for a quaternion; the tag also selects shortest-path tick interpolation.
+
+Subsequent corrections accumulate with the error still present, which decays exponentially with frame time, with a provisional half-life of 75 ms. Ordinary movement follows the corrected simulation without being low-passed. Untagged fields keep ordinary tick interpolation. `entity.Snap()` and `singleton.Snap()` remain immediate and clear the accumulated error. A replacement with no comparable presentation history clears it too, including adoption of a new host's network timeline.
+
+Only presentation keeps this error: match state and collisions correct immediately, and snapshots, hashes and network state are unchanged. Annotated built-in fields can be nested in ordinary structs; correction smoothing through a custom `Interpolate` type is deferred. See [Views](../game/views.md#provisional-correction-smoothing) for the provisional syntax and contract.
 
 ## Joining
 

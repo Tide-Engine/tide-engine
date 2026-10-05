@@ -722,7 +722,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -783,10 +783,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1080,7 +1080,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -7559,11 +7559,35 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     bool has_clamp = false;
     bool has_min = false;
     bool has_max = false;
+    bool has_snap = false;
+    for (int i = 0; i < f->attributes.count; i++) has_snap |= str_eq_c(f->attributes.items[i].name, "Snap");
     for (int i = 0; i < f->attributes.count; i++) {
         attribute *a = &f->attributes.items[i];
         const bool clamp = str_eq_c(a->name, "Clamp");
         const bool min = str_eq_c(a->name, "Min");
         const bool max = str_eq_c(a->name, "Max");
+        const bool position = str_eq_c(a->name, "Position");
+        const bool rotation = str_eq_c(a->name, "Rotation");
+        if (position || rotation) {
+            if (a->values.count || a->args.count) {
+                diag_error(a->at, "[" STR_FMT "] takes no arguments", STR_ARG(a->name));
+            } else if ((d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON && d->kind != DECL_STRUCT) || d->is_local
+                       || d->part_of || f->is_local) {
+                diag_error(a->at, "[" STR_FMT "] describes a match field, not local state, input or events", STR_ARG(a->name));
+                diag_note("put it on a match component or singleton field, or a field of an ordinary struct they hold");
+            } else if (has_snap) {
+                diag_error(a->at, "[Snap] keeps a field immediate, so it can't also have [" STR_FMT "]", STR_ARG(a->name));
+            } else if (f->view_correction) {
+                diag_error(a->at, "field '" STR_FMT "' already has a view correction attribute", STR_ARG(f->name));
+            } else if (f->type.kind != TY_ERROR && (position ? !type_is_float_based(f->type) || type_dim(f->type) < 1
+                                                             : f->type.kind != TY_FLOAT && f->type.kind != TY_QUATERNION)) {
+                diag_error(a->at, position ? "[Position] works on float and floating-point vectors, not %s"
+                                          : "[Rotation] works on float radians and quaternion, not %s", type_name(f->type));
+            } else {
+                f->view_correction = position ? 1 : 2;
+            }
+            continue;
+        }
         if (str_eq_c(a->name, "Snap")) {
             check_snap_attribute(d, f, a);
             continue;
@@ -7575,6 +7599,8 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Min");
             suggest_consider_c(&s, "Max");
             suggest_consider_c(&s, "Snap");
+            suggest_consider_c(&s, "Position");
+            suggest_consider_c(&s, "Rotation");
             suggest_note(&s);
             continue;
         }
@@ -8133,6 +8159,35 @@ static void check_interpolate_decl(const checker *c, decl *d, decl *m)
         return;
     }
     d->interpolate = m;
+}
+
+// A custom interpolation replaces the whole type's field traversal. Correction
+// roles below it would otherwise be accepted but silently never applied.
+static const field *correction_field(const decl *d, const int depth)
+{
+    if (depth > 64) return NULL; // A recursive type has its own diagnostic.
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->view_correction) return f;
+        if (f->type.kind == TY_STRUCT) {
+            const field *nested = correction_field(f->type.decl, depth + 1);
+            if (nested) return nested;
+        }
+    }
+    return NULL;
+}
+
+static void check_correction_interpolates(const program *prog)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (!d->interpolate) continue;
+        const field *f = correction_field(d, 0);
+        if (!f) continue;
+        diag_error(f->at, "view correction attributes under '" STR_FMT "' are not supported with its custom Interpolate",
+                   STR_ARG(d->name));
+        diag_note("custom interpolation replaces the whole type; correction smoothing for custom Interpolate is deferred");
+    }
 }
 
 // Where methods go (structs and components), their names, and their signatures.
@@ -9191,12 +9246,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     prog->time = time;
@@ -9234,7 +9289,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -9307,7 +9362,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -9327,7 +9382,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -9375,7 +9430,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -9383,7 +9438,7 @@ static void add_builtins(program *prog)
     prog->disconnected = builtin_event("Disconnected", true);
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
-    const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0},
+    const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
                                 {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
@@ -9430,7 +9485,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, f);
 }
 
@@ -11224,6 +11279,7 @@ bool check(program *prog)
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
+    check_correction_interpolates(prog);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == DECL_FUNCTION && !d->is_extern) check_method_body(&c, d);

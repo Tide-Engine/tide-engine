@@ -113,6 +113,7 @@ tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
 tide_e2e_test(blend)
+tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
 tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out

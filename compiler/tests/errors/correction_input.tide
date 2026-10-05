@@ -1,0 +1,3 @@
+// expect: describes a match field
+input Controls { [Position] float2 aim; Sample() {} }
+scene Main {}

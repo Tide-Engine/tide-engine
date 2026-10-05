@@ -181,7 +181,8 @@ typedef struct field {
     type type;
     expr *default_value; // Constant expression, or NULL for zero.
     loc type_at; // The type's name (the last part if it's qualified)
-    VEC(attribute) attributes; // [Clamp], [Min] and [Max] on input and struct fields
+    VEC(attribute) attributes; // Bounds, [Snap], and view correction roles
+    int view_correction; // 0: ordinary interpolation, 1: [Position], 2: [Rotation]
     loc type_qual_at; // Where the type starts: its namespace if it's qualified
     bool hidden; // The engine's own, in generated C only: a scene's visibility and players
     int leaf;    // In the device records: 1 + where its values start among its record's (a value is one)
