@@ -1,0 +1,7 @@
+// expect: extern systems that share a name each name a C function of their own, and both of these are Move
+// expect: say which C function each is: '[NativeName("...")] extern system Move(...);'
+scene Main { }
+component Body { float x; }
+component Other { float y; }
+extern system Move(mut Body body);
+extern system Move(mut Other other);

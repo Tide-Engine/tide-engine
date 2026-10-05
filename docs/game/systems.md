@@ -206,6 +206,10 @@ stage 2  Move  (per entity)
 
 Declaring more than a system uses makes others wait for nothing, so it's a warning: a parameter that's never used, or a `mut` one that's never written (a `mut World` that never calls `Set` too). A component that's only there to pick entities belongs in `with`. The editors offer quick fixes for these.
 
+## Written in C
+
+A system's code can be C's: a library's, or a loop over every entity's numbers that's worth writing by hand. `extern system Move(mut Position position, Velocity velocity);` declares one, with no body, and C is handed the components as the arrays the match keeps them in, rather than an entity at a time. It's a system like the others to everything on this page: its parameters pick its entities, and it's ordered and scheduled by them. See [Systems written in C](../c/functions.md#systems-written-in-c).
+
 ## What systems can't do
 
 Systems run the match, so they can't read this machine's local state, and they can't draw: drawing happens every frame, in [views](./views.md).

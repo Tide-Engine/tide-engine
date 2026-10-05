@@ -1,0 +1,5 @@
+// expect: a view can't be written in C yet: only a system can, 'extern system Name(...);'
+// expect: write it in Tide, and call C from it: 'extern' functions take what it reads
+scene Main { }
+component Body { float x; }
+extern view Show(Body body);

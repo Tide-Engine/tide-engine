@@ -270,7 +270,119 @@ Once C returns, the list is exactly those elements, however many it had: more, f
 
 A world's list is written piece by piece, and only the pieces whose bytes differ from what the list had. So a big list that comes out mostly the same costs little: the pieces that didn't change aren't hashed again, and stay shared with the snapshots rollback keeps.
 
+C still writes all of it, and all of it is compared. C that knows which elements changed can say only those, and the list keeps the rest:
+
+```c
+int PatchImage(tide_list_out *image)
+{
+    tide_list_out_keep(image, ImageSize());
+    for (int i = 0; i < changed_count; i++) {
+        tide_list_out_part(image, changed[i].first, changed[i].bytes, changed[i].count);
+    }
+    return ImageSize();
+}
+```
+
+- `tide_list_out_keep(out, count)` says the list keeps the elements it holds, and is `count` long once C returns. The ones past that go, and the ones it gains are zeros.
+- `tide_list_out_part(out, first, elements, count)` says the `count` elements from `first` on are the ones at `elements`, side by side. Parts are written in the order they're given, a later one over an earlier one, and what's past the list's count is left out.
+
+Nothing of what the list keeps is written, compared or hashed again: only the parts are, each with the elements it goes over. So a list of megabytes that changes in a few places costs those places.
+
+A part's elements are read once C has returned. They have to be in memory that's still good then, and that nothing changes meanwhile: C's own (static, or allocated), never the function's variables. Of keeping and asking for room, what C said last stands, so C that starts out keeping and finds everything changed asks for room and fills it.
+
 The argument is a list the code can change, with `out` before it, as for any `out` parameter: a field of a `mut` component or singleton, a `mut` local, or one declared there with `out var`. Its elements are what a list goes to C with.
+
+## Systems written in C
+
+An extern function is called for one entity at a time: a system written in Tide takes the components, and passes C what it reads of them. C that wants every entity's data at once (a physics library that reads its bodies back, a loop written with SIMD) would pay a call and a copy of each component for every entity. A system can be written in C instead, and handed the components as the arrays the match keeps them in. It's declared as a system is, with `extern` before it and no body:
+
+```csharp
+component Position
+{
+    float2 at;
+}
+
+component Velocity
+{
+    float2 by;
+}
+
+[NativeName("game_move")]
+extern system Move(mut Position position, Velocity velocity, Time time, without Frozen);
+```
+
+```c
+#include <stddef.h>
+#include "tide/math.h"
+#include "tide/rows.h"
+
+typedef struct Position { tide_float2 at; } Position;
+typedef struct Velocity { tide_float2 by; } Velocity;
+typedef struct Time { float dt; int32_t tick; float t; int32_t tickRate; } Time;
+
+void game_move(tide_rows *rows, const Time *time)
+{
+    const uint32_t count = tide_rows_count(rows);
+    float *x = tide_rows_floats_mut(rows, 0, offsetof(Position, at.x));
+    float *y = tide_rows_floats_mut(rows, 0, offsetof(Position, at.y));
+    const float *dx = tide_rows_floats(rows, 1, offsetof(Velocity, by.x));
+    const float *dy = tide_rows_floats(rows, 1, offsetof(Velocity, by.y));
+    for (uint32_t i = 0; i < count; i++) {
+        x[i] += dx[i] * time->dt;
+        y[i] += dy[i] * time->dt;
+    }
+}
+```
+
+To the rest of the game it's the system its declaration says. It runs for the entities its parameters pick, it takes `[Stage]`, `[Before]` and `[After]`, and [the schedule](../game/schedule.md) has it wait for the systems it shares data with, and they for it, by what it declares: what it takes `mut` is written, and the rest is read. `tide schedule` shows it as `Move  (per entity, in C)`, and the editors' line above it says `in C`. Nothing warns about a parameter it doesn't use, as its code can't be read.
+
+### What C is called with
+
+C is called once for each **run of rows**: entities that are side by side in the match's memory. That's a chunk of the entities that have one combination of components, a couple of thousand at most, or a piece of a chunk when the tick shares one out over threads. The runs come in the order a system written in Tide would go through the entities on one thread.
+
+- `rows` comes first: `tide_rows_count(rows)` is how many rows the run has, and every array has that many values.
+- The **singletons** the system takes follow it, in the declaration's order, each a pointer: `const` for one it reads, and the match's own for one it takes `mut`. `Time` is `{ float dt; int32_t tick; float t; int32_t tickRate; }`, with an `int32_t seed` after them in a game that uses [the match's seed](../language/math.md#the-match-s-seed).
+- The **components** are reached through `rows`, by number: 0 for the system's first component parameter, 1 for the second. Filters and singletons don't count.
+
+A system with no component and no filter runs once a tick, as in Tide: C is called once, with no rows (`tide_rows_count` is 0) and its singletons, which is a way to hand C a singleton.
+
+### Fields as arrays
+
+The match keeps a component 4 bytes at a time, each a column of its own, so a field of 4 bytes is already an array, a value for each row. C names a field by where it starts in a struct that has the component's fields in order, with `offsetof`:
+
+| Call | Gives |
+| --- | --- |
+| `tide_rows_floats(rows, component, offset)` | `const float *`: a `float` field, or one part of a vector (`offsetof(Position, at.y)`) |
+| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long` or of an `Entity` |
+| `tide_rows_floats_mut`, `tide_rows_ints_mut` | The same to write, for a component the system takes as `mut` |
+| `tide_rows_entities(rows)` | `const tide_entity *`: each row's entity |
+| `tide_rows_get(rows, component, row, &value)` | One row's whole component, copied into a struct |
+| `tide_rows_set(rows, component, row, &value)` | The same back, for a `mut` component |
+
+`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` and an `Entity` are two columns), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
+
+Nothing is copied to read: an array is the match's own memory. Writing is asked for a field at a time, and costs what's written:
+
+- The match shares what a tick doesn't change with its snapshots, and a client keeps one of every tick it predicts. Asking for an array to write is what makes that field's memory the match's own to change. C that asks for 2 of a component's 20 fields touches those 2.
+- A field that comes out as it was is shared again once C returns. So is a row `tide_rows_set` puts back as it was read: it writes the columns that differ, and asks for no other.
+- An array to write has what's there in it, and is the field from then on: read through it too. An array of the same field that was asked for to read before it may no longer be the one the run writes.
+- Every array is good until C returns, and no longer.
+
+A field that holds text, a list, a map, a set or a grid is a handle into the match's memory: C leaves those as they are.
+
+A call that can't be answered stops the program, saying which function it was, in which system, and what to write instead: a component the system doesn't take, an offset that isn't a 4-byte field's, an array to write of a component that isn't `mut`.
+
+### What it can take, and do
+
+A system written in C takes components (to read, or `mut`), filters (`with`, `without`) and singletons. The rest is an error that says what to write instead, for now: a sparse component or a filter by one (which rows have it is told row by row, and C gets whole runs), the `World`, a query, `Devices` and the input. A system written in Tide takes those, and can call C for each entity.
+
+C can't spawn, destroy, add or remove components, or send events from a system: a system written in Tide does that, from what C left in a component or a singleton.
+
+### Threads
+
+A system written in C splits its entities across threads by the rule every system does (see [Splitting across threads](../game/schedule.md#splitting-across-threads)): its runs go to different threads, and C is called on several at once, unless it takes a singleton as `mut`. Each run only reaches its own rows, so C that works row by row needs nothing more. C that keeps something from one run to the next, or needs its runs in order, takes a `mut` singleton, which keeps it on one thread, as it does a system written in Tide.
+
+The engine can't tell how much work C does, so it counts a row of a system written in C as a few calls' worth (256 operations) when it decides whether a tick is worth threads.
 
 ## Drawing from C
 
@@ -362,4 +474,4 @@ The compiler doesn't look inside C. It takes each call as touching nothing it tr
 
 C also changes how players join. When starting a match calls no C (no match event handler does, through anything it calls), a player joining a big world starts the match on its own machine too, and only gets what changed since (see [Sending worlds](../multiplayer/networking.md#sending-worlds)). C called while a match starts could do something outside the world on every joining machine, so a game whose match start calls C sends joining players the whole world instead.
 
-tidec declares each extern function from its Tide signature. If it doesn't match the C function, the call goes wrong the way it would in C.
+tidec declares each extern function from its Tide signature, and each extern system's function from its declaration. If it doesn't match the C function, the call goes wrong the way it would in C.
