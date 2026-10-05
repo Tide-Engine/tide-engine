@@ -214,20 +214,6 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     tide_devices_consume(&tide_run_devices);
 }
 
-// ...and as it would be sampled now, for the tick that's coming, which the
-// session runs early so views draw this moment (tide_session_desc.peek). The
-// devices keep what they have for the tick's own sample.
-static inline void tide_run_peek(void *user, const uint32_t tick, void *input)
-{
-    (void)user;
-    (void)tick;
-    if (!tide_run_game->sample_input) return;
-    tide_devices sampled = tide_run_devices;
-    tide_gui_hide(&tide_run_gui, &sampled);
-    tide_stats_hide(&tide_run_drawer, &sampled);
-    tide_run_game->sample_input(&sampled, tide_run_local, input);
-}
-
 static inline void tide_run_correct_views(void *user, const tide_view_correction *correction)
 {
     (void)user;
@@ -502,7 +488,6 @@ static inline tide_session *tide_run_new_session(void)
         .game = tide_run_game->game,
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
-        .peek = tide_run_peek,
         .jobs = tide_run_jobs(),      // Ticks on every core
         // To keep running predicted ticks again within a frame's budget. A run
         // with no window has no clock, so it goes the same on every machine.

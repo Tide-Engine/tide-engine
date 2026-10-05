@@ -61,7 +61,7 @@ A world goes over the network page by page, as a delta: each page is either the 
 
 ## Views and prediction
 
-Views draw the predicted world, blended between the last tick it ran and the one that's coming, which it runs early with this machine's input as it is (see [Views](../game/views.md#smooth-at-any-tick-rate)): this moment, so this machine's own input shows in the frame that reads it. A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
+Views draw the predicted world, blended between its last two ticks (see [Views](../game/views.md#smooth-at-any-tick-rate)). A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
 
 ### Predicted and confirmed
 
