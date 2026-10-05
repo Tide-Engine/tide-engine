@@ -16,7 +16,9 @@ namespace Box2D;
 // into this tick's step says so with [Before(PhysicsStages.Step)]: it then
 // runs before any of these, so what it writes into a body is what this tick
 // steps from. Any other runs after them, as a package's files compile before
-// the game's, and what it writes is the next tick's.
+// the game's, and what it writes is the next tick's: but for the ones written
+// above a system that's before the stage, which the default order then has
+// before it too. [After(PhysicsStages.Step)] holds a system after.
 enum PhysicsStages
 {
     Step
