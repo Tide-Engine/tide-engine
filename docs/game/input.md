@@ -102,7 +102,7 @@ Axes follow Unity: `y` is positive up, for sticks, the mouse, touches and the po
 
 ### Touch
 
-A finger keeps its slot in `touches` while it touches, and lifts out of it. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts: the one to follow for a single finger. A finger that touches and lifts between two samples reads as held for one, like a quick key press, so no tap is lost.
+A finger keeps its slot in `touches` while it touches, and lifts out of it. With ten fingers on the screen, an eleventh is left out. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts: the one to follow for a single finger. A finger that touches and lifts between two samples reads as held for one, like a quick key press, so no tap is lost.
 
 `touches[i]` is the touch in slot `i` (an empty one past the last), `touches.count` is how many slots there are, and `foreach` goes through every slot, touching or not:
 
