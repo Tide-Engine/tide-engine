@@ -206,6 +206,10 @@ static b3JointPair b3CreateJoint( b3World* world, const b3JointDef* def, b3Joint
 	b3Body* bodyA = b3GetBodyFullId( world, def->bodyIdA );
 	b3Body* bodyB = b3GetBodyFullId( world, def->bodyIdB );
 
+	// Tide: a joint goes into the lists of both its bodies and may bring sleeping sets together, which
+	// nothing follows one by one (see b3SnapTrack)
+	b3SnapTouchAll( world );
+
 	// If the joint prevents collisions, then destroy all contacts between attached bodies.
 	// Do this first so world arrays are not disturbed in the following code.
 	if ( def->collideConnected == false )
@@ -733,6 +737,9 @@ b3JointId b3CreateWheelJoint( b3WorldId worldId, const b3WheelJointDef* def )
 
 void b3DestroyJointInternal( b3World* world, b3Joint* joint, bool wakeBodies )
 {
+	// Tide: a joint leaves the lists of both its bodies, which nothing follows one by one (see b3SnapTrack)
+	b3SnapTouchAll( world );
+
 	int jointId = joint->jointId;
 
 	b3JointEdge* edgeA = joint->edges + 0;

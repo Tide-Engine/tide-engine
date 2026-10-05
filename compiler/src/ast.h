@@ -394,7 +394,11 @@ typedef struct decl {
     struct decl *local_part; // Its local fields, or NULL when it has none
     struct decl *part_of;    // A local part: the component or singleton it's of
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
-    const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
+    // `extern system Move(mut Position position, Time time);`: a DECL_SYSTEM written in C, with no body. C is
+    // called for each run of rows the system's filters admit, with their components as arrays (tide/rows.h) and
+    // the singletons it takes; to the schedule it's the system its signature says
+    bool extern_system;
+    const char *c_name; // Records: the C struct name. Extern functions and systems: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
     // Overloads, as in C#: functions that share a name, a type's methods that
     // do, and systems, views, handlers, frags and verts that do. Their
@@ -418,6 +422,7 @@ typedef struct decl {
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
+    bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -509,6 +514,12 @@ typedef struct decl {
     loc position_at;     // ...where it first reads a position in the window that way (the mouse's, a touch's)
     const char *position_what; // ...whose: "the mouse's position"
     VEC(world_use) world_uses; // Query reads and World access, by component: query declaration order, then first body use
+    // A function or method that takes the World: what it reaches through it, itself and through the
+    // functions it passes it on to (its world_uses, once every body is checked), says which worlds it's
+    // handed in generated C: the match's (`tide_w`, which it changes if it sets), this machine's (`tide_l`)
+    bool world_match;
+    bool world_local;
+    bool world_sets;
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
     // A view's `verified` parameters and filters name the world the server has

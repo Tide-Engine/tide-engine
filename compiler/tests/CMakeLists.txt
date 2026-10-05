@@ -20,6 +20,7 @@ tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
+tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
@@ -140,6 +141,11 @@ tide_e2e_test(directives) # #if and the rest: what other versions of tide read i
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
 tide_e2e_test(extern SOURCES e2e/extern.tide e2e/extern_noise.tide e2e/extern_c.c) # C functions, from the game's C file
+tide_e2e_test(extern_system SOURCES e2e/extern_system.tide e2e/extern_system_c.c) # Systems written in C, and their rows
+if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some
+    target_link_libraries(tidec_e2e_extern_system PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_extern_system PRIVATE TIDE_EXTERN_SYSTEM_THREADS=1)
+endif()
 tide_e2e_test(cpp SOURCES e2e/cpp.tide e2e/cpp_code.cpp) # ...and from its C++ file, with no C++ runtime
 tide_e2e_test(fails SOURCES e2e/fails.tide e2e/fails_c.c) # Errors as values, and T?
 tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main.tide)
