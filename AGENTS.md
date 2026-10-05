@@ -274,6 +274,8 @@ The generated header is the API between the game and the host. Namespaced declar
 ### Docs site
 
 - `docs/` is the docs site, https://tide-engine.dev: SvelteKit (`docs/src/`), with every page prerendered from the Markdown files beside it. It needs Node: `npm ci`, then `npm run dev` in `docs/` serves it, `npm run check` checks its types, and `npm run build` builds it. The build fails on a dead link, a link to an anchor that isn't there, a Svelte warning, or a Markdown file missing from the sidebar (`docs/src/lib/nav.ts`, which lists every page in reading order).
+- The site calls the product Tide Engine: its logo, the home page's name and pages' titles (`| Tide Engine`). The language and the command stay Tide, there as everywhere else.
+- The header has one link, Docs (`docs` in `docs/src/lib/nav.ts`), which starts at the guide: the categories are the sidebar's, never the header's.
 - A page is in the folder of its subject, and the sidebar's groups follow the folders (`spec.md`, beside them, is its Reference):
   - `guide/` (Get started): what a newcomer reads first, and the demos.
   - `game/`: what a game is made of, in two groups: Simulation, the match (components, systems and their schedule, events, scenes, tasks, input), and Presentation, what one machine shows of it (views, frags and verts, local state, the GUI).

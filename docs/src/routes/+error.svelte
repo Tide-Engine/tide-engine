@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-    <title>{page.status === 404 ? 'Page not found' : 'Something went wrong'} | Tide</title>
+    <title>{page.status === 404 ? 'Page not found' : 'Something went wrong'} | Tide Engine</title>
 </svelte:head>
 
 <main id="content">
@@ -31,7 +31,7 @@
         margin: 0;
         font-size: 64px;
         font-weight: 700;
-        color: var(--brand-2);
+        color: var(--brand-fill);
     }
 
     h1 {
