@@ -157,7 +157,7 @@ Colors add, subtract and multiply channel by channel, alpha too, and scale by a 
 
 ## Smooth shapes
 
-`Circle`, `Rect`, `WireRect` and the `Line` without a width fill whole pixels: rects side by side leave no seam between them, and a line is a pixel wide wherever it lands. The other shapes have smooth edges, at any size and turned any way:
+`Rect`, `WireRect` and the `Line` without a width fill whole pixels: rects side by side leave no seam between them, and a line is a pixel wide wherever it lands. A circle's edge is smooth, and so are the edges of the shapes that follow, at any size and turned any way:
 
 ```csharp
 view Bar(Health health)

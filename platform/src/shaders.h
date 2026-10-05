@@ -28,7 +28,7 @@
 // across and down: a smooth shape's edge is smooth over one of the target's,
 // whatever the display's scale. A plain circle's is smooth over a logical
 // pixel, which is the same where a display isn't scaled; where it is, the
-// renderer draws circles as smooth shapes (see TIDE_DRAW_CIRCLE in platform.c).
+// renderer draws circles as smooth shapes (see add_circle in platform.c).
 
 #define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; };\n"
 

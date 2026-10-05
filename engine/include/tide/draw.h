@@ -474,14 +474,14 @@ void tide_draw_wire_rect(tide_draw_list *d, tide_float2 center, tide_float2 size
 void tide_draw_line(tide_draw_list *d, tide_float2 from, tide_float2 to, tide_color color);
 
 // ---------------------------------------------------------------------------
-// Shapes with smooth edges. The shapes above fill whole pixels, so rects side
-// by side leave no seam and a line is a pixel wide wherever it is. These are
-// drawn by how far each pixel is from the shape's edge, which is smooth over
-// one pixel of the target at any size, turned any way. Lengths (sizes, radii,
-// widths) are in the units the commands are in, and angles are in radians,
-// from +x towards +y: counterclockwise under a camera, where y goes up, and
-// clockwise on the screen, where it goes down. A size, radius or width that
-// isn't positive draws nothing.
+// Shapes with smooth edges. The rects and the line above fill whole pixels, so
+// rects side by side leave no seam and a line is a pixel wide wherever it is
+// (a circle's edge is smooth). These are drawn by how far each pixel is from
+// the shape's edge, which is smooth over one pixel of the target at any size,
+// turned any way. Lengths (sizes, radii, widths) are in the units the commands
+// are in, and angles are in radians, from +x towards +y: counterclockwise
+// under a camera, where y goes up, and clockwise on the screen, where it goes
+// down. A size, radius or width that isn't positive draws nothing.
 
 // The general shape, which the functions after it are short for: a box
 // `size` wide and tall around `center`, turned by `rotation` about it.
