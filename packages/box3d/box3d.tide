@@ -1,0 +1,279 @@
+// Box3D, Erin Catto's 3D physics engine (box3d/, as it came, with the changes
+// box3d/TIDE.md lists), for a match: bodies and their shapes are components,
+// and every tick steps them.
+//
+// Box3D keeps its world in C's memory, where a match's rollbacks, joins and
+// reloads don't reach. So after each step its whole state goes into the match
+// as bytes (Physics.image, and Physics.geometry for the hulls it names), and
+// before each step C's world is either at that state already or is made from
+// it again. Everything that changes Box3D's world happens in these systems,
+// from what the components say: code that wants a body to move writes its
+// component.
+
+namespace Box3D;
+
+enum BodyType
+{
+    Static,
+    Kinematic,
+    Dynamic
+}
+
+// A rigid body. Its place and speeds are Box3D's after each step, and a system
+// that writes them moves the body: the next step starts from what they say.
+component Body
+{
+    long id; // Box3D's own handle: 0 until the body's first step
+    BodyType type = BodyType.Dynamic;
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    float3 velocity;
+    float3 angularVelocity; // Around each axis, in radians a second
+    float3 impulse; // Given to the body at the next step, once
+    float3 angularImpulse; // The same, around
+    float gravityScale = 1;
+    float linearDamping;
+    float angularDamping;
+    // The package's own: where the last step left the body, which is how
+    // what's written since is told, without asking Box3D
+    float3 stepPosition;
+    quaternion stepRotation = quaternion.identity;
+    float3 stepVelocity;
+    float3 stepAngularVelocity;
+    bool bullet;
+}
+
+// A box on the entity's body, `size` wide, high and deep around `offset`.
+component Box
+{
+    float3 size = float3(1, 1, 1);
+    float3 offset;
+    float density = 1000; // Water's, in kilograms a cubic meter
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+
+// A sphere on the entity's body.
+component Sphere
+{
+    float radius = 0.5;
+    float3 offset;
+    float density = 1000;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+
+// A capsule on the entity's body, standing along its y: `height` from end to
+// end, round ends included.
+component Capsule
+{
+    float radius = 0.5;
+    float height = 2;
+    float3 offset;
+    float density = 1000;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+
+// The package's own: the entity's box, its sphere or its capsule is on its
+// body in Box3D
+[Sparse]
+component BoxMade { }
+
+[Sparse]
+component SphereMade { }
+
+[Sparse]
+component CapsuleMade { }
+
+// Two bodies started touching, or stopped: sent to each, with the other.
+event Touched
+{
+    Entity other;
+}
+
+event Parted
+{
+    Entity other;
+}
+
+singleton Physics
+{
+    float3 gravity = float3(0, -10, 0);
+    int substeps = 4;
+    int bodies; // Made so far
+    int shapes;
+    long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
+    int size; // The image's bytes
+    bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
+    List<byte> image; // Box3D's whole state after the last step
+    List<byte> geometry; // The hulls the image names, each once: only ever added to
+    List<long> gone; // Bodies whose entities were destroyed, until the next step
+    Map<long, Entity> owners; // Each body's entity
+}
+
+struct Contact
+{
+    long a;
+    long b;
+    bool began;
+}
+
+[NativeName("b3t_open")]
+extern bool OpenWorld(long stamp);
+
+[NativeName("b3t_restore")]
+extern void RestoreWorld(List<byte> image, int size, List<byte> geometry, int geometrySize, long stamp);
+
+[NativeName("b3t_gone")]
+extern void RemoveBodies(List<long> bodies, int count);
+
+[NativeName("b3t_body")]
+extern int SyncBody(mut Body body);
+
+[NativeName("b3t_box")]
+extern int AttachBox(long body, in Box box);
+
+[NativeName("b3t_sphere")]
+extern int AttachSphere(long body, in Sphere sphere);
+
+[NativeName("b3t_capsule")]
+extern int AttachCapsule(long body, in Capsule capsule);
+
+[NativeName("b3t_step")]
+extern long StepWorld(float dt, int substeps, float3 gravity);
+
+[NativeName("b3t_image")]
+extern int WriteImage(out List<byte> image);
+
+[NativeName("b3t_geometry_size")]
+extern int GeometrySize();
+
+[NativeName("b3t_geometry")]
+extern void WriteGeometry(out List<byte> geometry);
+
+[NativeName("b3t_pull")]
+extern bool ReadBody(mut Body body, long stamp);
+
+[NativeName("b3t_touches")]
+extern int CountTouches(long stamp);
+
+[NativeName("b3t_touch")]
+extern Contact ReadTouch(int index);
+
+// C's world for this match, at the state the match is in: the one it has, or
+// one made from the image.
+system Begin(mut Physics physics)
+{
+    if (!OpenWorld(physics.stamp))
+    {
+        RestoreWorld(physics.image, physics.size, physics.geometry, physics.geometry.count, physics.stamp);
+    }
+    RemoveBodies(physics.gone, physics.gone.count);
+    physics.gone.Clear();
+}
+
+// New bodies are made, and what code wrote into a body since the last step
+// goes to Box3D.
+//
+// These systems read their components and write them back through the World,
+// for the few entities there's something to write for. A component taken as
+// `mut` is copied and compared for every entity a system runs for, whatever it
+// does, once a snapshot shares the world's pages, as a client's do every tick:
+// most bodies, most ticks, have nothing written.
+system Enter(Body body, mut Physics physics, mut World world)
+{
+    // A body nothing wrote to since the last step costs these comparisons, and no call
+    bool moved = body.position.x != body.stepPosition.x || body.position.y != body.stepPosition.y || body.position.z != body.stepPosition.z;
+    bool turned = body.rotation.value.x != body.stepRotation.value.x || body.rotation.value.y != body.stepRotation.value.y
+        || body.rotation.value.z != body.stepRotation.value.z || body.rotation.value.w != body.stepRotation.value.w;
+    bool pushed = body.velocity.x != body.stepVelocity.x || body.velocity.y != body.stepVelocity.y || body.velocity.z != body.stepVelocity.z;
+    bool spun = body.angularVelocity.x != body.stepAngularVelocity.x || body.angularVelocity.y != body.stepAngularVelocity.y
+        || body.angularVelocity.z != body.stepAngularVelocity.z;
+    bool nudged = body.impulse.x != 0 || body.impulse.y != 0 || body.impulse.z != 0 || body.angularImpulse.x != 0
+        || body.angularImpulse.y != 0 || body.angularImpulse.z != 0;
+    if (body.id == 0 || moved || turned || pushed || spun || nudged)
+    {
+        mut var next = body;
+        if (SyncBody(next) != 0)
+        {
+            physics.bodies += 1;
+            physics.owners[next.id] = this;
+        }
+        world.Set<Body>(this, next);
+    }
+}
+
+system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
+{
+    physics.shapes += AttachBox(body.id, box);
+    this.Add(BoxMade);
+}
+
+system AttachSpheres(Body body, Sphere sphere, mut Physics physics, without SphereMade)
+{
+    physics.shapes += AttachSphere(body.id, sphere);
+    this.Add(SphereMade);
+}
+
+system AttachCapsules(Body body, Capsule capsule, mut Physics physics, without CapsuleMade)
+{
+    physics.shapes += AttachCapsule(body.id, capsule);
+    this.Add(CapsuleMade);
+}
+
+// The step, and Box3D's state after it into the match.
+system Step(Time time, mut Physics physics)
+{
+    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    physics.moved = stamp != physics.stamp;
+    if (!physics.moved) return;
+    physics.stamp = stamp;
+    physics.size = WriteImage(physics.image);
+    // A hull the image names for the first time: a box of a new size
+    if (GeometrySize() != physics.geometry.count) WriteGeometry(physics.geometry);
+}
+
+// Where the step left each body that it moved.
+system Leave(Body body, Physics physics, mut World world)
+{
+    if (physics.moved)
+    {
+        mut var next = body;
+        if (ReadBody(next, physics.stamp)) world.Set<Body>(this, next);
+    }
+}
+
+system Report(Physics physics)
+{
+    int count = physics.moved ? CountTouches(physics.stamp) : 0;
+    for (int i = 0; i < count; i++)
+    {
+        Contact contact = ReadTouch(i);
+        Entity a = physics.owners[contact.a];
+        Entity b = physics.owners[contact.b];
+        if (contact.began)
+        {
+            a.Send(Touched { other = b });
+            b.Send(Touched { other = a });
+        }
+        else
+        {
+            a.Send(Parted { other = b });
+            b.Send(Parted { other = a });
+        }
+    }
+}
+
+// An entity that goes takes its body with it, at the next step.
+event(Destroyed) Remove(Body body, mut Physics physics)
+{
+    if (body.id != 0)
+    {
+        physics.gone.Add(body.id);
+        physics.owners.Remove(body.id);
+    }
+}
