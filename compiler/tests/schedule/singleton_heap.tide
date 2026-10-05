@@ -1,0 +1,11 @@
+// Functions mutate the heap through singleton list/text fields, so these
+// otherwise independent singleton writes must share the heap's ordering.
+singleton First { List<int> values; }
+singleton Second { string text; }
+void Push(mut First first) { first.values.Add(1); }
+void PushThrough(mut First first) { Push(first); }
+void Append(mut Second second) { second.text += "x"; }
+void AppendThrough(mut Second second) { Append(second); }
+scene Main { }
+system Fill(mut First first) { PushThrough(first); }
+system Label(mut Second second) { AppendThrough(second); }

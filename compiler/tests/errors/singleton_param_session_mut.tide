@@ -1,0 +1,4 @@
+// expect: 'Session' is managed by the engine
+void Close(mut Session session) { session.open = false; }
+local scene Main { }
+view Change(Session session) { Close(session); }

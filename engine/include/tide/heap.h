@@ -8,7 +8,10 @@
 
 // Memory a world keeps variable-length data in, such as the text of its
 // components' string fields. It's part of the world, in pages its snapshots
-// share (see tide/page.h), and it grows as it needs, with no limit but memory.
+// share (see tide/page.h), and it grows as it needs, up to the 1 GiB its
+// offsets' 30 bits reach, in blocks of 128 MiB at most (the biggest size
+// class). Past either, tide_heap_alloc ends the program, as running out of
+// memory does (tide_out_of_memory).
 //
 // Deterministic: blocks come from size classes, reused in a fixed order, so
 // the same allocations and releases give the same offsets on every machine.

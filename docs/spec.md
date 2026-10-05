@@ -145,7 +145,10 @@ system Burn(mut Unit unit)
 
 - A function is code that other code calls: systems, views, the input's `Sample` and `Sanitize`, methods and other functions. The engine never runs one by itself.
 - A parameter is a copy, read-only. A `mut` parameter is the caller's variable itself, which the function changes: the caller passes something it can write, and its signature still shows the write, so `Heal(unit.stats, 5)` needs `mut Unit unit`. The argument's type matches exactly.
-- Parameters and return values are built-in types, structs and components.
+- Parameters are built-in types, structs, components and singletons. Return values are built-in types, structs and components; singleton return values aren't supported.
+- Singleton parameters are explicit values, with the same read-only copy and `mut` caller-variable rules as components, in functions and methods. They bind no singleton from the world and grant no world access. Existing restrictions on copying or passing grids and rendering resources still apply; singletons still have no methods of their own.
+- Caller access remains decisive, through helper chains: match systems and handlers can pass match state they can write; views can read match state and change local state; the input's `Sample` only reads local state. Helper reads and writes count toward the caller's access and scheduling. For a match component or singleton with local fields, only an actual bound parameter supplies them to an ordinary function, not a plain copy (see Local state). Match code can't call a helper that uses local fields, and local code can't call one that writes match fields. Methods don't receive local fields.
+- Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations. Ordinary helpers can't read `session.room` or format a whole `Session` as text; pass the room code as a separate `string`.
 - Functions follow the rules of methods: they see their parameters and `Math`, can't spawn or change entities, and return a value on every path unless they return `void`.
 - A function can draw and use the GUI. Then only views, and other functions like it, can call it, as with `Draw2D` and `Draw3D`.
 - Namespaces apply: another namespace calls it `Combat.Heal(...)`. A function shares its name with nothing else in its namespace.
@@ -222,7 +225,7 @@ mut float scale = 1;             // mutable, explicit type
 
 ### System parameters
 
-A system's parameter list describes its whole query. Each parameter's modifier says how the system relates to that component or singleton:
+A system's component parameters describe the entities it runs for. Each parameter's modifier says how the system relates to that component or singleton:
 
 | Modifier  | Meaning                                                                 |
 |-----------|-------------------------------------------------------------------------|
@@ -243,6 +246,27 @@ system ClampPlayer(mut Transform trs, with Player)
 - `this` is the entity the code runs for: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. `this` is a keyword everywhere, and it can't be assigned.
 - Only code that runs once per entity has `this`: a system, view or handler that takes a component or filters by one (`with Player`). Elsewhere it's an error that says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.
+
+### Read-only entity queries
+
+A system can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
+
+```csharp
+system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
+{
+    foreach (var fighter in fighters)
+    {
+        // fighter.body is read-only Body data; fighter.entity is its Entity.
+    }
+}
+```
+
+- The outer parameters still select the entities the system runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick.
+- The nested list accepts named read-only match component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World`, local component or nested query.
+- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are system parameters only in this version, iterated in the system's ordinary control flow, outside parallel loops and callback blocks.
+- Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
+- Component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
+- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the system's run.
 
 ### The World
 
@@ -387,7 +411,9 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Limits
 
-- 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
+- 256 components and 1024 archetypes.
+- A world's heap, which keeps its text, lists, maps, sets and grids, holds 1 GiB, in blocks of 128 MiB at most: a text it keeps is one block. The scratch area, where code makes text and lists along the way, holds 1 GiB on each thread. Past any of these the program ends, as it does when it runs out of memory. A list stops growing at 1 GiB of elements.
+- Everything else grows as it needs, with no limit but memory: entities, entities per archetype, and structural changes and events per tick.
 
 ### Namespaces
 
@@ -554,7 +580,7 @@ Implemented, awaiting approval:
 ### Decided
 
 - An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. `event Hit { ... }` declares one, with fields like a struct's, which carry its context.
-- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system.
+- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters.
 - An event with no fields needs no name in the trigger: `event(Spawned) Arm(...)`.
 - `entity.Send(Hit { ... })` sends an event to an entity. `Send(RoundOver { ... })` sends it to the whole world.
 - A handler's components and `this` come from the entity the event was sent to, as a system's come from the entity it runs for. If that entity doesn't match the handler's parameters, the handler doesn't run for it.
@@ -716,8 +742,8 @@ system Advance(mut Match match)
 
 - `string` is text, as a value: assigning copies it, and nothing is ever shared.
 - A string's `length` counts characters (Unicode code points), not bytes.
-- Components, singletons, structs and events can hold text. A world keeps it in its heap, part of the world, so snapshots have it too. The heap grows as it needs, with no limit but memory.
-- Nothing about text fails: past the end of a string, positions are clamped. Text that code makes can be of any size: the scratch area it lives in grows as it needs, with no limit but memory.
+- Components, singletons, structs and events can hold text. A world keeps it in its heap, part of the world, so snapshots have it too. The heap grows as it needs, up to 1 GiB (see Limits).
+- Nothing about text fails: past the end of a string, positions are clamped. Text that code makes can be as long as the scratch area it lives in has room for: the area grows as it needs, up to 1 GiB a thread (see Limits).
 
 ### Provisional
 
@@ -745,7 +771,7 @@ system Advance(mut Match match)
 
 - `List<T>` is a list of values, as a value: assigning or passing one copies it, and changing a copy never changes the original.
 - A world keeps its lists in its heap, like text.
-- Nothing about lists fails: past the end, a read gives the element type's zero and a write does nothing. A world's lists grow with its heap, and a list that code makes grows with the scratch area, which grows as it needs, with no limit but memory.
+- Nothing about lists fails: past the end, a read gives the element type's zero and a write does nothing. A world's lists grow with its heap, and a list that code makes grows with the scratch area, each as far as it goes; a list stops growing at 1 GiB of elements (see Limits).
 
 ### Provisional
 
@@ -773,7 +799,7 @@ system Advance(mut Match match)
 
 - `Map<K, V>` holds values by key, and `Set<K>` keys each once, as values: assigning or passing one copies it, and changing a copy never changes the original.
 - A world keeps its maps and sets in its heap, like lists and text (see Lists).
-- Nothing about them fails: a key that isn't there reads as the value type's zero, and removing it does nothing. They grow with the heap, with no limit but memory.
+- Nothing about them fails: a key that isn't there reads as the value type's zero, and removing it does nothing. They grow with the heap, as far as it goes (see Limits).
 - Going through a map or a set gives its keys in the order they were added, the same on every machine.
 
 ### Provisional
@@ -989,7 +1015,7 @@ Implemented, awaiting approval:
 - An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Only systems, views, handlers and async code start tasks: a plain function or method can't, as a task belongs to a world.
 - `await` waits for an async call, or for `Wait.Ticks(n)` (the match's ticks; match code only), `Wait.Frames(n)` (this machine's frames; local code only) or `Wait.Seconds(s)`: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `Wait` only goes after `await`. `await` isn't allowed in a block written after a call.
 - Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
-- A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables. Plain functions still take no singletons.
+- A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.
 - An async function's world comes from what it does: changing the match (spawning, `mut` match components and singletons, sending match events, entity changes, `Snap`, `Wait.Ticks`) makes it match code, and local state (local components and singletons, `Session` calls, `Wait.Frames`) makes it local. What it awaits or starts decides it too. One that does neither runs in whichever world starts it, and tidec makes it for each. Doing both is an error, as is starting or awaiting one from the other world. Tasks can't draw or read this frame's `Devices`.
 - A task belongs to the entity the code that started it runs for, or with a task, to that task's entity, and ends when it's destroyed; code that runs for no entity starts tasks that belong to their world. A local task can belong to a match entity (a view of the match's entities started it), and ends with it, or when there's no match.
@@ -1175,7 +1201,7 @@ view DrawBox(Box box, Models models)
 ```
 
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
-  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, comes with drawing into a texture. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
+  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, isn't there yet. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are.
   - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw2D.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`. One read-only `Texture` parameter per stage may receive an explicit draw source; both stages receive the same source when both take it.
   - There are no individual plain value arguments to bind: what a frag or vert reads lives in a component, a singleton (local ones included), or the ordinary instance struct supplied by `Draw2D.Instanced`/`Draw3D.Instanced`.
   - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
@@ -1356,7 +1382,7 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); drawing into a texture that later meshes sample, for shadows, reflections and effects, and with it outputs other than one `Color`; code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
+- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
@@ -1556,10 +1582,10 @@ Local fields, beyond what's decided:
 - **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local component or singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
 - **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
   - a view's, read through `Box box` and written through `mut Box box`;
-  - a function's, which gets them with the component: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own parameter, `Bake(box)`. Such a function is local code: only views, handlers of `Forgotten` and functions like it call it, and calling it from a system is an error that says where it uses a local field;
+  - an ordinary function's, which gets them with the component or singleton: `void Bake(mut Box box)` writes them, `int Corners(Box box)` reads them, and the caller passes its own bound parameter, `Bake(box)`. The parameter can go through helper chains with its local fields. Such a function is local code: only views, handlers of `Forgotten` and functions like it call it, and calling it from match code is an error that says where it uses a local field;
   - a handler of `Forgotten`'s (below).
-- **A component's value is the match's part.** A copy (`var b = box;`), a value written out (`Box { ... }`), and what `world.Get<Box>(entity)` or `default` gives have no local fields, and `b.verts` is an error that says to read them through the parameter. So is naming one in a value, `Box { verts = ... }`, and passing a copy to a function that uses them. Methods work on values, so they have none either; a function that takes the component does.
-- **One side at a time.** A function that changes a component's match fields through a parameter and uses its local fields through the same one is an error: no code could call it. A view can't pass a match component to a function that changes its match fields.
+- **A component's or singleton's value is the match's part.** A copy (`var b = box;`), a value written out (`Box { ... }`), and what `world.Get<Box>(entity)` or `default` gives have no local fields, and `b.verts` is an error that says to read them through the parameter. So is naming one in a value, `Box { verts = ... }`, and passing a copy to a function that uses them. Methods work on values, so they have none either, including through explicit parameters; an ordinary function that takes a bound component or singleton parameter does.
+- **One side at a time.** A function that changes a component's or singleton's match fields through a parameter and uses its local fields through the same one is an error: no code could call it. This follows helper chains too. A view can't pass a match component or singleton to a function that changes its match fields.
 - Tasks can't use local fields yet, in the match or in local code.
 - **Memory.** An entity's local fields take memory from the first frame a view leaves them other than their defaults; a view that takes them as `mut` and changes nothing takes none. Where a default needs the heap (text, a list with elements, a grid with a size), a view that takes them as `mut` makes the entity's own as it first runs for it. Their text, lists and grids are in the local state's heap; a game whose only such fields are local has no heap in the match.
 - **When they go.** At the start of a frame, before the views: an entity's, once it's in neither world, or has the component in neither; a singleton's, once there's no match, back to their defaults; and all of them once the match this machine was in is over (it left, was dropped, or the match ended), whatever match the next frame sees, as another match's entities have the same handles. Entities only come and go with ticks, so a frame looks when either world's tick changed since the last one did.

@@ -1,0 +1,4 @@
+// expect: a local can't hold 'Field': it has a grid in it
+singleton Field { Grid2<int> cells; }
+void Read(Field field) { var copy = field; }
+scene Main { }

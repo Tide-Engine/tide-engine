@@ -571,6 +571,11 @@ button {
     aspect-ratio: 4 / 3;
 }
 
+/* Duel's stacked upgrade cards need room at narrow widths. */
+.prose .demo-frame.duel {
+    min-height: 440px;
+}
+
 /* Code reaches the edges on narrow screens, as there's no room to spare. */
 @media (max-width: 639px) {
     .prose .code,

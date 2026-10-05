@@ -113,5 +113,6 @@ if(TIDE_PLATFORM)
     add_subdirectory(platform)
     add_subdirectory(demo)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
+    add_subdirectory(examples/duel)
     add_subdirectory(bench)   # Ticks on the platform layer's threads
 endif()

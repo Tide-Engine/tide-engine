@@ -1,0 +1,6 @@
+// expect: 'AddThrough' changes its 'score'
+singleton Score { int value; }
+void Add(mut Score score) { score.value += 1; }
+void AddThrough(mut Score score) { Add(score); }
+scene Main { }
+system Change(Score score) { AddThrough(score); }

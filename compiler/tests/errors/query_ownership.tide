@@ -1,0 +1,4 @@
+// expect: 'ownership' isn't a query filter
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body, with ownership) bodies) { }

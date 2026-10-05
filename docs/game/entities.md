@@ -150,4 +150,4 @@ system Recover(Time time, mut Stunned stunned)
 }
 ```
 
-For now, a game has at most 256 components and 1024 archetypes. Everything else grows as it needs, with no limit but memory: entities, the rows of each archetype, and the structural changes and events in a tick (see [C hosts](../c/hosts.md#memory)).
+For now, a game has at most 256 components and 1024 archetypes. Entities, the rows of each archetype, and the structural changes and events in a tick grow as they need, with no limit but memory (see [C hosts](../c/hosts.md#memory)).

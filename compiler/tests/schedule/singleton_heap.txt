@@ -1,0 +1,10 @@
+singleton_heap: 2 systems each tick, 2 stages deep; none can run at the same time.
+A system starts once everything it runs after is done.
+
+stage 1  Fill  (once)
+         writes First
+         alongside nothing
+stage 2  Label  (once)
+         writes Second
+         after Fill: both change text, lists or grids, which the match keeps in one heap
+         alongside nothing

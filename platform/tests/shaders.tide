@@ -128,9 +128,20 @@ float2 Spot(int column, int row)
 // ---------------------------------------------------------------------------
 // What a frag reads: the entity's components, singletons, and nothing
 
+// Read-only singleton values pass through ordinary helper chains on the GPU.
+Color Sunlight(Sun sun)
+{
+    return sun.light;
+}
+
+Color Lighting(Sun sun)
+{
+    return Sunlight(sun);
+}
+
 frag Tinted(Corner3 vertex, mut Color color, Box box, Sun sun)
 {
-    color = box.tint * sun.light;
+    color = box.tint * Lighting(sun);
 }
 
 // Leaves its pixel as it starts

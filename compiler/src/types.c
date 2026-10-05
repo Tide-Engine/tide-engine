@@ -159,6 +159,7 @@ const char *type_name(const type t)
     case TY_ACTION: return "Action";
     case TY_DRAW_LIST: return "DrawList";
     case TY_WORLD: return "World";
+    case TY_QUERY: return "entity query";
     case TY_COMPONENT:
     case TY_SINGLETON:
     case TY_INPUT:
