@@ -126,6 +126,8 @@ static void flow_read(flow *f, const expr *e, uint8_t *st)
         diag_note("an 'out' parameter starts unassigned: what the caller's variable held isn't passed in. Assign it first, "
                   "or take it as 'mut " STR_FMT " " STR_FMT "' to read what the caller has",
                   STR_ARG(e->param->type_name), STR_ARG(e->name));
+        const fix first = {.kind = FIX_ASSIGN_FIRST, .at = e->at, .param = e->param, .method = f->code};
+        vec_push(f->prog->fixes, first);
     } else {
         diag_error(e->at, "'" STR_FMT "' isn't assigned here: the call that makes it may not have run", STR_ARG(e->name));
         diag_note("it's assigned once the call that takes 'out " STR_FMT "' has run, which '&&', '||', '?:' and '?\?' can "
