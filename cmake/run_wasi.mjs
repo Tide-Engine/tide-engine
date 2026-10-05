@@ -6,6 +6,8 @@
 // Programs import their memory, shared between their threads (see
 // platform/web/tide.js, which does the same in pages): each thread the program
 // starts (wasi-threads' thread-spawn) is a worker running it on that memory.
+// It's told the machine has as many threads to run on as Node says, or as
+// TIDE_THREADS says: for measuring, as a machine with another number would be.
 
 import { readFile } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
@@ -136,7 +138,7 @@ const imports = {
     env: { memory },
     wasi: { 'thread-spawn': spawnThread },
     // What the page gives web programs that tests can use (platform/web/tide_web.h)
-    tide: { threads: () => (memory && wanted.shared ? Math.min(availableParallelism(), 32) : 1) },
+    tide: { threads: () => (memory && wanted.shared ? Math.min(Number(process.env.TIDE_THREADS) || availableParallelism(), 32) : 1) },
 };
 const instance = await WebAssembly.instantiate(module, imports);
 process.exitCode = wasi.start(instance);

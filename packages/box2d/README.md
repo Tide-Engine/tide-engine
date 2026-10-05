@@ -81,6 +81,7 @@ Measured on a release build, 2,400 crates in stacks (an image of 2.5 MB), one th
 | Of the image, what changed | 77% | 7% | 0% |
 
 - The step runs on the tick's threads (`tide_job_start`, `tide/jobs.h`) once 128 bodies are awake, and gives the same world on any number of them: 0.45 ms on one thread and 0.27 on twelve, where every crate is awake.
+- On the web the step takes about 0.6 ms on one thread, and 0.5 shared out over the 24 threads a page gets on a machine of 12 cores, one for each thread its cores run (measured under Node; a tick, 2.1 ms against 1.9 on one thread, and 1.7 on 12 threads). Box2D's workers wait for each stage of a step in a loop, which on the web holds a processor for as long as it goes on, so one that has waited long sleeps there until the next stage (`box2d/TIDE.md`): before that, the same step took 1.3 ms on those 24 threads, and far longer on a machine with anything else to do.
 - The image is every body, shape and contact, about a kilobyte a body, whatever is awake. Box2D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
 - What's left, with everything moving, is mostly that: each chunk of the image that changed gets a page of its own, which the tick before's snapshot can't share.
 - Making C's world from an image, which a rollback does once, takes about half a millisecond.
