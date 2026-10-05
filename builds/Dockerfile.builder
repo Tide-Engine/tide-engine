@@ -21,5 +21,16 @@ RUN set -eu; \
     rm tide-linux-x64.tar.gz SHA256SUMS; \
     /opt/tide/bin/tide version
 ENV PATH=/opt/tide/bin:$PATH TIDE=/opt/tide/bin/tide TIDE_NO_UPDATE_CHECK=1
+# The engine's objects for a web build, which are the same for every game,
+# made once here: each build starts from a copy of them (TIDE_BUILD_WARM) and
+# compiles the game alone. tide keeps them by its version, its compiler and
+# its flags, never by the game's folder.
+RUN set -eu; \
+    mkdir -p /tmp/warm/game /opt/warm/web-release; \
+    printf 'scene Main { }\n' > /tmp/warm/game/game.tide; \
+    tide build /tmp/warm/game --web --release -o /tmp/warm/game.html; \
+    mv /tmp/warm/game/.tide/web-release/engine /opt/warm/web-release/engine; \
+    rm -rf /tmp/warm
+ENV TIDE_BUILD_WARM=/opt/warm
 COPY builder.mjs ./
 CMD ["node", "/builds/builder.mjs"]

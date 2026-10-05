@@ -507,6 +507,7 @@ export function createBuilds({ store, builders, admin, masterKey, tide, url = nu
     // -----------------------------------------------------------------------
 
     async function route(request, response) {
+        if (!URL.canParse(request.url, 'http://service')) return refuse(response, 400, 'that isn\'t an address');
         const path = new URL(request.url, 'http://service').pathname;
         const parts = path.split('/').slice(1);
         const method = request.method;
