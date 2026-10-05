@@ -73,6 +73,7 @@ static void aim_shot(tide_entity shot, float x, float y, float vx, float vy, int
     bullet.damage = 34;
     bullet.knockback = 0;
     bullet.bounces = bounces;
+    bullet.gravity = 0; // These shots fly straight, so the tests' geometry is exact.
     tide_set_Bullet(&world, shot, bullet);
 }
 
@@ -90,17 +91,42 @@ static bool choose(tide_entity target, int sender, int round, int slot)
         tide_game_api.command_sequence(&world, player(sender)) + 1, bytes, size);
 }
 
-static bool rematch(int sender, int match)
+// A command that names the match it was sent in, and no entity.
+static bool match_command(uint32_t id, int sender, int match)
 {
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, sizeof bytes, 0, false};
-    tide_bits_put(&bits, TIDE_COMMAND_ID_Rematch, 16);
+    tide_bits_put(&bits, id, 16);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(match));
     const uint32_t size = tide_bits_end(&bits);
     return tide_game_api.command(&world, player(sender),
         tide_game_api.command_sequence(&world, player(sender)) + 1, bytes, size);
+}
+
+static bool rematch(int sender, int match)
+{
+    return match_command(TIDE_COMMAND_ID_Rematch, sender, match);
+}
+
+static bool practice(int sender, int match)
+{
+    return match_command(TIDE_COMMAND_ID_Practice, sender, match);
+}
+
+static bool to_menu(int sender, int match)
+{
+    return match_command(TIDE_COMMAND_ID_ToMenu, sender, match);
+}
+
+static int shots(void)
+{
+    int count = 0;
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        if (tide_has_Bullet(&world, tide_entity_in_slot(&world.entities, i))) count++;
+    }
+    return count;
 }
 
 TIDE_TEST(duel_fast_shot_hits_thin_wall_before_fighter)
@@ -212,14 +238,212 @@ TIDE_TEST(duel_practice_bot_finishes_round_against_idle_player)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_player_joined(&world, player(0));
     tide_world_set_input(&world, player(0), (Controls){0});
+    tide_world_tick(&world);
+    TIDE_REQUIRE(practice(0, world.Duel.match));
     // Run ordinary practice play in the real arena, with blue providing no
     // input, including the normal countdown and the bot's firing cooldown.
     for (int tick = 0; tick < 1200 && world.Duel.phase != Phase_Draft; tick++)
         tide_world_tick(&world);
+    TIDE_CHECK(!world.Duel.attract);
     TIDE_CHECK(world.Duel.phase == Phase_Draft);
     TIDE_CHECK(world.Duel.draftSide == 0);
     TIDE_CHECK(world.Duel.scoreOrange == 1 && world.Duel.scoreBlue == 0);
     TIDE_CHECK(tide_get_Fighter(&world, world.Duel.blue).health == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_starts_at_the_menu_where_the_fighters_duel_by_themselves)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    tide_world_set_input(&world, player(0), (Controls){0});
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.attract);
+    TIDE_CHECK(world.Duel.phase == Phase_Countdown);
+    // The player is at the menu: blue shoots with no input of theirs, and
+    // the two never mirror each other into a draw that goes on forever.
+    bool blueShot = false;
+    for (int tick = 0; tick < 3000 && world.Duel.scoreBlue + world.Duel.scoreOrange == 0; tick++) {
+        tide_world_tick(&world);
+        blueShot = blueShot || tide_has_Bullet(&world, shot_from(world.Duel.blue));
+    }
+    TIDE_CHECK(blueShot);
+    TIDE_CHECK(world.Duel.scoreBlue + world.Duel.scoreOrange == 1);
+    // The loser's upgrade is picked for it, and a player's pick is refused.
+    TIDE_REQUIRE(world.Duel.phase == Phase_Draft);
+    const int round = world.Duel.round;
+    TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 0));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.round == round);
+    for (int tick = 0; tick < 120 && world.Duel.phase == Phase_Draft; tick++) tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
+
+    // Picking practice starts a match the player plays: blue is theirs again.
+    const int match = world.Duel.match;
+    TIDE_REQUIRE(practice(0, match - 1)); // A click from an earlier menu.
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.attract && world.Duel.match == match);
+    TIDE_REQUIRE(practice(0, match));
+    tide_world_tick(&world);
+    TIDE_CHECK(!world.Duel.attract);
+    TIDE_CHECK(world.Duel.match == match + 1);
+    TIDE_CHECK(world.Duel.scoreBlue == 0 && world.Duel.scoreOrange == 0);
+    TIDE_CHECK(world.Duel.phase == Phase_Countdown);
+    for (int tick = 0; tick < 150 && world.Duel.phase != Phase_Fight; tick++) tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.phase == Phase_Fight);
+    // Before the bot's first shot can reach it, blue has neither fired nor moved.
+    for (int tick = 0; tick < 10; tick++) tide_world_tick(&world);
+    TIDE_CHECK(!tide_has_Bullet(&world, shot_from(world.Duel.blue)));
+    TIDE_CHECK(tide_get_Body(&world, world.Duel.blue).position.x == -360);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_second_player_starts_the_match_and_leaving_returns_to_the_menu)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.attract);
+    const int match = world.Duel.match;
+    tide_world_player_joined(&world, player(1));
+    tide_world_tick(&world);
+    TIDE_CHECK(!world.Duel.attract);
+    TIDE_CHECK(world.Duel.match == match + 1 && world.Duel.phase == Phase_Countdown);
+    TIDE_CHECK(!tide_get_Fighter(&world, world.Duel.orange).bot);
+
+    // Two players have no menu to go back to together.
+    TIDE_REQUIRE(to_menu(0, world.Duel.match));
+    tide_world_tick(&world);
+    TIDE_CHECK(!world.Duel.attract && world.Duel.match == match + 1);
+
+    tide_world_player_left(&world, player(1));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.attract);
+    TIDE_CHECK(world.Duel.match == match + 2);
+    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.orange).bot);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_practice_ends_at_the_menu_when_its_player_says_so)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    tide_world_tick(&world);
+    TIDE_REQUIRE(to_menu(0, world.Duel.match)); // Already there.
+    tide_world_tick(&world);
+    const int match = world.Duel.match;
+    TIDE_REQUIRE(practice(0, match));
+    tide_world_tick(&world);
+    TIDE_REQUIRE(!world.Duel.attract);
+    TIDE_REQUIRE(to_menu(1, world.Duel.match)); // Nobody's player.
+    tide_world_tick(&world);
+    TIDE_CHECK(!world.Duel.attract);
+    TIDE_REQUIRE(to_menu(0, world.Duel.match));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.attract);
+    TIDE_CHECK(world.Duel.match == match + 2);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_menu_duel_starts_over_after_a_finished_match)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    tide_world_tick(&world);
+    const int match = world.Duel.match;
+    world.Duel.phase = Phase_Finished;
+    world.Duel.scoreOrange = 5;
+    world.Duel.timer = 0.1f;
+    TIDE_REQUIRE(rematch(0, match)); // Nobody at the menu asked for one.
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.match == match && world.Duel.phase == Phase_Finished);
+    for (int tick = 0; tick < 10; tick++) tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.match == match + 1);
+    TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.scoreOrange == 0);
+
+    // A match that players finished waits for them.
+    tide_world_player_joined(&world, player(1));
+    tide_world_tick(&world);
+    const int played = world.Duel.match;
+    world.Duel.phase = Phase_Finished;
+    world.Duel.scoreBlue = 5;
+    world.Duel.timer = 0.1f;
+    for (int tick = 0; tick < 30; tick++) tide_world_tick(&world);
+    TIDE_CHECK(world.Duel.match == played && world.Duel.phase == Phase_Finished);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_shots_drop_as_fast_as_their_fighters_build_says)
+{
+    start();
+    tide_entity shot = fire();
+    TIDE_REQUIRE(tide_has_Bullet(&world, shot));
+    const Build build = tide_get_Fighter(&world, world.Duel.blue).build;
+    TIDE_CHECK(build.gravity > 0);
+    TIDE_CHECK(tide_get_Bullet(&world, shot).gravity == build.gravity);
+    // In the open, away from platforms and fighters.
+    place(world.Duel.blue, -400, -150);
+    place(world.Duel.orange, 400, -150);
+    place(shot, -300, 200);
+    Body body = tide_get_Body(&world, shot);
+    body.velocity = tide_f2(300, 0);
+    tide_set_Body(&world, shot, body);
+    for (int tick = 0; tick < 30; tick++) tide_world_tick(&world);
+    TIDE_REQUIRE(tide_has_Bullet(&world, shot));
+    body = tide_get_Body(&world, shot);
+    // Half a second: each tick's speed is the one after its drop.
+    const float dt = 1.0f / 60.0f;
+    float y = 200, speed = 0;
+    for (int tick = 0; tick < 30; tick++) {
+        speed -= build.gravity * dt;
+        y += speed * dt;
+    }
+    TIDE_CHECK(fabsf(body.position.y - y) < 0.01f);
+    TIDE_CHECK(fabsf(body.position.x + 150) < 0.01f);
+    TIDE_CHECK(body.velocity.y < -200);
+
+    // A fighter with no gravity in its build fires shots that fly straight.
+    Fighter blue = tide_get_Fighter(&world, world.Duel.blue);
+    blue.build.gravity = 0;
+    tide_set_Fighter(&world, world.Duel.blue, blue);
+    Bullet old = tide_get_Bullet(&world, shot);
+    old.lifetime = 0;
+    tide_set_Bullet(&world, shot, old);
+    tide_world_tick(&world);
+    TIDE_REQUIRE(shots() == 0);
+    shot = fire();
+    TIDE_REQUIRE(tide_has_Bullet(&world, shot));
+    TIDE_CHECK(tide_get_Bullet(&world, shot).gravity == 0);
+    place(shot, -300, 200);
+    body = tide_get_Body(&world, shot);
+    body.velocity = tide_f2(300, 0);
+    tide_set_Body(&world, shot, body);
+    for (int tick = 0; tick < 30; tick++) tide_world_tick(&world);
+    TIDE_CHECK(tide_get_Body(&world, shot).position.y == 200);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(duel_a_build_remembers_the_cards_it_was_given_in_order)
+{
+    start();
+    world.Duel.phase = Phase_Draft;
+    world.Duel.draftSide = 0;
+    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.blue).build.cards == 0);
+    TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 2));
+    tide_world_tick(&world);
+    const int first = tide_get_Fighter(&world, world.Duel.blue).build.cards;
+    TIDE_CHECK(first >= 1 && first <= 8); // One card: its number, from 1.
+    world.Duel.phase = Phase_Draft;
+    world.Duel.draftSide = 0;
+    TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 0));
+    tide_world_tick(&world);
+    const int both = tide_get_Fighter(&world, world.Duel.blue).build.cards;
+    TIDE_CHECK(both % 16 == first);
+    TIDE_CHECK(both / 16 >= 1 && both / 16 <= 8);
     tide_world_free(&world);
 }
 
