@@ -104,9 +104,11 @@ scene Main { }
 input Controls
 {
     [Clamp(-1, 1)] float move;
-    float2 aim;
-    float2 point;
-    bool pointAim;
+    // Where a fighter points isn't something its player does: what another
+    // machine guesses of these three stays, where the rest is let go
+    [Absolute] float2 aim;
+    [Absolute] float2 point;
+    [Absolute] bool pointAim;
     bool jump;
     bool fire;
     bool block;

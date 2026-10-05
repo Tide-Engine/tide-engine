@@ -136,6 +136,7 @@ tide_e2e_test(net)
 tide_e2e_test(net_no_input)
 tide_e2e_test(net_ended)
 tide_e2e_test(net_join_big) # A world that takes longer to send than the ticks kept
+tide_e2e_test(guess) # Other players' inputs, guessed: their last ones for a while, then let go, but for [Absolute] fields
 tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)

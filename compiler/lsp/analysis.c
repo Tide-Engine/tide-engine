@@ -2804,6 +2804,10 @@ static void describe(const occurrence *o, sb *out)
                                          "input, after repairing NaN and before Sanitize."},
             {"Min", "[Min(x)]", "Keeps this input field at least x, before Sanitize runs."},
             {"Max", "[Max(x)]", "Keeps this input field at most x, before Sanitize runs."},
+            {"Absolute", "[Absolute]", "This input field's default isn't rest, as it says where something is, "
+                                       "like an aim or a pointer's place. A machine guesses another player's input by their "
+                                       "last one for a while, then as if they'd let go, each field back to its default; an "
+                                       "absolute field is kept."},
             {"Snap", "[Snap]", "Views see this field as it is at the latest tick, not blended between the last two: "
                                "for angles that wrap and values that jump."},
             {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
@@ -7167,6 +7171,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Clamp($1)");
             item(&c, "Min", CK_FUNCTION, "[Min(x)]", "Keeps the field at least x, before Sanitize runs.", "Min($1)");
             item(&c, "Max", CK_FUNCTION, "[Max(x)]", "Keeps the field at most x, before Sanitize runs.", "Max($1)");
+            item(&c, "Absolute", CK_FUNCTION, "[Absolute]",
+                 "This input field's default isn't rest, so a guess of another player's input keeps it.",
+                 "Absolute");
             item(&c, "Snap", CK_FUNCTION, "[Snap]", "Views see the field as it is, not blended between ticks.", "Snap");
             item(&c, "Position", CK_FUNCTION, "[Position]", "Provisional: linear tick interpolation with smooth visual correction error.", "Position");
             item(&c, "Rotation", CK_FUNCTION, "[Rotation]", "Provisional: shortest rotation interpolation and smooth correction error: float radians or quaternion.", "Rotation");
