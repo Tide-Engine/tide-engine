@@ -1,0 +1,7 @@
+// expect: 'Fill' changes its 'bytes', so pass it a variable or field
+// expect: store the value in a 'mut var' first
+extern int Fill(out List<byte> bytes);
+singleton Sizes { int image; }
+List<byte> Empty() { return []; }
+scene Main { }
+system Run(mut Sizes sizes) { sizes.image = Fill(Empty()); }

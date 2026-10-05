@@ -1,0 +1,4 @@
+// expect: only a list is an 'out' parameter, and 'name' is string
+// expect: C returns text, as its 'const char *': 'extern string Name(...);'
+scene Main { }
+extern void Name(out string name);
