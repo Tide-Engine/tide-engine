@@ -263,6 +263,14 @@ try {
                 // hosts, and each hears the other's packets: they're in one match.
                 await until(`${frame(0)}.contentWindow.Tide.room.length === 6 && ${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`, `${id}: one room`);
                 await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, `${id}: a match between the two`);
+                // Beside the slider is the least it can make the ping: the
+                // round trip the game that joined measured with nothing
+                // added, which is when the slider's ping starts.
+                await until(`${frame(1)}.contentWindow.Tide.minLag > 0`, `${id}: a round trip measured`);
+                await until('!example.querySelector(".example-lag-min").hidden', `${id}: the least ping shows`);
+                assert.match(await evaluate('example.querySelector(".example-lag-min").textContent'), /^min \d+ ms$/, `${id}: the least ping`);
+                assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.minLag`), 0, `${id}: the host's page has none`);
+                assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.lag === Number(example.querySelector('[data-example-lag]').value)`), true, `${id}: the slider's ping, once the least is known`);
                 // The slider is the ping both pages are told, at once: the
                 // round trip the one that joined is to have (what it then
                 // adds is tide_platform_web_lag's to check, in made-up time).

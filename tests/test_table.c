@@ -226,6 +226,35 @@ TIDE_TEST(table_lanes_are_written_apart)
     tide_entities_free(&entities);
 }
 
+// A row's lanes put back: one that's what's there already leaves its page as
+// it was, a snapshot's too and still hashed, and one that isn't is written.
+TIDE_TEST(table_scatter_writes_what_differs)
+{
+    tide_table t = {0};
+    tide_table snapshot = {0};
+    tide_entities entities = {0};
+    fill(&t, &entities, 40);
+    tide_table_copy(&snapshot, &t, &columns);
+    const uint64_t before = tide_table_hash(1, &t, &columns);
+
+    float value[2];
+    tide_table_gather(&t, &columns, 20, 1, 1, 8, value);
+    tide_table_scatter(&t, &columns, 20, 1, 1, 8, value);
+    TIDE_CHECK(t.pages[1 * 2 + 1] == snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX && tide_table_hash(1, &t, &columns) == before);
+
+    value[1] = 100.0f;
+    tide_table_scatter(&t, &columns, 20, 1, 1, 8, value);
+    TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(position(&t, 20)[0] == 20.0f && position(&t, 20)[1] == 100.0f && position(&t, 21)[1] == -21.0f);
+    TIDE_CHECK(position(&snapshot, 20)[1] == -20.0f && tide_table_hash(1, &snapshot, &columns) == before);
+    TIDE_CHECK(tide_table_hash(1, &t, &columns) != before);
+
+    tide_table_free(&t, &columns);
+    tide_table_free(&snapshot, &columns);
+    tide_entities_free(&entities);
+}
+
 TIDE_TEST(table_packs_and_unpacks)
 {
     tide_table t = {0};

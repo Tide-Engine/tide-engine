@@ -4,6 +4,8 @@ interface GamePage {
     room?: string;
     /** The round trip its player is to have to the match's server, in milliseconds. */
     lag?: number;
+    /** The least that can be: what a round trip took while nothing was added, 0 until the game measured one so. */
+    minLag?: number;
     /** Starts a program that waited for it. Done once its first frame is drawn. */
     start?: () => Promise<void>;
 }
@@ -63,6 +65,7 @@ export function liveExamples(article: HTMLElement) {
         const status = example.querySelector<HTMLElement>('.example-status')!;
         const lag = example.querySelector<HTMLInputElement>('[data-example-lag]');
         const lagText = lag?.parentElement?.querySelector('output');
+        const lagMin = example.querySelector<HTMLElement>('.example-lag-min');
         // One frame is a game of its own. Two are two machines: in a match
         // (the first hosts, the second joins its room), or each as it starts.
         const match = example.dataset.exampleMatch !== undefined;
@@ -78,6 +81,11 @@ export function liveExamples(article: HTMLElement) {
         let frames: HTMLIFrameElement[] = [];
         // The reader stopped it, or it can't run: it waits for the button.
         let held = false;
+        // The least ping written beside the slider, what the last look said
+        // it was, and what looks for it.
+        let least: number | undefined;
+        let other = 0;
+        let looking: ReturnType<typeof setInterval> | undefined;
 
         // What the reader is told, where the game will be. What's only
         // `loading` shows after a moment (app.css), so an example that comes
@@ -96,6 +104,10 @@ export function liveExamples(article: HTMLElement) {
             // Removing the document ends its frame loop and workers too.
             for (const viewport of viewports) viewport.replaceChildren();
             frames = [];
+            clearInterval(looking);
+            least = undefined;
+            other = 0;
+            if (lagMin) lagMin.hidden = true;
             say(message);
             run.textContent = begin;
             run.disabled = false;
@@ -115,7 +127,6 @@ export function liveExamples(article: HTMLElement) {
             if (backend) url.searchParams.set('backend', backend);
             url.searchParams.set('embedded', '');
             for (const [name, value] of Object.entries(options)) url.searchParams.set(name, value);
-            if (latency()) url.searchParams.set('lag', String(latency()));
             return url.href;
         }
 
@@ -193,6 +204,7 @@ export function liveExamples(article: HTMLElement) {
             started = true;
             run.disabled = true;
             stop.disabled = false;
+            if (lag) looking = setInterval(floor, 500);
             say(match ? 'Player 1 is opening a room…' : pair ? 'Loading both players…' : 'Loading example…', true);
             try {
                 const pages = await ready!;
@@ -224,15 +236,37 @@ export function liveExamples(article: HTMLElement) {
             start();
         }
 
-        // The slider changes what's running, and what starts next. Each page
-        // is told the same ping: the one that hosts has no trip to the server
-        // and adds nothing, and the one that joined makes its round trip that.
+        // The slider changes what's running. Each page is told the same ping:
+        // the one that hosts has no trip to the server and adds nothing, and
+        // the one that joined makes its round trip that. A match starts with
+        // none, until the least there can be is known (below).
         function delay() {
             if (lagText) lagText.textContent = `${latency()} ms`;
             for (const frame of frames) {
                 const page = frame && game(frame);
-                if (page) page.lag = latency();
+                if (page) page.lag = least === undefined ? 0 : latency();
             }
+            lagMin?.classList.toggle('limits', least !== undefined && latency() < least);
+        }
+
+        // The least the slider can make the ping, written beside it: the
+        // round trip the game that joined measured while its page added
+        // nothing, which is the ping its player has while the slider is under
+        // it. So a match's first moments are without the slider's ping, which
+        // starts once that's known. It can differ by a millisecond from one
+        // look to the next, so what's written changes once two looks in a row
+        // say the same other number.
+        function floor() {
+            const min = Math.max(0, ...frames.map((frame) => (frame && game(frame)?.minLag) || 0));
+            const said = other;
+            other = min;
+            if (!min || min === least || (least !== undefined && min !== said)) return;
+            least = min;
+            if (lagMin) {
+                lagMin.textContent = `min ${min} ms`;
+                lagMin.hidden = false;
+            }
+            delay();
         }
 
         function halt() {

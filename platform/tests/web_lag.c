@@ -7,7 +7,8 @@
 // for WebRTC here: a room whose other end sends back what it's sent, the
 // network's time later. The program stamps what it sends, reads what came back
 // once a frame, and says the round trip it measured, as a session does through
-// tide/host.h (tide_platform_room_ping).
+// tide/host.h (tide_platform_room_ping). The page says the least a lag can be
+// (`Tide.minLag`): what a trip took while it added nothing.
 //
 // Each step sets what it's about, lets the trips settle, then checks what they
 // take on the whole over the second after. The page's time is made up
@@ -81,6 +82,14 @@ static bool held(const double ms)
 {
     char script[64];
     snprintf(script, sizeof script, "Math.abs(net.held - %.1f) <= 4", ms);
+    return tide_web_eval(script);
+}
+
+// Whether the page says the least a lag can be is about `ms` (`Tide.minLag`).
+static bool least(const double ms)
+{
+    char script[64];
+    snprintf(script, sizeof script, "Math.abs(Tide.minLag - %.1f) <= 4", ms);
     return tide_web_eval(script);
 }
 
@@ -164,11 +173,13 @@ static int frame(void *user, const float seconds)
         break;
     case UNTOLD:
         check(near(trip, rest + 200), "a host that doesn't say what trips take gets the lag on top of them");
+        check(tide_web_eval("Tide.minLag === 0"), "and its page knows no least lag");
         told = true;
         break;
     case TOLD:
         check(near(trip, 200), "told what they take, the page makes them the lag: there and back, the network's time in it");
         check(held((200 - rest) / 2), "half of what it adds is on the way there");
+        check(tide_web_eval("Tide.minLag === 0"), "trips with something added don't say the least a lag can be");
         page_set("Tide.lag", 100);
         break;
     case CHANGED:
@@ -182,6 +193,7 @@ static int frame(void *user, const float seconds)
     case SHORT:
         check(near(trip, rest + SLOWER - NETWORK), "a lag shorter than the trip adds nothing");
         check(held(0), "and holds nothing back");
+        check(least(rest + SLOWER - NETWORK), "with nothing added, the page says the least a lag can be: what a trip takes");
         // The same page hosts a room, still told to lag: the other end is the player who joined
         network.close(network.self);
         page_set("net.real", NETWORK);
@@ -196,6 +208,7 @@ static int frame(void *user, const float seconds)
     default:
         check(near(trip, rest), "a page that hosts adds nothing: its machine runs the server");
         check(held(0), "and holds nothing back");
+        check(tide_web_eval("Tide.minLag === 0"), "nor has a least lag");
         break;
     }
     step++;
