@@ -570,7 +570,7 @@ Implemented, awaiting approval:
   - A match singleton's, as the match starts, from the match's seed and which field it is.
   - In the local world there's no seed: a local component's is seeded from its entity's handle, a local singleton's from which field it is, and a `local Random` field of a match component from the match entity's handle. They're the same every run.
   - A generator code sets to 0 later isn't seeded again.
-- **`Time.seed`** is the match's seed: an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`). It's a field of `Time`, so it's the world's: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks) it's 0, so a run repeats exactly.
+- **`Time.seed`** is the match's seed: an `int` from 0 to 2147483647. The server picks it as it starts a match, from the system's random number generator, which its host gives it (`tide_session_desc.entropy`; the standard host passes `tide_platform_entropy`, but in a run with no window: `--capture`, `--frames`, `--script`). It's a field of `Time`, so it's the world's: a joiner gets it with the world, snapshots, the hash, host migration and hot reload carry it, and clients never send it. A player who starts the match itself to have something to build the server's world from (`tide_game.pure_start`) is told the seed with how the match started. Where no host gives entropy (`tide_world_init`, tests, benchmarks, the standard host's runs with no window) it's 0, so a run repeats exactly.
 - **A game that uses none of it is what it was.** `Time` only has `seed` in a game that reads it or has a `Random` in the match's components or singletons, and only such a game's header has `tide_world_start_seeded(w, dt, start, seed)` and includes `tide/random.h`. Other games' worlds, hashes, headers and traffic don't change. A game that only rolls in local state has no seed in its match either.
 - **Hot reload**: a `Random` field is a struct with a `long`, so its state carries over by name like any field. One a reload adds starts at 0 on the entities that are there already, like any new field at its default: they roll alike until they're spawned again.
 - **Every player can read the seed** until scenes hide state from players (see Scenes): it's in the world, which every machine has whole.
@@ -875,8 +875,9 @@ system Advance(mut Match match)
 - `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, enums, text, entities and players) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 - An element is a copy, as with C#'s List of structs: `items[i].count = 1` is an error that says to take it out, change it and put it back. A `mut` parameter or a mut method can't change an element in place either.
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.
-- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead), and not lists, or structs with lists in them, yet.
-- Components, singletons, structs and events can hold lists; inputs can't.
+- Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead).
+- Components, singletons, structs and events can hold lists; inputs can't. A struct that holds a list, a map or text is a value like any other: a field of a component, a singleton, an event or another struct, a local, a parameter. Copying it copies what it holds.
+- What isn't supported yet is one inside another's elements: a list can't hold lists, maps, sets or grids (`List<List<int>>`), nor a struct that has a list, a map or a set in it, at any depth (`List<Bag>` where `Bag` has a `List<int>`). A list of structs that hold text is fine. The errors say which field is in the way, and what to write instead: one flat list with where each part starts (and how many it has), or a component on an entity of its own for each inner list, held as a `List<Entity>`.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt` or `Clear`), can't end the loop, wait, spawn or send, and so on.
@@ -885,7 +886,7 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, and lists of maps.
+- Lists of lists, lists of maps, and lists of structs that hold either.
 - Searching with a condition, and sorting by a key.
 - Fixed-size arrays inside components, which need no heap.
 
@@ -902,7 +903,7 @@ system Advance(mut Match match)
 
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
-- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps or structs holding them.
+- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
 - A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
@@ -915,7 +916,7 @@ system Advance(mut Match match)
 
 - Map literals, `[1: "a", 2: "b"]`.
 - Struct keys, and keys by several values.
-- Maps of maps, and maps in lists.
+- Maps of maps or of lists, maps in lists, and structs that hold any of them as a list's elements or a map's values.
 
 ## Grids
 
@@ -1152,7 +1153,7 @@ Implemented, awaiting approval:
   - **Gamepad:** `connected`; `leftStick` and `rightStick` (`float2`); `leftTrigger` and `rightTrigger` (`float`, 0 to 1); face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`); `dpad.up` and the other directions; `leftShoulder`, `rightShoulder`, `start` and `select`.
   - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers, as Unity's. A `Touch` has `press` (a button: `.down` when the finger touched, Unity's Began, and `.up` when it lifted, Ended), `id` (Unity's `touchId`: the same while the finger touches, a new one for each touch), and `position`, `delta` and `startPosition` (`float2`). A finger keeps its slot while it touches. `primaryTouch` is the finger that touched while no other was the primary one, until it lifts. A finger that touches and lifts between two samples reads as held for one, so no tap is lost. A finger is never the mouse, as in Unity's Input System.
   - **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last, as Unity's `Pointer.current`. Code that reads it works with a mouse and a finger alike.
-  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left. `scroll.y` is positive when scrolling away from the user.
+  - **Axes follow Unity:** `y` is positive up for sticks, the mouse, touches and the pointer. Their positions are in window pixels from the bottom left; in a view, `Screen.Flip` gives them from the top left, as the screen and the GUI count (see GUI). `scroll.y` is positive when scrolling away from the user.
 
 ```csharp
 input PlayerInput
@@ -1461,7 +1462,7 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; after `Draw2D.Screen()` they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
-  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Flip device positions' bottom-left `y` using `Screen.height - devices.pointer.position.y`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
+  - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Device positions count from the bottom left, so they go through `Screen.Flip` first (see GUI, Provisional): `Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position))`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
   - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` supplies only `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below).
@@ -1580,7 +1581,16 @@ view DrawHud(Arena arena)
 - `Screen.width` and `Screen.height` are the window's size.
 - The widgets: `Label`, `Button`, `Toggle`, `Slider`, `IntSlider`, `TextField`, `IntField`, `FloatField`, `Float2Field`, `Float3Field`, `Float4Field`, `ColorField` and `Space`, and the containers `Horizontal`, `Vertical`, `Area` and `Modal`.
 - `GUILayout.Modal(anchor, mut bool open) { ... }` is a panel over the whole screen while `open` is true, like a pause menu. While it's up, it has the focus, the widgets outside it don't work, the game and views get nothing from the devices, and back (Escape or the east button) closes it.
-- **Claims:** a view with widgets of its own, drawn with `Draw2D` or a C library's, says what they're using: `GUI.ClaimPointer()` and `GUI.ClaimKeyboard()`. What's claimed is hidden from the input's `Sample` and from the other views, as what the GUI uses is, and the view that claimed it goes on reading it.
+- **Controls:** a view's own widgets are controls. `GUI.Control(rect)` is a widget the view draws itself, however it likes: the GUI handles its input, and draws nothing for it, so showing that it's hovered or has the focus is the view's. It returns a small built-in value that says whether the rect is hovered, held, focused and clicked.
+  - It takes the pointer for its rect by itself, as the GUI's own widgets do: a press on it never reaches the input's `Sample` or the other views, from the frame it lands in.
+  - It joins Tab and Shift+Tab, arrow, d-pad and left stick navigation alongside the built-in widgets, in the order they're called. Enter, Space and the gamepad's south button click it.
+  - `GUI.Disabled(...) { }` and modals stop it like any widget.
+  - What a view draws is under the GUI's own widgets, and under a modal's dim, since the GUI draws last.
+- **Themes:** the GUI stays bare: one look, and a simple theme for it. `GUITheme` is a built-in struct of the colors the GUI's widgets use and their corners' radius, and nothing else: no styles for single widgets, no text sizes, no fonts. Its defaults are the look the widgets have without one, so a theme names only what it changes, and a game that sets none looks as it always did.
+  - `GUI.Theme(theme) { ... }` wraps a block: its widgets have the theme, and the look it found is back when the block ends. `GUI.SetTheme(theme)` stays for the widgets that follow, in this view and the ones after it, until it's set again or the frame ends. Every frame starts from the defaults. It's the rule for every setting of a frame with two forms, `Draw`'s too: the plain name around a block, and `Set` for what follows.
+  - Round corners are `Draw2D`'s round rects.
+  - The stats overlay and the debug views always keep their own look.
+- **Claims:** a view with widgets that read the devices themselves, like a C library's, says what they're using: `GUI.ClaimPointer()` and `GUI.ClaimKeyboard()`. What's claimed is hidden from the input's `Sample` and from the other views, as what the GUI uses is, and the view that claimed it goes on reading it.
 - A claim lasts one frame. The view makes it again every frame its widget uses the device, as immediate-mode code draws every frame, so a view that stops running leaves nothing claimed.
 - `GUI.ShowKeyboard()` shows a phone's keyboard, as typing into a field does, each frame it's called. It's apart from the keyboard's claim, so a claim for a widget's shortcuts doesn't bring the keyboard up.
 
@@ -1611,7 +1621,40 @@ local singleton Toolbox
     string name;
 }
 
-// A widget of the view's own, in the window's lower left corner
+local singleton Hand
+{
+    int picked = -1;
+}
+
+local singleton Lobby
+{
+    string code;
+}
+
+// A card the view draws itself: the GUI says what the player does with it
+view Cards(mut Hand hand)
+{
+    Draw2D.Screen();
+    for (var slot = 0; slot < 3; slot++)
+    {
+        var rect = Rect(40 + slot * 220, 200, 200, 280);
+        var card = GUI.Control(rect);
+        var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        Draw2D.RoundRect(center, float2(rect.width, rect.height), 18, card.focused || card.hovered ? Color.white : Color.gray);
+        if (card.clicked) hand.picked = slot;
+    }
+}
+
+// The GUI's own widgets, with a look that names what it changes
+view Join(mut Lobby lobby)
+{
+    GUI.Theme(GUITheme { field = Color(0.1, 0.12, 0.2), accent = Color.cyan, radius = 10 })
+    {
+        GUI.TextField(Rect(40, 500, 240, 36), "", lobby.code);
+    }
+}
+
+// A library's widget, which reads the devices itself, in the window's lower left corner
 view Tools(Devices devices, mut Toolbox box)
 {
     var pointer = devices.pointer;
@@ -1636,6 +1679,7 @@ Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
 - `Rect(x, y, width, height)` is a built-in value type measured from the top left corner, with `y` down, as in Unity's GUI, with `x`, `y`, `width` and `height`. World drawing and the mouse have `y` up. `GUI`'s rects are on the screen, inside an area or not.
+- `Screen.Flip(position)` gives a `float2` position counted from the screen's other edge: `float2(position.x, Screen.height - position.y)`. The devices count pixels from the bottom left with `y` up (see Input), and the screen, the GUI, `Draw2D.Screen()` and the conversion helpers from the top left with `y` down: `Screen.Flip(devices.pointer.position)` is the pointer on the screen. It's its own inverse, so it converts either way. It's the window's whatever target is drawn into, as the devices are, and readable where `Screen.width` is: views and the functions they call, not the match, the input's code or the GPU. The name is a pick, awaiting the owner.
 - `GUILayout.Area(anchor)` places a panel sized to its content at one of nine anchors, the built-in enum `Anchor`, named as Unity's `TextAnchor` (`UpperLeft` to `LowerRight`), 12 pixels from the screen's edges. `GUILayout.Area(rect)` places it at a rect. An anchored area is placed with its size from the frame before, and moves at the end of the frame if the size changed. One too big for the screen starts at its top left margin.
 - `GUILayout` widgets outside any area stack from the screen's top left, across every view. In a vertical container, buttons, toggles, sliders and fields stretch to the widest widget's width. Labelled widgets put their label in a column at least 130 wide, so a column of them lines up.
 - Widgets shrink when there isn't room: an anchored area is at most as wide as the screen less its margins, and a vertical container's widgets are at most as wide as it is. A row that's too wide shrinks each of its widgets by as much as it can give, with the frame before's widths. Fields and sliders shrink down to a small minimum, a labelled widget's label column first, down to the label; buttons give up half their padding; labels and toggles don't shrink.
@@ -1647,6 +1691,8 @@ Implemented, awaiting approval:
 - Widget IDs come from where each call is in the program, mixed with the entity a view runs for, and for a function that draws, with where it's called from. Calls from one place with the same entity count up, in the order they run.
 - Widgets draw as they're called, so, like `Spawn`, they can't be on the right of `&&` or `||` or in a side of `?:`. A statement with several runs them left to right.
 - Navigation: Tab and Shift+Tab move the focus between widgets, in the order they were drawn. The arrows, d-pad and left stick move it once a widget has it, and only start moving it while the game isn't reading the devices, so a HUD's button never takes the d-pad from the player. Enter, Space and the south button press; Escape and the east button let go. With the focus, left and right step a slider or number field.
+- Down and right go on to the next widget and up and left go back, in the order the widgets are called, whatever their places on the screen: three cards side by side are reached with left and right. A slider and a number field keep left and right, to step their value, and the press that brought the focus to one doesn't step it too. From a button, a toggle, a text field or a control, left and right move the focus.
+- `GUI.Navigate()` says a menu is up: the arrows, the d-pad and the left stick can start moving the focus though the match reads the devices, as in a menu over a match that goes on behind it. A view, or a function it calls, calls it every frame the menu is up, as with `GUI.ShowKeyboard()`. Without it, only Tab starts the focus there. Once a widget has the focus, the keyboard and the gamepad are hidden from the input's `Sample`, as ever.
 - Typing: clicking a number field, or pressing Enter on it, starts typing into it with its value selected, so the first character replaces it; typing a number into a focused field starts too. Enter or leaving the field keeps a valid number; Escape keeps the old value.
 - Widgets follow the pointer: the mouse, or a finger. A finger that lifted is nowhere, so nothing stays hovered where it was.
 - Hidden from the input's `Sample` and from views' `Devices`: the keyboard and gamepad while a widget has the focus, and the mouse's buttons and scroll, the pointer's press and the primary touch while the pointer is over a widget or an area, or pressing a widget. While a modal is up, everything is, the movement of the mouse and the pointer too.
@@ -1658,7 +1704,20 @@ Implemented, awaiting approval:
 - The GUI's own use comes first: a view never reads what the GUI is using, whatever it claimed, and the GUI's widgets work under a claim, as they're drawn on top. While a view has the keyboard, Tab and the arrows don't start moving the GUI's focus.
 - Views that claim the same device all go on reading it: which of their widgets is on top is theirs to know. Up to 16 views claim in one frame and go on reading; past that, a claim still hides.
 - A modal is an anchored area over the screen, dimmed. The one drawn last is on top, and only its widgets work. Its first widget takes the focus the frame after it comes up, and back doesn't close it on the frame it came up, so the press that opened it doesn't. `GUI` has no modal at a rect yet.
-- The drawing: a dark panel behind each area and the engine's default font, with no style to change yet.
+- The drawing: a dark panel behind each area and the engine's default font, in the theme's colors.
+- `GUI.Control(Rect rect) -> GUIControl`. `GUIControl` is a built-in struct of four bools, named as a `Devices` button's are:
+  - `hovered`: the pointer is on it, with nothing of the GUI's over it.
+  - `pressed`: the pointer holds it, from a press on it until it lets go, wherever it goes meanwhile, as `devices.mouse.left.pressed` is true while the button is held. A button looks down while it's `pressed` and `hovered`, and a handle follows the pointer while it's `pressed`. It's false in the frame the pointer lets go, and Enter held on it doesn't count.
+  - `focused`: the keyboard and the gamepad are on it.
+  - `clicked`: a press on it let go on it, or Enter, Space or the south button went down while it had the focus. For one frame.
+- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, nothing of it is true, the focus skips it, and the pointer on it is still the GUI's.
+- While a control has the focus, the view that called it goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. The input's `Sample` and the other views read none of it, as with any focused widget. So a menu's own shortcuts (a card's number) work while one of its cards has the focus, and a control can be a text field: its view reads `devices.keyboard.text`. A view that runs once per entity is one view. Under a modal, no view reads anything.
+- Controls made in a loop come from one call, so they're told apart by their turn, as the GUI's own widgets in a loop are: the first one made, the second, and so on. A loop that makes the same ones every frame, in the same order, is all that takes. One that leaves an earlier one out gives its turn to the next: what was hovered, held or focused there goes on with the control that's now in its place.
+- `GUILayout` has no control: `GUI.Control` takes its rect. A laid out one would hand back a rect inside an area, and what a view draws there is under the area's panel, which the GUI draws last; and an anchored area finds its place when it closes, after the control was drawn. It waits until views can draw among the GUI's widgets.
+- `GUITheme`'s fields, all `Color` but the last: `text` (text, and a slider's thumb), `panel` (an area's background), `control` (a button, a toggle's box, a slider's rail, a color field's frame), `hot` (those with the pointer on them), `pressed` (a button held down), `field` (a field to type into), `fieldHot` (one with the pointer on it), `accent` (the focus's outline, a toggle's check, a slider's filled part) and `float radius` (the corners', in pixels; 0, its default, is square). A modal's dim isn't in it, nor how much a disabled widget fades.
+- A part is no rounder than half its smaller side, so a slider's rail and a toggle's box end as a pill and a circle under a big radius. A part drawn around another (the focus's outline) or inside one (a toggle's check) is rounder or less round by how far it is from it. With a radius of 0 the widgets are the plain rects they always were.
+- An area's panel has the theme it opened with, whatever its block sets. `GUI.SetTheme` inside a `GUI.Theme` block ends with the block, which puts back what it found. `GUI.Theme` lays nothing out, like `GUI.Disabled`. Blocks nest up to 32 deep with containers; past that, a `GUI.Theme` changes nothing.
+- `GUI.Theme(theme);` with no block is an error that names `GUI.SetTheme`, and `GUI.SetTheme(theme) { ... }` one that names `GUI.Theme`. Several settings in one block, with commas, are `Draw`'s to bring.
 - `GUI.Disabled(bool disabled) { ... }` grays out the widgets in its block while `disabled` is true, as Unity's `GUI.enabled = false` and `EditorGUI.DisabledScope` do: they're drawn at half opacity, and can't be hovered, pressed, focused or typed into, so Tab skips them. A widget disabled while it's pressed lets go, and a field disabled while it's typed into keeps its old value. The block lays nothing out: its widgets go on in the container around it, `GUI`'s and `GUILayout`'s alike. The mouse on a disabled widget is still the GUI's, hidden from the input's `Sample`. Inside a disabled block, another stays disabled whatever its own `disabled` is. An area's panel doesn't fade, only its widgets.
 - **Clipboard:** `Clipboard.Copy(string text)` puts text on this machine's clipboard, like a "Copy" button next to a room's code. It's a statement of local code, as `Session`'s calls are (views and local handlers, not functions yet, `Sample` or match code), and the host does it after the frame; the frame's last one wins. Up to 255 bytes of UTF-8 for now, cut where a character starts. A browser takes it only shortly after a click or a key, as when a button is pressed. Pasting needs no call: Ctrl+V (Cmd+V on macOS) types what's on the clipboard into the text field that has the focus, but for newlines and tabs, on desktop and the web. Reading the clipboard from code isn't offered, since a browser only gives it to a paste.
 

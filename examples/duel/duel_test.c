@@ -11,6 +11,31 @@ static tide_player_id player(int side)
     return tide_player_from_index(side);
 }
 
+// A card of a build's list, which the world keeps in its heap.
+static Card card_at(const Build build, const int32_t index)
+{
+    return *(const Card *)tide_list_read(&world.heap, build.cards, index, sizeof(Card));
+}
+
+static int32_t card_count(const Build build)
+{
+    return tide_list_read_count(&world.heap, build.cards);
+}
+
+// Whether two builds are the same: their numbers, and the cards they hold. A
+// build's bytes say where its cards are, which is nothing of what they are.
+static bool same_build(Build a, Build b)
+{
+    const int32_t count = card_count(a);
+    if (card_count(b) != count) return false;
+    for (int32_t i = 0; i < count; i++) {
+        if (card_at(a, i) != card_at(b, i)) return false;
+    }
+    a.cards = (tide_list){0};
+    b.cards = (tide_list){0};
+    return memcmp(&a, &b, sizeof a) == 0;
+}
+
 static void start(void)
 {
     tide_world_free(&world);
@@ -533,17 +558,22 @@ TIDE_TEST(duel_a_build_remembers_the_cards_it_was_given_in_order)
 {
     start();
     draft(0);
-    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.blue).build.cards == 0);
+    TIDE_CHECK(card_count(tide_get_Fighter(&world, world.Duel.blue).build) == 0);
+    const Card third = (Card)world.Duel.offers.z;
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 2));
     tide_world_tick(&world);
-    const int first = tide_get_Fighter(&world, world.Duel.blue).build.cards;
-    TIDE_CHECK(first >= 1 && first <= 8); // One card: its number, from 1.
+    Build build = tide_get_Fighter(&world, world.Duel.blue).build;
+    TIDE_REQUIRE(card_count(build) == 1);
+    TIDE_CHECK(card_at(build, 0) == third);
     draft(0);
+    const Card first = (Card)world.Duel.offers.x;
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 0));
     tide_world_tick(&world);
-    const int both = tide_get_Fighter(&world, world.Duel.blue).build.cards;
-    TIDE_CHECK(both % 16 == first);
-    TIDE_CHECK(both / 16 >= 1 && both / 16 <= 8);
+    build = tide_get_Fighter(&world, world.Duel.blue).build;
+    TIDE_REQUIRE(card_count(build) == 2);
+    TIDE_CHECK(card_at(build, 0) == third && card_at(build, 1) == first);
+    // The other fighter's build has none of them
+    TIDE_CHECK(card_count(tide_get_Fighter(&world, world.Duel.orange).build) == 0);
     tide_world_free(&world);
 }
 
@@ -703,11 +733,12 @@ TIDE_TEST(duel_cards_persist_between_rounds_and_reset_on_rematch)
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 0));
     tide_world_tick(&world);
     const Build upgrade = tide_get_Fighter(&world, world.Duel.blue).build;
-    TIDE_CHECK(memcmp(&baseline, &upgrade, sizeof upgrade) != 0);
+    TIDE_CHECK(!same_build(baseline, upgrade));
+    TIDE_CHECK(card_count(baseline) == 0 && card_count(upgrade) == 1);
     TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
     tide_world_tick(&world);
     Fighter fighter = tide_get_Fighter(&world, world.Duel.blue);
-    TIDE_CHECK(memcmp(&upgrade, &fighter.build, sizeof upgrade) == 0);
+    TIDE_CHECK(same_build(upgrade, fighter.build));
     TIDE_CHECK(fighter.health == upgrade.maxHealth);
     TIDE_CHECK(tide_get_Body(&world, world.Duel.blue).position.x == -360);
     world.Duel.scoreBlue = 5;
@@ -718,7 +749,7 @@ TIDE_TEST(duel_cards_persist_between_rounds_and_reset_on_rematch)
     fighter = tide_get_Fighter(&world, world.Duel.blue);
     TIDE_CHECK(world.Duel.match == match + 1);
     TIDE_CHECK(world.Duel.scoreBlue == 0 && world.Duel.scoreOrange == 0);
-    TIDE_CHECK(memcmp(&baseline, &fighter.build, sizeof baseline) == 0);
+    TIDE_CHECK(same_build(baseline, fighter.build));
     TIDE_CHECK(fighter.health == 100);
     tide_world_free(&world);
 }
@@ -770,7 +801,7 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     TIDE_REQUIRE(choose(world.Duel.orange, 1, round, 0)); // The winner cannot draft.
     tide_world_tick(&world);
     const Build after = tide_get_Fighter(&world, world.Duel.blue).build;
-    TIDE_CHECK(memcmp(&before, &after, sizeof before) == 0);
+    TIDE_CHECK(same_build(before, after));
     TIDE_CHECK(world.Duel.phase == Phase_Draft && world.Duel.round == round);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 1));
     tide_world_tick(&world);
