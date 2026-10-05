@@ -1,0 +1,17 @@
+// A library a game imports: it has a Body, a Double and a Hit of its own.
+namespace Lib;
+
+component Body
+{
+    int mass = 7;
+}
+
+component Hit
+{
+    int amount = 3;
+}
+
+int Double(int x)
+{
+    return x * 2;
+}
