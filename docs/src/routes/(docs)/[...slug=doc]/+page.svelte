@@ -24,7 +24,7 @@
 </script>
 
 <svelte:head>
-    <title>{data.title} | Tide</title>
+    <title>{data.title} | Tide Engine</title>
     <meta name="description" content={data.description} />
     <meta property="og:title" content={data.title} />
     <meta property="og:description" content={data.description} />

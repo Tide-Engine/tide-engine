@@ -12,12 +12,15 @@
     --divider: #e2e2e3;
     --border: #c9c9ce;
 
-    /* Tide's colors: the demo's amber. */
+    /* Tide's colors: the demo's amber. --brand-fill is the logo's own, for
+       what's filled with it and for the name beside it; it's too light on
+       white for text that's read, so links there are darker. */
     --brand-1: #b45309;
     --brand-2: #c2600c;
-    --brand-3: #b45309;
+    --brand-fill: #f59e0b;
+    --brand-fill-hover: #fbbf24;
     --brand-soft: rgba(217, 119, 6, 0.14);
-    --brand-text: #ffffff;
+    --brand-text: #1b1b1f;
 
     --code-bg: #f6f6f7;
     --code-inline-bg: rgba(142, 150, 170, 0.14);
@@ -59,9 +62,7 @@
 
     --brand-1: #fbbf24;
     --brand-2: #f59e0b;
-    --brand-3: #b45309;
     --brand-soft: rgba(251, 191, 36, 0.16);
-    --brand-text: #1b1b1f;
 
     --code-bg: #161618;
     --code-inline-bg: rgba(101, 117, 133, 0.16);
