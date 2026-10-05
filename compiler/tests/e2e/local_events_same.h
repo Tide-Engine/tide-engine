@@ -34,13 +34,13 @@
 #define SAME_DELTA_SIZE 91u
 #define SAME_DELTA UINT64_C(0x70DF5F3B0F286804)
 #else
-#define SAME_WORLD_SIZE 0u
-#define SAME_PACKED_SIZE 0u
-#define SAME_PACKED UINT64_C(0)
-#define SAME_WHOLE_SIZE 0u
-#define SAME_WHOLE UINT64_C(0)
-#define SAME_DELTA_SIZE 0u
-#define SAME_DELTA UINT64_C(0)
+#define SAME_WORLD_SIZE 264u
+#define SAME_PACKED_SIZE 506u
+#define SAME_PACKED UINT64_C(0xC786A576CF21D572)
+#define SAME_WHOLE_SIZE 202u
+#define SAME_WHOLE UINT64_C(0x0A7B99342EA721D4)
+#define SAME_DELTA_SIZE 91u
+#define SAME_DELTA UINT64_C(0xE75A4A999F252753)
 #endif
 
 static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)

@@ -45,6 +45,17 @@ A world goes over the network page by page, as a delta: each page is either the 
 
 Views draw the predicted world, blended between its last two ticks (see [Views](../game/views.md#smooth-at-any-tick-rate)). A tick that's run again after a rollback changes the simulation immediately; tagged fields can smooth how the correction appears.
 
+### Predicted and confirmed
+
+Local code tells what's predicted from what the server has confirmed with one word, `verified`. The match can't say it: it's the same on every machine, and has no "confirmed".
+
+- **Before a view's parameter or filter**, it reads the world as of the verified tick: `view HealthBar(Health health, verified Health confirmed)` gets the health this machine predicts, and the one the server confirmed. See [Confirmed state](../game/views.md#confirmed-state).
+- **Before a local handler's event**, it hears the event once its tick is verified: `local event(verified Died died) ShowDeath(...)` runs once, late by as far as this machine runs ahead, and is never wrong. See [`verified` handlers](../game/events.md#verified-handlers).
+
+Without it, a view draws the world as this machine predicts it, and a [local handler](../game/events.md#local-handlers) hears each tick as this machine first ran it.
+
+A local handler hears an event once, though the tick that sent it may run again. A client remembers what each tick it hasn't had confirmed delivered: an event the tick sends again stays silent, one only the corrected tick has is heard then, late, and one the correction removed isn't taken back (see [Once, under rollback](../game/events.md#once-under-rollback)). What's kept for that is beside the world and never in it, so hashes, snapshots and what's sent are the same with local handlers or without.
+
 ### Provisional correction smoothing
 
 **Provisional.** Match fields marked `[Position]` or `[Rotation]` retain local presentation error across a prediction correction and remove it over time. `[Position]` uses additive error for floats and floating-point vectors. `[Rotation]` uses the shortest wrapped angular error for a float in radians, or relative rotational error for a quaternion; the tag also selects shortest-path tick interpolation.
@@ -79,5 +90,5 @@ The server can keep state from players: a [private scene](../game/scenes.md#priv
 
 ## Coming later
 
-- Telling predicted state from verified state in game code, for example to wait until a player's death is verified before showing it.
+- Drawing other players from confirmed state, blended between confirmed ticks rather than predicted ahead: what a view reads `verified` steps at the tick rate for now.
 - Servers with no window and no player of their own, lobbies, and finding matches.
