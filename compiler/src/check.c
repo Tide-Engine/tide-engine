@@ -1743,6 +1743,37 @@ static bool check_io_use(checker *c, const loc at, const char *what)
     return true;
 }
 
+// Frame.dt: how long this machine's frame is, which its host says before each
+// one and its local state keeps. Local code reads it, and the functions it
+// calls, which get the local state from their callers; an async function that
+// reads it is a local task. The match's time is Time's.
+static bool check_frame_time_use(checker *c, const loc at)
+{
+    if (gpu_refuses(c, at, "read Frame.dt", "the view puts what it needs in a component or a singleton, which it takes")) return false;
+    if (c->in_input) {
+        diag_error(at, "%s runs once per tick, not once per frame, so it can't read Frame.dt", input_code(c));
+        diag_note(c->in_sanitize ? "a frame's length is this machine's, and Sanitize runs on every machine"
+                                 : "a view keeps what the input needs in local state, which Sample reads");
+        return false;
+    }
+    decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_error(at, "the match runs the same on every machine, so it can't read Frame.dt");
+        diag_note("a frame's length is this machine's: the match takes 'Time time' and reads 'time.dt', a tick's length");
+        return false;
+    }
+    if (!code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)) {
+        diag_error(at, "Frame.dt can only be read in local code, and in functions it calls");
+        if (c->method) diag_note("methods can't; a function can, like 'void Fade(mut Glow glow) { ... }'");
+        else diag_note("views, local handlers and local tasks read it: it's how long this machine's frame is");
+        return false;
+    }
+    if (!code->frame_time) code->frame_time_at = at;
+    code->frame_time = true;
+    if (code->is_async && code->kind == DECL_FUNCTION) return note_side(code, TASK_LOCAL, at);
+    return true;
+}
+
 // `devices.keyboard.text`: what was typed since the last frame. It's a
 // frame's, as this frame's Devices are, so views read it, and the functions
 // they call. The input never sends it: Sample runs once per tick, not once per
@@ -4164,7 +4195,11 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
-        if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
+        if (str_eq_c(e->object->name, "Frame") && member.kind == TY_ERROR) {
+            diag_note("'Frame.dt' is the seconds since this machine's previous frame started");
+        } else if (str_eq_c(e->object->name, "Frame")) {
+            if (!check_frame_time_use(c, e->at)) return T_ERR;
+        } else if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
             diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
         } else if (str_eq_c(e->object->name, "Cursor")) {
             if (!check_cursor_use(c, e->at, false)) return T_ERR;
@@ -9604,7 +9639,7 @@ static bool is_builtin_name(const str name)
     return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
-        || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
+        || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
@@ -10879,6 +10914,39 @@ static void check_io_calls(const checker *c)
     }
 }
 
+// A function that calls one that reads Frame.dt reads it too: each is handed
+// the local state, so only local code calls them, and an async one is a local
+// task. Reading changes nothing, so a comparison and a parallel loop's steps
+// can.
+static void check_frame_time_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->frame_time || site->from->frame_time) continue;
+            site->from->frame_time = true;
+            site->from->frame_time_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        // An async one is a local task: starting it from the match is reported as that (resolve_tasks)
+        if (!site->to->frame_time || site->to->is_async) continue;
+        if (site->from->kind == DECL_FUNCTION || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' reads Frame.dt, which only local code can read", STR_ARG(site->to->name));
+        diag_note_at(site->to->frame_time_at, "it reads it on line %d, and %s", site->to->frame_time_at.line,
+                     site->from->kind == DECL_METHOD ? "methods can't"
+                     : site->from->kind == DECL_INPUT ? "the input's code runs once per tick"
+                                                      : "the match's time is Time's: 'time.dt' is a tick's length");
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && d->is_async && d->frame_time) note_side(d, TASK_LOCAL, d->frame_time_at);
+    }
+}
+
 // A function that uses a component's or singleton's local fields through a parameter is
 // given them with it, and so is one that passes the parameter on to it. So
 // only code that has them calls it: views, local handlers of Forgotten and
@@ -11255,6 +11323,7 @@ bool check(program *prog)
     check_sends(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);
+    check_frame_time_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);

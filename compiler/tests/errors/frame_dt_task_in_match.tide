@@ -1,0 +1,15 @@
+// expect: 'Burn' uses local state here, and changes the match on line 4, but a task runs in one world
+scene Main { }
+singleton Lamp { float glow = 1; bool lit; }
+async void Burn(mut Lamp lamp)
+{
+    lamp.glow = 0;
+    await Wait.Ticks(1);
+    lamp.glow += Frame.dt;
+}
+system Light(mut Lamp lamp)
+{
+    if (lamp.lit) return;
+    lamp.lit = true;
+    Burn(lamp);
+}

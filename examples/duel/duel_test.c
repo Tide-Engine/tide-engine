@@ -679,3 +679,48 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
     tide_world_free(&world);
 }
+
+// What a machine shows of the duel, as a host runs a frame: its length first,
+// then the views. `w` is NULL where there's no match.
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+
+static void frame(const tide_world *w, const float seconds)
+{
+    static tide_devices devices;
+    tide_local_frame_time(&local, seconds);
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(1280, 720), NULL);
+    tide_frame(w, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+}
+
+TIDE_TEST(duel_effects_move_by_the_frames_length_with_a_match_and_with_none)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_tick(&world);
+    tide_local_init(&local);
+    frame(&world, 0.25f);
+    TIDE_CHECK(local.Fx.dt == 0.05f); // A stall is a step, not a leap
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.dt == 0.008f);
+    for (int tick = 0; tick < 5; tick++) tide_world_tick(&world); // However many ticks a frame saw
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.dt == 0.008f);
+
+    // Joining another machine's match: there's none here meanwhile, and the
+    // frames go on, with the backdrop's clock and the spinner
+    const float now = local.Fx.now;
+    const int32_t frames = local.Fx.frame;
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTING, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL, 0.25f);
+    TIDE_CHECK(local.Fx.frame == frames + 1 && local.Fx.now == now + 0.05f);
+    TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.18f) < 1e-5f); // 0.72 turns a second
+    for (int i = 0; i < 5; i++) frame(NULL, 0.25f);
+    TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.08f) < 1e-5f); // Past a turn, it starts over
+    TIDE_CHECK(draw.count > 0);
+    tide_local_free(&local);
+    tide_world_free(&world);
+}
