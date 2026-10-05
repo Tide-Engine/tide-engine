@@ -1,4 +1,5 @@
-// A small deterministic platform duel. Views and local input mapping are in play.tide.
+// A small deterministic platform duel. This file is the match. What a machine
+// shows of it is in paint.tide (the arena), hud.tide and play.tide (the menus).
 settings { title = "Tide duel"; maxPlayers = 2; hostMigration = true; }
 
 const float ARENA_WIDTH = 960;
@@ -6,7 +7,8 @@ const float ARENA_HEIGHT = 540;
 const int WINS = 5;
 
 enum Phase { Countdown, Fight, Draft, Finished }
-enum Card { Vitality, RapidFire, Scatter, Ricochet, HeavyShot, SwiftFeet }
+enum Card { Vitality, RapidFire, Scatter, Ricochet, HeavyShot, SwiftFeet, Featherweight, Mortar }
+const int CARDS = 8;
 
 struct Build
 {
@@ -16,8 +18,10 @@ struct Build
     float damage = 35;
     float bulletSpeed = 750;
     float knockback = 220;
+    float gravity = 420; // How fast its shots drop
     int pellets = 1;
     int bounces;
+    int cards;           // The upgrades picked this match: 4 bits each, the first lowest
 }
 
 component Body
@@ -41,6 +45,20 @@ component Fighter
     float blockLeft;
     int round;
     int match;
+
+    // What this machine's views remember of it between frames (see paint.tide)
+    local int seenRound;
+    local float shownHealth;
+    local float chip;         // Health the last hits took, which its bar lets go of slowly
+    local float hit;          // A flash that fades
+    local float squash;       // Wider than tall above 0, taller than wide under it
+    local float squashSpeed;
+    local float arrive;       // 0 to 1 as it pops in at a round's start
+    local float recoil;
+    local float air;          // Seconds off the ground
+    local float puff;         // Until the next dust at its feet
+    local float seenCooldown;
+    local float seenBlock;
 }
 
 component Platform { float2 center; float2 half; }
@@ -52,8 +70,17 @@ component Bullet
     float damage;
     float knockback;
     int bounces;
+    float gravity;
     float lifetime = 4;
     int round;
+
+    // Where this machine's views last saw it, for its trail and its bounces
+    local bool seen;
+    local int seenBounces;
+    local int seenSide;
+    local float2 seenAt;
+    local float2 seenVelocity;
+    local float2 trail;
 }
 
 singleton Duel
@@ -65,6 +92,9 @@ singleton Duel
     int scoreBlue;
     int scoreOrange;
     int draftSide;
+    // Nobody plays yet: the fighters duel by themselves behind the menu, until
+    // a player there picks practice or a second player joins.
+    bool attract = true;
     Entity blue;
     Entity orange;
     PlayerID bluePlayer;
@@ -150,21 +180,44 @@ input Controls
 event Hit { float damage; float2 impulse; int round; }
 command ChooseCard { int round; int slot; }
 command Rematch { int match; }
+command Practice { int match; }
+command ToMenu { int match; }
 
-Card Offer(int round, int side, int slot)
+Card CardNumbered(int number)
 {
-    var first = Math.Hash(int3(round, side, 0)) % 6;
-    mut var second = Math.Hash(int3(round, side, 1)) % 6;
-    if (second == first) second = (second + 1) % 6;
-    mut var third = Math.Hash(int3(round, side, 2)) % 6;
-    while (third == first || third == second) third = (third + 1) % 6;
-    var number = slot == 0 ? first : slot == 1 ? second : third;
     if (number == 0) return Card.Vitality;
     if (number == 1) return Card.RapidFire;
     if (number == 2) return Card.Scatter;
     if (number == 3) return Card.Ricochet;
     if (number == 4) return Card.HeavyShot;
-    return Card.SwiftFeet;
+    if (number == 5) return Card.SwiftFeet;
+    if (number == 6) return Card.Featherweight;
+    return Card.Mortar;
+}
+
+Card Offer(int round, int side, int slot)
+{
+    var first = Math.Hash(int3(round, side, 0)) % CARDS;
+    mut var second = Math.Hash(int3(round, side, 1)) % CARDS;
+    if (second == first) second = (second + 1) % CARDS;
+    mut var third = Math.Hash(int3(round, side, 2)) % CARDS;
+    while (third == first || third == second) third = (third + 1) % CARDS;
+    return CardNumbered(slot == 0 ? first : slot == 1 ? second : third);
+}
+
+// How many upgrades a build has, and which the one at `index` was.
+int CardCount(Build build)
+{
+    mut var count = 0;
+    for (var left = build.cards; left > 0; left /= 16) count += 1;
+    return count;
+}
+
+Card CardAt(Build build, int index)
+{
+    mut var left = build.cards;
+    for (var i = 0; i < index; i++) left /= 16;
+    return CardNumbered(left % 16 - 1);
 }
 
 void ApplyCard(mut Build build, Card card)
@@ -184,6 +237,34 @@ void ApplyCard(mut Build build, Card card)
         build.reload *= 1.12;
     }
     if (card == Card.SwiftFeet) build.speed = Math.Min(450, build.speed * 1.15);
+    if (card == Card.Featherweight)
+    {
+        build.gravity *= 0.4;
+        build.bulletSpeed = Math.Min(1200, build.bulletSpeed * 1.15);
+    }
+    if (card == Card.Mortar)
+    {
+        build.gravity *= 1.6;
+        build.damage *= 1.45;
+        build.knockback *= 1.2;
+    }
+    // Seven fit an int, and a match gives a fighter four at most
+    mut var place = 1;
+    for (var i = CardCount(build); i > 0; i--) place *= 16;
+    if (place < 268435456) build.cards += (int(card) + 1) * place;
+}
+
+// Where to aim from `from` so a shot that drops lands on `to`: the flatter of
+// the two arcs, or a lob when it's out of reach.
+float2 Lead(float2 from, float2 to, float speed, float gravity)
+{
+    var offset = to - from;
+    var across = Math.Abs(offset.x);
+    if (gravity < 1 || across < 1) return offset;
+    var fast = speed * speed;
+    var root = fast * fast - gravity * (gravity * across * across + 2 * offset.y * fast);
+    if (root < 0) return float2(Math.Sign(offset.x), 1);
+    return float2(Math.Sign(offset.x), (fast - Math.Sqrt(root)) / (gravity * across));
 }
 
 void NewMatch(mut Duel duel)
@@ -223,6 +304,8 @@ event(PlayerJoined joined) Join(mut Duel duel, mut World world)
     fighter.bot = false;
     world.Set<Fighter>(target, fighter);
     target.Add(Owner { player = joined.player });
+    // Two players start their match. One alone is at the menu.
+    duel.attract = duel.bluePlayer == default || duel.orangePlayer == default;
     NewMatch(duel);
 }
 
@@ -240,12 +323,15 @@ event(PlayerLeft left) Leave(mut Duel duel, mut World world)
     fighter.bot = true;
     world.Set<Fighter>(target, fighter);
     target.Remove(Owner);
+    // Whoever stays is back at the menu, rather than facing a bot at once
+    duel.attract = true;
     NewMatch(duel);
 }
 
 command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fighter, mut Duel duel)
 {
     if (sender != owner.player || duel.phase != Phase.Draft || fighter.side != duel.draftSide) return;
+    if (duel.attract) return;
     if (choice.round != duel.round || choice.slot < 0 || choice.slot > 2) return;
     ApplyCard(fighter.build, Offer(duel.round, fighter.side, choice.slot));
     duel.round += 1;
@@ -255,8 +341,27 @@ command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fi
 
 command(Rematch request, PlayerID sender) PlayAgain(mut Duel duel)
 {
-    if (duel.phase != Phase.Finished || request.match != duel.match) return;
+    if (duel.phase != Phase.Finished || request.match != duel.match || duel.attract) return;
     if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    NewMatch(duel);
+}
+
+command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
+{
+    if (!duel.attract || request.match != duel.match) return;
+    if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    duel.attract = false;
+    NewMatch(duel);
+}
+
+// Practice ends when its player says so. Two players have no menu to go back
+// to together: one who has had enough leaves, and the other is at the menu.
+command(ToMenu request, PlayerID sender) BackToMenu(mut Duel duel)
+{
+    if (duel.attract || request.match != duel.match) return;
+    if (duel.bluePlayer != default && duel.orangePlayer != default) return;
+    if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    duel.attract = true;
     NewMatch(duel);
 }
 
@@ -275,7 +380,13 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
         duel.timer = Math.Max(0, duel.timer - time.dt);
         return;
     }
-    if (duel.phase != Phase.Fight) return;
+    if (duel.phase == Phase.Finished)
+    {
+        // Behind the menu, the next match starts by itself
+        duel.timer = Math.Max(0, duel.timer - time.dt);
+        if (duel.attract && duel.timer <= 0) NewMatch(duel);
+        return;
+    }
     mut var blueAlive = false;
     mut var orangeAlive = false;
     foreach (var entry in fighters)
@@ -296,6 +407,7 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
     if (duel.scoreBlue >= WINS || duel.scoreOrange >= WINS)
     {
         duel.phase = Phase.Finished;
+        duel.timer = 3.5;
         return;
     }
     duel.draftSide = blueAlive ? 1 : 0;
@@ -305,7 +417,8 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
 
 system BotDraft(mut Fighter fighter, mut Duel duel)
 {
-    if (!fighter.bot || duel.phase != Phase.Draft || duel.timer > 0 || fighter.side != duel.draftSide) return;
+    if (!fighter.bot && !duel.attract) return;
+    if (duel.phase != Phase.Draft || duel.timer > 0 || fighter.side != duel.draftSide) return;
     ApplyCard(fighter.build, Offer(duel.round, fighter.side, Math.Hash(duel.round) % 3));
     duel.round += 1;
     duel.phase = Phase.Countdown;
@@ -344,12 +457,19 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
     mut var fire = input.fire;
     mut var block = input.block.down;
     mut var aim = input.pointAim ? input.point - body.position : input.aim;
-    if (fighter.bot)
+    if (fighter.bot || duel.attract)
     {
         var target = world.Get<Body>(fighter.side == 0 ? duel.orange : duel.blue);
         var distance = target.position.x - body.position.x;
-        move = Math.Abs(distance) > 280 ? Math.Sign(distance) : Math.Abs(distance) < 150 ? -Math.Sign(distance) : 0;
-        aim = target.position - body.position;
+        // A bot has moods, a few a second: how near it likes to be, how well
+        // it aims and whether it holds its fire. Each side has its own, so
+        // two bots never mirror each other.
+        var mood = Math.Hash(int3(time.tick / 22, fighter.side, duel.round));
+        var near = 130 + mood % 4 * 30;
+        move = Math.Abs(distance) > near + 130 ? Math.Sign(distance) : Math.Abs(distance) < near ? -Math.Sign(distance) : 0;
+        var lead = Math.Normalize(Lead(body.position, target.position, fighter.build.bulletSpeed, fighter.build.gravity));
+        var off = (float(mood / 4 % 1000) / 1000 - 0.5) * 0.3;
+        aim = float2(lead.x * Math.Cos(off) - lead.y * Math.Sin(off), lead.x * Math.Sin(off) + lead.y * Math.Cos(off));
         // Step off a ledge when it blocks the shot instead of firing into it.
         var muzzle = body.position + Math.Normalize(aim) * (body.radius + 7);
         foreach (var candidate in platforms)
@@ -358,9 +478,9 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
             if (hit.fraction <= 1)
                 move = Math.Abs(distance) > 1 ? Math.Sign(distance) : fighter.side == 0 ? 1 : -1;
         }
-        jump = fighter.grounded && time.tick % 90 == 0;
-        fire = true;
-        block = time.tick % 137 == 0;
+        jump = fighter.grounded && (time.tick + fighter.side * 41) % 90 == 0;
+        fire = mood / 4000 % 5 != 0;
+        block = (time.tick + fighter.side * 59) % 137 == 0;
     }
     if (Math.LengthSq(aim) > 0.001) fighter.aim = Math.Normalize(aim);
     var targetSpeed = move * fighter.build.speed;
@@ -381,7 +501,8 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
         var muzzle = body.position + direction * (body.radius + 7);
         Spawn(Body { position = muzzle, previous = muzzle, velocity = direction * fighter.build.bulletSpeed, radius = 5 },
               Bullet { shooter = this, side = fighter.side, damage = fighter.build.damage,
-                       knockback = fighter.build.knockback, bounces = fighter.build.bounces, round = duel.round });
+                       knockback = fighter.build.knockback, bounces = fighter.build.bounces,
+                       gravity = fighter.build.gravity, round = duel.round });
     }
 }
 
@@ -423,6 +544,7 @@ system MoveBullets(Duel duel, Time time, mut Body body, mut Bullet bullet,
         return;
     }
     bullet.lifetime -= time.dt;
+    body.velocity.y -= bullet.gravity * time.dt;
     mut var remaining = 1.0;
     mut var elapsed = 0.0;
     for (var iteration = 0; iteration < 4; iteration++)
