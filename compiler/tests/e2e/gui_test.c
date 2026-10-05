@@ -229,3 +229,144 @@ TIDE_TEST(gui_disabled_blocks_gray_out_their_widgets)
     TIDE_REQUIRE(click("Connect", 0));
     TIDE_CHECK(local.Menu.connects == 2);
 }
+
+// What the last frame drew just before the `nth` text reading `text`: the box
+// a button's text is written on.
+static const tide_draw_command *box_of(const char *text, const int nth)
+{
+    const tide_draw_command *c = find(text, nth);
+    return c && c > draw.commands ? c - 1 : NULL;
+}
+
+static bool same_color(const tide_color a, const tide_color b)
+{
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+static tide_color color_of(const char *text)
+{
+    const tide_draw_command *c = find(text, 0);
+    return c ? c->color : (tide_color){-1.0f, -1.0f, -1.0f, -1.0f};
+}
+
+TIDE_TEST(gui_themes_wrap_a_block)
+{
+    start();
+    const tide_gui_theme usual = tide_gui_theme_default();
+    const tide_draw_command *themed = box_of("Themed", 0);
+    const tide_draw_command *plain = box_of("Plain", 0);
+    TIDE_REQUIRE(themed && plain);
+    // In the block: the theme's color, and its round corners
+    TIDE_REQUIRE(themed->kind == TIDE_DRAW_SHAPE && themed->shape < draw.shape_count);
+    TIDE_CHECK(same_color(themed->color, (tide_color){1.0f, 0.0f, 0.0f, 1.0f}));
+    TIDE_CHECK(draw.shapes[themed->shape].radius == 6.0f);
+    TIDE_CHECK(same_color(color_of("Themed"), usual.text)); // What it didn't name is as ever
+    // After it: as before
+    TIDE_CHECK(plain->kind == TIDE_DRAW_RECT && same_color(plain->color, usual.control));
+    TIDE_REQUIRE(click("Themed", 0));
+    TIDE_CHECK(local.Menu.themed == 1);
+}
+
+TIDE_TEST(gui_set_themes_hold_for_the_views_after)
+{
+    start();
+    const tide_gui_theme usual = tide_gui_theme_default();
+    const tide_color green = {0.0f, 1.0f, 0.0f, 1.0f};
+    TIDE_CHECK(same_color(color_of("Set here"), usual.text) && same_color(color_of("And after"), usual.text));
+    local.Menu.look = 1;
+    frame();
+    TIDE_CHECK(same_color(color_of("Set here"), green));
+    TIDE_CHECK(same_color(color_of("And after"), green)); // The next view's too
+    TIDE_CHECK(same_color(color_of("Plain"), usual.text)); // Not the ones before it
+    TIDE_CHECK(same_color(color_of("card 0"), (tide_color){1.0f, 1.0f, 1.0f, 1.0f})); // Nor what a view draws itself
+    local.Menu.look = 0;
+    frame(); // Every frame starts from the usual look
+    TIDE_CHECK(same_color(color_of("Set here"), usual.text) && same_color(color_of("And after"), usual.text));
+
+    // A theme names what it changes: the rest of a GUITheme is the usual look.
+    local.Menu.look = 2;
+    frame();
+    tide_gui_theme rounder = usual;
+    rounder.radius = 3.0f;
+    TIDE_CHECK(memcmp(&gui.theme, &rounder, sizeof rounder) == 0);
+}
+
+TIDE_TEST(gui_controls_are_the_views_to_draw)
+{
+    start();
+    TIDE_CHECK(find("card 0", 0) && find("card 1", 0) && find("card 2", 0));
+    TIDE_REQUIRE(point_at("card 1", 0, 4.0f));
+    frame();
+    TIDE_CHECK(find("card 1 hovered", 0) != NULL && find("card 0", 0) != NULL && find("card 2", 0) != NULL);
+    tide_button_set(&devices.mouse.left, true);
+    frame();
+    TIDE_CHECK(find("card 1 pressed", 0) != NULL);
+    TIDE_CHECK(local.Menu.picks == 0); // On release
+    // The press is the GUI's: the game doesn't see it
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(!sampled.mouse.left.pressed && !sampled.pointer.press.pressed);
+    tide_button_set(&devices.mouse.left, false);
+    frame();
+    TIDE_CHECK(local.Menu.picked == 1 && local.Menu.picks == 1); // Made in a loop, and the second one's click is its own
+    TIDE_REQUIRE(click("card 2", 0));
+    TIDE_CHECK(local.Menu.picked == 2 && local.Menu.picks == 2);
+}
+
+TIDE_TEST(gui_controls_take_the_focus_with_the_other_widgets)
+{
+    start();
+    tide_button_set(&devices.keyboard.leftShift, true);
+    press(&devices.keyboard.tab); // Back from nothing: the last widget, which is the third card
+    tide_button_set(&devices.keyboard.leftShift, false);
+    frame();
+    TIDE_CHECK(find("card 2 focused", 0) != NULL);
+    press(&devices.keyboard.leftArrow); // Left and right move it too, in the order they're called
+    TIDE_CHECK(find("card 1 focused", 0) != NULL && find("card 2", 0) != NULL);
+    press(&devices.keyboard.enter);
+    TIDE_CHECK(local.Menu.picked == 1 && local.Menu.picks == 1);
+
+    // The keys the GUI doesn't use are the cards' view's meanwhile, and no other view's.
+    press(&devices.keyboard.digit2);
+    TIDE_CHECK(local.Menu.digits == 1 && local.Menu.others == 0);
+    press(&devices.keyboard.escape); // Lets go
+    TIDE_CHECK(find("card 1", 0) != NULL && find("card 1 focused", 0) == NULL);
+    press(&devices.keyboard.digit2);
+    TIDE_CHECK(local.Menu.digits == 2 && local.Menu.others == 1);
+}
+
+TIDE_TEST(gui_navigate_lets_the_arrows_start_under_a_match)
+{
+    start();
+    // The game reads the devices: the arrows are its own
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    press(&devices.keyboard.upArrow);
+    TIDE_CHECK(find("card 2 focused", 0) == NULL);
+    // ...until a view says a menu is up
+    local.Menu.menuUp = true;
+    frame();
+    sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    press(&devices.keyboard.upArrow); // Back from nothing: the last one
+    TIDE_CHECK(find("card 2 focused", 0) != NULL);
+}
+
+TIDE_TEST(gui_disabled_blocks_stop_controls)
+{
+    start();
+    local.Menu.locked = true;
+    frame();
+    TIDE_REQUIRE(click("card 1", 0));
+    TIDE_CHECK(local.Menu.picks == 0);
+    TIDE_CHECK(find("card 1", 0) != NULL); // Not hovered either, with the mouse on it
+    // A press there still isn't the game's
+    tide_devices sampled = devices;
+    tide_button_set(&sampled.mouse.left, true);
+    tide_gui_hide(&gui, &sampled);
+    TIDE_CHECK(!sampled.mouse.left.pressed);
+    tide_button_set(&devices.keyboard.leftShift, true);
+    press(&devices.keyboard.tab); // The focus skips them: the last widget is the one before the cards
+    tide_button_set(&devices.keyboard.leftShift, false);
+    TIDE_CHECK(find("card 2 focused", 0) == NULL);
+}
