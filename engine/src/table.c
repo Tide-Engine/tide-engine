@@ -84,26 +84,35 @@ static void spare_give(tide_page *p)
     else free(p);
 }
 
-void tide_table_lanes_reserve(const uint32_t bytes)
+bool tide_table_lanes_shared(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                             const uint32_t lanes)
 {
-    (void)bytes; // The copies are pages now, each made as it's needed
+    for (uint32_t k = 0; k < lanes; k++) {
+        if (t->pages[chunk * c->count + first + k]->refs != 1u) return true;
+    }
+    return false;
 }
 
 void tide_table_lanes_begin(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first, const uint32_t lanes,
-                            uint8_t **out)
+                            const bool apart, const uint8_t **in, uint8_t **out)
 {
     const uint32_t rows = tide_table_rows(t, c->shift, chunk);
     for (uint32_t k = 0; k < lanes; k++) {
         tide_page *p = t->pages[chunk * c->count + first + k];
-        if (p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
+        if (!apart && p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
             p->hashed = UINT32_MAX;
-            out[k] = tide_page_data(p);
+            in[k] = out[k] = tide_page_data(p);
             continue;
         }
         tide_page *own = spare_take(p->size);
         *own = (tide_page){1, p->size, p->first, UINT32_MAX, 0, 0};
-        memcpy(tide_page_data(own), tide_page_data(p), (size_t)rows * c->sizes[first + k]);
         out[k] = tide_page_data(own);
+        if (apart) { // The loop writes every row: read where they are
+            in[k] = tide_page_data(p);
+            continue;
+        }
+        memcpy(tide_page_data(own), tide_page_data(p), (size_t)rows * c->sizes[first + k]);
+        in[k] = out[k];
     }
 }
 
@@ -121,8 +130,10 @@ void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t c
             continue;
         }
         memset(out[k] + bytes, 0, own->size - bytes); // Past its rows a page is zeros, and this one was whatever it was
-        tide_page_release(*p, 1);
+        tide_page *was = *p;
         *p = own;
+        if (was->refs == 1u) spare_give(was); // The table's alone, as when it wrote apart from a page of its own
+        else was->refs--;
     }
 }
 
