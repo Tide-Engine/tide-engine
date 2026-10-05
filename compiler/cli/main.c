@@ -51,8 +51,9 @@ static void usage(void)
            "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
            "  --title <title>    the window's title (default: the game's title setting, or the folder's name)\n"
-           "  --stats            show the frame rate, cpu time, ping, bandwidth, memory, draw calls and the slowest\n"
-           "                     systems in a corner, as the game's stats setting does\n"
+           "  --stats            show the stats in a corner, as the game's stats setting does: the frame rate, and at a\n"
+           "                     click or F8 the rest (cpu time, ping, bandwidth, memory, draw calls, the slowest\n"
+           "                     systems). run starts them open\n"
            "  --debug-views      F7 shows the profiler: where a frame's time and a tick's go (as the debugViews setting)\n"
            "  -o <path>          build: where the program goes\n"
            "  --no-open          run --web: serve the page without opening a browser\n"
@@ -266,6 +267,9 @@ int main(const int argc, char **argv)
         }
     }
 
+    // Whoever runs a game with --stats wants to read them: they start open. What a build shows its players
+    // starts as one line.
+    opts.stats_open = run && opts.stats;
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         return 2;

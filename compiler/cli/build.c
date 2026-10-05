@@ -267,9 +267,11 @@ static bool write_main(const char *path, const build_options *opts, const char *
              "\n"
              "int main(int argc, char **argv)\n"
              "{\n"
-             "    tide_run(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv});\n"
+             "    tide_run(&(tide_run_desc){%s, .stats = %s, .stats_open = %s, .debug_views = %s, .argc = argc,\n"
+             "                              .argv = argv});\n"
              "}\n",
-             title, opts->stats ? "true" : "false", opts->debug_views ? "true" : "false");
+             title, opts->stats ? "true" : "false", opts->stats_open ? "true" : "false",
+             opts->debug_views ? "true" : "false");
     return sys_write_text(path, text);
 }
 
@@ -1428,10 +1430,12 @@ static bool build_host(run *r, const char *program)
              "\n"
              "int main(int argc, char **argv)\n"
              "{\n"
-             "    tide_host_run_library(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv},\n"
+             "    tide_host_run_library(&(tide_run_desc){%s, .stats = %s, .stats_open = %s, .debug_views = %s,\n"
+             "                                           .argc = argc, .argv = argv},\n"
              "                          \"%s\");\n"
              "}\n",
-             title, r->b.opts->stats ? "true" : "false", r->b.opts->debug_views ? "true" : "false", dir);
+             title, r->b.opts->stats ? "true" : "false", r->b.opts->stats_open ? "true" : "false",
+             r->b.opts->debug_views ? "true" : "false", dir);
     char *host_c = path_join(r->gen, "host.c");
     file_list objects = {0};
     add_file(&objects, path_join(r->dir, "host.o"));
@@ -1630,10 +1634,12 @@ static bool write_web_main(const run *r)
              "    static tide_host_game game;\n"
              "    game = tide_host_game_api;\n"
              "    game.layout = &tide_game_layout;\n"
-             "    tide_host_run_web(&(tide_run_desc){%s, .stats = %s, .debug_views = %s, .argc = argc, .argv = argv},\n"
+             "    tide_host_run_web(&(tide_run_desc){%s, .stats = %s, .stats_open = %s, .debug_views = %s,\n"
+             "                                       .argc = argc, .argv = argv},\n"
              "                      &game);\n"
              "}\n",
-             title, r->b.opts->stats ? "true" : "false", r->b.opts->debug_views ? "true" : "false");
+             title, r->b.opts->stats ? "true" : "false", r->b.opts->stats_open ? "true" : "false",
+             r->b.opts->debug_views ? "true" : "false");
     char *path = path_join(r->gen, "main.c");
     const bool ok = sys_write_text(path, text);
     free(path);

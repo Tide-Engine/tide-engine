@@ -2034,7 +2034,7 @@ TIDE_TEST(lsp_settings)
     open_document("settings\n{\n    sta$ts = true;\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "bool stats"));
-    TIDE_CHECK(has(hover, "as `tide run --stats` does"));
+    TIDE_CHECK(has(hover, "or F8, opens it to the rest") && has(hover, "`tide run --stats` shows them open"));
     open_document("settings\n{\n    vers$ion = \"1.2.0\";\n}\nscene Main { }\n");
     hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "string version"));

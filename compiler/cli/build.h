@@ -9,7 +9,8 @@ typedef struct build_options {
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
     const char *output; // Where the program goes; NULL for <folder>/build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
-    bool stats;         // Show the stats overlay, whether or not the game's stats setting does
+    bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
+    bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
     bool debug_views;   // The debug views are on, whatever the game's debugViews setting says: F7 shows the profiler
 } build_options;
 

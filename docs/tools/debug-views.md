@@ -68,6 +68,6 @@ Frame  60 fps, longest 21.4 ms   16.67 ms     Tick  180 a second          0.93 m
 - A view that didn't run, like one that reads the match while there's none, has no row.
 - When `Ticks` is most of a frame and many of them run again, clients are paying for prediction: see [Input delay](../multiplayer/matches.md#input-delay).
 
-The [stats](cli.md#stats) are separate, and always shown once asked for: a few numbers in a corner, with the three systems that took longest in the last tick.
+The [stats](cli.md#stats) are separate: a line in a corner once they're asked for, which a click or F8 opens to a few numbers and the three systems that took longest in the last tick.
 
 A C host shows the profiler itself with `tide/profiler.h` (see [C hosts](../c/hosts.md#the-standard-host)).

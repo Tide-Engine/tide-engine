@@ -2330,6 +2330,11 @@ void tide_platform_draw_overlay(const char *text)
     draw_list(&overlay, frame_destination(), true);
 }
 
+void tide_platform_draw_over(const tide_draw_list *list)
+{
+    if (headless || !tide_window_unseen()) draw_list(list, frame_destination(), true);
+}
+
 const uint8_t *tide_platform_frame_pixels(int *width, int *height)
 {
     *width = *height = 0;

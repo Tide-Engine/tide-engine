@@ -360,7 +360,9 @@ view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu)
     Draw2D.SetScreen();
     var slim = Screen.height < 640 && Screen.width >= 720;
     var two = duel.bluePlayer != default && duel.orangePlayer != default;
-    var rect = slim ? Rect(Screen.width - 82, Screen.height - 34, 68, 26)
+    // In the top right corner: on a low screen, under the health bar that's there.
+    // The bottom right one is the engine's, for its stats (the `stats` setting).
+    var rect = slim ? Rect(Screen.width - 82, 37, 64, 24)
                     : Rect(Screen.width - 84, Screen.width < 720 ? 6 : 11, 68, 26);
     var pressed = Pill(rect, UI_INK, false, session.state == SessionState.Connected);
     Draw2D.Text(two ? "LEAVE" : "MENU", Middle(rect), 10, UI_INK, Anchor.MiddleCenter);
@@ -540,9 +542,12 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
             Draw2D.Text(screen.x < 520 ? "It stays for the match." : "You lost the round, so you grow stronger. It stays for the match.",
                   float2(middle.x, heading + (rows ? 22 : 30)), rows ? 11 : 13, UI_MUTED, Anchor.MiddleCenter);
             var last = first.y + stride.y * 2 + size.y * 0.5 + (rows ? 14 : 28);
-            Draw2D.Text(!online ? "Reconnecting. Your match will resume." : waiting ? "Locked in." : rows ? "Tap a card, or press 1, 2 or 3."
-                          : devices.gamepad.connected ? "Pick a card with the d-pad, or click one." : "Click a card, or press 1, 2 or 3.",
-                  float2(middle.x, last), 12, UI_MUTED, Anchor.MiddleCenter);
+            var note = !online ? "Reconnecting. Your match will resume." : waiting ? "Locked in." : rows ? "Tap a card, or press 1, 2 or 3."
+                     : devices.gamepad.connected ? "Pick a card with the d-pad, or click one." : "Click a card, or press 1, 2 or 3.";
+            // Low on the screen, it keeps clear of the bottom right corner, where the stats are
+            var half = Draw2D.MeasureText(note, 12).x * 0.5;
+            var at = last > screen.y - 44 ? Math.Min(middle.x, screen.x - StatsCorner(session) - half) : middle.x;
+            Draw2D.Text(note, float2(at, last), 12, UI_MUTED, Anchor.MiddleCenter);
         }
     }
 }
@@ -649,7 +654,8 @@ view PaintConnecting(Session session, mut DuelMenu menu)
     }
     else
     {
-        var back = Rect(screen.x - 166, screen.y - 37, 152, 30);
+        // After the words, and clear of the bottom right corner, where the stats are
+        var back = Rect(164, screen.y - 37, 152, 30);
         Panel(float2(middle.x, screen.y - 22), float2(screen.x + 4, 46), 0, Color(0.05, 0.065, 0.13, 0.96),
               Color(0.03, 0.04, 0.09, 0.96), 1.5, Color(0.3, 0.39, 0.58));
         Draw2D.Arc(float2(26, screen.y - 22), 8, menu.turn * Math.TAU, Math.TAU * 0.7, 2.6, UI_BLUE);
