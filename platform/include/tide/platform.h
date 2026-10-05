@@ -6,6 +6,7 @@
 #include "tide/devices.h"
 #include "tide/draw.h"
 #include "tide/gui.h"
+#include "tide/io.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
 
@@ -119,6 +120,13 @@ int tide_platform_fps(void);
 // "OpenGL ES 3". The web draws with WebGPU where the browser has it on a GPU,
 // and with WebGL 2 where it doesn't.
 const char *tide_platform_renderer(void);
+
+// Local files, independent of a window or renderer. The app ID identifies
+// saves across versions. Reinitializing the same ID preserves the provider
+// and pending storage operations, including when the game hot reloads.
+// Relative paths are under persistent_data_path; native absolute paths use
+// the operating system's permissions. Browser paths stay in its app's roots.
+const tide_io *tide_platform_io_init(const char *app_id);
 
 // How many draw calls the last list drawn took (tide_platform_draw), the
 // overlay's aside: a run of shapes, of text, or of one mesh's instances is one.

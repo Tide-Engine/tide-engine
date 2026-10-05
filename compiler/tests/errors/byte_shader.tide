@@ -1,0 +1,11 @@
+// expect: the GPU's ints are 32 bits
+scene Main { }
+frag Shade(Vertex vertex, mut Color color)
+{
+    byte value = 255;
+    color = vertex.color * value;
+}
+view DrawIt()
+{
+    Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade);
+}

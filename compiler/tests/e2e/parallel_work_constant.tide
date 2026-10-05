@@ -1,0 +1,21 @@
+scene Main { }
+singleton Pairs { List<int2> values; int count; bool ready; }
+
+system Setup(mut Pairs pairs)
+{
+    if (pairs.ready) return;
+    pairs.ready = true;
+    for (var i = 0; i < pairs.count; i++) pairs.values.Add(int2(i, 0));
+}
+
+system Accumulate(mut Pairs pairs)
+{
+    parallel (var i in pairs.values)
+    {
+        var item = pairs.values[i];
+        mut var total = 0;
+        // A small known loop should keep its cheap work estimate.
+        for (var j = 0; j < 10; j++) total += pairs.values[j].x;
+        pairs.values[i] = int2(item.x, total);
+    }
+}

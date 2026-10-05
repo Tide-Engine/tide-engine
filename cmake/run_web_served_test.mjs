@@ -65,9 +65,11 @@ await new Promise(done => server.listen(0, '127.0.0.1', done));
 // tests run), Chrome has no WebGPU at all. TIDE_WEBGPU_FLAGS has other flags
 // tried in their place, like "--enable-unsafe-webgpu" alone for this
 // machine's GPU.
-const flags = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
-if (process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
-if (process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
+const webgl = new URLSearchParams(query).get('backend') === 'webgl';
+const flags = webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+    : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
+if (!webgl && process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
+if (!webgl && process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
 
 // Absolute, and there already: otherwise Chrome shows a dialog about it, even headless
 const profileDir = resolve(profile);

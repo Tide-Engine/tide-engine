@@ -1145,6 +1145,8 @@ static const char *builtin_type_doc(const type_kind kind)
 {
     switch (kind) {
     case TY_BOOL: return "true or false.";
+    case TY_BYTE: return "An unsigned 8-bit integer, from 0 to 255. Stored as one byte; arithmetic promotes to int. "
+                         "byte(x) keeps the low 8 bits. Converts to int, long and float by itself.";
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
@@ -1679,7 +1681,7 @@ static void describe_default(const type t, sb *out)
 {
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
-    case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
     case TY_STRING: sb_put(out, "Empty text"); break;
@@ -2078,6 +2080,10 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
                       : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
+                      : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
+                      : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
+                      : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
                       : str_eq_c(o->name, "Cursor")    ? "\n\nThe mouse's cursor. `Cursor.Lock()` hides it and keeps it in "
                                                          "place, for a camera that looks around: a view calls it every "
                                                          "frame the game wants the mouse. `Cursor.locked` is whether the "
@@ -2893,6 +2899,9 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
     case OCC_OWNER:
         if (str_eq_c(o->owner, "Devices")) return cdefs_find("tide_devices", out);
         return cdefs_find_header(builtin_draw_owner(o->owner)                                         ? "draw.h"
+                                 : str_eq_c(o->owner, "File") || str_eq_c(o->owner, "Directory")
+                                       || str_eq_c(o->owner, "Path") || str_eq_c(o->owner, "Application")
+                                       || str_eq_c(o->owner, "Storage") ? "io.h"
                                  : str_eq_c(o->owner, "GUI") || str_eq_c(o->owner, "GUILayout")
                                        || str_eq_c(o->owner, "Screen") || str_eq_c(o->owner, "Cursor") ? "gui.h"
                                                                                                     : "math.h",
@@ -3834,7 +3843,7 @@ enum { ST_NAMESPACE, ST_TYPE, ST_STRUCT, ST_CLASS, ST_INTERFACE, ST_PARAMETER, S
 static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
+    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
     case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
         return true;
     default:
@@ -4631,6 +4640,9 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             return;
         }
         if (n == 1 && builtin_owner(base)) {
+            const bool io_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
+                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage");
+            if (io_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
             const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
@@ -4845,7 +4857,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 }
 
 static const char *const value_types[] = {
-    "bool", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
+    "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "RenderTarget",
 };
@@ -4873,7 +4885,7 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET)) continue;
+        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET)) continue;
         if ((t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
@@ -5043,6 +5055,13 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     if (statement) item(c, "Debug", CK_MODULE, "Log prints a line; Assert stops the program when a condition fails", NULL, NULL);
     // Where a statement starts, what a local can be; elsewhere, what makes a value.
     const bool local_code = view || (sc.decl && sc.decl->is_local);
+    item(c, "Path", CK_MODULE, "Pure path operations", NULL, NULL);
+    if (local_code || (routine && sc.decl->kind == DECL_FUNCTION)) {
+        item(c, "File", CK_MODULE, "Reads and writes this machine's files", NULL, NULL);
+        item(c, "Directory", CK_MODULE, "Lists and manages this machine's directories", NULL, NULL);
+        item(c, "Application", CK_MODULE, "Persistent save and temporary cache paths", NULL, NULL);
+        if (sc.decl->is_async) item(c, "Storage", CK_MODULE, "Await persistent storage commits", NULL, NULL);
+    }
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
@@ -6159,7 +6178,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Filter", "DrawList",
-                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "List", "Map", "Set", "Grid2", "Grid3",
+                                           "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
 
@@ -6364,6 +6383,8 @@ static const struct {
     const char *forms[3];
     const char *doc;
 } call_forms[] = {
+    {"byte", {"byte(int value)", "byte(long value)", "byte(float value)"}, "Keeps an integer's low 8 bits. "
+                                                                       "A float first converts with int(x), then keeps its low 8 bits."},
     {"int", {"int(float value)", "int(long value)"}, "From a float: truncates toward zero and saturates at the int range; NaN gives 0. "
                                                    "From a long: its low 32 bits."},
     {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "

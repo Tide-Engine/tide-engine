@@ -1,0 +1,29 @@
+scene Main { }
+
+singleton Pairs
+{
+    List<int2> values;
+    int count;
+    bool ready;
+}
+
+system Setup(mut Pairs pairs)
+{
+    if (pairs.ready) return;
+    pairs.ready = true;
+    for (var i = 0; i < pairs.count; i++) pairs.values.Add(int2(i, 0));
+}
+
+// A dynamic inner bound is not eight iterations: every item visits every
+// other item, as an n-body simulation does.
+system Accumulate(mut Pairs pairs)
+{
+    var n = pairs.values.count;
+    parallel (var i in pairs.values)
+    {
+        var item = pairs.values[i];
+        mut var total = 0;
+        for (var j = 0; j < n; j++) total += pairs.values[j].x;
+        pairs.values[i] = int2(item.x, total);
+    }
+}

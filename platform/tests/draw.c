@@ -12,7 +12,9 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "tide/net.h" // tide_hash
 #include "tide/platform.h"
@@ -1223,17 +1225,119 @@ static void tiles_leave_no_gaps(void)
 }
 
 // ---------------------------------------------------------------------------
-// --bench: frames of many shapes, each rendered offscreen and a pixel read
-// back, which waits for the GPU to finish it, and works in a hidden window or
-// page, where tide_platform_draw draws nothing.
+// --bench: frames of many shapes, rendered offscreen and read back, so it
+// works in a hidden window or page, where tide_platform_draw draws nothing.
+// Recording is timed separately. Rendering includes CPU submission, the GPU
+// and transferring the target's pixels back: it is not a GPU-only timing.
 
 #define BENCH_FRAMES 100
+#define BENCH_WARMUP 20
+
+static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "65536 rects, text every 1024",
+                                   "65536 textured quads", "65536 instances of a cube"};
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube
 static int bench_kind;
 static int bench_frame;
-static double bench_ms;
+static const char *bench_label;
+static FILE *bench_output;
+
+typedef struct bench_samples {
+    double record[BENCH_FRAMES];
+    double render_readback[BENCH_FRAMES];
+    double total[BENCH_FRAMES];
+} bench_samples;
+
+typedef struct bench_timing {
+    double median_ms;
+    double p95_ms;
+} bench_timing;
+
+static bench_samples bench_times;
+
+static int bench_compare(const void *a, const void *b)
+{
+    const double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+static bench_timing bench_summarize(double *ms)
+{
+    qsort(ms, BENCH_FRAMES, sizeof *ms, bench_compare);
+    return (bench_timing){(ms[BENCH_FRAMES / 2 - 1] + ms[BENCH_FRAMES / 2]) / 2.0,
+                         ms[(BENCH_FRAMES * 95 + 99) / 100 - 1]};
+}
+
+static void bench_json_text(FILE *f, const char *text)
+{
+    fputc('"', f);
+    for (const unsigned char *c = (const unsigned char *)text; *c; c++) {
+        if (*c == '"' || *c == '\\') fprintf(f, "\\%c", *c);
+        else if (*c < 0x20) fprintf(f, "\\u%04x", *c);
+        else fputc(*c, f);
+    }
+    fputc('"', f);
+}
+
+static void bench_write_record(const bench_timing recording, const bench_timing rendering, const bench_timing total)
+{
+    FILE *f = bench_output ? bench_output : stdout;
+    char date[32] = "";
+    const time_t now = time(NULL);
+    const struct tm *utc = gmtime(&now);
+    if (utc) strftime(date, sizeof date, "%Y-%m-%dT%H:%M:%SZ", utc);
+#if defined(__wasm__)
+    const char *os = "web", *arch = "wasm32";
+#elif defined(__ANDROID__)
+    const char *os = "android";
+#elif defined(_WIN32)
+    const char *os = "windows";
+#elif defined(__APPLE__)
+    const char *os = "macos";
+#else
+    const char *os = "linux";
+#endif
+#if !defined(__wasm__)
+#if defined(__aarch64__) || defined(_M_ARM64)
+    const char *arch = "arm64";
+#elif defined(__arm__) || defined(_M_ARM)
+    const char *arch = "arm";
+#elif defined(__x86_64__) || defined(_M_X64)
+    const char *arch = "x86_64";
+#elif defined(__i386__) || defined(_M_IX86)
+    const char *arch = "x86";
+#else
+    const char *arch = "unknown";
+#endif
+#endif
+#if defined(__OPTIMIZE__)
+    const char *optimized = "true";
+#else
+    const char *optimized = "false";
+#endif
+    // Supplied when measuring a build: configure-time Git metadata could name
+    // an older revision after commits or edits that did not reconfigure it.
+    const char *revision = getenv("TIDE_BENCH_REVISION");
+    const char *machine = getenv("TIDE_BENCH_MACHINE");
+    fprintf(f, "{\"benchmark\":\"draw\",\"label\":");
+    bench_json_text(f, bench_label);
+    fprintf(f, ",\"date\":\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"optimized\":%s,\"compiler\":", date, os, arch, optimized);
+    bench_json_text(f, __clang_version__);
+    fprintf(f, ",\"revision\":");
+    bench_json_text(f, revision ? revision : "unknown");
+    fprintf(f, ",\"machine\":");
+    bench_json_text(f, machine ? machine : "unknown");
+    fprintf(f, ",\"renderer\":");
+    bench_json_text(f, tide_platform_renderer());
+    fprintf(f, ",\"workload\":");
+    bench_json_text(f, bench_names[bench_kind]);
+    fprintf(f, ",\"count\":%u,\"width\":%d,\"height\":%d,\"warmup\":%d,\"frames\":%d,\"competitive_baseline\":false",
+            bench_kind ? WIDTH * 256u : 0u, (int)screen.x, (int)screen.y, BENCH_WARMUP, BENCH_FRAMES);
+    fprintf(f, ",\"record_ms\":{\"median\":%.6g,\"p95\":%.6g},\"render_readback_ms\":{\"median\":%.6g,\"p95\":%.6g},"
+               "\"total_ms\":{\"median\":%.6g,\"p95\":%.6g}}\n",
+            recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms, total.median_ms, total.p95_ms);
+}
 
 // A cube a unit across, its faces' corners each a color of their own.
 static const tide_vertex3 cube_corners[8] = {
@@ -1272,19 +1376,40 @@ static void bench_scene(void)
 
 static int bench(void)
 {
-    static const char *names[] = {"nothing", "65536 rects", "65536 circles", "65536 rects, text every 1024",
-                                  "65536 textured quads", "65536 instances of a cube"};
-    bench_scene();
     const uint64_t start = tide_time_now_ns();
+    bench_scene();
+    const uint64_t recorded = tide_time_now_ns();
     const tide_float2 point = tide_f2(1, 1);
     uint32_t pixel;
     tide_platform_read_pixels(&list, &point, 1, &pixel);
-    bench_ms += (double)(tide_time_now_ns() - start) / 1e6;
-    if (++bench_frame < BENCH_FRAMES) return TIDE_KEEP_RUNNING;
-    printf("%s: %.2f ms a frame\n", names[bench_kind], bench_ms / BENCH_FRAMES);
+    const uint64_t rendered = tide_time_now_ns();
+    if (bench_frame >= BENCH_WARMUP) {
+        const int at = bench_frame - BENCH_WARMUP;
+        bench_times.record[at] = (double)(recorded - start) / 1e6;
+        bench_times.render_readback[at] = (double)(rendered - recorded) / 1e6;
+        bench_times.total[at] = (double)(rendered - start) / 1e6;
+    }
+    if (++bench_frame < BENCH_WARMUP + BENCH_FRAMES) return TIDE_KEEP_RUNNING;
+    const bench_timing recording = bench_summarize(bench_times.record);
+    const bench_timing rendering = bench_summarize(bench_times.render_readback);
+    const bench_timing total = bench_summarize(bench_times.total);
+    printf("%s (ms, median / p95): record %.3f / %.3f, render + readback %.3f / %.3f, total %.3f / %.3f\n",
+           bench_names[bench_kind], recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms,
+           total.median_ms, total.p95_ms);
+    if (bench_label) bench_write_record(recording, rendering, total);
     bench_frame = 0;
-    bench_ms = 0.0;
-    return ++bench_kind < 6 ? TIDE_KEEP_RUNNING : 0;
+    if (++bench_kind < 6) return TIDE_KEEP_RUNNING;
+    if (bench_output) {
+        const bool failed = ferror(bench_output) != 0;
+        const int closed = fclose(bench_output);
+        bench_output = NULL;
+        if (failed || closed != 0) {
+            fprintf(stderr, "draw: couldn't finish saving benchmark results\n");
+            return 1;
+        }
+        printf("saved as '%s' in " TIDE_BENCH_RESULTS "/draw.jsonl\n", bench_label);
+    }
+    return 0;
 }
 
 static bool benching;
@@ -1334,7 +1459,34 @@ static int frame(void *user, const float seconds)
 
 int main(const int argc, char **argv)
 {
-    benching = argc > 1 && strcmp(argv[1], "--bench") == 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--bench") == 0) benching = true;
+        else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
+        else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
+        else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("usage: tide_platform_draw [--bench [--save <label>]]\n"
+                   "  --bench          20 warmup frames, then 100 measured frames per workload\n"
+                   "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
+                   "On the web: ?bench&save=<label> prints the records.\n"
+                   "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
+            return 0;
+        } else {
+            fprintf(stderr, "draw: unknown option or missing value: '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    if (bench_label && !benching) {
+        fprintf(stderr, "draw: --save needs --bench\n");
+        return 2;
+    }
+    if (benching) {
+        printf("benchmark: %d warmup and %d measured frames per workload; no competitive graphics baseline\n",
+               BENCH_WARMUP, BENCH_FRAMES);
+        if (bench_label) {
+            bench_output = fopen(TIDE_BENCH_RESULTS "/draw.jsonl", "ab");
+            if (!bench_output) printf("couldn't save to " TIDE_BENCH_RESULTS "/draw.jsonl; printing JSONL instead\n");
+        }
+    }
     tide_platform_open(&(tide_window_desc){.title = "draw", .width = WIDTH, .height = HEIGHT, .hidden = true});
     tide_platform_run(frame, NULL);
 }
