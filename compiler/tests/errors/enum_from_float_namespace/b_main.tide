@@ -1,0 +1,4 @@
+// expect: Combat.Stance(...) converts an int, not float
+singleton Match { Combat.Stance stance; float progress; }
+scene Main { }
+system S(mut Match match) { match.stance = Combat.Stance(match.progress); }

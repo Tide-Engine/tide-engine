@@ -29,7 +29,68 @@ input Controls
     Weapon weapon = Weapon.Sword;
 }
 
+// Stored as a byte and as a ushort: a number converts to what fits them.
+enum Voxel : byte { Air, Stone, Water }
+enum Tile : ushort { Grass, Rock }
+
+// Constants: an enum from its number, and a number through an enum.
+const Weapon SPARE = Weapon(1);
+const int WRAPPED = int(Voxel(258)); // Its low 8 bits: 2
+
+// An enum from its number, Weapon(1), as int(weapon) is its number.
+singleton Picks
+{
+    Weapon rolled;
+    Weapon spare = SPARE;
+    Weapon small;
+    Phase odd;      // A number none of Phase's members has, kept as it is
+    int oddValue;
+    int oddCase;
+    Voxel voxel;
+    Voxel wrapped;
+    Tile tile;
+    int wrappedConstant;
+    int cases;
+    string shown;
+}
+
 scene Main { }
+
+Weapon WeaponNumbered(int number) { return Weapon(number); }
+
+system Pick(mut Picks picks, Time time)
+{
+    picks.rolled = WeaponNumbered(time.tick % 2);
+    byte one = 1;
+    picks.small = Weapon(one); // A byte is an int where one goes
+    picks.odd = Phase(3);
+    picks.oddValue = int(picks.odd);
+    switch (picks.odd) // No member's case, so the default's
+    {
+        case Phase.Warmup:
+        case Phase.Playing:
+        case Phase.Over:
+            picks.oddCase = 1;
+            break;
+        default:
+            picks.oddCase = 2;
+            break;
+    }
+    picks.voxel = Voxel(time.tick + 1);
+    picks.wrapped = Voxel(time.tick + 258); // As byte(x): the low 8 bits
+    picks.tile = Tile(65537 - time.tick);   // And a ushort's low 16
+    picks.wrappedConstant = WRAPPED;
+    switch (Weapon(time.tick % 2))
+    {
+        case SPARE:
+            picks.cases += 10;
+            break;
+        case Weapon(0):
+            picks.cases += 1;
+            break;
+    }
+    picks.shown = $"{Phase(5)} {picks.odd} {Voxel(1)} {Voxel(-1)}";
+}
 
 system Advance(mut Match match, Time time)
 {

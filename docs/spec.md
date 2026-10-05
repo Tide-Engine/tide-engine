@@ -703,10 +703,16 @@ system Advance(mut Match match)
 ### Provisional
 
 - `enum Name { A, B = 5, C }` declares an enum. A member without a value is one more than the one before it, and the first is 0. A value is an int known while compiling: a literal, an int constant, or operators on them, worked out as they would be at run time. A comma after the last member is fine. `enum` is only a keyword at the start of a declaration.
-- An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: values still go through `int(...)`.
+- An enum is stored as an int, or as what it says after its name, as in C#: `enum Voxel : byte { ... }` takes one byte (0 to 255) and `: ushort` two (0 to 65535), for grids' cells and other data there's a lot of. A member out of that range is an error that gives the range. Anything else after the colon is an error that lists the three. Only the size changes: a value's number is still `int(...)`, and the value with a number `Voxel(...)`, which keeps the number's low bits (below).
 - Members are always written with their enum: `Phase.Playing`, or `Game.Phase.Playing` from another namespace. In generated C, `Phase.Playing` is `Phase_Playing`, a constant of the type `Phase`: an `int32_t`, or a `uint8_t` or `uint16_t` for `: byte` and `: ushort`.
 - Enums are values, like structs: fields, locals, inputs, and functions' parameters and return values can hold them. A field without a default starts at 0, even if no member has that value, as in C#.
-- `==` and `!=` compare two values of the same enum. `int(phase)` gives a member's value; there's no way from an int to an enum yet.
+- `==` and `!=` compare two values of the same enum.
+- An enum and its number convert both ways, and neither way by itself: `int(phase)` (or `long(phase)`) is a value's number, and `Phase(5)` the value with that number, as `float3(i)` mirrors `int3(f)`. The enum's name is all there is to it: no keyword, and no attribute. An enum in a namespace converts by its qualified name too, `Combat.Stance(2)`.
+- `Phase(...)` takes one int, or a byte, which is an int wherever one goes. A float or a long converts with `int(...)` first, and so does another enum's value: each is an error that says so. A mismatch the other way (`Phase p = 1;`, `int n = phase;`) names the conversion to write.
+- As C#'s cast does, `Phase(n)` keeps a number none of the members has: the value is that number, and `int(...)` gives it back. Nothing checks it, so the conversion costs nothing. The rest of the language takes such a value as it takes a field that started at 0 with no member there: it equals no member, a `switch` on it runs its `default` (or no section), text shows its number, an input or a command that carries one from another machine gets the field's default instead (below, and Commands), and a hot reload that changes the layout carries enums by their member's name, so it goes back to the field's default. Code that needs a member bounds the number first (`Card(hash % CARDS)`), or handles the rest in a `default`.
+- An enum stored as a byte or a ushort keeps the number's low 8 or 16 bits, as `byte(x)` keeps an int's low 8: `Voxel(300)` is `Voxel(44)`, and `Voxel(-1)` is `Voxel(255)`.
+- With a constant number it's a constant: `const Card FIRST = Card(0);`, a field's default, a `case` label.
+- It works in a frag or vert too, where an enum is an int whatever it's stored as: the number itself, cut to its low bits for a byte's or a ushort's enum, so the GPU and the CPU agree.
 - An enum in an input that isn't one of its members, which only a bad client could send, becomes the field's default before `Sanitize`, like a NaN float.
 - `switch` works on ints, longs and enums. A case is an int known while compiling (a literal, an int constant, or operators on them), or one of the enum's members, maybe through a constant of the enum. Labels in a row share a section, `default` handles the rest, and each value appears once.
 - Every section ends with `break;` or `return;` on every path, so none runs into the next, as in C#. Outside a switch, `break` ends a loop (see Loops); anywhere else it's an error.
@@ -716,7 +722,7 @@ system Advance(mut Match match)
 
 ### Open
 
-- Ordering enums (`<`), and turning an int into an enum.
+- Ordering enums (`<`).
 - A warning when a switch on an enum has no `default` and misses a member.
 
 ## Loops
@@ -749,7 +755,7 @@ system Advance(mut Match match)
 
 - Text is UTF-8. Literals can hold any UTF-8 character, and `\"`, `\\` and `\n`.
 - `$"score {score}"` puts values in text. After a value, a colon and a format, as in C#: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. Floats, vectors, quaternions, colors and rects take F, up to F9; ints, longs and int vectors take D (up to D32), X (up to X8, or X16 for a long) and F. The letter can be lowercase. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
-- Text can show numbers, bools, enums (their member's name), vectors and quaternions (`(1, 0.5)`), `Color` (`RGBA(1, 0, 0, 1)`), `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for a temporary handle: see Entities) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, plainly from 1e-7 to 1e21 and with an exponent beyond (`1.5E+21`), the same on every platform: computed exactly, never with the platform's printf.
+- Text can show numbers, bools, enums (their member's name, or their number when no member has it), vectors and quaternions (`(1, 0.5)`), `Color` (`RGBA(1, 0, 0, 1)`), `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for a temporary handle: see Entities) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, plainly from 1e-7 to 1e21 and with an exponent beyond (`1.5E+21`), the same on every platform: computed exactly, never with the platform's printf.
 - Text shows values with fields (structs, components, singletons, events and inputs) as C# shows records: `Stats { hp = 3, speed = 1.5 }`, `Nothing { }`, nested ones inside. Lists show as `[1, 2, 3]`. Text in them is in quotes, `name = "Bob"`, so `""` shows; it isn't escaped. Scenes show their own fields, not the engine's. `Session` shows its `room` last. The device records (`Devices` and the rest) don't show, nor does anything holding a matrix, which text can't show yet; the error names what's in the way.
 - `+` joins text with anything it can show: `"score " + score`, `1 + "st"`. `==` and `!=` compare text byte by byte. There's no `<` for text.
 - `length`, and the methods `Contains`, `StartsWith`, `EndsWith`, `IndexOf` (-1 if it's not there), `Substring(start)` and `Substring(start, length)`, `ToUpper` and `ToLower` (ASCII letters only, for now), `Trim` and `Replace(from, to)`.

@@ -1,0 +1,5 @@
+// expect: Phase(...) converts an int, not long
+enum Phase { Warmup, Playing }
+singleton Match { Phase phase; long total; }
+scene Main { }
+system S(mut Match match) { match.phase = Phase(match.total); }
