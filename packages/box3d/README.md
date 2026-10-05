@@ -81,7 +81,9 @@ Measured on a release build, 2,400 crates in stacks (an image of 3.5 MB, and 1.4
 | The image into the match, and bodies in and out | 0.53 | 0.18 | 0.04 |
 | Keeping and hashing the world | 0.35 | 0.09 | 0.00 |
 | Of the image, what changed | 68% | 10% | 0% |
+| Box3D alone, the same scene in plain C: a step | 1.0 | 0.015 | 0.0002 |
 
+- Box3D alone is its sources as they came, built with its own flags, one thread, no Tide. The package's copy, with its changes and Tide's flags, steps as fast to the hundredth of a millisecond, so everything a tick takes beyond that first row is the package's: 0.75 ms more than Box3D alone with everything moving, 0.35 more with one crate pushed, 0.04 at rest. With little moving that's most of the tick, as the image is written and compared whole, and every body looked at, whatever is awake.
 - The step runs on the tick's threads (`tide_job_start`, `tide/jobs.h`) once 512 bodies are awake, and gives the same world on any number of them: 1.3 ms on one thread and 0.5 on twelve, where every crate is awake. The step alone is quicker shared from a couple of hundred bodies, but a tick whose C shares work out runs its systems on threads too, and under about 500 bodies that costs more than the step saves.
 - The image is every body, shape and contact, about a kilobyte and a half a body, whatever is awake. Box3D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
 - What the package adds to the step is memory moved, not arithmetic: the image is written (3.5 MB), compared with the last one, what changed of it copied into the match and hashed, and each body's place read back into its component (0.4 ms of the 0.53). So it goes by how big the world is, where the step goes by what's awake.
