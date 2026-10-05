@@ -1,0 +1,5 @@
+// expect: 'override' goes before a declaration with code, which replaces the virtual one it names
+// expect: a struct is data, and data isn't replaced: its methods can be
+override struct Stats { float health; }
+
+scene Main { }

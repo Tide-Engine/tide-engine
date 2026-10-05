@@ -9,6 +9,7 @@
 #include "install.h"
 #include "packages.h"
 #include "packages_cmd.h"
+#include "publish.h"
 #include "sys.h"
 #include "toolchain.h"
 #include "upgrade.h"
@@ -39,6 +40,8 @@ static void usage(void)
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
            "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
            "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
+           "  fetch [folder]     download the game's packages from git that aren't on this machine yet, building nothing\n"
+           "  publish [folder]   send this version of the game's source to the build service, which builds it with mods\n"
            "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
            "  upgrade            update tide to the newest version\n"
            "  version            show tide's version and channel, where it's installed, and which compilers it found\n"
@@ -63,8 +66,10 @@ static void usage(void)
            "  --host [port]        a match others can join: in a room, and on a port (7777 by default; not on the web)\n"
            "  --join <code>        the match in the room with this code, like K7QF2M\n"
            "  --connect <address>  the match at an address, like 192.168.1.5 or localhost:7777 (not on the web)\n"
-           "\n"
-           "run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
+           "\n",
+           TIDE_VERSION);
+    // In two parts: C promises a string literal of 4095 characters only
+    printf("run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
            "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
            "  --capture <file.png>  the run's last frame, as a PNG\n"
            "  --frames <n>          the run ends after this many frames\n"
@@ -82,12 +87,14 @@ static void usage(void)
            "//folder a folder in the repository. A folder on this machine is a path, like ../shared.\n"
            "A package that comes with tide is its name alone, and is the version this tide came with.\n"
            "\n"
+           "publish: the game's key is in the environment, as TIDE_GAME_KEY. What's sent is what a build reads from\n"
+           "the game's folder: its .tide files, its C and libraries, and its tide.packages.\n"
+           "\n"
            "upgrade:\n"
            "  --nightly          follow nightly versions from now on\n"
            "  --stable           follow stable versions from now on\n"
            "  --version <v>      install exactly this version\n"
-           "tide says once a day when a newer version is out, unless TIDE_NO_UPDATE_CHECK is set.\n",
-           TIDE_VERSION);
+           "tide says once a day when a newer version is out, unless TIDE_NO_UPDATE_CHECK is set.\n");
 }
 
 // The installation: tide is in <root>/bin.
@@ -173,6 +180,15 @@ int main(const int argc, char **argv)
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
+    if (strcmp(command, "fetch") == 0 || strcmp(command, "publish") == 0) {
+        if (argc > 3 || (argc == 3 && argv[2][0] == '-')) {
+            fprintf(stderr, "tide: %s takes the game's folder, or none for this one\n", command);
+            return 2;
+        }
+        char *folder = path_absolute(argc == 3 ? argv[2] : ".");
+        return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
+    }
+
     if (strcmp(command, "upgrade") == 0) {
         const char *channel = NULL;
         const char *exact = NULL;
@@ -194,8 +210,8 @@ int main(const int argc, char **argv)
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
     if (!run && !build && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
-        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, editors, upgrade and version; see "
-                        "`tide help`\n");
+        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, fetch, publish, editors, upgrade "
+                        "and version; see `tide help`\n");
         return 2;
     }
 

@@ -1,0 +1,10 @@
+// expect: an override is written outside the type, in the package that replaces the method
+// expect: after the type's name, like 'override bool Stats.IsDead() { ... }'
+struct Stats
+{
+    float health = 100;
+
+    override bool IsDead() { return health <= 0; }
+}
+
+scene Main { }

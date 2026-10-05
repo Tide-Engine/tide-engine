@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override vert Combat.Shade(mut BoxVertex vertex)
+{
+    vertex.position.x += 1;
+}

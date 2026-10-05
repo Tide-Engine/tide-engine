@@ -303,6 +303,23 @@ int tide_add(const char *folder, const char *what)
     return add_needed(folder) ? 0 : 1;
 }
 
+int tide_fetch(const char *folder)
+{
+    packages_file game;
+    if (!packages_read(folder, &game, report, NULL)) return 1;
+    packages_free_file(&game);
+    // What the packages need goes in the file first, which downloads each to read what it needs
+    if (!add_needed(folder)) return 1;
+    game_packages packages;
+    const bool ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
+    const int count = packages.count;
+    packages_free(&packages);
+    if (!ok) return 1;
+    if (count == 0) printf("tide: tide.packages lists no packages\n");
+    else printf("tide: the game's %d package%s on this machine\n", count, count == 1 ? " is" : "s are");
+    return 0;
+}
+
 // Whether `name` names the package of `line`: by its own name, its
 // repository's or its folder's, or its source.
 static bool names_line(const char *name, const package_line *line, const char *folder)

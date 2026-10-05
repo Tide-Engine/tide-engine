@@ -322,11 +322,13 @@ static void add_game(const lsp_server *s, path_list *list, const char *folder)
 
 // A line of a manifest: a game and one of its files, or a folder (ending in
 // '/') for every .tide file in it and its subfolders, as tide_add_game lists a
-// game without SOURCES. Games of different manifests are different games.
+// game without SOURCES. A file of a package the game is built with has the
+// package's name after it. Games of different manifests are different games.
 typedef struct manifest_line {
     int manifest;
     const char *game;
     const char *path;
+    const char *package; // NULL for the game's own
 } manifest_line;
 
 typedef struct manifests {
@@ -356,8 +358,10 @@ static void read_manifest(manifests *m, const char *source)
         char *tab = strchr(line, '\t');
         if (tab) {
             *tab = '\0';
+            char *package = strchr(tab + 1, '\t');
+            if (package) *package++ = '\0';
             m->lines = realloc(m->lines, sizeof(manifest_line) * (size_t)(m->line_count + 1));
-            m->lines[m->line_count++] = (manifest_line){m->count, line, tab + 1};
+            m->lines[m->line_count++] = (manifest_line){m->count, line, tab + 1, package && *package ? package : NULL};
         }
         line = next;
     }
@@ -373,6 +377,43 @@ static void free_manifests(manifests *m)
     free(m->sources);
     free(m->texts);
     free(m->lines);
+}
+
+static bool same_game(const manifest_line *a, const manifest_line *b)
+{
+    return a->manifest == b->manifest && strcmp(a->game, b->game) == 0;
+}
+
+// The files of the manifest game `game` is a line of, into `list`, in the
+// order tidec compiles them: each package's, in the order the packages are
+// first named, then the game's own, each by path.
+static void add_manifest_game(const lsp_server *s, path_list *list, const manifests *m, const manifest_line *game)
+{
+    for (int i = 0; i < m->line_count; i++) {
+        const manifest_line *line = &m->lines[i];
+        if (!same_game(line, game) || !line->package) continue;
+        bool named = false;
+        for (int k = 0; k < i && !named; k++) {
+            named = same_game(&m->lines[k], game) && m->lines[k].package && strcmp(m->lines[k].package, line->package) == 0;
+        }
+        if (named) continue;
+        const int start = list->count;
+        for (int k = i; k < m->line_count; k++) {
+            const manifest_line *other = &m->lines[k];
+            if (same_game(other, game) && other->package && strcmp(other->package, line->package) == 0) {
+                add_path_in(list, other->path, line->package);
+            }
+        }
+        if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
+    }
+    const int start = list->count;
+    for (int i = 0; i < m->line_count; i++) {
+        const manifest_line *line = &m->lines[i];
+        if (!same_game(line, game) || line->package) continue;
+        if (is_folder(line->path)) add_folder(s, list, line->path, NULL, false);
+        else add_path(list, line->path);
+    }
+    if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
 }
 
 // The folder of the game that `path` (not in a manifest's game) belongs to,
@@ -446,13 +487,7 @@ static void game_of(const lsp_server *s, const char *path, path_list *list)
     }
 
     if (game) {
-        for (int i = 0; i < m.line_count; i++) {
-            const manifest_line *line = &m.lines[i];
-            if (line->manifest != game->manifest || strcmp(line->game, game->game) != 0) continue;
-            if (is_folder(line->path)) add_folder(s, list, line->path, NULL, false);
-            else add_path(list, line->path);
-        }
-        if (list->count > 0) qsort(list->items, (size_t)list->count, sizeof(char *), compare_paths);
+        add_manifest_game(s, list, &m, game);
     } else {
         char *folder = game_folder(s, path, &m);
         if (folder) add_game(s, list, folder);
@@ -861,11 +896,6 @@ typedef struct symbol_search {
     path_list seen; // Files searched already, with their games
 } symbol_search;
 
-static bool same_game(const manifest_line *a, const manifest_line *b)
-{
-    return a->manifest == b->manifest && strcmp(a->game, b->game) == 0;
-}
-
 // Searches a game's files (`list`, or `alone`, as run_game takes them),
 // unless they were all searched already.
 static void search_game(lsp_server *s, symbol_search *search, path_list *list, char *alone)
@@ -917,13 +947,7 @@ static void workspace_symbols(lsp_server *s, const json *id, const char *query)
         }
         if (!open) continue;
         path_list list = {0};
-        for (int k = i; k < m.line_count; k++) {
-            const manifest_line *line = &m.lines[k];
-            if (!same_game(line, &m.lines[i])) continue;
-            if (is_folder(line->path)) add_folder(s, &list, line->path, NULL, false);
-            else add_path(&list, line->path);
-        }
-        if (list.count > 0) qsort(list.items, (size_t)list.count, sizeof(char *), compare_paths);
+        add_manifest_game(s, &list, &m, &m.lines[i]);
         if (list.count > 0) search_game(s, &search, &list, NULL);
         else free_paths(&list);
     }

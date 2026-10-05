@@ -19,6 +19,9 @@ typedef struct parser {
     VEC(attribute) pending; // Attributes waiting for the next declaration
     VEC(attribute) field_pending; // Attributes waiting for the next field
     bool seen_decl;
+    // Parsing a declaration written after `override`: its name is the one it
+    // replaces, which can be qualified, `Combat.Move` or `Combat.Stats.Hurt`
+    bool overriding;
 } parser;
 
 static token *peek(const parser *p)
@@ -743,10 +746,12 @@ bool attributes_before_field(const token *toks, int i)
         && !is_decl_word(t->text);
 }
 
-// [mut] Type Name(: a method or function, rather than a field or a local.
-static bool at_method(const parser *p)
+// [mut] Type Name(, `from` tokens on: a method or function, rather than a
+// field or a local. With `qualified`, the name can be: `float Combat.Damage(`,
+// an override's, which names what it replaces.
+static bool at_method_from(const parser *p, const int from, const bool qualified)
 {
-    int i = at(p, T_MUT) ? 1 : 0;
+    int i = from + (peek_at(p, from)->kind == T_MUT ? 1 : 0);
     if (peek_at(p, i)->kind != T_IDENT || is_decl_word(peek_at(p, i)->text)) return false; // view Name(...)
     i++;
     while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
@@ -757,7 +762,54 @@ static bool at_method(const parser *p)
         i++;
     }
     if (peek_at(p, i)->kind == T_QUESTION) i++; // int? Find(...)
-    return peek_at(p, i)->kind == T_IDENT && peek_at(p, i + 1)->kind == T_LPAREN;
+    if (peek_at(p, i)->kind != T_IDENT) return false;
+    i++;
+    while (qualified && peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    return peek_at(p, i)->kind == T_LPAREN;
+}
+
+// [mut] Type Name(: a method or function, rather than a field or a local.
+static bool at_method(const parser *p)
+{
+    return at_method_from(p, 0, false);
+}
+
+static bool is_replace_word(const str text)
+{
+    return str_eq_c(text, "virtual") || str_eq_c(text, "override");
+}
+
+static str word_and_space(const token *word);
+static void refuse_replace_word(const token *word, const char *why);
+
+// `virtual` and `override` before a declaration with code, as in C#. Words of
+// their own only there: before a declaration's word (`virtual system`,
+// `override view`, `virtual event(`, `virtual local event(`, `virtual async
+// void`) or a function's or method's type and name (`virtual float Damage(`,
+// `override bool Stats.IsDead(`). Anywhere else they're names like any other,
+// a function's type too (`virtual Make(`). In a type's body (`in_type`), only
+// a method or an operator follows one.
+static bool at_replace_word(const parser *p, const bool in_type)
+{
+    const token *t = peek(p);
+    if (t->kind != T_IDENT || !is_replace_word(t->text)) return false;
+    const token *next = peek_at(p, 1);
+    if (next->kind == T_SYSTEM || next->kind == T_COMPONENT || next->kind == T_SINGLETON) return !in_type;
+    if (next->kind == T_MUT) return true; // virtual mut void Hurt(...)
+    if (next->kind != T_IDENT) return false;
+    const tok_kind after = peek_at(p, 2)->kind;
+    if (str_eq_c(next->text, "operator")) return false; // A type named so, with an operator
+    if (!in_type && after == T_LPAREN) return str_eq_c(next->text, "event") || str_eq_c(next->text, "command"); // virtual event(Hit hit) ...
+    if (!in_type && (is_decl_word(next->text) || str_eq_c(next->text, "async") || is_replace_word(next->text))) {
+        return after == T_IDENT || after == T_LPAREN || after == T_MUT || after == T_SYSTEM || after == T_COMPONENT
+            || after == T_SINGLETON;
+    }
+    // A type and a name, then '(': a function's or a method's. An operator's is `Type operator`.
+    if (after == T_IDENT && str_eq_c(peek_at(p, 2)->text, "operator")) return true;
+    for (int i = 2; peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT; i += 2) {
+        if (peek_at(p, i + 2)->kind == T_IDENT && str_eq_c(peek_at(p, i + 2)->text, "operator")) return true;
+    }
+    return at_method_from(p, 1, true);
 }
 
 // Where recovery can pick up again: a declaration's start. `Type Name(` at
@@ -777,6 +829,13 @@ static bool at_decl_start_or_function(const parser *p, const bool functions)
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LPAREN
         && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
+    // `virtual system ...`, `override float Combat.Damage(...)`. In a type's body a method can be virtual,
+    // so there only a declaration's own word after it starts one
+    if (t->kind == T_IDENT && t->at.col == 1 && is_replace_word(t->text) && at_replace_word(p, false)) {
+        const token *next = peek_at(p, 1);
+        if (functions || next->kind == T_SYSTEM || next->kind == T_COMPONENT || next->kind == T_SINGLETON) return true;
+        if (next->kind == T_IDENT && (is_decl_word(next->text) || str_eq_c(next->text, "async"))) return true;
+    }
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
     if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_SYSTEM && str_eq_c(t->text, "extern")) return true; // extern system
     if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
@@ -1162,6 +1221,25 @@ static decl *new_decl(const decl_kind kind, const token *name)
     return d;
 }
 
+// A declaration's name where it's declared: one word. After `override` it's
+// the name of what the declaration replaces, written as any reference to it
+// is, so it can be qualified: `Combat.Move`, or a method's `Combat.Stats.Hurt`.
+// The declaration is named by the last part, and keeps the whole.
+static decl *new_named_decl(parser *p, const decl_kind kind, const char *what)
+{
+    if (!p->overriding) return new_decl(kind, expect_ident(p, what));
+    const qname q = parse_qname(p, what);
+    decl *d = NEW(decl);
+    d->kind = kind;
+    int dot = q.text.len - 1;
+    while (dot >= 0 && q.text.ptr[dot] != '.') dot--;
+    d->name = (str){q.text.ptr + dot + 1, q.text.len - dot - 1};
+    d->at = q.name_at;
+    d->override_name = q.text;
+    d->override_qual_at = q.at;
+    return d;
+}
+
 // Sample() { ... } inside an input declaration, maybe taking local singletons.
 // The input's own name instead of Sample is the constructor it used to be.
 static void parse_sample(parser *p, decl *d, const token *name)
@@ -1461,15 +1539,17 @@ static decl *parse_method(parser *p, decl *owner)
 {
     const bool is_mut = accept(p, T_MUT);
     const qname ret = parse_decl_type(p, "return type");
-    const token *name = expect_ident(p, owner ? "method name" : "function name");
-    decl *m = new_decl(owner ? DECL_METHOD : DECL_FUNCTION, name);
+    decl *m = new_named_decl(p, owner ? DECL_METHOD : DECL_FUNCTION, owner ? "method name" : "function name");
     m->unit = p->unit;
     m->owner = owner;
     m->is_mut_method = is_mut;
     m->return_type_name = ret.text;
     m->return_type_at = ret.name_at;
     m->return_type_qual_at = ret.at;
-    parse_routine_rest(p, m, name);
+    parse_routine_params(p, m);
+    m->body_at = m->at;
+    m->body = parse_block(p);
+    m->end = m->body->end;
     return m;
 }
 
@@ -1579,14 +1659,40 @@ static decl *parse_data_decl(parser *p, const decl_kind kind)
             advance(p);
             continue;
         }
+        // `virtual bool IsDead() { ... }`: a method another package can replace. Its override is written
+        // outside the type, in that package: `override bool Stats.IsDead() { ... }`
+        const token *virtual = NULL;
+        if (at_replace_word(p, true)) {
+            const token *word = advance(p);
+            if (at_operator(p)) {
+                refuse_replace_word(word, "operators aren't replaced: an operator can call a virtual method, which can be");
+            } else if (str_eq_c(word->text, "override")) {
+                diag_error(word->at, "an override is written outside the type, in the package that replaces the method");
+                diag_note("after the type's name, like 'override bool " STR_FMT ".IsDead() { ... }', where the type's fields "
+                          "are in scope as they are here", STR_ARG(name->text));
+                suggest_replacement(word_and_space(word), "");
+            } else {
+                virtual = word;
+            }
+        } else if (at(p, T_IDENT) && is_replace_word(peek(p)->text) && peek_at(p, 1)->kind == T_IDENT
+                   && peek_at(p, 2)->kind == T_LPAREN
+                   && (str_eq_c(peek_at(p, 1)->text, "Sample") || str_eq_c(peek_at(p, 1)->text, "Sanitize"))) {
+            refuse_replace_word(advance(p), "an input's Sample and Sanitize are the game's own, as its input is");
+            continue;
+        }
         if (at_operator(p)) {
             if (p->recover) RECOVERING(p, vec_push(d->methods, parse_operator(p, d)));
             else vec_push(d->methods, parse_operator(p, d));
             continue;
         }
         if (at_method(p)) {
+            const int before = d->methods.count;
             if (p->recover) RECOVERING(p, vec_push(d->methods, parse_method(p, d)));
             else vec_push(d->methods, parse_method(p, d));
+            if (virtual && d->methods.count > before) {
+                d->methods.items[before]->is_virtual = true;
+                d->methods.items[before]->virtual_at = virtual->at;
+            }
             continue;
         }
         if (p->recover) RECOVERING(p, parse_field(p, d));
@@ -1749,8 +1855,7 @@ static decl *parse_enum(parser *p)
 // Views have the same shape: view Name(Transform trs, with Player) { ... }
 static decl *parse_system(parser *p, const bool is_view)
 {
-    const token *name = expect_ident(p, is_view ? "view name" : "system name");
-    decl *d = new_decl(DECL_SYSTEM, name);
+    decl *d = new_named_decl(p, DECL_SYSTEM, is_view ? "view name" : "system name");
     d->is_view = is_view;
     parse_query_rest(p, d);
     return d;
@@ -1781,8 +1886,7 @@ static decl *parse_extern_system(parser *p)
 // vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
 static decl *parse_shader(parser *p, const bool is_frag)
 {
-    const token *name = expect_ident(p, is_frag ? "frag name" : "vert name");
-    decl *d = new_decl(DECL_SHADER, name);
+    decl *d = new_named_decl(p, DECL_SHADER, is_frag ? "frag name" : "vert name");
     d->is_frag = is_frag;
     d->return_type_name = str_from("void");
     parse_query_rest(p, d);
@@ -1824,8 +1928,7 @@ static decl *parse_handler(parser *p, const bool command)
         sender.name_at = sender_name->at;
     }
     expect(p, T_RPAREN, "')' after the trigger");
-    const token *name = expect_ident(p, "handler name, like 'event(Hit hit) TakeHit(...)'");
-    decl *d = new_decl(DECL_SYSTEM, name);
+    decl *d = new_named_decl(p, DECL_SYSTEM, "handler name, like 'event(Hit hit) TakeHit(...)'");
     d->is_handler = true;
     d->is_command = command;
     vec_push(d->params, trigger);
@@ -1952,6 +2055,79 @@ static void parse_file_header(parser *p, const token *keyword)
     }
 }
 
+// The word and the spaces after it, as source: what editors remove with it.
+static str word_and_space(const token *word)
+{
+    const char *end = word->text.ptr + word->text.len;
+    while (*end == ' ' || *end == '\t') end++;
+    return (str){word->text.ptr, (int)(end - word->text.ptr)};
+}
+
+// `virtual` or `override` where it means nothing: what the words are for, and
+// why this isn't it. Editors offer to remove the word.
+static void refuse_replace_word(const token *word, const char *why)
+{
+    if (str_eq_c(word->text, "virtual")) {
+        diag_error(word->at, "'virtual' goes before a declaration with code, which another package can then replace: a system, "
+                             "a view, a handler, a function, a method, a frag or a vert");
+    } else {
+        diag_error(word->at, "'override' goes before a declaration with code, which replaces the virtual one it names: a "
+                             "system, a view, a handler, a function, a method, a frag or a vert");
+    }
+    diag_note("%s", why);
+    suggest_replacement(word_and_space(word), "");
+}
+
+// What `virtual` or `override` can't go before, though it's a declaration:
+// data, which no package replaces, and what isn't Tide's code. NULL for code.
+static const char *replace_refusal(const parser *p)
+{
+    const token *t = peek(p);
+    if (t->kind == T_COMPONENT) {
+        return "a component is data, and data isn't replaced: a package adds components of its own to the game's entities";
+    }
+    if (t->kind == T_SINGLETON) return "a singleton is data, and data isn't replaced: only code is";
+    if (t->kind == T_IDENT && str_eq_c(t->text, "extern") && peek_at(p, 1)->kind == T_SYSTEM) {
+        return "an extern system's code is C, which Tide can't replace: a system written in Tide can be virtual";
+    }
+    if (t->kind != T_IDENT || peek_at(p, 1)->kind != T_IDENT) return NULL;
+    if (str_eq_c(t->text, "struct")) return "a struct is data, and data isn't replaced: its methods can be, each marked 'virtual'";
+    if (str_eq_c(t->text, "event")) {
+        return "an event is data, and data isn't replaced: its handlers can be, like 'virtual event(Hit hit) TakeHit(...)'";
+    }
+    if (str_eq_c(t->text, "command")) {
+        return "a command is data, and data isn't replaced: its handler can be, like 'virtual command(Buy buy, PlayerID sender) "
+               "OnBuy(...)'";
+    }
+    if (str_eq_c(t->text, "enum")) return "an enum is data, and data isn't replaced: only code is";
+    if (str_eq_c(t->text, "scene")) return "a scene is data, and data isn't replaced: only code is";
+    if (str_eq_c(t->text, "input")) return "the input is data, and the game's own: only code is replaced";
+    if (str_eq_c(t->text, "const")) return "a constant is a value, the same on every machine, with no code to replace";
+    if (str_eq_c(t->text, "extern")) {
+        return "an extern function's code is C, which Tide can't replace: a virtual function can call it, and be replaced";
+    }
+    return NULL;
+}
+
+// `virtual` and `override` on the declaration they were written before.
+static void mark_replace_words(decl *d, const token *virtual, const token *override)
+{
+    if (virtual && override) {
+        diag_error(virtual->at, "an override can't be virtual too: a declaration is replaced once");
+        diag_note("two overrides of one declaration are an error, so nothing could replace this one: drop 'virtual'");
+        suggest_replacement(word_and_space(virtual), "");
+        virtual = NULL;
+    }
+    if (virtual) {
+        d->is_virtual = true;
+        d->virtual_at = virtual->at;
+    }
+    if (override) {
+        d->is_override = true;
+        d->override_at = override->at;
+    }
+}
+
 program *program_new(void)
 {
     return NEW(program);
@@ -1959,7 +2135,7 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
-    parser p = {toks, 0, {0}, recover, NULL, {0}, {0}, false};
+    parser p = {toks, 0, {0}, recover, NULL, {0}, {0}, false, false};
     p.unit = NEW(unit);
     p.unit->src = src;
     vec_push(prog->units, p.unit);
@@ -1975,8 +2151,13 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const token *t = peek(&p);
         // `local` before a declaration: it belongs to this machine, not the match.
         // `async` before a function or an event handler: it runs as a task.
+        // `virtual` before a declaration with code: another package can replace it.
+        // `override` before one: it replaces the virtual declaration it names.
         const token *local = NULL;
         const token *async = NULL;
+        const token *virtual = NULL;
+        const token *override = NULL;
+        p.overriding = false;
         for (;;) {
             const tok_kind after = peek_at(&p, 1)->kind;
             if (!local && t->kind == T_IDENT && str_eq_c(t->text, "local")
@@ -1984,17 +2165,24 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 local = advance(&p);
             } else if (!async && t->kind == T_IDENT && str_eq_c(t->text, "async") && (after == T_IDENT || after == T_MUT)) {
                 async = advance(&p);
+            } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
+                virtual = advance(&p);
+            } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
+                override = advance(&p);
+                p.overriding = true;
             } else {
                 break;
             }
             t = peek(&p);
         }
+        const token *replace_word = virtual ? virtual : override;
         // Contextual keywords: only special at the start of a declaration or a
         // file, so they can still name parameters and locals.
         const bool followed_by_name = peek_at(&p, 1)->kind == T_IDENT;
         if (t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
             if (local) diag_error(local->at, "'local' goes before a declaration, like 'local component Spark { ... }'");
+            if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
             parse_file_header(&p, t);
             continue;
         }
@@ -2006,6 +2194,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         if (t->kind == T_IDENT && str_eq_c(t->text, "settings") && peek_at(&p, 1)->kind == T_LBRACE) {
             advance(&p);
             if (local) diag_error(local->at, "the settings are the whole game's, so they can't be local");
+            if (replace_word) refuse_replace_word(replace_word, "the settings are the game's own, and have no code to replace");
             if (p.pending.count > 0) {
                 diag_error(p.pending.items[0].at, "settings take no attributes");
                 p.pending.count = 0;
@@ -2014,8 +2203,16 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             p.seen_decl = true;
             continue;
         }
+        // Data, constants and C functions aren't replaced: said before the
+        // declaration is read, which then goes as it would without the word
+        const char *refusal = replace_word ? replace_refusal(&p) : NULL;
+        if (refusal) {
+            refuse_replace_word(replace_word, refusal);
+            p.overriding = false;
+            virtual = override = NULL;
+        }
         decl *d;
-        const bool function = at_method(&p);
+        const bool function = at_method_from(&p, 0, p.overriding);
         if (!function) advance(&p);
         if (function) d = parse_method(&p, NULL);
         else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT);
@@ -2047,10 +2244,12 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         }
         else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const' or a function"); // Consumed, so recovery skips it
         d->unit = p.unit;
+        p.overriding = false;
         if (local) {
             d->is_local = true;
             d->local_at = local->at;
         }
+        if (virtual || override) mark_replace_words(d, virtual, override);
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {
             d->is_async = true;
             d->async_at = async->at;

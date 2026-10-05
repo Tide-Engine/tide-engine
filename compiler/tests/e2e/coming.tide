@@ -1,0 +1,29 @@
+// What a player does, and how soon views show it (coming_test.c).
+
+input Pad
+{
+    bool held;
+}
+
+component Walker { }
+
+singleton Meter
+{
+    float x;      // Where the key says, at once: all that's left of the wait is the engine's
+    float walked; // How long it's been held, in seconds: what a character that walks while it's held would have moved
+    int presses;
+}
+
+scene Main { }
+
+event(PlayerJoined joined) Give()
+{
+    Spawn(Walker, Owner { player = joined.player });
+}
+
+system Step(Pad pad, mut Meter meter, Time time, with Walker)
+{
+    meter.x = pad.held ? 100 : 0;
+    if (pad.held) meter.walked += time.dt;
+    if (pad.held.down) meter.presses += 1;
+}

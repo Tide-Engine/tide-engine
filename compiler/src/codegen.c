@@ -181,7 +181,7 @@ static const char *mangle(const str name)
 // would collide.
 static const char *make_cname(const decl *d)
 {
-    const str ns = d->unit ? d->unit->ns : (str){"", 0};
+    const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0}; // An override's is that of what it replaced
     if (d->c_suffix) { // One of several that share the name: its parameters' types go on, Damage_float_Weapon
         sb b = {0};
         for (int i = 0; i < ns.len; i++) sb_putn(&b, ns.ptr[i] == '.' ? "_" : &ns.ptr[i], 1);
