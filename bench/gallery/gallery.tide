@@ -28,9 +28,11 @@ component Canvas
 
 input Pen
 {
-    int x;
-    int y;
-    int color;
+    // Where the pen is and its color, not what the player is doing: what
+    // another machine guesses of them stays, where `down` is let go
+    [Absolute] int x;
+    [Absolute] int y;
+    [Absolute] int color;
     bool down;
 }
 

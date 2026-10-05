@@ -1416,6 +1416,11 @@ input PlayerInput
 - Buttons are sent as held (`.pressed`), like bool input fields: `.down` and `.up` in match code are against last tick's input, so a guessed input that repeats the last one doesn't press them again. A button let go and pressed again between two ticks is one press.
 - Repairs: sticks -1 to 1 on each axis, with NaN 0; triggers 0 to 1; the `delta` and `scroll` of the mouse, and the `delta` of touches and the pointer, finite, or 0.
 - On the server's machine, its own player's input is the server's too, so entities without an owner read it. A server with no player of its own keeps the defaults.
+- **A guess lets go after a while** (the owner asked for a limit, 2026-10-05: at a ping of 500 ms, corrections were wild; what's picked here awaits them). A machine predicts other players' inputs, and the server's, by their last ones for 0.15 seconds past the last tick the server confirmed to it, to the nearest tick. In the ticks it predicts past that, each of those inputs is the input's defaults, through the steps any input takes (repair, bounds, `Sanitize`), and the tick before is taken to have had the same, so no `.down` or `.up` is true for it, of a `bool` field or of a device's button. The devices match code reads are let go with the rest.
+  - `[Absolute]` on a field of the input says its default isn't rest, as it says where something is or which (an aim, a pointer's cell, a weapon chosen): a guess keeps it for as long as it goes on. It takes no arguments and goes on the input's own fields, of any type, never a struct's, a component's or a singleton's. The owner's word for it (2026-10-05, "maybe a different name"), over `[Hold]`.
+  - Only predicted ticks are guessed. The rule above stands for what the match is: a slot whose input isn't set for a tick keeps its last one, on the server and in every tick it confirms.
+  - This machine's own input is never guessed, nor the server's on the machine that runs it.
+  - Not picked yet: a setting for the 0.15 seconds (hosts written in C have `tide_client_desc.guess_seconds`), a limit of its own for a field, and anything between keeping and letting go, like an axis that fades.
 ### Open
 
 - Pairing devices with players, for local multiplayer.

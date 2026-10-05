@@ -16,7 +16,8 @@
 //
 // A client predicts. It runs a few ticks ahead of the server, so its inputs
 // reach the server in time, with its own input straight away and, for everyone
-// else, their last one. It keeps a snapshot of each tick from the last one the
+// else, their last one: for a while (tide_client_desc.guess_seconds), then as
+// if they'd let go. It keeps a snapshot of each tick from the last one the
 // server confirmed (the verified world) to the one it predicted. A tick that
 // arrives as it was predicted only has its hash checked; one that went
 // otherwise runs on the verified world, and the ticks after it run again. A
@@ -120,6 +121,14 @@ typedef struct tide_game {
     // server's (the slot after the last player's: tide_game_players). What
     // ticks' inputs go as deltas from.
     void (*world_input)(const void *world, uint32_t slot, void *input);
+    // What a client's guess comes to once it has gone on long enough
+    // (tide_client_desc.guess_seconds): every slot's input but `keep`'s as if
+    // its player had let go, each field back to its default but those the
+    // game marks [Absolute], and with no button going up for it. True if that
+    // changed any of them. Only ever on a predicted world: the server's
+    // inputs, and a confirmed tick's, are what was sent. NULL: nothing is let
+    // go, and a guess is the last input for as far as the client runs ahead.
+    bool (*let_go_inputs)(void *world, const tide_player_set *keep);
     // Commands are bounded, copied wire values. Checking only decodes them;
     // dispatch records them for this tick, with the connection's sender, and
     // advances its sequence. Sequences are world state: snapshots, hashes and
@@ -284,6 +293,14 @@ typedef struct tide_client_desc {
     // run is the same however fast the machine (benchmarks and tests).
     uint64_t (*now_ns)(void);
     double resim_budget; // Seconds a frame may spend running predicted ticks again; 0 for 0.004
+    // How long it guesses that another player's input stays as it was, past
+    // the last tick the server confirmed: 0 for 0.15 seconds. Further ahead
+    // than that, it predicts with the others having let go
+    // (tide_game.let_go_inputs), so a guess that was wrong moves things by
+    // what a player does in that long at most, however far ahead a slow
+    // connection has it run. To the nearest tick; a second or more is as far
+    // as a client predicts anyway, so then nothing is let go.
+    double guess_seconds;
     tide_view_correct_fn correct_views; // Optional: coalesced replay corrections, using `user`
     // Where what the match sends goes for this machine's local handlers
     // (tide/events.h), once its host takes it from there (`taken`): each event
@@ -363,6 +380,7 @@ typedef struct tide_session_desc {
     const tide_jobs *jobs;    // Threads to run ticks on (tide/jobs.h), or NULL: this one
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
+    double guess_seconds;     // How long its clients guess that others' inputs stay as they were; 0 for 0.15 (tide_client_desc)
     uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're `seed`
     uint32_t seed;             // With no entropy, the seed of every match it starts: 0 unless the host picked one
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`

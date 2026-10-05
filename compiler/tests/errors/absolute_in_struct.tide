@@ -1,0 +1,10 @@
+// expect: [Absolute] goes on an input's own fields
+struct Aim
+{
+    [Absolute] float2 direction;
+}
+input Controls
+{
+    Aim aim;
+}
+scene Main { }
