@@ -1,0 +1,241 @@
+// list.Resize(count): a list sized in one call. New elements are their type's
+// zero, and with fewer, the rest go, letting go of what they hold. Lists of a
+// few elements, lists in chunks (see tide/list.h), from one to the other both
+// ways, in the match, in the local world and in locals.
+
+struct Cell
+{
+    int id;
+    float weight;
+    bool alive;
+}
+
+struct Item
+{
+    string name;
+    int count;
+}
+
+struct Holder
+{
+    int tag;
+    List<int> values;
+}
+
+singleton Store
+{
+    List<byte> bytes;
+    List<Cell> cells; // 12 bytes each: chunks hold a number of them that's no power of two
+    List<string> names;
+    List<Item> items;
+    List<int> numbers;
+    Holder held;
+}
+
+singleton Results
+{
+    bool dirtied;
+    int checks;
+    int passed;
+    int firstFailure;
+}
+
+// What the host asks of the next tick, which takes it
+singleton Job
+{
+    int op;
+    int count;
+}
+
+// ...and of the next frame
+local singleton Shown
+{
+    List<int> numbers;
+    int count = -1;
+    int sum;
+}
+
+const int BIG = 300000; // Bytes: 19 chunks
+
+scene Main { }
+
+void Expect(mut Results t, bool ok)
+{
+    t.checks += 1;
+    if (ok) t.passed += 1;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+// A function sizes its caller's list, wherever that is
+void Size(mut List<int> values, int count)
+{
+    values.Resize(count);
+}
+
+int Sum(List<int> values)
+{
+    mut var total = 0;
+    foreach (var v in values) total += v;
+    return total;
+}
+
+// What the scratch area holds is whatever was there: this leaves it full of 255s for the lists Checks makes.
+system Dirty(mut Results t)
+{
+    if (t.dirtied) return;
+    t.dirtied = true;
+    mut List<byte> junk = [];
+    for (var i = 0; i < 3000000; i++) junk.Add(255);
+}
+
+system Checks(mut Store store, mut Results t)
+{
+    if (t.checks > 0) return; // Once
+
+    // From empty: zeros
+    store.numbers.Resize(5);
+    Expect(t, store.numbers.count == 5 && store.numbers[0] == 0 && store.numbers[4] == 0 && store.numbers[5] == 0);
+    // As long already: as it was
+    store.numbers[4] = 44;
+    store.numbers.Resize(5);
+    Expect(t, store.numbers.count == 5 && store.numbers[4] == 44);
+    // Fewer: the rest go, and what takes their place later is zero
+    store.numbers.Add(55);
+    store.numbers.Resize(4);
+    Expect(t, store.numbers.count == 4 && store.numbers[4] == 0);
+    store.numbers.Resize(7);
+    Expect(t, store.numbers.count == 7 && Sum(store.numbers) == 0);
+    // Under none is none
+    store.numbers.Resize(-7);
+    Expect(t, store.numbers.count == 0);
+    store.numbers.Add(1);
+    Expect(t, store.numbers.count == 1 && store.numbers[0] == 1);
+
+    // Text: the elements that go let go of theirs, and new ones are empty
+    for (var i = 0; i < 6; i++) store.names.Add($"n{i}");
+    store.names.Resize(2);
+    store.names.Resize(4);
+    Expect(t, store.names.count == 4 && store.names[1] == "n1" && store.names[2] == "" && store.names[3] == "");
+    store.names[3] = "last";
+    Expect(t, store.names[3] == "last" && store.names.IndexOf("n5") == -1);
+    // Structs that hold text
+    store.items.Add(Item { name = "sword", count = 1 });
+    store.items.Add(Item { name = "bow", count = 2 });
+    store.items.Resize(3);
+    Expect(t, store.items.count == 3 && store.items[1].name == "bow" && store.items[2].name == "" && store.items[2].count == 0);
+    store.items.Resize(1);
+    Expect(t, store.items.count == 1 && store.items[0].name == "sword" && store.items[1].name == "");
+
+    // Over a page: in chunks, all zeros
+    store.bytes.Resize(BIG);
+    mut var zeros = 0;
+    foreach (var b in store.bytes) if (b == 0) zeros += 1;
+    Expect(t, store.bytes.count == BIG && zeros == BIG);
+    for (var i = 0; i < BIG; i++) store.bytes[i] = byte(i * 7 + 3);
+    // Fewer chunks, then more: what it kept, and zeros past it
+    store.bytes.Resize(100000);
+    Expect(t, store.bytes.count == 100000 && store.bytes[99999] == byte(99999 * 7 + 3) && store.bytes[100000] == 0);
+    store.bytes.Resize(BIG);
+    mut var kept = 0;
+    mut var cleared = 0;
+    for (var i = 0; i < BIG; i++)
+    {
+        if (i < 100000 && store.bytes[i] == byte(i * 7 + 3)) kept += 1;
+        if (i >= 100000 && store.bytes[i] == 0) cleared += 1;
+    }
+    Expect(t, kept == 100000 && cleared == BIG - 100000);
+    // Down to a few, and up over a page again
+    store.bytes.Resize(10);
+    Expect(t, store.bytes.count == 10 && store.bytes[9] == byte(9 * 7 + 3) && store.bytes[10] == 0);
+    store.bytes.Resize(20000);
+    mut var after = 0;
+    for (var i = 10; i < 20000; i++) after += store.bytes[i];
+    Expect(t, store.bytes.count == 20000 && store.bytes[9] == byte(9 * 7 + 3) && after == 0);
+    // To none and back
+    store.bytes.Resize(0);
+    Expect(t, store.bytes.count == 0);
+    store.bytes.Resize(3);
+    Expect(t, store.bytes.count == 3 && store.bytes[0] == 0 && store.bytes[2] == 0);
+
+    // Structs, to a chunk's end and past it: a chunk holds 1364 of them
+    store.cells.Resize(3000);
+    store.cells[1363] = Cell { id = 6, weight = 0.5, alive = true };
+    store.cells[1364] = Cell { id = 7, weight = 1.5, alive = true };
+    store.cells[2999] = Cell { id = 9 };
+    store.cells.Resize(1365);
+    Expect(t, store.cells.count == 1365 && store.cells[1364].id == 7 && store.cells[1365].id == 0);
+    store.cells.Resize(3000);
+    Expect(t, store.cells[2999].id == 0 && store.cells[1364].alive && store.cells[1364].weight == 1.5 && store.cells[1365].id == 0);
+    store.cells.Resize(1364);
+    store.cells.Resize(1366);
+    Expect(t, store.cells.count == 1366 && store.cells[1363].id == 6 && store.cells[1364].id == 0 && !store.cells[1364].alive);
+
+    // What Clear and RemoveAt leave behind comes back as zeros
+    store.cells.RemoveAt(0);
+    store.cells.Resize(1366);
+    Expect(t, store.cells[1362].id == 6 && store.cells[1365].id == 0 && store.cells[1364].id == 0);
+    store.cells.Clear();
+    store.cells.Resize(2000);
+    Expect(t, store.cells.count == 2000 && store.cells[1362].id == 0 && !store.cells[1362].alive);
+
+    // A local's, where what was in the scratch area before isn't in the list
+    mut List<int> few = [1, 2, 3];
+    few.Resize(5);
+    Expect(t, few.count == 5 && few[2] == 3 && few[3] == 0 && few[4] == 0);
+    few[4] = 9;
+    few.Resize(2);
+    few.Resize(5);
+    Expect(t, few.count == 5 && few[1] == 2 && Sum(few) == 3);
+    mut List<byte> wide = [];
+    wide.Resize(2000000); // More than a piece of the scratch area
+    wide[1999999] = 5;
+    mut var total = 0;
+    foreach (var b in wide) total += b;
+    Expect(t, wide.count == 2000000 && total == 5);
+    wide.Resize(0);
+    wide.Add(1);
+    Expect(t, wide.count == 1 && wide[0] == 1);
+
+    // A copy taken out is the code's own: the match's stays
+    mut var copy = store.numbers;
+    copy.Resize(9);
+    Expect(t, copy.count == 9 && copy[0] == 1 && copy[8] == 0 && store.numbers.count == 1);
+
+    // Through a function, and in a struct
+    Size(store.numbers, 6000);
+    Expect(t, store.numbers.count == 6000 && Sum(store.numbers) == 1);
+    Size(few, 1);
+    Expect(t, few.count == 1 && few[0] == 1);
+    store.held.values.Resize(4);
+    store.held.values[3] = 8;
+    Expect(t, store.held.values.count == 4 && Sum(store.held.values) == 8 && store.held.tag == 0);
+    mut Holder holder = Holder { tag = 2, values = [5, 6, 7] };
+    holder.values.Resize(2);
+    Expect(t, holder.values.count == 2 && Sum(holder.values) == 11 && holder.tag == 2);
+}
+
+system Run(mut Store store, mut Job job)
+{
+    var op = job.op;
+    job.op = 0;
+    if (op == 1) store.bytes.Resize(job.count);
+    else if (op == 2)
+    {
+        for (var i = 0; i < store.bytes.count; i++) store.bytes[i] = byte(i * 7 + 3);
+    }
+    else if (op == 3) store.names.Resize(job.count);
+    else if (op == 4)
+    {
+        for (var i = 0; i < job.count; i++) store.names.Add($"name {i}");
+    }
+}
+
+// The local world's list
+view Show(mut Shown shown)
+{
+    if (shown.count < 0) return;
+    shown.numbers.Resize(shown.count);
+    if (shown.count > 0) shown.numbers[shown.count - 1] += 1;
+    shown.sum = Sum(shown.numbers);
+    shown.count = -1;
+}

@@ -38,6 +38,7 @@ int? Find(List<int> items, int wanted) { return null; }
 extern List<int> Primes(int count);
 extern float Noise(float x, float y);
 extern void Fill(in Stats stats, mut List<float> values);
+extern int Write(out List<byte> bytes, Buffer out);
 extern void DrawUI(DrawList list);
 RenderTarget scene; Texture image;
 Draw.Blit(scene.color, Draw.window, Blur);

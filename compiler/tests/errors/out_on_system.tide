@@ -1,0 +1,5 @@
+// expect: only extern functions take 'out' parameters: C makes the list's elements, and says how many
+// expect: this takes what it changes as 'mut': 'mut Store store'
+scene Main { }
+singleton Store { List<byte> image; }
+system Run(out Store store) { store.image.Clear(); }

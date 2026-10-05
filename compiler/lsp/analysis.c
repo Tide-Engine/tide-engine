@@ -1322,7 +1322,7 @@ static void format_param(const param *p, sb *out)
         return;
     }
     switch (p->mode) {
-    case PARAM_MUT: sb_put(out, "mut "); break;
+    case PARAM_MUT: sb_put(out, p->out_at.line > 0 ? "out " : "mut "); break; // As written, where the checker refused it too
     case PARAM_IN: sb_put(out, "in "); break;
     case PARAM_WITH: sb_put(out, "with "); break;
     case PARAM_WITHOUT: sb_put(out, "without "); break;
@@ -1574,6 +1574,7 @@ static const method_form list_calls[] = {
     {"RemoveAt", "RemoveAt(int index)", "Removes the element at `index`, moving the ones after it back."},
     {"Remove", "Remove(T item) -> bool", "Removes the first element equal to `item`, if there is one, and says whether it did."},
     {"Clear", "Clear()", "Removes every element."},
+    {"Resize", "Resize(int count)", "Makes the list `count` elements long, in one go: new ones are the element type's zero, and with fewer, the rest go. A count under 0 is 0."},
     {"Contains", "Contains(T item) -> bool", "Whether an element is equal to `item`."},
     {"IndexOf", "IndexOf(T item) -> int", "Where the first element equal to `item` is, or -1."},
     {"Sort", "Sort(a, b) { ... }", "Sorts the elements, stable: the block says whether `a` goes before `b`, as `return a.x < b.x;`. It changes nothing else."},
@@ -2348,6 +2349,7 @@ static void describe(const occurrence *o, sb *out)
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
+        else if (o->param->is_out) sb_put(out, "\n\nParameter, the caller's list, which C makes: it gets a `tide_list_out`, asks it for room, fills it, and says how many elements there are (`tide/list.h`). What the list held isn't passed.");
         else if (o->param->mode == PARAM_MUT) sb_put(out, "\n\nParameter, writable.");
         else sb_put(out, "\n\nParameter, read-only.");
         break;
@@ -6248,8 +6250,14 @@ void analysis_completion(const int line, const int character, jbuf *out)
             if (pk == T_LPAREN || pk == T_COMMA) {
                 item(&c, "in", CK_KEYWORD, "C gets a read-only pointer to the value", NULL, NULL);
                 item(&c, "mut", CK_KEYWORD, "C gets a pointer to the caller's variable, which it can change", NULL, NULL);
+                item(&c, "out", CK_KEYWORD, "C makes the caller's list: it gets a tide_list_out to fill", NULL, NULL);
             }
-            if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT || (pk == T_IDENT && str_eq_c(prev->text, "in"))) {
+            // `out` where a parameter starts is the word, and what's typed after it is a list
+            const bool after_out = pk == T_IDENT && str_eq_c(prev->text, "out") && last > f.open
+                                && (DOC->toks[last - 1].kind == T_LPAREN || DOC->toks[last - 1].kind == T_COMMA);
+            if (after_out) {
+                item(&c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_MUT || (pk == T_IDENT && str_eq_c(prev->text, "in"))) {
                 complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY);
                 complete_structs(&c);
                 complete_namespaces(&c, false);

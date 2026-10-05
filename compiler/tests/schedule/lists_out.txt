@@ -1,0 +1,18 @@
+lists_out: 4 systems each tick, 3 stages deep; 4 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Make  (once)
+         writes Image
+         alongside Count
+stage 2  Size  (once)
+         writes Scores
+         after Make: both change text, lists or grids, which the match keeps in one heap
+         alongside Count
+stage 3  Name  (once)
+         writes Names
+         after Make: both change text, lists or grids, which the match keeps in one heap (and through Size)
+         after Size: both change text, lists or grids, which the match keeps in one heap
+         alongside Count
+stage 1  Count  (once)
+         writes Clock
+         alongside Make, Size, Name

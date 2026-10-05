@@ -718,6 +718,14 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_platform_draw_over(&tide_run_over);
     }
 
+    // The devices keep what happened for the next tick's sample: a key that
+    // went down and up between two ticks, how far the mouse moved. Where no
+    // tick can sample, that's this frame's alone: in a game with no input, and
+    // while this machine is in no match, or isn't in it yet (connecting, or
+    // finding one that changed hands). A match that starts later reads what's
+    // held as it starts, never what was pressed before it.
+    if (!game->sample_input || status.client.state != TIDE_SESSION_CONNECTED) tide_devices_consume(&tide_run_devices);
+
     if (game->command && game->command_sent) {
         uint8_t bytes[TIDE_COMMAND_BYTES];
         uint32_t size;
