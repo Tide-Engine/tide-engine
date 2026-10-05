@@ -74,7 +74,7 @@ Measured on a release build, 2,400 crates in stacks (an image of 2.3 MB):
 | A tick's | One thread | 12 threads |
 |---|---|---|
 | Box2D's step | 0.45 ms | 0.27 ms |
-| Its state into an image | 1.3 ms | 1.4 ms |
+| Its state into an image | 1.1 ms | 1.3 ms |
 | The package's systems, and the image into the match | 1.1 ms | 1.4 ms |
 
 - The step runs on the tick's threads (`tide_job_start`, `tide/jobs.h`) once 128 bodies are awake, and gives the same world on any number of them.

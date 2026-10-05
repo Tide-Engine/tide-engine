@@ -100,7 +100,9 @@ install(FILES "${CMAKE_BINARY_DIR}/package/VERSION" DESTINATION . COMPONENT tide
 # what tide makes in a game's folder (an example's, in a package). OPTIONAL:
 # there's no folder until there's a package.
 install(DIRECTORY packages/ DESTINATION src/packages COMPONENT tide OPTIONAL
-    PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE)
+    PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE
+    # This repo's own: how it builds the packages' tests, and the tests
+    PATTERN "CMakeLists.txt" EXCLUDE PATTERN "test" EXCLUDE)
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(tools) # Editor support
 endif()
