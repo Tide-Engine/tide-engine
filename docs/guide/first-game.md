@@ -162,7 +162,7 @@ tide run --connect localhost
 
 Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
 
-No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input, and puts the match right when the server's answer arrives. Over a slow connection that moves their body a long way in one frame, each time they start or stop. Mark the position, and views draw the correction over a few frames instead:
+No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input for a moment, and puts the match right when the server's answer arrives. That moves their body in one frame, each time they start or stop, by up to what they move in 0.15 seconds (see [What other machines guess](../game/input.md#what-other-machines-guess)). Mark the position, and views draw the correction over a few frames instead:
 
 ```csharp
 component Body

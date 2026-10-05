@@ -14,8 +14,9 @@ local singleton Aim { float2 world; bool moved; }
 
 input Steer
 {
-    [Clamp(-3, 3)] float2 target;
-    bool steering;
+    // A place, not something a player does: what another machine guesses of it stays
+    [Absolute, Clamp(-3, 3)] float2 target;
+    [Absolute] bool steering;
 
     Sample(Devices devices, Aim aim)
     {
