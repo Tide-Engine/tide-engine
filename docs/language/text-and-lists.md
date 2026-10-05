@@ -21,11 +21,11 @@ system Greet(mut Nameplate plate, Stats stats)
 ### Joining and formatting
 
 - `+` joins text with anything it can show: `"score " + score`, `1 + "st"`.
-- `$"score {score}"` puts values in text. After a value, a colon and a format, as in C#: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
+- `$"score {score}"` puts values in text. After a value, a colon and a format say how it's written: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
 
 Text can show numbers, bools, enums (their member's name, or their number when [no member has it](./basics.md#from-a-number)), vectors and quaternions (`(1, 0.5)`), `Color`, `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for one a system splitting its entities across threads just spawned, whose ID comes once it's done) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, exactly the same on every platform.
 
-It shows whole values too, which is handy for debugging. Structs, components, singletons, events and inputs show every field, the way C# shows records, and lists show their elements. Text inside them is in quotes, so empty text still shows:
+It shows whole values too, which is handy for debugging. Structs, components, singletons, events and inputs show their name and every field, and lists show their elements. Text inside them is in quotes, so empty text still shows:
 
 ```csharp
 GUILayout.Label($"{session}");
@@ -74,7 +74,7 @@ Past the end, a read gives the element type's zero and a write does nothing.
 
 ### Elements are copies
 
-Like C#'s lists of structs, an element is a copy. `items[i].count = 1` is an error: take the element out, change it, and put it back.
+Reading an element gives a copy of it, so `items[i].count = 1` would only change the copy. It's an error: take the element out, change it, and put it back.
 
 ```csharp
 mut var slot = inventory.slots[i];
@@ -272,7 +272,7 @@ foreach (var e in board.scores)
 GUILayout.Label($"{board.scores}"); // {PlayerID(0): 30, PlayerID(1): 10}
 ```
 
-`TryGet` looks a key up once and says whether it was there, as C#'s `TryGetValue` does. Its second argument is an [`out` argument](./functions.md#out-parameters), so it can declare the variable the value goes in:
+`TryGet` looks a key up once and says whether it was there. Its second argument is an [`out` argument](./functions.md#out-parameters), so it can declare the variable the value goes in:
 
 ```csharp
 if (board.byName.TryGet("last", out var stats))

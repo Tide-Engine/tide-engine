@@ -116,7 +116,7 @@ A function can also be written in C, declared with `extern` and no body: see [Ca
 
 ## Default values, names and overloads
 
-These work as in C#.
+A parameter can have a default value, a call can pass an argument by its parameter's name, and functions can share a name.
 
 ```csharp
 float Damage(float base, float multiplier = 1, bool crit = false)
@@ -160,7 +160,7 @@ Systems, views and handlers can share a name too. Nothing calls them, so where o
 
 ## Out parameters
 
-A function returns one value. An `out` parameter gives another, through a variable of the caller's. It works as in C#, and it's for the same pattern: return whether there's something, and give it, or the default.
+A function returns one value. An `out` parameter gives another, through a variable of the caller's. It's for one pattern above all: return whether there's something, and give it, or the default.
 
 ```csharp
 bool TryHalf(int value, out int half)
@@ -288,7 +288,7 @@ Anything that takes a block can be in the list: the GUI's containers, [draw sett
 
 ## Operators
 
-A struct can declare operators, in C#'s form. They compile to plain function calls.
+A struct can declare operators, each a function named `operator` and its symbol. They compile to plain function calls.
 
 ```csharp
 struct Money
@@ -304,7 +304,7 @@ struct Money
 
 - The operators are `+ - * / % & | ^ << >>`, the comparisons `== != < <= > >=`, and `-`, `!` and `~` with one parameter.
 - At least one parameter is the struct itself. An operator sees only its parameters, not fields.
-- As in C#, `==` and `!=` come in pairs, and so do `<` and `>`, and `<=` and `>=`.
+- `==` and `!=` come in pairs, and so do `<` and `>`, and `<=` and `>=`: a struct that declares one declares the other.
 - A compound assignment uses its operator: `total += price` uses `+`.
 - Several operators can share a symbol with different types, like `Money * int` and `int * Money`.
 
