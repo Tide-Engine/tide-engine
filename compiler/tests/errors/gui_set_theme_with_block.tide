@@ -1,0 +1,9 @@
+// expect: for the widgets in a block alone, write 'GUI.Theme(...) { ... }'
+scene Main { }
+view Look()
+{
+    GUI.SetTheme(GUITheme { radius = 8 })
+    {
+        GUILayout.Label("inside");
+    }
+}

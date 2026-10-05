@@ -1,0 +1,7 @@
+// expect: GUI.Control can't be on the right side of && or ||
+scene Main { }
+local singleton Menu { bool open; int picks; }
+view Cards(mut Menu menu)
+{
+    if (menu.open && GUI.Control(Rect(0, 0, 100, 60)).clicked) menu.picks += 1;
+}

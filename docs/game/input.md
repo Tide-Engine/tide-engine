@@ -159,7 +159,7 @@ view Typing(Devices devices, mut Chat chat)
 }
 ```
 
-It's a frame's, so `Sample` can't read it, and neither can the match: an input holds no text, and what's typed is never sent. It's empty while the GUI has the keyboard, as when the player types into a `TextField`, and in every view but the one that [claimed the keyboard](./gui.md#widgets-of-your-own). A long paste comes over a few frames, 32 characters in each.
+It's a frame's, so `Sample` can't read it, and neither can the match: an input holds no text, and what's typed is never sent. It's empty while the GUI has the keyboard, as when the player types into a `TextField`, and in every view but the one whose [control](./gui.md#widgets-of-your-own) has the focus, or that [claimed the keyboard](./gui.md#widgets-that-read-the-devices-themselves). A long paste comes over a few frames, 32 characters in each.
 
 ### Devices in the match
 

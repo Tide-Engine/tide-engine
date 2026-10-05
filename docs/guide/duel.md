@@ -12,7 +12,7 @@ The game opens on its menu, with the two fighters dueling by themselves behind i
 
 Win five rounds to win the match. After each round, its loser picks one of three upgrades, which stays with them for the rest of the match.
 
-Shots drop as they fly, so aim over a target that's far away: the dots in front of your fighter show where your next shot goes. Block briefly to send incoming shots back. Your shield takes two seconds to come back. Pick an upgrade by clicking or tapping its card, by pressing `1`, `2` or `3`, or with the arrows or a gamepad's d-pad and Enter.
+Shots drop as they fly, so aim over a target that's far away: the dots in front of your fighter show where your next shot goes. Block briefly to send incoming shots back. Your shield takes two seconds to come back. Pick an upgrade by clicking or tapping its card, by pressing `1`, `2` or `3`, or with the arrows or a gamepad's d-pad and Enter. Every menu works that way: the arrows, Tab or the d-pad move between its buttons, and Enter, Space or the gamepad's south button press one.
 
 **Menu**, in the corner, ends practice, and so does Escape.
 
@@ -67,5 +67,5 @@ The game is `examples/duel` in the [repo](https://github.com/BlenMiner/tide-engi
 - `heard.tide` has the local handlers of those events: each runs once for an event, with the fighter or the shot as the event left it, and sets off sparks, a flash or a number. A hit's sparks come as this machine predicts it; what must not be wrong, like the number a hit took, a knockout or who took a round, comes from `verified` handlers, once the server has confirmed it.
 - `paint.tide` draws the arena. How a fighter or a shot looks beyond what the match says of it (a flash that fades, a squash that springs back, a trail) is in their [local fields](../game/local-state.md#local-fields), which the handlers set and the views let settle. The health bars and the score read the match `verified`.
 - `effects.tide` has the sparks, the trails, the rings and the camera's shake, all [local state](../game/local-state.md), and the backdrop, a [frag](../game/shaders.md) over the whole screen.
-- `hud.tide` and `play.tide` are the score and the menus, whose buttons and cards are the game's own, [claimed](../game/gui.md#widgets-of-your-own) from the pointer as the GUI's widgets are.
+- `hud.tide` and `play.tide` are the score and the menus. Their buttons and cards are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, the keyboard and a gamepad all work them with no code of the game's. The field for a room's code is the GUI's own, in a [theme](../game/gui.md#themes) that matches the menu.
 - `shapes.tide` has the few shapes the game draws again and again: panels whose fill goes from one color to another under an outline, glows and shadows. Everything but the backdrop is the engine's [smooth shapes](../game/views.md#smooth-shapes), round rects, ellipses, thick lines and arcs, drawn in the order they're written with the text among them.
