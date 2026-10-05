@@ -249,7 +249,7 @@ system ClampPlayer(mut Transform trs, with Player)
 
 ### Read-only entity queries
 
-A system can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
+A system, a view or a local handler can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
 
 ```csharp
 system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
@@ -261,12 +261,26 @@ system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) figh
 }
 ```
 
-- The outer parameters still select the entities the system runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick.
-- The nested list accepts named read-only match component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World`, local component or nested query.
-- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are system parameters only in this version, iterated in the system's ordinary control flow, outside parallel loops and callback blocks.
+- The outer parameters still select the entities the code runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick, and a view with only query parameters once per frame.
+- The nested list accepts named read-only component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World` or nested query. A system's is of the match's components; a view's and a local handler's are all the match's or all local (below).
+- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are parameters of systems, views and local handlers, iterated in that code's ordinary control flow, outside parallel loops and callback blocks. The match's event handlers, command handlers and tasks take none yet.
 - Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
-- Component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
-- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the system's run.
+- In a system, component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
+- `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the code's run.
+- **Views take `query` parameters as systems do**, read-only, with the same syntax and the same filters:
+
+```csharp
+// A fighter's shadow falls on the highest platform under it.
+view DrawFighter(Body body, Fighter fighter, query (Platform box) platforms)
+{
+    foreach (var entry in platforms) { ... entry.box.center ... }
+}
+```
+
+  - **Rows are what a view sees**: blended between ticks like the view's own parameters, over the entities of the world it draws. An entity that wasn't there last tick is as it is, as for a view's own entity.
+  - **`verified` inside a query** follows the rule for views (see Views and drawing): a binding marked `verified` comes from the world the server has confirmed. `query (verified Health health) confirmed` loops over the confirmed world's entities; a query that mixes marked and unmarked bindings takes the entities that are in both, the same entity and not just the same handle. The filters `with verified X` and `without verified X` work in a query too.
+  - **A query is all local or all the match's**, as a view is: a view may loop over local entities too, like its own sparks.
+- **Local handlers take queries too** (`local event(Hit hit) Show(..., query (Body body, with Fighter) fighters)`): they're local code that reads the match as views do. Their rows are as the handler's own match parameters are: from the tick that sent the event.
 
 ### The World
 
@@ -626,7 +640,7 @@ Implemented, awaiting approval:
 ### Decided
 
 - An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. `event Hit { ... }` declares one, with fields like a struct's, which carry its context.
-- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters.
+- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters, which only a local handler takes (see Read-only entity queries).
 - An event with no fields needs no name in the trigger: `event(Spawned) Arm(...)`.
 - `entity.Send(Hit { ... })` sends an event to an entity. `Send(RoundOver { ... })` sends it to the whole world.
 - A handler's components and `this` come from the entity the event was sent to, as a system's come from the entity it runs for. If that entity doesn't match the handler's parameters, the handler doesn't run for it.
@@ -678,7 +692,7 @@ event(Spawned) Arm(with Player)
 ```
 
 - **Local handlers** hear the match's events on each machine, to show what happened: `local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)`. It's `local` and the same `event(...)`, with no keyword of its own.
-  - It takes the event; the components of the entity the event was sent to, to read, where `mut` reaches only their local fields, as in a view; the match's singletons, to read; and local singletons, which it changes. One that takes no components runs once per event, as a match handler does.
+  - It takes the event; the components of the entity the event was sent to, to read, where `mut` reaches only their local fields, as in a view; the match's singletons, to read; local singletons, which it changes; and queries, whose rows are the match as the tick that sent the event left it (see Read-only entity queries). One that takes no components runs once per event, as a match handler does.
   - It runs at the start of the frame, before the views, for each tick this machine simulated since the last frame, in order. It changes local state and can't draw, like every handler.
   - It sees what it takes of the match as the event's turn left it, even when the entity is gone by the frame: that's what makes `Destroyed` say where something ended. Only what handlers take is kept.
   - The engine's own events have them too: `Spawned`, `Destroyed`, `PlayerJoined` and `PlayerLeft`.
@@ -736,7 +750,7 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 ### Open
 
 - Events for a component being added or removed.
-- Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for loops over queries.
+- Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for queries in the match's event handlers, command handlers and tasks, which only systems, views and local handlers take so far.
 - Local handlers: text and lists of the match in what they hear; the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
 
 ## Commands
@@ -1310,7 +1324,7 @@ view Board(verified Duel duel) { ... }
   - "The same entity" in both worlds is the same entity, not only the same handle: a rollback can give a handle to another entity (see Local state, an entity after a rollback).
   - Filters take it too: `with verified Dead`, `without verified Dead`. So do singletons: `verified Duel duel`.
   - A `verified` value isn't blended: it's as the last confirmed tick has it.
-  - In match code it's an error: the match is the same on every machine and has no "confirmed". Systems, match handlers, tasks and queries say so, and point to views and local handlers.
+  - In match code it's an error: the match is the same on every machine and has no "confirmed". Systems, match handlers, tasks and their queries say so, and point to views and local handlers.
   - With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says. To hold a death until it's confirmed, a game makes the death a state of a living entity (a field or a tag), takes everything `verified` in that view, or shows it from `local event(verified Destroyed)`.
   - A local handler takes it on its event: `local event(verified Died died)` (see Events).
 - Meshes are the general shape: `Draw2D.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with other drawing calls. `Draw3D` also supplies cube, sphere, cylinder and plane helpers.
@@ -1439,6 +1453,18 @@ event(Died dead) Respawn(mut Body body, Arena arena)
   - With one world and no server, as on a C host that ticks a world itself, that world is the confirmed one too.
   - Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match.
   - `verified` is a word of its own before a parameter's type where a type and a name follow, after `with` or `without` where a name follows, and before an event in a handler's `event(...)`. Anywhere else it's a name like any other.
+- **Queries in views and local handlers**, beyond what's decided (see Read-only entity queries):
+  - **Rows are read-only, and have the match's fields only.** `mut` on a binding is an error, in a view as in a system, and a row doesn't reach an entity's local fields, to read or to write: those are a view's that runs for the entity, through its own parameter. Naming one through a row is an error that says so.
+  - `entry.entity` is an `Entity` for the match's entities, the confirmed world's handle in a query whose bindings and filters are all `verified`, and a `LocalEntity` for a local query's.
+  - **Outside a match, a view with a query over the match doesn't run**, like any view that reads the match: a view only runs when everything it reads exists. A query that names no component is the match's in a view. A game that wants the rest of the view to go on outside a match keeps the query in a view of its own.
+  - A view's rows are made once a frame for the view, when it first runs for an entity, so a view no entity matches makes none, and a view that runs for each of its entities doesn't blend a query's again for each. Correction smoothing (`[Position]`, `[Rotation]`) applies to them as to the view's own parameters. Text and lists of the world the view draws are read through a row as through a parameter.
+  - As for a view's own parameters: any `verified` binding or filter asks for the entity in the confirmed world; a `verified` binding isn't blended, and its text, lists, maps, sets and grids aren't read yet (an error); the same component can be bound both ways in one query, `query (Health health, verified Health sure) both`; with one world and no server, that world is the confirmed one too.
+  - **A local query** reads the local world as it is, with what views earlier in the frame wrote. A view that changes a local component it also queries sees the rows it changed earlier in that run, as a system does, and its own entity's as it was before the view ran for it.
+  - `ownership` isn't a query filter, in a view either: an error, as in a system.
+  - **A local handler's rows are its event's tick's once that tick is done**: after all its events and changes, not as each event's turn left things, where the handler's own components are. So an entity the tick destroyed is in no row, the one the event was sent to included, and one it spawned is in them. They aren't blended. The tick records them once, whichever of its events have a handler that reads them, and only when it sent one.
+  - Under rollback, a handler that hears a tick as it's predicted gets the rows of the run that first sent its event, and one of a `verified` event the confirmed run's.
+  - Nothing in a local handler's query says `verified`: its event does, for all of it. Text, lists, maps, sets and grids of the match aren't in its rows (an error to name, and empty in a copy), as for what the handler takes itself.
+  - A query of this machine's entities in a local handler is the local world as it is when the handler runs. A handler of a local event, `Forgotten` among them, takes only those. A query over the match counts as something of the match's for `Spawned` and `Destroyed`: a local handler of one that takes it hears the match's.
 - `frag` and `vert` declare code the GPU runs for a mesh's pixels and vertices (above, and GPU code below).
 - `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
 - Views run in declaration order, after all the systems of the frame's ticks. Within a view, entities run in the same order as in systems.
@@ -1557,6 +1583,7 @@ view DrawHud(Arena arena)
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - **Blending confirmed state.** A `verified` value is as the last confirmed tick has it, so it steps at the tick rate. Showing other players from confirmed state, blended between confirmed ticks rather than predicted ahead (a competitive shooter wants their positions not extrapolated), needs that, and may belong at another level than a parameter's modifier.
 - `verified World`, and the confirmed world's text and lists.
+- Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
 - Views reading input, for example to draw where the local player aims before the tick runs.
 - GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (how a mesh blends, which side of a triangle draws, what it does with depth); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while`, `switch`, quaternions, `Math.Inverse` and `Math.Hash` there; SPIR-V, with Vulkan.
 - 3D: meshes in the grid's chunks, for voxels.
