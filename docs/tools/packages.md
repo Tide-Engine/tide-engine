@@ -115,6 +115,7 @@ github.com/someone/tide-math 9f2c1e07d4b8a3f6e5c2d1b0a9f8e7d6c5b4a392
 - Its other lines are the packages it needs, as a game lists them. One from git only needs packages from git and packages that come with `tide`, since a folder on your machine isn't on anyone else's.
 - Its C goes in its folder, as a game's does (see [Calling C](../c/functions.md)), and compiles with the game.
 - A package's systems run before the game's: packages' files compile first, each package after those it needs, and the game's files last (see [Systems](../game/systems.md#order)).
+- A package can replace code the game marked `virtual`, with an `override`, and mark its own for the game to replace (see [Virtual and override](../language/overrides.md)).
 
 To try a package as you write it, make a game in a folder of its own inside it, whose `tide.packages` lists the package's folder:
 
@@ -132,6 +133,32 @@ A folder with a `tide.packages` of its own is a game or a package, so `example/`
 ```
 github.com/someone/tide-packages//physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 ```
+
+### Replacing a game's code
+
+A package adds to a game, and it can also change it: an expansion, a variant of the rules, a mod. The game marks what can be replaced with `virtual`, and the package replaces it with an `override` of the same name and parameters, which runs in its place:
+
+```csharp
+// The game
+namespace Combat;
+
+virtual float Damage(float base, Weapon weapon)
+{
+    return base + weapon.power;
+}
+```
+
+```csharp
+// The package
+namespace Hardcore;
+
+override float Combat.Damage(float base, Combat.Weapon weapon)
+{
+    return (base + weapon.power) * 2;
+}
+```
+
+Every call of `Damage` in the game now calls the package's. Systems, views, handlers, methods, frags and verts are replaced the same way, and a game replaces what a package marked: see [Virtual and override](../language/overrides.md).
 
 ### Code for other versions of tide
 

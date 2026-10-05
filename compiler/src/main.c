@@ -15,6 +15,9 @@ static void usage(void)
             "<output-dir>/<name>.h and <name>.c.\n"
             "  @<list>        the files a text file lists, one per line: for more files\n"
             "                 than a command line holds\n"
+            "  --package <P>  the files after it are package P's, to the next --package;\n"
+            "                 a line of a list can say it too. Packages' files compile\n"
+            "                 first, in the order the packages are named\n"
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
@@ -24,10 +27,53 @@ static void usage(void)
             "                 GLSL and WGSL, instead of generating code\n");
 }
 
+// A game's files as they're named, each with the package it's in.
+typedef struct input_list {
+    compile_input *items;
+    int count;
+    int room;
+    const char *package; // What `--package` last said: the files after it are that package's
+} input_list;
+
+static bool add_input(input_list *inputs, const char *path)
+{
+    if (inputs->count == inputs->room) {
+        inputs->room = inputs->room ? inputs->room * 2 : 64;
+        inputs->items = realloc(inputs->items, (size_t)inputs->room * sizeof(compile_input));
+        if (!inputs->items) return false;
+    }
+    inputs->items[inputs->count++] = (compile_input){path, inputs->package};
+    return true;
+}
+
+// The order files compile in, which is the default order of systems: each
+// package's, in the order the packages were first named, then the game's own,
+// each by path (see path_compare), as tide gives them.
+static const input_list *ordering;
+
+static int package_rank(const char *package)
+{
+    if (!package) return ordering->count; // The game's own, after every package's
+    for (int i = 0; i < ordering->count; i++) {
+        const char *other = ordering->items[i].package;
+        if (other && strcmp(other, package) == 0) return i;
+    }
+    return ordering->count;
+}
+
+static int input_order(const void *a, const void *b)
+{
+    const compile_input *x = a;
+    const compile_input *y = b;
+    const int rank = package_rank(x->package) - package_rank(y->package);
+    return rank ? rank : path_compare(x->path, y->path);
+}
+
 // The files a list names, one per line, added to `inputs`: a game of thousands
 // of files is more than a command line holds (32,767 characters on Windows).
+// A line `--package <name>` says the files after it are that package's.
 // False when the list can't be read.
-static bool add_listed(const char *path, const char ***inputs, int *count, int *room)
+static bool add_listed(const char *path, input_list *inputs)
 {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -48,13 +94,10 @@ static bool add_listed(const char *path, const char ***inputs, int *count, int *
         char *next = end;
         while (*next == '\n' || *next == '\r') next++;
         *end = '\0';
-        if (*line) {
-            if (*count == *room) {
-                *room = *room ? *room * 2 : 64;
-                *inputs = realloc(*inputs, (size_t)*room * sizeof(char *));
-                if (!*inputs) return false;
-            }
-            (*inputs)[(*count)++] = line;
+        if (strncmp(line, "--package ", 10) == 0) {
+            inputs->package = line + 10;
+        } else if (*line && !add_input(inputs, line)) {
+            return false;
         }
         line = next;
     }
@@ -63,9 +106,7 @@ static bool add_listed(const char *path, const char ***inputs, int *count, int *
 
 int main(const int argc, char **argv)
 {
-    int input_room = argc;
-    const char **inputs = calloc((size_t)argc, sizeof(char *));
-    int input_count = 0;
+    input_list inputs = {0};
     codegen_options opts = {NULL, NULL, true, false, NULL, NULL, false};
     bool schedule = false;
 
@@ -83,28 +124,38 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--shaders") == 0) {
             schedule = true;
             opts.shaders = true;
+        } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
+            inputs.package = argv[++i];
         } else if (argv[i][0] == '-') {
             usage();
             return 2;
         } else if (argv[i][0] == '@') {
-            if (!add_listed(argv[i] + 1, &inputs, &input_count, &input_room)) return 2;
-        } else {
-            if (input_count == input_room) {
-                input_room *= 2;
-                inputs = realloc(inputs, (size_t)input_room * sizeof(char *));
-                if (!inputs) return 2;
-            }
-            inputs[input_count++] = argv[i];
+            if (!add_listed(argv[i] + 1, &inputs)) return 2;
+        } else if (!add_input(&inputs, argv[i])) {
+            return 2;
         }
     }
-    if (input_count == 0 || (!opts.out_dir && !schedule)) {
+    if (inputs.count == 0 || (!opts.out_dir && !schedule)) {
         usage();
         return 2;
     }
+    // By the order the packages were named in, which sorting would lose
+    input_list named = inputs;
+    named.items = malloc((size_t)inputs.count * sizeof(compile_input));
+    if (!named.items) return 2;
+    memcpy(named.items, inputs.items, (size_t)inputs.count * sizeof(compile_input));
+    ordering = &named;
+    qsort(inputs.items, (size_t)inputs.count, sizeof(compile_input), input_order);
+    // The generated files are named after the game's first file, not a package's
+    if (!opts.name) {
+        for (int i = 0; i < inputs.count && !opts.name; i++) {
+            if (!inputs.items[i].package) opts.name = path_stem(inputs.items[i].path);
+        }
+    }
 
-    if (!schedule) return compile_program(inputs, input_count, &opts, NULL) ? 0 : 1;
+    if (!schedule) return compile_inputs(inputs.items, inputs.count, &opts, NULL) ? 0 : 1;
     sb text = {0};
-    if (!compile_program(inputs, input_count, &opts, &text)) return 1;
+    if (!compile_inputs(inputs.items, inputs.count, &opts, &text)) return 1;
     fputs(text.data, stdout);
     return 0;
 }

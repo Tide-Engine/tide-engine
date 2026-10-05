@@ -1,0 +1,5 @@
+namespace Fast;
+
+override void Combat.Countdown(int ticks)
+{
+}

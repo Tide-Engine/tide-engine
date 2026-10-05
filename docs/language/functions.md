@@ -58,6 +58,8 @@ Calling a `mut` method changes what it's called on, so it needs write access, li
 
 Singletons and inputs have no methods of their own: keep the data and its methods in a struct, and the struct in them.
 
+A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
+
 ## Functions
 
 A function is code that other code calls. It has no keyword, just a return type:

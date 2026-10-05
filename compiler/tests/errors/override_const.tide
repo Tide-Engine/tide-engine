@@ -1,0 +1,5 @@
+// expect: 'override' goes before a declaration with code, which replaces the virtual one it names
+// expect: a constant is a value, the same on every machine, with no code to replace
+override const int MAX_HEALTH = 100;
+
+scene Main { }

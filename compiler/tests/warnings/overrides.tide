@@ -1,0 +1,46 @@
+// warnings: 1
+// expect: 'log' is declared mut but never written
+// What a virtual declaration takes is what its overrides get, and what an
+// override takes is what it replaces takes: neither is warned about a
+// parameter it doesn't use, which it can't drop. `mut` is each one's own, so
+// an override that never writes is told. What was replaced warns about
+// nothing: its unused local and the error nothing handles aren't in the build.
+// Package Mod is overrides/Mod/mod.tide.
+namespace Game;
+
+scene Main { }
+
+component Body { float x; }
+
+singleton Log { int count; }
+
+enum ParseError { Empty }
+
+int Parse(int value) fails ParseError
+{
+    if (value == 0) fail ParseError.Empty;
+    return value;
+}
+
+// A hook: nothing, until a package replaces it
+virtual system Hook(Body body, mut Log log)
+{
+}
+
+virtual system Move(mut Body body, mut Log log)
+{
+    var unused = body.x * 2;
+    Parse(1);
+    body.x += 1;
+    log.count += 1;
+}
+
+virtual system Count(mut Log log, Time time)
+{
+    log.count += 1;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body);
+}

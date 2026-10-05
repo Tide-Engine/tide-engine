@@ -1,0 +1,7 @@
+// expect: functions belong to neither side, so they can't be local
+virtual local float Half(float x)
+{
+    return x / 2;
+}
+
+scene Main { }
