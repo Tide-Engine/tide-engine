@@ -90,7 +90,7 @@ input Controls
 - **Only guesses change.** What the server runs, and what it confirms, is the input each player sent. A player whose input arrives late still keeps their last one for that tick, on every machine.
 - **What it costs.** A player who keeps going is shown a little behind where they'll turn out to be, and each tick the server confirms, the machine runs the ticks past its guess again. Both only happen on a machine further ahead than 0.15 seconds, and only while someone is doing something.
 
-`[Absolute]` takes no arguments, and goes on the input's own fields. Its name and the 0.15 seconds are provisional.
+`[Absolute]` takes no arguments, and goes on the input's own fields, not on the fields of a struct it holds.
 
 ## Devices
 
