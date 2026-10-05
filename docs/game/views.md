@@ -482,6 +482,33 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 `entity.Snap()` is applied at the end of the tick, like `Destroy`, so it never makes systems wait. `singleton.Snap()` needs the singleton as a `mut` parameter.
 
+### Provisional correction smoothing
+
+::: warning Provisional
+`[Position]` and `[Rotation]` are available, with provisional names and behavior. They may change as games test them.
+:::
+
+Tick interpolation makes motion smooth between ticks. A prediction correction can still move the next frame abruptly. These attributes tell Tide how to preserve the displayed value and remove the correction error over time:
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    [Rotation] float heading; // Radians, for 2D
+    float2 velocity;          // Ordinary tick interpolation
+}
+```
+
+`[Position]` on a float or floating-point vector keeps linear tick interpolation and accumulates an additive presentation offset. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+
+The error decays exponentially with frame time toward zero, or the identity rotation, with a provisional half-life of 75 ms. Another correction accumulates with whatever error remains. Ordinary movement follows the corrected simulation, so moving and aiming stay responsive. Untagged fields keep ordinary tick interpolation.
+
+This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
+
+The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`.
+
+Ordinary structs can contain annotated built-in fields, including through nested structs. Correction smoothing for a type with its own `Interpolate` is deferred; its existing tick interpolation remains available. No new custom-type method or correction-rate setting is agreed. The [specification](../spec.md#provisional-correction-smoothing) records the provisional contract.
+
 ### Blending your own way
 
 A struct or component can say how it blends with an `Interpolate` method, declared in it like an operator. It replaces the default blend for that type wherever views see it:
