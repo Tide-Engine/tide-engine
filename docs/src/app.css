@@ -561,6 +561,18 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
+/* The least the slider can make the ping: what a round trip takes here with
+   nothing added. It stands out while the slider is under it, as it's then the
+   ping the player has. */
+.example-lag-min {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.example-lag-min.limits {
+    color: var(--brand-1);
+}
+
 @container (max-width: 639px) {
     .example-players {
         grid-template-columns: minmax(0, 1fr);
