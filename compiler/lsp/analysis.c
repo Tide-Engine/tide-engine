@@ -458,6 +458,13 @@ static const param *query_binding(const param *query, const str name)
     return NULL;
 }
 
+// Card(2) or Combat.Stance(2): a call that names an enum, converting an int
+// to it. The checker says which enum even where it refused the argument.
+static bool converts_enum(const expr *e)
+{
+    return e->ctor == CTOR_ENUM && (e->call == CALL_NONE || e->call == CALL_CONSTRUCT) && e->type_decl;
+}
+
 static void walk_expr(const expr *e)
 {
     if (!e) return;
@@ -609,7 +616,11 @@ static void walk_expr(const expr *e)
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
-        if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
+        if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
+            o.kind = OCC_TYPE;
+            o.decl = e->type_decl;
+            add_occ(o);
+        } else if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
             o.kind = OCC_TYPE;
             add_occ(o);
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
@@ -642,7 +653,12 @@ static void walk_expr(const expr *e)
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>
         if (e->type_arg.len > 0) type_ref(e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
-        if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
+        if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
+            o.kind = OCC_TYPE;
+            o.decl = e->type_decl;
+            o.object_type = (type){TY_ERROR, NULL};
+            add_occ(o);
+        } else if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT) {
@@ -1888,6 +1904,21 @@ static void describe_world(const decl *d, sb *out)
     sb_put(out, ".");
 }
 
+static const char *name_for(const decl *d);
+
+// What Card(number) gives, for its hover and its signature.
+static void describe_enum_conversion(const decl *d, sb *out)
+{
+    const char *name = name_for(d);
+    sb_printf(out, "`%s(number)` is the `%s` with that number, as `int(value)` is a value's number. A number none of its "
+                   "members has stays as it is", name, name);
+    if (d->width == 1 || d->width == 2) {
+        sb_printf(out, ", cut to the %s the enum is stored in: its low %d bits, as `byte(x)` keeps an int's low 8",
+                  d->width == 1 ? "byte" : "ushort", d->width * 8);
+    }
+    sb_put(out, ".");
+}
+
 // Markdown for a hover over `o`.
 static void describe(const occurrence *o, sb *out)
 {
@@ -1924,6 +1955,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, "\n\nSent with `Send`, and handled by `event(...)` handlers at the end of the tick.");
             } else if (o->decl->is_local) {
                 sb_put(out, "\n\nLocal: this machine's own, never sent, rolled back or hashed. Views change it; the match can't see it.");
+            }
+            if (o->decl->kind == DECL_ENUM && o->call == CALL_CONSTRUCT) { // Card(2)
+                sb_put(out, "\n\n");
+                describe_enum_conversion(o->decl, out);
             }
         } else {
             code_block(out, type_name(o->type));
@@ -4759,7 +4794,14 @@ static void complete_structs(completion *c)
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", NULL, NULL);
-        if (d->kind == DECL_ENUM) item(c, name_for(d), CK_ENUM, "enum", NULL, NULL);
+        if (d->kind == DECL_ENUM) { // With how a value of it is written: a member, or from its number
+            sb doc = {0};
+            if (d->members.count > 0) {
+                sb_printf(&doc, "A member is written `%s." STR_FMT "`. ", name_for(d), STR_ARG(d->members.items[0].name));
+            }
+            describe_enum_conversion(d, &doc);
+            item(c, name_for(d), CK_ENUM, "enum", doc.data, NULL);
+        }
     }
 }
 
@@ -6597,6 +6639,10 @@ static int call_param_names(const expr *call, str *names, const int max)
         }
         return count;
     }
+    if (call->call == CALL_CONSTRUCT && call->ctor == CTOR_ENUM) { // Card(number)
+        if (max > 0) names[count++] = str_from("number");
+        return count;
+    }
     label_list list = {0};
     switch (call->call) {
     case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: {
@@ -6835,6 +6881,28 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(name, call_forms[i].name)) continue;
             for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
+        }
+    }
+    if (s.shown == 0) {
+        // An enum's name converts an int: the enum the call resolved to, or
+        // while it's half written, the one the names before the parenthesis say.
+        const occurrence *o = occurrence_at(DOC->toks[callee].at);
+        const decl *converted = o && o->kind == OCC_TYPE && o->decl && o->decl->kind == DECL_ENUM ? o->decl : NULL;
+        int first = callee;
+        while (first >= 2 && DOC->toks[first - 1].kind == T_DOT && DOC->toks[first - 2].kind == T_IDENT) first -= 2;
+        const str written = {DOC->toks[first].text.ptr,
+                             (int)(DOC->toks[callee].text.ptr + DOC->toks[callee].text.len - DOC->toks[first].text.ptr)};
+        for (int i = 0; !converted && i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind != DECL_ENUM || d->builtin) continue;
+            if (first == callee ? str_eq(d->name, name) && visible_by_name(d) : str_eq(d->qualified, written)) converted = d;
+        }
+        if (converted) {
+            sb label = {0};
+            sb doc = {0};
+            sb_printf(&label, "%s(int number)", name_for(converted));
+            describe_enum_conversion(converted, &doc);
+            add_signature(&s, label.data, doc.data);
         }
     }
     if (s.shown == 0) {

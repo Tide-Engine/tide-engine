@@ -100,6 +100,9 @@ void ts_Shade(tt_BoxVertex t_vertex, inout vec4 t_color) {
         }
         t_color.a = (t_color.a * 0.5);
     }
+    if (((tide_g0.x == 1) || (((tide_g0.x + 256) & 255) == 1))) {
+        t_color.a = 1.0;
+    }
     if ((((vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy).x < 10.0) || (tide_world.y < 0.0))) {
         discard;
     }
@@ -190,6 +193,9 @@ fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
             break;
         }
         (*t_color).a = ((*t_color).a * 0.5);
+    }
+    if (((tide_g0.x == 1) || (((tide_g0.x + 256) & 255) == 1))) {
+        (*t_color).a = 1.0;
     }
     if ((((tide_at.xy / tide_block.tide_screen.xy).x < 10.0) || (tide_world.y < 0.0))) {
         discard;

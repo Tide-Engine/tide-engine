@@ -746,6 +746,12 @@ TIDE_TEST(migrate_a_game_keeps_what_has_the_same_name)
     Unit before = tide_get_Unit(w, first);
     before.mode = Mode_Jump;
     tide_set_Unit(w, first, before);
+    // A number none of Mode's members has, as Mode(3) makes it: there's no name to carry it by
+    const tide_entity second = unit_named(w, "unit");
+    TIDE_REQUIRE(!tide_entity_is_null(second));
+    Unit odd = tide_get_Unit(w, second);
+    odd.mode = (Mode)3;
+    tide_set_Unit(w, second, odd);
     tide_migration m;
     TIDE_REQUIRE(carry(&old, w, copy, &m));
     const tide_entity carried = unit_named(copy, "first");
@@ -754,6 +760,7 @@ TIDE_TEST(migrate_a_game_keeps_what_has_the_same_name)
     TIDE_CHECK(before.position.x == 1.0f && after.position.x == 0.0f); // Another name: the default
     TIDE_CHECK(after.mode == Mode_Jump);
     TIDE_CHECK(after.stats.level == 2);
+    TIDE_CHECK(tide_get_Unit(copy, unit_named(copy, "unit")).mode == Mode_Run); // ...so it's the default again
     TIDE_CHECK(tide_world_entity_count(copy) == tide_world_entity_count(w));
     free(fields);
     free(types);

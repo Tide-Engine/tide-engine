@@ -122,9 +122,10 @@ static bool is_scalar_number(const type t)
     return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_FLOAT;
 }
 
-// After a type mismatch between a long and another number: how to convert,
-// since nothing converts to or from a long by itself but an int going in.
-static void note_long_conversion(const type want, const type have)
+// After a type mismatch that a conversion written out settles: how to convert.
+// Nothing converts to or from a long by itself but an int going in, and an
+// enum and its number convert neither way by themselves.
+static void note_conversion(const type want, const type have)
 {
     if (want.kind == TY_LONG && have.kind == TY_FLOAT) {
         diag_note("long(x) makes a float a long, truncated toward zero");
@@ -132,6 +133,10 @@ static void note_long_conversion(const type want, const type have)
         diag_note("float(x) makes a long a float, rounded to the nearest");
     } else if (want.kind == TY_INT && have.kind == TY_LONG) {
         diag_note("int(x) makes a long an int, keeping its low 32 bits");
+    } else if (want.kind == TY_ENUM && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+        diag_note("%s(x) makes an int the %s with that number", type_name(want), type_name(want));
+    } else if (have.kind == TY_ENUM && (want.kind == TY_INT || want.kind == TY_LONG)) {
+        diag_note("%s(x) makes it its number", type_name(want));
     }
 }
 
@@ -1329,7 +1334,7 @@ static type check_literal(checker *c, expr *e)
         if (!type_assignable(init->field->type, value)) {
             diag_error(init->value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(init->name),
                        type_name(init->field->type), type_name(value));
-            note_long_conversion(init->field->type, value);
+            note_conversion(init->field->type, value);
         }
     }
     return decl_type(d);
@@ -1614,6 +1619,64 @@ static type check_construct(checker *c, expr *e, const type target)
 
     diag_error(e->at, "%s has no constructor", name);
     return T_ERR;
+}
+
+static bool names_only(const expr *e);
+
+// Card(2), or Combat.Stance(2): the value of enum `d` with that number, as
+// int(card) is a value's number. A number none of its members has is kept, as
+// C#'s cast keeps it, cut to what the enum is stored as the way byte(x) cuts
+// an int to a byte.
+static type check_enum_conversion(checker *c, expr *e, decl *d)
+{
+    // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
+    e->type_decl = d;
+    e->ctor = CTOR_ENUM;
+    const type target = {TY_ENUM, d};
+    bool any_error = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (check_expr_want(c, e->args.items[i], T_INT_).kind == TY_ERROR) any_error = true;
+    }
+    if (any_error) return T_ERR;
+    const char *name = type_name(target);
+    if (e->args.count != 1) {
+        diag_error(e->at, "%s(...) converts one int, a member's number", name);
+        if (d->members.count > 0) {
+            diag_note("a member is written with its enum, like '%s." STR_FMT "'", name, STR_ARG(d->members.items[0].name));
+        }
+        return T_ERR;
+    }
+    const expr *arg = e->args.items[0];
+    const type from = arg->type;
+    if (!type_assignable(T_INT_, from)) {
+        diag_error(arg->at, "%s(...) converts an int, not %s", name, type_name(from));
+        if (from.kind == TY_FLOAT) diag_note("convert it to an int first, which drops its fraction: '%s(int(x))'", name);
+        else if (from.kind == TY_LONG) diag_note("convert it to an int first, which keeps its low 32 bits: '%s(int(x))'", name);
+        else if (from.kind == TY_ENUM && from.decl == d) diag_note("it already is one: use it as it is");
+        else if (from.kind == TY_ENUM) diag_note("go through its number: '%s(int(x))'", name);
+        return T_ERR;
+    }
+    e->call = CALL_CONSTRUCT;
+    return target;
+}
+
+// The enum a call converts an int to, going by the name it's written with:
+// Card in Card(2), Combat.Stance in Combat.Stance(2). NULL for any other call.
+static decl *converted_enum(const checker *c, const expr *e)
+{
+    decl *other;
+    str name = e->name;
+    if (e->kind == E_METHOD) {
+        str ns;
+        if (!names_only(e->object) || !qualified_text(e->object, &ns)) return NULL;
+        char *text = arena_alloc((size_t)ns.len + (size_t)e->name.len + 2);
+        memcpy(text, ns.ptr, (size_t)ns.len);
+        text[ns.len] = '.';
+        memcpy(text + ns.len + 1, e->name.ptr, (size_t)e->name.len);
+        name = (str){text, ns.len + 1 + e->name.len};
+    }
+    decl *d = lookup(c->prog, c->unit, name, NAME_TYPE, &other);
+    return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
 // The input code being checked, for messages.
@@ -2015,7 +2078,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
             diag_error(arg->at, "'" STR_FMT "' takes %s for '" STR_FMT "', not %s", STR_ARG(m->name), type_name(p->type),
                        STR_ARG(p->name), type_name(arg->type));
             if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw2D.list'");
-            note_long_conversion(p->type, arg->type);
+            note_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
                 diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
@@ -2184,9 +2247,11 @@ static type check_call(checker *c, expr *e)
     decl *const fn = find_named(c, e->name, e->at, NAME_FUNCTION);
     if (fn) return check_function_call(c, e, fn);
 
+    decl *const d = find_type(c, e->name, e->at);
+    if (d && d->kind == DECL_ENUM) return check_enum_conversion(c, e, d); // Card(2)
+
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
 
-    const decl *d = find_type(c, e->name, e->at);
     if (d && (d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_EVENT)) {
         diag_error(e->at, "write '" STR_FMT " { ... }' to make %s value", STR_ARG(e->name),
                    d->kind == DECL_STRUCT ? "a struct" : d->kind == DECL_EVENT ? "an event" : "a component");
@@ -2209,6 +2274,10 @@ static type check_call(checker *c, expr *e)
         suggest_consider_c(&s, "Spawn");
         suggest_consider_c(&s, "Send");
         suggest_builtin_types(&s);
+        for (int i = 0; i < c->prog->decls.count; i++) { // The game's functions, and its enums, which convert an int
+            const decl *other = c->prog->decls.items[i];
+            if (other->kind == DECL_FUNCTION || other->kind == DECL_ENUM) suggest_consider(&s, other->name);
+        }
         suggest_note(&s);
     }
     return T_ERR;
@@ -3462,10 +3531,31 @@ static type check_method(checker *c, expr *e)
         memcpy(text, ns.ptr, (size_t)ns.len);
         text[ns.len] = '.';
         memcpy(text + ns.len + 1, e->name.ptr, (size_t)e->name.len);
-        decl *const fn = find_named(c, (str){text, ns.len + 1 + e->name.len}, e->at, NAME_FUNCTION);
+        const str qualified = {text, ns.len + 1 + e->name.len};
+        decl *const fn = find_named(c, qualified, e->at, NAME_FUNCTION);
         if (fn) {
             mark_namespaces(e->object);
             return check_function_call(c, e, fn);
+        }
+        // Combat.Stance(2): an enum in a namespace, converting an int.
+        decl *const named = find_type(c, qualified, e->at);
+        if (named && named->kind == DECL_ENUM) {
+            mark_namespaces(e->object);
+            return check_enum_conversion(c, e, named);
+        }
+        if (!named && !is_namespace(c->prog, qualified)) { // Nothing there to call: maybe misspelled
+            mark_namespaces(e->object);
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "namespace '" STR_FMT "' has no function '" STR_FMT "'", STR_ARG(ns), STR_ARG(e->name));
+            suggestion s = suggest_start(e->name);
+            for (int i = 0; i < c->prog->decls.count; i++) {
+                const decl *other = c->prog->decls.items[i];
+                if ((other->kind == DECL_FUNCTION || other->kind == DECL_ENUM) && str_eq(decl_ns(other), ns)) {
+                    suggest_consider(&s, other->name);
+                }
+            }
+            suggest_note(&s);
+            return T_ERR;
         }
     }
 
@@ -6381,13 +6471,26 @@ static void check_assign(checker *c, const stmt *s)
     // Compound byte assignments explicitly narrow the promoted integer result.
     if (!type_assignable(target, result) && !(target.kind == TY_BYTE && s->op != T_ASSIGN && type_is_integer(result))) {
         diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
-        note_long_conversion(target, result);
+        note_conversion(target, result);
     }
 }
 
 static void check_stmt(checker *c, stmt *s);
 
 static bool fold_bool(const expr *e, bool *out);
+static bool fold_int(const expr *e, int64_t *out);
+
+// Card(2) while compiling: the number, in as many bits as the enum is stored
+// in. Going by what it says it's stored as, as an enum's member can be worked
+// out from one declared after it, which isn't checked yet.
+static bool fold_enum(const expr *e, int64_t *out)
+{
+    int64_t number;
+    if (e->args.count != 1 || !fold_int(e->args.items[0], &number)) return false;
+    const str backing = e->type_decl->backing;
+    *out = str_eq_c(backing, "byte") ? (uint8_t)number : str_eq_c(backing, "ushort") ? (uint16_t)number : (int32_t)number;
+    return true;
+}
 
 // An int known while compiling, from a checked expression: a literal, an
 // enum's member, constants, integer conversions, conditionals and operators
@@ -6423,11 +6526,13 @@ static bool fold_int(const expr *e, int64_t *out)
         return fold_bool(e->cond, &cond) && fold_int(cond ? e->lhs : e->rhs, out);
     }
     case E_CALL:
+        if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out);
         if (e->call != CALL_CONSTRUCT || e->ctor != CTOR_SCALAR || !type_is_integer(e->type)
             || e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
         *out = e->type.kind == TY_LONG ? l : e->type.kind == TY_BYTE ? (uint8_t)l : tide_i_from_l(l);
         return true;
     case E_METHOD: {
+        if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out); // Combat.Stance(2)
         if (e->call != CALL_BUILTIN || !type_is_integer(e->type) || e->args.count < 1 || e->args.count > 3) return false;
         int64_t args[3];
         for (int i = 0; i < e->args.count; i++) {
@@ -6706,7 +6811,7 @@ static void check_return(checker *c, const stmt *s)
     if (!type_assignable(m->return_type, value)) {
         diag_error(s->value->at, "'" STR_FMT "' returns %s, not %s", STR_ARG(m->name), type_name(m->return_type),
                    type_name(value));
-        note_long_conversion(m->return_type, value);
+        note_conversion(m->return_type, value);
     }
 }
 
@@ -6851,7 +6956,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (!type_assignable(s->type, value)) {
             diag_error(s->value->at, "can't initialize %s with %s", type_name(s->type), type_name(value));
-            note_long_conversion(s->type, value);
+            note_conversion(s->type, value);
         }
     }
 
@@ -7174,10 +7279,10 @@ static bool is_constant(const checker *c, const expr *e)
         return is_constant(c, e->lhs) && is_constant(c, e->rhs);
     case E_CONDITIONAL:
         return is_constant(c, e->cond) && is_constant(c, e->lhs) && is_constant(c, e->rhs);
-    case E_CALL: // A built-in type's constructor, and a grid's size
-        return (builtin_type_named(e->name, &ignored) || is_new_grid(e)) && all_constant(c, e);
-    case E_METHOD:
-        return e->object->kind == E_NAME && builtin_owner(e->object->name) && all_constant(c, e);
+    case E_CALL: // A built-in type's constructor, an enum's conversion, and a grid's size
+        return (builtin_type_named(e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)) && all_constant(c, e);
+    case E_METHOD: // Math.Max(...), and Combat.Stance(2)
+        return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
         return (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);
     case E_LITERAL:
@@ -7319,7 +7424,7 @@ static void check_constant(checker *c, decl *k)
         if (k->return_type.kind != TY_ERROR && t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
             diag_error(k->value->at, "constant '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type),
                        type_name(t));
-            note_long_conversion(k->return_type, t);
+            note_conversion(k->return_type, t);
         }
     }
     c->unit = outer;
@@ -7542,7 +7647,7 @@ static void check_default(checker *c, const field *f)
     const type t = check_constant_expr(c, value, true, f->type);
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
         diag_error(value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
-        note_long_conversion(f->type, t);
+        note_conversion(f->type, t);
     }
 }
 
