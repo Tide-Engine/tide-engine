@@ -1,58 +1,22 @@
 // Over the arena, in the screen's pixels: the score, both fighters' health and
 // upgrades, what the buttons do, and the words between rounds.
 
-// What the views last saw of the match's flow, to tell when it changes.
+// How long the round's flow has been where it is. The match's events say when
+// it turns (heard.tide): the views only count the seconds.
 local singleton Flow
 {
-    int match = -1;
-    bool attract;
-    Phase phase;
     float age;         // Seconds in this phase
-    int blue;
-    int orange;
     int winner = -1;   // Who took the last round: a side, or -1 when both went down
     float since = 100; // Seconds since a round ended
 }
 
 [Stage(PaintStages.Prepare, 10)]
-view WatchRound(Duel duel, mut Flow flow, mut Fx fx, mut Sky sky)
+view WatchRound(Duel duel, mut Flow flow, mut Fx fx)
 {
     flow.age += fx.dt;
     flow.since += fx.dt;
     // Behind the menu, the fight is scenery: it shakes and flashes less
     fx.calm = duel.attract ? 0.25 : 1;
-    if (duel.match != flow.match || duel.attract != flow.attract)
-    {
-        flow.match = duel.match;
-        flow.attract = duel.attract;
-        flow.phase = duel.phase;
-        flow.age = 0;
-        flow.blue = duel.scoreBlue;
-        flow.orange = duel.scoreOrange;
-        flow.since = 100;
-        return;
-    }
-    if (duel.scoreBlue != flow.blue || duel.scoreOrange != flow.orange)
-    {
-        flow.winner = duel.scoreBlue > flow.blue ? 0 : 1;
-        flow.since = 0;
-        flow.blue = duel.scoreBlue;
-        flow.orange = duel.scoreOrange;
-    }
-    if (duel.phase == flow.phase) return;
-    if (flow.phase == Phase.Fight && duel.phase == Phase.Countdown)
-    {
-        flow.winner = -1;
-        flow.since = 0;
-    }
-    if (duel.phase == Phase.Fight)
-    {
-        Shock(sky, float2(0, 30), 0.75);
-        Flash(fx, Color.white, 0.1);
-        fx.kick = 0.9;
-    }
-    flow.phase = duel.phase;
-    flow.age = 0;
 }
 
 string SideName(int side)
@@ -72,8 +36,10 @@ Color CardColor(Card card)
     return Color(1, 0.62, 0.22);
 }
 
+// The score is what the server has confirmed: a round this machine only
+// predicted lights nothing.
 [Stage(PaintStages.Hud)]
-view PaintScore(Duel duel, Flow flow)
+view PaintScore(verified Duel duel, Flow flow)
 {
     Draw2D.Screen();
     if (duel.attract) return;
@@ -124,14 +90,13 @@ view PaintScore(Duel duel, Flow flow)
 }
 
 [Stage(PaintStages.Hud, 10)]
-view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
+view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session session)
 {
     if (duel.attract) return;
-    var latest = world.Get<Fighter>(this);
     var color = FighterColor(fighter.side);
     var blue = fighter.side == 0;
     var who = blue ? duel.bluePlayer : duel.orangePlayer;
-    var mine = !latest.bot && who == session.player;
+    var mine = !fighter.bot && who == session.player;
     // Beside the score on a low screen, and under it otherwise
     var slim = Screen.height < 640 && Screen.width >= 720;
     var narrow = Screen.width < 720;
@@ -142,8 +107,10 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     var inward = blue ? 1 : -1;
     var bar = float2(edge + inward * width * 0.5, top + 21);
 
-    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
-    var before = Math.Saturate((latest.health + fighter.chip) / fighter.build.maxHealth);
+    // Its health as the server confirmed it, and in white what the last hits took
+    var solid = SureHealth(fighter, sure);
+    var health = Math.Saturate(solid / fighter.build.maxHealth);
+    var before = Math.Saturate((solid + fighter.chip) / fighter.build.maxHealth);
     var room = width - 6;
     var start = edge + inward * 3;
     Panel(bar, float2(width, 13), 6.5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.5,
@@ -166,7 +133,7 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     Draw2D.Circle(face + float2(inward * 1.5 - 3, -1), 2.1, Color.white);
     Draw2D.Circle(face + float2(inward * 1.5 + 3, -1), 2.1, Color.white);
     var name = SideName(fighter.side);
-    var tag = mine ? "YOU" : latest.bot ? "BOT" : "";
+    var tag = mine ? "YOU" : fighter.bot ? "BOT" : "";
     var nameWidth = Draw2D.MeasureText(name, 12).x;
     var tagWidth = tag == "" ? 0 : Draw2D.MeasureText(tag, 9).x + 10;
     var nameAt = blue ? edge + 24 : edge - 24 - nameWidth;
@@ -174,10 +141,10 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     if (tag != "")
         Panel(float2(tagAt + tagWidth * 0.5, top + 5), float2(tagWidth, 14), 7, mine ? color : Color(0.16, 0.2, 0.32),
               mine ? color : Color(0.16, 0.2, 0.32), 0, Color.clear);
-    for (var i = 0; i < latest.build.cards.count; i++)
+    for (var i = 0; i < sure.build.cards.count; i++)
     {
         var gem = float2((blue ? tagAt + tagWidth + 13 : tagAt - 13) + inward * i * 14, top + 5);
-        var tint = CardColor(latest.build.cards[i]);
+        var tint = CardColor(sure.build.cards[i]);
         Draw2D.RoundRect(gem, float2(9.5, 9.5), 2, Math.PI * 0.25, UI_OUTLINE);
         Draw2D.RoundRect(gem, float2(7, 7), 1.5, Math.PI * 0.25, tint);
         Draw2D.Circle(gem + float2(-1, -1.5), 1.2, Fade(Color.white, 0.8));
@@ -186,7 +153,7 @@ view PaintVitals(Fighter fighter, World world, Duel duel, Session session)
     Draw2D.Text(name, float2(nameAt, top - 1), 12, color);
     if (tag != "") Write(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED);
     if (narrow) return;
-    var left = $"{int(Math.Ceil(Math.Max(0, latest.health)))}";
+    var left = $"{int(Math.Ceil(Math.Max(0, solid)))}";
     var inner = edge + inward * width;
     Draw2D.Text(left, float2(blue ? inner - Draw2D.MeasureText(left, 12).x : inner, top - 1), 12, UI_INK);
 }

@@ -1,7 +1,8 @@
 // The arena as this machine shows it: platforms, fighters and shots, each a
-// handful of Draw2D's shapes, and the effects they set off (effects.tide).
-// Views can't change the match. What they keep of a fighter or a shot between
-// frames is in its local fields.
+// handful of Draw2D's shapes. Views can't change the match. How a fighter or a
+// shot looks beyond what the match says of it is in its local fields, which
+// this machine's handlers of the match's events set as things happen
+// (heard.tide), and these views let settle, frame by frame.
 const Color UI_BACKGROUND = Color(0.027, 0.035, 0.07);
 const Color UI_PANEL = Color(0.075, 0.1, 0.17);
 const Color UI_INK = Color(0.93, 0.96, 1);
@@ -54,90 +55,30 @@ view PaintPlatforms(Platform platform, mut Fx fx)
     Draw2D.Line(from, to, 2.2, Color(0.66, 0.83, 1, 0.92));
 }
 
-[Stage(PaintStages.Fighters)]
-view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Session session, Devices devices,
-    Canvas canvas, mut Fx fx, mut Sky sky)
+// A fighter's health as the server has confirmed it. In a round this machine
+// has started and the server hasn't confirmed yet, it's whole.
+float SureHealth(Fighter fighter, Fighter sure)
 {
-    // The latest tick's, where health drops at once. What a view reads of the
-    // match slides between ticks, which is right for drawing and late for a hit.
-    var latest = world.Get<Fighter>(this);
+    return sure.round == fighter.round ? sure.health : fighter.health;
+}
+
+[Stage(PaintStages.Fighters)]
+view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel duel, Session session, Devices devices,
+    Canvas canvas, mut Fx fx)
+{
     var color = FighterColor(fighter.side);
     var who = fighter.side == 0 ? duel.bluePlayer : duel.orangePlayer;
-    var mine = !latest.bot && !duel.attract && who == session.player;
+    var mine = !fighter.bot && !duel.attract && who == session.player;
     var step = Math.Min(fx.dt, 0.033);
+    // It's down once the server says so: a knockout this machine only predicted hides nothing
+    var solid = SureHealth(fighter, sure);
+    if (solid <= 0) return;
 
-    if (fighter.seenRound != latest.round)
-    {
-        // A new round: back at its start, and whole
-        fighter.seenRound = latest.round;
-        fighter.shownHealth = latest.health;
-        fighter.chip = 0;
-        fighter.hit = 0;
-        fighter.arrive = 0;
-        fighter.squash = 0;
-        fighter.squashSpeed = 0;
-        fighter.air = 0;
-        fighter.seenCooldown = latest.fireCooldown;
-        Ripple(fx, body.position, 8, 52, 4, 0.42, color);
-    }
-
-    if (latest.health < fighter.shownHealth - 0.01)
-    {
-        var damage = fighter.shownHealth - latest.health;
-        var push = Math.Normalize(world.Get<Body>(this).velocity);
-        fighter.chip += damage;
-        fighter.hit = 1;
-        fighter.squashSpeed -= 3;
-        fx.labels.Add(Label { position = body.position + float2(0, body.radius + 24), color = Mix(color, Color.white, 0.6),
-                              amount = int(Math.Ceil(damage)) });
-        Burst(fx, body.position, push, 1.5, 9, 430, Color.white);
-        Ripple(fx, body.position, body.radius, body.radius + 24 + damage * 0.3, 4, 0.24, Color.white);
-        if (mine) fx.hurt = 1;
-        if (latest.health > 0)
-        {
-            Chunks(fx, body.position, push * 170, 4 + int(damage * 0.1), 180, color);
-            Shake(fx, 0.2 + damage * 0.005);
-            fx.kick += 0.5;
-        }
-        else
-        {
-            // Knocked out: it bursts, and the whole arena feels it
-            Chunks(fx, body.position, push * 230, 36, 430, color);
-            Burst(fx, body.position, float2(0, 1), Math.TAU, 28, 660, Mix(color, Color.white, 0.5));
-            Dust(fx, body.position, float2(0, 30), 9, 24, Fade(color, 0.3));
-            Ripple(fx, body.position, 10, 170, 10, 0.55, Color.white);
-            Ripple(fx, body.position, 6, 100, 6, 0.4, color);
-            Shock(sky, body.position, 1);
-            Shake(fx, 0.9);
-            Flash(fx, Mix(color, Color.white, 0.65), 0.26);
-            fx.kick = 1.7;
-        }
-    }
-    fighter.shownHealth = latest.health;
-    if (latest.health <= 0) return;
-
-    fx.marks.Add(Mark { position = body.position, radius = body.radius, shield = latest.blockLeft > 0 });
+    fx.marks.Add(Mark { position = body.position, radius = body.radius, shield = fighter.blockLeft > 0 });
     var feet = body.position - float2(0, body.radius);
 
-    // It squashes as it lands and stretches as it jumps, and springs back
-    if (latest.grounded)
-    {
-        if (fighter.air > 0.09)
-        {
-            fighter.squashSpeed = 5 + Math.Min(4, fighter.air * 5);
-            Dust(fx, feet, float2(0, 12), 5, 9, Color(0.72, 0.82, 1, 0.26));
-        }
-        fighter.air = 0;
-    }
-    else
-    {
-        if (fighter.air == 0 && body.velocity.y > 120)
-        {
-            fighter.squashSpeed = -6.5;
-            Dust(fx, feet, float2(0, -10), 3, 8, Color(0.72, 0.82, 1, 0.22));
-        }
-        fighter.air += step;
-    }
+    // What happened to it set these off (heard.tide): it springs back from a
+    // squash, pops in, and its flash, its recoil and what a hit took fade
     fighter.squashSpeed += (-fighter.squash * 330 - fighter.squashSpeed * 15) * step;
     fighter.squash = Math.Clamp(fighter.squash + fighter.squashSpeed * step, -0.4, 0.45);
     fighter.arrive = Math.Min(1, fighter.arrive + step / 0.42);
@@ -145,20 +86,7 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
     fighter.recoil = Math.Max(0, fighter.recoil - step * 8);
     if (fighter.hit <= 0) fighter.chip = Math.Max(0, fighter.chip - (14 + fighter.chip * 2.5) * step);
 
-    if (latest.fireCooldown > fighter.seenCooldown + 0.02)
-    {
-        fighter.recoil = 1;
-        fighter.squashSpeed += 1.6;
-    }
-    fighter.seenCooldown = latest.fireCooldown;
-    if (latest.blockLeft > 0 && fighter.seenBlock <= 0)
-    {
-        Ripple(fx, body.position, body.radius, body.radius + 40, 5, 0.3, Color.white);
-        Ripple(fx, body.position, body.radius, body.radius + 26, 3, 0.22, color);
-    }
-    fighter.seenBlock = latest.blockLeft;
-
-    if (latest.grounded && Math.Abs(body.velocity.x) > 150 && duel.phase == Phase.Fight)
+    if (fighter.grounded && Math.Abs(body.velocity.x) > 150 && duel.phase == Phase.Fight)
     {
         fighter.puff -= step;
         if (fighter.puff <= 0)
@@ -169,9 +97,9 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
     }
 
     var grow = EaseBack(fighter.arrive);
-    var fly = latest.grounded ? 0 : Math.Clamp(Math.Abs(body.velocity.y) / 2600, 0, 0.14);
+    var fly = fighter.grounded ? 0 : Math.Clamp(Math.Abs(body.velocity.y) / 2600, 0, 0.14);
     // It breathes while it stands
-    var squash = fighter.squash + (latest.grounded ? Math.Sin(fx.now * 3.2 + fighter.side * 1.7) * 0.022 : 0);
+    var squash = fighter.squash + (fighter.grounded ? Math.Sin(fx.now * 3.2 + fighter.side * 1.7) * 0.022 : 0);
     var wide = body.radius * (1 + squash * 0.7) * (1 - fly * 0.8) * grow;
     var tall = body.radius * (1 - squash * 0.7) * (1 + fly) * grow;
     var center = body.position + float2(0, tall - body.radius * grow);
@@ -262,10 +190,10 @@ view PaintFighters(Body body, mut Fighter fighter, World world, Duel duel, Sessi
         Draw2D.Arc(center, body.radius + 8.5, Math.PI * 0.5, -Math.TAU * (1 - fighter.blockCooldown / 2), 1.9, Fade(color, 0.5));
     }
 
-    // Its health, over its head: what a hit took lingers in white
+    // Its health, over its head, as the server confirmed it: what a hit took lingers in white
     var bar = center + float2(0, tall + 16);
-    var health = Math.Saturate(fighter.health / fighter.build.maxHealth);
-    var before = Math.Saturate((latest.health + fighter.chip) / fighter.build.maxHealth);
+    var health = Math.Saturate(solid / fighter.build.maxHealth);
+    var before = Math.Saturate((solid + fighter.chip) / fighter.build.maxHealth);
     Panel(bar, float2(52, 10), 5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.2, Fade(UI_OUTLINE, 0.9));
     if (before > health)
         Draw2D.RoundRect(bar + float2((before - 1) * 23, 0), float2(46 * before, 5), 2.5, Fade(Color.white, 0.92));
@@ -295,65 +223,18 @@ view PaintBullets(Body body, mut Bullet bullet, mut Fx fx)
     var color = FighterColor(bullet.side);
     var speed = Math.Length(body.velocity);
     var direction = speed > 1 ? body.velocity / speed : float2(1, 0);
-    if (!bullet.seen)
-    {
-        // Just fired: a flash at the muzzle, sparks, and a shell that drops
-        bullet.seen = true;
-        bullet.seenBounces = bullet.bounces;
-        bullet.seenSide = bullet.side;
-        bullet.trail = body.position;
-        var up = fx.random.NextFloat();
-        var spin = fx.random.NextFloat();
-        fx.bits.Add(Bit { position = body.position + direction * 3, color = Color(1, 0.95, 0.8), life = 0.075, size = 30,
-                          kind = BitKind.Dot });
-        Burst(fx, body.position, direction, 0.75, 4, 400, Mix(color, Color.white, 0.6));
-        fx.bits.Add(Bit { position = body.position - direction * 16,
-                          velocity = float2(-direction.x * 90, 190 + up * 110), color = Color(1, 0.8, 0.36),
-                          life = 1.1, size = 2.6, gravity = 1150, drag = 0.5, spin = (spin - 0.5) * 50, kind = BitKind.Shell });
-        Shake(fx, 0.045);
-    }
-    else if (bullet.seenBounces != bullet.bounces || bullet.seenSide != bullet.side)
-    {
-        // It turned, off a wall or off a shield: its trail turns where it did
-        var blocked = bullet.seenSide != bullet.side;
-        var reach = bullet.seenVelocity * (2.0 / 60);
-        var hit = Strike(fx, bullet.seenAt, reach, body.radius);
-        var corner = hit.fraction <= 1 ? bullet.seenAt + reach * hit.fraction : body.position;
-        fx.streaks.Add(Streak { from = bullet.trail, to = corner, color = FighterColor(bullet.seenSide) });
-        bullet.trail = corner;
-        bullet.seenBounces = bullet.bounces;
-        bullet.seenSide = bullet.side;
-        Burst(fx, corner, direction, 2.2, blocked ? 14 : 7, blocked ? 460 : 300, Mix(color, Color.white, 0.5));
-        Ripple(fx, corner, 3, blocked ? 44 : 22, blocked ? 5 : 3, 0.24, Color.white);
-        if (blocked)
-        {
-            fx.bits.Add(Bit { position = corner, color = Color.white, life = 0.09, size = 34, kind = BitKind.Dot });
-            Shake(fx, 0.16);
-        }
-    }
+    // A shot heavier than most looks it
+    var heft = Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7);
+    // Its trail starts where it was fired, turns where it bounced and ends where
+    // it did (heard.tide). A shot fired before this machine was in the match
+    // starts it here.
+    if (Math.LengthSq(bullet.trail) == 0) bullet.trail = body.position;
     if (Math.DistanceSq(body.position, bullet.trail) > 49)
     {
-        fx.streaks.Add(Streak { from = bullet.trail, to = body.position, color = color,
-                                width = 7 * Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7) });
+        fx.streaks.Add(Streak { from = bullet.trail, to = body.position, color = color, width = 7 * heft });
         bullet.trail = body.position;
     }
-    bullet.seenAt = body.position;
-    bullet.seenVelocity = body.velocity;
 
-    // The frame's effects end the shots it doesn't see again
-    mut var known = false;
-    for (var i = 0; i < fx.shots.count; i++)
-    {
-        if (fx.shots[i].entity != this) continue;
-        fx.shots[i] = Shot { entity = this, position = body.position, velocity = body.velocity, side = bullet.side, frame = fx.frame };
-        known = true;
-        break;
-    }
-    if (!known)
-        fx.shots.Add(Shot { entity = this, position = body.position, velocity = body.velocity, side = bullet.side, frame = fx.frame });
-
-    // A shot that hits harder looks it
-    var heft = Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7);
     Draw2D.Line(bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
     Glow(body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
     Draw2D.Line(body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
