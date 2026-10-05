@@ -1,0 +1,11 @@
+// expect: 'Glow' uses local state, on line 5, so the match can't start it
+scene Main { }
+async void Glow(float speed)
+{
+    var step = Frame.dt * speed;
+    await Wait.Seconds(step);
+}
+system Light()
+{
+    Glow(2);
+}

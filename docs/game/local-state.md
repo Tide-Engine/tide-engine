@@ -14,7 +14,7 @@ local singleton Settings
 local component Spark
 {
     float2 position;
-    int framesLeft = 30;
+    float age;
 }
 ```
 
@@ -36,8 +36,8 @@ view Trail(Body body, with Ball)
 view DrawSparks(mut Spark spark)
 {
     Draw2D.Circle(spark.position, 0.1, Color.yellow);
-    spark.framesLeft -= 1;
-    if (spark.framesLeft <= 0) this.Destroy();
+    spark.age += Frame.dt;
+    if (spark.age >= 0.5) this.Destroy();
 }
 ```
 
@@ -46,6 +46,67 @@ view DrawSparks(mut Spark spark)
 Local structural changes and local events apply at the end of the frame, as the match's do at the end of the tick.
 
 A view only runs when everything it reads exists, so a view of the match's components or singletons doesn't run outside a match. A view runs for the entities of one world: its components are all local, or all the match's.
+
+## Time
+
+Local state has no ticks: views run once a frame, at the display's rate. `Frame.dt` is the seconds since the previous frame started, so what a machine animates for itself takes the same time on every display. The sparks above last half a second whether that's 30 frames or 72.
+
+```csharp
+struct Puff
+{
+    float2 position;
+    float2 velocity;
+    float age;
+}
+
+local singleton Smoke
+{
+    List<Puff> puffs;
+}
+
+view Drift(mut Smoke smoke)
+{
+    var dt = Math.Min(Frame.dt, 0.05); // A stall isn't a leap
+    mut var i = 0;
+    while (i < smoke.puffs.count)
+    {
+        mut var puff = smoke.puffs[i];
+        puff.age += dt;
+        if (puff.age >= 1.5)
+        {
+            smoke.puffs.RemoveAt(i);
+            continue;
+        }
+        puff.velocity = puff.velocity * Math.Max(0, 1 - 2 * dt); // Drag
+        puff.position += puff.velocity * dt;
+        smoke.puffs[i] = puff;
+        Draw2D.Circle(puff.position, 0.2 + puff.age * 0.3, Color(1, 1, 1, 0.4 * (1 - puff.age / 1.5)));
+        i++;
+    }
+}
+```
+
+- **All local code reads it**: views, local handlers, local tasks, and the functions they call. A task that waits a frame at a time moves on by it, as a view does:
+
+```csharp
+local singleton Banner
+{
+    float shown; // 0 to 1
+}
+
+async void Reveal(mut Banner banner)
+{
+    while (banner.shown < 1)
+    {
+        banner.shown = Math.Min(1, banner.shown + Frame.dt * 3);
+        await Wait.Frames(1);
+    }
+}
+```
+
+- **The match can't.** A frame's length is another on every machine, so a system or a match handler that reads it is an error, which says to take `Time time` and read `time.dt`, a tick's length. A function that reads it is local code, and the match can't call it.
+- **It needs no match.** It's there in a local scene and while connecting, and it's 0 only before the first frame, in a handler that runs as the program starts.
+- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)).
 
 ## Local fields
 

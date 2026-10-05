@@ -1,0 +1,9 @@
+// expect: a frame's length is this machine's: the match takes 'Time time' and reads 'time.dt', a tick's length
+scene Main { }
+event Shot { }
+singleton Clock { float age; }
+event(Shot) Count(mut Clock clock)
+{
+    clock.age += Frame.dt;
+}
+system Fire() { Send(Shot); }

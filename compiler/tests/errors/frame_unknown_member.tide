@@ -1,0 +1,7 @@
+// expect: Frame has no member 'time'
+local scene Main { }
+local singleton Clock { float now; }
+view Tick(mut Clock clock)
+{
+    clock.now = Frame.time;
+}
