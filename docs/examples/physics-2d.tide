@@ -75,9 +75,12 @@ view Crates(Body body, Box box, with Crate)
     Draw2D.RoundRect(body.position, box.size - float2(0.06), 0.1, body.angle, Color(0.98, 0.75, 0.14));
 }
 
+// A ball has a spoke, from its middle to its edge, to show how it's turned.
 view Balls(Body body, Circle circle)
 {
     Draw2D.Circle(body.position, circle.radius, Color(0.18, 0.83, 0.75));
+    var spoke = float2(Math.Cos(body.angle), Math.Sin(body.angle)) * circle.radius;
+    Draw2D.Line(body.position, body.position + spoke, 0.07, Color(0.086, 0.086, 0.094));
 }
 
 view Hud(Tally tally)

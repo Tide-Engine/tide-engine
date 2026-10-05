@@ -136,10 +136,14 @@ static int32_t share_from = SHARED_BODIES; // A step with this many bodies awake
 
 // The bodies the running tick's Enter made, in the order it made them, each
 // with its entity, for the system after it to take (b2t_made): the match keeps
-// whose each body is in a map, which is Tide's to write.
+// whose each body is in a map, which is Tide's to write. And each with the
+// impulses its component was spawned with, which the step gives it (push_new):
+// a body has no weight to push until its shapes are on it, later in the tick.
 typedef struct new_body {
     int64_t body;
     tide_entity entity;
+    tide_float2 impulse;
+    float turn;
 } new_body;
 
 static new_body *made;
@@ -442,6 +446,12 @@ static bool sync_body(body *b)
         const b2Pos at = b2Body_GetPosition(id);
         if ((float)at.x != b->position.x || (float)at.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(id)) != b->angle) {
             b2Body_SetTransform(id, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
+            // Box2D moves a sleeping body and leaves it asleep, hanging where it was put, and leaves asleep
+            // what rested on a body that's moved from under it. Code has no other way to say a body should
+            // wake than to move it, so a body that's moved is awake, and so is what it touched. It follows
+            // from the move, which is what's noted.
+            b2Body_SetAwake(id, true);
+            b2Body_WakeTouching(id);
             did |= 2u;
         }
         const b2Vec2 velocity = b2Body_GetLinearVelocity(id);
@@ -454,13 +464,17 @@ static bool sync_body(body *b)
             did |= 8u;
         }
     }
+    // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
+    // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
+    // Either way they're given once, and noted here
+    const bool is_new = did & 1u;
     if (b->impulse.x != 0 || b->impulse.y != 0) {
-        b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){b->impulse.x, b->impulse.y}, true);
+        if (!is_new) b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){b->impulse.x, b->impulse.y}, true);
         b->impulse = (tide_float2){0, 0};
         did |= 16u;
     }
     if (b->turn != 0) {
-        b2Body_ApplyAngularImpulse(id, b->turn, true);
+        if (!is_new) b2Body_ApplyAngularImpulse(id, b->turn, true);
         b->turn = 0;
         did |= 32u;
     }
@@ -535,13 +549,15 @@ void b2t_enter(tide_rows *rows, physics *p)
         if (!is_new && !moved && !pushed && !nudged) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
+        const tide_float2 impulse = b.impulse;
+        const float turn = b.turn;
         if (sync_body(&b)) {
             if (made_count == made_room) {
                 const int32_t room = made_room ? made_room * 2 : 64;
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i]};
+            made[made_count++] = (new_body){b.id, entities[i], impulse, turn};
         }
         tide_rows_set(rows, 0, i, &b); // Its id, and the impulses it was given, which are gone
         f = fields_of(rows);
@@ -566,6 +582,12 @@ static b2ShapeDef shape_def(const float density, const float friction, const flo
     def.material.restitution = bounce;
     def.isSensor = sensor;
     def.enableContactEvents = true; // Touched and Parted
+    // ...which a sensor sends too, for the shapes in it. Box2D only reports a shape to a sensor when both
+    // say so, and neither does unless it's told to: every shape does, as any may come into a sensor
+    def.enableSensorEvents = true;
+    // A sensor doesn't report another: each would report the other, and their entities hear of it twice.
+    // Shapes of one group below zero are never set against each other
+    if (sensor) def.filter.groupIndex = -1;
     return def;
 }
 
@@ -634,16 +656,45 @@ static void note_left(const world *w)
     }
 }
 
+// The impulses the bodies made this tick were spawned with, given now that
+// their shapes are on them and they weigh something: as an impulse written
+// into a body that's there is, a tick sooner. In the order the bodies were
+// made, and noted with them (sync_body), so nothing is noted here.
+static void push_new(const world *w)
+{
+    for (int32_t i = 0; i < made_count; i++) {
+        const new_body *n = &made[i];
+        const bool pushed = n->impulse.x != 0 || n->impulse.y != 0;
+        if (!pushed && n->turn == 0) continue;
+        const b2BodyId id = body_of(w, n->body);
+        if (!b2Body_IsValid(id)) continue;
+        if (pushed) b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){n->impulse.x, n->impulse.y}, true);
+        if (n->turn != 0) b2Body_ApplyAngularImpulse(id, n->turn, true);
+    }
+}
+
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
-    // Nothing awake, and nothing done to the world since its last step: a step
-    // would leave it as it is. The stamp stays, which says so.
-    if (w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
+    // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
+    // last step's wherever the world came from
+    const b2Vec2 pulled = b2World_GetGravity(w->id);
+    const bool turned = pulled.x != gravity.x || pulled.y != gravity.y;
+    // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
+    // step would leave it as it is. The stamp stays, which says so.
+    if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b2World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
+    push_new(w);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
+    if (turned) {
+        // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box2D
+        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
+        // gravity, which every step notes.
+        b2World_EnableSleeping(w->id, false);
+        b2World_EnableSleeping(w->id, true);
+    }
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -826,13 +877,22 @@ void b2t_leave(tide_rows *rows, const physics *p)
     }
 }
 
+// What the tick's step says started touching and stopped, as Box2D has it:
+// the contacts between solid shapes that began and ended, and then the same
+// of its sensors, each with a shape that came into it or left it. They're the
+// step's own, read in the tick that stepped, and a world that's made from its
+// image has the same ones to say after its next step: what each sensor has in
+// it is in the image.
 int32_t b2t_touches(const int64_t stamp)
 {
     (void)stamp;
-    const b2ContactEvents events = b2World_GetContactEvents(active->id);
-    return events.beginCount + events.endCount;
+    const b2ContactEvents contacts = b2World_GetContactEvents(active->id);
+    const b2SensorEvents sensors = b2World_GetSensorEvents(active->id);
+    return contacts.beginCount + contacts.endCount + sensors.beginCount + sensors.endCount;
 }
 
+// Whose body a shape is on, or 0 for a shape that's gone, with its body: its
+// entity was destroyed, and what it touched parts from no entity.
 static int64_t owner_of(const b2ShapeId shape)
 {
     if (!b2Shape_IsValid(shape)) return 0;
@@ -842,15 +902,33 @@ static int64_t owner_of(const b2ShapeId shape)
 
 touch b2t_touch(const int32_t index)
 {
-    const b2ContactEvents events = b2World_GetContactEvents(active->id);
+    const b2ContactEvents contacts = b2World_GetContactEvents(active->id);
+    const b2SensorEvents sensors = b2World_GetSensorEvents(active->id);
     touch out = {0};
-    if (index < events.beginCount) {
-        out.a = owner_of(events.beginEvents[index].shapeIdA);
-        out.b = owner_of(events.beginEvents[index].shapeIdB);
+    int32_t at = index;
+    if (at < contacts.beginCount) {
+        out.a = owner_of(contacts.beginEvents[at].shapeIdA);
+        out.b = owner_of(contacts.beginEvents[at].shapeIdB);
         out.began = true;
-    } else if (index - events.beginCount < events.endCount) {
-        out.a = owner_of(events.endEvents[index - events.beginCount].shapeIdA);
-        out.b = owner_of(events.endEvents[index - events.beginCount].shapeIdB);
+        return out;
+    }
+    at -= contacts.beginCount;
+    if (at < contacts.endCount) {
+        out.a = owner_of(contacts.endEvents[at].shapeIdA);
+        out.b = owner_of(contacts.endEvents[at].shapeIdB);
+        return out;
+    }
+    at -= contacts.endCount;
+    if (at < sensors.beginCount) {
+        out.a = owner_of(sensors.beginEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.beginEvents[at].visitorShapeId);
+        out.began = true;
+        return out;
+    }
+    at -= sensors.beginCount;
+    if (at < sensors.endCount) {
+        out.a = owner_of(sensors.endEvents[at].sensorShapeId);
+        out.b = owner_of(sensors.endEvents[at].visitorShapeId);
     }
     return out;
 }

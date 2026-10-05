@@ -11,7 +11,8 @@
 // What's between the two is the network, and what the engine adds: the wait
 // for a tick to sample the key, how early a client's inputs are sent to be
 // sure to be in time (the server holds each until its tick), the server's own
-// frame, and the watching player's.
+// frame, and the watching player's. The players are as a session makes them
+// over a network: their inputs wait a frame at the server, at the least.
 
 typedef struct player {
     tide_client *client;
@@ -41,7 +42,7 @@ static float shown(const tide_view_worlds v)
 typedef struct seen {
     double frames;      // From the frame the key is read to the frame the other player's view shows any of it, on the whole
     int most;           // ...and at the most
-    double early;       // How early the pressing player's inputs reach the server, in ticks, on the whole
+    double early;       // How long the pressing player's inputs wait at the server, in milliseconds, on the whole
     uint32_t resyncs;
     uint32_t late;      // Ticks the server ran without the pressing player's input, once its clock had settled
 } seen;
@@ -73,7 +74,8 @@ static seen measure(const uint32_t rate, const double latency)
             players[i].client = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
                                                                        .transport = tide_loopback_endpoint(net, (uint32_t)i + 2u),
                                                                        .server = tide_loopback_address(1),
-                                                                       .sample = sample, .user = &players[i], .lead = 1},
+                                                                       .sample = sample, .user = &players[i], .lead = 1,
+                                                                       .lead_frame = true},
                                                    now);
         }
         // A press every 23 frames once settled, held for 10: at another moment of a tick each time
@@ -87,7 +89,7 @@ static seen measure(const uint32_t rate, const double latency)
         tide_server_update(server, now);
         if (frame == SETTLE) late_before = tide_client_status_of(players[0].client).late_ticks;
         if (frame >= SETTLE) {
-            early += (double)tide_client_status_of(players[0].client).early_ticks;
+            early += (double)tide_client_status_of(players[0].client).early_ms;
             early_count++;
         }
         if (pressed_at >= 0 && players[1].client && shown(tide_client_view(players[1].client)) > 0.0f) {
@@ -112,21 +114,23 @@ static seen measure(const uint32_t rate, const double latency)
 
 // Frames, on the whole, at each tick rate and network. With inputs kept 2 to 6
 // ticks early they were 3 and 6 at 60 ticks a second, 6.5 and 9.5 at 30, 8 and
-// 12 at 20. These are what they may be at the most, now that inputs are as
-// early as they have to be: a change that makes players see each other later
-// fails here, and one that makes it sooner lowers them.
+// 12 at 20. Kept a tick early at the least: 2 and 5, 4.5 and 7.5, 5 and 9.
+// These are what they may be at the most, now that inputs wait a frame at the
+// server at the least, whatever a tick is: a change that makes players see
+// each other later fails here, and one that makes it sooner lowers them.
 TIDE_TEST(seen_how_late_other_players_see_you)
 {
     const uint32_t rates[] = {60, 30, 20};
     const double latencies[] = {0.0, 0.03};
-    const double most[3][2] = {{2.0, 5.0}, {4.5, 7.5}, {5.1, 9.1}};
+    const double most[3][2] = {{2.0, 5.0}, {2.5, 5.5}, {3.0, 6.1}};
     for (int r = 0; r < 3; r++) {
         for (int l = 0; l < 2; l++) {
             const seen s = measure(rates[r], latencies[l]);
             TIDE_CHECK(s.resyncs == 0);
             TIDE_CHECK(s.late == 0); // As early as they have to be: none too late
             TIDE_CHECK(s.frames <= most[r][l] + 0.01);
-            TIDE_CHECK(s.early >= 1.0 && s.early <= 1.6); // A tick at the least, and little more
+            // A frame at the least, and what a datagram that comes between two of the server's frames adds
+            TIDE_CHECK(s.early >= 16.6 && s.early <= 21.0);
         }
     }
 }
@@ -144,10 +148,10 @@ TIDE_TEST(seen_inputs_are_as_early_as_an_uneven_network_needs)
     player one = {0};
     one.client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 2),
                                                         .server = tide_loopback_address(1), .sample = sample, .user = &one,
-                                                        .lead = 1},
+                                                        .lead = 1, .lead_frame = true},
                                     now);
     uint32_t late_before = 0;
-    int32_t least = 1000, most = -1000;
+    float least = 1000.0f, most = -1000.0f;
     for (int frame = 0; frame < 3600; frame++) {
         now += FRAME;
         tide_loopback_set_time(net, now);
@@ -157,14 +161,79 @@ TIDE_TEST(seen_inputs_are_as_early_as_an_uneven_network_needs)
         const tide_client_status status = tide_client_status_of(one.client);
         if (frame == 600) late_before = status.late_ticks;
         if (frame < 600) continue; // Its first ten seconds, as it finds out how uneven the network is
-        if (status.early_ticks < least) least = status.early_ticks;
-        if (status.early_ticks > most) most = status.early_ticks;
+        if (status.early_ms < least) least = status.early_ms;
+        if (status.early_ms > most) most = status.early_ms;
     }
     const tide_client_status status = tide_client_status_of(one.client);
     TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
     TIDE_CHECK(status.late_ticks - late_before <= 2u); // Up to 40 ms more for a datagram is 3 ticks: it went that early
-    TIDE_CHECK(least >= 0 && most <= 6);
+    TIDE_CHECK(least >= 0.0f && most <= 100.0f);
     tide_client_destroy(one.client);
     tide_server_destroy(server);
     tide_loopback_destroy(net);
+}
+
+// One player in a match of 20 ticks a second, on a network 30 ms each way,
+// whose frames come as `every` says: how long its inputs waited at the least
+// once its clock had settled, and how many came too late.
+typedef struct waited {
+    float least;
+    uint32_t late;
+    uint32_t resyncs;
+} waited;
+
+static waited wait_with_frames(bool (*every)(int frame))
+{
+    tide_loopback *net = tide_loopback_create(7);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03});
+    double now = 0.0;
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 20,
+                                                                  .transports = {tide_loopback_endpoint(net, 1)}},
+                                             now);
+    player one = {0};
+    one.client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 2),
+                                                        .server = tide_loopback_address(1), .sample = sample, .user = &one,
+                                                        .lead = 1, .lead_frame = true},
+                                    now);
+    waited result = {.least = 1000.0f};
+    uint32_t late_before = 0;
+    for (int frame = 0; frame < 3600; frame++) {
+        now += FRAME;
+        tide_loopback_set_time(net, now);
+        one.key = frame / 7 % 2 == 0;
+        if (frame < 60 || every(frame)) tide_client_update(one.client, now);
+        tide_server_update(server, now);
+        const tide_client_status status = tide_client_status_of(one.client);
+        if (frame == 1200) late_before = status.late_ticks;
+        if (frame >= 1200 && status.early_ms < result.least) result.least = status.early_ms;
+    }
+    const tide_client_status status = tide_client_status_of(one.client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
+    result.late = status.late_ticks - late_before;
+    result.resyncs = status.resyncs;
+    tide_client_destroy(one.client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    return result;
+}
+
+static bool every_other(const int frame) { return frame % 2 == 0; }
+static bool but_one_in_97(const int frame) { return frame % 97 != 0; }
+
+// A machine whose frames are longer keeps its inputs one of its own frames
+// early: at 30 frames a second, a 30th of a second.
+TIDE_TEST(seen_inputs_wait_a_frame_of_the_machine_that_sends_them)
+{
+    const waited w = wait_with_frames(every_other);
+    TIDE_CHECK(w.resyncs == 0 && w.late == 0);
+    TIDE_CHECK(w.least >= 33.0f && w.least <= 50.0f); // Never a tick, which is 50 ms here
+}
+
+// A frame that never came is what the wait is for: the input it would have
+// sent goes a frame later, and is still in time.
+TIDE_TEST(seen_a_frame_that_never_came_makes_no_input_late)
+{
+    const waited w = wait_with_frames(but_one_in_97);
+    TIDE_CHECK(w.resyncs == 0 && w.late == 0);
+    TIDE_CHECK(w.least >= 0.0f && w.least <= 50.0f);
 }

@@ -29,8 +29,12 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xf7a01bafd461192b)
-#define IMAGES_HASH UINT64_C(0xd1e1a842cbe98ddc)
+#define SETTLED_HASH UINT64_C(0xd6c19b6d8d1775e6)
+#define IMAGES_HASH UINT64_C(0x9b4e06a4254ac345)
+// Where the crates are and how fast, at each of the 300 ticks: the simulation
+// alone. A change to what the image holds of a world moves the two above and
+// leaves this one; a change to how the world steps moves all three.
+#define BODIES_HASH UINT64_C(0xa2292c6100587813)
 
 static tide_world a;
 static tide_world b;
@@ -48,6 +52,19 @@ static void tick(tide_world *w, const int ticks)
     for (int i = 0; i < ticks; i++) tide_world_tick(w);
 }
 
+// Where each crate is and how fast, as its component says, into `hash`.
+static uint64_t places(const tide_world *w, uint64_t hash)
+{
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_has_Crate(w, e)) continue;
+        const Box2D_Body body = tide_get_Box2D_Body(w, e);
+        const float place[6] = {body.position.x, body.position.y, body.angle, body.velocity.x, body.velocity.y, body.spin};
+        hash = tide_hash_more(hash, place, sizeof place);
+    }
+    return hash;
+}
+
 TIDE_TEST(box2d_steps_a_match)
 {
     b2t_forget();
@@ -55,10 +72,12 @@ TIDE_TEST(box2d_steps_a_match)
     // Every tick's image, not only the last: a byte that differs somewhere and
     // then doesn't (a field one platform's solver leaves behind) shows here
     uint64_t images = 0;
+    uint64_t bodies = 0;
     for (int t = 0; t < 300; t++) {
         tide_world_tick(&a);
         const uint64_t hash = tide_world_hash(&a); // The image is in it
         images = tide_hash_more(images, &hash, sizeof hash);
+        bodies = places(&a, bodies);
     }
     int crates = 0;
     int resting = 0;
@@ -76,10 +95,11 @@ TIDE_TEST(box2d_steps_a_match)
     TIDE_CHECK(crates == 21);      // 12 stacked, 8 thrown, 1 pushed: the doomed one went
     TIDE_CHECK(a.Box2D_Physics.bodies == 23 && a.Box2D_Physics.shapes == 23);
     TIDE_CHECK(a.Tally.touched > 20 && a.Tally.parted > 0);
-    printf("    the world's hash is %016llx, and its 300 images' %016llx\n", (unsigned long long)tide_world_hash(&a),
-           (unsigned long long)tide_hash_end(images));
+    printf("    the world's hash is %016llx, its 300 images' %016llx, and its bodies' %016llx\n", (unsigned long long)tide_world_hash(&a),
+           (unsigned long long)tide_hash_end(images), (unsigned long long)tide_hash_end(bodies));
     TIDE_CHECK(tide_world_hash(&a) == SETTLED_HASH);
     TIDE_CHECK(tide_hash_end(images) == IMAGES_HASH);
+    TIDE_CHECK(tide_hash_end(bodies) == BODIES_HASH);
     tide_world_free(&a);
 }
 

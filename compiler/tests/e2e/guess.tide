@@ -1,0 +1,42 @@
+// What a machine guesses of another player's input: their last one for a
+// while, and then as if they'd let go, but for the fields marked [Absolute].
+
+component Body
+{
+    float2 position;
+    float2 facing;
+    int presses;
+    int releases;
+    int pushes;
+    int lifts;
+}
+
+input Controls
+{
+    float2 move;             // What the player is doing: a guess lets go of it
+    bool fire;
+    [Absolute] float2 aim;   // Where they point: a guess keeps it
+}
+
+scene Main { }
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Body, Owner { player = joined.player });
+}
+
+// A unit a tick at full tilt, so a position counts the ticks its input was held.
+system Drive(Controls input, mut Body body, with Owner)
+{
+    body.position += input.move;
+    body.facing = input.aim;
+    if (input.fire.down) body.presses += 1;
+    if (input.fire.up) body.releases += 1;
+}
+
+// The same through the devices, which match code reads of the player's.
+system Push(Devices devices, mut Body body, with Owner)
+{
+    if (devices.keyboard.space.pressed) body.pushes += 1;
+    if (devices.keyboard.space.up) body.lifts += 1;
+}
