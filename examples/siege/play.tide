@@ -1,0 +1,334 @@
+// Siege, as one machine shows it: the camera, the pieces, the scores and the
+// menu. Views read the match and never change it: what they write is this
+// machine's own (Pointer, Fx, Menu, and a crate's `hit`).
+using Box2D;
+
+// The docs site's colors.
+const Color BACK = Color(0.086, 0.086, 0.094);
+const Color LINE = Color(0.24, 0.25, 0.27);
+const Color QUIET = Color(0.64, 0.64, 0.68);
+const Color AMBER = Color(0.98, 0.75, 0.14);
+const Color TEAL = Color(0.18, 0.83, 0.75);
+const Color ROSE = Color(0.98, 0.44, 0.52);
+const Color BLUE = Color(0.47, 0.72, 1);
+const Color STONE = Color(0.56, 0.57, 0.62); // A crate nobody has painted
+
+// Where this machine's pointer is on the map, which its input sends.
+local singleton Pointer
+{
+    float2 world;
+    bool known; // Not before the pointer was ever on this window
+}
+
+local singleton Fx
+{
+    float beat;     // Radians, for what pulses: always under a full turn
+    float meter;    // How many pixels a meter of the map is, in this window
+    int seat = -1;  // This machine's player's, once it has a cannon
+    bool fired;     // The player has found the trigger
+}
+
+local singleton Menu
+{
+    bool open;
+    string code;
+}
+
+Color SeatColor(int seat)
+{
+    return seat == 0 ? AMBER : seat == 1 ? TEAL : seat == 2 ? ROSE : seat == 3 ? BLUE : STONE;
+}
+
+string SeatName(int seat)
+{
+    return seat == 0 ? "Amber" : seat == 1 ? "Teal" : seat == 2 ? "Rose" : "Blue";
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(color.r * light, color.g * light, color.b * light, color.a);
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color Mix(Color from, Color to, float t)
+{
+    return from + (to - from) * Math.Saturate(t);
+}
+
+float2 Turned(float2 offset, float angle)
+{
+    var c = Math.Cos(angle);
+    var s = Math.Sin(angle);
+    return float2(offset.x * c - offset.y * s, offset.x * s + offset.y * c);
+}
+
+// The camera shows the whole map whatever the window's shape: a wide one sees
+// more of the sides, where crates fall off, and a tall one further down the
+// pit. The ceiling stays under the scores' row.
+view Look(Devices devices, mut Pointer pointer, mut Fx fx)
+{
+    Draw2D.Clear(BACK);
+    var width = float(Screen.width);
+    var height = float(Screen.height);
+    var half = Math.Max(9.3, 11.4 * height / width);
+    var top = CEILING + 44 * 2 * half / height;
+    Draw2D.SetCamera(float2(0, top - half), half);
+    fx.meter = height / (2 * half);
+    fx.seat = -1;
+
+    pointer.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (Math.LengthSq(devices.pointer.delta) > 0 || devices.pointer.press.pressed) pointer.known = true;
+    if (devices.pointer.press.pressed || devices.keyboard.space.pressed) fx.fired = true;
+    fx.beat += Math.Min(Frame.dt, 0.05) * 3;
+    if (fx.beat > Math.TAU) fx.beat -= Math.TAU;
+}
+
+// While gravity is turned over, arrows climb the map's sides.
+view Risen(Siege siege, Fx fx)
+{
+    if (siege.flip <= 0) return;
+    var shown = Math.Saturate(siege.flip / 30.0);
+    var climb = fx.beat / Math.TAU * 3;
+    // Beside the islands, or as near the window's sides as shows
+    var across = Math.Min(11.6, Screen.width / (2 * fx.meter) - 0.8);
+    Draw.Blend(Blend.Add)
+    {
+        for (var side = -1; side <= 1; side += 2)
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                var at = float2(side * across, Math.Frac((i * 3 + climb) / 15) * 15);
+                var color = Fade(ROSE, shown * 0.5 * Math.Sin(at.y / 15 * Math.PI));
+                Draw2D.Line(at + float2(-0.5, -0.4), at, 0.16, color);
+                Draw2D.Line(at + float2(0.5, -0.4), at, 0.16, color);
+            }
+        }
+    }
+}
+
+// A view sees a body where the last step left it, blended between ticks, and
+// gliding to where the server says it is when this machine guessed otherwise.
+view Islands(Body body, Box box, with Ground)
+{
+    // The ceiling is drawn to the window's top, under the scores
+    var over = body.position.y > CEILING ? 12.0 : 0;
+    Draw2D.Rect(body.position + float2(0, over / 2), box.size + float2(0, over), LINE);
+}
+
+view Bridges(Body body, Box box, with Bridge)
+{
+    Draw2D.RoundRect(body.position, box.size, 0.2, QUIET);
+    Draw2D.Circle(body.position, 0.09, BACK);
+}
+
+view Orbs(Body body, Circle circle, Orb orb, Siege siege, Fx fx)
+{
+    var live = orb.rest <= 0;
+    var up = siege.flip > 0;
+    var pulse = 0.5 + 0.5 * Math.Sin(fx.beat);
+    var color = live || up ? Color.white : LINE;
+    Draw.Blend(Blend.Add)
+    {
+        if (live || up)
+            Draw2D.Shape(Shape { center = body.position, size = float2(circle.radius * 2), ellipse = true,
+                                 color = Fade(Color.white, (up ? 0.3 : 0.1) + pulse * 0.08 + orb.inside * 0.12), soft = 1.1 });
+    }
+    Draw2D.WireCircle(body.position, circle.radius, 0.1, color);
+    // While it rests, an arc fills up around it
+    if (!live && !up)
+        Draw2D.Arc(body.position, circle.radius, Math.PI / 2, -Math.TAU * (1 - orb.rest / float(ORB_REST)), 0.1, QUIET);
+    // Two arrows: what's down goes up
+    var lift = up ? 0.12 * pulse : 0;
+    for (var i = 0; i < 2; i++)
+    {
+        var tip = body.position + float2(0, 0.42 - i * 0.42 + lift);
+        Draw2D.Line(tip + float2(-0.34, -0.3), tip, 0.1, color);
+        Draw2D.Line(tip + float2(0.34, -0.3), tip, 0.1, color);
+    }
+}
+
+// A crate is the color of whoever's shot painted it last, lighter at its top,
+// and white for a moment after a shot landed on it. `hit` is a local field:
+// this view lets it fade.
+view Crates(Body body, Box box, mut Crate crate)
+{
+    crate.hit = Math.Max(0, crate.hit - Frame.dt * 4);
+    var color = Mix(SeatColor(crate.last), Color.white, crate.hit);
+    Draw2D.Shape(Shape { center = body.position, size = box.size - float2(0.04), rotation = body.angle, radius = 0.1,
+                         color = color, color2 = Shade(color, 0.72), outline = 0.07, outlineColor = Shade(color, 0.5) });
+}
+
+// A king's head is its second shape, a circle at an offset from its body.
+view Kings(Body body, Circle circle, Crate crate)
+{
+    var at = body.position + Turned(circle.offset, body.angle);
+    Draw2D.Circle(at, circle.radius, Color.white);
+    Draw2D.WireCircle(at, circle.radius, 0.08, Shade(SeatColor(crate.last), 0.5));
+}
+
+view Bumpers(Body body, Circle circle, with Bumper)
+{
+    Draw2D.Circle(body.position, circle.radius, Color(0.16, 0.17, 0.19));
+    Draw2D.WireCircle(body.position, circle.radius, 0.09, QUIET);
+    // Three studs, so that its turning shows
+    for (var i = 0; i < 3; i++)
+        Draw2D.Circle(body.position + Turned(float2(circle.radius - 0.3, 0), body.angle + i * Math.TAU / 3), 0.09, QUIET);
+}
+
+view Rings(Blast blast)
+{
+    var t = blast.age / float(BLAST_TICKS);
+    var color = SeatColor(blast.seat);
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Shape(Shape { center = blast.at, size = float2(1.2), ellipse = true,
+                             color = Fade(color, 0.5 * (1 - t) * (1 - t)), soft = REACH * 0.5 });
+        Draw2D.WireCircle(blast.at, REACH * (0.2 + 0.8 * Math.Sqrt(t)), 0.2 * (1 - t), Fade(color, 1 - t));
+    }
+}
+
+// A shot, with a streak behind it as long as it's fast.
+view Shots(Body body, Circle circle, Ball ball)
+{
+    var color = SeatColor(ball.seat);
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Line(body.position - body.velocity * 0.03, body.position, circle.radius * 1.5, Fade(color, 0.3));
+    }
+    Draw2D.Circle(body.position, circle.radius, Color.white);
+    Draw2D.WireCircle(body.position, circle.radius, 0.09, color);
+}
+
+view Cannons(Body body, Cannon cannon)
+{
+    var color = SeatColor(cannon.seat);
+    var pivot = Pivot(body.position, cannon.hangs);
+    var aim = Math.Normalize(cannon.aim);
+    var recoil = cannon.reload / float(RELOAD) * 0.3;
+    Draw2D.Line(pivot, pivot + aim * (MUZZLE - 0.2 - recoil), 0.44, Shade(color, 0.62));
+    Draw2D.RoundRect(body.position, float2(1, 0.7), 0.14, Shade(color, 0.45));
+    Draw2D.Circle(pivot, 0.45, color);
+}
+
+// This machine's player's cannon has a ring, and shows where its next shot
+// goes: the dots follow the pointer as it is this frame, ahead of the match's
+// tick. `with ownership` picks the entities this machine's player owns.
+view Mine(Body body, Cannon cannon, Pointer pointer, Siege siege, mut Fx fx, with ownership)
+{
+    fx.seat = cannon.seat;
+    var pivot = Pivot(body.position, cannon.hangs);
+    Draw2D.WireCircle(pivot, 0.68, 0.09, Color.white);
+    // Never smaller than text is read at, however small the map is drawn
+    if (!cannon.hangs)
+        Draw2D.Text("YOU", body.position + float2(0, -1.1), Math.Max(0.62, 12 / fx.meter), Color.white, Anchor.MiddleCenter, Font.Bold);
+    if (!pointer.known || siege.phase != Phase.Play) return;
+    var aim = Aimed(pivot, pointer.world, cannon.hangs);
+    var speed = Power(pivot, pointer.world);
+    var from = pivot + aim * MUZZLE;
+    var gravity = siege.flip > 0 ? 7.0 : -10.0;
+    for (var i = 1; i <= 11; i++)
+    {
+        var t = i * 0.06;
+        var at = from + aim * (speed * t) + float2(0, 0.5 * gravity * t * t);
+        if (at.y < CEILING) Draw2D.Circle(at, 0.1, Fade(Color.white, 0.75 - i * 0.06));
+    }
+}
+
+// The scores are read `verified`: what the server has confirmed, never a
+// crate this machine only predicted falling. Each cannon has its seat's, and
+// the query goes through them all.
+view Scores(verified Siege sure, Fx fx, query (verified Cannon cannon) cannons)
+{
+    Draw2D.SetScreen();
+    var slot = float(Screen.width) / SEATS;
+    foreach (var entry in cannons)
+    {
+        var seat = entry.cannon.seat;
+        var manned = Manned(sure, seat);
+        var middle = (seat + 0.5) * slot;
+        var color = SeatColor(seat);
+        Draw2D.Text($"{entry.cannon.score}", float2(middle, 15), 24, manned ? color : Shade(color, 0.7),
+                    Anchor.MiddleCenter, Font.Bold);
+        if (seat == fx.seat)
+            Draw2D.Text("you", float2(middle, 35), 12, Color.white, Anchor.MiddleCenter);
+        else if (!manned && sure.bots)
+            Draw2D.Text("bot", float2(middle, 35), 12, Shade(color, 0.7), Anchor.MiddleCenter);
+    }
+}
+
+view Hud(Siege siege, Session session, Devices devices, Fx fx, mut Menu menu)
+{
+    Draw2D.SetScreen();
+    var width = float(Screen.width);
+    var height = float(Screen.height);
+    var middle = float2(width / 2, 60);
+    if (siege.phase != Phase.Play && siege.winner >= 0)
+        Draw2D.Text($"{SeatName(siege.winner)} takes round {siege.round}", middle, 18, SeatColor(siege.winner),
+                    Anchor.MiddleCenter, Font.Bold);
+    else if (siege.flip > 0)
+    {
+        Draw2D.Text("Gravity is up", middle - float2(0, 3), 16, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.RoundRect(middle + float2(0, 11), float2(110 * siege.flip / float(FLIP_TICKS), 3), 1.5, Color.white);
+    }
+    if (!fx.fired)
+        Draw2D.Text("Point, and hold to fire", float2(width / 2, height - 62), 15, Color.white, Anchor.MiddleCenter);
+    // A match that's open says where: friends join it by this code
+    if (session.room != "")
+        Draw2D.Text($"Room {session.room}", float2(10, height - 52), 14, QUIET, Anchor.MiddleLeft);
+
+    // The bottom right corner is the engine's stats' (the `stats` setting)
+    GUI.SetTheme(GUITheme { radius = 6 });
+    if (GUI.Button(Rect(8, height - 38, 70, 30), "Reset") || devices.keyboard.r.down) Send(Rebuild { });
+    if (GUI.Button(Rect(84, height - 38, 70, 30), "Menu")) menu.open = true;
+    GUILayout.Modal(Anchor.MiddleCenter, menu.open)
+    {
+        // Others join this machine's match by its room's code, or this
+        // machine joins theirs
+        if (session.server && !session.open)
+        {
+            if (GUILayout.Button("Invite friends")) Session.Open();
+        }
+        else if (session.room != "")
+        {
+            GUILayout.Label($"Room {session.room}");
+            if (GUILayout.Button("Copy the code")) Clipboard.Copy(session.room);
+        }
+        GUILayout.Horizontal()
+        {
+            GUILayout.TextField("Code", menu.code);
+            if (GUILayout.Button("Join") && menu.code != "")
+            {
+                Session.Join(menu.code.Trim().ToUpper());
+                menu.open = false;
+            }
+        }
+        if (GUILayout.Button(siege.bots ? "Bots: on" : "Bots: off")) Send(Bots { });
+        if (GUILayout.Button("Back")) menu.open = false;
+    }
+}
+
+// Before the match's world has arrived, there's nothing of it to draw.
+view Waiting(Session session)
+{
+    if (session.state == SessionState.Connected) return;
+    Draw2D.SetScreen();
+    Draw2D.Text(session.state == SessionState.Connecting ? "Joining..." : "Not in a match",
+                float2(Screen.width, Screen.height) * 0.5, 18, QUIET, Anchor.MiddleCenter);
+}
+
+// A shot landed on this crate: each machine hears the match say so once,
+// however often it predicts the tick.
+local event(Struck) Flash(mut Crate crate)
+{
+    crate.hit = 1;
+}
+
+// A match this machine was in ended, or couldn't be joined: on to one of its own.
+local event(Disconnected gone) Alone()
+{
+    if (gone.reason != DisconnectReason.Left) Session.Start(Main);
+}

@@ -1,0 +1,507 @@
+// Siege: two towers of crates over a pit, and four cannons around them, one
+// for each player. A shot shoves what's near where it lands and paints it its
+// player's color, and a crate that falls off the map scores for whoever
+// painted it last. This file is the match, which every machine runs the same
+// way. What a machine shows of it, and what it asks of it, is in play.tide.
+//
+// Everything that moves is Box2D's (the box2d package): the game spawns
+// bodies, pushes them and reads where they are, and never moves one itself.
+using Box2D;
+
+settings { title = "Siege"; appId = "dev.tide.siege"; maxPlayers = 4; hostMigration = true; stats = true; }
+
+// The map, in meters. Its middle is x = 0 and the islands' tops are y = 0.
+const int SEATS = 4;             // Cannons, and the most players
+const float ISLAND_EDGE = 2.8;   // Where each island starts, either side of the pit
+const float ISLAND_WIDTH = 7.2;
+const float TOWER = 7;           // A tower's middle, from the map's
+const float CANNON = 3.5;        // A cannon's place, from the map's middle
+const float PIVOT = 0.4;         // How far from its body's middle a cannon turns
+const float MUZZLE = 1.3;        // From there to where a shot starts
+const float CEILING = 15;
+const float FLOOR = -6;          // What's under it has fallen off the map
+const float EDGE = 13.5;         // And the map's sides, which a shot wraps around
+
+const float BALL = 0.28;         // A shot's radius
+const float BALL_DENSITY = 6;
+const float BALL_MASS = 1.478;   // Its area, pi * BALL * BALL, times its density
+const int BALL_TICKS = 300;      // How long a shot lasts: five seconds
+const int RELOAD = 14;           // Ticks between a cannon's shots
+
+const float REACH = 2.6;         // How far around where it lands a shot shoves things
+const float SHOVE = 7;           // And how hard, right beside it: a speed, in meters a second
+const int BLAST_TICKS = 16;
+
+const int FLIP_TICKS = 210;      // Gravity stays turned over for three and a half seconds
+const int ORB_REST = 300;        // And the orb sleeps five seconds more
+const int PIECES = 62;           // What a round's two towers are made of
+const int LEFTOVERS = 12;        // A round is over once no more than these are on the map
+const int OVER_TICKS = 170;      // From there to the next round
+
+enum Phase { Play, Over, Clear }
+
+// A cannon, and the body it's on. Two stand on the islands and two hang from
+// the ceiling. `aim` is where it points, of length 1, and `power` the speed
+// its next shot leaves at. Its score is its seat's: a player who takes the
+// cannon over goes on from it.
+component Cannon
+{
+    int seat;
+    bool hangs;
+    float2 aim = float2(0, 1);
+    float power = 18;
+    int reload;
+    int score;       // What its shots knocked off the map
+    int round;       // ...this round
+    // While nobody has it, it plays by itself: where it aims, the shots left
+    // in its burst and the ticks until the next one. The engine seeds `dice`
+    // from the match's seed, so no two matches go the same.
+    Random dice;
+    float2 target;
+    int burst;
+    int wait = 90;
+}
+
+// A piece of a tower: whose shot painted it last, by seat (-1 for nobody's
+// yet), and what it's worth to them once it's off the map.
+component Crate
+{
+    int last = -1;
+    int worth = 1;
+    // How this machine shows it was just hit: set by a local handler, and let
+    // go of by the view that draws it. Nothing of it is in the match.
+    local float hit;
+}
+
+// What a shot's blast shoves: its weight, so that everything near gets the
+// same speed, light or heavy.
+component Loose { float mass = 1; }
+
+component Ball
+{
+    int seat;
+    int ticks;
+    bool manned;   // A player fired it, not a cannon by itself
+    bool landed;   // It hit something, and its blast went off
+    bool wrapped;  // It left by one side of the map and came back by the other
+}
+
+// Where a shot landed. It shoves and paints what's near at its first tick,
+// and stays a moment longer for the views' ring.
+component Blast
+{
+    float2 at;
+    int seat;
+    int age;
+}
+
+// The orb is a sensor: shots pass through it, and it hears of each.
+component Orb
+{
+    int inside; // Bodies in it now
+    int rest;   // Ticks until a shot through it counts again
+}
+
+component Bridge { }  // The platform that goes back and forth over the pit
+component Bumper { }  // Round, weightless, and in the way
+component Ground { }  // What never moves: the islands and the ceiling
+
+singleton Siege
+{
+    Phase phase = Phase.Clear; // The first tick builds the first round
+    int round;
+    int timer;
+    int flip;            // Ticks left of gravity turned over
+    int standing;        // Pieces of the towers still on the map
+    int winner = -1;     // The seat that scored most, while a round is over
+    bool bots = true;    // Cannons nobody has play by themselves
+    bool fresh;          // The round being built is the first of a new game
+    List<Entity> cannons;      // By seat
+    Map<PlayerID, int> seats;  // Each player's
+}
+
+scene Main { }
+
+input Controls
+{
+    // Where the player points is a place, not something they do: what
+    // another machine guesses of it stays where it was last
+    [Absolute, Clamp(-60, 60)] float2 target;
+    [Absolute] bool aiming;
+    bool fire;
+
+    Sample(Devices devices, Pointer pointer)
+    {
+        target = pointer.world;
+        aiming = pointer.known;
+        fire = devices.pointer.press.pressed || devices.keyboard.space.pressed;
+    }
+}
+
+// Sent to a crate a shot landed on. The match paints it, and each machine
+// flashes it (play.tide), which costs the match nothing.
+event Struck { int seat; }
+
+// Sent to a cannon when a crate its shots painted falls off the map.
+event Scored { int worth; }
+
+// What the buttons ask of the match.
+command Rebuild { }
+command Bots { }
+
+// The speed a shot leaves a cannon at, for where it's pointed: further is
+// faster. The match and the dots that show the shot's way both ask.
+float Power(float2 pivot, float2 target)
+{
+    return Math.Clamp(9 + Math.Distance(pivot, target) * 1.7, 12, 30);
+}
+
+// A cannon points away from what it's on, or level: never into the ground it
+// stands on, or the ceiling it hangs from.
+float2 Aimed(float2 pivot, float2 target, bool hangs)
+{
+    var away = hangs ? -1 : 1;
+    var way = target - pivot;
+    if (Math.LengthSq(way) < 0.01) return float2(0, away);
+    var aim = Math.Normalize(way);
+    return aim.y * away < 0.06 ? Math.Normalize(float2(aim.x, 0.06 * away)) : aim;
+}
+
+float2 Pivot(float2 body, bool hangs)
+{
+    return body + float2(0, hangs ? -PIVOT : PIVOT);
+}
+
+// Whether a player has this seat's cannon.
+bool Manned(Siege siege, int seat)
+{
+    foreach (var entry in siege.seats)
+    {
+        if (entry.value == seat) return true;
+    }
+    return false;
+}
+
+// What stays from round to round. Static bodies never move, and a kinematic
+// one goes where its velocity takes it, whatever is in its way. A cannon's
+// body has two shapes, a box and a circle at an offset.
+event(Spawned) Build(mut Siege siege, with Main)
+{
+    for (var side = -1; side <= 1; side += 2)
+        Spawn(Body { type = BodyType.Static, position = float2(side * (ISLAND_EDGE + ISLAND_WIDTH / 2), -0.75) },
+              Box { size = float2(ISLAND_WIDTH, 1.5) }, Ground);
+    Spawn(Body { type = BodyType.Static, position = float2(0, CEILING + 0.5) }, Box { size = float2(80, 1) }, Ground);
+    for (var seat = 0; seat < SEATS; seat++)
+    {
+        var side = seat % 2 == 0 ? -1 : 1;
+        var hangs = seat >= 2;
+        var cannon = Spawn(
+            Body { type = BodyType.Static, position = float2(side * CANNON, hangs ? CEILING - 0.35 : 0.35) },
+            Box { size = float2(1, 0.7) }, Circle { radius = 0.45, offset = float2(0, hangs ? -PIVOT : PIVOT) },
+            Cannon { seat = seat, hangs = hangs, aim = Math.Normalize(float2(-side, hangs ? -1 : 1)) });
+        siege.cannons.Add(cannon);
+    }
+    Spawn(Body { type = BodyType.Kinematic, position = float2(0, 3), velocity = float2(1.8, 0) },
+          Box { size = float2(2.6, 0.4), friction = 0.9 }, Bridge);
+    Spawn(Body { type = BodyType.Static, position = float2(0, 9) }, Circle { radius = 0.9, sensor = true }, Orb);
+}
+
+// A player takes the first seat nobody has. Owner ties its cannon to them:
+// the Fire system then reads their input for it.
+event(PlayerJoined joined) Sit(mut Siege siege)
+{
+    if (siege.seats.Has(joined.player)) return;
+    for (var seat = 0; seat < SEATS; seat++)
+    {
+        if (Manned(siege, seat)) continue;
+        siege.seats[joined.player] = seat;
+        siege.cannons[seat].Add(Owner { player = joined.player });
+        return;
+    }
+}
+
+event(PlayerLeft left) Stand(mut Siege siege)
+{
+    if (!siege.seats.TryGet(left.player, out var seat)) return;
+    siege.cannons[seat].Remove(Owner);
+    siege.seats.Remove(left.player);
+}
+
+// A blast shoves what's near it, with an impulse: Box2D gives it to the body
+// at its next step, once. This runs before the package's systems, so that
+// step is this tick's.
+[Before(PhysicsStages.Step)]
+system Shove(mut Body body, Loose loose, query (Blast blast) blasts)
+{
+    foreach (var entry in blasts)
+    {
+        if (entry.blast.age != 0) continue;
+        var away = body.position - entry.blast.at;
+        var distance = Math.Length(away);
+        if (distance > REACH) continue;
+        var push = (1 - distance / REACH) * SHOVE * loose.mass;
+        body.impulse += (distance > 0.05 ? away / distance : float2(0, 1)) * push;
+        body.turn += (away.x > 0 ? -0.12 : 0.12) * push;
+    }
+}
+
+// ...and paints the crates among them.
+[After(PhysicsStages.Step)]
+system Paint(Body body, mut Crate crate, query (Blast blast) blasts)
+{
+    foreach (var entry in blasts)
+    {
+        if (entry.blast.age == 0 && Math.Distance(body.position, entry.blast.at) < REACH) crate.last = entry.blast.seat;
+    }
+}
+
+[After(PhysicsStages.Step)]
+system Spend(mut Blast blast)
+{
+    blast.age += 1;
+    if (blast.age > BLAST_TICKS) this.Destroy();
+}
+
+// A cannon follows its player's pointer, and fires while they hold the
+// button. `controls` is the input of the player who owns the cannon. One with
+// no owner gets the server's, which it doesn't read: it picks a place in a
+// tower now and then, and fires a burst at it.
+//
+// A shot is a body spawned with an impulse and a turn, which Box2D gives it at
+// its first step. It's small and fast, so it's a bullet: checked against the
+// crates all along its way, not only where each step leaves it.
+[After(PhysicsStages.Step)]
+system Fire(Controls controls, mut Cannon cannon, Body body, Siege siege)
+{
+    if (cannon.reload > 0) cannon.reload -= 1;
+    var pivot = Pivot(body.position, cannon.hangs);
+    mut var fire = false;
+    var manned = Manned(siege, cannon.seat);
+    if (manned)
+    {
+        if (!controls.aiming) return;
+        cannon.aim = Aimed(pivot, controls.target, cannon.hangs);
+        cannon.power = Power(pivot, controls.target);
+        fire = controls.fire;
+    }
+    else
+    {
+        if (!siege.bots || siege.phase != Phase.Play) return;
+        cannon.wait -= 1;
+        if (cannon.wait <= 0)
+        {
+            var side = cannon.dice.NextBool() ? -TOWER : TOWER;
+            cannon.target = float2(side, 4.5) + cannon.dice.NextFloat2(float2(-2.6, -4), float2(2.6, 4));
+            cannon.burst = 2;
+            cannon.wait = cannon.dice.NextInt(180, 360);
+        }
+        // It swings round to where it means to fire, and fires once it's there
+        var wanted = Aimed(pivot, cannon.target, cannon.hangs);
+        cannon.aim = Math.Normalize(cannon.aim + (wanted - cannon.aim) * 0.2);
+        cannon.power = Power(pivot, cannon.target);
+        fire = cannon.burst > 0 && Math.Dot(cannon.aim, wanted) > 0.999;
+        if (fire && cannon.reload <= 0) cannon.burst -= 1;
+    }
+    if (!fire || cannon.reload > 0 || siege.phase != Phase.Play) return;
+    cannon.reload = RELOAD;
+    Spawn(Body { position = pivot + cannon.aim * MUZZLE, impulse = cannon.aim * (cannon.power * BALL_MASS),
+                 turn = cannon.seat % 2 == 0 ? -0.4 : 0.4, angularDamping = 0.4, bullet = true },
+          Circle { radius = BALL, density = BALL_DENSITY, bounce = 0.25 }, Ball { seat = cannon.seat, manned = manned });
+}
+
+// A shot that leaves by one side of the map comes back in by the other, once:
+// writing a body's position puts it there. Snap has views draw it there too,
+// rather than slide it across the map.
+[After(PhysicsStages.Step)]
+system Fly(mut Ball ball, mut Body body)
+{
+    ball.ticks += 1;
+    if (ball.ticks > BALL_TICKS || body.position.y < FLOOR)
+    {
+        this.Destroy();
+        return;
+    }
+    if (Math.Abs(body.position.x) < EDGE) return;
+    if (ball.wrapped)
+    {
+        this.Destroy();
+        return;
+    }
+    ball.wrapped = true;
+    body.position.x = body.position.x > 0 ? 0.3 - EDGE : EDGE - 0.3;
+    this.Snap();
+}
+
+// Touched comes to a body's entity when it starts touching another. A shot's
+// first one is where it lands: its blast goes off there.
+event(Touched touched) Land(mut Ball ball, Body body, World world)
+{
+    if (ball.landed || world.Has<Orb>(touched.other)) return;
+    ball.landed = true;
+    Spawn(Blast { at = body.position, seat = ball.seat });
+    if (world.Has<Crate>(touched.other)) touched.other.Send(Struck { seat = ball.seat });
+}
+
+event(Struck struck) Mark(mut Crate crate)
+{
+    crate.last = struck.seat;
+}
+
+event(Scored scored) Count(mut Cannon cannon)
+{
+    cannon.score += scored.worth;
+    cannon.round += scored.worth;
+}
+
+// The orb hears what comes into it, and what leaves. A player's shot through
+// it turns gravity over, unless it's resting. (What `Get` gives for an entity
+// with no Ball is a Ball nobody fired.)
+event(Touched touched) Charge(mut Orb orb, mut Siege siege, World world)
+{
+    orb.inside += 1;
+    if (orb.rest > 0 || siege.phase != Phase.Play || !world.Get<Ball>(touched.other).manned) return;
+    orb.rest = FLIP_TICKS + ORB_REST;
+    siege.flip = FLIP_TICKS;
+}
+
+event(Parted) Empty(mut Orb orb)
+{
+    orb.inside -= 1;
+}
+
+[After(PhysicsStages.Step)]
+system Rest(mut Orb orb)
+{
+    if (orb.rest > 0) orb.rest -= 1;
+}
+
+// Gravity is the world's, in the package's Physics: the next step uses what
+// it says. A new one wakes every body that had come to rest.
+[After(PhysicsStages.Step)]
+system Turn(mut Siege siege, mut Physics physics)
+{
+    if (siege.flip > 0) siege.flip -= 1;
+    var up = siege.flip > 0;
+    if (up != (physics.gravity.y > 0)) physics.gravity = float2(0, up ? 7 : -10);
+}
+
+[After(PhysicsStages.Step)]
+system Patrol(mut Body body, with Bridge)
+{
+    if (body.position.x > 1.5) body.velocity = float2(-1.8, 0);
+    if (body.position.x < -1.5) body.velocity = float2(1.8, 0);
+}
+
+// A crate that's off the map is gone, and scores for whoever painted it last.
+// An entity that's destroyed takes its body with it.
+[After(PhysicsStages.Step)]
+system Drop(Body body, Crate crate, mut Siege siege)
+{
+    if (body.position.y > FLOOR && Math.Abs(body.position.x) < EDGE + 8) return;
+    siege.standing -= 1;
+    if (crate.last >= 0) siege.cannons[crate.last].Send(Scored { worth = crate.worth });
+    this.Destroy();
+}
+
+[After(PhysicsStages.Step)]
+system Stray(Body body, with Bumper)
+{
+    if (body.position.y < FLOOR || Math.Abs(body.position.x) > EDGE + 8) this.Destroy();
+}
+
+// Between rounds, everything a round made goes, and the next one is built.
+[After(PhysicsStages.Step)]
+system Sweep(Siege siege, with Loose)
+{
+    if (siege.phase == Phase.Clear) this.Destroy();
+}
+
+[After(PhysicsStages.Step)]
+system SweepShots(Siege siege, with Ball)
+{
+    if (siege.phase == Phase.Clear) this.Destroy();
+}
+
+[After(PhysicsStages.Step)]
+system Recount(mut Cannon cannon, Siege siege)
+{
+    if (siege.phase != Phase.Clear) return;
+    cannon.round = 0;
+    cannon.burst = 0;
+    if (siege.fresh) cannon.score = 0;
+}
+
+// A round's pieces: two towers, of crates, planks across them and pillars
+// between, each with its king on top, a box with a round head that's worth
+// five; and three bumpers, which float (gravityScale = 0) and soon stop after
+// a shot sent them off (their damping).
+[After(PhysicsStages.Step)]
+system Rounds(mut Siege siege, query (Cannon cannon) cannons)
+{
+    if (siege.phase == Phase.Play)
+    {
+        if (siege.standing > LEFTOVERS) return;
+        siege.phase = Phase.Over;
+        siege.timer = OVER_TICKS;
+        // The round is whoever's scored most in it
+        mut var best = 0;
+        siege.winner = -1;
+        foreach (var entry in cannons)
+        {
+            if (entry.cannon.round <= best) continue;
+            best = entry.cannon.round;
+            siege.winner = entry.cannon.seat;
+        }
+        return;
+    }
+    if (siege.phase == Phase.Over)
+    {
+        siege.timer -= 1;
+        if (siege.timer <= 0) siege.phase = Phase.Clear;
+        return;
+    }
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var middle = side * TOWER;
+        for (var i = 0; i < 10; i++)
+            Spawn(Body { position = float2(middle - 2 + i % 5, 0.5 + i / 5) }, Box, Crate, Loose);
+        for (var i = 0; i < 2; i++)
+            Spawn(Body { position = float2(middle, 2.15 + i * 1.8) }, Box { size = float2(5.2, 0.3) }, Crate,
+                  Loose { mass = 1.56 });
+        for (var i = 0; i < 4; i++)
+            Spawn(Body { position = float2(middle - 2.25 + i * 1.5, 3.05) }, Box { size = float2(0.5, 1.5) }, Crate,
+                  Loose { mass = 0.75 });
+        for (var i = 0; i < 8; i++)
+            Spawn(Body { position = float2(middle - 1.5 + i % 4, 4.6 + i / 4) }, Box, Crate, Loose);
+        Spawn(Body { position = float2(middle, 6.25) }, Box { size = float2(4.2, 0.3) }, Crate, Loose { mass = 1.26 });
+        for (var i = 0; i < 5; i++)
+            Spawn(Body { position = i < 3 ? float2(middle - 1 + i, 6.9) : float2(middle - 3.5 + i, 7.9) }, Box, Crate,
+                  Loose);
+        // Two shapes on one body: a box, and a circle over its middle
+        Spawn(Body { position = float2(middle, 8.8) }, Box { size = float2(0.8, 0.8) },
+              Circle { radius = 0.34, offset = float2(0, 0.62) }, Crate { worth = 5 }, Loose);
+    }
+    for (var i = 0; i < 3; i++)
+        Spawn(Body { position = i == 2 ? float2(0, 5.6) : float2(i * 5.2 - 2.6, 11.5), gravityScale = 0,
+                     linearDamping = 1.6, angularDamping = 1.6 },
+              Circle { radius = 0.7, density = 0.6, bounce = 0.9 }, Bumper, Loose { mass = 0.92 });
+    siege.standing = PIECES;
+    siege.round += 1;
+    siege.phase = Phase.Play;
+    siege.winner = -1;
+    siege.flip = 0;
+    siege.fresh = false;
+}
+
+// The Reset button: a new first round, with nothing scored.
+command(Rebuild rebuild, PlayerID sender) Reset(mut Siege siege)
+{
+    siege.phase = Phase.Clear;
+    siege.round = 0;
+    siege.fresh = true;
+}
+
+command(Bots bots, PlayerID sender) Idle(mut Siege siege)
+{
+    siege.bots = !siege.bots;
+}
