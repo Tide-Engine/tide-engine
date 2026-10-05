@@ -343,11 +343,16 @@ void suggest_consider_c(suggestion *s, const char *candidate)
     suggest_consider(s, str_from(candidate));
 }
 
-void suggest_note(const suggestion *s)
+bool suggest_close(const suggestion *s)
 {
     // One typo in a short name, two in a longer one. Beyond that it's a guess.
     const int allowed = s->wrong.len <= 4 ? 1 : 2;
-    if (s->best.len == 0 || s->distance > allowed) return;
+    return s->best.len > 0 && s->distance <= allowed;
+}
+
+void suggest_note(const suggestion *s)
+{
+    if (!suggest_close(s)) return;
     diag_note("did you mean '" STR_FMT "'?", STR_ARG(s->best));
     if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, s->best);
 }

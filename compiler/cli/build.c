@@ -1500,14 +1500,15 @@ static void stamp_folder(uint64_t *h, const char *folder)
 
 // Changes whenever one of the game's .tide files does, or its C, headers and
 // libraries, or one comes or goes; or its tide.packages, or the files of a
-// package in a folder on this machine. Those from git, at their commits,
-// never change.
+// package in a folder on this machine, or of one that comes with tide. Those
+// from git, at their commits, never change.
 static uint64_t game_stamp(const build *b)
 {
     uint64_t h = 0xCBF29CE484222325ull;
     stamp_folder(&h, b->folder);
     for (int p = 0; p < b->packages.count; p++) {
-        if (b->packages.items[p].line->local) stamp_folder(&h, b->packages.items[p].folder);
+        const package_line *line = b->packages.items[p].line;
+        if (line->local || line->builtin) stamp_folder(&h, b->packages.items[p].folder);
     }
     return h;
 }

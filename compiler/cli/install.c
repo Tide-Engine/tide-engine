@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "packages.h"
 #include "sys.h"
 
 bool tide_installation_whole(const char *root, const char *version)
@@ -178,6 +179,25 @@ static bool replace_programs(install *s, const char *from, const char *to)
     return ok;
 }
 
+// The installation's packages/ isn't all the package's: by default it's also
+// where packages from git are kept (packages_cache), a folder for each host.
+// So the packages that come with tide are replaced there one by one, each a
+// folder of its name, and whatever else is in it stays.
+static bool replace_packages(install *s, const char *from, const char *to)
+{
+    names fresh = list_names(from);
+    bool ok = fresh.count == 0 || sys_mkdirs(to) || fail(s, to);
+    for (int i = 0; ok && i < fresh.count; i++) {
+        char *child_from = path_join(from, fresh.items[i]);
+        char *child_to = path_join(to, fresh.items[i]);
+        ok = replace(s, child_from, child_to);
+        free(child_from);
+        free(child_to);
+    }
+    free_names(&fresh);
+    return ok;
+}
+
 bool tide_install(const char *root, const char *fresh, const char *trash, char *failed, const size_t failed_size)
 {
     install s = {.trash = trash, .stamp = (long long)sys_now(), .failed = failed, .failed_size = failed_size};
@@ -199,7 +219,8 @@ bool tide_install(const char *root, const char *fresh, const char *trash, char *
         if (strcmp(entries.items[i], "bin") == 0 || strcmp(entries.items[i], "VERSION") == 0) continue;
         char *from = path_join(fresh, entries.items[i]);
         char *to = path_join(root, entries.items[i]);
-        ok = replace(&s, from, to);
+        if (strcmp(entries.items[i], PACKAGES_BUILTIN_DIR) == 0) ok = replace_packages(&s, from, to);
+        else ok = replace(&s, from, to);
         free(from);
         free(to);
     }
