@@ -50,6 +50,12 @@ add_test(NAME tide_cli_upgrade
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/upgrade_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/upgrade_test.cmake")
 
+# tide run where nobody watches (TIDE_HIDDEN): refused before it builds
+# anything, unless the run ends by itself.
+add_test(NAME tide_cli_hidden
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/hidden_test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden_test.cmake")
+
 # Packages build clang and lld into tide, so users need no compiler of their
 # own (see cmake/LLVM.cmake).
 option(TIDE_EMBED_LLVM "Build clang and lld into tide, from LLVM's static libraries" OFF)

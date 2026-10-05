@@ -93,6 +93,16 @@ static void follow_window(void)
 
 void tide_platform_open(const tide_window_desc *desc)
 {
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    // Nobody watches this run, so its window can't show, and one that isn't
+    // hidden has nothing but its closing to end the run
+    if (!desc->hidden && tide_hidden()) {
+        fprintf(stderr, "tide: TIDE_HIDDEN is set, so no window shows, and this one's closing is all that would end its run: a "
+                        "program that ends by itself opens its window hidden (tide_window_desc.hidden) or headless "
+                        "(tide_platform_open_headless)\n");
+        exit(2);
+    }
+#endif
     if (!tide_window_open(desc)) exit(1); // It said why
     gpu = tide_window_gpu();
     opened = tide_time_now_ns();
