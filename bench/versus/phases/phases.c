@@ -118,7 +118,7 @@ int versus_phases_main(const versus_desc *desc, const int argc, char **argv)
         fprintf(stderr, "--threads exceeds the pool's thread count (%u)\n", jobs ? jobs->threads : 1u);
         return 2;
     }
-    limited_jobs limited = {{NULL, threads, run_limited, NULL}, jobs};
+    limited_jobs limited = {{NULL, threads, run_limited, NULL, NULL}, jobs};
     if (jobs && jobs->threads > threads) {
         limited.jobs.self = &limited;
         jobs = &limited.jobs;

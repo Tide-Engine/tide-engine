@@ -3,10 +3,15 @@
 // workers (platform/web/tide.js). Frame by frame, as a game runs (workers only
 // start once the page's thread is back in the browser's hands), it ticks a busy
 // match (jobs.tide) on threads and another on one thread: they have to come out
-// the same, with the pool's workers taking part. Prints "ok", or "FAIL".
+// the same, with the pool's workers taking part, and those of its C's that
+// wait for each other (jobs_tasks.c) asleep while they wait: a page's own
+// thread can't sleep, and the browser stops a program that tries. Prints "ok",
+// or "FAIL".
 
 #define _POSIX_C_SOURCE 199309L // clock_gettime under strict C
 
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -26,6 +31,8 @@ static double now;
 
 // The threads that took part in a round of work, a bit each.
 static uint32_t threads_seen;
+
+extern atomic_int jobs_tasks_slept; // jobs_tasks.c: waits of C's workers that slept
 
 // Time the ticks took once the workers had joined: on one thread, and on all.
 static double one_seconds, many_seconds;
@@ -56,8 +63,15 @@ static int frame(void *user, const float seconds)
 {
     (void)user;
     now += seconds;
-    if (now > 45.0) return fail(threads_seen & ~1u ? "the ticks took over 45 seconds" : "no worker joined in 45 seconds");
-    for (int i = 0; i < 4 && ticks < TICKS; i++, ticks++) {
+    const bool slept = atomic_load(&jobs_tasks_slept) > 0;
+    if (now > 45.0) {
+        return fail(!(threads_seen & ~1u) ? "no worker joined in 45 seconds"
+                    : ticks < TICKS       ? "the ticks took over 45 seconds"
+                                          : "none of C's workers slept while it waited, in 45 seconds");
+    }
+    // A worker only takes one of C's tasks when it has nothing else: a few
+    // more ticks if none that waited has slept yet
+    for (int i = 0; i < 4 && (ticks < TICKS || !slept); i++, ticks++) {
         tide_world_copy(&snapshot, &many);
         const double start = seconds_now();
         tide_world_tick(&one);
@@ -74,9 +88,9 @@ static int frame(void *user, const float seconds)
         }
     }
     if (!(threads_seen & ~1u)) jobs->run(jobs->self, note_thread, NULL);
-    if (ticks < TICKS || !(threads_seen & ~1u)) return TIDE_KEEP_RUNNING;
-    printf("ok: %d ticks the same on %u threads, %d of which took part in one round\n", ticks, (unsigned)jobs->threads,
-           __builtin_popcount(threads_seen));
+    if (ticks < TICKS || !(threads_seen & ~1u) || atomic_load(&jobs_tasks_slept) == 0) return TIDE_KEEP_RUNNING;
+    printf("ok: %d ticks the same on %u threads, %d of which took part in one round; %d waits of C's workers slept\n", ticks,
+           (unsigned)jobs->threads, __builtin_popcount(threads_seen), atomic_load(&jobs_tasks_slept));
     if (timed) {
         printf("a tick took %.2f ms on one thread, %.2f ms on threads\n", one_seconds * 1000.0 / timed,
                many_seconds * 1000.0 / timed);

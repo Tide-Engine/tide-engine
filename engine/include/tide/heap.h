@@ -116,6 +116,13 @@ static inline tide_block *tide_heap_block(const tide_heap *h, const uint32_t blo
 // (tide_heap_write_shared).
 tide_block *tide_heap_write_shared(tide_heap *h, uint32_t block);
 
+// A block whose first `bytes` after its header are about to be written over,
+// all of them: as tide_heap_write, but a page that's copied first is copied
+// without them, as a big list's chunk would otherwise be copied only to be
+// replaced. Until they're written they're whatever was in memory, so only for
+// a block nothing else reads meanwhile.
+tide_block *tide_heap_write_over(tide_heap *h, uint32_t block, uint32_t bytes);
+
 static inline tide_block *tide_heap_write(tide_heap *h, const uint32_t block)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];
