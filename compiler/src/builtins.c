@@ -1531,10 +1531,12 @@ static const setting settings[] = {
      "inputs are delayed so every player's reach the server before its tick, and ticks run once, as the server "
      "confirms them, at the cost of input delay."},
     {"stats", TY_BOOL, "false",
-     "Shows the stats in the window's bottom right corner, as `tide run --stats` does: the frame rate and what a "
-     "frame's work takes, the ping, the bandwidth, the tick, the entity count, the threads, the memory, what draws "
-     "and in how many draw calls, and the systems that took longest in the last tick. It's part of the build, so "
-     "what `tide build` makes shows them too: take it out before players get the game."},
+     "Shows the stats in the window's bottom right corner: one line, the frame rate, and the ping in a match another "
+     "machine runs. A click or a tap on it, or F8, opens it to the rest: what a frame's work takes, the bandwidth, "
+     "the tick, the entity count, the threads, the memory, what draws and in how many draw calls, and the systems "
+     "that took longest in the last tick. Nothing is measured for them until then. It's part of the build, so what "
+     "`tide build` makes shows them too: take it out before players get the game, unless the frame rate is theirs "
+     "to see. `tide run --stats` shows them open."},
     {"debugViews", TY_BOOL, "false",
      "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
      "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "

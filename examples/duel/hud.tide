@@ -1,6 +1,14 @@
 // Over the arena, in the screen's pixels: the score, both fighters' health and
 // upgrades, what the buttons do, and the words between rounds.
 
+// How much of the screen's bottom right corner the game leaves to the engine's
+// stats (the `stats` setting): their one line, which is the frame rate, and in
+// a match another machine runs, the ping too.
+float StatsCorner(Session session)
+{
+    return session.server ? 100 : 196;
+}
+
 // How long the round's flow has been where it is. The match's events say when
 // it turns (heard.tide): the views only count the seconds.
 local singleton Flow
@@ -201,7 +209,7 @@ float Hints(bool draw, float2 at, bool gamepad, float shield, Color color)
 }
 
 [Stage(PaintStages.Hud, 20)]
-view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, with ownership)
+view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, Session session, with ownership)
 {
     if (duel.attract) return;
     var screen = float2(Screen.width, Screen.height);
@@ -209,9 +217,9 @@ view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, with
     var shield = fighter.blockLeft > 0 ? 1 : 1 - Math.Saturate(fighter.blockCooldown / 2);
     if (devices.touchscreen.connected && (canvas.touchAim || !canvas.handsOn))
     {
-        // Where fingers go: the left half moves, and a corner blocks
+        // Where fingers go: the left half moves, and a corner blocks, above the stats' line
         var move = float2(66, screen.y - 92);
-        var block = float2(screen.x - 58, screen.y - 66);
+        var block = float2(screen.x - 58, screen.y - 92);
         Oval(move, float2(36), Color(0.5, 0.62, 0.8, 0.07), Color(0.5, 0.62, 0.8, 0.07), 1.6, Color(0.5, 0.62, 0.8, 0.45));
         Oval(block, float2(36), Fade(color, 0.1), Fade(color, 0.1), 1.6, Fade(color, shield >= 1 ? 0.9 : 0.35));
         Draw2D.Arc(block, 31, -Math.PI * 0.5, Math.TAU * shield, 3, Fade(color, 0.8)); // From the top, clockwise
@@ -221,10 +229,13 @@ view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, with
             Draw2D.Text("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED, Anchor.MiddleCenter);
         return;
     }
-    // On a narrow screen, two rows would cover the arena: the keys alone fit
+    // In the screen's middle, or as far right as leaves the bottom right corner
+    // to the stats' line. On a narrow screen, two rows would cover the arena:
+    // the keys alone fit.
     var width = Hints(false, float2(0, 0), canvas.gamepadAim, shield, color);
-    if (width > screen.x - 24) return;
-    var at = float2((screen.x - width) * 0.5, screen.y - Math.Min(30, canvas.band * 0.42));
+    var left = Math.Min((screen.x - width) * 0.5, screen.x - StatsCorner(session) - width);
+    if (left < 12) return;
+    var at = float2(left, screen.y - Math.Min(30, canvas.band * 0.42));
     Hints(true, at, canvas.gamepadAim, shield, color);
 }
 

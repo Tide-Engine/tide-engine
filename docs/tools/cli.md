@@ -28,7 +28,7 @@ tide <command> [folder] [options]
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
-| `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does |
+| `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--frames`, `--script`, `--scale` | `run` only: plays the game [without a window](#without-a-window), to see what it draws |
@@ -51,11 +51,18 @@ settings
 }
 ```
 
+They're a drawer. Closed, it's one line: the frame rate, and in a match another machine runs, your ping. A click or a tap on that line opens it, and so does **F8**: the rest is listed above the line, which stays where it is, so a click in the same place closes it again.
+
+- **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run`, a reload leaves it as you left it.
+- **A click or a tap on it is never the game's.** Neither the game's input nor its views read that press, from the frame it lands in. A press that began elsewhere and crosses the drawer stays the game's. The game still sees F8, as it sees every key.
+- **Closed, it measures nothing.** The frame rate is a count of frames. What the list shows (a frame's work, each system's time, the memory) is measured while the list is open, so a game can ship with the line.
+- **The bottom right corner is its own.** A game that asks for the stats keeps its own buttons out of that corner: the line is about 80 pixels wide and 40 high, and about 190 wide with a ping in it.
+
 | Line | What it is |
 |---|---|
-| `60 fps` | Frames a second, over the last second |
+| `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu 2.1 ms` | What a frame's work takes on its thread: the ticks it runs, the views and the drawing, without the wait for the display |
-| `ping`, `delay` | The round trip to the machine running the match, and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
+| `ping`, `delay` | The round trip to the machine running the match (in the list when it's this machine), and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `up`, `down` | What goes over the network each second |
 | `tick`, `entities` | The match's tick, and how many entities it has |
 | `threads` | The threads ticks run on |
@@ -63,7 +70,13 @@ settings
 | `WebGPU`, `12 draw calls` | What draws (WebGPU, WebGL 2 or OpenGL), and how many draw calls the frame took: a run of shapes, of text or of one mesh's instances is one |
 | `Move 0.31 ms` | The three systems that took longest in the last tick |
 
-The numbers that are rates or averages change once a second. A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game.
+The numbers that are rates or averages change once a second, and the drawer shows once there's a first frame rate, a quarter of a second in. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
+
+A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
+
+::: info Provisional
+The drawer is new. Its key, what its one line says, and that only `tide run --stats` starts it open may still change.
+:::
 
 ### Threads on the web
 
@@ -176,7 +189,7 @@ tide run --frames 300 --capture menu.png
 These options' names and the script's format are new, and may still change.
 :::
 
-The picture is what the window would show: the views, the GUI over them, and the stats and the profiler when they're on. It's `--size` times `--scale` pixels: `--size 1280 720 --scale 2` is 2560 by 1440.
+The picture is what the window would show: the views, the GUI over them, and the stats and the profiler when they're on. It's `--size` times `--scale` pixels: `--size 1280 720 --scale 2` is 2560 by 1440. The [stats](#stats) are as a player would have them: one line unless the run asked with `--stats`, and a script's click on that line, or its `key f8`, opens them.
 
 Nothing of the run depends on the machine it's on, or on what's happening there:
 
@@ -185,7 +198,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **The window's size and scale are what you asked for,** whatever the display is.
 - **The match's seed is 0.** In a window, [`Time.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same. `--seed 7` picks another seed, to see the game roll otherwise: the same seed is the same run again.
 
-So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
+So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
 
 Something has to end a run nobody can close: `--frames`, or the script's `quit`. The run's exit code says how it went:
 

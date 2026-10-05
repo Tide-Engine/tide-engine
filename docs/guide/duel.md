@@ -14,7 +14,9 @@ Win five rounds to win the match. After each round, its loser picks one of three
 
 Shots drop as they fly, so aim over a target that's far away: the dots in front of your fighter show where your next shot goes. Block briefly to send incoming shots back. Your shield takes two seconds to come back. Pick an upgrade by clicking or tapping its card, by pressing `1`, `2` or `3`, or with the arrows or a gamepad's d-pad and Enter. Every menu works that way: the arrows, Tab or the d-pad move between its buttons, and Enter, Space or the gamepad's south button press one.
 
-**Menu**, in the corner, ends practice, and so does Escape.
+**Menu**, in the top right corner, ends practice, and so does Escape.
+
+The bottom right corner shows the frame rate, and your ping in a friend's match. Click or tap it, or press `F8`, and it lists the rest of what the engine is doing: the tick, the entities, what goes over the network, and the systems that take longest. That's the game's [`stats`](../tools/cli.md#stats) setting.
 
 | Action | Mouse and keyboard | Gamepad |
 |---|---|---|

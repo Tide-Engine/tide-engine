@@ -1,6 +1,8 @@
 // A small deterministic platform duel. This file is the match. What a machine
 // shows of it is in paint.tide (the arena), hud.tide and play.tide (the menus).
-settings { title = "Tide duel"; maxPlayers = 2; hostMigration = true; }
+// `stats` puts the frame rate in the bottom right corner, and the ping in a
+// friend's match: a click on it, or F8, lists the rest of what the engine does.
+settings { title = "Tide duel"; maxPlayers = 2; hostMigration = true; stats = true; }
 
 const float ARENA_WIDTH = 960;
 const float ARENA_HEIGHT = 540;
@@ -155,7 +157,7 @@ input Controls
                 move = Math.Clamp((touch.position.x - touch.startPosition.x) / 60, -1, 1);
                 jump = jump || touch.position.y - touch.startPosition.y > 45;
             }
-            else if (touch.startPosition.x > canvas.screenHalf.x * 2 - 110 && touch.startPosition.y < 120)
+            else if (touch.startPosition.x > canvas.screenHalf.x * 2 - 110 && touch.startPosition.y < 150)
                 block = true;
             else
             {
