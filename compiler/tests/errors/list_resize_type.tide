@@ -1,0 +1,4 @@
+// expect: Resize takes int here, not float: 'items.Resize(count)'
+scene Main { }
+component Inventory { List<int> scores; }
+system S(mut Inventory inv) { inv.scores.Resize(1.5); }

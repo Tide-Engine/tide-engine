@@ -1,0 +1,5 @@
+// expect: 'Fill' changes its 'bytes', which must be List<byte>, not List<int>
+extern int Fill(out List<byte> bytes);
+singleton Store { List<int> numbers; int size; }
+scene Main { }
+system Run(mut Store store) { store.size = Fill(store.numbers); }
