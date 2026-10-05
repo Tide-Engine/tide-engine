@@ -187,6 +187,8 @@ const cases = {
         ['Vertex corner', [['Vertex', 'support.class']]],
         ['Vertex3 corner3', [['Vertex3', 'support.class']]],
         ['Shape panel', [['Shape', 'support.class']]],
+        ['GUIControl card', [['GUIControl', 'support.class']]],
+        ['GUITheme look', [['GUITheme', 'support.class']]],
         ['Draw2D.Shape(panel)', [['Shape', '!support.class'], ['Shape', 'entity.name.function.call']]],
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],

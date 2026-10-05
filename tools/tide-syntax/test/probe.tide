@@ -120,6 +120,9 @@ view Show(Devices devices)
     var roll = dice.NextInt(6);
     DrawUI(Draw2D.list);
     if (GUI.Button("Copy")) Clipboard.Copy("x");
+    GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
+    GUITheme look = default;
+    GUI.SetTheme(look);
     if (!Cursor.locked) Cursor.Lock();
     float step = Frame.dt;
 }

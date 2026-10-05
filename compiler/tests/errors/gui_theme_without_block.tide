@@ -1,0 +1,3 @@
+// expect: to set it for the widgets that follow, in this view and the ones after it, write 'GUI.SetTheme(...)'
+scene Main { }
+view Look() { GUI.Theme(GUITheme { radius = 8 }); }

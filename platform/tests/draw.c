@@ -7,9 +7,9 @@
 // their triangles with their corners' colors, their textures and the clip,
 // that 3D meshes draw through their cameras, nearest in front, that meshes
 // draw through shaders of the game's, with what those read, that the shapes
-// with smooth edges are where they should be, edge by edge, that text is as
-// big as it measures, in both its weights, and that it's where its anchor
-// puts it.
+// with smooth edges are where they should be, edge by edge, that the GUI's
+// widgets have their theme's colors and corners, that text is as big as it
+// measures, in both its weights, and that it's where its anchor puts it.
 // `--bench` (or `?bench` on the web) times frames of many shapes instead.
 
 #include <math.h>
@@ -19,6 +19,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "tide/gui.h"
 #include "tide/net.h" // tide_hash
 #include "tide/platform.h"
 #include "tide/time.h"
@@ -1394,6 +1395,62 @@ static void smooth_shapes(void)
     expect(calls == 2, "shapes of every kind, one after another, are one draw call");
 }
 
+// The GUI's own widgets with a theme: its colors, and its round corners,
+// beside one with the look they have without. Buttons with no text, so no
+// font decides a pixel.
+static void themed_gui(void)
+{
+    static tide_gui gui;
+    static tide_devices devices; // Nothing is pressed, and the pointer is in a corner
+    // From nothing each time: the page runs this again once it lost its device
+    tide_draw_free(&gui.list);
+    memset(&gui, 0, sizeof gui);
+    memset(&devices, 0, sizeof devices);
+    const tide_gui_theme usual = tide_gui_theme_default();
+    tide_gui_theme theme = usual;
+    theme.control = blue;
+    theme.panel = purple;
+    theme.accent = yellow;
+    theme.radius = 12.0f;
+    for (int pass = 0; pass < 2; pass++) { // A frame for the widgets' order, and one with the focus on the last
+        tide_button_set(&devices.keyboard.tab, pass == 1);
+        tide_button_set(&devices.keyboard.leftShift, pass == 1);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_gui_begin(&gui, &devices, screen, NULL);
+        tide_gui_button(&gui, 1, (tide_rect){20, 20, 80, 40}, "");
+        const int look = tide_gui_begin_theme(&gui, theme);
+        tide_gui_button(&gui, 2, (tide_rect){120, 20, 80, 40}, "");
+        const int area = tide_gui_begin_area(&gui, 3, (tide_rect){20, 80, 200, 100});
+        tide_gui_close(&gui, area);
+        tide_gui_button(&gui, 4, (tide_rect){40, 220, 80, 40}, "");
+        tide_gui_close(&gui, look);
+        tide_gui_end(&gui, &list);
+    }
+    const check checks[] = {
+        {60.5f, 40.5f, usual.control, "a button's middle, with no theme"},
+        {20.5f, 20.5f, usual.control, "and its corner, which is square"},
+        {160.5f, 40.5f, blue, "a themed button's middle is the theme's color"},
+        {120.5f, 40.5f, blue, "to its edge's last pixel"},
+        {119.5f, 40.5f, background, "and not the one past it"},
+        {121.5f, 21.5f, background, "its corners are round: the top left"},
+        {198.5f, 21.5f, background, "the top right"},
+        {121.5f, 58.5f, background, "the bottom left"},
+        {198.5f, 58.5f, background, "and the bottom right"},
+        {124.5f, 24.5f, blue, "by the theme's radius, and no more"},
+        {120.5f, 130.5f, purple, "an area's panel is the theme's color"},
+        {21.5f, 81.5f, background, "and round too"},
+        {218.5f, 178.5f, background, "at every corner"},
+        {80.5f, 240.5f, blue, "a button that has the focus"},
+        {38.5f, 240.5f, yellow, "has the theme's outline around it"},
+        {121.5f, 240.5f, yellow, "on both sides"},
+        {122.5f, 240.5f, background, "two pixels wide"},
+        {39.5f, 219.5f, background, "which goes round its corners"},
+        {36.5f, 240.5f, background, "and no farther"},
+    };
+    check_pixels(checks, sizeof checks / sizeof checks[0]);
+}
+
 // The smooth shapes' scene as an image (a PPM), to look at.
 static int dump(const char *path)
 {
@@ -1877,6 +1934,7 @@ static int frame(void *user, const float seconds)
         primitives();
         shaded();
         smooth_shapes();
+        themed_gui();
         tiles_leave_no_gaps();
         text_checks();
         return run_checks();
@@ -1887,6 +1945,7 @@ static int frame(void *user, const float seconds)
     primitives();
     shaded();
     smooth_shapes();
+    themed_gui();
     tiles_leave_no_gaps();
     text_checks();
     const int code = run_checks();

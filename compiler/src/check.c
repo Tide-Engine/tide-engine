@@ -2717,6 +2717,12 @@ static type check_gui_call(checker *c, expr *e, const type result)
         if (!e->block) {
             diag_error(e->at, "%s takes a block: '%s(...) { ... }'", name.data, name.data);
             diag_note("its widgets go in the braces after it");
+            // A setting has two forms: the plain name around a block, and Set for what follows
+            if (str_eq_c(e->name, "Theme")) {
+                diag_note("to set it for the widgets that follow, in this view and the ones after it, write "
+                          "'GUI.SetTheme(...)'");
+                suggest_replacement(e->name, "SetTheme");
+            }
         }
     } else if (result.kind != TY_VOID && c->loop_header > 0) {
         diag_error(e->at, "%s can't be in a loop's condition or a for's step", name.data);
@@ -7413,7 +7419,13 @@ static void check_stmt(checker *c, stmt *s)
                 } else {
                     diag_error(e->block->at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
                 }
-                diag_note("is a ';' missing after the call?");
+                // A setting has two forms: Set for what follows, and the plain name around a block
+                if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                    diag_note("GUI.SetTheme sets the theme for the widgets that follow; for the widgets in a block alone, "
+                              "write 'GUI.Theme(...) { ... }'");
+                } else {
+                    diag_note("is a ';' missing after the call?");
+                }
             }
             c->block_depth++;
             check_stmt(c, e->block);
@@ -9935,6 +9947,57 @@ static void add_builtins(program *prog)
     shape->fields.items[6].default_value = none;
     shape->fields.items[8].default_value = white;
     prog->shape = shape;
+    // struct GUITheme { Color text; Color panel; Color control; Color hot;
+    // Color pressed; Color field; Color fieldHot; Color accent; float radius; }:
+    // how the GUI's own widgets look, which generated C hands tide/gui.h as a
+    // tide_gui_theme. Its defaults are the look every frame starts with,
+    // tide_gui_theme_default in the engine's gui.c: a change to one goes to
+    // the other.
+    decl *theme = NEW(decl);
+    theme->kind = DECL_STRUCT;
+    theme->name = str_from("GUITheme");
+    theme->builtin = true;
+    static const char *const theme_colors[][5] = {
+        {"text", "0.93", "0.93", "0.95", "1"},  {"panel", "0.07", "0.07", "0.1", "0.9"},
+        {"control", "0.2", "0.2", "0.25", "1"}, {"hot", "0.28", "0.28", "0.34", "1"},
+        {"pressed", "0.14", "0.14", "0.18", "1"}, {"field", "0.12", "0.12", "0.15", "1"},
+        {"fieldHot", "0.16", "0.16", "0.2", "1"}, {"accent", "1", "0.77", "0.24", "1"}};
+    for (int i = 0; i < (int)(sizeof theme_colors / sizeof theme_colors[0]); i++) {
+        field f = {0};
+        f.name = str_from(theme_colors[i][0]);
+        f.type_name = str_from("Color");
+        expr *color = NEW(expr); // Color(r, g, b, a)
+        color->kind = E_CALL;
+        color->name = str_from("Color");
+        for (int k = 1; k < 5; k++) {
+            expr *part = NEW(expr);
+            part->kind = E_FLOAT;
+            part->text = str_from(theme_colors[i][k]);
+            vec_push(color->args, part);
+        }
+        f.default_value = color;
+        vec_push(theme->fields, f);
+    }
+    field theme_radius = {0};
+    theme_radius.name = str_from("radius");
+    theme_radius.type_name = str_from("float");
+    vec_push(theme->fields, theme_radius);
+    prog->gui_theme = theme;
+    // struct GUIControl { bool hovered; bool pressed; bool focused; bool
+    // clicked; }: what GUI.Control says of a control, as tide/gui.h's
+    // tide_control.
+    decl *control = NEW(decl);
+    control->kind = DECL_STRUCT;
+    control->name = str_from("GUIControl");
+    control->builtin = true;
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked"};
+    for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(control_fields[i]);
+        f.type_name = str_from("bool");
+        vec_push(control->fields, f);
+    }
+    prog->gui_control = control;
     static const char *const filters[] = {"Point", "Bilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
@@ -10005,6 +10068,8 @@ static void add_builtins(program *prog)
     vec_push(decls, vertex);
     vec_push(decls, vertex3);
     vec_push(decls, shape);
+    vec_push(decls, theme);
+    vec_push(decls, control);
     vec_push(decls, filter);
     vec_push(decls, font);
     vec_push(decls, state);
@@ -11845,6 +11910,7 @@ bool check(program *prog)
 
     add_builtins(prog);
     builtins_use(prog->anchor, prog->shape, prog->font);
+    builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
     check_units(prog);
