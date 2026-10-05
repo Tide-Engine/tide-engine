@@ -1995,6 +1995,15 @@ static void describe(const occurrence *o, sb *out)
                             "of one color or from one to another, an outline, and an edge that's sharp or fades. "
                             "`Draw2D.RoundRect`, `Ellipse` and the thick outlines and lines are short for it.");
             } else if (o->decl == A.prog->random) sb_put(out, "\n\n" RANDOM_DOC);
+            else if (o->decl == A.prog->font) {
+                sb_put(out, "\n\nThe weight `Draw2D.Text` draws in and `Draw2D.MeasureText` measures in, after their "
+                            "other arguments: `Font.Regular` (what they use without one) or `Font.Bold`, the font's "
+                            "own bold. A game only carries the bold weight's file when its code says `Font.Bold`.");
+            } else if (o->decl == A.prog->anchor) {
+                sb_put(out, "\n\nA place of a box, as Unity's `TextAnchor`: where `GUILayout.Area` puts an area on "
+                            "the screen, and which place of a text's box is at the position `Draw2D.Text` takes "
+                            "(`Anchor.MiddleCenter` centers it there). Upper is towards the top of the screen.");
+            }
             else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
             else if (o->decl->is_scene) {
                 sb_put(out, o->decl->is_local ? "\n\nA local scene: loaded with `Scene.Load` from views, on this machine only."
@@ -6286,7 +6295,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "Filter", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "Filter", "Font", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
