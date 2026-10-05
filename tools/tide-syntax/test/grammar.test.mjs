@@ -194,6 +194,7 @@ const cases = {
         ['Draw.Blit(scene.color, Draw.window, Blur);', [['Blit', 'entity.name.function.call'], ['window', '!storage.type']]],
         ['if (GUI.Button("Copy")) Clipboard.Copy(', [['GUI', 'support.class'], ['Button', '!support.class'], ['Button', 'entity.name.function.call'], ['Clipboard', 'support.class']]],
         ['if (!Cursor.locked) Cursor.Lock();', [['Cursor', 'support.class'], ['locked', '!support.class'], ['Lock', 'entity.name.function.call']]],
+        ['float step = Frame.dt;', [['Frame', 'support.class'], ['dt', '!support.class']]],
         ['async void SaveBytes(List<byte> bytes) fails IOError', [['List', 'support.class'], ['byte', 'storage.type.primitive'], ['IOError', 'support.class']]],
         ['var root = Application.persistentDataPath;', [['Application', 'support.class'], ['persistentDataPath', '!support.class']]],
         ['Directory.CreateDirectory(root)!;', [['Directory', 'support.class'], ['CreateDirectory', 'entity.name.function.call']]],

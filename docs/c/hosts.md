@@ -29,7 +29,9 @@ int main(int argc, char **argv)
 }
 ```
 
-It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
+It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default, and `--size 1280 720` on the command line goes over them), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
+
+It also takes `--capture`, `--frames`, `--script` and `--scale`, which run the game [with no window](#without-a-window) (see [the tide command](../tools/cli.md#without-a-window) for what they do). So every game `tide_add_game` builds without `HOST` has them, and so does one `tide build` made.
 
 The profiler those show is `tide/profiler.h`, for a host of its own to show too. The host marks what each part of its frame was (`tide_profiler_begin`, `tide_profiler_mark`, `tide_profiler_end`) and adds the panel to its draw list (`tide_profiler_draw`). The game's code says the rest into the profiler's `profile` (`tide/profile.h`), while the host gives it to the GUI (`gui.profile`, which `tide_frame`'s views fill) and to what ticks run on (`tide_jobs.profile`, which `tide_world_tick_on` fills: `tide_platform_jobs_profile` for the platform's pool, or a `tide_jobs` of one thread where there's none). With neither, nothing is measured.
 
@@ -70,7 +72,7 @@ The generated header is the API between the game and its host. Namespaced declar
 - `tide_local` is this machine's local state, outside every world. `tide_local_init(local)` clears it and sets its defaults, and `tide_local_free(local)` lets it go. `tide_local_pack(local, out, capacity)` and `tide_local_unpack(local, data, size)` are it as bytes, as hot reloading carries it over. `TIDE_MAIN_IS_LOCAL` is defined when `Main` is local.
 - `tide_frame(w, previous, alpha, verified, local, draw, gui)` runs every view once, blending the match between `previous` and `w` by `alpha`, then applies the local changes they made, and local tasks whose time has come go on. Pass `NULL` and 1 to draw `w` as it is, and `NULL` for `w` outside a match. `verified` is the last world the server confirmed, which `tide_session_view` gives with the other two: an entity's [local fields](../game/local-state.md#local-fields) go once it's in neither `w` nor `verified`, so a destroy the client predicted wrong takes nothing. A host with one world passes `NULL`: `w` is all there is.
 - A match component's local fields are a struct of their own, `<Component>_local`, which the local state keeps for the entities something was written for: `tide_has_<Component>_local(local, entity)`, `tide_get_<Component>_local(local, entity)` (their defaults when nothing was, with text, lists and grids empty) and `tide_set_<Component>_local(local, entity, value)`. What C sets for an entity that had none is kept by its handle alone, where a view's is kept for [the entity it ran for](../game/local-state.md#after-a-rollback). `tide_get_<Component>` and the component's own struct are the match's part. A singleton's are `local-><Singleton>_local`.
-- `tide_local_frame_time(local, seconds)` says how long this frame is, before `tide_frame`: local tasks' `Wait.Seconds` counts it down. Without it, they wait forever.
+- `tide_local_frame_time(local, seconds)` says how long this frame is: it's what [`Frame.dt`](../game/views.md#a-frame-s-length) reads, local tasks' `Wait.Seconds` counts it down, and presentation correction errors decay once. Call it before the session update that may supply fresh corrections, then draw with `tide_frame`. Without it, `Frame.dt` is 0, local tasks wait forever and correction errors do not decay.
 
 **Input**
 
@@ -92,6 +94,14 @@ The generated header is the API between the game and its host. Namespaced declar
 - With host migration (`tide_game_api.host_migration`), the host that runs a match tells its session the room's code and key every frame (`tide_session_set_room`, with `tide_platform_room_code` and `tide_platform_room_key`). A session whose match lost its server says so (`tide_session_migrating`): the host goes to the room again (`tide_platform_room_migrate`), and once `tide_platform_room_migrated` says whether this machine hosts it now, calls `tide_session_take_over` or `tide_session_join`, or fails the session with `TIDE_DISCONNECT_ENDED` if the match ended there. A match that ends tells its transports (`tide_transport.end`, before they close), which a room passes on to the relay. `tide/host.h` does all of it.
 - `tide_local_take_request(local, &request, &start)` takes local code's session calls, like `Session.Start`, in order: call it until it's false. `Clipboard.Copy` comes this way too, as `TIDE_REQUEST_COPY`: put its text on the clipboard with `tide_platform_copy`. `tide_local_set_session`, `tide_local_connected` and `tide_local_disconnected` tell local code where it stands; `tide_local_set_session` takes whether the match is open too (`tide_session_status`'s `open`), and the code of the room the match is in (`tide_platform_room_code`), or `""` while it's closed; `tide_local_disconnected` takes a kick's message (`tide_session_event`'s `message`), or NULL.
 
+### Presentation corrections
+
+The standard host wires [provisional correction smoothing](../game/views.md#provisional-correction-smoothing) automatically. For a custom host, a game with tagged fields defines `TIDE_HAS_VIEW_CORRECTIONS` and exports `tide_local_correct(local, correction)`. Set the session's optional `correct_views` callback to forward its `tide_view_correction` into that function, using the session's `user` for your host state. A host driving a client directly uses `tide_client_desc.correct_views` instead.
+
+After drawing the view returned by `tide_session_view`, call `tide_session_mark_presented(session)`; for a client, call `tide_client_mark_presented(client)`. This records the tick and blend fraction actually drawn without copying worlds. A replay that replaces that presentation supplies the callback with old and corrected endpoint pairs at that same tick and fraction. The worlds belong to the callback only: do not retain their pointers. A context with `reset` clears the retained errors and may have no worlds.
+
+Call `tide_local_frame_time` before updating the session, so existing errors decay before fresh corrections arrive. These private caches are shared across views and excluded from world state and local packing. A host swapping builds must clear them with the old build's callback before replacing its table and refresh the session callback with `tide_session_set_view_corrector`; `tide/host.h` handles this too. Leaving the callback unset adds no correction snapshot copies.
+
 ## A frame
 
 A zeroed `tide_draw_list` and `tide_gui` are ready to use. A draw list grows as a frame needs, keeps its memory for the next one, and `tide_draw_free` lets it go. It also keeps a copy of each texture the last frame drew with (see [Textures](../game/views.md#textures)), which `tide_platform_draw` uploads when it changed; a host that swaps the game's code for another build calls `tide_draw_forget`, as `tide/host.h` does at a hot reload.
@@ -108,6 +118,38 @@ tide_platform_draw(&draw);
 ```
 
 Asking for the cursor's lock isn't having it: the system decides, and `tide_platform_poll` says whether the window holds the cursor, as `devices.mouse.locked`, which `Cursor.locked` reads. A host that fills the devices itself sets it.
+
+## Without a window
+
+To see what a game draws without a window on screen, or to run it where nobody watches, a host opens a headless window in `tide_platform_open`'s place. Its frame function stays as it is:
+
+```c
+tide_platform_open_headless(&(tide_headless_desc){
+    .width = 1280, .height = 720, // In logical pixels
+    .scale = 2.0f,                // As on a display scaled to 200%: the frame is 2560 by 1440 pixels
+    .frames = 300,                // The run ends once this many drew...
+    .script = "play.txt",         // ...or when its script says `quit`
+    .capture = "last.png",        // The last frame, as a PNG
+});
+tide_platform_run(frame, NULL);
+```
+
+::: info Provisional
+These names are new, and may still change.
+:::
+
+- Frames draw into pixels of the platform's own, at the size and scale asked for, whatever the display is. `tide_platform_frame_pixels(&width, &height)` gives the last frame drawn, whole, with the overlay: 4 bytes a pixel (red, green, blue, alpha), rows from the top. `tide_platform_capture(path)` writes it as a PNG.
+- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock (`now_ns` left out of its desc), as the standard host's does in such a run.
+- The devices are made up too: `tide_platform_poll` takes what the script says for the frame, and what `tide_platform_input` said, each event as a script's line has it without its frame (see [Scripts](../tools/cli.md#scripts)), never the system's:
+
+  ```c
+  tide_platform_input("mouse 640 360");
+  tide_platform_input("button left"); // A click, in the devices at the next poll
+  ```
+
+- `tide_platform_run` ends the program with exit code 0 after `frames` frames or at the script's `quit`, whichever is first, and with 1 when a picture couldn't be written. `tide_platform_open_headless` ends it with 2, having said why, when a line of the script is wrong or nothing ends the run.
+
+It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
 
 ## Memory
 

@@ -183,6 +183,21 @@ typedef enum tide_disconnect_reason {
 // Clients call it once for each tick they run ahead, in order.
 typedef void (*tide_sample_fn)(void *user, uint32_t tick, void *input);
 
+// A presentation correction, at the tick and fraction last drawn. The worlds
+// are valid only during the callback. A reset discards retained visual errors;
+// its worlds can be NULL when there is no comparable presentation history.
+typedef struct tide_view_correction {
+    const void *before;
+    const void *before_previous;
+    const void *after;
+    const void *after_previous;
+    uint32_t tick;
+    float alpha;
+    bool reset;
+} tide_view_correction;
+
+typedef void (*tide_view_correct_fn)(void *user, const tide_view_correction *correction);
+
 // ---------------------------------------------------------------------------
 // Server
 
@@ -259,6 +274,7 @@ typedef struct tide_client_desc {
     // run is the same however fast the machine (benchmarks and tests).
     uint64_t (*now_ns)(void);
     double resim_budget; // Seconds a frame may spend running predicted ticks again; 0 for 0.004
+    tide_view_correct_fn correct_views; // Optional: coalesced replay corrections, using `user`
 } tide_client_desc;
 
 typedef struct tide_client_status {
@@ -306,6 +322,9 @@ const void *tide_client_world(const tide_client *c);
 const void *tide_client_verified_world(const tide_client *c);
 // What views draw, as of the client's last update.
 tide_view_worlds tide_client_view(const tide_client *c);
+// After drawing tide_client_view, record its timestamp. This alone copies no
+// worlds: old endpoints are kept only if a later replay replaces them.
+void tide_client_mark_presented(tide_client *c);
 
 // ---------------------------------------------------------------------------
 // Session: what a host program uses. Start runs a server with this machine's
@@ -323,6 +342,7 @@ typedef struct tide_session_desc {
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
     uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're 0
+    tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {
@@ -416,6 +436,7 @@ double tide_session_until_tick(const tide_session *s);
 const void *tide_session_world(const tide_session *s);
 // What views draw, blended between ticks (see tide_view_worlds).
 tide_view_worlds tide_session_view(const tide_session *s);
+void tide_session_mark_presented(tide_session *s);
 // The server's world, on the machine that runs it; NULL elsewhere.
 const void *tide_session_server_world(const tide_session *s);
 tide_session_status tide_session_status_of(const tide_session *s);
@@ -424,6 +445,9 @@ bool tide_session_next_event(tide_session *s, tide_session_event *event);
 // Runs another build of the same game from now on: new code with the same
 // data layout (the same hash), for hot reloading. The match goes on.
 void tide_session_set_game(tide_session *s, const tide_game *game);
+// Hot reloading can add or remove correction attributes without changing the
+// simulation layout. Refresh the optional presentation callback with its table.
+void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn correct_views);
 
 // Makes `to`, a zeroed world of the new build, from `from`, a world of the old.
 typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);

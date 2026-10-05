@@ -30,7 +30,10 @@ typedef struct tide_run_desc {
     // The debug views are on, as with the game's debugViews setting or
     // --debug-views on the command line: F7 shows the profiler (tide/profiler.h)
     bool debug_views;
-    int argc;          // The command line, for --host, --join and --connect
+    // The command line: --host, --join and --connect, --debug-views, --size,
+    // and --capture, --frames, --script and --scale for a run with no window
+    // (see tide/run.h)
+    int argc;
     char **argv;
 } tide_run_desc;
 
@@ -78,6 +81,9 @@ typedef struct tide_host_game {
     // Graphics references in retained local state: native targets transfer to
     // the new build; a new address space recreates them. Optional for C hosts.
     void (*rebind_resources)(void *local, bool same_memory);
+    // Optional: accumulated visual errors for tagged match fields. The context
+    // belongs to this synchronous call; it never changes simulation state.
+    void (*correct_views)(void *local, const tide_view_correction *correction);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -122,6 +128,10 @@ static bool tide_run_debug_told;
 // has a profile to fill
 static tide_jobs tide_run_alone = {.threads = 1};
 static tide_run_desc tide_run_settings;
+// A run with no window, when the command line asks for one with --capture,
+// --frames or --script: what it asked (tide_platform_open_headless)
+static bool tide_run_headless;
+static tide_headless_desc tide_run_headless_desc;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
 // The server went away or turned this machine away: not because it left,
@@ -156,6 +166,18 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     tide_gui_hide(&tide_run_gui, &sampled); // A click on a button isn't the game's
     tide_run_game->sample_input(&sampled, tide_run_local, input);
     tide_devices_consume(&tide_run_devices);
+}
+
+static inline void tide_run_correct_views(void *user, const tide_view_correction *correction)
+{
+    (void)user;
+    if (tide_run_game->correct_views) tide_run_game->correct_views(tide_run_local, correction);
+}
+
+static inline void tide_run_refresh_view_corrector(void)
+{
+    tide_session_set_view_corrector(tide_run_session,
+                                   tide_run_game->correct_views ? tide_run_correct_views : NULL);
 }
 
 // Local commands waiting for transport capacity belong to the match whose
@@ -261,8 +283,29 @@ static inline bool tide_run_arguments(tide_session_request *request)
     return false;
 }
 
+// The command line's argument after `*i`, which `flag` takes, moving `*i` to
+// it. Without one, the program ends, saying what the flag takes.
+static inline const char *tide_run_value(int *i, const char *flag, const char *takes)
+{
+    if (*i + 1 < tide_run_settings.argc) return tide_run_settings.argv[++*i];
+    fprintf(stderr, "tide: %s takes %s\n", flag, takes);
+    exit(2);
+}
+
+// ...as a number from `least` to `most`, or the program ends the same way.
+static inline double tide_run_number(int *i, const char *flag, const double least, const double most, const char *takes)
+{
+    const char *text = tide_run_value(i, flag, takes);
+    char *end = NULL;
+    const double value = strtod(text, &end);
+    if (end != text && !*end && value >= least && value <= most) return value;
+    fprintf(stderr, "tide: %s takes %s, not '%s'\n", flag, takes, text);
+    exit(2);
+}
+
 // How tide_run_game runs: what `desc` says, with the defaults for what it and
-// the game's settings leave out, and --debug-views from its command line.
+// the game's settings leave out, and what its command line says: --debug-views,
+// the window's size, and a run with no window.
 static inline void tide_run_configure(const tide_run_desc *desc)
 {
     tide_run_settings = *desc;
@@ -272,15 +315,56 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     if (tide_run_settings.width <= 0) tide_run_settings.width = 960;
     if (tide_run_settings.height <= 0) tide_run_settings.height = 540;
     if (tide_run_settings.tick_rate < 0) tide_run_settings.tick_rate = 0; // The game's
+    tide_run_headless = false;
+    tide_run_headless_desc = (tide_headless_desc){0};
+    bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
-        if (strcmp(tide_run_settings.argv[i], "--debug-views") == 0) tide_run_settings.debug_views = true;
+        const char *arg = tide_run_settings.argv[i];
+        if (strcmp(arg, "--debug-views") == 0) {
+            tide_run_settings.debug_views = true;
+        } else if (strcmp(arg, "--size") == 0) {
+            const char *takes = "the window's width and height in pixels, like --size 1280 720";
+            tide_run_settings.width = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
+            tide_run_settings.height = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
+        } else if (strcmp(arg, "--scale") == 0) {
+            const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
+            tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
+            scaled = true;
+        } else if (strcmp(arg, "--frames") == 0) {
+            const char *takes = "how many frames the run lasts, like --frames 300";
+            tide_run_headless_desc.frames = (uint32_t)tide_run_number(&i, arg, 1.0, 1e9, takes);
+            tide_run_headless = true;
+        } else if (strcmp(arg, "--capture") == 0) {
+            tide_run_headless_desc.capture = tide_run_value(&i, arg, "the file the run's last frame goes to, like --capture menu.png");
+            tide_run_headless = true;
+        } else if (strcmp(arg, "--script") == 0) {
+            tide_run_headless_desc.script = tide_run_value(&i, arg, "a file of input by frame, like --script play.txt");
+            tide_run_headless = true;
+        }
     }
+    if (scaled && !tide_run_headless) {
+        fprintf(stderr, "tide: --scale is for a run with no window: with --capture, --frames or --script\n");
+        exit(2);
+    }
+    tide_run_headless_desc.width = tide_run_settings.width;
+    tide_run_headless_desc.height = tide_run_settings.height;
+#if defined(__wasm__) || defined(__ANDROID__)
+    if (tide_run_headless) {
+        fprintf(stderr, "tide: --capture, --frames and --script run a game with no window, on desktop only\n");
+        tide_run_headless = false;
+    }
+#endif
 }
 
-// Opens tide_run_game's window, as `desc` and the game's settings say.
+// Opens tide_run_game's window, as `desc` and the game's settings say, or
+// none for a run that asked for none.
 static inline void tide_run_open(const tide_run_desc *desc)
 {
     tide_run_configure(desc);
+    if (tide_run_headless) {
+        tide_platform_open_headless(&tide_run_headless_desc);
+        return;
+    }
     tide_platform_open(&(tide_window_desc){.title = tide_run_settings.title,
                                            .width = tide_run_settings.width,
                                            .height = tide_run_settings.height});
@@ -328,7 +412,10 @@ static inline tide_session *tide_run_new_session(void)
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
         .jobs = tide_run_jobs(),      // Ticks on every core
-        .now_ns = tide_time_now_ns,   // To keep running predicted ticks again within a frame's budget
+        // To keep running predicted ticks again within a frame's budget. A run
+        // with no window has no clock, so it goes the same on every machine.
+        .now_ns = tide_run_headless ? NULL : tide_time_now_ns,
+        .correct_views = tide_run_game->correct_views ? tide_run_correct_views : NULL,
         .entropy = tide_platform_entropy, // A seed for each match it starts, so no two go the same
     });
 }
@@ -446,6 +533,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
 
     tide_session *s = tide_run_session;
+    // Existing visual errors age before this update adds fresh corrections.
+    game->frame_time(tide_run_local, seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
     if (tide_platform_room_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -471,8 +560,8 @@ static inline int tide_run_frame(void *user, const float seconds)
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_gui_begin(&tide_run_gui, &tide_run_devices, tide_platform_screen_size(), tide_platform_measure_text);
-    game->frame_time(tide_run_local, seconds);
     game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
+    tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);

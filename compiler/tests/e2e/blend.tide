@@ -95,7 +95,7 @@ view DrawJumper(Body body, with Jumper)
     Draw2D.WireRect(body.position, float2(1, 1), Color.red);
 }
 
-view Frame(Camera camera, Shot shot, Time time)
+view DrawShot(Camera camera, Shot shot, Time time)
 {
     Draw2D.Camera(camera.center, 10);
     Draw2D.Rect(shot.center, float2(1, 1), Color.blue);

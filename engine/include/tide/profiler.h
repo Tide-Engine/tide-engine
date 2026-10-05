@@ -88,8 +88,8 @@ void tide_profiler_end(tide_profiler *p, uint32_t again_ticks);
 
 // Adds the panel to `list`, over what's there, in the top left corner of a
 // screen of `screen` pixels: the frame's rows and the tick's side by side, or
-// one under the other where the screen is narrow. `measure` is the width of
-// text as the renderer draws it (tide_platform_measure_text); NULL guesses.
+// one under the other where the screen is narrow. `measure` is how big the
+// renderer draws text (tide_platform_measure_text); NULL guesses.
 void tide_profiler_draw(const tide_profiler *p, tide_draw_list *list, tide_float2 screen, tide_measure_fn measure);
 
 // Lets its memory go: it's zeroed, and ready to use again.

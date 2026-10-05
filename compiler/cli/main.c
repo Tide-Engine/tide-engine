@@ -62,6 +62,15 @@ static void usage(void)
            "  --join <code>        the match in the room with this code, like K7QF2M\n"
            "  --connect <address>  the match at an address, like 192.168.1.5 or localhost:7777 (not on the web)\n"
            "\n"
+           "run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
+           "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
+           "  --capture <file.png>  the run's last frame, as a PNG\n"
+           "  --frames <n>          the run ends after this many frames\n"
+           "  --script <file>       input by frame, and when to capture and quit: lines like `120 key d down`,\n"
+           "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
+           "  --scale <s>           as on a display scaled this much: 1.5, 2 (1 without it)\n"
+           "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
+           "\n"
            "add: a package from git is github.com/owner/repo (or its URL), at the newest commit of\n"
            "its default branch; @branch after it follows a branch, @v1 the newest v1.x.y tag, and\n"
            "//folder a folder in the repository. A folder on this machine is a path, like ../shared.\n"
@@ -179,16 +188,52 @@ int main(const int argc, char **argv)
     }
 
     build_options opts = {.folder = "."};
-    const char *session[3] = {NULL, NULL, NULL}; // --host [port], --join <code> or --connect <address>, for the game
-    bool open_page = true;                        // run --web opens the page in a browser
+    // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
+    // --connect <address>, the window's size, and a run with no window
+    const char *game_args[16] = {NULL};
+    int game_arg_count = 0;
+    bool open_page = true; // run --web opens the page in a browser
+    bool once = false;     // run with no window: the game runs once, as it was built, and its exit code is tide's
+    bool sized = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
+        const int left = argc - i - 1; // Arguments after this one
+        if (run && game_arg_count > 12) { // Room for the longest of them yet
+            fprintf(stderr, "tide: run takes each of its options once\n");
+            return 2;
+        }
         if (run && strcmp(a, "--host") == 0) {
-            session[0] = a;
-            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') session[1] = argv[++i];
-        } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && i + 1 < argc) {
-            session[0] = a;
-            session[1] = argv[++i];
+            game_args[game_arg_count++] = a;
+            if (left >= 1 && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') game_args[game_arg_count++] = argv[++i];
+        } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && left >= 1) {
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--script") == 0)) {
+            if (left < 1) {
+                fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, a[2] == 'c' ? "--capture menu.png" : "--script play.txt");
+                return 2;
+            }
+            // The game runs in its own folder: the file is where the command says, from here
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = path_absolute(argv[++i]);
+            once = true;
+        } else if (run && (strcmp(a, "--frames") == 0 || strcmp(a, "--scale") == 0)) {
+            if (left < 1) {
+                fprintf(stderr, "tide: %s takes a number, like `%s`\n", a, a[2] == 'f' ? "--frames 300" : "--scale 2");
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            if (a[2] == 'f') once = true;
+        } else if (run && strcmp(a, "--size") == 0) {
+            if (left < 2) {
+                fprintf(stderr, "tide: --size takes the window's width and height, like `--size 1280 720`\n");
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            game_args[game_arg_count++] = argv[++i];
+            sized = true;
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
@@ -208,15 +253,20 @@ int main(const int argc, char **argv)
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         return 2;
     }
+    if ((once || sized) && (opts.web || opts.android)) {
+        fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
+                once ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
+        return 2;
+    }
     int code = 0;
     if (schedule) {
         code = tide_schedule(opts.folder, shaders) ? 0 : 1;
     } else if (run && opts.android) {
-        code = tide_run_android(root, &opts, session);
+        code = tide_run_android(root, &opts, game_args);
     } else if (run && !opts.web) {
-        code = tide_run_reloading(root, &opts, session);
+        code = tide_run_reloading(root, &opts, game_args, once);
     } else if (run) {
-        code = tide_run_web(root, &opts, open_page, session);
+        code = tide_run_web(root, &opts, open_page, game_args);
     } else {
         char *program = tide_build(root, &opts);
         if (!program) code = 1;

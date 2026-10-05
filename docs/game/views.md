@@ -125,6 +125,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.WireRect(center, size, color)` | A rectangle's outline |
 | `Draw2D.Line(from, to, color)` | A line |
 | `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
+| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)) |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
 | `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
@@ -250,6 +251,32 @@ view Health(Stats stats)
 ```
 
 What views draw there is under the GUI's widgets, which draw last.
+
+## Measuring text
+
+`Draw2D.Text` takes the text's top left corner. To center a line, align it to the right, or fit a panel around it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line.
+
+```csharp
+view Banner(Round round)
+{
+    Draw2D.Screen();
+    var size = Draw2D.MeasureText(round.message, 48);
+    var corner = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
+    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, size + float2(32, 16), Color.black);
+    Draw2D.Text(round.message, corner, 48, Color.white);
+}
+```
+
+That's the message in the middle of the screen, on a panel that fits it. Text against the right edge starts at `Screen.width - size.x`.
+
+The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered on a body starts half its height above the body's middle:
+
+```csharp
+var size = Draw2D.MeasureText(player.name, 0.5);
+Draw2D.Text(player.name, body.position + float2(-size.x, size.y) * 0.5, 0.5, Color.white);
+```
+
+It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own pixels and camera, and `target.MeasureText(text, size)` measures for it.
 
 ## 3D
 
@@ -482,6 +509,33 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 `entity.Snap()` is applied at the end of the tick, like `Destroy`, so it never makes systems wait. `singleton.Snap()` needs the singleton as a `mut` parameter.
 
+### Provisional correction smoothing
+
+::: warning Provisional
+`[Position]` and `[Rotation]` are available, with provisional names and behavior. They may change as games test them.
+:::
+
+Tick interpolation makes motion smooth between ticks. A prediction correction can still move the next frame abruptly. These attributes tell Tide how to preserve the displayed value and remove the correction error over time:
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    [Rotation] float heading; // Radians, for 2D
+    float2 velocity;          // Ordinary tick interpolation
+}
+```
+
+`[Position]` on a float or floating-point vector keeps linear tick interpolation and accumulates an additive presentation offset. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+
+The error decays exponentially with frame time toward zero, or the identity rotation, with a provisional half-life of 75 ms. Another correction accumulates with whatever error remains. Ordinary movement follows the corrected simulation, so moving and aiming stay responsive. Untagged fields keep ordinary tick interpolation.
+
+This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
+
+The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`.
+
+Ordinary structs can contain annotated built-in fields, including through nested structs. Correction smoothing for a type with its own `Interpolate` is deferred; its existing tick interpolation remains available. No new custom-type method or correction-rate setting is agreed. The [specification](../spec.md#provisional-correction-smoothing) records the provisional contract.
+
 ### Blending your own way
 
 A struct or component can say how it blends with an `Interpolate` method, declared in it like an operator. It replaces the default blend for that type wherever views see it:
@@ -508,6 +562,65 @@ component Body
 ```
 
 `Interpolate` isn't for code to call. Singletons have no methods, so a singleton blends its own way through a struct in it that has one.
+
+## A frame's length
+
+Frames come at the display's rate: 60 a second on one screen, 144 on another, fewer when the machine is busy. What a view animates of its own, like particles, a menu that slides in or a camera's shake, moves by time rather than by frames. `Frame.dt` is the seconds since the previous frame started:
+
+```csharp
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+}
+
+local singleton Sparks
+{
+    List<Spark> list;
+}
+
+view DrawSparks(mut Sparks sparks)
+{
+    mut var i = 0;
+    while (i < sparks.list.count)
+    {
+        mut var spark = sparks.list[i];
+        spark.age += Frame.dt;
+        if (spark.age >= spark.life)
+        {
+            sparks.list.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 9.8 * Frame.dt;
+        spark.position += spark.velocity * Frame.dt;
+        sparks.list[i] = spark;
+        Draw2D.Circle(spark.position, 0.1 * (1 - spark.age / spark.life), Color.yellow);
+        i++;
+    }
+}
+```
+
+- **It's this machine's, not the match's.** It's there with no match, in a menu and while connecting, where a view that takes `Time` doesn't run. In a match it's the same value, whatever the tick rate.
+- **The match has `Time`.** What's in the match moves by `time.dt`, a tick's length, in systems. A view draws the match as it is, already [blended](#smooth-at-any-tick-rate) to the frame, and uses `Frame.dt` for what it adds on top. A system that reads `Frame.dt` is an error that says so.
+- **It's the frame's real length.** A frame after the window was dragged, or the page was hidden, is as long as that took. Clamp it where a big step would show: `var dt = Math.Min(Frame.dt, 0.05);`.
+- **There's no clock beside it.** A float of seconds gets coarser as it grows: after four and a half hours it counts in steps of 2 milliseconds, and whatever it animates starts to judder. Add `Frame.dt` up into a field of your own instead, and wrap it where what it drives repeats:
+
+```csharp
+local singleton Spinner
+{
+    float turn; // Radians, always under a full turn
+}
+
+view Spin(mut Spinner spinner)
+{
+    spinner.turn += Frame.dt * 4;
+    if (spinner.turn > Math.TAU) spinner.turn -= Math.TAU;
+}
+```
+
+Views read `Frame.dt`, and so does the rest of [local code](./local-state.md#time): the functions they call, local handlers and local tasks.
 
 ## Reading this machine's devices
 

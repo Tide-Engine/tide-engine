@@ -955,6 +955,17 @@ static void ex_construct(emit *em, const expr *e)
         ex_as(em, e->args.items[0], vector_type(floats, 1));
         sb_put(em->o, ")");
         return;
+    case CTOR_ENUM: { // An enum is an int here whatever it's stored as: one stored as less keeps its low bits, as on the CPU
+        const int width = t.decl->width;
+        if (width != 1 && width != 2) {
+            ex(em, e->args.items[0]);
+            return;
+        }
+        sb_put(em->o, "(");
+        ex(em, e->args.items[0]);
+        sb_printf(em->o, " & %d)", width == 1 ? 255 : 65535);
+        return;
+    }
     case CTOR_COMPONENTS:
     case CTOR_MAT_COLUMNS:
     case CTOR_COLOR:

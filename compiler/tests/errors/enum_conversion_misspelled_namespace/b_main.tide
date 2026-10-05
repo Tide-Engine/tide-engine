@@ -1,0 +1,4 @@
+// expect: namespace 'Combat' has no function 'Stanse'
+singleton Match { Combat.Stance stance; }
+scene Main { }
+system S(mut Match match) { match.stance = Combat.Stanse(1); }
