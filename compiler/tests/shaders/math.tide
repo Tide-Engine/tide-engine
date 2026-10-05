@@ -1,0 +1,69 @@
+// Math on the GPU: what a shader language has no function for, or has one
+// that does otherwise than the CPU's, is a function of the engine's own
+// before the game's, the same formula in GLSL and in WGSL. A hash is unsigned
+// integers, so it's the CPU's number; Min, Max and Clamp tell a NaN by its
+// bits; and each function is only there in a shader that calls it.
+
+scene Main { }
+
+struct SkyVertex
+{
+    float2 position;
+    float2 uv;
+}
+
+singleton Wind
+{
+    quaternion turn = quaternion.identity;
+    float3 from = float3(0, 0, 1);
+    float4x4 place = float4x4.identity;
+    float strength = 1;
+    int seed;
+}
+
+local singleton Sky
+{
+    List<SkyVertex> corners;
+    List<int> faces;
+}
+
+// Integers: the same star in the same cell on every GPU
+frag Stars(SkyVertex vertex, mut Color color, Wind wind)
+{
+    int2 cell = int2(Math.Floor(vertex.uv * 64));
+    int luck = Math.Hash(cell) ^ Math.Hash(wind.seed) ^ Math.Hash(int3(cell, wind.seed)) ^ Math.Hash(int4(cell, 1, 2));
+    color = luck % 30 == 0 ? Color.white : Color.black;
+}
+
+// Quaternions and matrices, and what builds them
+vert Blow(mut SkyVertex vertex, Wind wind)
+{
+    quaternion spin = Math.Mul(wind.turn, quaternion.AxisAngle(float3(0, 0, 1), wind.strength));
+    quaternion eased = Math.Slerp(quaternion.Euler(wind.from), Math.Inverse(spin), 0.5);
+    quaternion aimed = Math.Nlerp(quaternion.LookRotation(Math.Forward(eased), Math.Up(spin)), Math.Conjugate(Math.Normalize(spin)), 0.5);
+    float3 pushed = Math.Rotate(aimed, float3(vertex.position, 0)) + Math.Right(spin) * Math.Angle(spin, eased);
+    float4x4 placed = Math.Mul(float4x4.TRS(wind.from, quaternion(float3x3(aimed)), float3(1)), Math.Inverse(wind.place));
+    float4x4 seen = Math.Mul(float4x4.PerspectiveFov(1, 1.5, 0.1, 100), float4x4.Ortho(4, 3, 0.1, 100));
+    float4x4 moved = Math.Mul(float4x4.Translate(pushed), float4x4(Math.Inverse(float3x3(spin)), wind.from));
+    float2x2 flat = Math.Inverse(float2x2(2, 1, -1, 3));
+    vertex.position = Math.Mul(flat, Math.Transform(Math.Mul(placed, Math.Mul(seen, moved)), pushed).xy);
+}
+
+// What's forgiving on the CPU is forgiving here, and gives a number where the CPU does
+frag Calm(SkyVertex vertex, mut Color color, Wind wind)
+{
+    float least = Math.Min(wind.strength, 2);
+    float2 most = Math.Max(vertex.uv, float2(0.5));
+    float3 held = Math.Clamp(wind.from, float3(0), float3(1));
+    float eased = Math.SmoothStep(1, 0, Math.Saturate(least));
+    float raised = Math.Pow(wind.strength - 2, 2);
+    float turned = Math.Atan2(vertex.uv.y - 0.5, vertex.uv.x - 0.5);
+    int capped = Math.Clamp(wind.seed, 0, 9);
+    color = Color(most.x * eased, held.y * raised, Math.Cmin(held) + turned, 1) * (capped / 9.0);
+}
+
+view Show(Sky sky)
+{
+    Draw2D.Mesh(sky.corners, sky.faces, Stars);
+    Draw2D.Mesh(sky.corners, sky.faces, Blow, Calm);
+}
