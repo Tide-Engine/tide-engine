@@ -270,6 +270,26 @@ Once C returns, the list is exactly those elements, however many it had: more, f
 
 A world's list is written piece by piece, and only the pieces whose bytes differ from what the list had. So a big list that comes out mostly the same costs little: the pieces that didn't change aren't hashed again, and stay shared with the snapshots rollback keeps.
 
+C still writes all of it, and all of it is compared. C that knows which elements changed can say only those, and the list keeps the rest:
+
+```c
+int PatchImage(tide_list_out *image)
+{
+    tide_list_out_keep(image, ImageSize());
+    for (int i = 0; i < changed_count; i++) {
+        tide_list_out_part(image, changed[i].first, changed[i].bytes, changed[i].count);
+    }
+    return ImageSize();
+}
+```
+
+- `tide_list_out_keep(out, count)` says the list keeps the elements it holds, and is `count` long once C returns. The ones past that go, and the ones it gains are zeros.
+- `tide_list_out_part(out, first, elements, count)` says the `count` elements from `first` on are the ones at `elements`, side by side. Parts are written in the order they're given, a later one over an earlier one, and what's past the list's count is left out.
+
+Nothing of what the list keeps is written, compared or hashed again: only the parts are, each with the elements it goes over. So a list of megabytes that changes in a few places costs those places.
+
+A part's elements are read once C has returned. They have to be in memory that's still good then, and that nothing changes meanwhile: C's own (static, or allocated), never the function's variables. Of keeping and asking for room, what C said last stands, so C that starts out keeping and finds everything changed asks for room and fills it.
+
 The argument is a list the code can change, with `out` before it, as for any `out` parameter: a field of a `mut` component or singleton, a `mut` local, or one declared there with `out var`. Its elements are what a list goes to C with.
 
 ## Drawing from C
