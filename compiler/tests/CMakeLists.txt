@@ -53,6 +53,8 @@ tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)
 tide_e2e_test(structs)
 tide_e2e_test(methods)
+tide_e2e_test(overloads) # Default values, named arguments, and functions, methods and systems that share a name
+tide_e2e_test(overloads_extern SOURCES e2e/overloads_extern.tide e2e/overloads_extern_c.c) # ...and C functions, which have neither
 tide_e2e_test(singleton_params) # Explicit singleton values, caller capabilities and local-field sidecars
 tide_e2e_test(operators)
 tide_e2e_test(events)

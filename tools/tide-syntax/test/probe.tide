@@ -246,6 +246,25 @@ int query(int value) { return value; }
 int QueryName(int query) { return query; }
 void CallQuery() { var answer = query(1); }
 
+// Defaults, arguments by name, and a shared name written with its parameters' types.
+float Strike(float base, float multiplier = 1, bool crit = false)
+{
+    return crit ? base * multiplier * 2 : base * multiplier;
+}
+float Strikes(bool on)
+{
+    return Strike(10, crit: true)
+        + 1;
+}
+float StrikesOn(bool on)
+{
+    return Strike(base: 1, multiplier: on ? 2 : 3);
+}
+system Advance(mut Body body, with Player) { }
+system Advance(mut Body body, with Enemy) { }
+[After(Advance(Body, with Player))]
+system Settle(mut Body body) { }
+
 // verified: a word of its own before a view's parameter, after with and without, and before a local handler's event; a name anywhere else.
 view HealthBar(Health health, verified Health confirmed, mut verified Combat.Armor armor) { }
 view Corpses(Body body, with verified Dead, without verified Combat.Ghost) { }

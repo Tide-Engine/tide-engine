@@ -50,6 +50,8 @@ Draw3D.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert firs
 
 With no frag, a pixel is its vertex's `color` times the draw's texture at its `uv`, as the built-in `Vertex` and `Vertex3` draw: a struct with no `Color color` draws white, and a texture needs a `float2 uv` to be read at. With no vert, the vertices are used as they are.
 
+Frags and verts can share a name when their parameters differ. A draw then names the one it means with its parameters' types, as [`[After]` names a system](./systems.md#order): `Draw2D.Mesh(vertices, indices, Tint(Vertex, Color, Sun))`.
+
 ## A frag
 
 ```csharp

@@ -79,7 +79,8 @@ system Regenerate(mut Unit unit)
 - Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
 - A function returns a value on every path, unless it returns `void`.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
-- A function shares its name with nothing else in its namespace. Methods can't share a name either, even with different parameters, or share one with a field.
+- A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
+- A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
 Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
 
@@ -110,6 +111,50 @@ Engine-owned singleton instances, such as `Time` and `Session`, stay read-only w
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 
+## Default values, names and overloads
+
+These work as in C#.
+
+```csharp
+float Damage(float base, float multiplier = 1, bool crit = false)
+{
+    return crit ? base * multiplier * 2 : base * multiplier;
+}
+
+float Damage(float base, Weapon weapon)
+{
+    return base + weapon.power;
+}
+
+system Strike(mut Unit unit, Weapon weapon)
+{
+    unit.health -= Damage(10);              // multiplier 1, no crit
+    unit.health -= Damage(10, 2);
+    unit.health -= Damage(10, crit: true);  // By name, past multiplier
+    unit.health -= Damage(10, weapon);      // The other Damage
+}
+```
+
+**Default values.** A parameter with `= value` can be left out of a call, which then passes the value.
+
+- The parameters a call can leave out are the last ones: after one with a default, each has one.
+- A default is a constant, like a [field's default](../game/entities.md): a literal, a constant, an enum's member, a constructor like `float2(0, 1)`, a struct's value, `Math` functions and operators on them, or `null` for a `T?`.
+- Only plain values take one. A `mut` parameter is the caller's variable, and a component or singleton is the caller's own, so a call always passes those.
+
+**Named arguments.** A call can pass an argument by its parameter's name, `crit: true`.
+
+- Arguments without a name come first, in the parameters' order. After a named one, each is named, in any order: `Damage(crit: true, base: 5)`.
+- They're worked out in the order the call writes them (see [Order](#order)).
+- The engine's functions take names where their parameters have them: `Draw2D.Circle(center: p, radius: 2, color: Color.red)`, `Session.Connect(address: host, port: 7001)`. Constructors, `Spawn`, `Send` and the like take their arguments in order.
+
+**Overloads.** Functions can share a name, and so can a type's methods, when their parameters' types differ. Names, `mut` and defaults don't tell two apart.
+
+- A call picks by its arguments. An argument's own type wins over one it converts to: `Damage(10)` is `Damage(int)` if there is one, and `Damage(float)` otherwise.
+- When two fit equally, the one the call wrote every parameter of wins over one that fills defaults in.
+- A call that fits none, or two just as well, is an error that lists them. Write the argument as the type meant, like `float(x)`, or name a parameter only one has.
+
+Systems, views and handlers can share a name too. Nothing calls them, so where one is named, it's written with its parameters' types: see [Order of systems](../game/systems.md#order).
+
 ## Order
 
 A `mut` parameter and a `mut` method change something of the caller's, so it matters when they run. Tide runs an expression left to right, on every platform:
@@ -131,6 +176,7 @@ system Count(mut Counter counter, mut Log log)
 ```
 
 - Arguments, operands, a vector's parts and a value's fields (`Pair { a = Next(counter), b = Next(counter) }`) all go in the order they're written, through any functions in between.
+- Arguments passed by name go in the order written too, whatever order the parameters are in: in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`.
 - A value is read where it's written. A read-only argument is a copy made then, a list too.
 - A method reads the value it's called on as it runs, once its arguments are worked out: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out.
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.

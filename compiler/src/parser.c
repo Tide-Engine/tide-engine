@@ -227,11 +227,24 @@ static expr *new_expr(const expr_kind kind, const loc at)
 
 static expr *parse_expr(parser *p);
 
+// (a, b), or with names as in C#: (a, crit: true). No expression starts with a
+// name and a ':', so that's an argument's name.
 static void parse_args(parser *p, expr *call)
 {
     expect(p, T_LPAREN, "'('");
     if (!at(p, T_RPAREN)) {
         do {
+            const bool named = at(p, T_IDENT) && peek_at(p, 1)->kind == T_COLON;
+            if (named || call->arg_names.count > 0) {
+                while (call->arg_names.count < call->args.count) { // The ones before the first name
+                    vec_push(call->arg_names, ((str){"", 0}));
+                    vec_push(call->arg_name_at, ((loc){0}));
+                }
+                const token *name = named ? advance(p) : NULL;
+                if (named) advance(p);
+                vec_push(call->arg_names, name ? name->text : ((str){"", 0}));
+                vec_push(call->arg_name_at, name ? name->at : ((loc){0}));
+            }
             vec_push(call->args, parse_expr(p));
         } while (accept(p, T_COMMA));
     }
@@ -1199,6 +1212,15 @@ static void parse_routine_params(parser *p, decl *m)
             prm.type_at = type.name_at;
             prm.name_at = peek(p)->at;
             prm.name = expect_ident(p, "parameter name")->text;
+            if (accept(p, T_ASSIGN)) { // float multiplier = 1
+                const token *first = peek(p);
+                prm.default_value = parse_expr(p);
+                const token *last = &p->toks[p->pos - 1];
+                // As written, with the quotes a text token leaves out
+                const char *start = first->text.ptr - (first->kind == T_STRING ? 1 : 0);
+                const char *end = last->text.ptr + last->text.len + (last->kind == T_STRING ? 1 : 0);
+                prm.default_text = (str){start, (int)(end - start)};
+            }
             vec_push(m->params, prm);
         } while (accept(p, T_COMMA));
     }
@@ -1546,6 +1568,11 @@ static void parse_query_params(parser *p, decl *d)
                 prm.name_at = peek(p)->at;
                 prm.name = expect_ident(p, "parameter name")->text;
             }
+            if (at(p, T_ASSIGN)) { // Nothing calls it, so nothing leaves a parameter out
+                diag_error(peek(p)->at, "the engine supplies these parameters, so they take no default");
+                diag_note("a function's or method's parameter can have one: 'float Damage(float base, float multiplier = 1)'");
+                longjmp(p->fail, 1);
+            }
             vec_push(d->params, prm);
         } while (accept(p, T_COMMA));
     }
@@ -1657,6 +1684,54 @@ static void skip_declaration(parser *p)
     while (!at(p, T_EOF) && !at_decl_start(p)) advance(p);
 }
 
+// (Position, Velocity, with Player) after a name in [Before] and [After]: the
+// parameters of the declaration it means, among those that share the name.
+// Types only, as C#'s `cref` writes them: no names, and no `mut`.
+static void parse_signature(parser *p, sig_items *out)
+{
+    expect(p, T_LPAREN, "'('");
+    if (!at(p, T_RPAREN)) {
+        do {
+            sig_item item = {0};
+            item.at = peek(p)->at;
+            item.mode = PARAM_READ;
+            if (at(p, T_MUT)) {
+                diag_error(peek(p)->at, "a declaration is named by its parameters' types: leave out 'mut'");
+                longjmp(p->fail, 1);
+            }
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "query") && peek_at(p, 1)->kind == T_LPAREN) {
+                advance(p);
+                item.mode = PARAM_QUERY;
+                sig_items nested = {0};
+                parse_signature(p, &nested);
+                item.query.items = nested.items;
+                item.query.count = nested.count;
+                item.query.cap = nested.cap;
+                vec_push(*out, item);
+                continue;
+            }
+            if (accept(p, T_WITH)) item.mode = PARAM_WITH;
+            else if (accept(p, T_WITHOUT)) item.mode = PARAM_WITHOUT;
+            // `verified Health`: the word, then the type. No names are written here, so a name after it is one.
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "verified") && peek_at(p, 1)->kind == T_IDENT) {
+                advance(p);
+                item.verified = true;
+            }
+            const qname type = parse_decl_type(p, "a parameter's type, like 'Move(Position, with Player)'");
+            item.type_name = type.text;
+            item.type_at = type.name_at;
+            item.type_qual_at = type.at;
+            if (at(p, T_IDENT)) {
+                diag_error(peek(p)->at, "a declaration is named by its parameters' types: leave out their names");
+                diag_note("write '" STR_FMT "' alone", STR_ARG(type.text));
+                longjmp(p->fail, 1);
+            }
+            vec_push(*out, item);
+        } while (accept(p, T_COMMA));
+    }
+    expect(p, T_RPAREN, "')' after the parameters' types");
+}
+
 // [Before(A.B), After(C)], one or more groups before a declaration.
 static void parse_attributes(parser *p)
 {
@@ -1672,11 +1747,20 @@ static void parse_attributes(parser *p)
                     vec_push(a.args, parse_qname(p, "an enum member, like 'RenderStages.Objects'"));
                     while (accept(p, T_COMMA)) vec_push(a.values, parse_expr(p));
                 } else {
+                    const bool orders = str_eq_c(a.name, "Before") || str_eq_c(a.name, "After");
                     do {
                         // [NativeName("stb_perlin_noise3")] takes text
-                        const bool call = at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN;
-                        if (at(p, T_STRING) || at(p, T_INT) || at(p, T_MINUS) || call) vec_push(a.values, parse_expr(p));
-                        else vec_push(a.args, parse_qname(p, "a name"));
+                        const bool call = !orders && at(p, T_IDENT) && peek_at(p, 1)->kind == T_LPAREN;
+                        if (at(p, T_STRING) || at(p, T_INT) || at(p, T_MINUS) || call) {
+                            vec_push(a.values, parse_expr(p));
+                            continue;
+                        }
+                        qname name = parse_qname(p, "a name");
+                        if (orders && at(p, T_LPAREN)) { // [After(Move(Position, with Player))]
+                            name.has_signature = true;
+                            parse_signature(p, &name.signature);
+                        }
+                        vec_push(a.args, name);
                     } while (accept(p, T_COMMA));
                 }
             }

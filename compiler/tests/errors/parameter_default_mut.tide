@@ -1,0 +1,3 @@
+// expect: a 'mut' parameter is the caller's variable, which a call can't leave out: it takes no default
+scene Main { }
+void Bump(mut int counter = 0) { counter += 1; }
