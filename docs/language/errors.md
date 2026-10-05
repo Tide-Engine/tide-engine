@@ -73,7 +73,7 @@ int Doubled(string text) fails ParseError
 }
 ```
 
-- `??`'s right side only runs when the left fails, as in C#, so, like the right side of `&&`, it can't spawn or draw widgets. Chains work: `ParseScore(a) ?? ParseScore(b) ?? 0`.
+- `??`'s right side only runs when the left fails, so, like the right side of `&&`, it can't spawn or draw widgets. Chains work: `ParseScore(a) ?? ParseScore(b) ?? 0`.
 - A name after `is` goes in an `if`'s or a loop's condition, alone or joined with `&&`. It's in scope where the test is true: `if (ParseScore(t) is int score && score > 10)`, or `while (Next() is int item) { ... }`. Without a name, `is` is a test anywhere: `var empty = ParseScore(t) is ParseError.Empty;`.
 - `!` never crashes. A struct's default is its fields' defaults, as `Stats { }` makes them.
 - `try` binds like a unary operator, so `try ParseScore(a) + 1` adds 1 to the value. It only works in a function or method that fails with the same error type. Systems, views and handlers have no caller to pass an error to, so they handle it where they call.
@@ -95,7 +95,7 @@ Connect(7777)!;  // Carries on, whatever happened
 
 ## Values that may be missing
 
-`T?` is a value or nothing, for lookups where nothing isn't an error. `null` is nothing, and a value converts to a `T?` by itself, as in C#:
+`T?` is a value or nothing, for lookups where nothing isn't an error. `null` is nothing, and a value converts to a `T?` by itself:
 
 ```csharp
 int? Find(List<int> items, int wanted)
