@@ -508,7 +508,7 @@ typedef enum is_pattern {
 
 typedef enum builtin_call {
     CALL_NONE,
-    CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...)
+    CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw2D.Circle(...): calls c_callee with the view's draw list first
     CALL_SPAWN,
@@ -558,6 +558,7 @@ typedef enum ctor_form {
     CTOR_PLAYER,         // PlayerID(index)
     CTOR_COLOR,          // Color(r, g, b) or Color(r, g, b, a)
     CTOR_RECT,           // Rect(x, y, width, height)
+    CTOR_ENUM,           // Card(number), Combat.Stance(number): the enum's value with that number; type_decl is the enum
 } ctor_form;
 
 typedef enum binding_kind {
@@ -603,7 +604,7 @@ struct expr {
     binding_kind bind;
     param *param;       // BIND_PARAM
     stmt *local;        // BIND_LOCAL: the S_VAR declaring it
-    decl *type_decl;    // BIND_TYPE, E_LITERAL's type, and CALL_SEND's event
+    decl *type_decl;    // BIND_TYPE, E_LITERAL's type, CALL_SEND's event, and CTOR_ENUM's enum
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
 
     // E_MEMBER, E_METHOD
@@ -622,7 +623,7 @@ struct expr {
     // E_CALL, E_METHOD
     VEC(expr *) args;
     builtin_call call;
-    ctor_form ctor;         // CALL_CONSTRUCT
+    ctor_form ctor;         // CALL_CONSTRUCT; CTOR_ENUM even where the checker refused the conversion
     const char *c_callee;   // CALL_BUILTIN
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called
