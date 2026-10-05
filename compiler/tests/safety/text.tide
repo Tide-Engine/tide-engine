@@ -1,0 +1,52 @@
+// expect: cuts "" "" "" "héllo wörld" "" "wörld" "héllo w"
+// expect: finds 0 -1 0 true true true 11
+// expect: swaps "héo wörd" "héllo wörld" "héllo wörld"
+// expect: cases "HéLLO WöRLD" "héllo wörld" "" "a"
+// expect: formats 007 FFFFFFFF 1.500000000 80000000 -2147483648 00000000000000000000000000000001
+// expect: grows 1441792 héllo wörld
+// expect: fields 22 héllo wörldhéllo wörld 0
+
+// Text cut, searched and replaced anywhere: before its start, past its end,
+// with nothing to look for, and a field that's written from itself.
+
+singleton Words
+{
+    string line = "héllo wörld";
+    string empty;
+    int most = 2147483647;
+    int least = 0x80000000;
+    bool done;
+}
+
+scene Main { }
+
+system Run(mut Words w)
+{
+    if (w.done) return;
+    w.done = true;
+    var s = w.line;
+
+    Debug.Log($"cuts \"{s.Substring(w.most)}\" \"{s.Substring(3, -1)}\" \"{s.Substring(w.most, w.most)}\" "
+        + $"\"{s.Substring(w.least)}\" \"{s.Substring(w.least, w.least)}\" \"{s.Substring(6, w.most)}\" \"{s.Substring(-4, 7)}\"");
+
+    Debug.Log($"finds {s.IndexOf(w.empty)} {w.empty.IndexOf(s)} {w.empty.IndexOf(w.empty)} {s.Contains(w.empty)} "
+        + $"{s.StartsWith(w.empty)} {w.empty.EndsWith(w.empty)} {s.length}");
+
+    Debug.Log($"swaps \"{s.Replace("l", w.empty)}\" \"{s.Replace(w.empty, w.empty)}\" \"{s.Replace(w.empty, "x")}\"");
+
+    Debug.Log($"cases \"{s.ToUpper()}\" \"{s.ToLower()}\" \"{w.empty.Trim()}\" \"{"  a  ".Trim()}\"");
+
+    Debug.Log($"formats {7:D3} {-1:X8} {1.5:F9} {w.least:X} {w.least:D1} {1:D32}");
+
+    // Text that doubles until it's megabytes
+    mut var long = s;
+    for (var i = 0; i < 17; i++) long = long + long;
+    Debug.Log($"grows {long.length} {long.Substring(long.length - 11)}");
+
+    // A field written from itself, and emptied
+    w.line = w.line + w.line;
+    var kept = w.line;
+    w.line = w.empty;
+    w.line = w.line;
+    Debug.Log($"fields {kept.length} {kept} {w.line.length}");
+}

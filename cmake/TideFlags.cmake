@@ -14,6 +14,16 @@ target_compile_options(tide_flags INTERFACE
     -ffp-contract=off
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux and Android (whose toolchain file says Linux): a function whose
+    # locals take more than a page touches each page as it makes room for
+    # them, so a stack that runs out, as a game's recursion with no end does,
+    # ends at its guard page and never past it in memory that's something
+    # else's (see AGENTS.md, Language). Windows' targets check big frames by
+    # themselves, and tide builds games the same way (compiler/cli/build.c).
+    target_compile_options(tide_flags INTERFACE -fstack-clash-protection)
+endif()
+
 if(WIN32)
     # Silences MSVC CRT warnings that push non-portable *_s functions.
     target_compile_definitions(tide_flags INTERFACE _CRT_SECURE_NO_WARNINGS)

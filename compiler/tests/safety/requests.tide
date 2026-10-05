@@ -1,0 +1,42 @@
+// expect: asked 6 frames
+// ticks: 3
+
+// What local code asks of the session and the clipboard, with text far longer
+// than an address, a room's code or a message is, players no match has, and
+// more of each in a frame than there are players.
+
+local singleton Asked
+{
+    int frames;
+    string long;
+    int most = 2147483647;
+    int least = 0x80000000;
+}
+
+scene Main { }
+
+view Ask(mut Asked asked, Session session)
+{
+    asked.frames += 1;
+    if (asked.long.length == 0)
+    {
+        asked.long = "héllo ";
+        for (var i = 0; i < 16; i++) asked.long = asked.long + asked.long;
+    }
+    for (var i = 0; i < 300; i++)
+    {
+        Session.Kick(PlayerID(i * 7919 - 100), asked.long);
+        Session.Kick(PlayerID(asked.most), "");
+        Session.Kick(PlayerID(asked.least), asked.long.Substring(0, i));
+    }
+    Session.KickAll(asked.long);
+    Clipboard.Copy(asked.long);
+    Clipboard.Copy(asked.long.Substring(0, 255));
+    Clipboard.Copy("");
+    if (asked.frames == 2) Session.Join(asked.long);
+    if (asked.frames == 3) Session.Connect(asked.long, asked.most);
+    if (asked.frames == 4) Session.Connect("", asked.least);
+    if (asked.frames == 5) Session.Open(asked.least);
+    if (asked.frames == 5) Session.Close();
+    if (asked.frames == 6) Debug.Log($"asked {asked.frames} frames {session.room}");
+}

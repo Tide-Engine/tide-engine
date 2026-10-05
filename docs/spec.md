@@ -42,6 +42,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `local` in front of a declaration makes it belong to the machine instead of the match, and in front of a field of a match component or singleton, that field alone (see Local state).
 - A function, `ReturnType Name(parameters) { ... }` with no keyword, declares code that other code calls (see Functions).
 - `extern` declares a function written in C (see C functions).
+- `virtual` in front of a declaration with code says another package can replace it, and `override` in front of one replaces it (see Mods).
 - `const` declares a constant (see Constants).
 - `settings` sets the engine's settings for the game (see Settings).
 
@@ -1156,6 +1157,7 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
 - A parallel loop's step changes only its own cell or block, `at` plus constants (`at + int2(1, 0)`, `int2(at.x + 1, at.y)`), and the variables it declares. Anything else it changes is an error that says why: a variable outside the loop (to add up, use a `for` loop or a foreach that goes in order), another cell, the whole grid (`Clear`), through a `mut` argument too. It can't `break` out of the loop (`continue` ends the step), return, wait, start tasks, spawn, send, add, remove or destroy, load scenes, draw, use the GUI, or hold another parallel loop. It can call functions, and C.
 - A block is 1 to 64 cells along each axis, a size known while compiling: a constant int, or `int2`/`int3`. The offset can be any int: blocks start at it plus any multiple of their size, so with blocks of 2, an offset of 2 gives the same blocks as 0.
+- An open axis ends where the ints do. A block that would go past the last int is left out, as one past a grid's size is, so no block's cells wrap around; a step that reads past that edge, `cells[at + int2(1, 0)]` at the last int, reads the cell its own arithmetic wraps to, as an int wraps anywhere else. A foreach reaches the cells at both ends. (Picked while testing that no loop can go wrong there: see Open, at the end.)
 - A parallel loop goes in a system, a view or an event handler that isn't async: not in functions, methods, async code or an input's `Sample`. A foreach there whose steps only touch their own cell runs at once; anywhere else, it goes in order.
 - A foreach over a grid can't wait inside it: it goes through the cells as they are.
 - Each step writes into a copy of its chunk, made from the chunk as it was, and the loop's end puts the copies into the grid in order, chunk by chunk, so where the steps ran never shows. The schedule says how many parallel loops each system has: `(once, 2 parallel loops)`. A tick with one runs on threads, and the loop's steps spread across them when there are enough to be worth it.
@@ -2571,7 +2573,7 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ## Mods
 
-**Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, one part is built: the service's first slice, for web games, with `tide publish` (**Provisional**, below). The language's part (`virtual`, `override`, what a mod may be), games that load builds, and the sandbox aren't.
+**Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, two parts are built (**Provisional**, below): `virtual` and `override`, as the language has them for any package, and the service's first slice, for web games, with `tide publish`. What a mod may be, games that load builds, and the sandbox aren't.
 
 ### Decided
 
@@ -2589,15 +2591,15 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 ```csharp
 // The game
-virtual system Move(mut Position position, Velocity velocity)
+virtual system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt;
+    position.value += velocity.value * time.dt;
 }
 
 // A mod
-override system Move(mut Position position, Velocity velocity)
+override system Move(mut Position position, Velocity velocity, Time time)
 {
-    position.value += velocity.value * Time.dt * 2;
+    position.value += velocity.value * time.dt * 2;
 }
 ```
 
@@ -2612,7 +2614,30 @@ override system Move(mut Position position, Velocity velocity)
 
 ### Provisional
 
-Implemented, awaiting approval: the service's first slice, at `builds.tide-engine.dev` (`builds/` in the repository). A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+`virtual` and `override`, implemented for every package, a mod's or not, awaiting approval:
+
+- **Where the words go.** Where `local` and `async` do, in any order with them, before a declaration with code: a system, a view, a handler (an event's, a command's, a local one), a function, a method, a frag or a vert. They're words of their own only there, and names like any other everywhere else, a function's type too (`virtual Make()` is a function that returns a `virtual`).
+  - On data (a component, singleton, struct, event, command, enum, scene or the input), a constant, the settings or an `extern` function, each is an error that says what the words are for, and why this isn't it. Editors offer to remove the word.
+  - Operators, `Interpolate` and the input's `Sample` and `Sanitize` aren't replaced either: an error on each.
+  - `virtual override` together is an error: a declaration is replaced once, so nothing could replace an override.
+- **The name an override writes.** It's the name of what it replaces, looked up as any reference is from the override's file: with its namespace (`override system Combat.Move(...)`), or alone in that namespace, in one inside it, or after `using Combat;`. Two `using` namespaces that both have it are ambiguous, as for any name.
+  - A method's override is written outside its type, since it's in another package, with the type before the method's name: `override bool Stats.IsDead()`, or `override bool Combat.Stats.IsDead()`. The type's fields and methods are in scope, as in the type's body. Where a type and a namespace have the same name, it's the type.
+  - An override's code reads names as its own file does: its namespace and its `using` lines.
+  - It declares no name of its own: nothing in its own namespace is named after it, and it clashes with nothing there.
+- **What it has to match.** An override that names nothing is an error that says what there is: the name in another namespace, with how to write it, a declaration of another kind under that name, or the closest name. One whose parameters are no declaration's lists the declarations the name has, as a wrong reference to a shared name does. One that matches a declaration that isn't `virtual` says so, and that marking it is its developer's choice; editors offer to mark it where it's the game's own.
+  - Beyond its parameters' types, an override is what it replaces: a view's is a view, a handler's handles the same event (a command's the same command), `local` and `verified` on its event as the other has them, and `async` as the other is. A function's or a method's returns the same type, `fails` with the same error, and has `out` where the other has it. Each is an error that says what the replaced declaration has, with the override's start as it should be written.
+  - It can differ in its parameters' names, in `mut` (a parameter's, and a method's own), and in a function's default values. Calls are checked against the override, since it's what's built: its defaults, its names for arguments passed by name, and its `mut`.
+- **Where it runs.** It writes no attribute of its own: `[Stage]`, `[Before]` or `[After]` on an override is an error that says it keeps the replaced declaration's. Those are read as the replaced declaration's file wrote them. Its place in the default order is the replaced declaration's, among that one's file's declarations.
+- **Another package.** An override is in another package than what it replaces, the game counting as one: a package replaces the game's code or another package's, and a game a package's. One in the same package is an error that says to change the declaration itself. A package can mark its own declarations `virtual`.
+  - `tide` and the language server say which package each file is in. `tidec` by itself is told with `--package <Name>` before a package's files, on its command line or as a line of a list of files, which is how this repo's tests build games with packages (`tide_add_game(... PACKAGES <Name> <files>...)`).
+- **What was replaced.** It's still checked for errors, as the code it is: its names, types, what it may write, what it returns and assigns. It isn't checked for what depends on the code that calls it or that it calls (a match system that calls a function that draws, say), as those rules are worked out over the program that's built, which it isn't in.
+  - Nothing of it is built or counted: its spawns, Adds and Removes make no archetype, what it sends counts as sent by nobody, its calls make nothing wait, and it's in no schedule. It warns about nothing.
+- **Parameters nothing uses.** A virtual declaration's parameters are what its overrides get, and an override's are those of what it replaces, so neither is warned about a parameter it never uses: a virtual system with an empty body is a hook. `mut` is each one's own, and one that's never written is still warned about.
+- **The same declaration again, without `override`.** It's the error it always was (`is already declared with these parameters`). Where the first one is `virtual` and in another package, a note says `override` is what replaces it, and editors offer the word.
+- **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
+- **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
+
+The service's first slice. Implemented, awaiting approval: the service's first slice, at `builds.tide-engine.dev` (`builds/` in the repository). A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
 
 - Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
 - Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.
@@ -2633,11 +2658,6 @@ Proposed, awaiting the owner. None of it is built, but for the service's first s
 
 The language:
 
-- `virtual` and `override` go where `local` and `async` do, on declarations with a body: systems, views, handlers, functions, methods, frags and verts. They're keywords only there.
-- An override that matches nothing `virtual` is an error that lists what the name has.
-- An override writes no `[Stage]`, `[Before]` or `[After]` of its own. It can differ in `mut`, and the schedule is worked out from what's built.
-- The two words aren't only for mods: an override is in another package than what it replaces, and a game's own packages can use both, as an expansion would. A mod can mark its own declarations `virtual`, for the mods that need it.
-- Declarations of data aren't replaced: components, singletons, events, enums, scenes, the input, the settings. A mod adds components of its own to the game's entities, as any code does.
 - A mod sees every declaration of the game's, as a package does (see Open, Access control). It declares what a package can, less `extern`. The packages it needs are mods too, or come with tide, or are ones the game lists itself: only those last two can have C.
 
 What a mod's code reaches:
@@ -2676,7 +2696,7 @@ The sandbox:
 
 The order to do the work in, proposed:
 
-1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in.
+1. `virtual` and `override`, across packages. They're useful with no service: expansions, variants, and mods a developer builds in. Built (see Provisional).
 2. Memory safety as a tested promise (see Open, at the end).
 3. tidec's rules for mods: Tide alone, and files of their own.
 4. Games that load signed builds, and the service, with listed mods only.
@@ -2721,4 +2741,12 @@ Implemented, awaiting approval:
 - Archetype growth past what reachability trims: an `Add` or `Remove` on an entity read from a field or a parameter still reaches every archetype of its world, so a game that toggles many components on arbitrary entities multiplies combinations. Sparse components (a presence bit in the row instead of an archetype of their own) are the way out; see Entities.
 - How modules, such as the engine's built-in systems, initialize when there's a single `Main`.
 - Access control: whether a namespace can keep declarations to itself.
-- Memory safety as a promise: that no Tide code, however wrong, can corrupt memory or reach outside its world, tested with generated programs under sanitizers. Mods rest on it (see Mods), and so does a player who takes a world from a host they don't know.
+- Memory safety as a promise: that no Tide code, however wrong, can corrupt memory or reach outside its world. Mods rest on it (see Mods), and so does a player who takes a world from a host they don't know. Where it stands (2026-10-05):
+  - **Tested, for what Tide alone can say.** `compiler/tests/safety/` is games that try each way in: an index anywhere in a list, a grid, a map or text, sizes nothing can have, handles to entities that are gone or never were, ints and floats at their limits, loops whose places are at the ints' edge, a sort whose comparison lies, events and tasks in their thousands, and drawing and widgets given NaN, infinities and indices past what they index. Each ends in a defined way, with what it gave pinned, under AddressSanitizer and UndefinedBehaviorSanitizer on every push (the `sanitize` preset). What they found is fixed, and what's left is below.
+  - **What a stack that runs out does is open, and the owner's.** Tide has no limit on how deep calls go, and generated code doesn't check. Today a function that calls itself with no end stops the program as the system stops one whose stack ran out: a crash, with no message of the engine's, or, where the C compiler turned the recursion into a loop, a program that never ends. It's a crash and not something worse on Windows (which checks big frames), on Linux and Android (games are compiled so that a function with locals bigger than a page touches each page), and on the web's own thread (which stops at memory's edge). macOS wasn't checked. It's not known to be one on the web's other threads, whose stacks are memory like any other with nothing beside them to stop at: a deep enough call there writes over what's next to its stack. The choices:
+    1. Leave it: a crash where the platform gives one. Nothing to build, and the web's threads stay as they are.
+    2. A stop with a message, as an endless chain of events has: generated code checks how much stack is left where a function can call itself (a comparison a call, in those functions alone), and stops naming the function. The same on every platform, the web's threads included, and the only one of the three that closes them.
+    3. A limit on depth instead (a count, say 10,000 calls deep): simpler to say, but a count isn't a size, so big locals still run out before it, and it would need 2's check as well.
+  - **Bytes from another machine** aren't tested as hostile: a world, a delta or an input a server or a player made up. Sessions check what they read (sizes, counts, a world's hash), and a fuzzer covers the WebRTC stack, but nothing yet feeds a session's own messages broken at random.
+  - **A game's C is trusted**, as ever: the promise is about Tide code.
+  - **Still to do: programs made at random.** The tests are the ways in someone thought of. A generator of valid Tide programs, run the same way, is what finds the rest.

@@ -1,0 +1,80 @@
+// expect: tick 0: heard 20000 hits 0
+// expect: tick 1: heard 20000 hits 2 alive false
+// expect: tick 2: heard 20000 hits 2 words 6
+// ticks: 4
+
+// Events in their thousands, to entities that are gone by their turn, from
+// handlers that destroy what they run for, with text and lists in them.
+
+component Target
+{
+    int hits;
+    List<int> log;
+    string last;
+}
+
+singleton Tally
+{
+    int heard;
+    int hits;
+    int words;
+    Entity target;
+}
+
+event Ping
+{
+    int n;
+}
+
+event Hit
+{
+    int damage;
+    string note;
+    List<int> parts;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    tally.target = Spawn(Target);
+}
+
+event(Ping ping) Count(mut Tally tally)
+{
+    tally.heard += 1;
+}
+
+// The first hit destroys the entity: the one recorded before that still finds it, and nothing after does,
+// not what the handler sends to it either
+event(Hit hit) Take(mut Target target, mut Tally tally)
+{
+    target.hits += hit.damage;
+    target.log = hit.parts;
+    target.log.Add(hit.damage);
+    target.last = hit.note + hit.note;
+    tally.hits += 1;
+    tally.words += target.last.length;
+    this.Destroy();
+    this.Send(Ping { n = 1 });
+    this.Send(Hit { damage = 100, note = "late" });
+}
+
+system Run(Tally tally, World world, Time time)
+{
+    if (time.tick == 0)
+    {
+        for (var i = 0; i < 20000; i++) Send(Ping { n = i });
+        tally.target.Send(Hit { damage = 1, note = "a", parts = [1, 2, 3] });
+        tally.target.Send(Hit { damage = 2, note = "bc" });
+        tally.target.Destroy();
+        tally.target.Send(Hit { damage = 3, note = "", parts = [] });
+    }
+    else
+    {
+        tally.target.Send(Hit { damage = 4, note = "gone", parts = [4] });
+    }
+    if (time.tick == 0) Debug.Log($"tick 0: heard {tally.heard + 20000} hits {tally.hits}");
+    if (time.tick == 1) Debug.Log($"tick 1: heard {tally.heard} hits {tally.hits} alive {world.Has<Target>(tally.target)}");
+    if (time.tick == 2) Debug.Log($"tick 2: heard {tally.heard} hits {tally.hits} words {tally.words}");
+}

@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override system Damage(mut Position position)
+{
+    position.value += 2;
+}

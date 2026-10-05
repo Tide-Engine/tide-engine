@@ -75,6 +75,7 @@ export const sidebar: Group[] = [
             { text: 'Text and lists', link: '/language/text-and-lists' },
             { text: 'Grids', link: '/language/grids' },
             { text: 'Namespaces and files', link: '/language/namespaces' },
+            { text: 'Virtual and override', link: '/language/overrides' },
         ],
     },
     {

@@ -149,9 +149,27 @@ static void note_conversion(const type want, const type have)
 
 static const str global_ns = {"", 0};
 
+// The namespace a declaration's name is in: its file's, or for an override in
+// place, that of what it replaced (decl_home).
 static str decl_ns(const decl *d)
 {
-    return d->unit ? d->unit->ns : global_ns;
+    return decl_home(d) ? decl_home(d)->ns : global_ns;
+}
+
+// Whether code being checked is built. What an override replaced is checked
+// against a copy of the program (check_replaced), where it isn't: what its
+// code would have generated C carry (a type's helpers, a singleton's count of
+// snaps) is left out, and it warns about nothing.
+static bool builds(const program *prog)
+{
+    return !prog->dry;
+}
+
+// An override that isn't in place: it declares no name of its own, so no name
+// finds it, and it clashes with none. One that found nothing to replace stays so.
+static bool unplaced_override(const decl *d)
+{
+    return d->is_override && !d->placed;
 }
 
 // Splits "Game.Combat.Health" into "Game.Combat" and "Health". False if there's no dot.
@@ -222,6 +240,8 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
     for (int i = 0; i < buckets; i++) index->first[i] = -1;
     for (int i = n - 1; i >= 0; i--) { // Backwards, so the first of a bucket is the first in decls
         const decl *d = prog->decls.items[i];
+        index->next[i] = -1;
+        if (unplaced_override(d)) continue;
         const str ns = decl_ns(d);
         uint32_t h = name_hash(name_hash(NAME_HASH, ns.ptr, (size_t)ns.len), d->name.ptr, (size_t)d->name.len);
         if (c_names) {
@@ -249,7 +269,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
-            if (d == prog->random) d->named = true; // Generated C only has it in games that name it
+            if (d == prog->random && builds(prog)) d->named = true; // Generated C only has it in games that name it
             return d;
         }
     }
@@ -511,6 +531,7 @@ static param *find_param(const checker *c, const str name)
 typedef VEC(decl *) decl_list;
 
 static bool same_type(type a, type b);
+static bool same_package(const decl *a, const decl *b);
 
 // What shares a name with what: functions, systems of every kind (views and
 // handlers are systems), and frags and verts.
@@ -653,6 +674,12 @@ static void settle_shared_name(const program *prog, decl *d)
             diag_error(d->at, "'" STR_FMT "' is already declared with these parameters", STR_ARG(d->qualified));
             const source *src = diag_source(other->at.file);
             if (src && other->at.file != d->at.file) diag_note_at(other->at, "the other one is in %s", src->path);
+            if (other->is_virtual && !same_package(d, other)) { // What was probably meant
+                diag_note("the other one is virtual: to replace it, write 'override' before this one");
+                const fix replace = {.kind = FIX_ADD_OVERRIDE, .at = d->at, .method = d};
+                vec_push(((program *)prog)->fixes, replace);
+                break;
+            }
         }
         diag_note("declarations that share a name differ in their parameters' types: names, 'mut' and defaults don't tell them apart");
         break;
@@ -4555,7 +4582,7 @@ static type check_world_call(checker *c, expr *e, param *world)
                       "that takes the component", STR_ARG(world->name), STR_ARG(d->name));
             return T_ERR;
         }
-        d->tried = true;
+        if (builds(c->prog)) d->tried = true;
     }
     // A view only reads the match
     if (set && !d->is_local && !helper && code->is_view) {
@@ -5092,7 +5119,7 @@ static type check_snap(checker *c, expr *e, decl *singleton)
     }
     if (singleton) {
         if (!check_writable(c, e->object, NULL, NULL)) return T_ERR;
-        singleton->snapped = true;
+        if (builds(c->prog)) singleton->snapped = true;
     }
     e->call = CALL_SNAP;
     e->type_decl = singleton;
@@ -5228,13 +5255,14 @@ static void mark_shown(const type t)
     for (int i = 0; i < t.decl->fields.count; i++) mark_shown(t.decl->fields.items[i].type);
 }
 
+
 // What text can show: $"{x}", or "a" + x.
-static bool text_can_hold(const type t)
+static bool text_can_hold(const program *prog, const type t)
 {
     const decl *outer[TEXT_DEPTH];
     type why;
     if (!text_shows_all(t, &why, outer, 0)) return false;
-    mark_shown(t);
+    if (builds(prog)) mark_shown(t);
     return true;
 }
 
@@ -5289,14 +5317,14 @@ static int32_t text_format(const expr *value, const str format)
     return 0;
 }
 
-static type binary_result(const tok_kind op, const type l, const type r, const loc at, decl **overload)
+static type binary_result(const program *prog, const tok_kind op, const type l, const type r, const loc at, decl **overload)
 {
     *overload = NULL;
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
     // Text joins with anything it can show, and compares with text.
     if (l.kind == TY_STRING || r.kind == TY_STRING) {
         const type other = l.kind == TY_STRING ? r : l;
-        if (op == T_PLUS && text_can_hold(other)) return (type){TY_STRING, NULL};
+        if (op == T_PLUS && text_can_hold(prog, other)) return (type){TY_STRING, NULL};
         if ((op == T_EQ || op == T_NE) && l.kind == TY_STRING && r.kind == TY_STRING) return T_BOOL_;
         if (op == T_PLUS) {
             text_cant_show(at, other);
@@ -5312,7 +5340,7 @@ static type binary_result(const tok_kind op, const type l, const type r, const l
     }
     // Byte operands promote before built-in arithmetic, comparison and bitwise work.
     if (l.kind == TY_BYTE || r.kind == TY_BYTE) {
-        return binary_result(op, l.kind == TY_BYTE ? T_INT_ : l, r.kind == TY_BYTE ? T_INT_ : r, at, overload);
+        return binary_result(prog, op, l.kind == TY_BYTE ? T_INT_ : l, r.kind == TY_BYTE ? T_INT_ : r, at, overload);
     }
 
     // Longs: with ints and longs, which widen to long. Never with floats by
@@ -6317,7 +6345,7 @@ static type check_map_method(checker *c, expr *e, const type map)
         value.type = map_value(map);
         vec_push(called->params, value);
         check_out_param(c, called, &called->params.items[0], e->args.items[1]);
-        map.decl->tries = true;
+        if (builds(c->prog)) map.decl->tries = true;
     }
     if (methods[m].changes) {
         decl *changer = NEW(decl);
@@ -6328,7 +6356,7 @@ static type check_map_method(checker *c, expr *e, const type map)
     }
     if (methods[m].result == TY_OPTIONAL) { // Get: the value, or nothing
         const type optional = optional_type(c, map_value(map), e->at);
-        if (optional.kind != TY_ERROR) map.decl->optional = optional.decl;
+        if (optional.kind != TY_ERROR && builds(c->prog)) map.decl->optional = optional.decl;
         return optional;
     }
     return (type){methods[m].result, NULL};
@@ -6556,7 +6584,7 @@ static type check_list_method(checker *c, expr *e, const type list)
         changer->name = (str){name.data, (int)name.len};
         check_writable(c, e->object, changer, NULL);
     }
-    if (str_eq_c(e->name, "Resize") && list.decl) list.decl->resized = true; // Generated C has its helper
+    if (str_eq_c(e->name, "Resize") && list.decl && builds(c->prog)) list.decl->resized = true; // Generated C has its helper
     return (type){methods[m].result, NULL};
 }
 
@@ -7027,7 +7055,7 @@ static type check_expr_any(checker *c, expr *e)
         if (e->op == T_PLUS && (l.kind == TY_STRING || r.kind == TY_STRING)) {
             check_text_context(c, l.kind == TY_STRING ? e->rhs : e->lhs);
         }
-        t = binary_result(e->op, l, r, e->at, &e->method);
+        t = binary_result(c->prog, e->op, l, r, e->at, &e->method);
         note_operator_call(c, e->method, e);
         break;
     }
@@ -7039,7 +7067,7 @@ static type check_expr_any(checker *c, expr *e)
             const type vt = check_expr(c, value);
             if (vt.kind == TY_VOID) {
                 diag_error(value->at, "this doesn't produce a value to show in the text");
-            } else if (!text_can_hold(vt)) {
+            } else if (!text_can_hold(c->prog, vt)) {
                 text_cant_show(value->at, vt);
             } else {
                 check_text_context(c, value);
@@ -7950,7 +7978,7 @@ static void check_assign(checker *c, const stmt *s)
     type result = value;
     if (s->op != T_ASSIGN) {
         if (compound_op(s->op) == T_PLUS && target.kind == TY_STRING) check_text_context(c, s->value);
-        result = binary_result(compound_op(s->op), target, value, s->at, &((stmt *)s)->operator_decl);
+        result = binary_result(c->prog, compound_op(s->op), target, value, s->at, &((stmt *)s)->operator_decl);
         note_operator_call(c, s->operator_decl, s->value);
         if (result.kind == TY_ERROR) return;
     }
@@ -8700,7 +8728,7 @@ static void check_stmt(checker *c, stmt *s)
         const bool effect = stands_alone(e);
         if (!effect && e->type.kind != TY_ERROR) diag_error(e->at, "this expression does nothing on its own");
         // A call that can fail, whose error nothing looks at.
-        if (e->type.kind == TY_FAILABLE && effect) {
+        if (e->type.kind == TY_FAILABLE && effect && builds(c->prog)) { // What an override replaced warns about nothing
             const expr *named = e->kind == E_AWAIT ? e->lhs : e;
             diag_warning(e->at, "%s can fail, and nothing handles its error here", wrapped_what(named));
             diag_note("handle it with 'is %s', pass it on with 'try', or carry on without it: '%s" STR_FMT "(...)!'",
@@ -9968,6 +9996,11 @@ static void check_method_decls(checker *c, decl *d)
             continue;
         }
         if (str_eq_c(m->name, "Interpolate") && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT)) {
+            if (m->is_virtual) {
+                diag_error(m->virtual_at, "'Interpolate' is how views blend '" STR_FMT "', and isn't replaced", STR_ARG(d->name));
+                diag_note("it can call a virtual method, which a package can replace");
+                m->is_virtual = false;
+            }
             check_interpolate_decl(c, d, m);
             continue;
         }
@@ -11262,9 +11295,13 @@ static void check_params(const checker *c, decl *sys)
 // nothing, so it's worth a warning.
 static void warn_unused_params(checker *c, const decl *sys)
 {
+    // A virtual declaration's parameters are what its overrides take too, and an override's are those of
+    // what it replaces: neither can drop one it doesn't use. 'mut' is each one's own.
+    const bool shared = sys->is_virtual || sys->is_override;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         const type_kind kind = p->type.kind;
+        if (shared && !p->read) continue;
         if (kind == TY_QUERY && !p->read) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             diag_note("remove the query parameter");
@@ -12083,7 +12120,9 @@ static void collect_decls(program *prog)
     for (int i = 0; i < declared; i++) {
         decl *d = prog->decls.items[i];
         const str ns = decl_ns(d);
-        if (ns.len > 0) {
+        if (d->is_override) {
+            d->qualified = d->override_name; // As written, until it's in the place of what it names
+        } else if (ns.len > 0) {
             sb qualified = {0};
             sb_printf(&qualified, STR_FMT "." STR_FMT, STR_ARG(ns), STR_ARG(d->name));
             d->qualified = (str){qualified.data, (int)qualified.len};
@@ -12092,7 +12131,8 @@ static void collect_decls(program *prog)
         }
         if (!d->builtin) split_local_fields(prog, d);
 
-        if (!d->builtin) {
+        // An override's name is that of what it replaces: it declares none, so it clashes with none
+        if (!d->builtin && !d->is_override) {
             check_reserved(d->name, d->at);
             if (is_builtin_name(d->name)) {
                 diag_error(d->at, "'" STR_FMT "' is built into the language", STR_ARG(d->name));
@@ -12682,7 +12722,7 @@ static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool
         return true;
     }
     decl *other;
-    decl *enumeration = lookup(c->prog, d->unit, enum_name, NAME_TYPE, &other);
+    decl *enumeration = lookup(c->prog, decl_home(d), enum_name, NAME_TYPE, &other);
     if (!enumeration) {
         if (!required) return false;
         diag_error(q->at, "unknown enum '" STR_FMT "'", STR_ARG(enum_name));
@@ -12772,7 +12812,9 @@ static void check_attributes(checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
-        c->unit = d->unit;
+        // An override in place has the attributes of what it replaced, which that one's file wrote
+        const unit *home = decl_home(d);
+        c->unit = home;
         bool stage_seen = false;
         for (int a = 0; a < d->attributes.count; a++) {
             attribute *attr = &d->attributes.items[a];
@@ -12844,7 +12886,7 @@ static void check_attributes(checker *c)
             for (int k = 0; k < attr->args.count; k++) {
                 qname *q = &attr->args.items[k];
                 decl *other;
-                decl *target = lookup(c->prog, d->unit, q->text, NAME_SYSTEM, &other);
+                decl *target = lookup(c->prog, home, q->text, NAME_SYSTEM, &other);
                 if (!target) {
                     if (resolve_order_member(c, d, q, false)) continue;
                     diag_error(q->name_at, "unknown %s '" STR_FMT "'", kind, STR_ARG(q->text));
@@ -12866,7 +12908,7 @@ static void check_attributes(checker *c)
                     continue;
                 }
                 // Among those that share the name, the one its parameters say
-                target = named_decl(c->prog, d->unit, target, q->has_signature, &q->signature, q->name_at);
+                target = named_decl(c->prog, home, target, q->has_signature, &q->signature, q->name_at);
                 if (!target) continue;
                 q->decl = target;
                 if (target == d) {
@@ -13769,6 +13811,454 @@ static void add_scene_player_words(program *prog)
     }
 }
 
+// ---------------------------------------------------------------------------
+// virtual and override
+//
+// As in C#: `virtual` before a declaration with code says another package can
+// replace it, and `override` before one replaces the virtual declaration it
+// names. An override is matched by name and by parameters, both: the name as
+// its file writes any reference (qualified, or through a `using`), and the
+// parameters' types in order, with a system's filters, as overloads are told
+// apart (same_param_lists). It then takes the other's place, while compiling:
+// where it is among the program's declarations, its name and namespace, and
+// its attributes, so every reference, the schedule and generated C have the
+// override where the declaration was. What was replaced is checked for
+// errors and nothing more (check_replaced).
+
+// Whether two declarations are in the same package, the game counting as one.
+static bool same_package(const decl *a, const decl *b)
+{
+    const char *x = package_of(a);
+    const char *y = package_of(b);
+    return x == y || (x && y && strcmp(x, y) == 0);
+}
+
+// "package Combat", or "the game".
+static const char *package_text(const decl *d)
+{
+    const char *package = package_of(d);
+    if (!package) return "the game";
+    sb text = {0};
+    sb_printf(&text, "package %s", package);
+    return text.data;
+}
+
+// What an override names, as messages say it: "Combat.Move", or a method with
+// its type, "Combat.Stats.IsDead".
+static const char *replaced_name(const decl *v)
+{
+    sb text = {0};
+    if (v->owner) sb_printf(&text, STR_FMT "." STR_FMT, STR_ARG(v->owner->qualified), STR_ARG(v->name));
+    else sb_printf(&text, STR_FMT, STR_ARG(v->qualified));
+    return text.data;
+}
+
+static const char *file_of(const decl *d)
+{
+    const source *src = diag_source(d->at.file);
+    return src ? src->path : "another file";
+}
+
+// What a declaration with code is, with its article: "a system", "an event handler".
+static const char *code_kind(const decl *d)
+{
+    if (d->kind == DECL_SHADER) return d->is_frag ? "a frag" : "a vert";
+    if (d->kind == DECL_SYSTEM) {
+        if (d->is_view) return "a view";
+        if (d->is_handler) return d->is_command ? "a command handler" : d->is_local ? "a local event handler" : "an event handler";
+        return "a system";
+    }
+    return d->owner ? "a method" : "a function";
+}
+
+// How an override of `v` starts, up to its name: "override system",
+// "override local event(Hit hit)", "override float".
+static void put_override_start(sb *out, const decl *v)
+{
+    sb_put(out, "override ");
+    if (v->kind == DECL_SHADER) {
+        sb_put(out, v->is_frag ? "frag" : "vert");
+    } else if (v->kind != DECL_SYSTEM) {
+        sb_printf(out, "%s%s" STR_FMT, v->is_async ? "async " : "", v->is_mut_method ? "mut " : "", STR_ARG(v->return_type_name));
+    } else if (!v->is_handler) {
+        sb_put(out, v->is_view ? "view" : "system");
+    } else {
+        const param *trigger = &v->params.items[0];
+        sb_printf(out, "%s%s%s(%s" STR_FMT, v->is_local ? "local " : "", v->is_async ? "async " : "", v->is_command ? "command" : "event",
+                  trigger->verified ? "verified " : "", STR_ARG(trigger->type_name));
+        if (trigger->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(trigger->name));
+        if (v->is_command && v->params.count > 1) sb_printf(out, ", PlayerID " STR_FMT, STR_ARG(v->params.items[1].name));
+        sb_put(out, ")");
+    }
+}
+
+// An override as its file would write it for `v`, with the name it wrote:
+// "override view Combat.Hud(...)".
+static const char *override_example(const decl *o, const decl *v)
+{
+    sb text = {0};
+    put_override_start(&text, v);
+    sb_printf(&text, " " STR_FMT "(...)", STR_ARG(o->override_name));
+    return text.data;
+}
+
+// `override bool Combat.Stats.IsDead()`: what's before the last part of an
+// override's name can be a type, a struct or a component, and it then replaces
+// that type's method. A type comes before a namespace of the same name.
+static void override_owner(const checker *c, decl *o)
+{
+    str type_name;
+    str name;
+    if (!split_qualified(o->override_name, &type_name, &name)) return;
+    decl *other;
+    decl *t = lookup(c->prog, o->unit, type_name, NAME_TYPE, &other);
+    if (!t || t->builtin || (t->kind != DECL_STRUCT && t->kind != DECL_COMPONENT)) return;
+    if (other) {
+        diag_error(o->override_qual_at, "'" STR_FMT "' is ambiguous: both " STR_FMT " and " STR_FMT " have it", STR_ARG(type_name),
+                   STR_ARG(decl_ns(t)), STR_ARG(decl_ns(other)));
+        diag_note("write which one you mean, like '" STR_FMT "." STR_FMT "'", STR_ARG(t->qualified), STR_ARG(name));
+    }
+    o->kind = DECL_METHOD;
+    o->owner = t;
+}
+
+// An override whose name names nothing of its kind: what there is, and how to
+// write it.
+static void nothing_to_override(const checker *c, const decl *o, const name_kind kind)
+{
+    const program *prog = c->prog;
+    const char *what = code_kind(o) + (code_kind(o)[1] == 'n' ? 3 : 2); // Without its article
+    diag_error(o->at, "there's no %s named '" STR_FMT "' to override", what, STR_ARG(o->override_name));
+    // Something else of that name: the declaration is another kind's
+    static const name_kind kinds[] = {NAME_SYSTEM, NAME_FUNCTION, NAME_SHADER};
+    for (int k = 0; k < 3; k++) {
+        decl *other;
+        const decl *d = kinds[k] == kind ? NULL : lookup(prog, o->unit, o->override_name, kinds[k], &other);
+        if (!d) continue;
+        diag_note("'" STR_FMT "' is %s: an override is written as what it replaces, '%s'", STR_ARG(d->qualified), code_kind(d),
+                  override_example(o, d));
+        return;
+    }
+    // The name in another namespace: it's written with it, or its namespace is imported
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (!is_kind(d, kind) || d->builtin || unplaced_override(d) || !str_eq(d->name, o->name)) continue;
+        if (kind == NAME_FUNCTION && d->kind != DECL_FUNCTION) continue;
+        const str ns = decl_ns(d);
+        if (ns.len > 0) {
+            diag_note("there's '" STR_FMT "': write it with its namespace, or start the file with 'using " STR_FMT ";'",
+                      STR_ARG(d->qualified), STR_ARG(ns));
+        } else {
+            diag_note("there's '" STR_FMT "', in no namespace: write the name alone", STR_ARG(d->qualified));
+        }
+        return;
+    }
+    suggestion s = suggest_start(o->name);
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (is_kind(d, kind) && !d->builtin && !unplaced_override(d)) suggest_consider(&s, d->name);
+    }
+    suggest_note(&s);
+    diag_note("an override has the name of the virtual declaration it replaces, as code here would name it");
+}
+
+// What an override and the declaration it names have to agree on, beyond its
+// name and its parameters' types: said as what the declaration has. False
+// after an error.
+static bool override_agrees(const decl *o, const decl *v)
+{
+    if (o->kind == DECL_SYSTEM) {
+        if (o->is_view != v->is_view || o->is_handler != v->is_handler) {
+            diag_error(o->at, "'%s' is %s, and this is %s", replaced_name(v), code_kind(v), code_kind(o));
+            diag_note("an override is written as what it replaces: '%s'", override_example(o, v));
+            return false;
+        }
+        if (!o->is_handler) return true;
+        if (!o->event || !v->event) return false; // Said
+        const param *mine = &o->params.items[0];
+        const param *theirs = &v->params.items[0];
+        if (o->event != v->event) {
+            diag_error(mine->type_at.line ? mine->type_at : mine->at, "'%s' handles '" STR_FMT "', not '" STR_FMT "'",
+                       replaced_name(v), STR_ARG(v->event->name), STR_ARG(o->event->name));
+            diag_note("an override handles what the handler it replaces does: '%s'", override_example(o, v));
+            return false;
+        }
+        if (o->is_local != v->is_local) {
+            diag_error(o->is_local ? o->local_at : o->at, "'%s' is %s, and this is %s", replaced_name(v),
+                       v->is_local ? "a local handler, which runs on this machine" : "a handler of the match's",
+                       o->is_local ? "local" : "the match's");
+            diag_note("an override runs where what it replaces does: '%s'", override_example(o, v));
+            return false;
+        }
+        if (mine->verified != theirs->verified) {
+            diag_error(mine->verified ? mine->verified_at : mine->at, "'%s' hears '" STR_FMT "' %s, and this hears it %s",
+                       replaced_name(v), STR_ARG(v->event->name),
+                       theirs->verified ? "once the server confirmed it" : "as it's predicted",
+                       mine->verified ? "once the server confirmed it" : "as it's predicted");
+            diag_note("an override hears what the handler it replaces does: '%s'", override_example(o, v));
+            return false;
+        }
+    } else if (o->kind == DECL_SHADER) {
+        if (o->is_frag != v->is_frag) {
+            diag_error(o->at, "'%s' is %s, and this is %s", replaced_name(v), code_kind(v), code_kind(o));
+            diag_note("an override is written as what it replaces: '%s'", override_example(o, v));
+            return false;
+        }
+        return true;
+    } else {
+        if (o->return_type.kind == TY_ERROR || v->return_type.kind == TY_ERROR) return false; // Said
+        if (!same_type(o->return_type, v->return_type)) {
+            diag_error(o->return_type_qual_at, "'%s' returns %s, and this returns %s", replaced_name(v),
+                       v->return_type.kind == TY_VOID ? "nothing" : type_name(v->return_type),
+                       o->return_type.kind == TY_VOID ? "nothing" : type_name(o->return_type));
+            diag_note("the code that calls it takes what it returns: an override returns the same, '%s'", override_example(o, v));
+            return false;
+        }
+        if (!same_type(o->fails, v->fails)) {
+            if (v->fails.kind == TY_VOID) {
+                diag_error(o->fails_at, "'%s' can't fail, so an override of it can't either", replaced_name(v));
+                diag_note("the code that calls it handles no error: drop 'fails %s'", type_name(o->fails));
+            } else {
+                diag_error(o->fails_at.line ? o->fails_at : o->at, "'%s' fails with %s, and this %s",
+                           replaced_name(v), type_name(v->fails),
+                           o->fails.kind == TY_VOID ? "can't fail" : "fails with another error");
+                diag_note("the code that calls it handles that error: write 'fails %s' after the parameters", type_name(v->fails));
+            }
+            return false;
+        }
+        int j = 0;
+        for (int i = 0; i < o->params.count; i++) {
+            const param *mine = &o->params.items[i];
+            const param *theirs = &v->params.items[j++];
+            if (mine->is_out == theirs->is_out) continue;
+            if (theirs->is_out) {
+                diag_error(mine->at, "'%s' makes its '" STR_FMT "', an 'out' parameter, so its override does too",
+                           replaced_name(v), STR_ARG(theirs->name));
+                diag_note("the calls say 'out' there: write 'out " STR_FMT " " STR_FMT "'", STR_ARG(mine->type_name),
+                          STR_ARG(mine->name));
+            } else {
+                diag_error(mine->out_at, "'%s' takes its '" STR_FMT "' as a value, so its override can't make it",
+                           replaced_name(v), STR_ARG(theirs->name));
+                diag_note("no call says 'out' there: drop 'out'");
+            }
+            return false;
+        }
+    }
+    if (o->is_async != v->is_async) {
+        if (v->is_async) {
+            diag_error(o->at, "'%s' is async, and this isn't", replaced_name(v));
+            diag_note("it runs as a task, which the code that starts it or awaits it relies on: '%s'", override_example(o, v));
+        } else {
+            diag_error(o->async_at, "'%s' isn't async, so an override of it can't be", replaced_name(v));
+            diag_note("the code that calls it has its result at once: drop 'async', and start a task from it if it has to wait");
+        }
+        return false;
+    }
+    return true;
+}
+
+// Finds the declaration `o` overrides, and pairs them (decl.replaces,
+// decl.replaced_by), or says why not. place_overrides then puts it in place.
+static void match_override(const checker *c, decl *o)
+{
+    program *prog = c->prog;
+    decl_list same = {0};
+    if (o->owner) { // A method's: the type's methods of that name
+        bool other_kind = false;
+        for (int i = 0; i < o->owner->methods.count; i++) {
+            decl *m = o->owner->methods.items[i];
+            if (!str_eq(m->name, o->name)) continue;
+            if (m->is_operator || m->is_interpolate) other_kind = true;
+            else vec_push(same, m);
+        }
+        if (same.count == 0 && other_kind) {
+            diag_error(o->at, "'" STR_FMT "' is how views blend '" STR_FMT "', and isn't replaced", STR_ARG(o->name),
+                       STR_ARG(o->owner->qualified));
+            return;
+        }
+        if (same.count == 0) {
+            diag_error(o->at, "'" STR_FMT "' has no method '" STR_FMT "' to override", STR_ARG(o->owner->qualified), STR_ARG(o->name));
+            suggestion s = suggest_start(o->name);
+            for (int i = 0; i < o->owner->methods.count; i++) {
+                if (!o->owner->methods.items[i]->is_operator) suggest_consider(&s, o->owner->methods.items[i]->name);
+            }
+            suggest_note(&s);
+            return;
+        }
+    } else {
+        const name_kind kind = o->kind == DECL_SYSTEM ? NAME_SYSTEM : o->kind == DECL_SHADER ? NAME_SHADER : NAME_FUNCTION;
+        decl *other;
+        decl *first = lookup(prog, o->unit, o->override_name, kind, &other);
+        if (!first) {
+            nothing_to_override(c, o, kind);
+            return;
+        }
+        if (other) {
+            diag_error(o->at, "'" STR_FMT "' is ambiguous: both " STR_FMT " and " STR_FMT " have it", STR_ARG(o->override_name),
+                       STR_ARG(decl_ns(first)), STR_ARG(decl_ns(other)));
+            diag_note("write which one you mean, like '" STR_FMT "'", STR_ARG(first->qualified));
+            return;
+        }
+        if (first->shares_name) sharing_name(prog, first, &same);
+        else vec_push(same, first);
+    }
+    if (params_have_errors(o->params.items, o->params.count)) return; // Said
+
+    decl *v = NULL;
+    for (int k = 0; k < same.count && !v; k++) {
+        decl *candidate = same.items[k];
+        if (candidate == o || params_have_errors(candidate->params.items, candidate->params.count)) continue;
+        if (same_param_lists(o->params.items, o->params.count, candidate->params.items, candidate->params.count)) v = candidate;
+    }
+    if (!v) {
+        sb written = {0};
+        put_param_types(&written, o->params.items, o->params.count);
+        diag_error(o->at, "no '" STR_FMT "' takes (%s), so this overrides nothing", STR_ARG(o->override_name),
+                   written.data ? written.data : "");
+        for (int k = 0; k < same.count; k++) {
+            diag_note("%s '%s'%s", same.count == 1 ? "it's" : k == 0 ? "there's" : "and", signature_of(same.items[k]),
+                      same.items[k]->is_virtual ? "" : ", which isn't virtual");
+        }
+        diag_note("an override has the parameters' types of what it replaces, in order, with its filters; their names and "
+                  "'mut' can differ");
+        return;
+    }
+    const char *named = signature_of(v) + v->name.len; // "(Position, with Player)"
+    if (v->replaced_by) { // Another override got there first
+        const decl *first = v->replaced_by;
+        if (same_package(o, first)) {
+            diag_error(o->at, "'%s%s' is replaced twice in %s", replaced_name(v), named, package_text(o));
+        } else {
+            diag_error(o->at, "'%s%s' is replaced twice: by %s here, and by %s", replaced_name(v), named,
+                       package_text(o), package_text(first));
+        }
+        diag_note_at(first->at, "the other override is in %s", file_of(first));
+        diag_note("a declaration is replaced once: nothing depends on the order packages are listed in");
+        return;
+    }
+    if (!v->is_virtual) {
+        diag_error(o->at, "'%s%s' isn't marked 'virtual', so nothing replaces it", replaced_name(v), named);
+        diag_note_at(v->at, "it's declared in %s", file_of(v));
+        diag_note("what can be replaced is its developer's choice: 'virtual' before it, in %s", package_text(v));
+        if (!package_of(v)) { // The game's own code, which whoever reads this can change
+            const fix mark = {.kind = FIX_ADD_VIRTUAL, .at = o->at, .method = v};
+            vec_push(prog->fixes, mark);
+        }
+        return;
+    }
+    if (same_package(o, v)) {
+        diag_error(o->override_at, "an override is in another package than what it replaces, and '%s' is in %s too",
+                   replaced_name(v), package_text(v));
+        diag_note_at(v->at, "it's declared in %s", file_of(v));
+        diag_note("change the declaration itself: 'virtual' and 'override' are for a package that replaces the game's code or "
+                  "another package's, and for a game that replaces a package's");
+        return;
+    }
+    if (!override_agrees(o, v)) return;
+    // It runs where what it replaces did, so it writes no order of its own
+    for (int a = 0; a < o->attributes.count; a++) {
+        const attribute *attr = &o->attributes.items[a];
+        diag_error(attr->at, "an override keeps the Stage, Before and After of what it replaces, and writes none: remove '"
+                   STR_FMT "'", STR_ARG(attr->name));
+        diag_note("it takes the place of '%s' in the order, with what that one's attributes say", replaced_name(v));
+        break;
+    }
+    v->replaced_by = o;
+    o->replaces = v;
+}
+
+// An override that was matched goes where what it replaces was, and that one
+// goes nowhere.
+static void replace_in(decl **items, int *count)
+{
+    int kept = 0;
+    for (int i = 0; i < *count; i++) {
+        decl *d = items[i];
+        if (d->replaced_by && !d->replaced_by->placed) d = d->replaced_by;
+        else if (d->replaces && !d->placed) continue;
+        items[kept++] = d;
+    }
+    *count = kept;
+}
+
+// Matches the overrides of systems, views and handlers (`systems`), or of
+// functions, methods, frags and verts, once those have their parameters'
+// types, and puts each in the place of what it replaces: among the
+// declarations and the lists made of them (or its type's methods), under its
+// name, in its namespace and with its attributes, so that what's checked and
+// built from here on has the override there. What was replaced is in
+// program.replaced.
+static void place_overrides(const checker *c, const bool systems)
+{
+    program *prog = c->prog;
+    decl_list matched = {0};
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *o = prog->decls.items[i];
+        if (!o->is_override || o->placed || (o->kind == DECL_SYSTEM) != systems) continue;
+        match_override(c, o);
+        if (o->replaces) vec_push(matched, o);
+    }
+    if (matched.count == 0) return;
+    for (int i = 0; i < matched.count; i++) { // A method's: in its type
+        decl *o = matched.items[i];
+        for (int k = 0; o->owner && k < o->owner->methods.count; k++) {
+            if (o->owner->methods.items[k] == o->replaces) o->owner->methods.items[k] = o;
+        }
+    }
+    replace_in(prog->decls.items, &prog->decls.count);
+    replace_in(prog->systems.items, &prog->systems.count);
+    replace_in(prog->views.items, &prog->views.count);
+    replace_in(prog->handlers.items, &prog->handlers.count);
+    for (int i = 0; i < matched.count; i++) {
+        decl *o = matched.items[i];
+        decl *v = o->replaces;
+        o->placed = true;
+        o->named_in = v->unit;
+        o->qualified = v->qualified;
+        o->shares_name = v->shares_name;
+        o->c_suffix = v->c_suffix;
+        o->signature = v->signature;
+        o->attributes.items = v->attributes.items; // Its own were refused
+        o->attributes.count = v->attributes.count;
+        o->attributes.cap = v->attributes.cap;
+        if (v->event && v->event->needs_target == v) v->event->needs_target = o;
+        vec_push(prog->replaced, v);
+    }
+    for (int i = 0; i < prog->systems.count; i++) prog->systems.items[i]->index = i;
+    for (int i = 0; i < prog->views.count; i++) prog->views.items[i]->index = i;
+    for (int i = 0; i < prog->handlers.count; i++) prog->handlers.items[i]->index = i;
+    prog->by_name.first = NULL; // The names are others' now
+    prog->by_c_name.first = NULL;
+}
+
+// What an override replaced isn't built, but it's still code its developer
+// reads and changes: it's checked for errors as the code it is. Nothing it
+// would add to the program stays: it's checked against a copy of the program
+// and of the checker's lists, so its spawns, Adds and Removes, sends, calls,
+// mesh draws and what it reads count for nothing in the archetypes, the
+// schedule, the input or generated C, and it warns about nothing. The quick
+// fixes its errors offer are kept. Its signature was checked as any is: it's
+// what its override was matched by.
+static void check_replaced(checker *c, decl *v)
+{
+    program copy = *c->prog;
+    copy.dry = true;
+    checker dry = *c;
+    dry.prog = &copy;
+    const int fixes = c->prog->fixes.count;
+    if (v->kind == DECL_SYSTEM) {
+        dry.unit = v->unit;
+        dry.system = v;
+        const int errors = diag_error_count();
+        const int outs = dry.outs;
+        check_stmt(&dry, v->body);
+        check_body_assigned(&dry, NULL, v->body, outs, errors);
+    } else {
+        check_method_body(&dry, v);
+    }
+    for (int i = fixes; i < copy.fixes.count; i++) vec_push(c->prog->fixes, copy.fixes.items[i]);
+}
+
 bool check(program *prog)
 {
     checker c = {0};
@@ -13819,16 +14309,21 @@ bool check(program *prog)
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         c.unit = d->unit;
+        if (d->is_override && d->kind == DECL_FUNCTION) override_owner(&c, d); // `override bool Stats.IsDead()`: a method's
         if (d->kind == DECL_FUNCTION) check_function_decl(&c, d);
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
+        else if (d->kind == DECL_METHOD) check_signature(&c, d); // An override of a method, outside its type until it's placed
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
+    // Overrides of functions, methods, frags and verts take their places before any body names one
+    place_overrides(&c, false);
     check_shared_names(&c, DECL_FUNCTION);
     check_shared_names(&c, DECL_SHADER);
     check_correction_interpolates(prog);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == DECL_FUNCTION && !d->is_extern) check_method_body(&c, d);
+        if (d->kind == DECL_METHOD) check_method_body(&c, d); // An override of a method that found none to replace
         if (d->kind == DECL_SHADER) {
             const int errors = diag_error_count();
             check_method_body(&c, d);
@@ -13836,6 +14331,7 @@ bool check(program *prog)
         }
         for (int k = 0; k < d->methods.count; k++) check_method_body(&c, d->methods.items[k]);
     }
+    for (int i = 0; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
     if (prog->input) {
         c.unit = prog->input->unit;
         check_sample(&c, prog->input);
@@ -13846,11 +14342,29 @@ bool check(program *prog)
     // filesystem effects must already exclude automatic foreach threading.
     mark_io_callers(&c);
 
+    // Overrides of systems, views and handlers take their places before any of
+    // their bodies is checked, which needs every one's parameters first. A game
+    // with none has each one's parameters checked with its body, as ever.
+    bool overrides_systems = false;
+    for (int i = 0; i < prog->decls.count; i++) {
+        overrides_systems |= prog->decls.items[i]->kind == DECL_SYSTEM && prog->decls.items[i]->is_override;
+    }
+    const int replaced_before = prog->replaced.count;
+    if (overrides_systems) {
+        for (int i = 0; i < prog->decls.count; i++) {
+            decl *d = prog->decls.items[i];
+            if (d->kind != DECL_SYSTEM) continue;
+            c.unit = d->unit;
+            check_params(&c, d);
+            d->params_checked = true;
+        }
+        place_overrides(&c, true);
+    }
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM) continue;
         c.unit = d->unit;
-        check_params(&c, d);
+        if (!d->params_checked) check_params(&c, d);
         c.system = d;
         if (d->extern_system) { // Its code is C's: there's nothing of it to check, or to warn about not using
             check_extern_system(&c, d);
@@ -13862,6 +14376,7 @@ bool check(program *prog)
         check_body_assigned(&c, NULL, d->body, outs, errors);
         if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
     }
+    for (int i = replaced_before; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
     check_shared_names(&c, DECL_SYSTEM);
     diag_phase("checking code");
     drop_unused_seed(prog);

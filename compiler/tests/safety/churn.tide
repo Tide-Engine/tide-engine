@@ -1,0 +1,120 @@
+// expect: tick 11: alive 64 text 444 lists 326964 keys 604 big 40000
+// ticks: 12
+
+// A world's heap worked hard while snapshots share its pages: text, lists,
+// maps and big lists that grow, shrink, move between entities and go, entities
+// that come and go with them, and components put back whole through the World.
+
+struct Note
+{
+    string text;
+    int weight;
+}
+
+component Bag
+{
+    List<int> numbers;
+    List<Note> notes;
+    Map<string, int> counts;
+    Set<Entity> friends;
+    string name;
+    Entity next;
+    int age;
+}
+
+[Sparse]
+component Marked
+{
+    string why;
+    List<int> since;
+}
+
+singleton Store
+{
+    List<Entity> bags;
+    List<int> big;
+    Map<int, string> names;
+    string log;
+    Random random;
+}
+
+event Swap
+{
+    Entity other;
+    List<int> carried;
+    string word;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Store store)
+{
+    for (var i = 0; i < 64; i++) store.bags.Add(Spawn(Bag { name = $"bag {i}", numbers = [i, i + 1] }));
+}
+
+// Each bag grows, shrinks and renames itself, in an order its own random numbers pick
+system Work(mut Bag bag, mut Store store, Time time)
+{
+    bag.age += 1;
+    var roll = store.random.NextInt(8);
+    if (roll == 0) bag.numbers.Clear();
+    else if (roll == 1) bag.numbers.Resize(bag.age * 37 % 5000);
+    else bag.numbers.Add(bag.age);
+    bag.name = roll == 2 ? "" : roll == 3 ? bag.name + bag.name.Substring(0, 3) : $"bag {bag.age} {time.tick}";
+    bag.notes.Add(Note { text = bag.name, weight = roll });
+    if (bag.notes.count > 6) bag.notes.RemoveAt(roll % bag.notes.count);
+    bag.counts[bag.name] += 1;
+    if (bag.counts.count > 4) bag.counts.Clear();
+    bag.friends.Add(this);
+    bag.friends.Add(bag.next);
+    bag.next = store.bags[store.random.NextInt(store.bags.count)];
+    if (roll == 4) this.Add(Marked { why = bag.name, since = bag.numbers });
+    if (roll == 5) this.Remove(Marked);
+    if (roll == 6) bag.next.Send(Swap { other = this, carried = bag.numbers, word = bag.name });
+}
+
+// A bag takes another's lists and text, read through the World and put back whole
+event(Swap swap) Take(mut Bag bag, mut World world, mut Store store)
+{
+    mut var theirs = world.Get<Marked>(swap.other);
+    theirs.since = swap.carried;
+    theirs.why = theirs.why + swap.word;
+    world.Set<Marked>(swap.other, theirs);
+    bag.numbers = swap.carried;
+    bag.notes.Add(Note { text = swap.word, weight = swap.carried.count });
+    store.log = store.log.length > 2000 ? swap.word : store.log + swap.word;
+    store.names[swap.carried.count] = swap.word;
+}
+
+// Some go and others come in their place, so handles in lists and sets go stale
+system Turnover(mut Store store, Time time)
+{
+    for (var i = 0; i < 8; i++)
+    {
+        var at = store.random.NextInt(store.bags.count);
+        store.bags[at].Destroy();
+        store.bags[at] = Spawn(Bag { name = $"new {time.tick} {i}", numbers = store.big });
+    }
+    // A list in chunks that's cut and grown again each tick
+    store.big.Resize(time.tick % 3 == 0 ? 10 : 40000);
+    for (var i = 0; i < 100; i++) store.big[store.random.NextInt(40000)] = time.tick;
+    if (store.names.count > 32) store.names.Clear();
+}
+
+[After(Work, Turnover)]
+system Report(Store store, World world, Time time, query (Bag bag) all)
+{
+    if (time.tick != 11) return;
+    mut var alive = 0;
+    mut var text = 0;
+    mut var lists = 0;
+    mut var keys = 0;
+    foreach (var each in all)
+    {
+        alive += 1;
+        text += each.bag.name.length;
+        lists += each.bag.numbers.count + each.bag.notes.count;
+        keys += each.bag.counts.count + each.bag.friends.count + (world.Has<Marked>(each.entity) ? 1 : 0);
+    }
+    Debug.Log($"tick {time.tick}: alive {alive} text {text} lists {lists} keys {keys} big {store.big.count}");
+}

@@ -1,0 +1,13 @@
+// expect: 'Interpolate' is how views blend 'Angle', and isn't replaced
+// expect: it can call a virtual method, which a package can replace
+struct Angle
+{
+    float radians;
+
+    virtual Angle Interpolate(Angle from, Angle to, float t)
+    {
+        return Angle { radians = from.radians + (to.radians - from.radians) * t };
+    }
+}
+
+scene Main { }

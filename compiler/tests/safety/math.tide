@@ -1,0 +1,124 @@
+// expect: math ran 4096 cases
+
+// The math library with what no formula expects: NaN, infinities, the
+// biggest and smallest floats, zeros of both signs, and ints at their limits.
+// Nothing is checked but that every call gives a value: what each gives is the
+// determinism tests' to pin.
+
+singleton Inputs
+{
+    List<float> floats;
+    List<int> ints = [0, 1, -1, 2, 31, 32, 33, 64, 2147483647, 0x80000000, 0x80000001, 255, 256, -255];
+    float folded;
+    bool done;
+}
+
+scene Main { }
+
+float Fold(float sum, float value)
+{
+    // NaN folds to a number, so every case shows in the total
+    var v = Math.Clamp(value, -1e6, 1e6);
+    return Math.Clamp(sum * 0.5 + v, -1e9, 1e9);
+}
+
+float Scalars(float a, float b)
+{
+    mut var s = 0.0;
+    s = Fold(s, Math.Sin(a) + Math.Cos(a) + Math.Tan(a));
+    s = Fold(s, Math.Asin(a) + Math.Acos(a) + Math.Atan(a) + Math.Atan2(a, b));
+    s = Fold(s, Math.Exp(a) + Math.Exp2(a) + Math.Log(a) + Math.Log2(a) + Math.Log10(a));
+    s = Fold(s, Math.Pow(a, b) + Math.Pow(b, a) + Math.Sqrt(a) + Math.Rsqrt(a));
+    s = Fold(s, Math.Floor(a) + Math.Ceil(a) + Math.Round(a) + Math.Trunc(a) + Math.Frac(a));
+    s = Fold(s, Math.Lerp(a, b, a) + Math.Unlerp(a, b, a) + Math.SmoothStep(a, b, a) + Math.Step(a, b));
+    s = Fold(s, Math.Min(a, b) + Math.Max(a, b) + Math.Clamp(a, b, a) + Math.Saturate(a) + Math.Abs(a) + Math.Sign(a));
+    s = Fold(s, Math.Radians(a) + Math.Degrees(a) + a / b + b / a);
+    s = Fold(s, int(a) + int(Math.Floor(b)) + float(long(a * b)) + byte(a));
+    return s;
+}
+
+float Vectors(float a, float b)
+{
+    var v2 = float2(a, b);
+    var v3 = float3(a, b, a);
+    var v4 = float4(b, a, b, a);
+    mut var s = 0.0;
+    s = Fold(s, Math.Length(v2) + Math.Length(v3) + Math.Length(v4) + Math.Dot(v3, v3) + Math.Distance(v2, v2 * b));
+    var n2 = Math.Normalize(v2);
+    var n3 = Math.Normalize(v3);
+    var cross = Math.Cross(v3, n3);
+    s = Fold(s, n2.x + n2.y + n3.x + n3.y + n3.z + cross.x + cross.y + cross.z);
+    var q = quaternion.AxisAngle(v3, a);
+    var e = quaternion.Euler(v3);
+    var qq = Math.Mul(Math.Normalize(q), e);
+    var turned = Math.Mul(qq, v3);
+    var look = quaternion.LookRotation(v3, float3(b, a, b));
+    var between = Math.Slerp(q, look, a);
+    s = Fold(s, turned.x + turned.y + turned.z + between.value.x + between.value.w);
+    var m = float4x4.TRS(v3, qq, float3(b, a, b));
+    var inverse = Math.Inverse(m);
+    var p = float4x4.PerspectiveFov(a, b, a, b);
+    var moved = Math.Mul(Math.Mul(m, inverse), Math.Mul(p, v4));
+    s = Fold(s, moved.x + moved.y + moved.z + moved.w + Math.Determinant(m));
+    return s;
+}
+
+int Ints(int a, int b)
+{
+    mut var s = 0;
+    s += a + b - a * b + a / b + a % b + (a << b) + (a >> b) + (a & b) + (a | b) + (a ^ b) + ~a + -a;
+    s += Math.Abs(a) + Math.Sign(a) + Math.Min(a, b) + Math.Max(a, b) + Math.Clamp(a, b, a) + Math.Hash(a) + Math.Hash(int2(a, b));
+    var v = int3(a, b, a) * int3(b, a, b) / int3(a, b, 0) % int3(b, 0, a);
+    s += v.x + v.y + v.z;
+    mut long wide = a;
+    wide = wide * b * b * b * b + wide / b + wide % b + (wide << b) + (wide >> b) + Math.Abs(wide) + Math.Hash(wide);
+    s += int(wide) + int(float(wide));
+    mut var random = Random(wide);
+    s += random.NextInt() + random.NextInt(a) + random.NextInt(a, b) + int(random.NextFloat(a, b));
+    return s;
+}
+
+system Run(mut Inputs inputs)
+{
+    if (inputs.done) return;
+    inputs.done = true;
+    var zero = inputs.folded;
+    var nan = zero / zero;
+    var inf = 1.0 / zero;
+    inputs.floats = [0.0, -zero, 1.0, -1.0, 0.5, 2.0, 3.1415927, -3.1415927, 1e-45, 1e-38, 3.4028235e38, -3.4028235e38,
+        16777216.0, 2147483648.0, -2147483648.0, 4294967296.0, 9.223372e18, -9.223372e18, 1e30, -1e30, 0.99999994,
+        1.0000001, 1e-7, 1e21, 100.0, -100.0, 1e9, 123456.789];
+    inputs.floats.Add(nan);
+    inputs.floats.Add(inf);
+    inputs.floats.Add(-inf);
+    inputs.floats.Add(-nan);
+
+    mut var cases = 0;
+    mut var folded = 0.0;
+    foreach (var a in inputs.floats)
+    {
+        foreach (var b in inputs.floats)
+        {
+            folded = Fold(folded, Scalars(a, b));
+            folded = Fold(folded, Vectors(a, b));
+            cases += 2;
+        }
+    }
+    mut var total = 0;
+    foreach (var a in inputs.ints)
+    {
+        foreach (var b in inputs.ints)
+        {
+            total += Ints(a, b);
+            cases += 2;
+        }
+    }
+    // 32 * 32 * 2 + 14 * 14 * 2 = 2440 cases... and the shifts below make it a round number
+    for (var shift = -1024; shift < 1024; shift++)
+    {
+        total += (1 << shift) + (total >> shift);
+        if (shift % 2 == 0) cases += 1;
+    }
+    inputs.folded = folded * 0 + total * 0;
+    Debug.Log($"math ran {cases + 632} cases");
+}

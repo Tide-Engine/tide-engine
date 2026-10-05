@@ -394,6 +394,31 @@ typedef struct decl {
     struct decl *local_part; // Its local fields, or NULL when it has none
     struct decl *part_of;    // A local part: the component or singleton it's of
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
+    // `virtual` before a declaration with a body (a system, view, handler,
+    // function, method, frag or vert) says another package can replace it, and
+    // `override` before one replaces it, as in C#. An override is the
+    // declaration of the same name and parameters (their types, with a
+    // system's filters: what tells overloads apart), and takes its place while
+    // compiling: in program.decls and the lists made of it (or its type's
+    // `methods`), with its name, its namespace and its attributes, so the
+    // schedule, every reference and generated C have the override where the
+    // other was. What it replaced is in program.replaced: still checked for
+    // errors, and nothing else.
+    bool is_virtual;
+    loc virtual_at;    // The `virtual` keyword
+    bool is_override;
+    loc override_at;   // The `override` keyword
+    str override_name; // An override's name as written, which can be qualified: "Combat.Move", "Combat.Stats.Hurt"
+    loc override_qual_at;     // ...where it starts; `at` is its last part
+    struct decl *replaces;    // An override's: the declaration it took the place of
+    struct decl *replaced_by; // What an override replaced: the override
+    bool placed;              // An override that's in the place of what it replaces
+    // The file whose namespace a declaration's name is in, and where its
+    // attributes are written: its own (NULL), but for an override in place,
+    // the file of what it replaced. Its code still reads names as its own
+    // file does (`unit`).
+    const struct unit *named_in;
+    bool params_checked;      // A system, view or handler whose parameters were checked ahead of the others: a virtual one, or an override
     // `extern system Move(mut Position position, Time time);`: a DECL_SYSTEM written in C, with no body. C is
     // called for each run of rows the system's filters admit, with their components as arrays (tide/rows.h) and
     // the singletons it takes; to the schedule it's the system its signature says
@@ -980,6 +1005,8 @@ typedef struct decl_index {
 typedef struct program {
     VEC(unit *) units; // Its files, in the order they're parsed: sorted by path
     VEC(decl *) decls; // In source order, file by file, builtins first.
+    VEC(decl *) replaced; // What overrides replaced (decl.replaced_by), which is no longer in `decls` or any list made of it
+    bool dry;             // A copy of the program that replaced code is checked against: what it would add to the build is dropped
     decl_index by_name;   // ...by namespace and name, once the checker asks
     decl_index by_c_name; // ...and by name in generated C
 
@@ -1098,6 +1125,8 @@ typedef enum fix_kind {
     // An `out` parameter (`param`) of `method` read before it's assigned: `x = default;` as the function
     // starts, or the parameter as `mut`, with the word gone from its calls
     FIX_ASSIGN_FIRST,
+    FIX_ADD_VIRTUAL,  // An override of a declaration (`method`) that isn't marked: `virtual` before it
+    FIX_ADD_OVERRIDE, // A declaration (`method`) with the name and parameters of a virtual one in another package: `override` before it
 } fix_kind;
 
 typedef struct fix {
@@ -1149,6 +1178,13 @@ void grid_shape(const decl *grid, int *cell, int shift[3]);
 // Why `sys` waits for `w->on`, like "both write Transform". `quote` wraps names
 // ("`" for Markdown).
 void describe_wait(const decl *sys, const system_wait *w, const char *quote, sb *out);
+
+// The file whose namespace a declaration's name is in: its own, or for an
+// override in place, the file of what it replaced.
+static inline const unit *decl_home(const decl *d)
+{
+    return d->named_in ? d->named_in : d->unit;
+}
 
 // A declaration's name as code in `from`'s namespace writes it: short in the
 // same namespace, qualified elsewhere, and always qualified without `from`.

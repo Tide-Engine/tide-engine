@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override event(Heal heal) TakeHit(mut Unit unit)
+{
+    unit.stats.health += heal.amount;
+}

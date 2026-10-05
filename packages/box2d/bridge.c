@@ -100,8 +100,18 @@ _Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 &
                "box2d.tide's types changed: these are theirs");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
-// out would cost more than it saves.
-#define SHARED_BODIES 128
+// out would cost more than it saves. The step itself is quicker shared from a
+// few hundred bodies, but a tick whose C starts jobs runs its systems on
+// threads too (tide/jobs.h), and what that costs the rest of the tick is only
+// made up for from about here: measured, a tick with 1,800 crates awake was
+// slower shared and one with 2,400 quicker. A page's threads cost more to
+// reach, and its step has no SIMD to share out: there, 2,400 was slower
+// shared and 4,800 quicker.
+#ifdef __wasm__
+#define SHARED_BODIES 4096
+#else
+#define SHARED_BODIES 2048
+#endif
 
 #define WORLDS 4
 
@@ -122,6 +132,7 @@ static world worlds[WORLDS];
 static uint64_t uses;
 static world *active; // The running tick's
 static bool shared;   // The running step's tasks go to other threads
+static int32_t share_from = SHARED_BODIES; // A step with this many bodies awake is shared out
 
 // The bodies the running tick's Enter made, in the order it made them, each
 // with its entity, for the system after it to take (b2t_made): the match keeps
@@ -348,6 +359,13 @@ void b2t_forget(void)
     }
     active = NULL;
     made_count = made_taken = 0;
+}
+
+// For tests: a step is shared out over the tick's threads from this many
+// bodies awake, where it takes thousands for that to pay. None is the usual.
+void b2t_share_from(const int32_t bodies)
+{
+    share_from = bodies > 0 ? bodies : SHARED_BODIES;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -626,7 +644,7 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
-    shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= SHARED_BODIES;
+    shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     b2World_Step(w->id, dt, substeps);
