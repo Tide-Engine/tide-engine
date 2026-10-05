@@ -11,10 +11,11 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
-Each change is marked `Tide:` where it is. They're all for one thing: a world's
-image is kept in the match, where it's hashed and sent between players, so it
-has to be the same bytes on every machine for the same state, and one
-machine's has to load on another.
+Each change is marked `Tide:` where it is. All but one are for one thing: a
+world's image is kept in the match, where it's hashed and sent between players,
+so it has to be the same bytes on every machine for the same state, and one
+machine's has to load on another. The one that isn't is for how long a step
+takes on a page's threads (the last under Threads where upstream knows none).
 
 ### Calls to take an image and to restore one
 
@@ -127,6 +128,20 @@ match has no recording, and a player who joins has only the match's bytes.
   world stepped on threads was another than on one, from the test's tick 7.
   The lock spins, as a web page's main thread may not wait, and it guards a
   few instructions.
+- **`solver.c`: a worker that has waited long for the next stage sleeps**
+  (`b3SolverTask`, `B3_TIDE_WAIT_ROUNDS`), on the web only. A step's workers
+  wait for each stage in a loop, with the CPU's pause in it and, every few
+  rounds, the system's yield. WebAssembly has no pause and a page no yield, so
+  there the loop holds a processor for as long as it waits, and with a worker
+  on every one a page has, the system takes a processor from a worker that has
+  a block to run whatever else the machine has: the stage then waits a time
+  slice for that block. After 4096 rounds of the wait, which is about what
+  waking a worker takes, so that the waits between stages go as they did, a
+  worker sleeps until the main thread gives the next stage (`b3t_stage_sleep`,
+  and `b3t_stage_wake` after each change of `atomicSyncBits`, both the
+  bridge's, which has them from `tide/jobs.h`). On a thread that can't sleep,
+  a page's own, it goes on with the loop. A world steps the same either way,
+  as it does with any number of workers.
 
 ### What a match keeps of an image from tick to tick
 

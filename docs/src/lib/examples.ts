@@ -2,9 +2,9 @@
 interface GamePage {
     /** The code of the room the game hosts or joined, "" for none. */
     room?: string;
-    /** The round trip its player is to have to the match's server, in milliseconds. */
+    /** The ping its player is to have: the network's round trip to the match's server, in milliseconds. */
     lag?: number;
-    /** The least that can be: what a round trip took while nothing was added, 0 until the game measured one so. */
+    /** The least that can be: the ping while nothing was added, once the game measured it so. */
     minLag?: number;
     /** Starts a program that waited for it. Done once its first frame is drawn. */
     start?: () => Promise<void>;
@@ -84,7 +84,7 @@ export function liveExamples(article: HTMLElement) {
         // The least ping written beside the slider, what the last look said
         // it was, and what looks for it.
         let least: number | undefined;
-        let other = 0;
+        let other: number | undefined;
         let looking: ReturnType<typeof setInterval> | undefined;
 
         // What the reader is told, where the game will be. What's only
@@ -106,7 +106,7 @@ export function liveExamples(article: HTMLElement) {
             frames = [];
             clearInterval(looking);
             least = undefined;
-            other = 0;
+            other = undefined;
             if (lagMin) lagMin.hidden = true;
             say(message);
             run.textContent = begin;
@@ -249,18 +249,19 @@ export function liveExamples(article: HTMLElement) {
             lagMin?.classList.toggle('limits', least !== undefined && latency() < least);
         }
 
-        // The least the slider can make the ping, written beside it: the
-        // round trip the game that joined measured while its page added
-        // nothing, which is the ping its player has while the slider is under
-        // it. So a match's first moments are without the slider's ping, which
-        // starts once that's known. It can differ by a millisecond from one
-        // look to the next, so what's written changes once two looks in a row
-        // say the same other number.
+        // The least the slider can make the ping, written beside it: the ping
+        // the game that joined measured while its page added nothing, which
+        // is the one its player has while the slider is under it. So a match's
+        // first moments are without the slider's ping, which starts once
+        // that's known. It can differ by a millisecond from one look to the
+        // next, so what's written changes once two looks in a row say the
+        // same other number.
         function floor() {
-            const min = Math.max(0, ...frames.map((frame) => (frame && game(frame)?.minLag) || 0));
+            const known = frames.map((frame) => frame && game(frame)?.minLag).filter((min) => typeof min === 'number');
+            const min = known.length ? Math.max(...known) : undefined;
             const said = other;
             other = min;
-            if (!min || min === least || (least !== undefined && min !== said)) return;
+            if (min === undefined || min === least || (least !== undefined && min !== said)) return;
             least = min;
             if (lagMin) {
                 lagMin.textContent = `min ${min} ms`;

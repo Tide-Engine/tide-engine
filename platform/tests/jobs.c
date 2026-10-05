@@ -18,6 +18,7 @@ static tide_world many;     // On every core
 static tide_world snapshot; // Of `many`, before each tick: it shares its pages
 
 extern atomic_int jobs_tasks_elsewhere; // jobs_tasks.c
+extern atomic_int jobs_tasks_slept;
 
 // The threads that took part in a round of work, a bit each.
 static uint32_t threads_seen;
@@ -77,6 +78,18 @@ TIDE_TEST(jobs_threads_change_nothing)
     }
     printf("    %d of C's tasks ran on another thread than the one that started them\n", atomic_load(&jobs_tasks_elsewhere));
     TIDE_CHECK(atomic_load(&jobs_tasks_elsewhere) > 0);
+
+    // C's workers that wait for each other in stages (jobs_tasks.c) sleep while
+    // they wait, where the pool's threads can, and are woken for each stage:
+    // one that wasn't would have held the tick up for good. Elsewhere they
+    // never sleep
+    for (int t = 0; t < 20000 && jobs->more && atomic_load(&jobs_tasks_slept) == 0; t++) {
+        tide_world_tick(&one);
+        tide_world_tick_on(&many, jobs);
+        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
+    }
+    printf("    %d of their waits slept\n", atomic_load(&jobs_tasks_slept));
+    TIDE_CHECK(jobs->more ? atomic_load(&jobs_tasks_slept) > 0 : atomic_load(&jobs_tasks_slept) == 0);
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
     // Entities spawned on many threads: every handle kept is the real one
@@ -131,6 +144,120 @@ TIDE_TEST(jobs_threads_change_nothing)
     tide_world_free(&one);
     tide_world_free(&many);
     tide_world_free(&snapshot);
+}
+
+// ---------------------------------------------------------------------------
+// A pool whose threads can sleep (tide_jobs.more, the web's): a thread that
+// finds nothing to do leaves the tick, and comes back when it's asked for.
+// The tick here is one system that goes on until the other threads have left,
+// then sixteen tasks at once, which wait for it.
+
+#define BACK_TASKS 16u
+static const tide_jobs *back_pool;
+static void (*back_work)(void *context, uint32_t thread);
+static void *back_context;
+static _Thread_local uint32_t back_thread; // Which of the pool's this is, while it's in the tick
+static atomic_uint back_inside;            // Threads in the tick
+static atomic_uint back_entries[32];       // Times each went into this one
+static atomic_uint back_first_ran;
+static atomic_uint back_ran[BACK_TASKS];
+static atomic_uint back_returned; // Tasks run by a thread that had left this tick and come back
+
+static void back_counted(void *context, const uint32_t thread)
+{
+    (void)context;
+    back_thread = thread & 31u;
+    atomic_fetch_add(&back_entries[back_thread], 1u);
+    atomic_fetch_add(&back_inside, 1u);
+    back_work(back_context, thread);
+    atomic_fetch_sub(&back_inside, 1u);
+}
+
+static void back_run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    (void)self;
+    back_work = work;
+    back_context = context;
+    back_pool->run(back_pool->self, back_counted, NULL);
+}
+
+static void back_more(void *self, const uint32_t count)
+{
+    (void)self;
+    back_pool->more(back_pool->self, count);
+}
+
+static uint32_t back_first_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 1u << 30; // Enough for the tick to go on threads
+    return 1;
+}
+
+static void back_first(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    (void)task;
+    (void)pieces;
+    for (volatile uint32_t i = 0; i < 100000u; i++) {
+    } // Long enough for a waiting worker to wake and join
+    // Until the tick has no thread in it but this one and the caller's, which
+    // stays: the others have nothing to do until this is done
+    const uint32_t stay = back_thread == 0u ? 1u : 2u;
+    while (atomic_load(&back_inside) > stay) {
+    }
+    atomic_fetch_add(&back_first_ran, 1u);
+}
+
+static uint32_t back_tasks_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 0;
+    return BACK_TASKS;
+}
+
+static void back_task(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    (void)pieces;
+    for (volatile uint32_t i = 0; i < 100000u; i++) {
+    } // Long enough for the threads asked back to take some
+    if (atomic_load(&back_entries[back_thread]) > 1u) atomic_fetch_add(&back_returned, 1u);
+    atomic_fetch_add(&back_ran[task], 1u);
+}
+
+TIDE_TEST(jobs_threads_come_back)
+{
+    back_pool = tide_platform_jobs();
+    if (!back_pool || !back_pool->more) {
+        printf("    this pool's threads stay in a tick until it's done: nothing to check\n");
+        return;
+    }
+    static const uint32_t waits[1] = {0};
+    const tide_system_tasks systems[2] = {
+        {.count = back_first_count, .run = back_first, .name = "first"},
+        {.count = back_tasks_count, .run = back_task, .wait_count = 1, .waits = waits, .name = "tasks"},
+    };
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more};
+    int ticks = 0;
+    // A worker has to have joined the tick while its first system ran to have
+    // left it: a few more ticks if none had yet
+    for (; ticks < 20000 && atomic_load(&back_returned) == 0u; ticks++) {
+        for (uint32_t i = 0; i < 32u; i++) atomic_store(&back_entries[i], 0u);
+        for (uint32_t i = 0; i < BACK_TASKS; i++) atomic_store(&back_ran[i], 0u);
+        atomic_store(&back_first_ran, 0u);
+        tide_run_systems(&queue, &tick, &counted);
+        TIDE_REQUIRE(atomic_load(&back_inside) == 0u && atomic_load(&back_first_ran) == 1u);
+        bool once = true;
+        for (uint32_t i = 0; i < BACK_TASKS; i++) once &= atomic_load(&back_ran[i]) == 1u;
+        TIDE_REQUIRE(once);
+    }
+    printf("    %u of %u tasks were run by threads that had left the tick, after %d tick%s\n",
+           (unsigned)atomic_load(&back_returned), (unsigned)BACK_TASKS, ticks, ticks == 1 ? "" : "s");
+    TIDE_CHECK(atomic_load(&back_returned) > 0u);
 }
 
 // The system says how much memory the program has (tide_platform_memory),

@@ -1,0 +1,12 @@
+// expect: 'Fight' sets any entity's Health through its World, and the system takes this entity's too
+// What a function reaches through the functions it passes its World on to is its own
+component Health { int value; Entity other; }
+scene Main { }
+void Drain(Entity target, mut World world)
+{
+    mut var theirs = world.Get<Health>(target);
+    theirs.value -= 1;
+    world.Set<Health>(target, theirs);
+}
+void Fight(Entity target, mut World world) { Drain(target, world); }
+system Brawl(mut Health own, mut World world) { Fight(own.other, world); }

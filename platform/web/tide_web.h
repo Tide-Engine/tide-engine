@@ -111,9 +111,12 @@ TIDE_WEB_IMPORT(gamepad_button) float tide_web_gamepad_button(int pad, int butto
 TIDE_WEB_IMPORT(run) __attribute__((noreturn)) void tide_web_run(bool timer_frames);
 TIDE_WEB_IMPORT(stop) void tide_web_stop(void);
 
-// Threads the program can run on: the CPU's cores when the page can share the
-// program's memory with workers (it's cross-origin isolated), or else 1. Each
-// thread pthread_create makes is a worker (wasi-threads' thread-spawn).
+// Threads the program can run on: the processors the browser says the machine
+// has when the page can share the program's memory with workers (it's
+// cross-origin isolated), or else 1. A browser counts both threads of a core
+// that runs two, and says nothing else, so a pool of this many has no core to
+// spare: its threads sleep when they have nothing to do (platform/src/jobs.c).
+// Each thread pthread_create makes is a worker (wasi-threads' thread-spawn).
 TIDE_WEB_IMPORT(threads) uint32_t tide_web_threads(void);
 
 // Whether the page is hidden: another tab in front, or the window minimized.
@@ -147,8 +150,11 @@ TIDE_WEB_IMPORT(room_send) void tide_web_room_send(uint32_t room, uint32_t to, c
 // The next datagram that arrived: its size, or 0 when there's none.
 TIDE_WEB_IMPORT(room_receive) uint32_t tide_web_room_receive(uint32_t room, uint32_t *from, void *data,
                                                              uint32_t capacity);
-// The round trip the session measures to the room's host (see tide_platform_room_ping).
-TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(uint32_t ping_ms);
+// When the datagram room_receive last gave arrived in the page: milliseconds,
+// by the clock the program's own goes by (performance.now).
+TIDE_WEB_IMPORT(room_arrived) double tide_web_room_arrived(void);
+// What the session measures to the room's host (see tide_platform_room_ping).
+TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(int32_t ping_ms, uint32_t answer_ms);
 
 // Hot reloading, under tide run --web: what the page's last program left this
 // one (tide_reload_save in platform/src/reload.c), 0 bytes if nothing, and a

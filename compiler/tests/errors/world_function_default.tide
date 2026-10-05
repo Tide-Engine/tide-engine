@@ -1,0 +1,4 @@
+// expect: 'world' is the World, which the caller passes its own: it takes no default
+component Health { int value; }
+scene Main { }
+bool Alive(Entity target, World world = default) { return world.Has<Health>(target); }

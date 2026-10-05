@@ -1,4 +1,5 @@
 // expect: the World is no value: code calls it, like 'world.Get<Health>(entity)'
+// expect: a function or method that takes 'World world' is passed it as an argument
 component Health { int value; }
 scene Main { }
 system Keep(World world, with Health)

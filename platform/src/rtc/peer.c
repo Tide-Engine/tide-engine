@@ -92,6 +92,7 @@ static void sctp_in(void *user, const void *data, const size_t size)
     if (p->inbox_count == RTC_PEER_INBOX || size > sizeof p->inbox[0].data) return; // Like UDP: lost
     const int at = (p->inbox_head + p->inbox_count++) % RTC_PEER_INBOX;
     p->inbox[at].size = (uint16_t)size;
+    p->inbox[at].arrived = p->reading;
     memcpy(p->inbox[at].data, data, size);
 }
 
@@ -174,6 +175,7 @@ void rtc_peer_update(rtc_peer *p, const double now)
     uint8_t datagram[2048];
     size_t n;
     while ((n = rtc_ice_receive(&p->ice, now, datagram, sizeof datagram)) != 0) {
+        p->reading = p->ice.arrived; // What comes out of it arrived when it did
         if (p->dtls_started && datagram[0] >= 20 && datagram[0] <= 63) rtc_dtls_receive(&p->dtls, datagram, n, now);
     }
     if (p->dtls_started) rtc_dtls_update(&p->dtls, now);
@@ -208,6 +210,7 @@ size_t rtc_peer_receive(rtc_peer *p, void *out, const size_t capacity)
         p->inbox_count--;
         if (p->inbox[at].size <= capacity && p->inbox[at].size) {
             memcpy(out, p->inbox[at].data, p->inbox[at].size);
+            p->arrived = p->inbox[at].arrived;
             return p->inbox[at].size;
         }
     }

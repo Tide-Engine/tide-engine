@@ -6280,6 +6280,66 @@ TIDE_TEST(lsp_out_selection_and_calls)
     TIDE_CHECK(has(request("textDocument/codeLens"), "after Halve: it writes Tally, which this reads"));
 }
 
+// The World in a function: its caller's, passed on. What the function reaches
+// through it shows as the system's own, and world.TryGet makes its variable.
+#define WORLD_FUNCTION                                                         \
+    "component Health { int value = 10; }\n"                                   \
+    "component Healer { Entity patient; int seen; }\n"                         \
+    "bool TryFind(Entity target, World world, out Health health)\n"            \
+    "{\n"                                                                      \
+    "    return world.TryGet<Health>(target, out health);\n"                   \
+    "}\n"                                                                      \
+    "scene Main { }\n"                                                         \
+    "event(Spawned) Setup(with Main) { Spawn(Health { }); Spawn(Healer { }); }\n"
+
+TIDE_TEST(lsp_world_in_functions)
+{
+    start();
+    open_document(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n"
+                                 "    if (TryFind(healer.patient, world, out var health)) healer.seen = health.value;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // The system's World: what the function it's passed to reads counts as its own
+    TIDE_CHECK(has(hover_at(8, 38), "Through its `World`, it reads any entity's `Health`."));
+    // The function's own
+    const char *own = hover_at(2, 36);
+    TIDE_CHECK(has(own, "The World: any entity's components by its handle") && has(own, "`TryGet<T>(entity, out value)`"));
+    TIDE_CHECK(has(own, "Through its `World`, it reads any entity's `Health`."));
+    TIDE_CHECK(has(hover_at(4, 19), "World.TryGet<Health>(Entity entity, out Health value) -> bool"));
+    TIDE_CHECK(has(hover_at(10, 49), "Health health") && has(hover_at(10, 49), "An `out` argument declares it"));
+
+    // Where a function's parameter starts, and after the World's dot
+    TIDE_CHECK(offers(complete(WORLD_FUNCTION "bool Alive(Entity target, $) { return true; }\n"), "World"));
+    TIDE_CHECK(!offers(complete(WORLD_FUNCTION "async void Watch(Entity target, $) { await Wait.Ticks(1); }\n"), "World"));
+    const char *members = complete(WORLD_FUNCTION "bool Alive(Entity target, World world) { return world.$; }\n");
+    TIDE_CHECK(offers(members, "TryGet") && offers(members, "Get") && offers(members, "Has") && offers(members, "Set"));
+    TIDE_CHECK(has(members, "\"insertText\":\"TryGet<${1:Component}>(${2:entity}, out var ${3:value})\",\"insertTextFormat\":2"));
+
+    // What TryGet's second argument can be, and its signature
+    const char *argument = complete(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n"
+                                                   "    world.TryGet<Health>(healer.patient, $);\n}\n");
+    TIDE_CHECK(offers(argument, "out var value") && offers(argument, "out") && offers(argument, "out _"));
+    const char *after = complete(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n"
+                                                "    world.TryGet<Health>(healer.patient, out $);\n}\n");
+    TIDE_CHECK(offers(after, "var") && offers(after, "Health") && offers(after, "_"));
+    open_document(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n    world.TryGet<Health>(healer.patient, $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "TryGet<Health>(Entity entity, out Health value) -> bool"));
+
+    // The rules that depend on who calls are said at the call
+    open_document(WORLD_FUNCTION "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }\n"
+                                 "view Show(Healer healer, mut World world) { Heal(healer.patient, world); }\n");
+    TIDE_CHECK(has(last_sent(), "a view reads the match, and 'Heal' changes 'Health' through its World"));
+    // ...and a read-only World passed where a function sets through it is fixed where it's declared
+    static const char read_only[] = WORLD_FUNCTION
+        "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }\n"
+        "system Mend(Healer healer, World world) { Heal(healer.patient, world); }\n";
+    open_document(read_only);
+    TIDE_CHECK(has(last_sent(), "declare the parameter as 'mut World world' to set entities' components through it"));
+    actions_at(9);
+    const char *fixed = apply_fix(read_only, "Declare 'world' as mut");
+    TIDE_REQUIRE(fixed != NULL);
+    TIDE_CHECK(has(fixed, "system Mend(Healer healer, mut World world) { Heal(healer.patient, world); }\n"));
+}
+
 // Typing code with `out` parameters and arguments from scratch, and once it's
 // whole, asking at every place in it: nothing may crash.
 TIDE_TEST(lsp_out_every_prefix_is_safe)

@@ -1,0 +1,4 @@
+// expect: a function can only have one World parameter
+component Health { int value; }
+scene Main { }
+bool Same(Entity target, World first, World second) { return first.Has<Health>(target) == second.Has<Health>(target); }

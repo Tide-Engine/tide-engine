@@ -297,7 +297,13 @@ typedef struct tide_client_status {
     tide_session_state state;
     tide_disconnect_reason reason; // Once it's offline again
     tide_player_id player;         // This machine's player, once connected
-    uint32_t ping_ms;              // Round trip to the server
+    // The network's round trip to the server: from when this machine sent to
+    // when the answer arrived, less what the server held it. No wait for an
+    // update is in it, on either machine (tide_transport.clock)...
+    uint32_t ping_ms;
+    // ...and what an answer takes to be read, those waits in it: from the
+    // update that sent to the update that reads it. What the client waits by.
+    uint32_t answer_ms;
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)

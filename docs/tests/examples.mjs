@@ -63,14 +63,18 @@ const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '-
 let socket;
 let closeBrowser;
 try {
+    // Chrome says where its debugger listens once it's up. On a machine that
+    // never ran it, or a busy one, that can take most of a minute, so there's
+    // no deadline of ours: one would only measure the machine. If Chrome ends
+    // first, it never will say, and what it did say is the error.
     const endpoint = await new Promise((done, fail) => {
-        const timeout = setTimeout(() => fail(new Error('Chrome did not start')), 20000);
         let log = '';
         child.on('error', fail);
+        child.on('exit', (code) => fail(new Error(`Chrome ended before it started (${code}):\n${log}`)));
         child.stderr.on('data', (data) => {
             log += data;
             const match = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(log);
-            if (match) { clearTimeout(timeout); done(`http://127.0.0.1:${match[1]}`); }
+            if (match) done(`http://127.0.0.1:${match[1]}`);
         });
     });
     const target = await (await fetch(`${endpoint}/json/new?about:blank`, { method: 'PUT' })).json();
@@ -266,10 +270,10 @@ try {
                 // Beside the slider is the least it can make the ping: the
                 // round trip the game that joined measured with nothing
                 // added, which is when the slider's ping starts.
-                await until(`${frame(1)}.contentWindow.Tide.minLag > 0`, `${id}: a round trip measured`);
+                await until(`typeof ${frame(1)}.contentWindow.Tide.minLag === 'number'`, `${id}: a ping measured`);
                 await until('!example.querySelector(".example-lag-min").hidden', `${id}: the least ping shows`);
                 assert.match(await evaluate('example.querySelector(".example-lag-min").textContent'), /^min \d+ ms$/, `${id}: the least ping`);
-                assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.minLag`), 0, `${id}: the host's page has none`);
+                assert.equal(await evaluate(`${frame(0)}.contentWindow.Tide.minLag === undefined`), true, `${id}: the host's page has none`);
                 assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.lag === Number(example.querySelector('[data-example-lag]').value)`), true, `${id}: the slider's ping, once the least is known`);
                 // The slider is the ping both pages are told, at once: the
                 // round trip the one that joined is to have (what it then
