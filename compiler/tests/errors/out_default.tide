@@ -1,0 +1,3 @@
+// expect: an 'out' parameter is the caller's list, which a call can't leave out: it takes no default
+scene Main { }
+extern int Fill(int count, out List<byte> bytes = []);

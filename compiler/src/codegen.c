@@ -2080,7 +2080,9 @@ static bool extern_takes_lists(const decl *m)
 // they are, `mut` ones by address, `in` ones by address too (a copy's, for a
 // value that's no variable's), and text as C text. Text C returns is copied,
 // since C may reuse it. One that takes lists is called through a function of
-// its own (gen_extern_lists), which takes the lists, `mut` ones by address.
+// its own (gen_extern_lists), which takes the lists, `mut` ones by address,
+// and an `out` one with where it is, as the list C makes may start empty,
+// and an empty list doesn't say whose it is.
 static void gen_extern_call(gen *g, sb *o, const expr *e)
 {
     const decl *m = e->method;
@@ -2098,6 +2100,7 @@ static void gen_extern_call(gen *g, sb *o, const expr *e)
             sb_put(o, "&("); // The caller's list itself, whose elements C changes
             gen_expr(g, o, arg);
             sb_put(o, ")");
+            if (p->is_out) sb_printf(o, ", %s", place_where(g, arg)); // Where the list is
         } else if (p->type.kind == TY_LIST) {
             gen_as(g, o, arg, p->type);
         } else if (p->mode == PARAM_MUT
@@ -2611,7 +2614,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             const type element = list_elem(e->type_decl);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
-                const bool is_element = i == e->args.count - 1 && !str_eq_c(e->name, "RemoveAt");
+                const bool is_element = i == e->args.count - 1 && !str_eq_c(e->name, "RemoveAt") && !str_eq_c(e->name, "Resize");
                 gen_as(g, o, e->args.items[i], is_element ? element : (type){TY_INT, NULL});
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the list is
@@ -5879,6 +5882,9 @@ static void gen_list_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER void tide_list%d_insert(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_remove_at(tide_list *l, int32_t i, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_clear(tide_list *l, uint32_t where);\n", k);
+            if (prog->lists.items[k]->resized) {
+                sb_printf(o, "TIDE_HELPER void tide_list%d_resize(tide_list *l, int32_t count, uint32_t where);\n", k);
+            }
             sb_printf(o, "TIDE_HELPER tide_list tide_list%d_copy(tide_list l);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_assign(tide_list *to, tide_list value, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_own(tide_list *l, uint32_t where);\n", k);
@@ -5942,6 +5948,15 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const char *takes = take_all.data ? take_all.data : "";
         sb_printf(o, "TIDE_HELPER void tide_list%d_clear(tide_list *l, const uint32_t where)\n{\n    (void)where;\n%s", k, drops);
         sb_printf(o, "    tide_list_clear(l, sizeof(%s));\n}\n\n", sz);
+        // Resize, in the games that call it: the elements it takes out let go of their text first, as Clear's do
+        if (prog->lists.items[k]->resized) {
+            sb_printf(o, "TIDE_HELPER void tide_list%d_resize(tide_list *l, const int32_t count, const uint32_t where)\n{\n", k);
+            if (text) {
+                sb_printf(o, "    for (int32_t i = count < 0 ? 0 : count; i < tide_list_count(*l); i++) "
+                             "tide_list%d_drop(tide_list_at_mut(*l, i, sizeof(%s)), where);\n", k, sz);
+            }
+            sb_printf(o, "    tide_list_resize(l, count, sizeof(%s), where);\n}\n\n", sz);
+        }
         sb_printf(o, "TIDE_HELPER tide_list tide_list%d_copy(const tide_list l)\n{\n    return tide_list_copy(l, sizeof(%s));\n}\n\n", k, sz);
         sb_printf(o, "TIDE_HELPER void tide_list%d_assign(tide_list *l, const tide_list value, const uint32_t where)\n{\n%s", k, drops);
         sb_printf(o, "    tide_list_set(l, value, sizeof(%s), where);\n%s}\n\n", sz, takes);
@@ -10084,7 +10099,7 @@ static void gen_heard(gen *g)
 // address if it's mut), then the parameters, mut ones by address.
 // An extern function's parameter as C declares it: plain values as they are,
 // `mut` and `in` ones by address, text as C text, and lists as pointers to
-// their elements.
+// their elements, but an `out` one, which C makes through a tide_list_out.
 static const char *extern_param(gen *g, const param *p)
 {
     sb b = {0};
@@ -10093,6 +10108,8 @@ static const char *extern_param(gen *g, const param *p)
         sb_printf(&b, "const char *%s", name);
     } else if (p->type.kind == TY_DRAW_LIST) { // The frame's list, which C draws into
         sb_printf(&b, "tide_draw_list *%s", name);
+    } else if (p->type.kind == TY_LIST && p->is_out) {
+        sb_printf(&b, "tide_list_out *%s", name);
     } else if (p->type.kind == TY_LIST) {
         sb_printf(&b, "%s%s *%s", p->mode == PARAM_MUT ? "" : "const ", c_type(list_elem(p->type.decl)), name);
     } else if (p->mode == PARAM_MUT || p->mode == PARAM_IN) {
@@ -10113,6 +10130,9 @@ static const char *extern_return(const decl *m)
 // The function an extern that takes lists is called through: C gets each
 // list's elements side by side, which a list in chunks (see tide/list.h) only
 // has in a copy, written back into the list after the call when C changes it.
+// An `out` list goes as a tide_list_out, which C makes the elements through:
+// once it returns, they're the caller's list, which is at the `where` that
+// comes with it.
 static void gen_extern_lists(gen *g, sb *o, const decl *m)
 {
     const char *ret = extern_return(m);
@@ -10123,6 +10143,7 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         if (i) sb_put(o, ", ");
         if (p->type.kind != TY_LIST) sb_put(o, extern_param(g, p));
         else sb_printf(o, "%s%s", p->mode == PARAM_MUT ? "tide_list *" : "const tide_list ", local_cname(g, p->name));
+        if (p->type.kind == TY_LIST && p->is_out) sb_printf(o, ", const uint32_t %s", where_name(g, p->name));
     }
     sb_put(o, ")\n{\n");
     for (int i = 0; i < m->params.count; i++) {
@@ -10130,6 +10151,10 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         if (p->type.kind != TY_LIST) continue;
         const bool changes = p->mode == PARAM_MUT;
         const char *element = c_type(list_elem(p->type.decl));
+        if (p->is_out) {
+            sb_printf(o, "    tide_list_out tide_out%d;\n    tide_list_out_begin(&tide_out%d, (uint32_t)sizeof(%s));\n", i, i, element);
+            continue;
+        }
         sb_printf(o, "    bool tide_copied%d;\n", i);
         sb_printf(o, "    %s *tide_flat%d = tide_list_flatten(%s%s, (uint32_t)sizeof(%s), %s, &tide_copied%d);\n", element, i,
                   changes ? "*" : "", local_cname(g, p->name), element, changes ? "true" : "false", i);
@@ -10139,7 +10164,8 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
         if (i) sb_put(o, ", ");
-        if (p->type.kind == TY_LIST) sb_printf(o, "tide_flat%d", i);
+        if (p->type.kind == TY_LIST && p->is_out) sb_printf(o, "&tide_out%d", i);
+        else if (p->type.kind == TY_LIST) sb_printf(o, "tide_flat%d", i);
         else sb_put(o, local_cname(g, p->name));
     }
     sb_put(o, ");\n");
@@ -10147,6 +10173,10 @@ static void gen_extern_lists(gen *g, sb *o, const decl *m)
         const param *p = &m->params.items[i];
         if (p->type.kind != TY_LIST) continue;
         const bool changes = p->mode == PARAM_MUT;
+        if (p->is_out) {
+            sb_printf(o, "    tide_list_out_end(&tide_out%d, %s, %s);\n", i, local_cname(g, p->name), where_name(g, p->name));
+            continue;
+        }
         sb_printf(o, "    tide_list_unflatten(%s%s, tide_flat%d, (uint32_t)sizeof(%s), %s, tide_copied%d);\n", changes ? "*" : "",
                   local_cname(g, p->name), i, c_type(list_elem(p->type.decl)), changes ? "true" : "false", i);
     }

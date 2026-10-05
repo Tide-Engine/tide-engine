@@ -159,6 +159,12 @@ void tide_list_remove_at(tide_list *l, int32_t i, uint32_t size);
 // Removes every element. Release their text first.
 void tide_list_clear(tide_list *l, uint32_t size);
 
+// Makes the list `count` elements long (none, for a count under 0), in one
+// go. New ones are zeroed. With fewer, the rest go: release their text first.
+// A world's list in chunks gives back the chunks it no longer needs. A list
+// that would be bigger than one gets stays as it is.
+void tide_list_resize(tide_list *l, int32_t count, uint32_t size, uint32_t where);
+
 // A copy in the scratch area: a list taken out of a field or variable.
 tide_list tide_list_copy(tide_list l, uint32_t size);
 
@@ -193,6 +199,46 @@ void tide_list_sort(tide_list *l, uint32_t size, bool (*before)(const void *ctx,
 // which it was.
 void *tide_list_flatten(tide_list l, uint32_t size, bool changes, bool *copied);
 void tide_list_unflatten(tide_list l, void *flat, uint32_t size, bool changes, bool copied);
+
+// ---------------------------------------------------------------------------
+// A list C makes: an extern function's `out List<T>` parameter, which C gets
+// as a tide_list_out. C asks for room, fills it, and says how many elements
+// there are; once it returns, the caller's list is exactly those. What the
+// list held before isn't passed, so nothing of it is copied for C.
+//
+//     int WriteImage(tide_list_out *image)
+//     {
+//         uint8_t *bytes = tide_list_out_room(image, 4096);
+//         const uint32_t written = fill(bytes, 4096);
+//         tide_list_out_count(image, written);
+//         return (int)written;
+//     }
+
+typedef struct tide_list_out {
+    void *room;     // What C fills: memory of the engine's, kept for the next call
+    uint32_t size;  // An element's bytes
+    uint32_t asked; // The elements there's room for
+    uint32_t count; // ...and how many of them the list gets
+} tide_list_out;
+
+// Memory for `count` elements side by side, for C to fill; what's in it is
+// unspecified. Asking again gives memory for the new count and the earlier
+// one is no longer good, so C that finds it needs more asks again and starts
+// over. NULL for no elements, and for more than a list holds (1 GiB of them).
+void *tide_list_out_room(tide_list_out *out, uint32_t count);
+
+// How many of those elements, from the first, the list has once C returns: at
+// most the room last asked for. Never called: the list is empty.
+void tide_list_out_count(tide_list_out *out, uint32_t count);
+
+// For generated code, around the call: begin sets `out` up for elements of
+// `size` bytes, and end makes the list `l`, which is at `where`, what C said,
+// and lets the room go. A world's list is written chunk by chunk and only
+// where its bytes differ, so a chunk that comes out the same stays shared
+// with the world's snapshots and isn't hashed again; the chunks past the new
+// count go back to the heap.
+void tide_list_out_begin(tide_list_out *out, uint32_t size);
+void tide_list_out_end(tide_list_out *out, tide_list *l, uint32_t where);
 
 // ---------------------------------------------------------------------------
 // Parallel loops over a list's elements, by index: `parallel (var i in items)`

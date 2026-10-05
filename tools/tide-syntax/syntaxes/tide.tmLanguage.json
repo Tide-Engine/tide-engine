@@ -456,8 +456,8 @@
           }
         },
         {
-          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is",
-          "match": "(?:(?<=[(,])|^)\\s*(in)(?=\\s+[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
+          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is; extern int Write(out List<byte> bytes): a list C makes. A name anywhere else: Buffer out, out.size",
+          "match": "(?:(?<=[(,])|^)\\s*(in|out)(?=\\s+[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
           "captures": {
             "1": { "name": "storage.modifier.tide" }
           }

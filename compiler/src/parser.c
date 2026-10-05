@@ -1214,13 +1214,27 @@ static void parse_routine_params(parser *p, decl *m)
         do {
             param prm = {0};
             prm.at = peek(p)->at;
-            prm.mode = accept(p, T_MUT) ? PARAM_MUT : PARAM_READ;
+            const token *mut = at(p, T_MUT) ? advance(p) : NULL;
+            prm.mode = mut ? PARAM_MUT : PARAM_READ;
             // `in Stats stats`: `in` before a type and a name (the checker says it's only for extern functions)
             const tok_kind after = peek_at(p, 2)->kind;
             if (prm.mode == PARAM_READ && at(p, T_IDENT) && str_eq_c(peek(p)->text, "in") && peek_at(p, 1)->kind == T_IDENT
                 && (after == T_IDENT || after == T_DOT || after == T_LT)) {
                 advance(p);
                 prm.mode = PARAM_IN;
+            }
+            // `out List<byte> image`: `out` before a type and a name, an extern function's too. The call changes
+            // the list, so it's a `mut` parameter to everything but C, which makes its elements
+            if (prm.mode != PARAM_IN && at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
+                && (after == T_IDENT || after == T_DOT || after == T_LT)) {
+                if (mut) {
+                    diag_error(mut->at, "'out' says the call makes the list, which 'mut' would only change: drop 'mut'");
+                    diag_note("like 'extern int Fill(out List<byte> bytes);'");
+                    longjmp(p->fail, 1);
+                }
+                prm.out_at = advance(p)->at;
+                prm.is_out = true;
+                prm.mode = PARAM_MUT;
             }
             // `verified Health health` is a view's parameter: a function takes the value it's passed
             if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "verified") && peek_at(p, 1)->kind == T_IDENT
@@ -1560,6 +1574,19 @@ static void parse_query_params(parser *p, decl *d)
                                   STR_FMT "[entity]', and 'world.Has<" STR_FMT ">(entity)' where it has '" STR_FMT
                                   ".Has(entity)'", STR_ARG(component.text), STR_ARG(name), STR_ARG(component.text),
                                   STR_ARG(name));
+                    }
+                    longjmp(p->fail, 1);
+                }
+                // `out Store store`, as C# has it: here `out` is an extern function's, for a list C makes
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
+                    && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
+                    diag_error(peek(p)->at, "only extern functions take 'out' parameters: C makes the list's elements, and "
+                                            "says how many");
+                    if (peek_at(p, 2)->kind == T_IDENT) {
+                        diag_note("this takes what it changes as 'mut': 'mut " STR_FMT " " STR_FMT "'", STR_ARG(peek_at(p, 1)->text),
+                                  STR_ARG(peek_at(p, 2)->text));
+                    } else {
+                        diag_note("this takes what it changes as 'mut', like 'mut Health health'");
                     }
                     longjmp(p->fail, 1);
                 }

@@ -2844,6 +2844,7 @@ TIDE_TEST(lsp_methods_and_functions)
     "extern float Noise(float x, float y);\n"                                  \
     "extern int twice(int x);\n"                                               \
     "extern float Weigh(in float3 v, List<float> weights, string name);\n"    \
+    "extern int Fill(out List<byte> bytes, int count);\n"                     \
     "\n"                                                                       \
     "component Ground { float height; }\n"                                     \
     "scene Main { }\n"                                                         \
@@ -2870,12 +2871,36 @@ TIDE_TEST(lsp_extern_functions)
     open_document(EXTERNS "system Shape(mut Ground ground)\n{\n    ground.height = We$igh(float3(1), [1], \"a\");\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "extern float Weigh(in float3 v, List<float> weights, string name)"));
 
+    // A list C makes: `out` is in its signature, a call of it writes the list, and its parameter says what C gets.
+#define FILLED "singleton Store { List<byte> image; int size; }\n"
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fi$ll(store.image, 4);\n}\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\""));
+    const char *fill = request("textDocument/hover");
+    TIDE_CHECK(has(fill, "extern int Fill(out List<byte> bytes, int count)") && has(fill, "C function `Fill`"));
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fill($store.image, 4);\n}\n");
+    const char *filling = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(filling, "Fill(out List<byte> bytes, int count)") && has(filling, "\"activeParameter\":0"));
+    open_document(EXTERNS FILLED "system Make(Store store, mut Ground ground)\n{\n    ground.height = Fill(store.image, 4);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'store' is read-only") && has(last_sent(), "'Fill' changes its 'bytes'"));
+    open_document("extern int Fill(out List<byte> by$tes, int count);\nscene Main { }\n");
+    const char *made = request("textDocument/hover");
+    TIDE_CHECK(has(made, "List<byte> bytes") && has(made, "the caller's list, which C makes") && has(made, "tide_list_out"));
+    open_document("scene Main { }\nvoid Fill(out List<byte> bytes) { bytes.Add(1); }\n");
+    TIDE_CHECK(has(last_sent(), "only extern functions take 'out' parameters"));
+    // A system that only makes a list through C still writes what holds it: no warning that `mut` is unused
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    Fill(store.image, 4);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef FILLED
+
     // Completion: the declaration, its return type and parameters, the attribute, and calls.
     TIDE_CHECK(offers(complete(EXTERNS "$"), "extern"));
     TIDE_CHECK(offers(complete(EXTERNS "extern $"), "float"));
     const char *params = complete(EXTERNS "extern float Sum($");
-    TIDE_CHECK(offers(params, "in") && offers(params, "mut") && offers(params, "float3"));
+    TIDE_CHECK(offers(params, "in") && offers(params, "mut") && offers(params, "out") && offers(params, "float3"));
     TIDE_CHECK(offers(complete(EXTERNS "extern float Sum(in $"), "float3"));
+    const char *after_out = complete(EXTERNS "extern int Make(int count, out $");
+    TIDE_CHECK(offers(after_out, "List") && !offers(after_out, "float3")); // Only a list is made by C
+    TIDE_CHECK(!offers(complete(EXTERNS "extern int Make(int out $"), "List")); // A parameter named out is a name
     TIDE_CHECK(offers(complete(EXTERNS "[$"), "NativeName"));
     TIDE_CHECK(offers(complete(EXTERNS "system Shape(mut Ground ground)\n{\n    $\n}\n"), "Noise"));
 
@@ -2884,8 +2909,10 @@ TIDE_TEST(lsp_extern_functions)
     TIDE_CHECK(has(last_sent(), "C functions can't take lists of text yet"));
 
     // The formatter leaves an extern on its line.
-    static const char messy[] = "extern  float Noise( float x ,float y ) ;\nscene Main { }\n";
-    static const char expected[] = "extern float Noise(float x, float y);\nscene Main { }\n";
+    static const char messy[] = "extern  float Noise( float x ,float y ) ;\nextern int Fill( out  List<byte> bytes ,in float3 v ) ;\n"
+                                "scene Main { }\n";
+    static const char expected[] = "extern float Noise(float x, float y);\nextern int Fill(out List<byte> bytes, in float3 v);\n"
+                                   "scene Main { }\n";
     format_reply(messy);
     const char *formatted = apply_reply(messy, NULL);
     TIDE_CHECK(strcmp(formatted, expected) == 0);
@@ -3724,6 +3751,16 @@ TIDE_TEST(lsp_built_in_methods)
     open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Add($\n}\n");
     const char *add = request("textDocument/signatureHelp");
     TIDE_CHECK(has(add, "List<int>.Add(int item)") && !has(add, "components"));
+    // Resize: a list's, in what's offered after it, its hover and its signature
+    TIDE_CHECK(offers(complete(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.$\n}\n"), "Resize"));
+    open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Res$ize(4);\n}\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    const char *resize = request("textDocument/hover");
+    TIDE_CHECK(has(resize, "List<int>.Resize(int count)") && has(resize, "new ones are the element type's zero"));
+    open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Resize($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "List<int>.Resize(int count)"));
+    open_document(BUILT_IN_METHODS "system S(Field field)\n{\n    field.items.Resize(4);\n}\n"); // It changes the list
+    TIDE_CHECK(has(last_sent(), "'field' is read-only") && has(last_sent(), "'List.Resize' is a mut method"));
     open_document(BUILT_IN_METHODS "system S(mut Body body)\n{\n    this.Add($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "entity.Add(components...)"));
     open_document(BUILT_IN_METHODS "system S(Field field)\n{\n    var t = field.name.Substring(1, $\n}\n");

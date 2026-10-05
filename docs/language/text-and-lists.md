@@ -67,6 +67,7 @@ system Collect(mut Inventory inventory, Pickup pickup)
 
 - `count`, `items[i]` to read, and `items[i] = x` or `items[i] += x` to write.
 - `Add(item)`, `Insert(index, item)`, `RemoveAt(index)` and `Clear()`.
+- `Resize(count)` makes the list `count` elements long in one go. New elements are the element type's zero, empty for text. With fewer, the rest go. A count under 0 is 0.
 - For elements that `==` compares (numbers, bools, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 
 Past the end, a read gives the element type's zero and a write does nothing.

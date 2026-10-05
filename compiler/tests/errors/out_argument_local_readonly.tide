@@ -1,0 +1,10 @@
+// expect: 'made' is read-only
+// expect: 'Fill' changes its 'bytes'
+extern int Fill(out List<byte> bytes);
+singleton Sizes { int image; }
+scene Main { }
+system Run(mut Sizes sizes)
+{
+    List<byte> made = [];
+    sizes.image = Fill(made);
+}

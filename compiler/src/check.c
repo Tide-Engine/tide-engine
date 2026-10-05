@@ -2711,8 +2711,9 @@ static void put_routine(sb *out, const decl *m)
     sb_printf(out, STR_FMT "(", STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
-        sb_printf(out, "%s%s" STR_FMT " " STR_FMT, i ? ", " : "", p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_IN ? "in " : "",
-                  STR_ARG(p->type_name), STR_ARG(p->name));
+        sb_printf(out, "%s%s" STR_FMT " " STR_FMT, i ? ", " : "",
+                  p->is_out ? "out " : p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_IN ? "in " : "", STR_ARG(p->type_name),
+                  STR_ARG(p->name));
         if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text));
     }
     sb_put(out, ")");
@@ -6136,6 +6137,7 @@ static type check_list_method(checker *c, expr *e, const type list)
         {"RemoveAt", "items.RemoveAt(index)", 1, true, false, true, false, TY_VOID},
         {"Remove", "items.Remove(item)", 1, false, true, true, true, TY_BOOL},
         {"Clear", "items.Clear()", 0, false, false, true, false, TY_VOID},
+        {"Resize", "items.Resize(count)", 1, true, false, true, false, TY_VOID},
         {"Contains", "items.Contains(item)", 1, false, true, false, true, TY_BOOL},
         {"IndexOf", "items.IndexOf(item)", 1, false, true, false, true, TY_INT},
     };
@@ -6183,6 +6185,7 @@ static type check_list_method(checker *c, expr *e, const type list)
         changer->name = (str){name.data, (int)name.len};
         check_writable(c, e->object, changer, NULL);
     }
+    if (str_eq_c(e->name, "Resize") && list.decl) list.decl->resized = true; // Generated C has its helper
     return (type){methods[m].result, NULL};
 }
 
@@ -9260,6 +9263,11 @@ static void check_param_default(checker *c, const decl *m, const param *p)
         diag_error(value->at, "an operator always gets its operands, so they take no default");
         return;
     }
+    if (p->is_out) {
+        diag_error(value->at, "an 'out' parameter is the caller's list, which a call can't leave out: it takes no default");
+        diag_note("drop the default");
+        return;
+    }
     if (p->mode == PARAM_MUT) {
         diag_error(value->at, "a 'mut' parameter is the caller's variable, which a call can't leave out: it takes no default");
         diag_note("drop 'mut' to take a value, or drop the default");
@@ -9334,7 +9342,13 @@ static void check_signature(checker *c, decl *m)
             diag_note("a Tide %s's parameters are read-only already; drop 'in'", m->owner ? "method" : "function");
             p->mode = PARAM_READ;
         }
-        if (p->type.kind == TY_RECORD && p->mode == PARAM_MUT) {
+        if (p->is_out && !m->is_extern) {
+            diag_error(p->out_at, "only extern functions take 'out' parameters: C makes the list's elements, and says how many");
+            diag_note("a Tide %s changes its caller's variable as 'mut " STR_FMT " " STR_FMT "'", m->owner ? "method" : "function",
+                      STR_ARG(p->type_name), STR_ARG(p->name));
+            p->is_out = false; // A `mut` parameter, to what's checked next
+        }
+        if (p->type.kind == TY_RECORD && p->mode == PARAM_MUT && !p->is_out) {
             diag_error(p->at, "devices can only be read, so '" STR_FMT "' can't be 'mut'", STR_ARG(p->name));
         }
         if (p->type.kind == TY_DRAW_LIST && !m->is_extern) {
@@ -9343,8 +9357,9 @@ static void check_signature(checker *c, decl *m)
             p->type = T_ERR;
         } else if (p->type.kind == TY_DRAW_LIST && p->mode != PARAM_READ) {
             diag_error(p->at, "a DrawList goes to C as it is, a 'tide_draw_list *'; drop '%s'",
-                       p->mode == PARAM_MUT ? "mut" : "in");
+                       p->is_out ? "out" : p->mode == PARAM_MUT ? "mut" : "in");
             p->mode = PARAM_READ;
+            p->is_out = false;
         }
         if (p->type.kind != TY_ACTION) continue;
         if (m->kind != DECL_FUNCTION) {
@@ -9624,9 +9639,22 @@ static const char *extern_c_name(const decl *fn)
 
 // An extern function's parameter: plain data, by value, or by address when
 // it's `mut` or `in`; text as C text; or a list as a pointer to its elements,
-// which are plain data.
-static void check_extern_param(const checker *c, decl *fn, const param *p)
+// which are plain data, or with `out`, as a tide_list_out C makes them through.
+static void check_extern_param(const checker *c, decl *fn, param *p)
 {
+    if (p->is_out && p->type.kind != TY_LIST) {
+        if (p->type.kind != TY_ERROR) {
+            diag_error(p->out_at, "only a list is an 'out' parameter, and '" STR_FMT "' is %s", STR_ARG(p->name), type_name(p->type));
+            if (p->type.kind == TY_STRING) {
+                diag_note("C returns text, as its 'const char *': 'extern string Name(...);'");
+            } else {
+                diag_note("C makes the elements of an 'out List<T>'; it changes a value through a pointer as 'mut " STR_FMT " " STR_FMT
+                          "', or returns it", STR_ARG(p->type_name), STR_ARG(p->name));
+            }
+        }
+        p->is_out = false;
+        if (p->type.kind == TY_STRING) p->mode = PARAM_READ; // Said already: not again, of 'mut'
+    }
     if (p->type.kind == TY_STRING) {
         c->prog->uses_text = true; // C text that isn't already can be a copy
         if (p->mode == PARAM_MUT) {
@@ -9666,7 +9694,7 @@ static void check_extern_decl(const checker *c, decl *fn)
         c->prog->uses_text = true; // Copied into the scratch area
     } else if (fn->return_type.kind == TY_LIST) {
         diag_error(fn->return_type_at, "C functions can't return lists");
-        diag_note("C can fill the elements of a list the game passes it as 'mut List<T>'");
+        diag_note("C makes a list the game passes it as 'out List<T>', and changes the elements of one it's passed as 'mut List<T>'");
     } else if (c_refuses(fn->return_type)) {
         diag_error(fn->return_type_at, "C functions can't return %s yet", c_refuses(fn->return_type));
         diag_note("return numbers, vectors, enums, text, or structs of them");

@@ -1,0 +1,4 @@
+// expect: Resize takes 1 argument: 'items.Resize(count)'
+scene Main { }
+component Inventory { List<int> scores; }
+system S(mut Inventory inv) { inv.scores.Resize(); }

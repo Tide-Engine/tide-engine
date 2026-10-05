@@ -247,6 +247,10 @@ typedef struct param {
     bool verified;
     loc verified_at; // ...the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    // `out List<byte> image`, an extern function's: C makes the list's elements and says how many, through a
+    // tide_list_out (tide/list.h). Its mode is PARAM_MUT, as for everything else it's a list the call changes
+    bool is_out;
+    loc out_at; // ...the word
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
@@ -407,6 +411,7 @@ typedef struct decl {
     VEC(field) fields;
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
     int dims;  // Grids: 2 or 3
+    bool resized;         // Lists: some code calls Resize, so generated C has its helper
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it

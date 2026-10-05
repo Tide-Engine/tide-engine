@@ -1,0 +1,4 @@
+// expect: only extern functions take 'out' parameters: C makes the list's elements, and says how many
+// expect: a Tide function changes its caller's variable as 'mut List<int> values'
+scene Main { }
+void Fill(out List<int> values) { values.Add(1); }
