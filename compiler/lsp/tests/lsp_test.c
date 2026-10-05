@@ -2042,11 +2042,41 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
 
-    // Claims, for widgets a view draws itself
+    // Claims, for widgets that read the devices themselves
     const char *claims = complete("scene Main { }\nview V()\n{\n    GUI.$\n}\n");
     TIDE_CHECK(offers(claims, "ClaimPointer"));
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
+
+    // A widget a view draws itself, and the look of the GUI's own
+    TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));
+    TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}")); // The one that takes a block
+#define CONTROL_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
+    open_document(CONTROL_VIEW("    GUI.Navigate();\n    var card = GUI.Con$trol(Rect(0, 0, 200, 200));\n"
+                               "    if (card.clicked || card.pressed && card.hovered) GUI.SetTheme(GUITheme { radius = 4 });\n"
+                               "    GUI.Theme(GUITheme { hot = Color.red, fieldHot = Color.red })\n    {\n"
+                               "        GUI.Label(Rect(0, 0, 10, 10), card.focused ? \"on\" : \"off\");\n    }"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *control = request("textDocument/hover");
+    TIDE_CHECK(has(control, "GUI.Control(Rect rect) -> GUIControl"));
+    TIDE_CHECK(has(control, "the GUI handles its input as a button's, and draws nothing"));
+    const char *said = complete(CONTROL_VIEW("    var card = GUI.Control(Rect(0, 0, 200, 200));\n    var on = card.$"));
+    TIDE_CHECK(offers(said, "hovered") && offers(said, "pressed") && offers(said, "focused") && offers(said, "clicked"));
+    TIDE_CHECK(has(said, "a press on it let go on it"));
+    const char *looks = complete(CONTROL_VIEW("    GUI.SetTheme(GUITheme { $ });"));
+    TIDE_CHECK(offers(looks, "text") && offers(looks, "panel") && offers(looks, "control") && offers(looks, "hot"));
+    TIDE_CHECK(offers(looks, "pressed") && offers(looks, "field") && offers(looks, "fieldHot") && offers(looks, "accent"));
+    TIDE_CHECK(offers(looks, "radius"));
+    open_document(CONTROL_VIEW("    GUI.Set$Theme(GUITheme { });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.SetTheme(GUITheme theme)"));
+    open_document(CONTROL_VIEW("    GUI.The$me(GUITheme { })\n    {\n    }"));
+    TIDE_CHECK(has(request("textDocument/hover"), "GUI.Theme(GUITheme theme, Block content)"));
+    open_document(CONTROL_VIEW("    var look = GUIThe$me { radius = 4 };\n    GUI.SetTheme(look);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "a theme names what it changes"));
+    // One form says the other's name
+    open_document(CONTROL_VIEW("    GUI.Theme(GUITheme { });"));
+    TIDE_CHECK(has(last_sent(), "GUI.Theme takes a block") && has(last_sent(), "GUI.SetTheme(...)"));
+#undef CONTROL_VIEW
     open_document("scene Main { }\nview V()\n{\n    GUI.Claim$Pointer();\n    GUI.ClaimKeyboard();\n    GUI.ShowKeyboard();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *claim = request("textDocument/hover");

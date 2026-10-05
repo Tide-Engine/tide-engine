@@ -315,3 +315,43 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     tide_draw_free(&list);
     tide_profiler_free(&p);
 }
+
+// The panel isn't one of the GUI's widgets: it looks the same whatever theme
+// the game gave those.
+TIDE_TEST(profiler_keeps_its_look_whatever_the_guis_theme)
+{
+    static tide_profiler p;
+    static tide_gui gui;
+    static tide_draw_list themed;
+    measured(&p, 3);
+    tide_profiler_end(&p, 100);
+    const tide_devices devices = {0};
+    uint32_t first[2];
+    for (int pass = 0; pass < 2; pass++) {
+        tide_draw_list *to = pass == 0 ? &list : &themed;
+        tide_draw_reset(to);
+        tide_gui_begin(&gui, &devices, tide_f2(960, 540), font);
+        if (pass == 1) {
+            tide_gui_theme loud = tide_gui_theme_default();
+            loud.text = loud.panel = loud.control = (tide_color){1.0f, 0.0f, 1.0f, 1.0f};
+            loud.radius = 9.0f;
+            tide_gui_set_theme(&gui, loud);
+        }
+        tide_gui_button(&gui, 1, (tide_rect){500, 400, 100, 30}, "Play");
+        tide_gui_end(&gui, to);
+        first[pass] = to->count; // The profiler's rows go after the GUI's, as a host adds them
+        tide_profiler_draw(&p, to, tide_f2(960, 540), font);
+    }
+    TIDE_REQUIRE(first[0] == first[1] && list.count == themed.count && list.count > first[0] + 4);
+    TIDE_CHECK(themed.commands[1].kind == TIDE_DRAW_SHAPE && list.commands[1].kind == TIDE_DRAW_RECT); // The button took the theme
+    for (uint32_t i = first[0]; i < list.count; i++) {
+        const tide_draw_command *a = &list.commands[i];
+        const tide_draw_command *b = &themed.commands[i];
+        TIDE_CHECK(a->kind == b->kind && a->kind != TIDE_DRAW_SHAPE);
+        TIDE_CHECK(a->color.r == b->color.r && a->color.g == b->color.g && a->color.b == b->color.b && a->color.a == b->color.a);
+        if (a->kind == TIDE_DRAW_TEXT) TIDE_CHECK(strcmp(list.text + a->text, themed.text + b->text) == 0);
+    }
+    tide_draw_free(&list);
+    tide_draw_free(&themed);
+    tide_profiler_free(&p);
+}
