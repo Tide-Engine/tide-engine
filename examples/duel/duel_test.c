@@ -33,6 +33,15 @@ static void start(void)
     }
 }
 
+// A draft, as RoundFlow starts one: who picks, and the three cards it dealt.
+// The deck isn't asked, so the cards are the same in every run.
+static void draft(const int side)
+{
+    world.Duel.phase = Phase_Draft;
+    world.Duel.draftSide = side;
+    world.Duel.offers = (tide_int3){1, 4, 6};
+}
+
 static void place(tide_entity entity, float x, float y)
 {
     Body body = tide_get_Body(&world, entity);
@@ -430,15 +439,13 @@ TIDE_TEST(duel_shots_drop_as_fast_as_their_fighters_build_says)
 TIDE_TEST(duel_a_build_remembers_the_cards_it_was_given_in_order)
 {
     start();
-    world.Duel.phase = Phase_Draft;
-    world.Duel.draftSide = 0;
+    draft(0);
     TIDE_CHECK(tide_get_Fighter(&world, world.Duel.blue).build.cards == 0);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 2));
     tide_world_tick(&world);
     const int first = tide_get_Fighter(&world, world.Duel.blue).build.cards;
     TIDE_CHECK(first >= 1 && first <= 8); // One card: its number, from 1.
-    world.Duel.phase = Phase_Draft;
-    world.Duel.draftSide = 0;
+    draft(0);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, world.Duel.round, 0));
     tide_world_tick(&world);
     const int both = tide_get_Fighter(&world, world.Duel.blue).build.cards;
@@ -599,8 +606,7 @@ TIDE_TEST(duel_cards_persist_between_rounds_and_reset_on_rematch)
     const Build baseline = tide_get_Fighter(&world, world.Duel.blue).build;
     const int match = world.Duel.match;
     const int round = world.Duel.round;
-    world.Duel.phase = Phase_Draft;
-    world.Duel.draftSide = 0;
+    draft(0);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 0));
     tide_world_tick(&world);
     const Build upgrade = tide_get_Fighter(&world, world.Duel.blue).build;
@@ -659,8 +665,7 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     start();
     const Build before = tide_get_Fighter(&world, world.Duel.blue).build;
     const int round = world.Duel.round;
-    world.Duel.phase = Phase_Draft;
-    world.Duel.draftSide = 0;
+    draft(0);
     TIDE_REQUIRE(choose(world.Duel.blue, 1, round, 0)); // Another player's fighter.
     tide_world_tick(&world);
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round - 1, 0)); // An earlier draft.
@@ -677,5 +682,27 @@ TIDE_TEST(duel_card_commands_validate_sender_round_slot_and_drafting_side)
     TIDE_REQUIRE(choose(world.Duel.blue, 0, round, 1));
     tide_world_tick(&world);
     TIDE_CHECK(world.Duel.phase == Phase_Countdown && world.Duel.round == round + 1);
+    tide_world_free(&world);
+}
+
+// A match's seed is where its cards and its bots' moods come from: the menu's
+// duel goes the same from one seed, and otherwise from another.
+TIDE_TEST(duel_matches_differ_with_their_seeds)
+{
+    static const uint32_t seeds[4] = {1, 2, 3, 1};
+    uint64_t drafts[4];
+    for (int i = 0; i < 4; i++) {
+        tide_world_free(&world);
+        tide_world_start_seeded(&world, 1.0f / 60.0f, NULL, seeds[i]);
+        for (int tick = 0; tick < 3000 && world.Duel.phase != Phase_Draft; tick++) tide_world_tick(&world);
+        TIDE_REQUIRE(world.Duel.phase == Phase_Draft);
+        // Three cards of the eight, no two alike
+        const tide_int3 offers = world.Duel.offers;
+        TIDE_CHECK(offers.x != offers.y && offers.y != offers.z && offers.x != offers.z);
+        TIDE_CHECK(offers.x >= 0 && offers.x < 8 && offers.y >= 0 && offers.y < 8 && offers.z >= 0 && offers.z < 8);
+        drafts[i] = tide_world_hash(&world);
+    }
+    TIDE_CHECK(drafts[0] != drafts[1] && drafts[1] != drafts[2] && drafts[0] != drafts[2]);
+    TIDE_CHECK(drafts[0] == drafts[3]);
     tide_world_free(&world);
 }

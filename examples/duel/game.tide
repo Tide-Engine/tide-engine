@@ -92,6 +92,11 @@ singleton Duel
     int scoreBlue;
     int scoreOrange;
     int draftSide;
+    // What deals the cards a round's loser picks from, and the three it dealt.
+    // Nothing seeds it here, so the engine does, from the match's seed: no two
+    // matches offer the same cards.
+    Random deck;
+    int3 offers;
     // Nobody plays yet: the fighters duel by themselves behind the menu, until
     // a player there picks practice or a second player joins.
     bool attract = true;
@@ -195,14 +200,21 @@ Card CardNumbered(int number)
     return Card.Mortar;
 }
 
-Card Offer(int round, int side, int slot)
+// Three cards out of the deck, no two alike, as a draft starts.
+void Deal(mut Duel duel)
 {
-    var first = Math.Hash(int3(round, side, 0)) % CARDS;
-    mut var second = Math.Hash(int3(round, side, 1)) % CARDS;
-    if (second == first) second = (second + 1) % CARDS;
-    mut var third = Math.Hash(int3(round, side, 2)) % CARDS;
-    while (third == first || third == second) third = (third + 1) % CARDS;
-    return CardNumbered(slot == 0 ? first : slot == 1 ? second : third);
+    var first = duel.deck.NextInt(CARDS);
+    mut var second = duel.deck.NextInt(CARDS - 1);
+    if (second >= first) second += 1;
+    mut var third = duel.deck.NextInt(CARDS - 2);
+    if (third >= Math.Min(first, second)) third += 1;
+    if (third >= Math.Max(first, second)) third += 1;
+    duel.offers = int3(first, second, third);
+}
+
+Card Offer(Duel duel, int slot)
+{
+    return CardNumbered(slot == 0 ? duel.offers.x : slot == 1 ? duel.offers.y : duel.offers.z);
 }
 
 // How many upgrades a build has, and which the one at `index` was.
@@ -333,7 +345,7 @@ command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fi
     if (sender != owner.player || duel.phase != Phase.Draft || fighter.side != duel.draftSide) return;
     if (duel.attract) return;
     if (choice.round != duel.round || choice.slot < 0 || choice.slot > 2) return;
-    ApplyCard(fighter.build, Offer(duel.round, fighter.side, choice.slot));
+    ApplyCard(fighter.build, Offer(duel, choice.slot));
     duel.round += 1;
     duel.phase = Phase.Countdown;
     duel.timer = 1.2;
@@ -411,6 +423,7 @@ system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
         return;
     }
     duel.draftSide = blueAlive ? 1 : 0;
+    Deal(duel);
     duel.phase = Phase.Draft;
     duel.timer = 1;
 }
@@ -419,7 +432,7 @@ system BotDraft(mut Fighter fighter, mut Duel duel)
 {
     if (!fighter.bot && !duel.attract) return;
     if (duel.phase != Phase.Draft || duel.timer > 0 || fighter.side != duel.draftSide) return;
-    ApplyCard(fighter.build, Offer(duel.round, fighter.side, Math.Hash(duel.round) % 3));
+    ApplyCard(fighter.build, Offer(duel, duel.deck.NextInt(3)));
     duel.round += 1;
     duel.phase = Phase.Countdown;
     duel.timer = 1.2;
@@ -463,8 +476,8 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
         var distance = target.position.x - body.position.x;
         // A bot has moods, a few a second: how near it likes to be, how well
         // it aims and whether it holds its fire. Each side has its own, so
-        // two bots never mirror each other.
-        var mood = Math.Hash(int3(time.tick / 22, fighter.side, duel.round));
+        // two bots never mirror each other, and each match its own, from its seed.
+        var mood = Math.Hash(int4(time.seed, time.tick / 22, fighter.side, duel.round));
         var near = 130 + mood % 4 * 30;
         move = Math.Abs(distance) > near + 130 ? Math.Sign(distance) : Math.Abs(distance) < near ? -Math.Sign(distance) : 0;
         var lead = Math.Normalize(Lead(body.position, target.position, fighter.build.bulletSpeed, fighter.build.gravity));
