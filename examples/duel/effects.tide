@@ -400,67 +400,32 @@ view BounceBits(mut Fx fx, query (Platform box) platforms)
     }
 }
 
+// A bit that's light rather than a thing: a spark, or a flash where a shot
+// left its gun or ended.
+bool Glows(Bit bit)
+{
+    return bit.kind == BitKind.Streak || bit.kind == BitKind.Dot && bit.gravity == 0;
+}
+
 // The effects go over everything in the arena, which drew before them.
 [Stage(PaintStages.Effects, 2)]
 view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
 {
     var scene = lens.scene;
-    mut var t = 0;
-    while (t < fx.streaks.count)
-    {
-        mut var streak = fx.streaks[t];
-        streak.age += fx.dt;
-        if (streak.age >= streak.life)
-        {
-            fx.streaks[t] = fx.streaks[fx.streaks.count - 1];
-            fx.streaks.RemoveAt(fx.streaks.count - 1);
-            continue;
-        }
-        fx.streaks[t] = streak;
-        var left = 1 - streak.age / streak.life;
-        GlowLineOn(scene, streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
-        scene.Line(streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
-        t++;
-    }
-
-    mut var w = 0;
-    while (w < fx.waves.count)
-    {
-        mut var wave = fx.waves[w];
-        wave.age += fx.dt;
-        if (wave.age >= wave.life)
-        {
-            fx.waves[w] = fx.waves[fx.waves.count - 1];
-            fx.waves.RemoveAt(fx.waves.count - 1);
-            continue;
-        }
-        fx.waves[w] = wave;
-        var along = wave.age / wave.life;
-        var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
-        scene.WireCircle(wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
-        w++;
-    }
-
-    // The pieces, where MoveBits and BounceBits left them
+    // What's thrown first, where MoveBits and BounceBits left it: dust, pieces
+    // and shells, which cover what's behind them
     foreach (var bit in fx.bits)
     {
+        if (Glows(bit)) continue; // With the light, below
         var along = bit.age / bit.life;
         var left = 1 - along;
-        if (bit.kind == BitKind.Streak)
-        {
-            var speed = Math.Length(bit.velocity);
-            var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
-            GlowLineOn(scene, tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
-            scene.Line(tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
-        }
-        else if (bit.kind == BitKind.Puff)
+        if (bit.kind == BitKind.Puff)
         {
             scene.Circle(bit.position, bit.size * (0.45 + along * 0.9), Fade(bit.color, left * left));
         }
         else if (bit.kind == BitKind.Dot)
         {
-            scene.Circle(bit.position, bit.size * 0.5 * (bit.gravity > 0 ? Math.Min(1, left * 3) : left),
-                 Fade(bit.color, Math.Min(1, left * 2.5)));
+            scene.Circle(bit.position, bit.size * 0.5 * Math.Min(1, left * 3), Fade(bit.color, Math.Min(1, left * 2.5)));
         }
         else if (bit.kind == BitKind.Shell)
         {
@@ -472,6 +437,61 @@ view PaintEffects(mut Fx fx, mut Sky sky, Lens lens)
         }
     }
 
+    // Then the light, which adds to what's under it rather than covering it:
+    // trails, rings, sparks and flashes are brighter where they cross
+    Draw.Blend(Blend.Add)
+    {
+        mut var t = 0;
+        while (t < fx.streaks.count)
+        {
+            mut var streak = fx.streaks[t];
+            streak.age += fx.dt;
+            if (streak.age >= streak.life)
+            {
+                fx.streaks[t] = fx.streaks[fx.streaks.count - 1];
+                fx.streaks.RemoveAt(fx.streaks.count - 1);
+                continue;
+            }
+            fx.streaks[t] = streak;
+            var left = 1 - streak.age / streak.life;
+            GlowLineOn(scene, streak.from, streak.to, streak.width * left * 0.5, 9, Fade(streak.color, 0.2 * left));
+            scene.Line(streak.from, streak.to, streak.width * left, Fade(streak.color, 0.6 * left));
+            t++;
+        }
+
+        mut var w = 0;
+        while (w < fx.waves.count)
+        {
+            mut var wave = fx.waves[w];
+            wave.age += fx.dt;
+            if (wave.age >= wave.life)
+            {
+                fx.waves[w] = fx.waves[fx.waves.count - 1];
+                fx.waves.RemoveAt(fx.waves.count - 1);
+                continue;
+            }
+            fx.waves[w] = wave;
+            var along = wave.age / wave.life;
+            var radius = wave.from + (wave.to - wave.from) * EaseOut(along);
+            scene.WireCircle(wave.center, radius, Math.Max(0.6, wave.width * (1 - along)), Fade(wave.color, (1 - along) * (1 - along)));
+            w++;
+        }
+
+        foreach (var bit in fx.bits)
+        {
+            if (!Glows(bit)) continue;
+            var left = 1 - bit.age / bit.life;
+            if (bit.kind == BitKind.Dot)
+            {
+                scene.Circle(bit.position, bit.size * 0.5 * left, Fade(bit.color, Math.Min(1, left * 2.5)));
+                continue;
+            }
+            var speed = Math.Length(bit.velocity);
+            var tail = bit.position - bit.velocity * (Math.Min(speed * 0.045, 22) / Math.Max(speed, 1));
+            GlowLineOn(scene, tail, bit.position, bit.size * left * 0.5, 7, Fade(bit.color, 0.3 * left));
+            scene.Line(tail, bit.position, bit.size * left, Fade(Mix(bit.color, Color.white, left * 0.6), Math.Min(1, left * 2)));
+        }
+    }
 
     // Numbers, over everything in the arena
     mut var l = 0;
@@ -612,8 +632,12 @@ view PaintOverlay(mut Fx fx)
                Fade(bit.color, Math.Min(1, left * 3)));
     }
 
-    if (fx.hurt > 0.01)
-        Inset(screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
-    if (fx.flash > 0.01)
-        Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash * fx.calm));
+    // Both are light: they add to the screen, and darken nothing
+    Draw.Blend(Blend.Add)
+    {
+        if (fx.hurt > 0.01)
+            Inset(screen * 0.5, screen, 0, Math.Min(screen.x, screen.y) * 0.2, Color(1, 0.14, 0.2, fx.hurt * 0.3));
+        if (fx.flash > 0.01)
+            Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash * fx.calm));
+    }
 }
