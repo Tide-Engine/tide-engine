@@ -80,6 +80,7 @@ system Regenerate(mut Unit unit)
 - A function returns a value on every path, unless it returns `void`.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
+- A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
 Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
@@ -155,9 +156,65 @@ system Strike(mut Unit unit, Weapon weapon)
 
 Systems, views and handlers can share a name too. Nothing calls them, so where one is named, it's written with its parameters' types: see [Order of systems](../game/systems.md#order).
 
+## Out parameters
+
+A function returns one value. An `out` parameter gives another, through a variable of the caller's. It works as in C#, and it's for the same pattern: return whether there's something, and give it, or the default.
+
+```csharp
+bool TryHalf(int value, out int half)
+{
+    if (value % 2 != 0)
+    {
+        half = default;
+        return false;
+    }
+    half = value / 2;
+    return true;
+}
+
+system Halve(mut Pile pile, mut Tally tally)
+{
+    if (TryHalf(pile.size, out var half))
+    {
+        pile.size = half;
+    }
+    tally.last = half;                  // Still there after the if
+
+    TryHalf(pile.size, out pile.next);  // Into a field
+    TryHalf(pile.size, out _);          // Not wanted
+}
+```
+
+**In the function**, an `out` parameter starts with no value: what the caller's variable held isn't passed in.
+
+- The code assigns it before it reads it, and on every path that returns. A path that has nothing to give assigns `default`.
+- An `if` assigns it when both sides do. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them.
+- Passing it on as another call's `out` argument assigns it: `return scores.TryGet(key, out score);`.
+- In a function that [fails](./errors.md), `fail` doesn't have to assign it. After a call that failed, the caller's variable is what the function assigned before it failed, or its type's default.
+
+**At the call**, the argument says `out`, in one of four ways:
+
+| Argument | What it does |
+| --- | --- |
+| `out var half` | Declares a local of the parameter's type, right there |
+| `out int half` | The same, with its type written |
+| `out pile.next` | Assigns a variable the code has: a `mut` local, or a field of something it takes as `mut` |
+| `out _` | Leaves it out |
+
+- A local declared this way is read-only, like a `var`. `out mut var half` declares one the code changes later.
+- It belongs to the block the call's statement is in. Declared in an `if`'s condition, it's still there in the `else` and after the `if`. Declared in a `while`'s or a `for`'s condition, it's the loop's own.
+- It's only read where its call has run. In `if (ready && TryHalf(8, out var half))`, `half` has a value inside the `if`, and reading it after the `if` is an error, since `ready` may have been false.
+- The type matches exactly, as for `mut`, and by name the name comes first: `TryHalf(value: 8, half: out var h)`.
+- A list's element and a swizzle of several components (`v.xy`) are copies, so neither can be an `out` argument: declare a variable, and put it in.
+- An `out` argument is a write. A system needs `mut` on the component or singleton the variable is in, and a view can't make the match's.
+
+Functions, methods and [C functions](../c/functions.md#values-across) have `out` parameters. Systems, views, handlers, frags and verts don't, as the engine calls them and nothing would take what they make. Async functions don't either: their call returns before the task has made anything, so they return a struct instead. An `out` parameter has no default, and `out` doesn't tell functions that share a name apart.
+
+Maps have one built in: [`TryGet(key, out value)`](./text-and-lists.md#members-2).
+
 ## Order
 
-A `mut` parameter and a `mut` method change something of the caller's, so it matters when they run. Tide runs an expression left to right, on every platform:
+A `mut` parameter, an `out` parameter and a `mut` method change something of the caller's, so it matters when they run. Tide runs an expression left to right, on every platform:
 
 ```csharp
 int Next(mut Counter counter)

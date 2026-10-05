@@ -247,8 +247,10 @@ typedef struct param {
     bool verified;
     loc verified_at; // ...the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
-    // `out List<byte> image`, an extern function's: C makes the list's elements and says how many, through a
-    // tide_list_out (tide/list.h). Its mode is PARAM_MUT, as for everything else it's a list the call changes
+    // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
+    // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
+    // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
+    // makes the elements of, through a tide_list_out (tide/list.h)
     bool is_out;
     loc out_at; // ...the word
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
@@ -415,6 +417,7 @@ typedef struct decl {
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
+    bool tries;           // Maps: some code calls TryGet, so generated C has its helper
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -767,6 +770,17 @@ struct expr {
     struct stmt *binding;
     bool binding_ok;     // In an if's or loop's condition, joined by &&: its name is in scope where it's true
 
+    // An argument written with `out`, for an `out` parameter, as C#'s. The
+    // expression is the variable the call makes: one the code has (`out
+    // health`, `out body.health`), or an E_NAME of the local the argument
+    // declares (`out var health`, `out Health health`: `out_local`, an S_VAR
+    // with no value) or of a place nothing names (`out _`: `out_local` too,
+    // with `discard`). Once checked it's bound like any variable, so the code
+    // that takes a `mut` argument by address takes it the same way.
+    bool is_out;
+    loc out_at;             // The word
+    struct stmt *out_local; // The local it declares, or the place `out _` makes
+
     // E_INDEX of the grid a parallel loop goes over, at its step's place plus
     // constants: read from, or written in, the step's window (the loop's
     // `windowed`), this far from its place.
@@ -830,6 +844,11 @@ struct stmt {
     bool assigned; // An assignment writes it, after its declaration
     bool unused;   // Nothing reads it (a local a statement declares): the checker warns
     int errors_before; // The errors reported before it was declared: more by its scope's end hide uses
+    // A local an `out` argument declares, `out var health`: it has no value of
+    // its own, and is unassigned until the call that makes it has run
+    bool out_decl;
+    bool discard;  // ...or the place `out _` makes for what the call gives, which no code names
+    const expr *out_arg; // ...and the argument that declares it
     str type_name; // Empty for `var`. With its namespace if it's qualified.
     str name;
     type type;
@@ -1000,6 +1019,7 @@ typedef struct program {
     decl *forgotten;     // ...and a match entity's local fields are going, as it's gone
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
+    bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements
     bool uses_text;      // Some code makes text, in the scratch area the run functions clear
     bool uses_heap;      // Some field holds text or a list: the worlds have a heap
     bool local_heap;     // Some local field of the match's does: the local world has a heap, whether the match has or not
@@ -1058,6 +1078,12 @@ typedef enum fix_kind {
     FIX_REMOVE_LOCAL, // ...whose value does nothing: remove its declaration
     FIX_KEEP_CALL,    // ...whose value is a call that does something: keep the call, as a statement of its own
     FIX_LOCAL_WORD,   // `local` on a field where it means nothing: remove the word
+    FIX_ADD_OUT,      // An argument for an `out` parameter, written without the word: `out` before it
+    FIX_REMOVE_OUT,   // `out` before an argument no `out` parameter takes: remove the word
+    FIX_DISCARD_OUT,  // A local an `out` argument declares that nothing reads: `out _` instead
+    // A return, or a function's end, that leaves an `out` parameter (`param`) of `method` unassigned:
+    // `x = default;` before it. At the function's name for its end
+    FIX_ASSIGN_OUT,
 } fix_kind;
 
 typedef struct fix {
@@ -1128,6 +1154,13 @@ bool parse_file(program *prog, const source *src, token *toks, bool recover);
 // declaration. For recovery, which takes a '[' at column 1 as a declaration.
 bool attributes_before_field(const token *toks, int i);
 bool check(program *prog);
+
+// Definite assignment, as C#'s, for what starts unassigned: a function's or
+// method's `out` parameters, which its code assigns before it reads them and
+// on every path that returns, and the locals `out` arguments declare, which
+// are only read where the call that makes them has run (assigned.c). `code`
+// is the function or method whose body it is, or NULL for other code.
+void check_assigned(program *prog, const decl *code, const stmt *body);
 
 // Checks every frag and vert, and the functions they call, for what the GPU
 // runs, and plans the shader each mesh draw draws through (program.shaders):

@@ -3,6 +3,6 @@ extern int Fill(out List<byte> bytes);
 singleton Field { List<int> items; List<byte> image; }
 system Step(mut Field field)
 {
-    parallel (var i in field.items) { field.items[i] = Fill(field.image); }
+    parallel (var i in field.items) { field.items[i] = Fill(out field.image); }
 }
 scene Main { }

@@ -1,0 +1,15 @@
+// expect: 'half' is read-only
+// expect: declare it as 'out mut int half' to change it after the call that makes it
+scene Main { }
+singleton Tally { int total; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally)
+{
+    TryHalf(8, out int half);
+    TryHalf(half, out half);
+    tally.total = half;
+}

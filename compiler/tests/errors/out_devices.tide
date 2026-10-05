@@ -1,0 +1,3 @@
+// expect: devices can only be read, so 'devices' can't be 'out'
+scene Main { }
+bool Pressed(out Devices devices) { return false; }

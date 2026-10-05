@@ -1,0 +1,11 @@
+// expect: a list's element is a copy, so 'TryHalf' can't make it
+// expect: make a variable, and put it in: 'TryHalf(..., out var e); items[i] = e;'
+scene Main { }
+struct Cell { int half; }
+singleton Tally { List<Cell> cells; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally) { TryHalf(8, out tally.cells[0].half); }

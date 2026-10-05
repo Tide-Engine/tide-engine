@@ -1,0 +1,4 @@
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+scene Main { }
+struct Corner { float2 position; }
+frag Shade(Corner corner, out Color color) { color = Color.white; }

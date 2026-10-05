@@ -2871,24 +2871,30 @@ TIDE_TEST(lsp_extern_functions)
     open_document(EXTERNS "system Shape(mut Ground ground)\n{\n    ground.height = We$igh(float3(1), [1], \"a\");\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "extern float Weigh(in float3 v, List<float> weights, string name)"));
 
-    // A list C makes: `out` is in its signature, a call of it writes the list, and its parameter says what C gets.
+    // A list C makes: `out` is in its signature and at its call, which writes the list, and its parameter says what C gets.
 #define FILLED "singleton Store { List<byte> image; int size; }\n"
-    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fi$ll(store.image, 4);\n}\n");
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fi$ll(out store.image, 4);\n}\n");
     TIDE_CHECK(!has(last_sent(), "\"severity\""));
     const char *fill = request("textDocument/hover");
     TIDE_CHECK(has(fill, "extern int Fill(out List<byte> bytes, int count)") && has(fill, "C function `Fill`"));
-    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fill($store.image, 4);\n}\n");
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fill($out store.image, 4);\n}\n");
     const char *filling = request("textDocument/signatureHelp");
     TIDE_CHECK(has(filling, "Fill(out List<byte> bytes, int count)") && has(filling, "\"activeParameter\":0"));
-    open_document(EXTERNS FILLED "system Make(Store store, mut Ground ground)\n{\n    ground.height = Fill(store.image, 4);\n}\n");
-    TIDE_CHECK(has(last_sent(), "'store' is read-only") && has(last_sent(), "'Fill' changes its 'bytes'"));
+    open_document(EXTERNS FILLED "system Make(Store store, mut Ground ground)\n{\n    ground.height = Fill(out store.image, 4);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'store' is read-only") && has(last_sent(), "'Fill' makes its 'bytes'"));
     open_document("extern int Fill(out List<byte> by$tes, int count);\nscene Main { }\n");
     const char *made = request("textDocument/hover");
     TIDE_CHECK(has(made, "List<byte> bytes") && has(made, "the caller's list, which C makes") && has(made, "tide_list_out"));
-    open_document("scene Main { }\nvoid Fill(out List<byte> bytes) { bytes.Add(1); }\n");
-    TIDE_CHECK(has(last_sent(), "only extern functions take 'out' parameters"));
+    TIDE_CHECK(has(made, "A call says `out` before its argument"));
+    // ...and anything else C makes through a pointer
+    open_document("extern bool Half(int value, out int ha$lf);\nscene Main { }\n");
+    const char *pointer = request("textDocument/hover");
+    TIDE_CHECK(has(pointer, "out int half") && has(pointer, "which C makes: it gets a pointer") && !has(pointer, "tide_list_out"));
+    // The word is the call's to write, as for any `out` parameter
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fill(store.image, 4);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Fill' makes its 'bytes', so the argument says 'out'"));
     // A system that only makes a list through C still writes what holds it: no warning that `mut` is unused
-    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    Fill(store.image, 4);\n}\n");
+    open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    Fill(out store.image, 4);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 #undef FILLED
 
@@ -2897,9 +2903,11 @@ TIDE_TEST(lsp_extern_functions)
     TIDE_CHECK(offers(complete(EXTERNS "extern $"), "float"));
     const char *params = complete(EXTERNS "extern float Sum($");
     TIDE_CHECK(offers(params, "in") && offers(params, "mut") && offers(params, "out") && offers(params, "float3"));
+    TIDE_CHECK(has(params, "C makes the caller's variable: it gets a pointer to write through, or for a list, a tide_list_out"));
     TIDE_CHECK(offers(complete(EXTERNS "extern float Sum(in $"), "float3"));
     const char *after_out = complete(EXTERNS "extern int Make(int count, out $");
-    TIDE_CHECK(offers(after_out, "List") && !offers(after_out, "float3")); // Only a list is made by C
+    TIDE_CHECK(offers(after_out, "List") && offers(after_out, "float3") && offers(after_out, "bool"));
+    TIDE_CHECK(!offers(after_out, "string") && !offers(after_out, "out") && !offers(after_out, "DrawList")); // C makes no text
     TIDE_CHECK(!offers(complete(EXTERNS "extern int Make(int out $"), "List")); // A parameter named out is a name
     TIDE_CHECK(offers(complete(EXTERNS "[$"), "NativeName"));
     TIDE_CHECK(offers(complete(EXTERNS "system Shape(mut Ground ground)\n{\n    $\n}\n"), "Noise"));
@@ -5623,4 +5631,654 @@ TIDE_TEST(lsp_shared_names)
     // A name alone, where two share it, says what to write
     open_document(MOVES "[After(Move)]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
     TIDE_CHECK(has(last_sent(), "2 declarations share the name 'Move'") && has(last_sent(), "'Move(Body, with Player)'"));
+}
+
+// `out` parameters, as C#'s: a function's and a method's, and a map's TryGet.
+#define OUT_PARAMS                                                             \
+    "struct Stats\n"                                                           \
+    "{\n"                                                                      \
+    "    int power = 3;\n"                                                     \
+    "\n"                                                                       \
+    "    bool TryPower(int least, out int found)\n"                            \
+    "    {\n"                                                                  \
+    "        found = power;\n"                                                 \
+    "        return power >= least;\n"                                         \
+    "    }\n"                                                                  \
+    "}\n"                                                                      \
+    "\n"                                                                       \
+    "bool TryHalf(int value, out int half)\n"                                  \
+    "{\n"                                                                      \
+    "    half = value / 2;\n"                                                  \
+    "    return value % 2 == 0;\n"                                             \
+    "}\n"                                                                      \
+    "\n"                                                                       \
+    "bool Use(int value) { return value > 0; }\n"                              \
+    "singleton Tally { int total; Stats stats; Map<int, float> scores; Map<int, Stats> all; }\n" \
+    "scene Main { }\n"
+
+// A system whose first statement is on line 22
+#define OUT_RUN OUT_PARAMS "system Run(mut Tally tally)\n{\n"
+
+// Every way an argument says `out`: a local it declares there (with `var`, a
+// type or `mut`), a field the code has, nothing, and by its parameter's name
+#define OUT_EVERY                                                              \
+    OUT_RUN                                                                    \
+    "    if (TryHalf(8, out var half)) tally.total = half;\n"                  \
+    "    tally.total += half;\n"                                               \
+    "    TryHalf(8, out int typed);\n"                                         \
+    "    TryHalf(typed, out mut var changed);\n"                               \
+    "    changed += 1;\n"                                                      \
+    "    TryHalf(changed, out tally.total);\n"                                 \
+    "    TryHalf(8, out _);\n"                                                 \
+    "    TryHalf(value: 8, half: out var named);\n"                            \
+    "    tally.stats.TryPower(named, out int _);\n"                            \
+    "}\n"
+
+static const char *all_hints(void)
+{
+    return request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                      "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":60,\"character\":0}}");
+}
+
+// The parameter where it's declared, in hovers, the outline and signatures.
+TIDE_TEST(lsp_out_parameters)
+{
+    start();
+    open_document(OUT_EVERY);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // Its hover, on its name and on its word, says what a call writes for it
+    const char *param = hover_at(11, 33);
+    TIDE_CHECK(has(param, "out int half") && has(param, "the caller's variable, which the call makes: it starts unassigned here"));
+    TIDE_CHECK(has(param, "A call says `out` before its argument: `out var half` declares the variable there"));
+    const char *word = hover_at(11, 25);
+    TIDE_CHECK(has(word, "out int half") && has(word, "which the call makes"));
+    TIDE_CHECK(has(word, "\"range\":{\"start\":{\"line\":11,\"character\":24},\"end\":{\"line\":11,\"character\":27}}"));
+    const char *method = hover_at(4, 38); // A method's
+    TIDE_CHECK(has(method, "out int found") && has(method, "`out var found` declares the variable there"));
+    TIDE_CHECK(has(hover_at(13, 5), "out int half")); // ...and where its code assigns it
+    // The function's and the method's signatures have the word
+    TIDE_CHECK(has(hover_at(22, 10), "bool TryHalf(int value, out int half)"));
+    TIDE_CHECK(has(hover_at(30, 18), "bool TryPower(int least, out int found)"));
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"TryPower\",\"detail\":\"bool TryPower(int least, out int found)\""));
+
+    // Signature help: the parameter the argument is for, by its place or its name
+    open_document(OUT_RUN "    TryHalf(8, out var $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"bool TryHalf(int value, out int half)\"") && has(help, "\"activeParameter\":1"));
+    TIDE_CHECK(has(help, "{\"label\":[13,22]},{\"label\":[24,36]}")); // `out int half` is 24 to 36
+    open_document(OUT_RUN "    TryHalf(half: out var h, value: $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":0"));
+    open_document(OUT_RUN "    tally.stats.TryPower(2, $\n}\n");
+    const char *power = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(power, "bool TryPower(int least, out int found)") && has(power, "\"activeParameter\":1"));
+
+    // What's wrong with a parameter or a call comes with its note
+    open_document(OUT_RUN "    TryHalf(8, tally.total);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'TryHalf' makes its 'half', so the argument says 'out'"));
+    TIDE_CHECK(has(last_sent(), "'out var half' declares one there, and 'out _' leaves it out"));
+    open_document(OUT_PARAMS "system Run(out Tally tally) { tally.total = 1; }\n");
+    TIDE_CHECK(has(last_sent(), "the engine calls this itself, so nothing would take what an 'out' parameter makes"));
+    TIDE_CHECK(has(last_sent(), "this takes what it changes as 'mut': 'mut Tally tally'"));
+}
+
+// The argument: its word, the local it declares and the variable it writes,
+// in hovers, definitions, references, highlights and renames.
+TIDE_TEST(lsp_out_arguments)
+{
+    start();
+    open_document(OUT_EVERY);
+    // The word says what the call makes there, and for which parameter
+    const char *declares = hover_at(22, 20);
+    TIDE_CHECK(has(declares, "out int half") && has(declares, "Declares `half` here, a local the call makes: read-only afterwards"));
+    TIDE_CHECK(has(declares, "For `TryHalf`'s `out int half`."));
+    TIDE_CHECK(has(hover_at(25, 20), "out mut int changed") && has(hover_at(25, 20), "the code can change it afterwards"));
+    const char *assigns = hover_at(27, 22);
+    TIDE_CHECK(has(assigns, "The call makes the variable after it: it's written, as by an assignment"));
+    const char *leaves = hover_at(28, 16);
+    TIDE_CHECK(has(leaves, "out _") && has(leaves, "Leaves out what the call makes there: no variable takes it."));
+    TIDE_CHECK(has(hover_at(28, 19), "\"result\":null")); // `_` is no name
+    TIDE_CHECK(has(hover_at(30, 40), "\"result\":null"));
+    TIDE_CHECK(has(hover_at(30, 37), "A 32-bit integer")); // ...though `out int _` writes a type
+    TIDE_CHECK(has(hover_at(29, 23), "out int half")); // The name it's passed by is its parameter
+
+    // The local an argument declares says so, with its type and whether the code can change it
+    const char *half = hover_at(22, 28);
+    TIDE_CHECK(has(half, "int half") && has(half, "Local variable, read-only. An `out` argument declares it, and the call it's in makes it"));
+    TIDE_CHECK(has(half, "`out mut var half` declares one the code can change afterwards."));
+    TIDE_CHECK(has(hover_at(24, 24), "`out mut int typed` declares one") && has(hover_at(24, 20), "A 32-bit integer"));
+    const char *changed = hover_at(25, 33);
+    TIDE_CHECK(has(changed, "mut int changed") && has(changed, "Local variable. An `out` argument declares it") && !has(changed, "read-only"));
+    TIDE_CHECK(has(hover_at(23, 20), "Local variable, read-only. An `out` argument declares it")); // A use, after the if
+
+    // Its definition is the argument, from a use after the `if` that declared it
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 23, 20, ""),
+                   "\"range\":{\"start\":{\"line\":22,\"character\":27},\"end\":{\"line\":22,\"character\":31}}"));
+    // ...and every use refers to it: in the if, and after it
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 22, 28, "\"context\":{\"includeDeclaration\":true}"),
+                     "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 23, 20, "\"context\":{\"includeDeclaration\":false}"),
+                     "\"uri\"") == 2);
+    // Highlights: declared and added to (writes), and passed on (a read)
+    const char *marks = request_at("file:///test.tide", "textDocument/documentHighlight", 25, 33, "");
+    TIDE_CHECK(count(marks, "\"kind\":3") == 2 && count(marks, "\"kind\":2") == 1);
+
+    // Its type's definition: the struct a map's TryGet gives
+    open_document(OUT_RUN "    if (tally.all.TryGet(1, out var sta$ts)) tally.total = stats.power;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"range\":{\"start\":{\"line\":0,\"character\":7}"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Stats stats"));
+
+    // A variable the code has is written by the call that makes it, as by an assignment
+    open_document(OUT_RUN "    mut var ke$pt = 0;\n    TryHalf(8, out kept);\n    tally.total = kept;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *kept = request("textDocument/documentHighlight");
+    TIDE_CHECK(count(kept, "\"kind\":3") == 2 && count(kept, "\"kind\":2") == 1);
+    TIDE_CHECK(has(kept, "{\"range\":{\"start\":{\"line\":23,\"character\":19},\"end\":{\"line\":23,\"character\":23}},\"kind\":3}"));
+    // ...and so is a field
+    open_document(OUT_RUN "    TryHalf(8, out tally.to$tal);\n    tally.stats.power = tally.total;\n}\n");
+    const char *field = request("textDocument/documentHighlight");
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":22,\"character\":25},\"end\":{\"line\":22,\"character\":30}},\"kind\":3}"));
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":23,\"character\":30},\"end\":{\"line\":23,\"character\":35}},\"kind\":2}"));
+
+    // Rename: where it's declared and every use, after the `if` too, and nothing of the parameter
+    static const char program[] = OUT_RUN "    if (TryHalf(8, out var half)) tally.total = half;\n    tally.total += half;\n}\n";
+    open_document(OUT_RUN "    if (TryHalf(8, out var half)) tally.total = half;\n    tally.total += ha$lf;\n}\n");
+    TIDE_CHECK(has(request("textDocument/prepareRename"), "\"result\":{\"start\":{\"line\":23,\"character\":19}"));
+    request_with("textDocument/rename", "\"newName\":\"part\"");
+    const char *renamed = apply_reply(program, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "if (TryHalf(8, out var part)) tally.total = part;\n    tally.total += part;\n"));
+    TIDE_CHECK(has(renamed, "bool TryHalf(int value, out int half)\n{\n    half = value / 2;"));
+    char copy[8192];
+    snprintf(copy, sizeof copy, "%s", renamed);
+    open_document(copy);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // The parameter renames with the name an argument is passed by
+    static const char by_name[] = OUT_RUN "    TryHalf(value: 8, half: out var named);\n    tally.total = named;\n}\n";
+    open_document(by_name);
+    rename_at(22, 23, "part");
+    const char *parts = apply_reply(by_name, "file:///test.tide");
+    TIDE_CHECK(has(parts, "bool TryHalf(int value, out int part)\n{\n    part = value / 2;") && has(parts, "part: out var named"));
+
+    // Neither `_` nor the word is a name to rename, and a new name can't be one an argument declares
+    open_document(OUT_EVERY);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 19, ""), "Nothing to rename here."));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 16, ""),
+                   "'out' is a keyword before a parameter's type or an argument, so it can't be renamed."));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 11, 25, ""), "'out' is a keyword"));
+    TIDE_CHECK(has(rename_at(22, 28, "named"), "'named' is already declared"));
+    TIDE_CHECK(has(rename_at(22, 28, "out"), "\"changes\"")); // The word is a name anywhere else
+}
+
+// A local an argument declares is in scope after it: the enclosing block's,
+// or the loop's own when a loop's header declares it.
+TIDE_TEST(lsp_out_local_scopes)
+{
+    start();
+    // An if's condition's: in both branches and after it, and in the rest of the condition
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half))\n    {\n        tally.total = $\n    }\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half)) { }\n    else\n    {\n        tally.total = $\n    }\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half)) { }\n    tally.total = $\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half)) Use($);\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half) && Use($)) { }\n}\n"), "half"));
+    const char *chained = complete(OUT_RUN "    if (TryHalf(8, out var half) && TryHalf(half, out var quarter) && Use($)) { }\n}\n");
+    TIDE_CHECK(offers(chained, "half") && offers(chained, "quarter"));
+    TIDE_CHECK(has(chained, "{\"label\":\"quarter\",\"kind\":6,\"detail\":\"int\"}"));
+    // ...but not before it, nor outside the block the if is in
+    TIDE_CHECK(!offers(complete(OUT_RUN "    Use($);\n    if (TryHalf(8, out var half)) { }\n}\n"), "half"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    if (TryHalf(Use($) ? 1 : 2, out var half)) { }\n}\n"), "half"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    {\n        if (TryHalf(8, out var half)) { }\n    }\n    Use($);\n}\n"), "half"));
+    // An else if is a statement of the else: its own there, and gone after the chain
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.total > 1) { }\n    else if (TryHalf(8, out var half))\n    {\n"
+                                       "        tally.total = $\n    }\n}\n"),
+                      "half"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    if (tally.total > 1) { }\n    else if (TryHalf(8, out var half)) { }\n    Use($);\n}\n"), "half"));
+    // A statement's, a local's value's, an assignment's and a switch's value's: from there on
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    var even = TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    mut var even = false;\n    even = TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    switch (TryHalf(8, out var half) ? 1 : 0)\n    {\n        case 1:\n            tally.total = $\n"
+                                       "            break;\n    }\n}\n"),
+                      "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    switch (TryHalf(8, out var half) ? 1 : 0)\n    {\n        case 1:\n            break;\n    }\n"
+                                       "    tally.total = $\n}\n"),
+                      "half"));
+    // A loop's header's is the loop's own: in its condition, its step and its body, and gone after it
+    TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half))\n    {\n        tally.total = $\n    }\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half)) Use($);\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half) && Use($)) { }\n}\n"), "half"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half)) { }\n    Use($);\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); Use($)) { }\n}\n"), "half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); i++)\n    {\n        tally.total = $\n    }\n}\n"), "half"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); i++) { }\n    Use($);\n}\n"), "half"));
+    // A call's block is a block: what's declared in it stays in it, and what its arguments declare is around it
+    TIDE_CHECK(offers(complete(OUT_PARAMS "void Twice(out int ran, Action content) { ran = 2; content(); content(); }\n"
+                                          "system Run(mut Tally tally)\n{\n    Twice(out var ran)\n    {\n        Use($);\n    }\n}\n"),
+                      "ran"));
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "void Twice(out int ran, Action content) { ran = 2; content(); content(); }\n"
+                                           "system Run(mut Tally tally)\n{\n    Twice(out var ran)\n    {\n        TryHalf(8, out var half);\n"
+                                           "    }\n    Use($);\n}\n"),
+                       "half"));
+    // `out _` declares nothing
+    const char *nothing = complete(OUT_RUN "    TryHalf(8, out _);\n    Use($);\n}\n");
+    TIDE_CHECK(offers(nothing, "tally") && !offers(nothing, "_") && !has(nothing, "tide_out_"));
+
+    // Its members, from the argument: once the statement parses, and while it's being typed
+    const char *members = complete(OUT_RUN "    if (tally.all.TryGet(3, out var stats)) tally.total += stats.$power;\n}\n");
+    TIDE_CHECK(offers(members, "power") && offers(members, "TryPower"));
+    const char *typing = complete(OUT_RUN "    if (tally.all.TryGet(3, out var stats)) tally.total += stats.$\n}\n");
+    TIDE_CHECK(offers(typing, "power") && offers(typing, "TryPower"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.all.TryGet(3, out Stats stats)) tally.total += stats.$\n}\n"), "power"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.all.TryGet(key: 3, value: out mut var stats)) tally.total += stats.$\n}\n"), "power"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    if (TryHalf(3, out var stats)) tally.total += stats.$\n}\n"), "power")); // An int has none
+}
+
+// Completion where `out` goes: a function's and a method's parameters, and
+// the argument for an `out` parameter.
+TIDE_TEST(lsp_out_completion)
+{
+    start();
+    // Where a parameter starts, beside `mut`: functions, methods and extern functions have them
+    const char *function = complete(OUT_PARAMS "bool Find(int key, $");
+    TIDE_CHECK(offers(function, "mut") && offers(function, "out") && offers(function, "int"));
+    TIDE_CHECK(has(function, "The caller's variable, which the call makes: assigned here on every path that returns"));
+    TIDE_CHECK(offers(complete("struct S\n{\n    int a;\n    bool Find($\n"), "out"));
+    TIDE_CHECK(offers(complete(OUT_PARAMS "extern bool Find(int key, $"), "out"));
+    // ...and nothing the engine calls itself, nor an async function, nor an operator
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "system Find($"), "out") && !offers(complete(OUT_PARAMS "view Find($"), "out"));
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "event(Spawned) Find($"), "out") && !offers(complete(OUT_PARAMS "frag Find($"), "out"));
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "async void Find($"), "out"));
+    TIDE_CHECK(!offers(complete("struct S\n{\n    int a;\n    S operator +($\n"), "out"));
+    // After the word, what a call can make: no Action, no devices, and no second modifier
+    const char *after = complete(OUT_PARAMS "bool Find(int key, out $");
+    TIDE_CHECK(offers(after, "int") && offers(after, "List") && offers(after, "Stats") && offers(after, "Tally"));
+    TIDE_CHECK(!offers(after, "Action") && !offers(after, "Devices") && !offers(after, "mut") && !offers(after, "out"));
+    TIDE_CHECK(offers(complete(OUT_PARAMS "bool Find(int key, out Stats $"), "stats"));
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "bool Find(int out $"), "Stats")); // A parameter named out is a name
+
+    // The argument for an `out` parameter says `out`: nothing else fits there
+    const char *argument = complete(OUT_RUN "    TryHalf(8, $);\n}\n");
+    TIDE_CHECK(offers(argument, "out var half") && offers(argument, "out") && offers(argument, "out _") && offers(argument, "half:"));
+    TIDE_CHECK(has(argument, "{\"label\":\"out var half\",\"kind\":15,\"detail\":\"Declares the variable the call makes\""));
+    TIDE_CHECK(has(argument, "\"insertText\":\"out var ${1:half}\",\"insertTextFormat\":2"));
+    TIDE_CHECK(!offers(argument, "tally") && !offers(argument, "true"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, $\n}\n"), "out var half")); // Still open
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, o$\n}\n"), "out var half")); // The word being typed
+    const char *named = complete(OUT_RUN "    TryHalf(value: 8, half: $);\n}\n");
+    TIDE_CHECK(offers(named, "out var half") && offers(named, "out _") && !offers(named, "tally"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    tally.stats.TryPower(2, $);\n}\n"), "out var found")); // A method's
+    // ...and an argument for any other parameter is a value
+    const char *value = complete(OUT_RUN "    TryHalf($);\n}\n");
+    TIDE_CHECK(!offers(value, "out") && !offers(value, "out _") && offers(value, "tally") && offers(value, "half:"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    Use($);\n}\n"), "out"));
+    // Where functions share a name and only one makes its variable there, both fit
+    const char *shared = complete(OUT_PARAMS "bool Pick(int key, out int value) { value = key; return true; }\n"
+                                             "bool Pick(int key, int least) { return key > least; }\n"
+                                             "system Run(mut Tally tally)\n{\n    Pick(1, $);\n}\n");
+    TIDE_CHECK(offers(shared, "out var value") && offers(shared, "tally"));
+
+    // After the word: a local to declare, with `var`, `mut` or the parameter's type; `_`; and what the code can change
+    const char *made = complete(OUT_RUN "    mut var spare = 0;\n    var fixed = 1;\n    mut var other = 0.5;\n    TryHalf(8, out $);\n}\n");
+    TIDE_CHECK(offers(made, "var") && offers(made, "mut") && offers(made, "_") && offers(made, "int"));
+    TIDE_CHECK(has(made, "\"insertText\":\"var ${1:half}\"") && has(made, "\"insertText\":\"int ${1:half}\""));
+    TIDE_CHECK(offers(made, "spare") && offers(made, "tally")); // A mut local of its type, and a mut parameter, whose fields it can make
+    TIDE_CHECK(!offers(made, "fixed") && !offers(made, "other") && !offers(made, "TryHalf") && !offers(made, "true"));
+    const char *changes = complete(OUT_RUN "    TryHalf(8, out mut $);\n}\n");
+    TIDE_CHECK(offers(changes, "var") && offers(changes, "int") && !offers(changes, "_") && !offers(changes, "tally"));
+    TIDE_CHECK(has(complete(OUT_RUN "    TryHalf(8, out var $);\n}\n"), "\"items\":[]")); // Naming it
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(value: 8, half: out $);\n}\n"), "var"));
+    // A variable named out, where a value goes, is a name
+    const char *name = complete(OUT_RUN "    mut var out = 2;\n    Use(out $);\n}\n");
+    TIDE_CHECK(!offers(name, "var") && !offers(name, "_"));
+    // In a mut method, its type's fields are what a call can make
+    TIDE_CHECK(offers(complete(OUT_PARAMS "struct Pile\n{\n    int size;\n    mut void Halve() { TryHalf(size, out $); }\n}\n"), "size"));
+}
+
+// A map's TryGet, the engine's own `out` parameter.
+TIDE_TEST(lsp_map_try_get)
+{
+    start();
+    open_document(OUT_RUN "    if (tally.scores.TryGet(3, out var score)) tally.total += int(score);\n"
+                          "    tally.scores.TryGet(key: 4, value: out _);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = hover_at(22, 22);
+    TIDE_CHECK(has(hover, "Map<int, float>.TryGet(int key, out float value) -> bool"));
+    TIDE_CHECK(has(hover, "Whether the key is in the map, and through `out`, its value, or the value type's default"));
+    TIDE_CHECK(has(hover_at(22, 40), "float score") && has(hover_at(22, 40), "An `out` argument declares it"));
+    TIDE_CHECK(has(hover_at(22, 32), "out float score") && has(hover_at(22, 32), "Declares `score` here"));
+    TIDE_CHECK(has(all_hints(), "{\"position\":{\"line\":22,\"character\":44},\"label\":\": float\",\"kind\":1"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 22, 22, ""), "Built-in names can't be renamed"));
+    // A map's other methods have their hovers too
+    open_document(OUT_RUN "    if (tally.scores.Ha$s(3)) tally.scores.Remove(3);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Map<int, float>.Has(int key) -> bool"));
+
+    // After a dot, with its arguments laid out; none on a set, which has no values
+    const char *members = complete(OUT_RUN "    tally.scores.$\n}\n");
+    TIDE_CHECK(offers(members, "TryGet") && offers(members, "Get") && offers(members, "Has"));
+    TIDE_CHECK(has(members, "\"detail\":\"Map<int, float>.TryGet(int key, out float value) -> bool\""));
+    TIDE_CHECK(has(members, "\"insertText\":\"TryGet(${1:key}, out var ${2:value})\",\"insertTextFormat\":2"));
+    TIDE_CHECK(has(members, "\"insertText\":\"Has($1)\""));
+    TIDE_CHECK(!offers(complete("singleton Seen { Set<int> keys; }\nscene Main { }\nsystem Run(mut Seen seen)\n{\n    seen.keys.$\n}\n"), "TryGet"));
+
+    // Signature help, and what its second argument can be
+    open_document(OUT_RUN "    tally.scores.TryGet(3, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"Map<int, float>.TryGet(int key, out float value) -> bool\"") && has(help, "\"activeParameter\":1"));
+    TIDE_CHECK(has(help, "{\"label\":[23,30]},{\"label\":[32,47]}")); // `out float value` is 32 to 47
+    open_document(OUT_RUN "    tally.scores.TryGet(value: out var score, key: $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":0"));
+    const char *argument = complete(OUT_RUN "    tally.scores.TryGet(3, $);\n}\n");
+    TIDE_CHECK(offers(argument, "out var value") && offers(argument, "out") && offers(argument, "out _") && !offers(argument, "tally"));
+    const char *after = complete(OUT_RUN "    mut var best = 0.5;\n    mut var count = 0;\n    tally.scores.TryGet(3, out $);\n}\n");
+    TIDE_CHECK(offers(after, "var") && offers(after, "float") && offers(after, "_") && offers(after, "best") && !offers(after, "count"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    tally.all.TryGet(3, out $);\n}\n"), "Stats")); // The value's type
+    TIDE_CHECK(!offers(complete(OUT_RUN "    tally.scores.TryGet($);\n}\n"), "out var value")); // Its key is a value
+
+    // What's wrong with a call of it
+    open_document(OUT_RUN "    tally.scores.TryGet(3, tally.total);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value', so the argument says 'out'"));
+    open_document(OUT_RUN "    tally.scores.TryGet(3, out tally.total);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value' float, not int"));
+}
+
+// Inlay hints and semantic tokens around `out`.
+TIDE_TEST(lsp_out_hints_and_tokens)
+{
+    start();
+    open_document(OUT_EVERY);
+    const char *hints = all_hints();
+    // `out var`'s type, after its name, as a `var` statement's; none where a type is written, nor for `_`
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":22,\"character\":31},\"label\":\": int\",\"kind\":1,\"paddingLeft\":true}"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":25,\"character\":38},\"label\":\": int\",\"kind\":1"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":29,\"character\":41},\"label\":\": int\",\"kind\":1"));
+    TIDE_CHECK(count(hints, "\"kind\":1") == 3);
+    // A literal argument has its parameter's name, and one that says `out` none: what it is says which it's for
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":22,\"character\":16},\"label\":\"value:\",\"kind\":2,\"paddingRight\":true}"));
+    TIDE_CHECK(count(hints, "\"label\":\"value:\"") == 3 && count(hints, "\"kind\":2") == 3);
+    TIDE_CHECK(!has(hints, "\"label\":\"half:\"") && !has(hints, "\"label\":\"found:\""));
+
+    // The word is a keyword (11) where a parameter starts and before an argument; the local an argument declares is a
+    // variable (6), declared (1) and read-only (2) unless it says `mut`; `_` is nothing
+    open_document("bool F(out int a) { a = 1; return true; }\nscene Main { }\n"
+                  "system S() { F(out var x); F(out mut var y); F(out _); }\n");
+    const char *tokens = request("textDocument/semanticTokens/full");
+    // Line 0: bool, F, out, int, a (a parameter, 5, declared and not read-only), and its use
+    TIDE_CHECK(has(tokens, "\"data\":[0,0,4,11,0,0,5,1,9,1,0,2,3,11,0,0,4,3,11,0,0,4,1,5,1,0,5,1,5,0,"));
+    // Line 2, from S: F, out, x; F, out, y; F, out
+    TIDE_CHECK(has(tokens, "1,7,1,9,1,0,6,1,9,0,0,2,3,11,0,0,8,1,6,3,0,4,1,9,0,0,2,3,11,0,0,12,1,6,1,0,4,1,9,0,0,2,3,11,0]"));
+    // A variable or a parameter named out is a name
+    open_document("scene Main { }\nint Twice(int out) { return out * 2; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/semanticTokens/full"), "1,0,3,11,0,0,4,5,9,1,0,6,3,11,0,0,4,3,5,3,0,14,3,5,2]"));
+}
+
+// The formatter keeps an argument's `out` and what follows it a space apart,
+// and a map's types tight.
+TIDE_TEST(lsp_format_out)
+{
+    start();
+    static const char messy[] = "bool TryHalf(int value ,out   int half)\n{\nhalf=value/2;return true;\n}\n"
+                                "bool Find(Map<int,float> scores,out List< int > found,out   int? best,out Map< int ,float > copy)\n"
+                                "{\nfound=[];best=null;copy=scores;return scores.TryGet(1,out  _);\n}\n"
+                                "singleton Tally { int total; Map < int,float > scores; Set < int > seen; }\nscene Main { }\n"
+                                "system Run( mut Tally tally )\n{\n"
+                                "if (TryHalf( 8 ,out   var half )) tally.total=half;\n"
+                                "TryHalf(8,out mut  int typed);\ntyped+=1;\n"
+                                "TryHalf(typed , out _ );\n"
+                                "TryHalf(value : 8,half :out  var named);\n"
+                                "if(tally.scores.TryGet(named,out  var score)&&score>1) tally.total=named;\n"
+                                "TryHalf(8,\nout tally . total);\n}\n";
+    static const char expected[] = "bool TryHalf(int value, out int half)\n{\n    half = value / 2; return true;\n}\n"
+                                   "bool Find(Map<int, float> scores, out List<int> found, out int? best, out Map<int, float> copy)\n"
+                                   "{\n    found = []; best = null; copy = scores; return scores.TryGet(1, out _);\n}\n"
+                                   "singleton Tally { int total; Map<int, float> scores; Set<int> seen; }\nscene Main { }\n"
+                                   "system Run(mut Tally tally)\n{\n"
+                                   "    if (TryHalf(8, out var half)) tally.total = half;\n"
+                                   "    TryHalf(8, out mut int typed);\n    typed += 1;\n"
+                                   "    TryHalf(typed, out _);\n"
+                                   "    TryHalf(value: 8, half: out var named);\n"
+                                   "    if (tally.scores.TryGet(named, out var score) && score > 1) tally.total = named;\n"
+                                   "    TryHalf(8,\n        out tally.total);\n}\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]")); // Formatting what's formatted changes nothing
+    TIDE_CHECK(has(format_reply(OUT_EVERY), "\"result\":[]"));
+    TIDE_CHECK(has(last_sent(), "\"result\":[]"));
+
+    // A range's lines only
+    static const char lines[] = "bool TryHalf(int value, out int half) { half = value / 2; return true; }\nscene Main { }\n"
+                                "system S()\n{\nTryHalf(8,out  var a);\nTryHalf(a ,out   _);\n}\n";
+    open_document(lines);
+    request_with("textDocument/rangeFormatting", "\"range\":{\"start\":{\"line\":5,\"character\":0},\"end\":"
+                                                 "{\"line\":6,\"character\":0}},\"options\":{\"tabSize\":4,\"insertSpaces\":true}");
+    const char *ranged = apply_reply(lines, NULL);
+    TIDE_CHECK(has(ranged, "{\nTryHalf(8,out  var a);\n    TryHalf(a, out _);\n}\n"));
+}
+
+// Quick fixes for what's wrong around `out`: the word missing or misplaced, a
+// local nothing reads, and one the code changes.
+TIDE_TEST(lsp_out_quick_fixes)
+{
+    start();
+    // An argument for an `out` parameter without the word: the word goes before it
+    static const char missing[] = OUT_RUN "    TryHalf(8, tally.total);\n    tally.scores.TryGet(1, tally.stats.power);\n}\n";
+    open_document(missing);
+    const char *add = actions_at(22);
+    TIDE_CHECK(has(add, "\"title\":\"Add 'out'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+    TIDE_CHECK(has(add, "{\"range\":{\"start\":{\"line\":22,\"character\":15},\"end\":{\"line\":22,\"character\":15}},\"newText\":\"out \"}"));
+    const char *added = apply_fix(missing, "Add 'out'");
+    TIDE_REQUIRE(added != NULL);
+    TIDE_CHECK(has(added, "    TryHalf(8, out tally.total);\n"));
+    actions_at(23); // A map's TryGet too, before the whole of what it's given
+    const char *got = apply_fix(missing, "Add 'out'");
+    TIDE_REQUIRE(got != NULL);
+    TIDE_CHECK(has(got, "    tally.scores.TryGet(1, out tally.stats.power);\n"));
+
+    // The word before an argument no `out` parameter takes: it goes, with the space after it
+    static const char extra[] = OUT_RUN "    Use(out tally.total);\n    tally.total = Math.Max(out  tally.total, 1);\n}\n";
+    open_document(extra);
+    TIDE_CHECK(has(last_sent(), "'Use' takes a value for 'value', which isn't an 'out' parameter"));
+    const char *remove = actions_at(22);
+    TIDE_CHECK(has(remove, "\"title\":\"Remove 'out'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+    const char *removed = apply_fix(extra, "Remove 'out'");
+    TIDE_REQUIRE(removed != NULL);
+    TIDE_CHECK(has(removed, "    Use(tally.total);\n"));
+    actions_at(23); // One of the engine's functions
+    const char *plain = apply_fix(extra, "Remove 'out'");
+    TIDE_REQUIRE(plain != NULL);
+    TIDE_CHECK(has(plain, "    tally.total = Math.Max(tally.total, 1);\n"));
+    TIDE_CHECK(!has(actions_at(21), "Remove 'out'")); // Only on its line
+
+    // A function that isn't there: what's wrong is its name, not the word, and the one created makes what the call gives it
+    static const char unknown[] = OUT_RUN "    Shrink(8, out tally.total);\n    Other(out _);\n}\n";
+    open_document(unknown);
+    TIDE_CHECK(has(last_sent(), "unknown function 'Shrink'") && has(last_sent(), "unknown function 'Other'"));
+    TIDE_CHECK(!has(last_sent(), "nothing here takes one") && !has(last_sent(), "unknown name '_'"));
+    const char *create = actions_at(22);
+    TIDE_CHECK(!has(create, "Remove 'out'"));
+    TIDE_CHECK(has(create, "Create function 'Shrink'"));
+    TIDE_CHECK(has(create, "void Shrink(int value, out int total)\\n{\\n    total = default;\\n}\\n"));
+
+    // What the notes say to write, as changes: `mut out` is `out`, and what the engine calls takes `mut`
+    static const char both[] = "bool TryHalf(int value, mut out int half)\n{\n    half = value / 2;\n    return true;\n}\nscene Main { }\n";
+    open_document(both);
+    actions_at(0);
+    const char *dropped = apply_fix(both, "Change to 'out'");
+    TIDE_REQUIRE(dropped != NULL);
+    TIDE_CHECK(has(dropped, "bool TryHalf(int value, out int half)\n"));
+    static const char engine[] = "singleton Store { int size; }\nsystem Run(out Store store) { store.size = 1; }\nscene Main { }\n";
+    open_document(engine);
+    actions_at(1);
+    const char *taken = apply_fix(engine, "Change to 'mut'");
+    TIDE_REQUIRE(taken != NULL);
+    TIDE_CHECK(has(taken, "system Run(mut Store store) { store.size = 1; }\n"));
+
+    // A name there is already: the argument assigns it. A type that isn't the parameter's: `var` takes it
+    static const char again[] = OUT_RUN "    mut var half = 0;\n    TryHalf(8, out var half);\n    tally.total = half;\n}\n";
+    open_document(again);
+    actions_at(23);
+    const char *assigns = apply_fix(again, "Change to 'half'");
+    TIDE_REQUIRE(assigns != NULL);
+    TIDE_CHECK(has(assigns, "    TryHalf(8, out half);\n"));
+    static const char wrong_type[] = OUT_RUN "    TryHalf(8, out mut float half);\n    tally.total = int(half);\n}\n";
+    open_document(wrong_type);
+    actions_at(22);
+    const char *takes = apply_fix(wrong_type, "Change to 'var'");
+    TIDE_REQUIRE(takes != NULL);
+    TIDE_CHECK(has(takes, "    TryHalf(8, out mut var half);\n"));
+
+    // A return, or a function's end, that leaves an `out` parameter unassigned: the default, before it. Not
+    // before a return that's an if's body with no braces, which has to stay one statement
+    static const char unassigned[] = "bool TryHalf(int value, out int half)\n{\n    if (value % 2 != 0) return false;\n"
+                                     "    if (value < 0)\n    {\n        return false;\n    }\n    half = value / 2;\n"
+                                     "    return true;\n}\nvoid Fill(int n, out int count)\n{\n    if (n > 0) count = n;\n}\n"
+                                     "scene Main { }\n";
+    open_document(unassigned);
+    TIDE_CHECK(has(last_sent(), "'TryHalf' returns here without assigning its 'half'"));
+    TIDE_CHECK(!has(actions_at(2), "Assign 'half = default;'"));
+    actions_at(5);
+    const char *filled = apply_fix(unassigned, "Assign 'half = default;'");
+    TIDE_REQUIRE(filled != NULL);
+    TIDE_CHECK(has(filled, "    {\n        half = default;\n        return false;\n    }\n"));
+    actions_at(10); // At its name, for its end
+    const char *ended = apply_fix(unassigned, "Assign 'count = default;'");
+    TIDE_REQUIRE(ended != NULL);
+    TIDE_CHECK(has(ended, "    if (n > 0) count = n;\n    count = default;\n}\n"));
+
+    // A local an argument declares that nothing reads: a warning that editors fade, fixed by `out _`
+    static const char unread[] = OUT_RUN "    TryHalf(8, out var rest);\n    TryHalf(8, out mut int spare);\n"
+                                         "    tally.all.TryGet(1, out Stats found);\n    tally.total = 1;\n}\n";
+    open_document(unread);
+    TIDE_CHECK(has(last_sent(), "\"message\":\"local 'rest' is never used\\nnote: nothing reads what the call makes there: write "
+                                "'out _' to leave it out\",\"tags\":[1]"));
+    TIDE_CHECK(has(last_sent(), "\"range\":{\"start\":{\"line\":22,\"character\":23},\"end\":{\"line\":22,\"character\":27}}"));
+    TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 3 && count(last_sent(), "\"severity\":2") == 3);
+    const char *leave = actions_at(22);
+    TIDE_CHECK(has(leave, "\"title\":\"Leave 'rest' out: 'out _'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+    TIDE_CHECK(!has(leave, "Remove 'rest'") && !has(leave, "Keep the call"));
+    const char *left = apply_fix(unread, "Leave 'rest' out: 'out _'");
+    TIDE_REQUIRE(left != NULL);
+    TIDE_CHECK(has(left, "{\n    TryHalf(8, out _);\n    TryHalf(8, out mut int spare);\n"));
+    actions_at(23); // Its `mut` and its type go with its name
+    const char *spared = apply_fix(unread, "Leave 'spare' out: 'out _'");
+    TIDE_REQUIRE(spared != NULL);
+    TIDE_CHECK(has(spared, "    TryHalf(8, out _);\n    tally.all.TryGet(1, out Stats found);\n"));
+    actions_at(24);
+    const char *lost = apply_fix(unread, "Leave 'found' out: 'out _'");
+    TIDE_REQUIRE(lost != NULL);
+    TIDE_CHECK(has(lost, "    tally.all.TryGet(1, out _);\n    tally.total = 1;\n}\n"));
+    // What's fixed compiles cleanly
+    open_document(OUT_RUN "    TryHalf(8, out _);\n    TryHalf(8, out _);\n    tally.all.TryGet(1, out _);\n    tally.total = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // A local an argument declares that the code changes: `mut` after the word, before `var` or its type
+    static const char changed[] = OUT_RUN "    TryHalf(8, out var half);\n    half += 1;\n    TryHalf(8, out int typed);\n"
+                                          "    TryHalf(half, out typed);\n    tally.total = half + typed;\n}\n";
+    open_document(changed);
+    TIDE_CHECK(has(last_sent(), "'half' is read-only\\nnote: declare it as 'out mut var half' to change it after the call that makes it"));
+    TIDE_CHECK(has(last_sent(), "declare it as 'out mut int typed' to change it"));
+    const char *declare = actions_at(23);
+    TIDE_CHECK(has(declare, "Declare 'half' as mut") && has(declare, "\"start\":{\"line\":22,\"character\":19}"));
+    const char *mutable = apply_fix(changed, "Declare 'half' as mut");
+    TIDE_REQUIRE(mutable != NULL);
+    TIDE_CHECK(has(mutable, "    TryHalf(8, out mut var half);\n    half += 1;\n"));
+    actions_at(25);
+    const char *typed = apply_fix(changed, "Declare 'typed' as mut");
+    TIDE_REQUIRE(typed != NULL);
+    TIDE_CHECK(has(typed, "    TryHalf(8, out mut int typed);\n    TryHalf(half, out typed);\n"));
+}
+
+// What holds an `out` argument, as selections grow, and the calls that say it.
+TIDE_TEST(lsp_out_selection_and_calls)
+{
+    start();
+    open_document(OUT_EVERY);
+    // From the local an argument declares: its name, the argument from its word, the call, the condition's statement
+    const char *ranges = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
+                                    "\"positions\":[{\"line\":22,\"character\":28}]");
+    TIDE_CHECK(has(ranges, "\"result\":[{\"range\":{\"start\":{\"line\":22,\"character\":27},\"end\":{\"line\":22,\"character\":31}},"
+                           "\"parent\":{\"range\":{\"start\":{\"line\":22,\"character\":19},\"end\":{\"line\":22,\"character\":31}},"
+                           "\"parent\":{\"range\":{\"start\":{\"line\":22,\"character\":8},\"end\":{\"line\":22,\"character\":32}},"));
+    // `out _` is its word and its `_`, not the name generated C gives it
+    const char *blank = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
+                                   "\"positions\":[{\"line\":28,\"character\":19}]");
+    TIDE_CHECK(has(blank, "\"result\":[{\"range\":{\"start\":{\"line\":28,\"character\":19},\"end\":{\"line\":28,\"character\":20}},"
+                          "\"parent\":{\"range\":{\"start\":{\"line\":28,\"character\":15},\"end\":{\"line\":28,\"character\":20}},"
+                          "\"parent\":{\"range\":{\"start\":{\"line\":28,\"character\":4},\"end\":{\"line\":28,\"character\":21}},"));
+    // A field the call makes: the argument is the word and the whole of it
+    const char *field = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
+                                   "\"positions\":[{\"line\":27,\"character\":32}]");
+    TIDE_CHECK(has(field, "\"parent\":{\"range\":{\"start\":{\"line\":27,\"character\":21},\"end\":{\"line\":27,\"character\":36}},"));
+
+    // The call hierarchy: a function with an `out` parameter, by its signature, and who calls it
+    const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 22, 10, "");
+    TIDE_CHECK(has(item, "{\"name\":\"TryHalf\",\"kind\":12,\"detail\":\"bool TryHalf(int value, out int half)\""));
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"callHierarchy/incomingCalls\",\"params\":{\"item\":{\"name\":\"TryHalf\","
+           "\"kind\":12,\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":11,\"character\":0},\"end\":"
+           "{\"line\":15,\"character\":1}},\"selectionRange\":{\"start\":{\"line\":11,\"character\":5},\"end\":"
+           "{\"line\":11,\"character\":12}}}}}");
+    TIDE_CHECK(has(last_sent(), "{\"from\":{\"name\":\"Run\",\"kind\":12") && count(last_sent(), "\"from\":") == 1);
+    // ...from the if's condition, and five statements
+    TIDE_CHECK(has(last_sent(), "\"fromRanges\":[{\"start\":{\"line\":22,\"character\":8},\"end\":{\"line\":22,\"character\":15}}"));
+    TIDE_CHECK(count(last_sent(), "\"character\":4},\"end\":{\"line\":2") == 5);
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"callHierarchy/outgoingCalls\",\"params\":{\"item\":{\"name\":\"Run\","
+           "\"kind\":12,\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":20,\"character\":0},\"end\":"
+           "{\"line\":32,\"character\":1}},\"selectionRange\":{\"start\":{\"line\":20,\"character\":7},\"end\":"
+           "{\"line\":20,\"character\":10}}}}}");
+    TIDE_CHECK(has(last_sent(), "{\"to\":{\"name\":\"TryHalf\"") && has(last_sent(), "{\"to\":{\"name\":\"TryPower\",\"kind\":6"));
+    TIDE_CHECK(count(last_sent(), "\"to\":") == 2);
+
+    // A function with an `out` parameter folds like any other, and moves to a file of its own as it's written
+    TIDE_CHECK(has(request("textDocument/foldingRange"), "{\"startLine\":11,\"endLine\":14}"));
+    const char *move = request_at("file:///test.tide", "textDocument/codeAction", 12, 0,
+                                  "\"range\":{\"start\":{\"line\":12,\"character\":0},\"end\":{\"line\":12,\"character\":0}}");
+    TIDE_CHECK(has(move, "\"title\":\"Move 'TryHalf' to TryHalf.tide\",\"kind\":\"refactor.move\""));
+    TIDE_CHECK(has(move, "\"newText\":\"bool TryHalf(int value, out int half)\\n{\\n    half = value / 2;\\n"
+                         "    return value % 2 == 0;\\n}\\n\""));
+
+    // A call that makes a singleton's field writes the singleton, as the schedule's lenses say: no `mut` goes unused
+    open_document(OUT_PARAMS "singleton Seen { int total; }\n"
+                             "system Halve(mut Tally tally) { TryHalf(8, out tally.total); }\n"
+                             "system Read(Tally tally, mut Seen seen) { seen.total = tally.total; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/codeLens"), "after Halve: it writes Tally, which this reads"));
+}
+
+// Typing code with `out` parameters and arguments from scratch, and once it's
+// whole, asking at every place in it: nothing may crash.
+TIDE_TEST(lsp_out_every_prefix_is_safe)
+{
+    static const char program[] = OUT_EVERY
+        "bool Both(int a, out int halfA, out List<int> made)\n{\n    made = [];\n    return TryHalf(a, out halfA) && halfA > 1;\n}\n"
+        "system Loop(mut Tally tally)\n{\n"
+        "    mut var n = 40;\n"
+        "    while (TryHalf(n, out var halved) && halved > 4) n = halved;\n"
+        "    for (var i = 0; TryHalf(i, out mut var h); i++) { h += 1; tally.total = h; }\n"
+        "    if (tally.all.TryGet(n, out Stats found) && found.TryPower(1, out _)) tally.total = found.power;\n"
+        "    switch (Both(n, out var a, out var made) ? a : made.count)\n    {\n        case 1:\n            tally.total = a;\n"
+        "            break;\n    }\n"
+        "    tally.scores.TryGet(key: 1, value: out var score);\n    tally.total += int(score);\n}\n";
+    start();
+    type_out(program, 0);
+    TIDE_CHECK(has(last_sent(), "\"result\""));
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    static const char *const methods[] = {"textDocument/completion", "textDocument/hover", "textDocument/signatureHelp",
+                                          "textDocument/definition", "textDocument/typeDefinition",
+                                          "textDocument/documentHighlight", "textDocument/prepareCallHierarchy",
+                                          "textDocument/prepareRename"};
+    cursor_line = cursor_character = 0;
+    for (size_t n = 0; program[n]; n++) {
+        for (size_t i = 0; n >= strlen(OUT_PARAMS) && i < sizeof methods / sizeof methods[0]; i++) {
+            const char *reply = request(methods[i]);
+            TIDE_CHECK(has(reply, "\"result\"") || has(reply, "\"error\""));
+        }
+        cursor_character = program[n] == '\n' ? 0 : cursor_character + 1;
+        if (program[n] == '\n') cursor_line++;
+    }
 }

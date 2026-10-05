@@ -194,7 +194,7 @@ system Step(Time time, mut Physics physics)
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
-    physics.size = WriteImage(physics.image);
+    physics.size = WriteImage(out physics.image);
 }
 
 // Where the step left each body that it moved.
