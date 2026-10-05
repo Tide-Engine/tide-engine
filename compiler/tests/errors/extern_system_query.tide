@@ -1,0 +1,5 @@
+// expect: a system written in C can't take a query yet
+// expect: a system written in Tide goes through one, and can call C with what it finds: 'system Seek(query (...) others) { ... }'
+scene Main { }
+component Body { float x; }
+extern system Seek(mut Body body, query (Body other) others);
