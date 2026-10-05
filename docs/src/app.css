@@ -357,6 +357,18 @@ button {
     color: var(--text-2);
 }
 
+/* Said only where a finger is the pointer: there, a swipe on an example is the
+   page's until a tap on it. */
+.example-touch {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    .example-touch {
+        display: inline;
+    }
+}
+
 .example-columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -423,11 +435,29 @@ button {
     background: #161618;
 }
 
+/* A frame is there before its game has drawn (lib/examples.ts): unseen until
+   then, over the background the examples draw on, so one comes up in one step. */
 .example-viewport iframe {
     display: block;
     width: 100%;
     height: 100%;
     border: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+}
+
+.example-viewport iframe.shown {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* The game has the keyboard, and a touchscreen's swipes, until a press
+   elsewhere. CSS's own :focus isn't an iframe's whose page has the focus. */
+.example-viewport iframe.focused,
+.prose .demo-frame.focused {
+    outline: 2px solid var(--brand-1);
+    outline-offset: -2px;
 }
 
 .prose .example-status {
@@ -438,6 +468,17 @@ button {
     color: #c8c8d0;
     font-size: 14px;
     text-align: center;
+}
+
+/* Only what takes a while to load says so. */
+.prose .example-status.loading {
+    animation: example-loading 0.3s 0.7s backwards;
+}
+
+@keyframes example-loading {
+    from {
+        opacity: 0;
+    }
 }
 
 /* Two players: their frames side by side, and the source under them. */
@@ -471,14 +512,24 @@ button {
     height: 360px;
 }
 
+/* What a pair says is over its players, where it moves nothing as it comes and
+   goes: one player's game may be up while the other's still joins. */
+.example-stage {
+    position: relative;
+}
+
 .prose .tide-pair .example-status {
-    position: static;
+    top: 150px;
+    left: 50%;
+    right: auto;
+    width: max-content;
+    max-width: calc(100% - 48px);
     margin: 0;
-    padding: 10px 16px;
-    border-top: 1px solid var(--divider);
-    color: var(--text-2);
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: rgb(22 22 24 / 0.92);
     font-size: 13px;
-    text-align: left;
+    transform: translateX(-50%);
 }
 
 .tide-pair .example-source {
