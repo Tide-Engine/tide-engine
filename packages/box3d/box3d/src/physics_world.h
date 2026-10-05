@@ -122,6 +122,56 @@ typedef struct b3TaskContext
 
 b3DeclareArray( b3TaskContext );
 
+// Tide: which of a world's bodies, shapes and contacts may differ from what its last image has of them (see
+// ../TIDE.md, and b3World_GetSnapshotParts in world_snapshot.c), so that the next image writes those and no
+// others. A bit each, by id.
+typedef struct b3SnapSet
+{
+	uint64_t* bits;
+	int blockCount;
+} b3SnapSet;
+
+#define B3_SNAP_TRACK_SECTIONS 17
+
+typedef struct b3SnapTrack
+{
+	// The sets say everything that may have changed since the last image. Not so until an image in
+	// sections was taken, after a restore, and after anything was done to the world that the sets
+	// don't follow: then the next image is written whole.
+	bool sparse;
+
+	b3SnapSet bodies;
+	b3SnapSet shapes;
+	b3SnapSet contacts;
+
+	// The last image: where its sections were, how big each was, and how many bodies, shapes and
+	// contacts it had room for
+	int bases[B3_SNAP_TRACK_SECTIONS];
+	int sizes[B3_SNAP_TRACK_SECTIONS];
+	int bodyCount;
+	int shapeCount;
+	int contactCount;
+
+	// One body in this many can be awake for an image to be written in parts, or 0 for the usual share
+	// (b3World_SetSnapshotAwakeShare)
+	int awakeShare;
+
+	// Something was done to a sleeping set, or to the pairs, since the last image. Nothing writes these
+	// but what says so (b3SnapTouchSleepingSet, b3SnapTouchPairs): the step leaves what's asleep alone,
+	// and a pair comes and goes with its contact. An image in parts leaves out the one that wasn't touched.
+	bool setsTouched;
+	bool pairsTouched;
+
+	// How many shapes had a material array of their own, or were a mesh, a height field or a compound,
+	// when an image was last written whole. Only those, and the contacts they're in, have more in an
+	// image than the room every shape and every contact takes, and none can come while the sets are
+	// followed (b3CreateShapeInternal), so an image in parts looks for none when there were none.
+	int oddShapeCount;
+
+	// What b3World_GetSnapshotParts hands out, kept from one image to the next (b3SnapParts)
+	void* parts;
+} b3SnapTrack;
+
 // The world struct manages all physics entities, dynamic simulation,  and asynchronous queries.
 // The world also contains efficient memory management facilities.
 typedef struct b3World
@@ -300,7 +350,81 @@ typedef struct b3World
 	bool enableContinuous;
 	bool enableSpeculative;
 	bool inUse;
+
+	// Tide: what changed since the world's last image. Last, so that everything above is where upstream
+	// has it.
+	b3SnapTrack snapTrack;
 } b3World;
+
+// Tide: a body, a shape or a contact may be another than the world's last image has it (b3SnapTrack). Said
+// wherever one is written that isn't an awake body's own: an awake body, its shapes and the contacts it's in
+// are taken to have changed anyway, as the step writes them on its worker threads. These are only called
+// from code that runs on one thread.
+void b3SnapGrowSet( b3SnapSet* set, int blockCount );
+
+static inline void b3SnapSetBit( b3SnapSet* set, int index )
+{
+	int block = index >> 6;
+	if ( block >= set->blockCount )
+	{
+		b3SnapGrowSet( set, block + 1 );
+	}
+	set->bits[block] |= (uint64_t)1 << ( index & 63 );
+}
+
+static inline void b3SnapTouchBody( b3World* world, int bodyId )
+{
+	if ( world->snapTrack.sparse && bodyId >= 0 )
+	{
+		b3SnapSetBit( &world->snapTrack.bodies, bodyId );
+	}
+}
+
+static inline void b3SnapTouchShape( b3World* world, int shapeId )
+{
+	if ( world->snapTrack.sparse && shapeId >= 0 )
+	{
+		b3SnapSetBit( &world->snapTrack.shapes, shapeId );
+	}
+}
+
+static inline void b3SnapTouchContact( b3World* world, int contactId )
+{
+	if ( world->snapTrack.sparse && contactId >= 0 )
+	{
+		b3SnapSetBit( &world->snapTrack.contacts, contactId );
+	}
+}
+
+// Tide: something was done that the sets don't follow: the next image is written whole
+static inline void b3SnapTouchAll( b3World* world )
+{
+	world->snapTrack.sparse = false;
+}
+
+// Tide: something was written in a solver set, which matters when it's a sleeping one: a body's place or
+// mass, a contact or an island taken out, the set made or destroyed
+static inline void b3SnapTouchSleepingSet( b3World* world, int setIndex )
+{
+	if ( setIndex >= b3_firstSleepingSet )
+	{
+		world->snapTrack.setsTouched = true;
+	}
+}
+
+// Tide: a pair was added or removed
+static inline void b3SnapTouchPairs( b3World* world )
+{
+	world->snapTrack.pairsTouched = true;
+}
+
+// Tide: a body, its shapes and every contact it's in
+void b3SnapTouchBodyDeep( b3World* world, const b3Body* body );
+
+// Tide: what a call does to the world, by the name its recording has: the sets follow the calls named here,
+// through b3SnapTouchBody and the like where they write, and any other writes the next image whole. So a call
+// nobody looked at costs an image, and can't make a wrong one.
+void b3SnapNoteOp( b3World* world, int op );
 
 b3World* b3GetUnlockedWorldFromId( b3WorldId id );
 b3World* b3GetWorldFromId( b3WorldId id );
