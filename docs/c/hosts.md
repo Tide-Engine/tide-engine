@@ -29,7 +29,9 @@ int main(int argc, char **argv)
 }
 ```
 
-It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
+It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `tide_run_desc` also has `width` and `height` (960 by 540 by default, and `--size 1280 720` on the command line goes over them), `stats`, which shows the stats whether or not the game's `stats` setting does, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
+
+It also takes `--capture`, `--frames`, `--script` and `--scale`, which run the game [with no window](#without-a-window) (see [the tide command](../tools/cli.md#without-a-window) for what they do). So every game `tide_add_game` builds without `HOST` has them, and so does one `tide build` made.
 
 The profiler those show is `tide/profiler.h`, for a host of its own to show too. The host marks what each part of its frame was (`tide_profiler_begin`, `tide_profiler_mark`, `tide_profiler_end`) and adds the panel to its draw list (`tide_profiler_draw`). The game's code says the rest into the profiler's `profile` (`tide/profile.h`), while the host gives it to the GUI (`gui.profile`, which `tide_frame`'s views fill) and to what ticks run on (`tide_jobs.profile`, which `tide_world_tick_on` fills: `tide_platform_jobs_profile` for the platform's pool, or a `tide_jobs` of one thread where there's none). With neither, nothing is measured.
 
@@ -108,6 +110,38 @@ tide_platform_draw(&draw);
 ```
 
 Asking for the cursor's lock isn't having it: the system decides, and `tide_platform_poll` says whether the window holds the cursor, as `devices.mouse.locked`, which `Cursor.locked` reads. A host that fills the devices itself sets it.
+
+## Without a window
+
+To see what a game draws without a window on screen, or to run it where nobody watches, a host opens a headless window in `tide_platform_open`'s place. Its frame function stays as it is:
+
+```c
+tide_platform_open_headless(&(tide_headless_desc){
+    .width = 1280, .height = 720, // In logical pixels
+    .scale = 2.0f,                // As on a display scaled to 200%: the frame is 2560 by 1440 pixels
+    .frames = 300,                // The run ends once this many drew...
+    .script = "play.txt",         // ...or when its script says `quit`
+    .capture = "last.png",        // The last frame, as a PNG
+});
+tide_platform_run(frame, NULL);
+```
+
+::: info Provisional
+These names are new, and may still change.
+:::
+
+- Frames draw into pixels of the platform's own, at the size and scale asked for, whatever the display is. `tide_platform_frame_pixels(&width, &height)` gives the last frame drawn, whole, with the overlay: 4 bytes a pixel (red, green, blue, alpha), rows from the top. `tide_platform_capture(path)` writes it as a PNG.
+- Time is made up: `seconds` is a 60th of a second every frame, and frames come as fast as the machine runs them. A session that should go the same on every machine takes no clock (`now_ns` left out of its desc), as the standard host's does in such a run.
+- The devices are made up too: `tide_platform_poll` takes what the script says for the frame, and what `tide_platform_input` said, each event as a script's line has it without its frame (see [Scripts](../tools/cli.md#scripts)), never the system's:
+
+  ```c
+  tide_platform_input("mouse 640 360");
+  tide_platform_input("button left"); // A click, in the devices at the next poll
+  ```
+
+- `tide_platform_run` ends the program with exit code 0 after `frames` frames or at the script's `quit`, whichever is first, and with 1 when a picture couldn't be written. `tide_platform_open_headless` ends it with 2, having said why, when a line of the script is wrong or nothing ends the run.
+
+It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
 
 ## Memory
 

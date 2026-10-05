@@ -27,6 +27,23 @@
 // using. The views draw every frame, and their GUI over the world. Close the
 // window to quit.
 //
+//     game --size 1280 720    the window's size, in logical pixels (960 by 540 without it)
+//     game --debug-views      F7 shows the profiler
+//
+// A game also runs with no window, to see what it draws without one on
+// screen, or in CI (tide_platform_open_headless). Time is made up, a 60th of
+// a second a frame, and so is input, so a run repeats exactly on any machine:
+//
+//     game --frames 300 --capture menu.png    300 frames, the last of them to a PNG
+//     game --script play.txt                  input by frame from a file, which also says
+//                                             when to capture and quit (docs/tools/cli.md)
+//     game --capture big.png --frames 60 --scale 2
+//                                             as on a display scaled to 200%
+//
+// Such a run ends with exit code 0 at --frames or the script's `quit`, with
+// 1 when a picture can't be written, and with 2, having started nothing,
+// when a flag or a line of the script is wrong. Desktop only.
+//
 // The loop itself is in tide/host.h, which runs the game through
 // tide_host_game_api, made here from the game's header.
 

@@ -30,6 +30,8 @@ tide <command> [folder] [options]
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
+| `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
+| `--capture`, `--frames`, `--script`, `--scale` | `run` only: plays the game [without a window](#without-a-window), to see what it draws |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -138,6 +140,92 @@ Hot reload is only for `tide run`: `tide build` makes a plain program, or a page
 | `--host [port]` | Opens the match for others to join: in a room, whose code the game can show, and on UDP port 7777 by default (not on the web) |
 | `--join <code>` | The match in the room with this code, like `K7QF2M` |
 | `--connect <address>` | The match at an address, like `192.168.1.5` or `localhost:7777` (not on the web) |
+
+## Without a window
+
+`tide run` can play a game with no window at all, to see what it draws or to check it still runs: from a script, on a build server, or for an agent that shouldn't open windows on your screen. The game runs once, as it was built, and `tide` ends with the game's exit code. Nothing is watched or reloaded.
+
+```
+tide run --frames 300 --capture menu.png
+```
+
+| Option | What it does |
+|---|---|
+| `--capture <file.png>` | Writes the run's last frame as a PNG |
+| `--frames <n>` | Ends the run after `n` frames |
+| `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
+| `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there |
+| `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
+
+::: info Provisional
+These options' names and the script's format are new, and may still change.
+:::
+
+The picture is what the window would show: the views, the GUI over them, and the stats and the profiler when they're on. It's `--size` times `--scale` pixels: `--size 1280 720 --scale 2` is 2560 by 1440.
+
+Nothing of the run depends on the machine it's on, or on what's happening there:
+
+- **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
+- **Input is made up.** The game gets what the script says and nothing else: never the real keyboard, mouse or gamepad, and it leaves the clipboard alone. The cursor is locked whenever the game asks for it.
+- **The window's size and scale are what you asked for,** whatever the display is.
+
+So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
+
+Something has to end a run nobody can close: `--frames`, or the script's `quit`. The run's exit code says how it went:
+
+| Exit code | What happened |
+|---|---|
+| 0 | The run ended at `--frames` or `quit`, and its pictures were written |
+| 1 | A picture couldn't be written. Folders aren't made for it |
+| 2 | An option or a line of the script is wrong: nothing ran, and the message names what to fix |
+
+A game `tide build` made takes the same options itself, so a build server needs no `tide`: `build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
+
+### Scripts
+
+A script is a text file. Each line is the frame something happens at, then what happens. Frames count from 1, and lines are in the order of their frames. A blank line, or one that starts with `#`, says nothing.
+
+```
+# Into a practice round, then a few steps to the right
+30 mouse 640 353
+31 button left
+120 key d down
+200 capture fight.png
+260 key d up
+300 quit
+```
+
+```
+tide run --script play.txt --size 1280 720
+```
+
+| Line | What happens |
+|---|---|
+| `key <name> down`, `key <name> up` | A key goes down or up, by its name in [`Devices`](../game/input.md#devices): `w`, `space`, `enter`, `leftShift`, `upArrow`, `digit1` |
+| `key <name>` | A tap: down for this frame, and up at the next |
+| `button <name> down`, `up`, or neither | A mouse button, the same way: `left`, `right`, `middle`, `back` or `forward`. `button left` is a click where the mouse is |
+| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw2D.Screen()`'s are |
+| `move <dx> <dy>` | The mouse moves by so much, across and down: what turns a camera whose [cursor is locked](../game/views.md#looking-around) |
+| `scroll <x> <y>` | The wheel turns, `y` positive away from you |
+| `text <characters>` | Characters typed, to the line's end, as [`devices.keyboard.text`](../game/input.md#typed-text) and the GUI's fields get them: 32 a frame, as a paste comes. No key is pressed for them: Enter and Backspace are `key` lines |
+| `touch <finger> down <x> <y>` | A finger touches the screen. `<finger>` is a number you pick, to say which one moves and lifts |
+| `touch <finger> move <x> <y>` | It moves |
+| `touch <finger> up` | It lifts, where it was, or at an `<x> <y>` after it |
+| `pad <button> down`, `up`, or neither | A gamepad's button, by name: `buttonSouth`, `start`, `dpad.up` |
+| `pad leftStick <x> <y>`, `pad rightStick <x> <y>` | A stick, from -1 to 1, with `y` up |
+| `pad leftTrigger <value>`, `pad rightTrigger <value>` | A trigger, from 0 to 1 |
+| `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
+| `quit` | Ends the run once this frame drew |
+
+What a line does is in the devices at its frame, as if a player had done it since the frame before. So it goes the way a player's input goes: the GUI takes a click on one of its widgets and the game doesn't get it, and a modal keeps the keys from the game.
+
+The mouse starts outside the window, on no widget. A gamepad is connected from the script's first `pad` line, and a touchscreen from its first `touch`.
+
+A line that's wrong stops the run before it starts, and the message says which, and what to write:
+
+```
+tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
+```
 
 ## add and update
 
