@@ -72,6 +72,11 @@ static inline void tide_run_views(const void *world, const void *previous, const
     tide_frame(world, previous, alpha, verified, local, draw, gui);
 }
 
+static inline void tide_run_events(void *local, tide_event_log *events)
+{
+    tide_local_events(local, events);
+}
+
 static inline void tide_run_frame_time(void *local, const float seconds)
 {
     tide_local_frame_time(local, seconds);
@@ -171,6 +176,7 @@ static const tide_host_game tide_host_game_api = {
     .sample_input = tide_run_sample_input,
 #endif
     .frame = tide_run_views,
+    .events = tide_run_events,
     .frame_time = tide_run_frame_time,
     .take_request = tide_run_take_request,
 #ifdef TIDE_HAS_COMMANDS

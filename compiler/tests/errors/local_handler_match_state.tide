@@ -1,4 +1,4 @@
-// expect: 'Score' belongs to the match, and local handlers only take local state for now
+// expect: 'Score' belongs to the match, and a handler of a local event only takes local state
 singleton Score { int value; }
 local event Blink { }
 scene Main { }

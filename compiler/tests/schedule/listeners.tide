@@ -1,0 +1,66 @@
+// A match event's local handlers hear it on each machine, at the start of a
+// frame: they're listed apart from the handlers the tick runs.
+
+component Health
+{
+    int value = 10;
+    local float flash;
+}
+
+local singleton Shown
+{
+    int hits;
+    int deaths;
+}
+
+event Hit
+{
+    int damage = 1;
+}
+
+// Only local code handles it
+event Glanced
+{
+    float2 at;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Health);
+}
+
+system Strike(Health health)
+{
+    this.Send(Hit);
+    if (health.value < 3) this.Send(Glanced { at = float2(1, 2) });
+}
+
+event(Hit hit) TakeHit(mut Health health)
+{
+    health.value -= hit.damage;
+    if (health.value <= 0) this.Destroy();
+}
+
+local event(Hit hit) Flash(mut Health health, mut Shown shown)
+{
+    health.flash = 1;
+    shown.hits += hit.damage;
+}
+
+[Before(Flash)]
+local event(verified Hit) Count(mut Shown shown)
+{
+    shown.hits += 1;
+}
+
+local event(Glanced glanced) Spark(mut Shown shown)
+{
+    if (glanced.at.x > 0) shown.hits += 1;
+}
+
+local event(verified Destroyed) Mourn(Health health, mut Shown shown)
+{
+    shown.deaths += health.value + 1;
+}

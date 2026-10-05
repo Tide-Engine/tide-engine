@@ -1,0 +1,12 @@
+// expect: a local handler hears the match as the event left it, and the World is the match as it is now
+component Health { int value; }
+event Hit { Entity attacker; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health).Send(Hit); }
+
+local event(Hit hit) Flash(Health health, World world, mut Log log)
+{
+    log.count = world.Get<Health>(hit.attacker).value + health.value;
+}

@@ -1,0 +1,11 @@
+// expect: 'cells' is a list of the match's, which a local handler doesn't hear yet
+event Cleared { List<int> cells; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Send(Cleared { cells = [1, 2] }); }
+
+local event(Cleared cleared) Count(mut Log log)
+{
+    log.count = cleared.cells.count;
+}

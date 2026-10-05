@@ -1,0 +1,11 @@
+// expect: 'verified Health' appears twice
+component Health { int value; }
+local singleton Fx { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+view Bar(verified Health a, verified Health b, mut Fx fx)
+{
+    fx.count = a.value + b.value;
+}
