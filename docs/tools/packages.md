@@ -86,7 +86,7 @@ A folder's files build as they are, with no commit, and `tide run` reloads the g
 
 ## Packages that come with tide
 
-Some packages come with `tide`, in its installation. A line for one is its name alone:
+Some packages come with `tide`, in its installation: `box2d` and `box3d`, Erin Catto's physics engines in 2D and in 3D, are the two so far. A line for one is its name alone:
 
 ```
 box2d
