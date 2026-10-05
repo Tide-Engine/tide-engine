@@ -1,0 +1,10 @@
+// expect: the match is the same on every machine, so a system has nothing 'verified' to read
+component Health { int value; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+system Heal(verified Health health)
+{
+    if (health.value > 0) return;
+}

@@ -1,0 +1,98 @@
+// Events only local code handles cost the match nothing. This game's match is
+// local_events_plain.tide's, which is this game without them: both games'
+// worlds and what their machines send are the same (local_events_same.h).
+
+component Ball
+{
+    float2 position;
+    float2 velocity = float2(3, 2);
+    int bounces;
+}
+
+component Player { }
+
+singleton Field
+{
+    float2 size = float2(8, 5);
+    int bounces;
+}
+
+input Controls
+{
+    float push;
+}
+
+scene Main { }
+
+// What the match sends for whoever shows it: nothing in the match handles them
+event Bounced
+{
+    float2 at;
+    float2 normal;
+}
+
+event Pushed
+{
+    float by;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Ball { position = float2(1, 1) });
+    Spawn(Ball { position = float2(4, 3), velocity = float2(-2, 3) });
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+system Push(Controls controls, mut Field field, with Player)
+{
+    if (controls.push == 0) return;
+    field.size.x += controls.push * 0.01;
+    this.Send(Pushed { by = controls.push });
+}
+
+system Roll(mut Ball ball, mut Field field, Time time)
+{
+    ball.position += ball.velocity * time.dt;
+    if (ball.position.x < 0 || ball.position.x > field.size.x)
+    {
+        ball.velocity.x = -ball.velocity.x;
+        ball.bounces += 1;
+        field.bounces += 1;
+        this.Send(Bounced { at = ball.position, normal = float2(ball.position.x < 0 ? 1 : -1, 0) });
+    }
+    if (ball.position.y < 0 || ball.position.y > field.size.y)
+    {
+        ball.velocity.y = -ball.velocity.y;
+        ball.bounces += 1;
+        field.bounces += 1;
+        this.Send(Bounced { at = ball.position, normal = float2(0, ball.position.y < 0 ? 1 : -1) });
+    }
+}
+
+local singleton Shown
+{
+    int bounces;
+    int sure;
+    int pushes;
+    float2 last;
+}
+
+local event(Bounced bounced) Spark(Ball ball, mut Shown shown)
+{
+    shown.bounces += 1;
+    shown.last = bounced.at + bounced.normal * float(ball.bounces);
+}
+
+local event(verified Bounced) Mark(mut Shown shown)
+{
+    shown.sure += 1;
+}
+
+local event(Pushed pushed) Nudge(mut Shown shown)
+{
+    if (pushed.by != 0) shown.pushes += 1;
+}
