@@ -26,8 +26,8 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x702c3b06c79c06fc)
-#define IMAGES_HASH UINT64_C(0x93583282f09da0cd)
+#define SETTLED_HASH UINT64_C(0x6b36b5fdd15808a9)
+#define IMAGES_HASH UINT64_C(0xfccb993ef597dfd3)
 
 static tide_world a;
 static tide_world b;
@@ -166,14 +166,26 @@ static void cost(tide_world *w, const char *what, const int ticks)
     uint64_t in_all;
     b2t_measure(&step, &image);
     b2t_measure_blocks(&changed, &in_all);
-    const uint64_t began = tide_time_now_ns();
-    for (int i = 0; i < ticks; i++) tide_world_tick(w);
-    const uint64_t took = tide_time_now_ns() - began;
+    // As a match does: each tick's world is kept (a snapshot, which shares what
+    // the tick left alone) and hashed (what the tick changed)
+    uint64_t took = 0;
+    uint64_t kept_ns = 0;
+    for (int i = 0; i < ticks; i++) {
+        const uint64_t began = tide_time_now_ns();
+        tide_world_tick(w);
+        const uint64_t ticked = tide_time_now_ns();
+        tide_world_copy(&kept, w);
+        (void)tide_world_hash(w);
+        took += ticked - began;
+        kept_ns += tide_time_now_ns() - ticked;
+    }
     b2t_measure(&step, &image);
     b2t_measure_blocks(&changed, &in_all);
-    printf("    %-22s a tick takes %.3f ms: %.3f Box2D's step, %.3f its image, %.3f the rest; %.0f%% of the image changes\n", what,
-           (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
-           (double)(took - step - image) / (ticks * 1e6), in_all ? 100.0 * (double)changed / (double)in_all : 0.0);
+    printf("    %-19s a tick takes %.3f ms: %.3f Box2D's step, %.3f its image, %.3f the rest; keeping and hashing it %.3f, "
+           "with %.0f%% of the image changed\n",
+           what, (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
+           (double)(took - step - image) / (ticks * 1e6), (double)kept_ns / (ticks * 1e6),
+           in_all ? 100.0 * (double)changed / (double)in_all : 0.0);
 }
 
 TIDE_TEST(box2d_costs)
@@ -191,6 +203,7 @@ TIDE_TEST(box2d_costs)
     TIDE_CHECK((uint64_t)a.Box2D_Physics.stamp == stamp && !a.Box2D_Physics.moved); // Nothing stepped, and nothing was written
     printf("    %d crates; the image is %d bytes\n", CRATES, (int)a.Box2D_Physics.size);
     tide_world_free(&a);
+    tide_world_free(&kept);
 }
 
 #ifdef BOX2D_TEST_JOBS

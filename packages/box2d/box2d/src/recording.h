@@ -78,6 +78,13 @@ typedef struct b2RecBuffer
 	bool countOnly;
 	// Tide: `data` is the caller's, as big as it is. What doesn't fit is counted and not written (see ../TIDE.md)
 	bool fixed;
+	// Tide: an image in sections (see snapshot.c). Where each starts, when the caller says; each one's size, when
+	// it asks; the section being written, plus one, and where it started; and whether one ran into the next.
+	const int* bases;
+	int* sizes;
+	int section;
+	int sectionStart;
+	bool overran;
 } b2RecBuffer;
 
 // User-owned recording buffer. The world appends into it while recording; the user saves and

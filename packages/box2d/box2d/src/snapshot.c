@@ -38,6 +38,35 @@
 #define B2_SNAP_FLAG_VALIDATION 0x1u	   // image was built with validation, only used for diagnostics
 #define B2_SNAP_FLAG_DOUBLE_PRECISION 0x2u // image was built with double precision world positions
 
+// Tide: an image in sections (see ../TIDE.md). After the header there's a table of where each section starts,
+// and each is written there, with zeros between one's end and the next one's start. So a section that grows or
+// shrinks a little leaves the others where they were, and an image differs from the one before it where the
+// world does. Upstream's image is one run of bytes, whose every byte moves when an early part changes size.
+#define B2_SNAP_FLAG_SECTIONS 0x4u
+enum
+{
+	b2_sectionConfig,		// World scalars and the id pools
+	b2_sectionFixedSets,	// The static and the disabled solver sets
+	b2_sectionAwakeSet,
+	b2_sectionSleepingSets,
+	b2_sectionBodies,
+	b2_sectionShapes,
+	b2_sectionFatAABBs,
+	b2_sectionContacts,
+	b2_sectionJoints,
+	b2_sectionChains,
+	b2_sectionSensors,
+	b2_sectionIslands,
+	b2_sectionStaticTree,
+	b2_sectionKinematicTree,
+	b2_sectionDynamicTree,
+	b2_sectionPairs,
+	b2_sectionGraph,
+	b2_sectionCount,
+};
+_Static_assert( b2_sectionCount == B2_SNAPSHOT_SECTIONS, "the sections of an image, as box2d.h counts them" );
+_Static_assert( b2_bodyTypeCount == 3, "a tree a section" );
+
 // Layout hash seeds from all structs we memcpy, plus key constants.
 // Changing any struct or constant updates the hash. Re-purposing or swapping
 // fields might not change the hash
@@ -98,6 +127,9 @@ typedef struct b2SnapReader
 	int cursor;
 	int size;
 	bool ok;
+	// Tide: an image in sections says where each starts
+	bool sectioned;
+	int bases[b2_sectionCount];
 } b2SnapReader;
 
 static void b2SnapRCheck( b2SnapReader* r, int need )
@@ -105,6 +137,48 @@ static void b2SnapRCheck( b2SnapReader* r, int need )
 	if ( need < 0 || (int64_t)r->cursor + (int64_t)need > (int64_t)r->size )
 	{
 		r->ok = false;
+	}
+}
+
+// Tide: the next section starts here. Its size goes to the caller who asked, and with a table of bases the
+// writing goes on from this one's, over zeros. A section that ran past the next one's base says so, and from
+// there on the image is only measured, as one run of bytes: the caller places the sections again.
+static void b2SnapSection( b2RecBuffer* buf, int section )
+{
+	if ( buf->sizes != NULL && buf->section > 0 )
+	{
+		buf->sizes[buf->section - 1] = buf->size - buf->sectionStart;
+	}
+
+	if ( buf->bases != NULL && buf->overran == false && section < b2_sectionCount )
+	{
+		int base = buf->bases[section];
+		if ( buf->size > base )
+		{
+			buf->overran = true;
+			buf->countOnly = true;
+		}
+		else if ( buf->countOnly || base > buf->capacity )
+		{
+			buf->countOnly = true;
+			buf->size = base;
+		}
+		else
+		{
+			memset( buf->data + buf->size, 0, (size_t)( base - buf->size ) );
+			buf->size = base;
+		}
+	}
+
+	buf->section = section + 1;
+	buf->sectionStart = buf->size;
+}
+
+static void b2SnapSeek( b2SnapReader* r, int section )
+{
+	if ( r->sectioned && r->ok )
+	{
+		r->cursor = r->bases[section];
 	}
 }
 
@@ -498,9 +572,18 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	{
 		hdr.flags |= B2_SNAP_FLAG_DOUBLE_PRECISION;
 	}
+	if ( buf->bases != NULL )
+	{
+		hdr.flags |= B2_SNAP_FLAG_SECTIONS;
+	}
 	b2SnapW_Bytes( buf, &hdr, (int)sizeof( hdr ) );
+	if ( buf->bases != NULL )
+	{
+		b2SnapW_Bytes( buf, buf->bases, b2_sectionCount * (int)sizeof( int ) );
+	}
 
 	// World config
+	b2SnapSection( buf, b2_sectionConfig );
 	b2SerWorldConfig( buf, world );
 
 	// 7 id pools
@@ -513,22 +596,37 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	b2SerIdPool( buf, &world->solverSetIdPool );
 
 	// Solver sets
+	b2SnapSection( buf, b2_sectionFixedSets );
 	int setCount = world->solverSets.count;
 	b2SnapW_I32( buf, setCount );
 	for ( int i = 0; i < setCount; ++i )
 	{
+		if ( i == b2_awakeSet )
+		{
+			b2SnapSection( buf, b2_sectionAwakeSet );
+		}
+		else if ( i == b2_firstSleepingSet )
+		{
+			b2SnapSection( buf, b2_sectionSleepingSets );
+		}
 		b2SerSolverSet( buf, world->solverSets.data + i );
 	}
 
 	// Sparse arrays. Bodies, shapes and joints carry a host userData pointer scrubbed to NULL on write.
 	// Contacts have no userData, so they go out as raw POD.
+	b2SnapSection( buf, b2_sectionBodies );
 	b2SerSimArray( buf, world->bodies, b2Body );
+	b2SnapSection( buf, b2_sectionShapes );
 	b2SerSimArray( buf, world->shapes, b2Shape );
+	b2SnapSection( buf, b2_sectionFatAABBs );
 	b2SerPodArray( buf, world->fatAABBs );
+	b2SnapSection( buf, b2_sectionContacts );
 	b2SerPodArray( buf, world->contacts );
+	b2SnapSection( buf, b2_sectionJoints );
 	b2SerSimArray( buf, world->joints, b2Joint );
 
 	// Chain shapes: POD scalars then per-live-slot heap arrays
+	b2SnapSection( buf, b2_sectionChains );
 	int chainCount = world->chainShapes.count;
 	b2SnapW_I32( buf, chainCount );
 	for ( int i = 0; i < chainCount; ++i )
@@ -548,6 +646,7 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	}
 
 	// Sensors: shapeId + 3 visitor arrays per slot
+	b2SnapSection( buf, b2_sectionSensors );
 	int sensorCount = world->sensors.count;
 	b2SnapW_I32( buf, sensorCount );
 	for ( int i = 0; i < sensorCount; ++i )
@@ -560,6 +659,7 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	}
 
 	// Islands: POD scalars + 3 inner arrays per slot
+	b2SnapSection( buf, b2_sectionIslands );
 	int islandCount = world->islands.count;
 	b2SnapW_I32( buf, islandCount );
 	for ( int i = 0; i < islandCount; ++i )
@@ -578,16 +678,20 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	b2BroadPhase* bp = &world->broadPhase;
 	for ( int t = 0; t < b2_bodyTypeCount; ++t )
 	{
+		b2SnapSection( buf, b2_sectionStaticTree + t );
 		b2SerTree( buf, &bp->trees[t] );
 	}
+	b2SnapSection( buf, b2_sectionPairs );
 	b2SerHashSet( buf, &bp->pairSet );
 
 	// Constraint graph: B2_GRAPH_COLOR_COUNT colors
+	b2SnapSection( buf, b2_sectionGraph );
 	b2ConstraintGraph* graph = &world->constraintGraph;
 	for ( int c = 0; c < B2_GRAPH_COLOR_COUNT; ++c )
 	{
 		b2SerGraphColor( buf, &graph->colors[c], c == B2_OVERFLOW_INDEX );
 	}
+	b2SnapSection( buf, b2_sectionCount ); // Tide: the last one's size
 }
 
 // Free per-object heap the overwrite steps below don't reach, so restoring over a
@@ -629,6 +733,7 @@ static void b2FreeLiveSimElements( b2World* world )
 static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 {
 	// Step 1: world scalars
+	b2SnapSeek( r, b2_sectionConfig );
 	b2DesWorldConfig( r, world );
 
 	// Step 2: 7 id pools (overwrite entirely, including solverSetIdPool from the 3 pre-created sets)
@@ -654,6 +759,7 @@ static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 	}
 
 	// Each set writes at least setIndex plus 5 array counts
+	b2SnapSeek( r, b2_sectionFixedSets );
 	int setCount = b2SnapR_I32( r );
 	if ( r->ok && b2SnapCheckCount( r, setCount, (int)sizeof( b2SolverSet ), 6 * (int)sizeof( int ) ) == false )
 	{
@@ -668,19 +774,33 @@ static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 		// (c) Deserialize each set
 		for ( int i = 0; i < setCount; ++i )
 		{
+			if ( i == b2_awakeSet )
+			{
+				b2SnapSeek( r, b2_sectionAwakeSet );
+			}
+			else if ( i == b2_firstSleepingSet )
+			{
+				b2SnapSeek( r, b2_sectionSleepingSets );
+			}
 			b2DesSolverSet( r, world->solverSets.data + i );
 		}
 	}
 
 	// Step 4: sparse arrays. userData was written as NULL by the serializer, so a plain copy restores
 	// it cleanly with no host pointers to scrub here.
+	b2SnapSeek( r, b2_sectionBodies );
 	b2DesPodArray( r, world->bodies );
+	b2SnapSeek( r, b2_sectionShapes );
 	b2DesPodArray( r, world->shapes );
+	b2SnapSeek( r, b2_sectionFatAABBs );
 	b2DesPodArray( r, world->fatAABBs );
+	b2SnapSeek( r, b2_sectionContacts );
 	b2DesPodArray( r, world->contacts );
+	b2SnapSeek( r, b2_sectionJoints );
 	b2DesPodArray( r, world->joints );
 
 	// Step 5: chain shapes
+	b2SnapSeek( r, b2_sectionChains );
 	{
 		// Destroy the shell's chainShapes array (empty, but has a backing allocation)
 		b2Array_Destroy( world->chainShapes );
@@ -728,6 +848,7 @@ static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 	}
 
 	// Step 6: sensors
+	b2SnapSeek( r, b2_sectionSensors );
 	{
 		// Destroy the shell's sensors array
 		b2Array_Destroy( world->sensors );
@@ -761,6 +882,7 @@ static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 	}
 
 	// Step 7: islands
+	b2SnapSeek( r, b2_sectionIslands );
 	{
 		// Destroy the shell's islands array
 		b2Array_Destroy( world->islands );
@@ -801,14 +923,17 @@ static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 		// Trees: the shell already allocated tree nodes; free them and replace
 		for ( int t = 0; t < b2_bodyTypeCount; ++t )
 		{
+			b2SnapSeek( r, b2_sectionStaticTree + t );
 			b2DesTree( r, &bp->trees[t] );
 		}
 
 		// pairSet
+		b2SnapSeek( r, b2_sectionPairs );
 		b2DesHashSet( r, &bp->pairSet );
 	}
 
 	// Step 9: constraint graph
+	b2SnapSeek( r, b2_sectionGraph );
 	{
 		b2ConstraintGraph* graph = &world->constraintGraph;
 		for ( int c = 0; c < B2_GRAPH_COLOR_COUNT; ++c )
@@ -882,6 +1007,26 @@ static bool b2OpenSnapshotImage( const uint8_t* image, int size, b2SnapReader* r
 	r->cursor = (int)sizeof( hdr );
 	r->size = size;
 	r->ok = true;
+
+	// Tide: where its sections start, each after the one before it and inside the image
+	r->sectioned = ( hdr.flags & B2_SNAP_FLAG_SECTIONS ) != 0;
+	if ( r->sectioned )
+	{
+		b2SnapR_Bytes( r, r->bases, (int)sizeof( r->bases ) );
+		int last = r->cursor;
+		for ( int i = 0; i < b2_sectionCount && r->ok; ++i )
+		{
+			if ( r->bases[i] < last || r->bases[i] > size )
+			{
+				r->ok = false;
+			}
+			last = r->bases[i];
+		}
+		if ( r->ok == false )
+		{
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -985,6 +1130,42 @@ int b2World_GetSnapshot( b2WorldId worldId, uint8_t* image, int capacity )
 	buf.fixed = true;
 	b2SerializeWorld( world, &buf );
 	return buf.size;
+}
+
+// Tide: an image in sections, each at its base (see the top of this file)
+int b2GetSnapshotHead( void )
+{
+	return (int)sizeof( b2SnapHeader ) + b2_sectionCount * (int)sizeof( int );
+}
+
+int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	B2_ASSERT( world->locked == false );
+	if ( world->locked )
+	{
+		return 0;
+	}
+
+	b2RecBuffer buf = { 0 };
+	buf.data = image;
+	buf.capacity = image != NULL ? capacity : 0;
+	buf.fixed = true;
+	buf.bases = bases;
+	buf.sizes = sizes;
+	b2SerializeWorld( world, &buf );
+	return buf.overran ? -1 : buf.size;
+}
+
+bool b2GetSnapshotBases( const uint8_t* image, int size, int* bases )
+{
+	b2SnapReader reader;
+	if ( b2OpenSnapshotImage( image, size, &reader ) == false || reader.sectioned == false )
+	{
+		return false;
+	}
+	memcpy( bases, reader.bases, sizeof( reader.bases ) );
+	return true;
 }
 
 static uint64_t b2FnvMixBytes( uint64_t hash, const void* data, int n )
