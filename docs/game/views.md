@@ -269,7 +269,7 @@ view Banner(Round round)
 
 That's the message in the middle of the screen, on a panel that fits it. Text against the right edge starts at `Screen.width - size.x`.
 
-The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered over a body starts half its height above the middle:
+The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered on a body starts half its height above the body's middle:
 
 ```csharp
 var size = Draw2D.MeasureText(player.name, 0.5);
