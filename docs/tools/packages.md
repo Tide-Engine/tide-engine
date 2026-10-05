@@ -1,6 +1,6 @@
 # Packages
 
-A package is Tide code, and C, that games share: a folder of `.tide` files, like a game's, without a `Main`. A game lists the packages it uses in a file named `tide.packages`, next to its own files, and `tide` builds them with it. Packages come from git repositories, at a commit, or from folders on your machine.
+A package is Tide code, and C, that games share: a folder of `.tide` files, like a game's, without a `Main`. A game lists the packages it uses in a file named `tide.packages`, next to its own files, and `tide` builds them with it. Packages come from git repositories, at a commit, from folders on your machine, or with `tide` itself.
 
 ## Using one
 
@@ -84,6 +84,21 @@ github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 
 A folder's files build as they are, with no commit, and `tide run` reloads the game when they change, as it does for the game's own. `tide add ../shared` adds one.
 
+## Packages that come with tide
+
+Some packages come with `tide`, in its installation. A line for one is its name alone:
+
+```
+box2d
+github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
+```
+
+`tide add box2d` writes that line, and the lines of what the package needs. A game that doesn't list one builds none of it: its code compiles and links only with the games that name it.
+
+A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
+
+A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
+
 ## Writing a package
 
 A package is a folder whose `tide.packages` starts with its name, which is its namespace:
@@ -97,7 +112,7 @@ github.com/someone/tide-math 9f2c1e07d4b8a3f6e5c2d1b0a9f8e7d6c5b4a392
 - Every file of the package puts what it declares in its namespace, `namespace Physics;`, or in one inside it, like `namespace Physics.Joints;`.
 - What a game has one of is the game's: a package can't declare `Main`, the input or the settings. Its systems can take `Devices`, which the game's input sends with its own fields.
 - `tide 0.3` is the oldest `tide` it builds with. With an older one, a game that uses it says so, and to run `tide upgrade`.
-- Its other lines are the packages it needs, as a game lists them. One from git only needs packages from git, since a folder on your machine isn't on anyone else's.
+- Its other lines are the packages it needs, as a game lists them. One from git only needs packages from git and packages that come with `tide`, since a folder on your machine isn't on anyone else's.
 - Its C goes in its folder, as a game's does (see [Calling C](../c/functions.md)), and compiles with the game.
 - A package's systems run before the game's: packages' files compile first, each package after those it needs, and the game's files last (see [Systems](../game/systems.md#order)).
 

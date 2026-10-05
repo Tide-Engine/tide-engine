@@ -124,6 +124,9 @@ suggestion suggest_start(str wrong);
 void suggest_consider(suggestion *s, str candidate);
 void suggest_consider_c(suggestion *s, const char *candidate);
 void suggest_note(const suggestion *s);
+// Whether the closest name offered (`best`) is close enough to suggest, for a
+// "did you mean" that isn't a diagnostic's note.
+bool suggest_close(const suggestion *s);
 
 // What to write in place of `wrong` (a slice of the source), which the last
 // diagnostic's note said in its own words: editors offer the change, as they

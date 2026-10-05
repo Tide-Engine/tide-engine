@@ -61,6 +61,30 @@ TIDE_TEST(cli_packages_take_sources_as_people_write_them)
     TIDE_CHECK(rejects("github.com/owner/../repo"));
     TIDE_CHECK(rejects("github.com/owner/repo//"));
     TIDE_CHECK(rejects(""));
+    // A name alone is a package that comes with tide. Its @ref is given, for the caller to refuse.
+    TIDE_CHECK(parses("box2d", "box2d", NULL));
+    TIDE_CHECK(parses("box2d@v1", "box2d", "v1"));
+    TIDE_CHECK(rejects("box2d@"));
+    TIDE_CHECK(rejects("Box2D"));
+    TIDE_CHECK(rejects("box-2d"));
+    TIDE_CHECK(rejects("2d"));
+}
+
+TIDE_TEST(cli_packages_that_come_with_tide_are_names_alone)
+{
+    TIDE_CHECK(packages_is_builtin("box2d"));
+    TIDE_CHECK(packages_is_builtin("a"));
+    TIDE_CHECK(!packages_is_builtin(""));
+    TIDE_CHECK(!packages_is_builtin("Box2D"));
+    TIDE_CHECK(!packages_is_builtin("2d"));
+    TIDE_CHECK(!packages_is_builtin("box_2d"));
+    TIDE_CHECK(!packages_is_builtin("box2d/joints"));
+    TIDE_CHECK(!packages_is_builtin("box2d.tide"));
+    TIDE_CHECK(!packages_is_builtin("./box2d")); // A folder
+    TIDE_CHECK(!packages_is_builtin("github.com"));
+    TIDE_CHECK(!packages_is_builtin("package")); // The words that start the file's other lines
+    TIDE_CHECK(!packages_is_builtin("tide"));
+    TIDE_CHECK(packages_is_builtin("tides"));
 }
 
 static bool relative_is(const char *from, const char *path, const char *want)
@@ -168,6 +192,179 @@ TIDE_TEST(cli_packages_files_say_what_they_are)
     TIDE_CHECK(packages_read(none, &f, collect, &r));
     TIDE_CHECK(!f.exists && f.count == 0 && !f.name);
     packages_free_file(&f);
+}
+
+// ---------------------------------------------------------------------------
+// The packages that come with tide, in an installation made up for the test:
+// they're in its src/packages, which tide says as it starts
+
+// Everything reported, a line each: "<line>: <message> (<note>)".
+typedef struct said {
+    char text[4096];
+    size_t len;
+} said;
+
+static void say(void *user, const char *where, const int line, const char *message, const char *note)
+{
+    (void)where;
+    said *s = user;
+    if (s->len >= sizeof s->text) return;
+    s->len += (size_t)snprintf(s->text + s->len, sizeof s->text - s->len, "%d: %s (%s)\n", line, message, note ? note : "");
+}
+
+static void put(const char *root, const char *file, const char *text);
+
+// An installation with packages, in its src/packages: dice, which needs
+// rolls; rolls; lonely, which needs a folder beside it; and what isn't one of
+// them. Gives the installation's folder.
+static char *installation(void)
+{
+    char *root = path_join(scratch(), "installed");
+    sys_remove_tree(root);
+    put(root, "src/packages/dice/" PACKAGES_FILE, "package Dice\nrolls\n");
+    put(root, "src/packages/rolls/" PACKAGES_FILE, "package Rolls\n");
+    put(root, "src/packages/lonely/" PACKAGES_FILE, "package Lonely\n../rolls\n");
+    // Not packages that come with tide: a folder with no tide.packages, and
+    // one named as none is
+    put(root, "src/packages/empty/dice.tide", "namespace Empty;\n");
+    put(root, "src/packages/Loud/" PACKAGES_FILE, "package Loud\n");
+    return root;
+}
+
+TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
+{
+    char *root = installation();
+    char *builtin = path_join(root, "src/packages");
+    // Before anything says which folder they're in, none does.
+    char **names = NULL;
+    TIDE_CHECK(packages_builtin_names(&names) == 0 && !names);
+    TIDE_CHECK(!packages_builtin_exists("dice"));
+
+    packages_set_builtin_folder(builtin);
+    TIDE_REQUIRE(packages_builtin_names(&names) == 3);
+    TIDE_CHECK(strcmp(names[0], "dice") == 0 && strcmp(names[1], "lonely") == 0 && strcmp(names[2], "rolls") == 0);
+    packages_free_names(names, 3);
+    TIDE_CHECK(packages_builtin_exists("dice"));
+    TIDE_CHECK(!packages_builtin_exists("empty"));
+    TIDE_CHECK(!packages_builtin_exists("nope"));
+
+    // A game that lists them: each is its folder there, after what it needs.
+    char *game = write_packages("builtin_game", "dice\nrolls\n");
+    game_packages g;
+    said s = {0};
+    TIDE_CHECK(packages_resolve(game, &g, NULL, say, &s));
+    TIDE_CHECK(s.len == 0);
+    TIDE_REQUIRE(g.count == 2);
+    TIDE_CHECK(g.file.lines[0].builtin && !g.file.lines[0].local && !g.file.lines[0].commit);
+    TIDE_CHECK(strcmp(g.items[0].name, "Rolls") == 0 && strcmp(g.items[1].name, "Dice") == 0);
+    char *want = path_join(builtin, "dice/");
+    char *relative = packages_relative(want, g.items[1].folder);
+    TIDE_CHECK(strcmp(relative, ".") == 0); // The same folder, however each is written
+    free(relative);
+    free(want);
+    packages_free(&g);
+    free(game);
+
+    // What a package needs, the game lists, by its name.
+    game = write_packages("builtin_needs", "dice\n");
+    s = (said){0};
+    TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
+    TIDE_CHECK(strstr(s.text, "1: Dice needs rolls, which this file doesn't list (add this line: rolls)"));
+    packages_free(&g);
+    package_need *needs = NULL;
+    TIDE_REQUIRE(packages_missing(game, NULL, NULL, &needs) == 1);
+    TIDE_CHECK(strcmp(needs[0].line, "rolls") == 0 && strcmp(needs[0].by, "Dice") == 0);
+    packages_free_needs(needs, 1);
+    free(game);
+
+    // A name no package has says which there are, the one that's close, and
+    // how the folder of that name beside the file is written.
+    game = write_packages("builtin_unknown", "dise\nshared\n");
+    char *shared = path_join(game, "shared");
+    TIDE_CHECK(sys_mkdirs(shared));
+    free(shared);
+    s = (said){0};
+    TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
+    TIDE_CHECK(strstr(s.text, "1: no package called dise comes with this tide "
+                              "(did you mean 'dice'? It comes with dice, lonely and rolls)"));
+    TIDE_CHECK(strstr(s.text, "2: no package called shared comes with this tide "
+                              "(it comes with dice, lonely and rolls; a folder is written as a path, like ./shared)"));
+    packages_free(&g);
+    free(game);
+
+    // One that comes with tide names what it needs as a game does, never by a folder.
+    game = write_packages("builtin_folder", "lonely\nrolls\n");
+    s = (said){0};
+    TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
+    TIDE_CHECK(strstr(s.text, "2: a package that comes with tide can't use a folder on this machine (../rolls)"));
+    packages_free(&g);
+    free(game);
+
+    // A package from a folder can need one that comes with tide, by its name.
+    char *folder = write_packages("builtin_user", "package User\ndice\n");
+    free(folder);
+    game = write_packages("builtin_through", "../builtin_user\ndice\nrolls\n");
+    s = (said){0};
+    TIDE_CHECK(packages_resolve(game, &g, NULL, say, &s));
+    TIDE_REQUIRE(g.count == 3);
+    TIDE_CHECK(strcmp(g.items[0].name, "Rolls") == 0 && strcmp(g.items[1].name, "Dice") == 0);
+    TIDE_CHECK(strcmp(g.items[2].name, "User") == 0);
+    packages_free(&g);
+    free(game);
+
+    // A tide that comes with none says so: its folder of them isn't there.
+    char *none = path_join(root, "src/none");
+    packages_set_builtin_folder(none);
+    char *note = packages_builtin_unknown("dice", NULL);
+    TIDE_CHECK(strcmp(note, "it comes with none") == 0);
+    free(note);
+    free(none);
+
+    packages_set_builtin_folder(NULL);
+    sys_remove_tree(root);
+    free(builtin);
+    free(root);
+}
+
+TIDE_TEST(cli_a_line_for_a_package_that_comes_with_tide_is_its_name_alone)
+{
+    char *dir = write_packages("builtin_lines", "box2d  # The version this tide came with\n"
+                                                "./box2d\n"
+                                                "github.com/owner/box2d 0123456789abcdef0123456789abcdef01234567\n");
+    packages_file f;
+    said s = {0};
+    TIDE_CHECK(packages_read(dir, &f, say, &s));
+    TIDE_REQUIRE(f.count == 3);
+    TIDE_CHECK(f.lines[0].builtin && !f.lines[0].local && !f.lines[0].commit && !f.lines[0].ref);
+    TIDE_CHECK(strcmp(f.lines[0].source, "box2d") == 0);
+    TIDE_CHECK(f.lines[1].local && !f.lines[1].builtin); // A folder of the same name is still a folder
+    TIDE_CHECK(!f.lines[2].local && !f.lines[2].builtin);
+    // Its folder is in the one tide says they're in, and nothing said here.
+    char *folder = packages_folder(&f.lines[0], f.folder);
+    TIDE_CHECK(!folder);
+    packages_free_file(&f);
+    free(dir);
+
+    // It takes no commit and follows nothing, and `package` and `tide` are never names.
+    dir = write_packages("builtin_mistakes", "box2d 0123456789abcdef0123456789abcdef01234567\n"
+                                             "box2d@v1\n"
+                                             "box2d\n"
+                                             "box2d\n"
+                                             "package\n"
+                                             "tide\n"
+                                             "Box2D\n");
+    s = (said){0};
+    TIDE_CHECK(!packages_read(dir, &f, say, &s));
+    TIDE_CHECK(f.count == 1);
+    TIDE_CHECK(strstr(s.text, "1: a package that comes with tide needs no commit (a name alone, like `box2d`, is a "
+                              "package that comes with tide: it's the version this tide came with)"));
+    TIDE_CHECK(strstr(s.text, "2: a package that comes with tide follows no branch or version"));
+    TIDE_CHECK(strstr(s.text, "4: box2d is listed twice"));
+    TIDE_CHECK(strstr(s.text, "5: `package` needs a name"));
+    TIDE_CHECK(strstr(s.text, "6: `tide` needs a version"));
+    TIDE_CHECK(strstr(s.text, "7: 'Box2D' isn't a package"));
+    packages_free_file(&f);
+    free(dir);
 }
 
 // Git's list as a host sends it: the service, then each ref, the first with

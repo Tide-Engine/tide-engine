@@ -19,10 +19,10 @@ set(ENV{TIDE_PACKAGES} "${WORK}/cache")
 set(ENV{TIDE_GIT_MIRROR} "${mirror}")
 set(ENV{TIDE_NO_UPDATE_CHECK} 1)
 
-# Runs tide in `dir`, and checks how it ended and that what it said has each
-# of the texts after EXPECT.
+# Runs tide in `dir`, and checks how it ended, that what it said has each of
+# the texts after EXPECT, and none of those after WITHOUT.
 function(tide dir)
-    cmake_parse_arguments(ARG "FAILS" "" "ARGS;EXPECT" ${ARGN})
+    cmake_parse_arguments(ARG "FAILS" "" "ARGS;EXPECT;WITHOUT" ${ARGN})
     execute_process(COMMAND "${TIDE}" ${ARG_ARGS} WORKING_DIRECTORY "${dir}"
         RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err)
     set(said "${out}${err}")
@@ -35,6 +35,12 @@ function(tide dir)
         string(FIND "${said}" "${text}" at)
         if(at EQUAL -1)
             message(FATAL_ERROR "tide ${ARG_ARGS} should have said '${text}', and said:\n${said}")
+        endif()
+    endforeach()
+    foreach(text IN LISTS ARG_WITHOUT)
+        string(FIND "${said}" "${text}" at)
+        if(NOT at EQUAL -1)
+            message(FATAL_ERROR "tide ${ARG_ARGS} shouldn't have said '${text}', and said:\n${said}")
         endif()
     endforeach()
 endfunction()
@@ -228,3 +234,108 @@ endif()
 file(REMOVE "${stopped}/.tide-fetched" "${stopped}/packages/physics/body.tide")
 tide("${game}" ARGS schedule . EXPECT "downloading github.com/test/physics at 2222222222" "Physics.Integrate")
 tide("${game}" ARGS schedule . EXPECT "Physics.Integrate")
+
+# ---------------------------------------------------------------------------
+# Packages that come with tide
+
+# They're in tide's installation, <root>/src/packages/<name>, where tide is in
+# <root>/bin: this tide goes in one of its own, with three of them and nothing
+# to build games with, which tide schedule, add and update don't need.
+set(built "${TIDE}")
+set(install "${WORK}/install")
+file(COPY "${TIDE}" DESTINATION "${install}/bin")
+get_filename_component(tide_name "${TIDE}" NAME)
+set(TIDE "${install}/bin/${tide_name}")
+set(builtin "${install}/src/packages")
+# The installation's packages/ is where packages from git are kept, where the
+# installers put tide: nothing there comes with it.
+file(WRITE "${install}/packages/cards/tide.packages" "package Cards\n")
+file(WRITE "${builtin}/rolls/tide.packages" "package Rolls\n")
+file(WRITE "${builtin}/rolls/sides.tide" "namespace Rolls;\n\nint Sides()\n{\n    return 6;\n}\n")
+file(WRITE "${builtin}/dice/tide.packages" "package Dice\nrolls\n")
+file(WRITE "${builtin}/dice/die.tide" "namespace Dice;
+
+component Die
+{
+    int face;
+}
+
+system Roll(mut Die die)
+{
+    die.face += Rolls.Sides();
+}
+")
+# One that names what it needs by a folder, which no game's file could.
+file(WRITE "${builtin}/lonely/tide.packages" "package Lonely\n../rolls\n")
+file(WRITE "${builtin}/lonely/alone.tide" "namespace Lonely;\n")
+
+set(game "${WORK}/builtin-game")
+file(WRITE "${game}/main.tide" "using Dice;
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Die { });
+}
+
+system Count(mut Die die)
+{
+    die.face += 1;
+}
+")
+
+# tide add writes the name alone, in lower case however it's typed, and adds
+# what the package needs.
+tide("${game}" ARGS add Dice EXPECT "added Dice, which comes with tide" "added rolls, which Dice needs")
+expect_file("${game}/tide.packages" "dice\nrolls\n")
+tide("${game}" ARGS add dice EXPECT "Dice is in tide.packages already, on line 1" WITHOUT "tide update")
+tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
+
+# tide update leaves those lines alone, and says nothing about them.
+tide("${game}" ARGS update EXPECT "tide.packages has no packages from git to update" WITHOUT "Dice" "Rolls")
+tide("${game}" ARGS add github.com/test/maths EXPECT "added Maths, at 1111111 (main)")
+tide("${game}" ARGS update EXPECT "Maths is up to date, at 1111111 (main)" WITHOUT "Dice" "Rolls")
+expect_file("${game}/tide.packages" "dice\nrolls\ngithub.com/test/maths ${M1}\n")
+tide("${game}" ARGS update dice EXPECT "Dice comes with tide, so `tide upgrade` is what updates it")
+tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
+
+# A name no package has: those there are, and the one that's close.
+tide("${game}" ARGS add dise FAILS
+    EXPECT "no package called dise comes with this tide" "did you mean 'dice'? It comes with dice, lonely and rolls")
+tide("${game}" ARGS add cards FAILS EXPECT "no package called cards comes with this tide")
+file(WRITE "${game}/tide.packages" "dice\nrolls\nnope\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:3: error: no package called nope comes with this tide" "it comes with dice, lonely and rolls")
+# A folder of that name beside the game is one only as a path.
+file(WRITE "${game}/shared/tide.packages" "package Shared\n")
+file(WRITE "${game}/tide.packages" "dice\nrolls\nshared\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:3: error: no package called shared comes with this tide"
+           "a folder is written as a path, like ./shared")
+file(WRITE "${game}/tide.packages" "dice\nrolls\n./shared\n")
+tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll")
+
+# It's the version this tide came with: no commit, and nothing to follow.
+file(WRITE "${game}/tide.packages" "dice ${M1}\nrolls\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: a package that comes with tide needs no commit"
+           "a name alone, like `dice`, is a package that comes with tide: it's the version this tide came with")
+file(WRITE "${game}/tide.packages" "dice@v1\nrolls\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: a package that comes with tide follows no branch or version")
+tide("${game}" ARGS add rolls@v1 FAILS EXPECT "a package that comes with tide follows no branch or version")
+
+# What it needs, the game lists, and it names that as a game does.
+file(WRITE "${game}/tide.packages" "dice\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "tide.packages:1: error: Dice needs rolls, which this file doesn't list" "add this line: rolls")
+file(WRITE "${game}/tide.packages" "dice\nrolls\nlonely\n")
+tide("${game}" ARGS schedule . FAILS
+    EXPECT "a package that comes with tide can't use a folder on this machine (../rolls)")
+
+# They're the installation's: the tide the build made, where it was built, has neither.
+file(WRITE "${game}/tide.packages" "dice\nrolls\n")
+tide("${game}" ARGS schedule . EXPECT "stage 1  Dice.Roll" "stage 2  Count")
+set(TIDE "${built}")
+tide("${game}" ARGS schedule . FAILS EXPECT "tide.packages:1: error: no package called dice comes with this tide")

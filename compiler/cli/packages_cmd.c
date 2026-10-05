@@ -208,18 +208,40 @@ int tide_add(const char *folder, const char *what)
 {
     char *source = NULL;
     char *ref = NULL;
-    if (!packages_parse_source(what, &source, &ref)) {
+    // A package that comes with tide, as its name is said (Box2D) or as its line is written (box2d)
+    char *typed = dup(what);
+    bool word = isalpha((unsigned char)typed[0]);
+    for (const char *c = typed; *c && word; c++) word = isalnum((unsigned char)*c);
+    for (char *c = typed; *c && word; c++) *c = (char)tolower((unsigned char)*c);
+    const bool parsed = packages_parse_source(typed, &source, &ref);
+    free(typed);
+    if (!parsed) {
         fprintf(stderr, "tide: '%s' isn't a package's source\n", what);
         fprintf(stderr, "  = note: give a git repository, like github.com/owner/repo or https://github.com/owner/repo.git, "
-                        "with @branch or @v1 after it to follow a branch or a version; or a folder, like ../shared\n");
+                        "with @branch or @v1 after it to follow a branch or a version; or a folder, like ../shared; or the "
+                        "name of a package that comes with tide\n");
+        return 2;
+    }
+    const bool builtin = packages_is_builtin(source);
+    if (builtin && ref) {
+        fprintf(stderr, "tide: a package that comes with tide follows no branch or version\n");
+        fprintf(stderr, "  = note: a name alone, like `%s`, is a package that comes with tide: it's the version this tide "
+                        "came with\n", source);
         return 2;
     }
     packages_file game;
     if (!packages_read(folder, &game, report, NULL)) return 1;
-    package_line line = {0, source, ref, NULL, packages_is_local(source)};
+    if (builtin && !packages_builtin_exists(source)) {
+        char *note = packages_builtin_unknown(source, game.folder);
+        fprintf(stderr, "tide: no package called %s comes with this tide\n", source);
+        fprintf(stderr, "  = note: %s\n", note);
+        free(note);
+        return 1;
+    }
+    package_line line = {0, source, ref, NULL, packages_is_local(source), builtin};
     for (int i = 0; i < game.count; i++) {
         const package_line *other = &game.lines[i];
-        bool same = other->local == line.local;
+        bool same = other->local == line.local && other->builtin == line.builtin;
         if (same && !line.local) same = strcmp(other->source, source) == 0;
         if (same && line.local) {
             char *a = packages_folder(other, game.folder);
@@ -231,14 +253,14 @@ int tide_add(const char *folder, const char *what)
         if (!same) continue;
         char *name = package_name(other, game.folder);
         printf("tide: %s is in tide.packages already, on line %d\n", name, other->line);
-        if (!other->local) printf("  = note: `tide update %s` moves it to the newest commit\n", name);
+        if (!other->local && !other->builtin) printf("  = note: `tide update %s` moves it to the newest commit\n", name);
         free(name);
         return 0;
     }
 
     git_refs refs = {0};
     const char *found = NULL;
-    if (!line.local) {
+    if (!line.local && !line.builtin) {
         char *repo = packages_repo(source);
         const bool listed = fetch_refs(repo, &refs);
         free(repo);
@@ -267,12 +289,13 @@ int tide_add(const char *folder, const char *what)
     }
 
     char text[1024];
-    if (line.local) snprintf(text, sizeof text, "%s", source);
+    if (line.local || line.builtin) snprintf(text, sizeof text, "%s", source);
     else snprintf(text, sizeof text, "%s%s%s %s", source, ref ? "@" : "", ref ? ref : "", line.commit);
     packages_text t = load(folder);
     append(&t, text);
     if (!save(&t)) return 1;
-    if (line.local) printf("tide: added %s, from %s\n", pf.name, source);
+    if (line.builtin) printf("tide: added %s, which comes with tide\n", pf.name);
+    else if (line.local) printf("tide: added %s, from %s\n", pf.name, source);
     else printf("tide: added %s, at %.7s (%s)\n", pf.name, line.commit, short_ref(found));
     packages_free_file(&pf);
     git_refs_free(&refs);
@@ -302,7 +325,7 @@ int tide_update(const char *folder, const char *const *names, const int count)
     }
     bool *chosen = calloc((size_t)game.count + 1, sizeof(bool));
     if (!chosen) abort();
-    for (int i = 0; i < game.count && count == 0; i++) chosen[i] = !game.lines[i].local;
+    for (int i = 0; i < game.count && count == 0; i++) chosen[i] = !game.lines[i].local && !game.lines[i].builtin;
     for (int n = 0; n < count; n++) {
         bool any = false;
         for (int i = 0; i < game.count; i++) {
@@ -333,6 +356,12 @@ int tide_update(const char *folder, const char *const *names, const int count)
         if (line->local) {
             char *name = package_name(line, game.folder);
             printf("tide: %s is a folder on this machine, so it's always up to date\n", name);
+            free(name);
+            continue;
+        }
+        if (line->builtin) { // Only when it was named: with no names, these lines are left alone
+            char *name = package_name(line, game.folder);
+            printf("tide: %s comes with tide, so `tide upgrade` is what updates it\n", name);
             free(name);
             continue;
         }
