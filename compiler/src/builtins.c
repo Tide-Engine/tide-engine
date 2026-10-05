@@ -182,6 +182,10 @@ typedef struct signature {
     const char *doc;         // One line for editors, or NULL
     unsigned mut;            // A bit per parameter the call changes: the argument's variable itself
     int gui;                 // GUI_ID and GUI_CONTAINER
+    // The parameters a call can leave out, its last `optional`: each one's
+    // default as Tide writes it ("false"), which its C function is passed then
+    int optional;
+    const char *defaults[MAX_PARAMS];
 } signature;
 
 #define MAX_SIGNATURES 320
@@ -221,7 +225,16 @@ static signature *add(const char *owner, const char *name, const type result, co
         exit(1);
     }
     signature *s = &signatures[signature_count++];
-    *s = (signature){owner, name, result, argc, {p0, p1, p2, T_NONE, T_NONE, T_NONE}, permanent(c_name), NULL, NULL, 0, 0};
+    *s = (signature){owner, name, result, argc, {p0, p1, p2, T_NONE, T_NONE, T_NONE}, permanent(c_name), NULL, NULL, 0, 0, 0, {NULL}};
+    return s;
+}
+
+// The last parameter of `s` is one a call can leave out, for the value
+// `text`, as Tide writes it: `bool overwrite = false`.
+static signature *defaulted(signature *s, const char *text)
+{
+    s->optional = 1;
+    s->defaults[s->argc - 1] = text;
     return s;
 }
 
@@ -277,7 +290,7 @@ static void describe(signature *s, const char *param_names, const char *doc)
 }
 
 // A Draw2D function of up to MAX_PARAMS parameters: `argc` of them, each a `const type *`.
-static void add_draw2d(const char *name, const char *c_name, const char *param_names, const char *doc, const int argc, ...)
+static signature *add_draw2d(const char *name, const char *c_name, const char *param_names, const char *doc, const int argc, ...)
 {
     signature *s = add("Draw2D", name, T_NONE, c_name, 0, T_NONE, T_NONE, T_NONE);
     va_list types;
@@ -286,6 +299,7 @@ static void add_draw2d(const char *name, const char *c_name, const char *param_n
     va_end(types);
     s->argc = argc;
     describe(s, param_names, doc);
+    return s;
 }
 
 static void build_signatures(void)
@@ -487,39 +501,32 @@ static void build_signatures(void)
         "and each line of several is against the anchor's side. `font` is its weight: `Font.Regular` (the "
         "default) or `Font.Bold`.";
     add_draw2d("Text", "tide_draw_text", "text, position, size, color", text_doc, 4, &T_STR, &T_F2, &T_F, &T_COLOR);
-    add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, anchor", text_doc,
-               5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_ANCHOR);
+    // With an anchor, the font is one a call can leave out; a font alone goes after the color
+    defaulted(add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, anchor, font", text_doc,
+                         6, &T_STR, &T_F2, &T_F, &T_COLOR, &T_ANCHOR, &T_FONT), "Font.Regular");
     add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, font", text_doc,
                5, &T_STR, &T_F2, &T_F, &T_COLOR, &T_FONT);
-    add_draw2d("Text", "tide_draw_text_at", "text, position, size, color, anchor, font", text_doc,
-               6, &T_STR, &T_F2, &T_F, &T_COLOR, &T_ANCHOR, &T_FONT);
     static const char measure_doc[] =
         "How big `Draw2D.Text` would draw `text` at `size` now, in the weight `font` (`Font.Regular` without "
         "one): the width of its widest line in x and the height of its lines in y, in the units the Draw2D calls are "
         "in. One line is `size` high. It's the box an anchor names a place of: "
         "`Draw2D.Text(text, center, size, color, Anchor.MiddleCenter)` centers it.";
-    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 2, T_STR, T_F, T_NONE), "text, size",
-             measure_doc);
-    describe(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 3, T_STR, T_F, T_FONT), "text, size, font",
-             measure_doc);
+    describe(defaulted(add("Draw2D", "MeasureText", T_F2, "tide_draw_measure_text", 3, T_STR, T_F, T_FONT), "Font.Regular"),
+             "text, size, font", measure_doc);
     static const char mesh_doc[] =
         "Triangles: three of `indices` each, places in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
         "uv (0, 0). `filter` is how it's read between cells: `Filter.Bilinear` (the default) or `Filter.Point`.";
     describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_lists", 2, T_VERTICES, T_INDICES, T_NONE),
              "vertices, indices", mesh_doc);
-    describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS),
-             "vertices, indices, texture", mesh_doc);
     signature *sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS);
     sampled->argc = 4;
     sampled->params[3] = T_FILTER;
-    describe(sampled, "vertices, indices, texture, filter", mesh_doc);
-    describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE),
-             "vertices, indices, texture", mesh_doc);
+    describe(defaulted(sampled, "Filter.Bilinear"), "vertices, indices, texture, filter", mesh_doc);
     signature *texture_sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE);
     texture_sampled->argc = 4;
     texture_sampled->params[3] = T_FILTER;
-    describe(texture_sampled, "vertices, indices, texture, filter", mesh_doc);
+    describe(defaulted(texture_sampled, "Filter.Bilinear"), "vertices, indices, texture, filter", mesh_doc);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
@@ -527,52 +534,34 @@ static void build_signatures(void)
         "again and again in a row is drawn at once.";
     describe(add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_lists", 3, T_VERTICES3, T_INDICES, T_F4X4),
              "vertices, indices, transform", mesh3_doc);
-    signature *textured3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
-    textured3->argc = 4;
-    textured3->params[3] = T_PIXELS;
-    describe(textured3, "vertices, indices, transform, texture", mesh3_doc);
     signature *sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
     sampled3->argc = 5;
     sampled3->params[3] = T_PIXELS;
     sampled3->params[4] = T_FILTER;
-    describe(sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
-    signature *texture3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
-    texture3->argc = 4;
-    texture3->params[3] = T_TEXTURE;
-    describe(texture3, "vertices, indices, transform, texture", mesh3_doc);
+    describe(defaulted(sampled3, "Filter.Bilinear"), "vertices, indices, transform, texture, filter", mesh3_doc);
     signature *texture_sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
     texture_sampled3->argc = 5;
     texture_sampled3->params[3] = T_TEXTURE;
     texture_sampled3->params[4] = T_FILTER;
-    describe(texture_sampled3, "vertices, indices, transform, texture, filter", mesh3_doc);
+    describe(defaulted(texture_sampled3, "Filter.Bilinear"), "vertices, indices, transform, texture, filter", mesh3_doc);
     static const char instanced_doc[] =
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
         "transform places it; without one it uses the identity. A vert places 2D instances.";
     describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
              "vertices, indices, instances", instanced_doc);
-    signature *instances_textured = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
-                                        T_VERTICES3, T_INDICES, T_TRANSFORMS);
-    instances_textured->argc = 4;
-    instances_textured->params[3] = T_PIXELS;
-    describe(instances_textured, "vertices, indices, instances, texture", instanced_doc);
     signature *instances_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
                                        T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_sampled->argc = 5;
     instances_sampled->params[3] = T_PIXELS;
     instances_sampled->params[4] = T_FILTER;
-    describe(instances_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
-    signature *instances_texture = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
-                                      T_VERTICES3, T_INDICES, T_TRANSFORMS);
-    instances_texture->argc = 4;
-    instances_texture->params[3] = T_TEXTURE;
-    describe(instances_texture, "vertices, indices, instances, texture", instanced_doc);
+    describe(defaulted(instances_sampled, "Filter.Bilinear"), "vertices, indices, instances, texture, filter", instanced_doc);
     signature *instances_texture_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
                                               T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_texture_sampled->argc = 5;
     instances_texture_sampled->params[3] = T_TEXTURE;
     instances_texture_sampled->params[4] = T_FILTER;
-    describe(instances_texture_sampled, "vertices, indices, instances, texture, filter", instanced_doc);
+    describe(defaulted(instances_texture_sampled, "Filter.Bilinear"), "vertices, indices, instances, texture, filter", instanced_doc);
     describe(add("Draw2D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES, T_INDICES, T_INSTANCES),
              "vertices, indices, instances", instanced_doc);
     describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
@@ -650,12 +639,9 @@ static void build_signatures(void)
              "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "
              "Android. Anywhere: systems, views, handlers, functions. A tick run again after a rollback logs again, so "
              "prefix match state with `Time.tick`.");
-    describe(add("Debug", "Assert", T_NONE, "tide_debug_assert", 1, T_BOOL, T_NONE, T_NONE), "condition",
-             "Nothing while the condition holds. When it doesn't, the program stops, naming the file, the line and the "
-             "source line.");
-    describe(add("Debug", "Assert", T_NONE, "tide_debug_assert", 2, T_BOOL, T_STR, T_NONE), "condition, message",
+    describe(defaulted(add("Debug", "Assert", T_NONE, "tide_debug_assert", 2, T_BOOL, T_STR, T_NONE), "\"\""), "condition, message",
              "Nothing while the condition holds. When it doesn't, the program stops, naming the file, the line, the "
-             "source line and the message.");
+             "source line and the message, if it has one.");
     describe(add("string", "Contains", T_BOOL, "tide_str_contains", 1, T_STR, T_NONE, T_NONE),
              "value", "Whether `value` is in the text.");
     describe(add("string", "StartsWith", T_BOOL, "tide_str_starts_with", 1, T_STR, T_NONE, T_NONE),
@@ -773,18 +759,19 @@ static void build_signatures(void)
     describe(add("File", "AppendAllText", T_NONE, "tide_file_append_all_text", 2, T_STR, T_STR, T_NONE), "path, contents", "Appends UTF-8 text, creating the file if missing. Fails with IOError.");
     describe(add("File", "ReadAllBytes", T_BYTES, "tide_file_read_all_bytes", 1, T_STR, T_NONE, T_NONE), "path", "Reads the whole file into List<byte>. Fails with IOError.");
     describe(add("File", "WriteAllBytes", T_NONE, "tide_file_write_all_bytes", 2, T_STR, T_BYTES, T_NONE), "path, contents", "Creates or replaces a binary file. Fails with IOError.");
-    for (int overwrite = 0; overwrite < 2; overwrite++) {
-        describe(add("File", "Copy", T_NONE, "tide_file_copy", 2 + overwrite, T_STR, T_STR, T_BOOL), "source, destination, overwrite", "Copies a file; overwrite defaults to false. Fails with IOError.");
-        describe(add("File", "Move", T_NONE, "tide_file_move", 2 + overwrite, T_STR, T_STR, T_BOOL), "source, destination, overwrite", "Moves a file; overwrite defaults to false. Fails with IOError.");
-    }
+    describe(defaulted(add("File", "Copy", T_NONE, "tide_file_copy", 3, T_STR, T_STR, T_BOOL), "false"), "source, destination, overwrite",
+             "Copies a file, over one that's there only with `overwrite`. Fails with IOError.");
+    describe(defaulted(add("File", "Move", T_NONE, "tide_file_move", 3, T_STR, T_STR, T_BOOL), "false"), "source, destination, overwrite",
+             "Moves a file, over one that's there only with `overwrite`. Fails with IOError.");
     describe(add("File", "Delete", T_NONE, "tide_file_delete", 1, T_STR, T_NONE, T_NONE), "path", "Deletes a file. A missing file succeeds. Fails with IOError.");
     describe(add("Directory", "Exists", T_BOOL, "tide_directory_exists", 1, T_STR, T_NONE, T_NONE), "path", "Whether a directory exists on this machine.");
     describe(add("Directory", "CreateDirectory", T_NONE, "tide_directory_create_directory", 1, T_STR, T_NONE, T_NONE), "path", "Creates missing parents; an existing directory succeeds. Fails with IOError.");
-    for (int recursive = 0; recursive < 2; recursive++) {
-        describe(add("Directory", "GetFiles", T_PATHS, "tide_directory_get_files", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Lists file paths sorted by name; recursive defaults to false. Fails with IOError.");
-        describe(add("Directory", "GetDirectories", T_PATHS, "tide_directory_get_directories", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Lists directory paths sorted by name; recursive defaults to false. Fails with IOError.");
-        describe(add("Directory", "Delete", T_NONE, "tide_directory_delete", 1 + recursive, T_STR, T_BOOL, T_NONE), "path, recursive", "Deletes a directory; recursive defaults to false. Fails with IOError.");
-    }
+    describe(defaulted(add("Directory", "GetFiles", T_PATHS, "tide_directory_get_files", 2, T_STR, T_BOOL, T_NONE), "false"), "path, recursive",
+             "Lists file paths sorted by name, with `recursive` those of the folders inside too. Fails with IOError.");
+    describe(defaulted(add("Directory", "GetDirectories", T_PATHS, "tide_directory_get_directories", 2, T_STR, T_BOOL, T_NONE), "false"),
+             "path, recursive", "Lists directory paths sorted by name, with `recursive` those inside them too. Fails with IOError.");
+    describe(defaulted(add("Directory", "Delete", T_NONE, "tide_directory_delete", 2, T_STR, T_BOOL, T_NONE), "false"), "path, recursive",
+             "Deletes a directory: an empty one, or with `recursive` everything in it. Fails with IOError.");
     describe(add("Directory", "Move", T_NONE, "tide_directory_move", 2, T_STR, T_STR, T_NONE), "source, destination", "Moves a directory, refusing an existing destination. Fails with IOError.");
     describe(add("Path", "Combine", T_STR, "tide_path_combine", 2, T_STR, T_STR, T_NONE), "first, second", "Combines two paths without accessing storage.");
     describe(add("Path", "GetFileName", T_STR, "tide_path_get_file_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the last path segment.");
@@ -935,6 +922,7 @@ static void format_signature(const signature *s, sb *out)
             sb_putn(out, names, n);
             names = end ? end + 2 : NULL;
         }
+        if (s->defaults[a]) sb_printf(out, " = %s", s->defaults[a]); // One a call can leave out
     }
     if (s->gui & GUI_CONTAINER) sb_printf(out, "%sBlock content", s->argc ? ", " : "");
     sb_put(out, ")");
@@ -944,14 +932,65 @@ static void format_signature(const signature *s, sb *out)
     if (strcmp(s->owner, "Storage") == 0) sb_put(out, " fails IOError");
 }
 
+// The parameter of `s` named `name`, or -1.
+static int param_named(const signature *s, const str name)
+{
+    int index = 0;
+    for (const char *p = s->param_names; p && *p; index++) {
+        const char *end = strchr(p, ',');
+        const size_t n = end ? (size_t)(end - p) : strlen(p);
+        if ((size_t)name.len == n && memcmp(name.ptr, p, n) == 0) return index < s->argc ? index : -1;
+        p = end ? end + 2 : NULL;
+    }
+    return -1;
+}
+
+// Whether a call writes names on its arguments that the engine's functions
+// take. Mesh and Instanced go by what each argument is, so theirs stay in order.
+static bool names_args(const expr *e)
+{
+    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced");
+}
+
+// Which parameter of `s` each argument of a call is for, as in C#: in order,
+// then by the names written. The parameters a call leaves out are the last
+// ones. False when the arguments can't be `s`'s.
+static bool bind(const signature *s, const expr *e, int *param_of)
+{
+    const int written = e->args.count;
+    if (written > s->argc || written < s->argc - s->optional) return false;
+    bool given[MAX_PARAMS] = {false};
+    bool named = false;
+    for (int i = 0; i < written; i++) {
+        const str name = names_args(e) ? e->arg_names.items[i] : (str){"", 0};
+        int at = i;
+        if (name.len > 0) {
+            named = true;
+            at = param_named(s, name);
+            if (at < 0) return false;
+        } else if (named) {
+            return false; // After a named one, each is named
+        }
+        if (given[at]) return false;
+        given[at] = true;
+        param_of[i] = at;
+    }
+    for (int k = 0; k < written; k++) {
+        if (!given[k]) return false;
+    }
+    return true;
+}
+
 // Whether signature `s` takes the call's arguments. `default`, unchecked yet,
 // fits any parameter but a mut one, which changes a variable.
 static bool fits(const signature *s, const expr *e)
 {
-    if (s->argc != e->args.count) return false;
-    for (int a = 0; a < s->argc; a++) {
+    int param_of[MAX_PARAMS];
+    if (!bind(s, e, param_of)) return false;
+    for (int i = 0; i < e->args.count; i++) {
+        const int a = param_of[i];
         const type want = real_type(s->params[a]);
-        const expr *arg = e->args.items[a];
+        const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
         // A type the program doesn't have, like Grid2<Color> where no grid is one: nothing is it
         if (mesh_type(want)) return false;
@@ -976,12 +1015,16 @@ static bool default_ambiguous(const int first, const expr *e)
     for (int j = first + 1; j < signature_count; j++) {
         const signature *other = &signatures[j];
         if (strcmp(other->owner, s->owner) != 0 || strcmp(other->name, s->name) != 0 || !fits(other, e)) continue;
-        for (int a = 0; a < s->argc; a++) {
-            const type t = real_type(s->params[a]);
-            const type u = real_type(other->params[a]);
-            if (e->args.items[a]->kind != E_DEFAULT || (t.kind == u.kind && t.decl == u.decl)) continue;
-            diag_error(e->args.items[a]->at, "'default' could be %s or %s here: %s.%s has a version for each",
-                       signature_type_name(s->params[a]), signature_type_name(other->params[a]), s->owner, s->name);
+        int mine[MAX_PARAMS];
+        int theirs[MAX_PARAMS];
+        bind(s, e, mine);
+        bind(other, e, theirs);
+        for (int i = 0; i < e->args.count; i++) {
+            const type t = real_type(s->params[mine[i]]);
+            const type u = real_type(other->params[theirs[i]]);
+            if (e->args.items[i]->kind != E_DEFAULT || (t.kind == u.kind && t.decl == u.decl)) continue;
+            diag_error(e->args.items[i]->at, "'default' could be %s or %s here: %s.%s has a version for each",
+                       signature_type_name(s->params[mine[i]]), signature_type_name(other->params[theirs[i]]), s->owner, s->name);
             diag_note("write the value itself instead, so the call says which version it means");
             return true;
         }
@@ -1066,6 +1109,27 @@ type resolve_builtin_call(const str owner, expr *e)
         if (!fits(s, e)) continue;
         if (defaults > 0 && default_ambiguous(i, e)) return (type){TY_ERROR, NULL};
         for (int a = 0; a < s->argc; a++) vec_push(e->arg_want, real_type(s->params[a]));
+        // Arguments written with names go in the parameters' order: what was
+        // written stays in `written`, and is worked out in that order
+        if (names_args(e)) {
+            int param_of[MAX_PARAMS];
+            bind(s, e, param_of);
+            bool in_order = true;
+            for (int k = 1; k < e->args.count; k++) in_order &= param_of[k - 1] < param_of[k];
+            if (!in_order) {
+                expr **ordered = arena_alloc(sizeof(expr *) * (size_t)e->args.count);
+                for (int k = 0; k < e->args.count; k++) {
+                    ordered[param_of[k]] = e->args.items[k];
+                    vec_push(e->arg_order, param_of[k]);
+                }
+                e->settled = true;
+                e->written.items = e->args.items;
+                e->written.count = e->written.cap = e->args.count;
+                e->args.items = ordered;
+                e->args.cap = e->args.count;
+            }
+            e->names_taken = true;
+        }
         e->c_callee = s->c_name;
         e->arg_mut = s->mut;
         e->gui = s->gui;
@@ -1206,12 +1270,13 @@ static const char *componentwise_params(const int argc, const char *name)
     return argc == 1 ? "x" : argc == 2 ? "a, b" : "a, b, c";
 }
 
-// "Circle(${1:center}, ${2:radius}, ${3:color})" from "center, radius, color".
-static void format_snippet(const char *name, const char *param_names, sb *out)
+// "Circle(${1:center}, ${2:radius}, ${3:color})" from "center, radius, color":
+// the first `count` parameters, the ones every call writes.
+static void format_snippet(const char *name, const char *param_names, const int count, sb *out)
 {
     sb_printf(out, "%s(", name);
     int index = 1;
-    for (const char *p = param_names; p && *p;) {
+    for (const char *p = param_names; p && *p && index <= count;) {
         const char *end = strchr(p, ',');
         const size_t n = end ? (size_t)(end - p) : strlen(p);
         sb_printf(out, "%s${%d:", index > 1 ? ", " : "", index);
@@ -1233,7 +1298,7 @@ void builtin_list_members(const str owner, void (*visit)(void *user, const built
             sb detail = {0};
             sb_printf(&detail, "Math.%s(%s)", componentwise[i].name, params);
             sb snippet = {0};
-            format_snippet(componentwise[i].name, params, &snippet);
+            format_snippet(componentwise[i].name, params, componentwise[i].argc, &snippet);
             const builtin_member m = {componentwise[i].name, true, detail.data, componentwise_doc(componentwise[i].name),
                                       snippet.data};
             visit(user, &m);
@@ -1251,7 +1316,7 @@ void builtin_list_members(const str owner, void (*visit)(void *user, const built
         sb detail = {0};
         format_signature(s, &detail);
         sb snippet = {0};
-        if (s->param_names) format_snippet(s->name, s->param_names, &snippet);
+        if (s->param_names) format_snippet(s->name, s->param_names, s->argc - s->optional, &snippet);
         else sb_printf(&snippet, "%s($1)", s->name);
         if (s->gui & GUI_CONTAINER) sb_put(&snippet, "\n{\n\t$0\n}");
         const builtin_member m = {s->name, true, detail.data, s->doc, snippet.data};

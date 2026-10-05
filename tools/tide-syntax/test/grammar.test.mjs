@@ -356,6 +356,24 @@ const cases = {
         ['Draw3D.Mesh(models.crate', [['Draw3D', 'support.class'], ['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
         ['Draw3D.Cube(', [['Draw3D', 'support.class'], ['Cube', 'entity.name.function.call']]],
     ],
+    'arguments by name, defaults, and a shared name with its parameters': [
+        ['float Strike(float base, float multiplier = 1', [
+            ['Strike', 'entity.name.function'], ['Strike', '!entity.name.function.call'], ['=', 'keyword.operator.assignment'],
+            ['multiplier', '!variable.parameter'], ['false', 'constant.language.boolean'],
+        ]],
+        ['return Strike(10, crit: true)', [
+            ['crit', 'variable.parameter'], [':', 'punctuation.separator.colon'], [':', '!keyword.operator'],
+            ['true', 'constant.language.boolean'],
+        ]],
+        ['return Strike(base: 1, multiplier: on ? 2 : 3)', [
+            ['base', 'variable.parameter'], ['multiplier', 'variable.parameter'], [':', 'punctuation.separator.colon', 2],
+            ['?', 'keyword.operator.ternary'], [':', 'keyword.operator.ternary', 3], ['on', '!variable.parameter'],
+        ]],
+        ['[After(Advance(Body, with Player))]', [
+            ['After', 'entity.name.function.attribute'], ['Body', 'entity.name.type'], ['with', 'storage.modifier'],
+            ['Player', 'entity.name.type'],
+        ]],
+    ],
 };
 
 for (const [name, lines] of Object.entries(cases)) {

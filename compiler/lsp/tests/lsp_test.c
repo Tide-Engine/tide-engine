@@ -618,7 +618,7 @@ TIDE_TEST(lsp_hover)
 
     open_document(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(Draw2D.Measure$Text(\"a\", 12), 1, Color.red);\n}\n");
     const char *measure = request("textDocument/hover");
-    TIDE_CHECK(has(measure, "Draw2D.MeasureText(string text, float size) -> float2"));
+    TIDE_CHECK(has(measure, "Draw2D.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
     TIDE_CHECK(has(measure, "the width of its widest line in x and the height of its lines in y"));
 
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.Nor$malize(body.position);\n}\n");
@@ -709,7 +709,7 @@ TIDE_TEST(lsp_meshes)
 
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
     const char *mesh = request("textDocument/hover");
-    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter)"));
+    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear)"));
     TIDE_CHECK(has(mesh, "Triangles: three of `indices` each"));
     // Each version's doc, 2D and 3D
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.Cam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
@@ -795,12 +795,11 @@ TIDE_TEST(lsp_text_anchor_and_font)
     open_document(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
     const char *text = request("textDocument/hover");
     TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color)"));
-    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor)"));
     TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Font font)"));
-    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font)"));
+    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font = Font.Regular)"));
     TIDE_CHECK(has(text, "Anchor.MiddleCenter") && has(text, "Font.Bold"));
     open_document(TEXT_VIEW("    var size = Draw2D.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw2D.Rect(size, size, Color.white);"));
-    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font) -> float2"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
     open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
     TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
     open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
@@ -937,7 +936,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
-    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter) -> Color"));
+    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && !offers(list, "count")); // The GPU has no lists
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
@@ -1024,7 +1023,7 @@ TIDE_TEST(lsp_shaders_hover)
     const char *discard = hover_at(39, 38);
     TIDE_CHECK(has(discard, "Pixel.Discard()") && has(discard, "Leaves the pixel undrawn"));
     const char *sample = hover_at(38, 25);
-    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter) -> Color") && has(sample, "Reads the grid as a texture"));
+    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color") && has(sample, "Reads the grid as a texture"));
     TIDE_CHECK(has(hover_at(43, 12), "A vert and a frag, named last, run on the GPU"));
     // They're the GPU's: no C to go to
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 35, 80, ""), "\"result\":null"));
@@ -1216,7 +1215,7 @@ TIDE_TEST(lsp_shaders_signature_help)
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
                                "    color = models.wood.Sample(vertex.uv, $\n}\n");
     const char *sample = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter) -> Color\"") && has(sample, "\"activeParameter\":1"));
+    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color\"") && has(sample, "\"activeParameter\":1"));
 }
 
 // Formatting, folding, selection, inlay hints and moving one to a file of its
@@ -3670,7 +3669,7 @@ TIDE_TEST(lsp_built_in_methods)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Clipboard.Copy(string text)"));
     open_document("singleton Field { Grid2<int> cells = Grid2(8, $ }\nscene Main { }\n");
     const char *grid = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(grid, "Grid2(int width, int height)") && has(grid, "\"activeParameter\":1"));
+    TIDE_CHECK(has(grid, "Grid2(int width = 0, int height = 0)") && has(grid, "\"activeParameter\":1"));
     open_document("scene Main { }\nview V()\n{\n    Draw2D.Text(\"a\", $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Draw2D.Text(string text, float2 position, float size, Color color)"));
 
@@ -5332,4 +5331,134 @@ TIDE_TEST(lsp_random)
     // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
     TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
+}
+
+// Default values, arguments by name, and functions that share a name
+#define OVERLOADS                                                                                                     \
+    "scene Main { }\nsingleton Log { float total; }\nstruct Weapon { float power = 3; }\n"                            \
+    "float Damage(float base, float multiplier = 1, bool crit = false) { return crit ? base * multiplier * 2 : base * multiplier; }\n" \
+    "float Damage(float base, Weapon weapon) { return base + weapon.power; }\n"
+
+TIDE_TEST(lsp_overloads)
+{
+    start();
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true) + Damage(1.0, Weapon { });\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // Signature help: every one that shares the name, with its defaults as written
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"float Damage(float base, float multiplier = 1, bool crit = false)\""));
+    TIDE_CHECK(has(help, "\"label\":\"float Damage(float base, Weapon weapon)\""));
+    TIDE_CHECK(has(help, "\"activeSignature\":0,\"activeParameter\":1"));
+    // "float Damage(" is 13 characters: `float multiplier = 1` is 25 to 45, its default with it
+    TIDE_CHECK(has(help, "{\"label\":[13,23]},{\"label\":[25,45]},{\"label\":[47,64]}"));
+    // An argument written with a name is its parameter's, wherever it is
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":2"));
+    // ...and only the one that has the name takes it
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, weapon: $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":1,\"activeParameter\":1"));
+
+    // Hover and go to definition: the one the call's arguments pick
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Dam$age(1.0, Weapon { });\n}\n");
+    const char *picked = request("textDocument/hover");
+    TIDE_CHECK(has(picked, "float Damage(float base, Weapon weapon)") && !has(picked, "multiplier"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":4,\"character\":6}"));
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Dam$age(10, crit: true);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "float Damage(float base, float multiplier = 1, bool crit = false)"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":3,\"character\":6}"));
+
+    // A name on an argument is a use of its parameter: it shows what it is, and renames with it
+    static const char program[] = OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true);\n}\n";
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, cr$it: true);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "bool crit"));
+    request_with("textDocument/rename", "\"newName\":\"critical\"");
+    const char *renamed = apply_reply(program, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "bool critical = false) { return critical ? base"));
+    TIDE_CHECK(has(renamed, "Damage(10, critical: true)"));
+
+    // Inlay hints name the arguments that don't say theirs
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, 2, crit: true);\n}\n");
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(has(hints, "\"label\":\"base:\"") && has(hints, "\"label\":\"multiplier:\"") && !has(hints, "\"label\":\"crit:\""));
+    // ...and none where a call leaves a parameter out: its default isn't written there
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10);\n}\n");
+    const char *left_out = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                      "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(has(left_out, "\"label\":\"base:\"") && !has(left_out, "\"label\":\"multiplier:\""));
+
+    // What's wrong with a call says what to write
+    open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crti: true);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Damage' has no parameter 'crti'") || has(last_sent(), "no 'Damage' takes"));
+
+    // Completion where an argument starts: the names the parameters not given yet go by
+    const char *names = complete(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, $);\n}\n");
+    TIDE_CHECK(offers(names, "multiplier:") && offers(names, "crit:") && offers(names, "weapon:") && !offers(names, "base:"));
+    TIDE_CHECK(has(names, "\"detail\":\"bool crit = false\"") && offers(names, "log")); // Values, as anywhere
+    const char *rest = complete(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true, $);\n}\n");
+    TIDE_CHECK(offers(rest, "multiplier:") && !offers(rest, "crit:"));
+
+    // The formatter: a name sits against its colon, a default has spaces around its '=', and `?:` keeps its own
+    static const char messy[] = "scene Main { }\nsingleton Log { float total; }\n"
+                                "float Scale(float value,float by=2,bool on=true)\n{\nreturn on?value*by:value;\n}\n"
+                                "system Run(mut Log log)\n{\nlog.total = Scale(1,on :false,by:log.total>1?2:3);\n}\n";
+    static const char expected[] = "scene Main { }\nsingleton Log { float total; }\n"
+                                   "float Scale(float value, float by = 2, bool on = true)\n{\n    return on ? value * by : value;\n}\n"
+                                   "system Run(mut Log log)\n{\n    log.total = Scale(1, on: false, by: log.total > 1 ? 2 : 3);\n}\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+}
+
+// The engine's own functions show what a call can leave out as a default
+TIDE_TEST(lsp_built_in_defaults)
+{
+    start();
+    open_document("scene Main { }\nlocal singleton Menu { bool open; }\nview Show(Menu menu)\n{\n"
+                  "    if (menu.open) Session.Open($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"label\":\"Session.Open(int port = 7777)\""));
+    open_document("scene Main { }\nlocal singleton Menu { bool open; }\nview Show(Menu menu)\n{\n"
+                  "    if (menu.open) Session.Kick(PlayerID(1), $\n}\n");
+    const char *kick = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(kick, "Session.Kick(PlayerID player, string message = \\\"\\\")") && has(kick, "\"activeParameter\":1"));
+    open_document("scene Main { }\nlocal singleton Menu { bool open; }\nview Show(Menu menu)\n{\n"
+                  "    Debug.Ass$ert(menu.open);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Debug.Assert(bool condition, string message = \\\"\\\")"));
+    // Names on the engine's functions, in any order
+    open_document("scene Main { }\nview Show()\n{\n    Draw2D.Circle(radius: 2, center: float2(3, 4), color: Color.red);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+}
+
+// Systems that share a name: [After] writes the one it means with its
+// parameters' types, each of which is a use of the type.
+#define MOVES                                                                                                         \
+    "scene Main { }\ncomponent Body { float x; }\ncomponent Player { }\ncomponent Enemy { }\n"                        \
+    "system Move(mut Body body, with Player) { body.x += 1; }\n"                                                       \
+    "system Move(mut Body body, with Enemy) { body.x -= 1; }\n"                                                        \
+    "event(Spawned) Setup(with Main) { Spawn(Body, Player); Spawn(Body, Enemy); }\n"
+
+TIDE_TEST(lsp_shared_names)
+{
+    start();
+    static const char program[] = MOVES "[After(Move(Body, with Enemy))]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n";
+    open_document(MOVES "[After(Mo$ve(Body, with Enemy))]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "system Move(mut Body body, with Enemy)"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":5,\"character\":7}"));
+
+    // Renaming the component renames it where the attribute writes it
+    open_document(MOVES "[After(Move(Body, with Ene$my))]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "component Enemy"));
+    request_with("textDocument/rename", "\"newName\":\"Foe\"");
+    const char *renamed = apply_reply(program, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "component Foe { }") && has(renamed, "with Foe) { body.x -= 1; }"));
+    TIDE_CHECK(has(renamed, "[After(Move(Body, with Foe))]"));
+
+    // A name alone, where two share it, says what to write
+    open_document(MOVES "[After(Move)]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
+    TIDE_CHECK(has(last_sent(), "2 declarations share the name 'Move'") && has(last_sent(), "'Move(Body, with Player)'"));
 }

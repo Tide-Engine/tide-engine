@@ -26,6 +26,18 @@ extern float Noise(float x, float y, float z, int xWrap, int yWrap, int zWrap);
 
 A namespace doesn't change the C name: in `namespace Terrain;`, that's `Terrain.Noise` in Tide and still `stb_perlin_noise3` in C.
 
+An extern's parameters can have [default values](../language/functions.md#default-values-names-and-overloads), and calls can name them: C is passed a default like any argument. Externs can share a name too, but C has one function of a name, so each says which C function it is:
+
+```csharp
+extern float c_scale(float value, float by = 2);
+
+[NativeName("c_mix_floats")]
+extern float Mix(float a, float b);
+
+[NativeName("c_mix_ints")]
+extern int Mix(int a, int b);
+```
+
 ## Where the C goes
 
 In the game's folder, with nothing to set up:

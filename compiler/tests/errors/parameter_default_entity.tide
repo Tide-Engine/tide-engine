@@ -1,0 +1,3 @@
+// expect: the only Entity a default can be is the null one: 'target = default'
+scene Main { }
+bool Aimed(Entity target = 5) { return target != default; }

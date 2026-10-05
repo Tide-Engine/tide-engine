@@ -154,6 +154,23 @@ typedef struct unit {
     VEC(loc) using_at;
 } unit;
 
+// One parameter of a declaration that's named with its parameters, as C#'s
+// `cref` names an overload: `Position` or `with Player` in
+// [After(Move(Position, with Player))]. Its type as written, with neither a
+// name nor `mut`.
+typedef struct sig_item {
+    int mode;      // PARAM_READ, PARAM_WITH, PARAM_WITHOUT or PARAM_QUERY
+    bool verified; // `verified Health`, `with verified Dead`: a view's, from the world the server has
+    str type_name; // "ownership" for `with ownership`; empty for a query
+    loc at;        // Where it starts
+    loc type_at;   // The type's name (the last part if it's qualified)
+    loc type_qual_at;
+    VEC(struct sig_item) query; // PARAM_QUERY: its own parameters
+    const struct param *param;  // The parameter it names, once checked
+} sig_item;
+
+typedef VEC(sig_item) sig_items;
+
 // A name that may be qualified by a namespace: Health, Combat.Health.
 typedef struct qname {
     str text;    // Without spaces: "Combat.Health"
@@ -161,6 +178,8 @@ typedef struct qname {
     loc name_at; // The last part: the name itself
     struct decl *decl; // What it names, once checked
     const struct enum_member *enum_member; // Ordering attributes: a phase in this enum
+    bool has_signature;  // Written with its parameters, `Move(Position, with Player)`: which of the declarations that share the name
+    sig_items signature;
 } qname;
 
 // [Before(Physics.Integrate)]
@@ -228,6 +247,8 @@ typedef struct param {
     bool verified;
     loc verified_at; // ...the word
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
+    struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
+    str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
@@ -369,6 +390,13 @@ typedef struct decl {
     bool is_extern;   // `extern float Noise(float x);`: a DECL_FUNCTION written in C, with no body
     const char *c_name; // Records: the C struct name. Extern functions: the C function, from [NativeName] or the name.
     const char *gen_name; // Its name in generated C (Combat_Health for Combat.Health), which codegen gives every declaration once, before it writes any
+    // Overloads, as in C#: functions that share a name, a type's methods that
+    // do, and systems, views, handlers, frags and verts that do. Their
+    // parameters tell them apart: their types in order, with a system's
+    // filters, whatever their names, `mut` and defaults.
+    bool shares_name;     // Another declaration of its kind has its name, where it's declared
+    const char *c_suffix; // ...so its name in generated C goes on with its parameters' types: "_float_Weapon"
+    const char *signature; // ...and messages and tools write it with them, as code names it: "Move(Position, with Player)"
     bool device_group;  // Devices, Keyboard, Mouse, Gamepad, Dpad, Touch, ...: records made of device values
     int leaves_count;   // ...how many
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
@@ -660,6 +688,18 @@ struct expr {
 
     // E_CALL, E_METHOD
     VEC(expr *) args;
+    // Arguments written with their parameter's name, `crit: true`, and
+    // parameters a call leaves out for their defaults. The parser leaves
+    // `args` as written. Where a call names arguments or leaves some out, the
+    // checker makes `args` what each parameter gets, in the parameters' order
+    // (a parameter's own default where the call wrote nothing, the same
+    // expression at every such call), and keeps what was written in `written`.
+    VEC(str) arg_names;   // Each argument's name as written, empty for one without; no items when none has one
+    VEC(loc) arg_name_at;
+    bool settled;         // `args` is in the parameters' order, defaults filled in: `written` has what the call wrote
+    VEC(expr *) written;  // The arguments as written, for a settled call (none, when it wrote none)
+    VEC(int) arg_order;   // Named arguments out of the parameters' order: each written argument's place in `args`, in the order written, which they're worked out in
+    bool names_taken;     // The checker matched the names to parameters; it refuses names on calls that take none
     builtin_call call;
     ctor_form ctor;         // CALL_CONSTRUCT; CTOR_ENUM even where the checker refused the conversion
     const char *c_callee;   // CALL_BUILTIN
