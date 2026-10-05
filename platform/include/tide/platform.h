@@ -32,6 +32,13 @@ typedef struct tide_window_desc {
 } tide_window_desc;
 
 // Opens the window and its graphics context.
+//
+// In a run nobody watches (TIDE_HIDDEN in the environment: tide_hidden,
+// tide/page.h), no window shows on a desktop, whatever asks for one. A window
+// that's `hidden` opens as ever, as a headless one does. One that isn't has
+// only its closing to end its run, which nobody could do, so the program ends
+// here instead, with exit code 2, having said why: a program that ends by
+// itself opens its window `hidden`, or headless.
 void tide_platform_open(const tide_window_desc *desc);
 
 // A headless window: none on screen, for pictures of what a game draws and
