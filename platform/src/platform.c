@@ -93,6 +93,16 @@ static void follow_window(void)
 
 void tide_platform_open(const tide_window_desc *desc)
 {
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    // Nobody watches this run, so its window can't show, and one that isn't
+    // hidden has nothing but its closing to end the run
+    if (!desc->hidden && tide_hidden()) {
+        fprintf(stderr, "tide: TIDE_HIDDEN is set, so no window shows, and this one's closing is all that would end its run: a "
+                        "program that ends by itself opens its window hidden (tide_window_desc.hidden) or headless "
+                        "(tide_platform_open_headless)\n");
+        exit(2);
+    }
+#endif
     if (!tide_window_open(desc)) exit(1); // It said why
     gpu = tide_window_gpu();
     opened = tide_time_now_ns();
@@ -755,31 +765,53 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     mesh_vertex_count += count;
 }
 
-// Text of `size` with its top left corner at `at`, in window pixels: a quad a
-// glyph, after the text before it when nothing came between them. It's drawn
-// on the target's own pixels (see font.h): its lines start on one, and each
-// glyph is a whole number of them from the last, so none is ever blended
-// between two.
-static void add_text(const char *text, const tide_float2 at, const float size, const rgba color)
+// Where the line of text at `line` starts, in the target's pixels, a whole
+// one: at `x`, or for a `side` of 1 or 2, with its middle or its end there.
+static float line_start(const unsigned char *font, const char *line, const int pixels, const float stretch,
+                        const float x, const uint32_t side)
+{
+    int across = 0;
+    for (uint32_t c; side && (c = tide_utf8_next(&line)) != 0 && c != '\n';) across += tide_font_advance(font, c, pixels);
+    return floorf(x - (float)across * stretch * 0.5f * (float)side + 0.5f);
+}
+
+// Text of `size` in window pixels, in the weight `font` is the file of, with
+// the place `anchor` names (a tide_anchor) of its box at `at`: a quad a glyph,
+// after the text before it when nothing came between them. It's drawn on the
+// target's own pixels (see font.h): its lines start on one, and each glyph is
+// a whole number of them from the last, so none is ever blended between two.
+static void add_text(const char *text, const tide_float2 at, const float size, const rgba color, const uint32_t anchor,
+                     const unsigned char *font)
 {
     if (!(size > 0.0f)) return;
     const tide_float2 scale = pixel_scale();
     float stretch;
     const int pixels = tide_font_pixels(size, scale.y, &stretch);
+    const float pitch = tide_font_pitch(font, pixels, stretch);
+    // The anchor's column and row: each line is against its side, and the
+    // lines are a box as tall as tide_font_size says, whose top, middle or
+    // bottom is at `at`
+    const uint32_t side = anchor % 3u, row = anchor / 3u;
+    float above = 0.0f;
+    if (row) {
+        uint32_t lines = 1;
+        for (const char *c = text; *c; c++) lines += *c == '\n';
+        above = (size * scale.y + (float)(lines - 1u) * pitch) * 0.5f * (float)row;
+    }
     // In the target's pixels, as the pen is
-    const float left = floorf(at.x * scale.x + 0.5f);
-    const float pitch = tide_font_pitch(pixels, stretch);
-    float pen_x = left, pen_y = floorf((at.y + tide_font_baseline() * size) * scale.y + 0.5f); // On the baseline
+    const float x = at.x * scale.x;
+    float pen_x = line_start(font, text, pixels, stretch, x, side);
+    float pen_y = floorf((at.y + tide_font_baseline(font) * size) * scale.y - above + 0.5f); // On the baseline
 
     if (step_count == 0 || steps[step_count - 1].kind != STEP_TEXT) add_step(STEP_TEXT)->first = mesh_vertex_count;
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
-            pen_x = left;
+            pen_x = line_start(font, text, pixels, stretch, x, side);
             pen_y += pitch;
             continue;
         }
         tide_font_glyph g;
-        if (!tide_font_glyph_for(c, pixels, &g)) continue; // No room for it this frame
+        if (!tide_font_glyph_for(font, c, pixels, &g)) continue; // No room for it this frame
         if (g.width) {
             const float x0 = (pen_x + (float)g.left * stretch) / scale.x;
             const float y0 = (pen_y + (float)g.top * stretch) / scale.y;
@@ -1841,7 +1873,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         }
         case TIDE_DRAW_TEXT:
-            add_text(list->text + c->text, to_screen(cam, c->a), c->b.x * cam->scale, color);
+            // A command in bold without the bold's file (a list filled by hand) is in the regular weight
+            add_text(list->text + c->text, to_screen(cam, c->a), c->b.x * cam->scale, color, c->words.anchor,
+                     c->words.bold ? list->bold : TIDE_FONT_REGULAR);
             break;
         }
     }
@@ -2017,7 +2051,8 @@ tide_float2 tide_platform_screen_size(void)
 // As add_text draws it: on the window's pixels, or on those of a render
 // target's image, as many to a logical one as a frame drawn into the window
 // gives it.
-tide_float2 tide_platform_measure_text(const char *text, const float size, const tide_target_size *target)
+tide_float2 tide_platform_measure_text(const char *text, const float size, const tide_target_size *target,
+                                       const unsigned char *font)
 {
     tide_float2 scale = window_scale();
     if (target) {
@@ -2030,7 +2065,7 @@ tide_float2 tide_platform_measure_text(const char *text, const float size, const
         scale = tide_f2((float)wide / width, (float)high / height);
     }
     tide_float2 measured;
-    tide_font_size(text, size, scale.x, scale.y, &measured.x, &measured.y);
+    tide_font_size(font, text, size, scale.x, scale.y, &measured.x, &measured.y);
     return measured;
 }
 
@@ -2060,7 +2095,7 @@ void tide_platform_draw_overlay(const char *text)
         if (n >= sizeof lines[0]) n = sizeof lines[0] - 1;
         memcpy(lines[count], line, n);
         lines[count][n] = '\0';
-        widths[count] = ceilf(tide_font_measure(lines[count], size, window_scale().y));
+        widths[count] = ceilf(tide_font_measure(TIDE_FONT_REGULAR, lines[count], size, window_scale().y));
         if (widths[count] > widest) widest = widths[count];
         line = end ? end + 1 : NULL;
     }

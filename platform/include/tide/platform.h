@@ -32,6 +32,13 @@ typedef struct tide_window_desc {
 } tide_window_desc;
 
 // Opens the window and its graphics context.
+//
+// In a run nobody watches (TIDE_HIDDEN in the environment: tide_hidden,
+// tide/page.h), no window shows on a desktop, whatever asks for one. A window
+// that's `hidden` opens as ever, as a headless one does. One that isn't has
+// only its closing to end its run, which nobody could do, so the program ends
+// here instead, with exit code 2, having said why: a program that ends by
+// itself opens its window `hidden`, or headless.
 void tide_platform_open(const tide_window_desc *desc);
 
 // A headless window: none on screen, for pictures of what a game draws and
@@ -205,9 +212,11 @@ tide_float2 tide_platform_screen_size(void);
 // How big `text` is drawn `size` tall with the platform's font, in the same
 // units, logical pixels: its widest line's width and its lines' height, on
 // the window's pixels (NULL) or on those of a render target of the size
-// `target` says, as the window's display has them. It's the tide_measure_fn
+// `target` says, as the window's display has them, in the weight `font` is
+// the file of: TIDE_FONT_REGULAR or TIDE_FONT_BOLD. It's the tide_measure_fn
 // that tide_gui_begin takes (tide/draw.h), and needs no window open.
-tide_float2 tide_platform_measure_text(const char *text, float size, const tide_target_size *target);
+tide_float2 tide_platform_measure_text(const char *text, float size, const tide_target_size *target,
+                                       const unsigned char *font);
 
 // Renders `list` offscreen at the window's size, then reads the pixels at
 // `points` (window pixels from the top left) as 0xRRGGBBAA. For tests: proves

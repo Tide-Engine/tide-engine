@@ -81,11 +81,10 @@ view PaintScore(verified Duel duel, Flow flow)
         Draw2D.RoundRect(float2(34, 25), float2(6, 26), 3, 0.3, UI_ORANGE);
     }
 
-    if (Screen.width >= 720) Write($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(middle, row + 20), 10, UI_MUTED);
+    if (Screen.width >= 720) Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(middle, row + 20), 10, UI_MUTED, Anchor.MiddleCenter);
     if (!compact)
     {
-        Draw2D.Text("DUEL", float2(46, 11), 26, UI_INK);
-        Draw2D.Text("DUEL", float2(46.6, 11), 26, UI_INK);
+        Draw2D.Text("DUEL", float2(46, 11), 26, UI_INK, Font.Bold);
     }
 }
 
@@ -152,11 +151,11 @@ view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session sess
     }
 
     Draw2D.Text(name, float2(nameAt, top - 1), 12, color);
-    if (tag != "") Write(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED);
+    if (tag != "") Draw2D.Text(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED, Anchor.MiddleCenter);
     if (narrow) return;
     var left = $"{int(Math.Ceil(Math.Max(0, solid)))}";
     var inner = edge + inward * width;
-    Draw2D.Text(left, float2(blue ? inner - Draw2D.MeasureText(left, 12).x : inner, top - 1), 12, UI_INK);
+    Draw2D.Text(left, float2(inner, top - 1), 12, UI_INK, blue ? Anchor.UpperRight : Anchor.UpperLeft);
 }
 
 // One hint: a key's cap, and what the key does. With `draw` off, it only
@@ -173,7 +172,7 @@ float Hint(bool draw, float2 at, string key, string does, float ready, Color col
         // Filling up, while what the key does comes back
         if (ready < 1)
             Draw2D.RoundRect(float2(at.x + 3 + (cap - 6) * ready * 0.5, at.y + 8), float2((cap - 6) * ready, 2.5), 1.2, color);
-        Write(key, center, 11, ready >= 1 ? UI_INK : UI_MUTED);
+        Draw2D.Text(key, center, 11, ready >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
         Draw2D.Text(does, float2(at.x + cap + 6, at.y - 6), 11, UI_MUTED);
     }
     return at.x + cap + 6 + Draw2D.MeasureText(does, 11).x + 18;
@@ -217,10 +216,10 @@ view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, with
         Oval(move, float2(36), Color(0.5, 0.62, 0.8, 0.07), Color(0.5, 0.62, 0.8, 0.07), 1.6, Color(0.5, 0.62, 0.8, 0.45));
         Oval(block, float2(36), Fade(color, 0.1), Fade(color, 0.1), 1.6, Fade(color, shield >= 1 ? 0.9 : 0.35));
         Draw2D.Arc(block, 31, -Math.PI * 0.5, Math.TAU * shield, 3, Fade(color, 0.8)); // From the top, clockwise
-        Write("MOVE", move, 11, UI_MUTED);
-        Write("BLOCK", block, 11, shield >= 1 ? UI_INK : UI_MUTED);
+        Draw2D.Text("MOVE", move, 11, UI_MUTED, Anchor.MiddleCenter);
+        Draw2D.Text("BLOCK", block, 11, shield >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
         if (screen.x > 520)
-            Write("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED);
+            Draw2D.Text("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED, Anchor.MiddleCenter);
         return;
     }
     // On a narrow screen, two rows would cover the arena: the keys alone fit
@@ -253,8 +252,8 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var words = flow.winner < 0 ? "DOUBLE K.O." : SideName(flow.winner) + " TAKES THE ROUND";
         var slide = (1 - EaseOut(flow.since / 0.3)) * 60;
         var shown = Math.Saturate(open * 1.4 - 0.4);
-        Write(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35 * shown));
-        WriteBold(words, middle + float2(slide, 0), big ? 34 : 22, Fade(UI_OUTLINE, shown));
+        Draw2D.Text(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(words, middle + float2(slide, 0), big ? 34 : 22, Fade(UI_OUTLINE, shown), Anchor.MiddleCenter, Font.Bold);
         return;
     }
 
@@ -263,8 +262,8 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var enter = EaseOut(flow.age / 0.25);
         GlowBox(middle, float2(250 * enter, 40), 20, 60, Color(0.008, 0.012, 0.035, 0.7));
         Draw2D.RoundRect(middle + float2(0, big ? 34 : 24), float2(150 * Math.Saturate(duel.timer / 1.2), 3), 1.5, Fade(UI_INK, 0.8 * enter));
-        Write($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, Fade(UI_MUTED, enter));
-        WriteBold("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, Fade(UI_INK, enter));
+        Draw2D.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, Fade(UI_MUTED, enter), Anchor.MiddleCenter);
+        Draw2D.Text("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, Fade(UI_INK, enter), Anchor.MiddleCenter, Font.Bold);
     }
     else if (duel.phase == Phase.Fight && flow.age < 0.8)
     {
@@ -273,9 +272,9 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var size = Math.Round((big ? 62 : 40) * (1 + 0.5 * Math.Max(0, 1 - flow.age * 8)) * 0.5) * 2;
         var shown = Math.Saturate((1 - gone) * 2.5);
         var apart = 3 + 14 * gone;
-        WriteBold("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75 * shown));
-        WriteBold("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75 * shown));
-        WriteBold("FIGHT!", middle, size, Fade(Color.white, shown));
+        Draw2D.Text("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("FIGHT!", middle, size, Fade(Color.white, shown), Anchor.MiddleCenter, Font.Bold);
     }
     else if (duel.phase == Phase.Draft && flow.age > 1.5)
     {
@@ -287,6 +286,6 @@ view PaintBanner(Duel duel, Flow flow, Session session)
         var width = Math.Min(screen.x - 24, Draw2D.MeasureText(words, 15).x + 86);
         Panel(middle, float2(width, 54), 27, Color(0.1, 0.13, 0.22, 0.95), Color(0.05, 0.065, 0.125, 0.95), 1.6, Fade(tint, 0.8));
         Draw2D.Arc(middle + float2(-width * 0.5 + 28, 0), 10, flow.age * 0.9 * Math.TAU, Math.TAU * 0.7, 3, tint);
-        Write(words, middle + float2(16, 0), screen.x < 460 ? 11 : 15, tint);
+        Draw2D.Text(words, middle + float2(16, 0), screen.x < 460 ? 11 : 15, tint, Anchor.MiddleCenter);
     }
 }

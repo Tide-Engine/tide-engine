@@ -1,0 +1,7 @@
+// expect: no version of Draw2D.Text takes (string, float2, int, Color, Filter)
+scene Main { }
+
+view Show()
+{
+    Draw2D.Text("DUEL", float2(0), 88, Color.white, Filter.Point);
+}

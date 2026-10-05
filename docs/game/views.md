@@ -213,8 +213,10 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Ellipse(center, radii, color)` | An ellipse. `Ellipse(center, radii, rotation, color)` turns it, and `WireEllipse(center, radii, width, color)` is its outline |
 | `Draw2D.Arc(center, radius, start, sweep, width, color)` | Part of a ring |
 | `Draw2D.Shape(shape)` | A [`Shape`](#the-general-shape): a fill from one color to another, an outline around a fill, an edge that fades |
-| `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it |
-| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)) |
+| `Draw2D.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it (see [Text](#text)) |
+| `Draw2D.Text(text, position, size, color, anchor)` | Text with `position` another place of its box: `Anchor.MiddleCenter` centers it there |
+| `Draw2D.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw2D.Text(text, position, size, color, anchor, font)` |
+| `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
 | `Draw2D.Clip(rect)` | Only what's inside `rect` draws, for the calls after it; `Draw2D.Clip()` draws everywhere again (see [Clipping](#clipping)) |
@@ -416,29 +418,61 @@ What views draw there is under the GUI's widgets, which draw last.
 
 The mouse, touches and the pointer count pixels from the bottom left instead, with `y` up. `Screen.Flip(devices.pointer.position)` is where the pointer is in the screen's pixels: see [Screen and world coordinates](#screen-and-world-coordinates).
 
-## Measuring text
+## Text
 
-`Draw2D.Text` takes the text's top left corner. To center a line, align it to the right, or fit a panel around it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line.
+`Draw2D.Text(text, position, size, color)` draws text in the engine's font. Its `size` is its font size, as CSS's and Unity's: the height of a line of it, with its capitals in the line's middle. A newline in the text starts another line under it. Text is fitted to the display's pixels, so it's sharp at the sizes it's read at.
+
+### Anchors
+
+Without more, `position` is the text's top left corner. An `Anchor` after the color says which place of the text's box it is instead, the nine of Unity's `TextAnchor`: `UpperLeft`, `UpperCenter`, `UpperRight`, `MiddleLeft`, `MiddleCenter`, `MiddleRight`, `LowerLeft`, `LowerCenter` and `LowerRight`.
 
 ```csharp
 view Banner(Round round)
 {
     Draw2D.Screen();
-    var size = Draw2D.MeasureText(round.message, 48);
-    var corner = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
-    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, size + float2(32, 16), Color.black);
-    Draw2D.Text(round.message, corner, 48, Color.white);
+    var middle = float2(Screen.width, Screen.height) * 0.5;
+    Draw2D.Text("FIGHT!", middle, 64, Color.white, Anchor.MiddleCenter);
+    Draw2D.Text($"Round {round.number}", float2(Screen.width - 16, 16), 24, Color.gray, Anchor.UpperRight);
 }
 ```
 
-That's the message in the middle of the screen, on a panel that fits it. Text against the right edge starts at `Screen.width - size.x`.
+That's a word in the middle of the screen, and the round's number against its top right corner, wherever the window's edges are and however wide the text comes out.
 
-The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera. There `y` is up, and text goes down from its corner, so a name centered on a body starts half its height above the body's middle:
+The box is as wide as the text's widest line and as tall as its lines. Upper is towards the top of the screen, whether the calls are in the world, where `y` goes up, or in the screen's pixels, where it goes down: a name over a body is `Draw2D.Text(player.name, body.position + float2(0, 1), 0.5, Color.white, Anchor.LowerCenter)` under any camera. Text of several lines lines up on the anchor's side: its lines start together at a left anchor, end together at a right one, and are centered on one between.
+
+### Bold
+
+The font has two weights. `Font.Bold`, last in the call, draws text in the font's own bold:
 
 ```csharp
-var size = Draw2D.MeasureText(player.name, 0.5);
-Draw2D.Text(player.name, body.position + float2(-size.x, size.y) * 0.5, 0.5, Color.white);
+Draw2D.Text("DUEL", at, 88, Color.white, Font.Bold);
+Draw2D.Text("DUEL", at, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
 ```
+
+`Font.Regular` is the weight text has without one. A `Font` is a value like any enum's, so a function can take one and pass it on.
+
+Bold is a second font file, and a game only carries it when its code says `Font.Bold`: about 95 KB more in the program, and nothing for a game that never does. Its strokes are a whole number of pixels thick, as the regular weight's are, so text stays sharp. At the smallest sizes, under 13 of the display's pixels, that's one pixel in both weights: bold is for text of about that size and up, and for titles. A letter the bold weight doesn't have (it covers Latin, Greek and Cyrillic, less widely than the regular one) is drawn in the regular weight.
+
+The GUI's widgets are in the regular weight.
+
+### Measuring text
+
+To fit a panel around a text, or to put something beside it, ask how big it will be: `Draw2D.MeasureText(text, size)` returns a `float2`, the width of the text's widest line in `x` and the height of its lines in `y`. One line is `size` high, and each newline adds a line. It's the box an anchor names a place of.
+
+```csharp
+view Banner(Round round)
+{
+    Draw2D.Screen();
+    var middle = float2(Screen.width, Screen.height) * 0.5;
+    var size = Draw2D.MeasureText(round.message, 48, Font.Bold);
+    Draw2D.Rect(middle, size + float2(32, 16), Color.black);
+    Draw2D.Text(round.message, middle, 48, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+```
+
+That's the message in the middle of the screen, on a panel that fits it. Bold text is wider than regular, so it's measured in its weight: `Draw2D.MeasureText(text, size, Font.Bold)`.
+
+The answer is in the units the Draw calls are in: pixels after `Draw2D.Screen()`, and the world's under a camera.
 
 It's what `Draw2D.Text` would draw at that point of the view, to the pixel. Text is fitted to the display's pixels to stay sharp, so the same text can come out a little wider or narrower on another display, under another camera or in a window of another size: measure where you draw, each frame, rather than keeping the answer. A [render target](#targets-and-post-processing) has its own camera, and pixels of its own to fit text to, so `target.MeasureText(text, size)` measures for it.
 

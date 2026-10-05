@@ -366,9 +366,9 @@ TIDE_TEST(draw_coordinates_targets_forget)
 static tide_target_size measured_in;
 static bool measured_in_window;
 
-static tide_float2 note_measure(const char *text, const float size, const tide_target_size *target)
+static tide_float2 note_measure(const char *text, const float size, const tide_target_size *target, const unsigned char *font)
 {
-    (void)text;
+    (void)text, (void)font;
     measured_in_window = target == NULL;
     if (target) measured_in = *target;
     return tide_f2(size * 3.0f, size);
@@ -389,7 +389,7 @@ TIDE_TEST(draw_coordinates_targets_are_in_logical_pixels)
     TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(4.0f, 3.0f), window), tide_f2(130.0f, 40.0f)));
     TIDE_CHECK(close2(tide_draw_screen_to_world(&d, tide_f2(130.0f, 40.0f), window), tide_f2(4.0f, 3.0f)));
     // Its text is measured where it's drawn: in the target, at its scale
-    const tide_float2 text = tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    const tide_float2 text = tide_draw_measure_text(&d, "Tide", 2.0f, TIDE_FONT_REGULAR, window, note_measure);
     TIDE_CHECK(close2(text, tide_f2(6.0f, 2.0f)));
     TIDE_CHECK(!measured_in_window && measured_in.width == 200.0f && measured_in.scale == 3.0f);
 
@@ -402,13 +402,13 @@ TIDE_TEST(draw_coordinates_targets_are_in_logical_pixels)
     TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(0.0f, 0.0f), wider), tide_f2(250.0f, 150.0f)));
     TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(50.0f, 50.0f), wider), tide_f2(400.0f, 0.0f)));
     TIDE_CHECK(close3(tide_draw_world_to_screen_3d(&d, tide_f3(0.0f, 0.0f, 2.0f), wider), tide_f3(250.0f, 150.0f, 0.85f)));
-    tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    tide_draw_measure_text(&d, "Tide", 2.0f, TIDE_FONT_REGULAR, window, note_measure);
     TIDE_CHECK(!measured_in_window && measured_in.window == 0.5f);
     // With no window to follow, it has no size
     TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(5.0f, 5.0f), tide_f2(0.0f, 0.0f)), tide_f2(0.0f, 0.0f)));
 
     tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
-    tide_draw_measure_text(&d, "Tide", 2.0f, window, note_measure);
+    tide_draw_measure_text(&d, "Tide", 2.0f, TIDE_FONT_REGULAR, window, note_measure);
     TIDE_CHECK(measured_in_window);
     tide_draw_free(&d);
     tide_render_targets_free();
