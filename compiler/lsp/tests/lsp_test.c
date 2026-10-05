@@ -6101,6 +6101,52 @@ TIDE_TEST(lsp_out_quick_fixes)
     TIDE_CHECK(has(create, "Create function 'Shrink'"));
     TIDE_CHECK(has(create, "void Shrink(int value, out int total)\\n{\\n    total = default;\\n}\\n"));
 
+    // What the notes say to write, as changes: `mut out` is `out`, and what the engine calls takes `mut`
+    static const char both[] = "bool TryHalf(int value, mut out int half)\n{\n    half = value / 2;\n    return true;\n}\nscene Main { }\n";
+    open_document(both);
+    actions_at(0);
+    const char *dropped = apply_fix(both, "Change to 'out'");
+    TIDE_REQUIRE(dropped != NULL);
+    TIDE_CHECK(has(dropped, "bool TryHalf(int value, out int half)\n"));
+    static const char engine[] = "singleton Store { int size; }\nsystem Run(out Store store) { store.size = 1; }\nscene Main { }\n";
+    open_document(engine);
+    actions_at(1);
+    const char *taken = apply_fix(engine, "Change to 'mut'");
+    TIDE_REQUIRE(taken != NULL);
+    TIDE_CHECK(has(taken, "system Run(mut Store store) { store.size = 1; }\n"));
+
+    // A name there is already: the argument assigns it. A type that isn't the parameter's: `var` takes it
+    static const char again[] = OUT_RUN "    mut var half = 0;\n    TryHalf(8, out var half);\n    tally.total = half;\n}\n";
+    open_document(again);
+    actions_at(23);
+    const char *assigns = apply_fix(again, "Change to 'half'");
+    TIDE_REQUIRE(assigns != NULL);
+    TIDE_CHECK(has(assigns, "    TryHalf(8, out half);\n"));
+    static const char wrong_type[] = OUT_RUN "    TryHalf(8, out mut float half);\n    tally.total = int(half);\n}\n";
+    open_document(wrong_type);
+    actions_at(22);
+    const char *takes = apply_fix(wrong_type, "Change to 'var'");
+    TIDE_REQUIRE(takes != NULL);
+    TIDE_CHECK(has(takes, "    TryHalf(8, out mut var half);\n"));
+
+    // A return, or a function's end, that leaves an `out` parameter unassigned: the default, before it. Not
+    // before a return that's an if's body with no braces, which has to stay one statement
+    static const char unassigned[] = "bool TryHalf(int value, out int half)\n{\n    if (value % 2 != 0) return false;\n"
+                                     "    if (value < 0)\n    {\n        return false;\n    }\n    half = value / 2;\n"
+                                     "    return true;\n}\nvoid Fill(int n, out int count)\n{\n    if (n > 0) count = n;\n}\n"
+                                     "scene Main { }\n";
+    open_document(unassigned);
+    TIDE_CHECK(has(last_sent(), "'TryHalf' returns here without assigning its 'half'"));
+    TIDE_CHECK(!has(actions_at(2), "Assign 'half = default;'"));
+    actions_at(5);
+    const char *filled = apply_fix(unassigned, "Assign 'half = default;'");
+    TIDE_REQUIRE(filled != NULL);
+    TIDE_CHECK(has(filled, "    {\n        half = default;\n        return false;\n    }\n"));
+    actions_at(10); // At its name, for its end
+    const char *ended = apply_fix(unassigned, "Assign 'count = default;'");
+    TIDE_REQUIRE(ended != NULL);
+    TIDE_CHECK(has(ended, "    if (n > 0) count = n;\n    count = default;\n}\n"));
+
     // A local an argument declares that nothing reads: a warning that editors fade, fixed by `out _`
     static const char unread[] = OUT_RUN "    TryHalf(8, out var rest);\n    TryHalf(8, out mut int spare);\n"
                                          "    tally.all.TryGet(1, out Stats found);\n    tally.total = 1;\n}\n";

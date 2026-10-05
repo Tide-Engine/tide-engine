@@ -3361,6 +3361,31 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             fixed = diagnostic_at(f->at);
             break;
         }
+        case FIX_ASSIGN_OUT: { // A return, or a function's end, that leaves an `out` parameter unassigned
+            const bool at_end = loc_cmp(f->at, f->method->at) == 0;
+            const loc where = at_end ? f->method->end : f->at; // Its closing brace, or the return
+            const int t = where.file == A.doc ? token_at(where) : -1;
+            if (t <= 0) continue;
+            // Only before a statement of a block: a return that's an if's body with no braces stays one statement
+            const tok_kind before = DOC->toks[t - 1].kind;
+            if (before != T_LBRACE && before != T_RBRACE && before != T_SEMI && before != T_COLON) continue;
+            const str line = doc_line(where.line);
+            const int indent = where.col - 1 < line.len ? where.col - 1 : line.len;
+            bool first = true; // On its line: the assignment gets a line of its own
+            for (int i = 0; i < indent; i++) first &= isspace((unsigned char)line.ptr[i]) != 0;
+            sb_printf(&title, "Assign '" STR_FMT " = default;'", STR_ARG(p->name));
+            start = end = where;
+            if (first && at_end) { // A step in from the brace
+                start = end = (loc){where.line, 1, A.doc};
+                sb_printf(&text, "%.*s    " STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            } else if (first) {
+                sb_printf(&text, STR_FMT " = default;\n%.*s", STR_ARG(p->name), indent, line.ptr);
+            } else {
+                sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            }
+            fixed = diagnostic_at(f->at);
+            break;
+        }
         case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
             continue; // Their own actions, above
         }

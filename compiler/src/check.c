@@ -2477,6 +2477,16 @@ static loc expr_start(const expr *e)
     return e->at;
 }
 
+// The source from `from` to the end of the name of a local an `out` argument
+// declares, `var half` in `out var half`: what an editor's fix replaces. Empty
+// when the two aren't on one line.
+static str up_to_name(const stmt *local, const loc from)
+{
+    if (from.file != local->name_at.file || from.line != local->name_at.line || from.col > local->name_at.col) return (str){NULL, 0};
+    const int before = local->name_at.col - from.col;
+    return (str){local->name.ptr - before, local->name.len + before};
+}
+
 // An argument written `out ...`, before the parameter it's for is known. A
 // declaration puts its local in scope, with its type if it writes one. `out
 // _`, where the code has nothing named `_`, and a declaration of that name
@@ -2516,6 +2526,8 @@ static void begin_out_arg(checker *c, expr *arg)
             if (find_local(c, local->name) || find_param(c, local->name)) {
                 diag_error(local->name_at, "'" STR_FMT "' is already declared", STR_ARG(local->name));
                 diag_note("'out " STR_FMT "' assigns the variable there is; a new one takes another name", STR_ARG(local->name));
+                const str declares = up_to_name(local, local->at); // What editors offer: the name alone
+                if (declares.len > 0) suggest_replacement(declares, str_to_cstr(local->name));
             }
             vec_push(c->locals, local);
         }
@@ -2822,8 +2834,13 @@ static bool check_out_param(checker *c, const decl *m, const param *p, expr *arg
                    "'" STR_FMT "' makes its '" STR_FMT "' %s, not %s", STR_ARG(m->name), STR_ARG(p->name), type_name(p->type),
                    type_name(arg->type));
         if (arg->out_local) {
-            diag_note("'out var " STR_FMT "' takes the parameter's type",
-                      STR_ARG(arg->out_local->discard ? str_from("_") : arg->out_local->name));
+            const stmt *local = arg->out_local;
+            diag_note("'out var " STR_FMT "' takes the parameter's type", STR_ARG(local->discard ? str_from("_") : local->name));
+            // What editors offer: `var` where the type is written
+            str written = local->discard ? (str){NULL, 0} : up_to_name(local, local->type_qual_at);
+            written.len -= written.len > 0 ? local->name.len : 0;
+            while (written.len > 0 && written.ptr[written.len - 1] == ' ') written.len--;
+            if (written.len > 0) suggest_replacement(written, "var");
         } else {
             diag_note("an 'out' argument is the variable itself, so its type is the parameter's: 'out var " STR_FMT
                       "' declares one of that type", STR_ARG(p->name));
@@ -10270,7 +10287,7 @@ static void check_body_assigned(const checker *c, const decl *code, const stmt *
     if (diag_error_count() != errors) return;
     bool makes = c->outs != outs;
     for (int i = 0; code && !makes && i < code->params.count; i++) makes = code->params.items[i].is_out;
-    if (makes) check_assigned(code, body);
+    if (makes) check_assigned(c->prog, code, body);
 }
 
 static void check_method_body(checker *c, decl *m)
