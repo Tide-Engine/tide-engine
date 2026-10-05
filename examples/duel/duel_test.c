@@ -833,14 +833,71 @@ TIDE_TEST(duel_effects_move_by_the_frames_length_with_a_match_and_with_none)
     // Joining another machine's match: there's none here meanwhile, and the
     // frames go on, with the backdrop's clock and the spinner
     const float now = local.Fx.now;
-    const int32_t frames = local.Fx.frame;
     tide_local_set_session(&local, TIDE_SESSION_CONNECTING, (tide_player_id){0}, 0, false, false, "");
     frame(NULL, 0.25f);
-    TIDE_CHECK(local.Fx.frame == frames + 1 && local.Fx.now == now + 0.05f);
+    TIDE_CHECK(local.Fx.now == now + 0.05f);
     TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.18f) < 1e-5f); // 0.72 turns a second
     for (int i = 0; i < 5; i++) frame(NULL, 0.25f);
     TIDE_CHECK(fabsf(local.DuelMenu.turn - 0.08f) < 1e-5f); // Past a turn, it starts over
     TIDE_CHECK(draw.count > 0);
+    tide_local_free(&local);
+    tide_world_free(&world);
+}
+
+// A tick that tells this machine what it sent, and the frame that shows it.
+static tide_event_log heard;
+
+static void tick_and_show(void)
+{
+    tide_world_tick_events(&world, NULL, &heard);
+    tide_local_events(&local, &heard);
+    frame(&world, 0.008f);
+}
+
+// What happens in the match reaches the effects through its events: the local
+// handlers set a fighter's and a shot's local fields and add what flies, and
+// nothing watches the world for changes.
+TIDE_TEST(duel_effects_come_from_what_the_match_sends)
+{
+    start();
+    tide_local_init(&local);
+    place(world.Duel.blue, -220, 180);
+    place(world.Duel.orange, 0, 180);
+    frame(&world, 0.008f);
+    TIDE_CHECK(local.Fx.bits.at == 0 && local.Fx.labels.at == 0 && local.Fx.streaks.at == 0);
+
+    // Blue fires: its gun kicks, and the shot's trail starts at the muzzle
+    Fighter blue = tide_get_Fighter(&world, world.Duel.blue);
+    blue.fireCooldown = 0;
+    tide_set_Fighter(&world, world.Duel.blue, blue);
+    tide_world_set_input(&world, player(0), (Controls){.aim = {1, 0}, .fire = true});
+    tick_and_show();
+    tide_world_set_input(&world, player(0), (Controls){.aim = {1, 0}});
+    const tide_entity shot = shot_from(world.Duel.blue);
+    TIDE_REQUIRE(tide_has_Bullet(&world, shot));
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.blue).recoil > 0.5f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.orange).recoil == 0.0f);
+    TIDE_CHECK(tide_has_Bullet_local(&local, shot) && tide_get_Bullet_local(&local, shot).trail.x != 0.0f);
+    TIDE_CHECK(local.Fx.bits.at != 0); // The muzzle's flash and sparks
+
+    // It hits orange: a flash, what the hit took in white on its bar, and a number
+    aim_shot(shot, -100, 180, 18000, 0, 0);
+    tick_and_show();
+    TIDE_CHECK(tide_get_Fighter(&world, world.Duel.orange).health == 66);
+    const Fighter_local struck = tide_get_Fighter_local(&local, world.Duel.orange);
+    TIDE_CHECK(struck.hit > 0.5f && struck.chip > 30.0f && struck.chip <= 34.0f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.blue).hit == 0.0f);
+    TIDE_CHECK(local.Fx.labels.at != 0);
+    // The shot is gone, and the last of its trail was drawn up to where it ended
+    TIDE_CHECK(!tide_has_Bullet(&world, shot) && local.Fx.streaks.at != 0);
+    TIDE_CHECK(!tide_has_Bullet_local(&local, shot)); // ...and what was kept for it went with it
+
+    // A tick nobody listens to shows nothing, and the match goes the same
+    const float chip = tide_get_Fighter_local(&local, world.Duel.orange).chip;
+    tide_world_tick(&world);
+    frame(&world, 0.0f);
+    TIDE_CHECK(tide_get_Fighter_local(&local, world.Duel.orange).chip == chip);
+    tide_event_log_free(&heard);
     tide_local_free(&local);
     tide_world_free(&world);
 }

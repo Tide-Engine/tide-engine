@@ -1,0 +1,10 @@
+// expect: a view can't change the match, and 'Health' belongs to it
+component Health { int value; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+view Bar(mut verified Health health)
+{
+    health.value = 0;
+}

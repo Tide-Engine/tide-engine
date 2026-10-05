@@ -496,7 +496,12 @@ void print_schedule(const program *prog, const char *game, sb *out)
         }
     }
 
-    if (prog->handlers.count > 0) {
+    bool handled = false, heard = false;
+    for (int i = 0; i < prog->events.count; i++) {
+        handled |= prog->events.items[i]->handlers.count > 0;
+        heard |= prog->events.items[i]->listeners.count > 0;
+    }
+    if (handled) {
         sb_put(out, "\nEvent handlers, at the end of the tick, as their events are sent:\n");
         for (int i = 0; i < prog->events.count; i++) {
             const decl *event = prog->events.items[i];
@@ -508,6 +513,23 @@ void print_schedule(const program *prog, const char *game, sb *out)
                 if (k) sb_put(out, ", ");
                 put_decl_name(out, event->handlers.items[k], "", NULL);
                 if (event->handlers.items[k]->is_async) sb_put(out, " (async)");
+            }
+            sb_put(out, "\n");
+        }
+    }
+    // A match event's local handlers hear it on each machine, outside the tick
+    if (heard) {
+        sb_put(out, "\nLocal handlers of the match's events, at the start of a frame, for what the ticks since the last one sent:\n");
+        for (int i = 0; i < prog->events.count; i++) {
+            const decl *event = prog->events.items[i];
+            if (event->listeners.count == 0) continue;
+            sb_put(out, "         ");
+            put_decl_name(out, event, "", NULL);
+            sb_put(out, ": ");
+            for (int k = 0; k < event->listeners.count; k++) {
+                if (k) sb_put(out, ", ");
+                put_decl_name(out, event->listeners.items[k], "", NULL);
+                if (event->listeners.items[k]->listens_verified) sb_put(out, " (verified)");
             }
             sb_put(out, "\n");
         }

@@ -62,9 +62,10 @@ Both machines run the same arena from the players' inputs.
 
 The game is `examples/duel` in the [repo](https://github.com/BlenMiner/tide-engine/tree/dev/examples/duel).
 
-`game.tide` and `physics.tide` are the match: the rules, which every machine runs the same way. The rest is what one machine shows of it, and none of it is in the match:
+`game.tide` and `physics.tide` are the match: the rules, which every machine runs the same way. The match also says what happens in it, as [events](../game/events.md) nothing in the match handles: a hit that counted, a shot's bounce and where it ended, a jump, a landing, who took a round. They cost the match nothing. The rest is what one machine shows of it, and none of it is in the match:
 
-- `paint.tide` draws the arena, and watches the match to start effects: a view compares what it sees with what it saw the frame before, which it keeps in [local fields](../game/local-state.md#local-fields) of the fighters and the shots.
+- `heard.tide` has the local handlers of those events: each runs once for an event, with the fighter or the shot as the event left it, and sets off sparks, a flash or a number. A hit's sparks come as this machine predicts it; what must not be wrong, like the number a hit took, a knockout or who took a round, comes from `verified` handlers, once the server has confirmed it.
+- `paint.tide` draws the arena. How a fighter or a shot looks beyond what the match says of it (a flash that fades, a squash that springs back, a trail) is in their [local fields](../game/local-state.md#local-fields), which the handlers set and the views let settle. The health bars and the score read the match `verified`.
 - `effects.tide` has the sparks, the trails, the rings and the camera's shake, all [local state](../game/local-state.md), and the backdrop, a [frag](../game/shaders.md) over the whole screen.
 - `hud.tide` and `play.tide` are the score and the menus, whose buttons and cards are the game's own, [claimed](../game/gui.md#widgets-of-your-own) from the pointer as the GUI's widgets are.
 - `shapes.tide` has the few shapes the game draws again and again: panels whose fill goes from one color to another under an outline, glows and shadows. Everything but the backdrop is the engine's [smooth shapes](../game/views.md#smooth-shapes), round rects, ellipses, thick lines and arcs, drawn in the order they're written with the text among them.

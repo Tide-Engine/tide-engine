@@ -1142,6 +1142,14 @@ static void parse_routine_params(parser *p, decl *m)
                 advance(p);
                 prm.mode = PARAM_IN;
             }
+            // `verified Health health` is a view's parameter: a function takes the value it's passed
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "verified") && peek_at(p, 1)->kind == T_IDENT
+                && (after == T_IDENT || after == T_DOT || after == T_LT)) {
+                diag_error(peek(p)->at, "'verified' goes on a view's parameter, or on a local handler's event: a function takes "
+                                        "the value it's passed");
+                diag_note("the view takes it 'verified', and passes it on: 'view Name(verified Health health) { Show(health); }'");
+                longjmp(p->fail, 1);
+            }
             prm.function_param = true;
             const qname type = parse_decl_type(p, "parameter type");
             prm.type_name = type.text;
@@ -1467,10 +1475,18 @@ static void parse_query_params(parser *p, decl *d)
                     longjmp(p->fail, 1);
                 }
             }
+            const bool filter = prm.mode == PARAM_WITH || prm.mode == PARAM_WITHOUT;
+            // `verified Health health`, `with verified Dead`: a word of its own
+            // before a parameter's type, and a name like any other everywhere
+            // else, a type's too (`verified score`, `with verified`)
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "verified") && peek_at(p, 1)->kind == T_IDENT
+                && (filter || peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT)) {
+                prm.verified = true;
+                prm.verified_at = advance(p)->at;
+            }
             // `with ownership`, `without ownership`: a word of its own right after
             // them, and a name like any other everywhere else, a namespace's too
             // (`with ownership.Flag`)
-            const bool filter = prm.mode == PARAM_WITH || prm.mode == PARAM_WITHOUT;
             if (filter && at(p, T_IDENT) && str_eq_c(peek(p)->text, "ownership") && peek_at(p, 1)->kind != T_DOT) {
                 const token *word = advance(p);
                 prm.ownership = true;
@@ -1555,6 +1571,11 @@ static decl *parse_handler(parser *p, const bool command)
     param trigger = {0};
     trigger.mode = PARAM_EVENT;
     trigger.at = peek(p)->at;
+    // `event(verified Died died)`: the word before the event, where an event follows it
+    if (!command && at(p, T_IDENT) && str_eq_c(peek(p)->text, "verified") && peek_at(p, 1)->kind == T_IDENT) {
+        trigger.verified = true;
+        trigger.verified_at = advance(p)->at;
+    }
     const qname type = parse_qname(p, "the event it handles, like 'event(Hit hit)'");
     trigger.type_name = type.text;
     trigger.type_qual_at = type.at;

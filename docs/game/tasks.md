@@ -55,7 +55,7 @@ async event(Spawned) Arm(mut Turret turret)
 }
 ```
 
-Local handlers can be async too: `local async event(...)` (see [Local state](./local-state.md)).
+Local handlers can be async too: `local async event(...)` (see [Local state](./local-state.md)). A local handler of one of the match's events can't be yet: it starts a task by calling an async function (see [Events](./events.md#what-isn-t-there-yet)).
 
 Systems and views can't wait, as they run again every tick or frame: they start tasks instead, by calling an async function.
 
