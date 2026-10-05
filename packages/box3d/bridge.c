@@ -542,6 +542,38 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
+// A body that's asleep is awake from here on. It isn't a call an image in
+// parts follows (box3d/TIDE.md), so the world's next image is written whole:
+// it's only made for a body that's asleep, which code seldom does anything to.
+static void wake(const b3BodyId id)
+{
+    if (b3Body_GetType(id) != b3_staticBody && !b3Body_IsAwake(id)) b3Body_SetAwake(id, true);
+}
+
+// Box3D moves a sleeping body and leaves it asleep, hanging where it was put,
+// and leaves asleep what rested on a body that's moved from under it. Code has
+// no other way to say a body should wake than to move it, so a body that's
+// moved is awake, and so is what it touched. It follows from the move, which
+// is what's noted.
+static void wake_moved(const b3BodyId id)
+{
+    static b3ContactData *touching;
+    static int room;
+    wake(id);
+    const int most = b3Body_GetContactCapacity(id);
+    if (most == 0) return;
+    if (most > room) {
+        touching = tide_realloc(touching, (size_t)room * sizeof *touching, (size_t)most * sizeof *touching);
+        room = most;
+    }
+    const int count = b3Body_GetContactData(id, touching, most);
+    for (int i = 0; i < count; i++) {
+        const b3BodyId one = b3Shape_GetBody(touching[i].shapeIdA);
+        const bool own = one.index1 == id.index1 && one.generation == id.generation;
+        wake(own ? b3Shape_GetBody(touching[i].shapeIdB) : one);
+    }
+}
+
 // A body's component into Box3D: made, if it's new, or else what code wrote
 // into it since the last step. Whether it was made.
 static bool sync_body(body *b)
@@ -571,6 +603,7 @@ static bool sync_body(body *b)
         if (!b3Body_IsValid(id)) return 0;
         if (!same(float3(b3ToVec3(b3Body_GetPosition(id))), b->position) || !same_turn(turn(b3Body_GetRotation(id)), b->rotation)) {
             b3Body_SetTransform(id, b3ToPos(vec(b->position)), quat(b->rotation));
+            wake_moved(id);
             did |= 2u;
         }
         if (!same(float3(b3Body_GetLinearVelocity(id)), b->velocity)) {
@@ -838,14 +871,25 @@ static void push_new(const world *w)
 int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravity)
 {
     world *w = active;
-    // Nothing awake, and nothing done to the world since its last step: a step
-    // would leave it as it is. The stamp stays, which says so.
-    if (w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
+    // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
+    // last step's wherever the world came from
+    const bool turned = !same(float3(b3World_GetGravity(w->id)), gravity);
+    // Nothing awake, nothing done to the world since its last step, and what pulls on it as it was: a
+    // step would leave it as it is. The stamp stays, which says so.
+    if (!turned && w->stamp != 0 && w->chain == (uint64_t)w->stamp && b3World_GetAwakeBodyCount(w->id) == 0) return w->stamp;
     note('s', &dt, sizeof dt);
     note('s', &substeps, sizeof substeps);
     note('s', &gravity, sizeof gravity);
     push_new(w);
     b3World_SetGravity(w->id, vec(gravity));
+    if (turned) {
+        // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box3D
+        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
+        // gravity, which every step notes. Neither call is one an image in parts follows, so the next
+        // image is written whole, as it would be with everything awake.
+        b3World_EnableSleeping(w->id, false);
+        b3World_EnableSleeping(w->id, true);
+    }
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;

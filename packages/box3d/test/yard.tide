@@ -74,7 +74,7 @@ system Roll(mut Body body, Script script, with Roller)
 system Tease(mut Body body, Crate crate, Script script)
 {
     if (script.quiet) return;
-    // Asleep, and moved: onto another stack, where it goes on sleeping
+    // Asleep, and moved: onto another stack, which it wakes with it
     if (script.tick == 150 && crate.stack == 2 && crate.row == 2) body.position = float3(-9 + 2 * 7, 3.5, 0);
     // Asleep, and gone: from under the rest of its stack
     if (script.tick == 200 && crate.stack == 4 && crate.row == 0) this.Destroy();
@@ -109,7 +109,13 @@ system Stage(Script script)
     }
 }
 
-// The static body goes, from under what's on it
+// The static body is moved, under a crate that's asleep on it, which wakes
+system Shift(mut Body body, Script script, with Shelf)
+{
+    if (!script.quiet && script.tick == 330) body.position = float3(1.4, 4.2, 0.3);
+}
+
+// ...and goes, from under what's on it
 system Unshelve(Script script, with Shelf)
 {
     if (!script.quiet && script.tick == 420) this.Destroy();

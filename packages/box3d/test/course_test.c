@@ -194,3 +194,100 @@ TIDE_TEST(box3d_gives_a_new_body_its_impulse)
     TIDE_CHECK(body_of(&a, tide_has_Thrown).velocity.x == thrown.velocity.x); // And not again
     tide_world_free(&a);
 }
+
+// ---------------------------------------------------------------------------
+// Bodies at rest
+
+// Ticks until a tick steps nothing, and whether one came within `most`
+static bool rests(tide_world *w, const int most)
+{
+    for (int i = 0; i < most; i++) {
+        tide_world_tick(w);
+        if (!w->Box3D_Physics.moved) return true;
+    }
+    return false;
+}
+
+// A world at rest that nothing is done to: no tick steps it, so its state is
+// the one it was at
+static bool stays(tide_world *w)
+{
+    const int64_t stamp = w->Box3D_Physics.stamp;
+    bool still = true;
+    for (int i = 0; i < 60; i++) {
+        tide_world_tick(w);
+        still = still && !w->Box3D_Physics.moved && w->Box3D_Physics.stamp == stamp;
+    }
+    return still;
+}
+
+TIDE_TEST(box3d_wakes_a_body_that_code_moves)
+{
+    start(&a, Case_Rest);
+    TIDE_REQUIRE(rests(&a, 600));
+    TIDE_CHECK(stays(&a));
+
+    // A crate asleep on the floor, put in the air: it falls
+    Box3D_Body sleeper = body_of(&a, tide_has_Sleeper);
+    TIDE_CHECK(near(sleeper.position.y, 0.5f));
+    sleeper.position.y = 5.0f;
+    put(&a, tide_has_Sleeper, sleeper);
+    tick(&a, 20);
+    TIDE_CHECK(a.Box3D_Physics.moved);
+    const float falling = body_of(&a, tide_has_Sleeper).position.y;
+    printf("    a sleeping crate put at 5 is at %g a third of a second later\n", (double)falling);
+    TIDE_CHECK(falling < 4.9f && body_of(&a, tide_has_Sleeper).velocity.y < -1.0f);
+    TIDE_REQUIRE(rests(&a, 600));
+    TIDE_CHECK(near(body_of(&a, tide_has_Sleeper).position.y, 0.5f));
+    TIDE_CHECK(stays(&a));
+
+    // ...and one that's turned where it lies: it comes to lie on a side again
+    Box3D_Body tilted = body_of(&a, tide_has_Tilted);
+    const tide_quaternion turned = tide_axisangle_q(tide_f3(0.0f, 0.0f, 1.0f), 0.5f);
+    tilted.rotation = turned;
+    put(&a, tide_has_Tilted, tilted);
+    tick(&a, 5);
+    TIDE_CHECK(a.Box3D_Physics.moved);
+    TIDE_REQUIRE(rests(&a, 600));
+    const float lies = alike(body_of(&a, tide_has_Tilted).rotation, turned);
+    printf("    a sleeping crate turned by 0.5 is %g from how it was turned once it's at rest\n",
+           (double)(2.0f * tide_acos_f(tide_min_f(1.0f, lies))));
+    TIDE_CHECK(lies < 0.99f);
+
+    // A body that never moves, moved from under a crate asleep on it: the crate falls to the floor
+    TIDE_CHECK(body_of(&a, tide_has_Rider).position.y > 3.0f);
+    Box3D_Body ledge = body_of(&a, tide_has_Ledge);
+    ledge.position.x = 14.0f;
+    put(&a, tide_has_Ledge, ledge);
+    TIDE_REQUIRE(rests(&a, 600));
+    const Box3D_Body rider = body_of(&a, tide_has_Rider);
+    printf("    a crate asleep on a ledge that's moved away comes to rest at %g\n", (double)rider.position.y);
+    TIDE_CHECK(near(rider.position.y, 0.5f));
+    TIDE_CHECK(body_of(&a, tide_has_Ledge).position.x == 14.0f);
+    TIDE_CHECK(stays(&a));
+    tide_world_free(&a);
+}
+
+TIDE_TEST(box3d_gravity_that_changes_wakes_the_world)
+{
+    start(&a, Case_Rest);
+    TIDE_REQUIRE(rests(&a, 600));
+    const int64_t stamp = a.Box3D_Physics.stamp;
+    TIDE_CHECK(stays(&a));
+
+    a.Box3D_Physics.gravity = tide_f3(0.0f, 10.0f, 0.0f);
+    tide_world_tick(&a);
+    TIDE_CHECK(a.Box3D_Physics.moved && a.Box3D_Physics.stamp != stamp); // Stepped, though nothing was awake
+    tick(&a, 30);
+    const Box3D_Body sleeper = body_of(&a, tide_has_Sleeper);
+    printf("    with gravity turned upwards, a crate that slept on the floor is at %g half a second later\n", (double)sleeper.position.y);
+    TIDE_CHECK(sleeper.position.y > 1.0f && sleeper.velocity.y > 1.0f);
+    TIDE_CHECK(body_of(&a, tide_has_Rider).position.y > 4.2f);
+
+    // ...and back: everything falls again, and comes to rest
+    a.Box3D_Physics.gravity = tide_f3(0.0f, -10.0f, 0.0f);
+    TIDE_REQUIRE(rests(&a, 900));
+    TIDE_CHECK(body_of(&a, tide_has_Sleeper).position.y < 2.0f);
+    TIDE_CHECK(stays(&a));
+    tide_world_free(&a);
+}
