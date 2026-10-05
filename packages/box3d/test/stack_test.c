@@ -21,6 +21,8 @@
 // bridge.c
 void b3t_forget(void);
 void b3t_narrow(bool on);
+void b3t_check(bool on, bool whenever);
+void b3t_images(int32_t *whole, int32_t *in_parts);
 int32_t b3t_geometry_size(void); // Of the world the last tick had
 int32_t b3t_shared_steps(void);
 int32_t b3t_restores(void);
@@ -50,13 +52,34 @@ static void tick(tide_world *w, const int ticks)
     for (int i = 0; i < ticks; i++) tide_world_tick(w);
 }
 
+// How many images were written whole and how many in parts since `*whole` and
+// `*in_parts` were last read, which they are again.
+static void images_since(int32_t *whole, int32_t *in_parts)
+{
+    int32_t now_whole;
+    int32_t now_in_parts;
+    b3t_images(&now_whole, &now_in_parts);
+    const int32_t were_whole = *whole;
+    const int32_t were_in_parts = *in_parts;
+    *whole = now_whole - were_whole;
+    *in_parts = now_in_parts - were_in_parts;
+}
+
 TIDE_TEST(box3d_steps_a_match)
 {
     // Twice: as this CPU solves contacts, 8 at a time where it has AVX2, and 4
     // at a time, as one without does. A web build has neither, and is the third.
     for (int narrow = 0; narrow < 2; narrow++) {
+        int32_t whole = 0;
+        int32_t in_parts = 0;
+        images_since(&whole, &in_parts);
         b3t_forget();
         b3t_narrow(narrow);
+        // Every image that's written as what changed of the last one is compared
+        // with the image written whole, here and in every test but the timed
+        // ones. Once with images in parts whenever there can be, and once as a
+        // match has them: whole while most of the world is awake.
+        b3t_check(true, narrow == 0);
         start(&a, 12);
         // Every tick's image, not only the last: a byte that differs somewhere and
         // then doesn't (a field one platform's solver leaves behind) shows here
@@ -87,6 +110,9 @@ TIDE_TEST(box3d_steps_a_match)
                (unsigned long long)tide_hash_end(images));
         TIDE_CHECK(tide_world_hash(&a) == SETTLED_HASH);
         TIDE_CHECK(tide_hash_end(images) == IMAGES_HASH);
+        images_since(&whole, &in_parts);
+        printf("    %d of its images were written whole, and %d as what changed of the one before\n", (int)whole, (int)in_parts);
+        TIDE_CHECK(whole > 0 && in_parts > (narrow ? 20 : 250)); // Both ways are in the pinned hashes
         tide_world_free(&a);
     }
     b3t_narrow(false);
@@ -96,6 +122,7 @@ TIDE_TEST(box3d_steps_a_match)
 // whatever C's worlds have been through since.
 TIDE_TEST(box3d_rolls_back)
 {
+    b3t_check(true, true);
     b3t_forget();
     start(&a, 12);
     tick(&a, 100);
@@ -127,6 +154,7 @@ TIDE_TEST(box3d_images_say_everything)
 {
     enum { TICKS = 240 };
     static uint64_t went[TICKS];
+    b3t_check(true, true);
     b3t_forget();
     start(&a, 12);
     for (int i = 0; i < TICKS; i++) {
@@ -149,6 +177,7 @@ TIDE_TEST(box3d_images_say_everything)
 // A player who joins gets the world as bytes, and has none of C's.
 TIDE_TEST(box3d_joins)
 {
+    b3t_check(true, true);
     b3t_forget();
     start(&a, 12);
     tick(&a, 100);
@@ -181,6 +210,9 @@ static void cost(tide_world *w, const char *what, const int ticks)
     uint64_t counting; // What counting the image's changes took inside the ticks: the measuring's, not a match's
     b3t_measure(&step, &image);
     b3t_measure_blocks(&changed, &in_all, &counting);
+    int32_t whole = 0;
+    int32_t in_parts = 0;
+    images_since(&whole, &in_parts);
     // As a match does: each tick's world is kept (a snapshot, which shares what
     // the tick left alone) and hashed (what the tick changed)
     uint64_t took = 0;
@@ -200,11 +232,12 @@ static void cost(tide_world *w, const char *what, const int ticks)
     b3t_measure(&step, &image);
     b3t_measure_blocks(&changed, &in_all, &counting);
     took -= counting;
+    images_since(&whole, &in_parts);
     printf("    %-19s a tick takes %.3f ms: %.3f Box3D's step, %.3f its image, %.3f the rest; keeping and hashing it %.3f, "
-           "with %.0f%% of the image changed\n",
+           "with %.0f%% of the image changed; %d images whole and %d in parts\n",
            what, (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
            (double)(took - step - image) / (ticks * 1e6), (double)kept_ns / (ticks * 1e6),
-           in_all ? 100.0 * (double)changed / (double)in_all : 0.0);
+           in_all ? 100.0 * (double)changed / (double)in_all : 0.0, (int)whole, (int)in_parts);
     if (getenv("B3T_SYSTEMS")) {
         for (uint32_t i = 0; i < profile.systems.count; i++) {
             printf("        %-24s %.3f ms\n", profile.systems.items[i].name, profile.systems.items[i].total / ticks);
@@ -216,6 +249,7 @@ static void cost(tide_world *w, const char *what, const int ticks)
 TIDE_TEST(box3d_costs)
 {
     enum { CRATES = 2400 };
+    b3t_check(false, false); // Timed: as a match runs it
     b3t_forget();
     start(&a, CRATES);
     cost(&a, "everything moving:", 120);
@@ -243,6 +277,7 @@ TIDE_TEST(box3d_threads_change_nothing)
         return;
     }
     enum { CRATES = 2400, TICKS = 120 };
+    b3t_check(false, false); // Timed: as a match runs it. parts_test.c checks images in parts on threads
     b3t_forget();
     start(&a, CRATES);
     start(&b, CRATES);

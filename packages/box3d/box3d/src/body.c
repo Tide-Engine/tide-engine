@@ -90,11 +90,18 @@ void b3RefreshBodyContactIndices( b3World* world, b3Body* body )
 		{
 			contact->encodedBodySimB = encodedBodySimIndex;
 		}
+
+		// Tide: every contact of a body that moved in its set, which may be the static one
+		// (see b3SnapTrack)
+		b3SnapTouchContact( world, contactId );
 	}
 }
 
 void b3SyncBodyFlags( b3World* world, b3Body* body )
 {
+	// Tide: what the body's set has of it, and it may be a sleeping one (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, body->setIndex );
+
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 
 	// Preserve the sim only flags: fast for contact recycling, time of impact for debug draw.
@@ -136,6 +143,8 @@ static void b3RemoveBodyFromIsland( b3World* world, b3Body* body )
 		island->bodies.data[localIndex] = movedBodyId;
 		B3_VALIDATE( world->bodies.data[movedBodyId].islandIndex == island->bodies.count - 1 );
 		world->bodies.data[movedBodyId].islandIndex = localIndex;
+		// Tide: another body of the island, which may be asleep (see b3SnapTrack)
+		b3SnapTouchBody( world, movedBodyId );
 		island->bodies.count -= 1;
 	}
 
@@ -289,6 +298,9 @@ b3BodyId b3CreateBody( b3WorldId worldId, const b3BodyDef* def )
 	}
 
 	b3Body* body = b3Array_Get( world->bodies, bodyId );
+	// Tide: a new body, which may be static or asleep (see b3SnapTrack)
+	b3SnapTouchBody( world, bodyId );
+	b3SnapTouchSleepingSet( world, setId );
 	body->userData = def->userData;
 	body->setIndex = setId;
 	body->localIndex = set->bodySims.count - 1;
@@ -372,6 +384,11 @@ void b3DestroyBody( b3BodyId bodyId )
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
 
+	// Tide: the body, its shapes and its contacts, as they are before any of them goes: the body may be
+	// static or asleep (see b3SnapTrack). What its going changes of others is said where it's done.
+	b3SnapTouchBodyDeep( world, body );
+	b3SnapTouchSleepingSet( world, body->setIndex );
+
 	// Wake bodies attached to this body, even if this body is static.
 	bool wakeBodies = true;
 
@@ -433,6 +450,8 @@ void b3DestroyBody( b3BodyId bodyId )
 		b3Body* movedBody = b3Array_Get( world->bodies, movedId );
 		B3_ASSERT( movedBody->localIndex == movedIndex );
 		movedBody->localIndex = body->localIndex;
+		// Tide: another body of the set, which may be the static one or a sleeping one
+		b3SnapTouchBody( world, movedId );
 		b3RefreshBodyContactIndices( world, movedBody );
 	}
 
@@ -894,6 +913,11 @@ b3BodyTOIResult b3Body_TimeOfImpactMover( b3BodyId bodyId, b3Pos origin, const b
 
 void b3UpdateBodyMassData( b3World* world, b3Body* body )
 {
+	// Tide: the body's mass, and a flag of each contact it's in: the body may be static or asleep
+	// (see b3SnapTrack)
+	b3SnapTouchBodyDeep( world, body );
+	b3SnapTouchSleepingSet( world, body->setIndex );
+
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 
 	// Mass is no longer dirty
@@ -1121,6 +1145,11 @@ void b3Body_SetTransform( b3BodyId bodyId, b3Pos position, b3Quat rotation )
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
 	b3BodySim* bodySim = b3GetBodySim( world, body );
+
+	// Tide: each of the body's shapes gets its bounds again, and nothing wakes the body: it may be
+	// static or asleep (see b3SnapTrack)
+	b3SnapTouchBodyDeep( world, body );
+	b3SnapTouchSleepingSet( world, body->setIndex );
 
 	bodySim->transform.p = position;
 	bodySim->transform.q = rotation;
