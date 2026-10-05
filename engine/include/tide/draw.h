@@ -36,24 +36,36 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_TEXT,        // a = where its anchor is, b.x = font size, color, text, words
     TIDE_DRAW_SCREEN,      // The commands after it are in the screen's pixels
     TIDE_DRAW_MESH,        // mesh: its triangles, and the texture they sample
-    TIDE_DRAW_CLIP,        // a = the corner where x and y are lowest, b = size
+    TIDE_DRAW_CLIP,        // clip: only what's inside it draws, for the commands after it
     TIDE_DRAW_NO_CLIP,
     TIDE_DRAW_CAMERA_3D, // camera: the 3D camera, for the 3D meshes after it
-    TIDE_DRAW_MESH_3D,   // mesh3: a run of instances of a 3D mesh
+    TIDE_DRAW_MESH_3D,   // mesh3: a run of instances of a 3D mesh, color: what tints them
     TIDE_DRAW_SHADED,    // shaded: a run of instances of a mesh, through a shader of the game's
     TIDE_DRAW_TARGET,    // target: destination for subsequent commands; 0 is the window
     TIDE_DRAW_BLIT,      // shaded: a fullscreen shaded run, replacing its destination
     TIDE_DRAW_SHAPE,     // a = center, b = size, color, shape: a shape with smooth edges
 } tide_draw_kind;
 
+// How what a command draws goes over what's there. Tide's `Blend` has the same
+// values. A color's alpha is how much of it there is, in each of them.
+typedef enum tide_blend {
+    TIDE_BLEND_ALPHA,    // Over it, by its alpha: what's there shows through what's clear
+    TIDE_BLEND_ADD,      // Added to it, as light is: glows, sparks, fire
+    TIDE_BLEND_MULTIPLY, // What's there times it: shadows, stains, tinted glass. White changes nothing
+    TIDE_BLEND_REPLACE,  // In its place, alpha too
+} tide_blend;
+
 typedef struct tide_draw_command {
-    uint32_t kind; // tide_draw_kind
+    uint16_t kind;  // tide_draw_kind
+    uint8_t blend;  // tide_blend, for a command that draws
+    uint8_t unused; // 0
     union {
         uint32_t text;  // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
         uint32_t shape; // TIDE_DRAW_SHAPE: the rest of it, its place in tide_draw_list.shapes
     };
     union {
         uint32_t target; // TIDE_DRAW_TARGET: 1 + its place in tide_draw_list.targets, or 0
+        uint32_t clip;   // TIDE_DRAW_CLIP: 1 + its place in tide_draw_list.clips
         struct {
             tide_float2 a;
             tide_float2 b;
@@ -65,7 +77,8 @@ typedef struct tide_draw_command {
             uint32_t filter;  // tide_filter
         } mesh;
         struct {             // TIDE_DRAW_CAMERA_3D
-            uint32_t matrix; // Its place in tide_draw_list.matrices: from the world to clip space, as OpenGL's
+            uint32_t matrix; // Its place in tide_draw_list.matrices: from the world to clip space, as OpenGL's.
+                             // TIDE_DRAW_FIRST_CAMERA: the one each frame starts with
             uint32_t fit;    // 1: it's for a square screen, and renderers divide x by the screen's width over its height
         } camera;
         struct {              // TIDE_DRAW_MESH_3D
@@ -81,12 +94,15 @@ typedef struct tide_draw_command {
         struct {             // TIDE_DRAW_TEXT, after its `a` and `b.x`
             tide_float2 at;  // `a`
             float size;      // `b.x`
-            uint32_t anchor; // tide_anchor: the place of its box that's at `a`
-            uint32_t bold;   // 1: in the bold weight, whose file is tide_draw_list.bold
+            uint16_t anchor; // tide_anchor: the place of its box that's at `a`
+            uint16_t bold;   // 1: in the bold weight, whose file is tide_draw_list.bold
+            uint32_t turned; // 1 + its place in tide_draw_list.turns, for text a transform turned or stretched; else 0
         } words;
     };
     tide_color color;
 } tide_draw_command;
+
+#define TIDE_DRAW_FIRST_CAMERA UINT32_MAX
 
 // A rectangle: its corner and its size. The GUI's are from the top left.
 typedef struct tide_rect {
@@ -125,6 +141,10 @@ typedef enum tide_shape_form {
     TIDE_SHAPE_BOX,
     TIDE_SHAPE_ELLIPSE,
     TIDE_SHAPE_ARC, // Its size is the ring's, and its outline's width how thick the ring is
+    TIDE_SHAPE_FORMS = 0xFF, // What a tide_draw_shape_data's `form` has of these...
+    // ...and with this, its outline is a pixel of the screen wide, whatever the camera: the outline of a
+    // rect or a circle that a transform turned or stretched
+    TIDE_SHAPE_HAIRLINE = 0x100,
 } tide_shape_form;
 
 // The rest of a TIDE_DRAW_SHAPE command, whose `a` is the shape's center, `b`
@@ -136,7 +156,7 @@ typedef struct tide_draw_shape_data {
     float outline;     // How wide its outline is, inside its edge, or 0 for none
     float soft;        // How far its edge fades: outwards from it, or for less than 0, inwards
     float sweep;       // TIDE_SHAPE_ARC: half the angle it covers, in radians, under pi
-    uint32_t form;     // tide_shape_form
+    uint32_t form;     // tide_shape_form, maybe with TIDE_SHAPE_HAIRLINE
     tide_color color2; // Its fill at its bottom
     tide_color outline_color;
 } tide_draw_shape_data;
@@ -308,15 +328,123 @@ typedef struct tide_draw_texture {
 
 enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET };
 
+// A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
+typedef struct tide_draw_transform {
+    tide_float2 x;      // Where (1, 0) goes, from where (0, 0) does
+    tide_float2 y;      // ...and (0, 1)
+    tide_float2 offset; // Where (0, 0) goes
+} tide_draw_transform;
+
+#define TIDE_DRAW_NO_TRANSFORM ((tide_draw_transform){{1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f}})
+
+// Moved by `offset` after it's turned by `rotation`, in radians from +x
+// towards +y, after it's scaled by `scale`: all about (0, 0).
+tide_draw_transform tide_draw_transform_trs(tide_float2 offset, float rotation, tide_float2 scale);
+
+// The same with less: as big each way, turned only, or moved only.
+static inline tide_draw_transform tide_draw_transform_scaled(const tide_float2 offset, const float rotation, const float scale)
+{
+    return tide_draw_transform_trs(offset, rotation, tide_f2(scale, scale));
+}
+
+static inline tide_draw_transform tide_draw_transform_turned(const tide_float2 offset, const float rotation)
+{
+    return tide_draw_transform_trs(offset, rotation, tide_f2(1.0f, 1.0f));
+}
+
+static inline tide_draw_transform tide_draw_transform_moved(const tide_float2 offset)
+{
+    return (tide_draw_transform){{1.0f, 0.0f}, {0.0f, 1.0f}, offset};
+}
+
+// A matrix's: its first two columns are where (1, 0) and (0, 1) go, and its third where (0, 0) does.
+static inline tide_draw_transform tide_draw_transform_matrix(const tide_float3x3 m)
+{
+    return (tide_draw_transform){{m.c0.x, m.c0.y}, {m.c1.x, m.c1.y}, {m.c2.x, m.c2.y}};
+}
+
+// The settings that say where a destination's commands land, which each
+// destination has its own of (see Settings, below). A zeroed one is a frame's
+// first: the first cameras, no clip and no transform.
+typedef struct tide_draw_place {
+    // What the commands to come are drawn through: 1 + its place in tide_draw_list.cameras and
+    // cameras_3d, or 0 for the camera each frame starts with...
+    uint32_t camera_2d, camera_3d;
+    uint32_t clip; // ...and 1 + its place in tide_draw_list.clips, or 0 for none
+    // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
+    // that say so are recorded before the next one that draws: a setting that's set and put back with
+    // nothing drawn records nothing, and neither does one that's set to what it was.
+    uint32_t played_2d, played_3d, played_clip;
+    uint32_t moved;                // TIDE_DRAW_MOVED_*: what of the transforms below there is, for the others are unset
+    float scale;                   // How many times as big `transform` makes what has no direction: a radius, a width
+    tide_draw_transform transform; // What 2D commands go through before the camera
+    tide_float4x4 transform_3d;    // ...and 3D meshes' instances
+} tide_draw_place;
+
+enum {
+    TIDE_DRAW_MOVED = 1,         // `transform` isn't the identity
+    TIDE_DRAW_MOVED_UPRIGHT = 2, // ...and only moves and scales, each axis by more than 0: a rect stays a rect
+    TIDE_DRAW_MOVED_EVEN = 4,    // ...both by as much: text is fitted to pixels
+    TIDE_DRAW_MOVED_3D = 8,      // `transform_3d` isn't the identity
+    TIDE_DRAW_MOVED_ROUND = 16,  // `transform` scales as much every way, turned or mirrored as it may: a circle stays one
+};
+
+// A 2D camera a list was given, or the screen.
+typedef struct tide_draw_camera_data {
+    tide_float2 center;
+    float size;      // Half the height it sees, or 0 for a pixel a unit
+    uint32_t screen; // 1: the screen's pixels instead, from the top left, y down
+} tide_draw_camera_data;
+
+// A 3D camera a list was given: from the world to clip space, as OpenGL's.
+typedef struct tide_draw_camera_3d_data {
+    tide_float4x4 matrix;
+    uint32_t fit; // 1: it's for a square screen (see TIDE_DRAW_CAMERA_3D)
+} tide_draw_camera_3d_data;
+
+// A clip: a rect, inside the clip it was made in.
+typedef struct tide_draw_clip_data {
+    tide_rect rect;  // In the units of the camera it was made under, after the transform it was made in
+    uint32_t camera; // 1 + that camera's place in tide_draw_list.cameras, or 0 for the frame's first camera
+    uint32_t parent; // 1 + the place here of the clip it's inside, or 0 for none
+} tide_draw_clip_data;
+
 // A rendering destination named by recorded commands. Its identity is supplied
 // by the resource owner; its size is captured when the command is recorded.
 typedef struct tide_draw_target_data {
     uint64_t id;
     uint64_t version; // Resize revision, captured with its size.
     tide_target_size size;
-    uint32_t clipped;
-    uint32_t camera_2d, camera_3d; // Command indexes, 1 + their places; 0 for the defaults.
+    tide_draw_place place; // Its settings, while another destination is selected
 } tide_draw_target_data;
+
+// What a block's setting found, which the block's end puts back (see tide_draw_pop).
+typedef struct tide_draw_saved {
+    uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
+    uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
+    union {
+        uint32_t value; // A blend, or what a place has for a camera or a clip
+        tide_color tint;
+        struct {
+            tide_draw_transform transform;
+            uint32_t moved;
+            float scale;
+        };
+        tide_float4x4 transform_3d;
+    };
+} tide_draw_saved;
+
+enum {
+    TIDE_DRAW_SAVED_BLEND,
+    TIDE_DRAW_SAVED_TINT,
+    TIDE_DRAW_SAVED_NO_TINT,
+    TIDE_DRAW_SAVED_TRANSFORM,
+    TIDE_DRAW_SAVED_TRANSFORM_3D,
+    TIDE_DRAW_SAVED_NO_TRANSFORM_3D,
+    TIDE_DRAW_SAVED_CLIP,
+    TIDE_DRAW_SAVED_CAMERA_2D,
+    TIDE_DRAW_SAVED_CAMERA_3D,
+};
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
 typedef struct tide_vertex3 {
@@ -388,8 +516,10 @@ typedef enum tide_shader_format {
 // float4 or int4 of its instance's each), and textures.
 enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 8 };
 
-// The most bytes of the game's a shader's uniforms hold, after the engine's own.
-#define TIDE_SHADER_UNIFORM_BYTES 4000u
+// The most bytes of the game's a shader's uniforms hold, after the engine's
+// own: with those, 255 float4s, as OpenGL ES drivers that count a block's
+// members among a shader's uniform vectors take 256 at most.
+#define TIDE_SHADER_UNIFORM_BYTES 3984u
 
 // A vertex shader and a fragment shader, in each language a renderer takes,
 // and what they read:
@@ -403,10 +533,14 @@ enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 8 };
 // - Uniforms for each draw, one block. The engine's own come first:
 //   `tide_camera`, a matrix from the mesh's space to clip space as OpenGL has
 //   it (the world through the 3D camera for a 3D shader; for a 2D one, the
-//   units the draw is in, through the 2D camera or the screen), then
-//   `tide_screen`, a float4: the target's pixels in a logical one across and
-//   down, and the target's height in its own pixels. After them,
-//   `uniform_floats` float4s and `uniform_ints` int4s of the game's.
+//   units the draw is in, through the 2D camera or the screen, and the
+//   transform the draw is in), then `tide_screen`, a float4: the target's
+//   pixels in a logical one across and down, the target's height in its own
+//   pixels, and 1 where the draw multiplies what's there (TIDE_BLEND_MULTIPLY:
+//   its color goes to white as its alpha goes to 0) or 0; then `tide_tint`,
+//   a float4 the pixel's color is multiplied by (see tide_draw_set_tint).
+//   After them, `uniform_floats` float4s and `uniform_ints` int4s of the
+//   game's.
 // - `texture_count` textures: `pixels0`, `pixels1`...
 //
 // GLSL is without its version line, its uniforms a std140 block named
@@ -450,6 +584,9 @@ typedef struct tide_draw_run {
     uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
     uint32_t blended;  // A bit for each texture: sampled blended with its neighbors, or the nearest
     uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
+    tide_color tint;   // What its pixels' colors are multiplied by
+    uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera
+    tide_draw_transform transform;
 } tide_draw_run;
 
 // One frame's commands. Not simulation state: it lives outside the world. A
@@ -474,8 +611,25 @@ typedef struct tide_draw_list {
     tide_draw_target_data *targets;
     uint32_t target_count, target_capacity;
     uint32_t target; // Current destination, 1 + its place above; 0 is the window
-    uint32_t window_clipped;
-    uint32_t window_camera_2d, window_camera_3d;
+    tide_draw_place place;  // The current destination's settings...
+    tide_draw_place window; // ...and the window's, while a target is selected
+    uint32_t unsettled;     // Whether `place` plays other than what it has (see tide_draw_place)
+    uint32_t blend;         // tide_blend: how the commands to come go over what's there
+    uint32_t tinted;        // Whether `tint` is anything but white: it's unset otherwise
+    tide_color tint;        // What the commands to come have their colors multiplied by
+    uint32_t altered;       // Whether a 2D command is recorded other than as it's given: tinted, or moved
+    tide_draw_camera_data *cameras; // The 2D cameras the frame was given, which places and clips name
+    uint32_t camera_count, camera_capacity;
+    tide_draw_camera_3d_data *cameras_3d; // ...and the 3D ones
+    uint32_t camera_3d_count, camera_3d_capacity;
+    tide_draw_clip_data *clips; // ...and the clips, which TIDE_DRAW_CLIP commands name too
+    uint32_t clip_count, clip_capacity;
+    tide_float2x2 *turns; // The turned TIDE_DRAW_TEXT commands' transforms: where the text's right and down go
+    uint32_t turn_count, turn_capacity;
+    tide_draw_saved *saved; // What the blocks that are open found (see tide_draw_pop)
+    uint32_t saved_count, saved_capacity;
+    uint32_t *remap; // tide_draw_append's: where another list's clips are in this one
+    uint32_t remap_capacity;
     tide_float4x4 *matrices; // The 3D cameras' and the instances' of 3D meshes
     uint32_t matrix_count;
     uint32_t matrix_capacity;
@@ -499,9 +653,6 @@ typedef struct tide_draw_list {
     uint32_t shape_capacity;
     const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
     uint32_t frame;   // Counts tide_draw_reset
-    uint32_t clipped; // Whether a clip is on for the commands to come
-    uint32_t camera_2d; // 1 + the current 2D camera or screen command, or 0 for the default
-    uint32_t camera_3d; // 1 + the current 3D camera command, or 0 for the default
     uint32_t epoch;   // Counts tide_draw_forget
 } tide_draw_list;
 
@@ -547,18 +698,95 @@ static inline uint32_t tide_draw_target_texture(tide_draw_list *d, const uint64_
 // A CPU image or target color, copied or referenced as its source requires.
 uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
 
-// Fills the whole screen, or what the clip leaves of it.
+// Fills the whole screen, or what the clip leaves of it, with `color` as it
+// is: no blend, tint or transform changes a clear.
 void tide_draw_clear(tide_draw_list *d, tide_color color);
+
+// ---------------------------------------------------------------------------
+// Settings: what the commands recorded after them are drawn with. Each frame
+// starts from the defaults (tide_draw_reset).
+//
+// There are two kinds. How a command comes out is the same wherever it draws:
+// how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
+// Where it lands belongs to its destination, the window or a target, each
+// with its own for the frame: its cameras, its clip and its transforms. Those
+// are set, and pushed, for the destination that's selected (tide_draw_to).
+//
+// Each has two forms. tide_draw_set_* sets it for the commands to come, until
+// it's set again, and tide_draw_unset_* puts it back as each frame starts.
+// tide_draw_push_* sets it around some commands: it returns a mark, and
+// tide_draw_pop with that mark puts back what the push found, along with what
+// every push since it found, whatever was set meanwhile. A push combines with
+// what's there where that means something: a clip only narrows the one it's
+// in, a tint multiplies it, and a transform is inside it. A set sets outright.
+//
+// A setting that's set to what it was, or set and put back with nothing drawn
+// between, records nothing, so it never comes between commands a renderer
+// would draw at once.
+
+// How the commands after it go over what's there (tide_blend): by their alpha,
+// each frame's first. Clears and blits don't blend.
+void tide_draw_set_blend(tide_draw_list *d, tide_blend blend);
+void tide_draw_unset_blend(tide_draw_list *d);
+uint32_t tide_draw_push_blend(tide_draw_list *d, tide_blend blend);
+
+// What the commands after it have their colors multiplied by, alpha too: a
+// shape's and text's colors, a mesh's corners', and what a shader of the
+// game's wrote. White, each frame's first, changes nothing.
+void tide_draw_set_tint(tide_draw_list *d, tide_color tint);
+void tide_draw_unset_tint(tide_draw_list *d);
+uint32_t tide_draw_push_tint(tide_draw_list *d, tide_color tint);
+
+// Moves, turns and scales the 2D commands after it, in the units they're in,
+// before the camera: none, each frame's first. Shapes stay shapes, moved,
+// turned, mirrored and scaled as they are; one that's stretched (scaled
+// more one way than the other) or skewed is the nearest shape to it: a circle
+// is an ellipse, a rect's sides follow its own axes, and what has no
+// direction (a radius, an outline's width) is scaled by the transform's mean.
+// Meshes go through it as they are. Text that's only moved and scaled, as
+// much each way, is fitted to pixels at the size it comes out; turned or
+// stretched, it's drawn as it would be upright, turned, with no pixels to fit.
+// A clip made inside one is the upright rect around what its rect becomes.
+void tide_draw_set_transform(tide_draw_list *d, tide_draw_transform transform);
+void tide_draw_unset_transform(tide_draw_list *d);
+uint32_t tide_draw_push_transform(tide_draw_list *d, tide_draw_transform transform);
+
+// The same for 3D meshes: each instance's transform goes through it on its
+// way to the world.
+void tide_draw_set_transform_3d(tide_draw_list *d, tide_float4x4 transform);
+void tide_draw_unset_transform_3d(tide_draw_list *d);
+uint32_t tide_draw_push_transform_3d(tide_draw_list *d, tide_float4x4 transform);
+
+// Both of the selected destination's transforms, and both of its cameras, as each frame starts.
+void tide_draw_unset_transforms(tide_draw_list *d);
+void tide_draw_unset_cameras(tide_draw_list *d);
 
 // Sets the camera for the commands after it: `center` is the world position
 // at the middle of the screen, and `size` is half the visible height, like
 // Unity's orthographic size. Each frame starts with the camera at the origin
 // and 1 world unit per pixel.
-void tide_draw_camera(tide_draw_list *d, tide_float2 center, float size);
+void tide_draw_set_camera(tide_draw_list *d, tide_float2 center, float size);
+void tide_draw_unset_camera(tide_draw_list *d);
+uint32_t tide_draw_push_camera(tide_draw_list *d, tide_float2 center, float size);
 
 // The commands after it are in the screen's pixels: from the top left, with y
 // down, until the next camera.
-void tide_draw_screen(tide_draw_list *d);
+void tide_draw_set_screen(tide_draw_list *d);
+uint32_t tide_draw_push_screen(tide_draw_list *d);
+
+// Puts back what the push that gave `mark` found, and every push since.
+void tide_draw_pop(tide_draw_list *d, uint32_t mark);
+
+// Selects the window and puts every setting back where a frame starts, every
+// destination's own too: for what a host draws after a game's views, like the
+// GUI.
+void tide_draw_defaults(tide_draw_list *d);
+
+// The tint the commands to come are drawn with: white for none.
+static inline tide_color tide_draw_tint(const tide_draw_list *d)
+{
+    return d->tinted ? d->tint : TIDE_COLOR_WHITE;
+}
 
 void tide_draw_circle(tide_draw_list *d, tide_float2 center, float radius, tide_color color);
 void tide_draw_wire_circle(tide_draw_list *d, tide_float2 center, float radius, tide_color color);
@@ -656,7 +884,8 @@ void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, uint32_t ver
 // library's, whose every batch has a texture and a clip of its own:
 // tide_draw_vertices copies them into the list and returns where the first
 // is, and tide_draw_triangles draws triangles of the list's vertices from
-// `base` on.
+// `base` on. The vertices are moved and tinted as they're copied, by the
+// transform and the tint there are then.
 uint32_t tide_draw_vertices(tide_draw_list *d, const tide_vertex *vertices, uint32_t count);
 void tide_draw_triangles(tide_draw_list *d, uint32_t base, const uint32_t *indices, uint32_t count,
                          const tide_texture *texture, tide_filter filter);
@@ -666,14 +895,18 @@ void tide_draw_triangles(tide_draw_list *d, uint32_t base, const uint32_t *indic
 uint64_t tide_texture_version(const void *pixels, int32_t width, int32_t height);
 
 // Only what's inside `rect` draws, for the commands after it, clears too,
-// until another clip or tide_draw_no_clip. The rect is in the units the
+// until another clip or tide_draw_unset_clip. The rect is in the units the
 // commands are in (the world's under a camera, pixels on the screen), from
 // (x, y) to (x + width, y + height), and stays where it is on the screen when
-// the camera changes. Each frame starts with none.
-void tide_draw_clip(tide_draw_list *d, tide_rect rect);
-void tide_draw_no_clip(tide_draw_list *d);
+// the camera changes. Each frame starts with none. A pushed one is what of
+// `rect` is inside the clip there was.
+void tide_draw_set_clip(tide_draw_list *d, tide_rect rect);
+void tide_draw_unset_clip(tide_draw_list *d);
+uint32_t tide_draw_push_clip(tide_draw_list *d, tide_rect rect);
 
-// Adds `from`'s commands to the end of `d`, such as the GUI's over the world.
+// Adds `from`'s commands to the end of `d`, such as the GUI's over the world,
+// as `from` recorded them: none of `d`'s settings changes them. It starts
+// from tide_draw_defaults, and leaves the cameras and clips `from` ended with.
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from);
 
 // The texture `id` of `space` (TIDE_PIXELS_*) at `version`, for a mesh
@@ -695,10 +928,14 @@ void tide_draw_triangles_with(tide_draw_list *d, uint32_t base, const uint32_t *
 // looks (along its rotation's +z, its up its +y), and how much it sees up
 // and down, in degrees, like Unity's Camera.fieldOfView. It sees from 0.3
 // units in front of it on, however far, and as much across as the screen's
-// shape gives. Other commands keep the camera they have.
-void tide_draw_camera_3d(tide_draw_list *d, tide_float3 position, tide_quaternion rotation, float field_of_view);
+// shape gives. Other commands keep the camera they have. Each frame starts
+// with one at the origin, looking along +z, that sees 60 degrees.
+void tide_draw_set_camera_3d(tide_draw_list *d, tide_float3 position, tide_quaternion rotation, float field_of_view);
+void tide_draw_unset_camera_3d(tide_draw_list *d);
+uint32_t tide_draw_push_camera_3d(tide_draw_list *d, tide_float3 position, tide_quaternion rotation,
+                                  float field_of_view);
 
-// What tide_draw_camera_3d records: from the world to clip space, for a
+// What tide_draw_set_camera_3d records: from the world to clip space, for a
 // square screen (TIDE_DRAW_CAMERA_3D's `fit`).
 tide_float4x4 tide_draw_camera_3d_matrix(tide_float3 position, tide_quaternion rotation, float field_of_view);
 
@@ -706,7 +943,8 @@ tide_float4x4 tide_draw_camera_3d_matrix(tide_float3 position, tide_quaternion r
 // (it looks along its +z), and `projection` takes what it sees, looking down
 // -z as OpenGL's and Unity's views do, to clip space (see
 // tide_perspectivefov_f4x4 and tide_ortho_f4x4), the screen's shape included.
-void tide_draw_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
+void tide_draw_set_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
+uint32_t tide_draw_push_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
 
 // A 3D mesh, placed in the world by `transform`: each pixel is its corners'
 // colors blended across the triangle, times `texture`'s at their uvs (NULL
@@ -763,10 +1001,12 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, ui
 
 // Runs a frag over the entire selected destination. The fixed Vertex mesh has
 // clip-space positions, top-left uvs, and white color. The camera is identity,
-// clipping is disabled for this draw alone, and output replaces destination
-// color without changing its depth. Texture bindings and packed shader data
-// are the same as tide_draw_shaded's. Sampling the destination is refused.
-void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const void *instance,
+// clipping is disabled for this draw alone, and none of the settings apply:
+// its output goes over the destination's color as `blend` says
+// (TIDE_BLEND_REPLACE: in its place), without changing its depth. Texture
+// bindings and packed shader data are the same as tide_draw_shaded's.
+// Sampling the destination is refused.
+void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, tide_blend blend, const void *instance,
                    const void *uniforms, const uint32_t *textures, uint32_t blended);
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
@@ -802,11 +1042,12 @@ void tide_draw_plane_rotated(tide_draw_list *d, tide_float3 center, tide_float2 
 // GUI's are. Device positions are from the bottom left:
 // tide_draw_screen_flip gives them as screen positions.
 //
-// Each target keeps its own cameras. The 2D helpers use its most recent
-// 2D camera or screen command, or the
-// default centered camera at one world unit per pixel. In screen mode both
-// are the identity. A 3D camera leaves them as they were, and 2D commands
-// leave the 3D camera as it was. Neither needs a frame to have been rendered.
+// Each target keeps its own cameras. The 2D helpers use its 2D camera or
+// screen as it's set, or the default centered camera at one world unit per
+// pixel. In screen mode both are the identity. A 3D camera leaves them as
+// they were, and 2D commands leave the 3D camera as it was. Neither needs a
+// frame to have been rendered. They're the camera's alone: a transform
+// (tide_draw_set_transform) is no part of them.
 tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
 tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
 
@@ -852,11 +1093,12 @@ tide_float2 tide_draw_guess_text(const char *text, float size, const tide_target
 
 // The size of `text` as tide_draw_text_at would draw it now, at `size` in the
 // weight `font` is the file of, in the units the commands recorded next are
-// in: the screen's pixels after tide_draw_screen, and world units through the
-// current 2D camera, which draws text as many times bigger as it has pixels
-// to a unit. `x` is its widest line's width and `y` the height of its lines:
-// its box, which an anchor names a place of. `screen_size` is as for the
-// coordinate helpers above, and `measure` the renderer's, or NULL to guess.
-// Nothing for a size that isn't above 0, as nothing is drawn.
+// in: the screen's pixels on the screen, and world units through the current
+// 2D camera, which draws text as many times bigger as it has pixels to a
+// unit, or the units a transform takes when there's one. `x` is its widest
+// line's width and `y` the height of its lines: its box, which an anchor
+// names a place of. `screen_size` is as for the coordinate helpers above, and
+// `measure` the renderer's, or NULL to guess. Nothing for a size that isn't
+// above 0, as nothing is drawn.
 tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, float size, const unsigned char *font,
                                    tide_float2 screen_size, tide_measure_fn measure);

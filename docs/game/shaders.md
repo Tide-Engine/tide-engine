@@ -71,6 +71,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
 - **`mut Color color` is the pixel.** A frag writes its output through `mut`, as a system writes a component, and returns nothing. What `color` holds when the frag ends is the pixel's color, blended over what's behind it by its alpha.
+- **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`.
 - `color` starts as `Color.white`. It isn't the pixel already on the screen: a GPU doesn't let a frag read that. A frag that never writes it draws white.
 - A frag has one output for now, a `Color`. More, and other types, aren't there yet.
 
@@ -149,10 +150,18 @@ frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun 
 }
 ```
 
+The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal turned into the world by `instance.transform`, against a light the slider moves. **Bands** rounds the light to steps, in the same frag.
+
+::: tide-example lighting Lighting, in a frag
+
+<<< @/examples/lighting.tide
+
+:::
+
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen()`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture.
 
@@ -164,7 +173,7 @@ frag Leaves(BoxVertex vertex, mut Color color, Models models, Pixel pixel)
 }
 ```
 
-The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.Camera` reads it too, and take that.
+The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.SetCamera` reads it too, and take that.
 
 ## What the GPU runs
 
@@ -283,6 +292,14 @@ view GrassField(Foliage foliage, Models models)
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
 - Textures, filters, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
+
+Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.
+
+::: tide-example instances A list of motes, in one draw
+
+<<< @/examples/instances.tide
+
+:::
 
 An ordinary instance parameter is supplied only by `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
 

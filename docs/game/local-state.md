@@ -41,6 +41,14 @@ view DrawSparks(mut Spark spark)
 }
 ```
 
+The example below has no match at all: its `Main` is a local scene. Moving the pointer spawns local entities, and a view moves, fades and destroys them, by `Frame.dt`.
+
+::: tide-example local-state Local entities, and no match
+
+<<< @/examples/local-state.tide
+
+:::
+
 `LocalEntity` is an entity of the local world: local `Spawn` returns one, and in a view of local components, `this` is one. Local code can hold and read an `Entity` of the match, like the unit a player selected, but never change it.
 
 Local structural changes and local events apply at the end of the frame, as the match's do at the end of the tick.

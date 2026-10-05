@@ -47,6 +47,7 @@ The screen updates every **frame**, as fast as the display allows:
 ## Where to go next
 
 - [Install tide](./install.md), then make [your first game](./first-game.md).
+- Try the [live examples](./examples.md): small games that run in these pages, beside their code.
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md).
 - See how machines share a match, and how the engine keeps them in step: [matches](../multiplayer/matches.md), [networking](../multiplayer/networking.md) and [determinism](../multiplayer/determinism.md).
 - Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).

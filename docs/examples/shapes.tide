@@ -4,30 +4,31 @@ local singleton ShapeSettings { float amount = 0.65; }
 
 view Shapes(ShapeSettings settings)
 {
-    Draw2D.Clear(Color(0.04, 0.07, 0.12));
-    Draw2D.Camera(float2(0), 3.6);
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0), 3.6);
     // A shadow and a card with a gradient, rounded corners and an outline.
     Draw2D.Shape(Shape { center = float2(-1.2, -0.08), size = float2(2, 2.6), radius = 0.2,
                          color = Color(0, 0, 0, 0.6), soft = 0.3 });
     Draw2D.Shape(Shape { center = float2(-1.2, 0), size = float2(2, 2.6), radius = 0.2,
-                         color = Color(0.2, 0.3, 0.48), color2 = Color(0.08, 0.12, 0.22),
-                         outline = 0.025, outlineColor = Color(0.4, 0.55, 0.75) });
+                         color = Color(0.22, 0.22, 0.25), color2 = Color(0.12, 0.12, 0.14),
+                         outline = 0.025, outlineColor = Color(0.36, 0.37, 0.41) });
     // A pill-shaped bar fills with the slider's value.
-    Draw2D.RoundRect(float2(-1.2, 0), float2(1.6, 0.28), 0.14, Color(0.04, 0.07, 0.12));
-    Draw2D.RoundRect(float2(-2 + settings.amount * 0.8, 0), float2(settings.amount * 1.6, 0.28), 0.14, Color(0.35, 0.9, 0.65));
+    Draw2D.RoundRect(float2(-1.2, 0), float2(1.6, 0.28), 0.14, Color(0.086, 0.086, 0.094));
+    Draw2D.RoundRect(float2(-2 + settings.amount * 0.8, 0), float2(settings.amount * 1.6, 0.28), 0.14, Color(0.98, 0.75, 0.14));
     Draw2D.WireRoundRect(float2(-1.2, 0), float2(1.6, 0.28), 0.14, 0.02, Color.white);
     // Outlines stay equally wide all the way around an ellipse.
     Draw2D.Shape(Shape { center = float2(1.2, 0.65), size = float2(1.7, 0.8), ellipse = true,
-                         rotation = settings.amount, color = Color(0.7, 0.5, 1),
+                         rotation = settings.amount, color = Color(0.98, 0.44, 0.52),
                          outline = 0.045, outlineColor = Color.white });
-    Draw2D.WireCircle(float2(1.2, -0.7), 0.5, 0.13, Color(0.18, 0.24, 0.32));
-    Draw2D.Arc(float2(1.2, -0.7), 0.5, 0, Math.TAU * settings.amount, 0.13, Color(1, 0.65, 0.3));
-    Draw2D.Line(float2(-2, -1.8), float2(2, -1.8), 0.08, Color(0.3, 0.8, 1));
+    Draw2D.WireCircle(float2(1.2, -0.7), 0.5, 0.13, Color(0.24, 0.25, 0.27));
+    Draw2D.Arc(float2(1.2, -0.7), 0.5, 0, Math.TAU * settings.amount, 0.13, Color(0.18, 0.83, 0.75));
+    Draw2D.Line(float2(-2, -1.8), float2(2, -1.8), 0.08, Color(0.18, 0.83, 0.75));
 }
 
 view Controls(mut ShapeSettings settings)
 {
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Text("Shapes, gradients and outlines", float2(16, 14), 18, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Amount", settings.amount, 0, 1);
 }

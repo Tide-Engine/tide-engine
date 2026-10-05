@@ -1613,8 +1613,8 @@ static const method_form target_calls[] = {
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
 };
 
-#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination, frag shader)"
-#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. It replaces color independently of camera and clip, and preserves depth. Source cannot be destination.color."
+#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader)"
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color."
 
 // What Draw2D.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
@@ -6713,7 +6713,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "Blend", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -7749,20 +7749,51 @@ static int case_level_at(const int *levels, const char *text)
     return 0;
 }
 
-enum { BREAK_BEFORE = 1, BREAK_AFTER = 2 };
+// BREAK_STACKED: the comma after a call in a list of calls before one block, whose next call starts a line
+// as the first did.
+enum { BREAK_BEFORE = 1, BREAK_AFTER = 2, BREAK_STACKED = 4 };
+
+// Whether the ',' at token `i` is between calls listed before the block they
+// share, `Draw.Blend(Blend.Add), Draw2D.Clip(panel) { ... }`: it follows a
+// call's ')' with nothing open since `brace`, the brace it's in, which is a
+// block's, and what it starts ends at a '{' rather than a ';'.
+static bool stacks_calls(const int i, const int brace)
+{
+    if (i == 0 || DOC->toks[i - 1].kind != T_RPAREN || i + 1 >= DOC->tok_count || DOC->toks[i + 1].kind != T_IDENT) return false;
+    if (brace < 0 || opens_literal(brace) || opens_enum(brace)) return false;
+    int nested = 0;
+    for (int k = i + 1; k < DOC->tok_count; k++) {
+        const tok_kind kind = DOC->toks[k].kind;
+        if (kind == T_LPAREN || kind == T_LBRACKET) nested++;
+        else if (kind == T_RPAREN || kind == T_RBRACKET) nested--;
+        else if (nested == 0 && kind == T_LBRACE) return DOC->toks[k - 1].kind == T_RPAREN;
+        else if (nested == 0 && (kind == T_SEMI || kind == T_RBRACE)) return false;
+        if (nested < 0) return false;
+    }
+    return false;
+}
 
 // Where lines break for C#-style braces, per token: around both braces of a
 // block that spans lines (or isn't closed yet), and before an `else` that
 // follows a block when its own block spans lines. Literals, and blocks on one
-// line, stay as they are.
+// line, stay as they are. Calls listed with commas before one block go one to
+// a line.
 static unsigned char *brace_breaks(void)
 {
     unsigned char *breaks = arena_alloc((size_t)DOC->tok_count + 1);
     int *open = arena_alloc(sizeof(int) * ((size_t)DOC->tok_count + 1));
+    int *nested_at = arena_alloc(sizeof(int) * ((size_t)DOC->tok_count + 1)); // What was open when each brace opened
     int depth = 0;
+    int nested = 0; // Parentheses and brackets open
     for (int i = 0; i < DOC->tok_count; i++) {
         const tok_kind k = DOC->toks[i].kind;
+        if (k == T_LPAREN || k == T_LBRACKET) nested++;
+        if ((k == T_RPAREN || k == T_RBRACKET) && nested > 0) nested--;
+        if (k == T_COMMA && depth > 0 && nested == nested_at[depth - 1] && stacks_calls(i, open[depth - 1])) {
+            breaks[i] |= BREAK_AFTER | BREAK_STACKED;
+        }
         if (k == T_LBRACE) {
+            nested_at[depth] = nested;
             open[depth++] = i;
         } else if (k == T_RBRACE && depth > 0) {
             const int o = open[--depth];
@@ -7992,7 +8023,9 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                     pending++;
                     opened_pending = true;
                 }
-                statement_open = k != T_SEMI && k != T_LBRACE && k != T_RBRACE && !label;
+                // The next call in a list before a block starts a line as the first did
+                const bool stacked = k == T_COMMA && (breaks[last_tok] & BREAK_STACKED);
+                statement_open = k != T_SEMI && k != T_LBRACE && k != T_RBRACE && !label && !stacked;
                 ended_comma = k == T_COMMA;
             }
         }

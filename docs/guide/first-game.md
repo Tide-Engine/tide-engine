@@ -52,8 +52,8 @@ system Move(mut Body body, Time time)
 
 system Bounce(mut Body body, with Ball)
 {
-    if (Math.Abs(body.position.x) > 300) body.velocity.x = -body.velocity.x;
-    if (Math.Abs(body.position.y) > 200) body.velocity.y = -body.velocity.y;
+    if (Math.Abs(body.position.x) > 160) body.velocity.x = -body.velocity.x;
+    if (Math.Abs(body.position.y) > 160) body.velocity.y = -body.velocity.y;
 }
 ```
 
@@ -80,7 +80,17 @@ In the folder:
 tide run
 ```
 
-`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Leave the window open: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)). The next part adds players.
+`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Leave the window open: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)).
+
+This is the game so far, built for the web and running in the page:
+
+::: tide-example first-ball The game so far
+
+<<< @/examples/first-ball.tide
+
+:::
+
+The next part adds players.
 
 ## Players and input
 
@@ -152,6 +162,11 @@ tide run --connect localhost
 
 Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
 
+Here are two machines in one match, each running [the whole game](#the-whole-game): the first hosts it, and the second joined its room, as `tide run --join` does with a room's code (see [Matches](../multiplayer/matches.md#rooms)). Click a frame so it has the keyboard, and steer with `WASD`: its player is yellow there, and gray in the other frame.
+
+::: tide-match first-game Two players, in one match
+:::
+
 ## Build it for the web
 
 ```sh
@@ -168,70 +183,12 @@ It goes in `build/`, as one self-contained `.html` file with the game inside, wh
 
 ## The whole game
 
-::: details game.tide
-```csharp
-component Body
-{
-    float2 position;
-    float2 velocity;
-    float radius = 20;
-}
+Click the game so it has the keyboard, and steer with `WASD`.
 
-component Ball { }
+::: tide-example first-game game.tide
 
-input Controls
-{
-    float2 move;
+<<< @/examples/first-game.tide
 
-    Sample(Devices devices)
-    {
-        var keys = devices.keyboard;
-        if (keys.d.pressed) move.x += 1;
-        if (keys.a.pressed) move.x -= 1;
-        if (keys.w.pressed) move.y += 1;
-        if (keys.s.pressed) move.y -= 1;
-    }
-}
-
-scene Main { }
-
-event(Spawned) Setup(with Main)
-{
-    Spawn(Body { velocity = float2(160, 120) }, Ball);
-}
-
-event(PlayerJoined joined) AddPlayer()
-{
-    Spawn(Body { radius = 16 }, Owner { player = joined.player });
-}
-
-system Steer(Controls input, mut Body body, with Owner)
-{
-    body.velocity = Math.Normalize(input.move) * 250;
-}
-
-system Move(mut Body body, Time time)
-{
-    body.position += body.velocity * time.dt;
-}
-
-system Bounce(mut Body body, with Ball)
-{
-    if (Math.Abs(body.position.x) > 300) body.velocity.x = -body.velocity.x;
-    if (Math.Abs(body.position.y) > 200) body.velocity.y = -body.velocity.y;
-}
-
-view DrawBalls(Body body, with Ball)
-{
-    Draw2D.Circle(body.position, body.radius, Color.red);
-}
-
-view DrawPlayers(Body body, Owner owner, Session session)
-{
-    var color = owner.player == session.player ? Color.yellow : Color.gray;
-    Draw2D.Circle(body.position, body.radius, color);
-}
-```
 :::
 
 ## Next

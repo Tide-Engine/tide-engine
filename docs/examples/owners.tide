@@ -1,0 +1,103 @@
+settings { title = "Owners"; tickRate = 30; maxPlayers = 4; }
+
+scene Main { }
+
+component Body
+{
+    float2 position;
+    Color color;
+    float speed = 2.5;
+}
+singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }
+command Trade { }
+
+// Where this machine's pointer is in the arena, which its input sends.
+local singleton Aim { float2 world; bool moved; }
+
+input Steer
+{
+    [Clamp(-3, 3)] float2 target;
+    bool steering;
+
+    Sample(Devices devices, Aim aim)
+    {
+        target = aim.world;
+        steering = aim.moved;
+    }
+}
+
+// A body nobody owns. It reads the server's input: the machine hosting the match.
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float2(0, 1.4), color = Color(0.64, 0.64, 0.68), speed = 0.8 });
+}
+
+// Owner ties an entity to a player, so it reads that player's input.
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    var first = roster.arrivals % 2 == 0;
+    roster.arrivals += 1;
+    roster.bodies[joined.player] = Spawn(
+        Body { position = float2(first ? -1 : 1, 0), color = first ? Color(0.98, 0.75, 0.14) : Color(0.18, 0.83, 0.75) },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+// One system for every body. `steer` is the input of whoever owns the one it runs for.
+system Follow(Steer steer, mut Body body, Time time)
+{
+    if (!steer.steering) return;
+    var way = steer.target - body.position;
+    var step = body.speed * time.dt;
+    body.position += Math.Length(way) > step ? Math.Normalize(way) * step : way;
+}
+
+// Owner is a component like any other: writing it hands control over.
+command(Trade trade, PlayerID sender) TradeBodies(mut Roster roster)
+{
+    mut PlayerID other = sender;
+    foreach (var seat in roster.bodies)
+    {
+        if (seat.key != sender) other = seat.key;
+    }
+    if (other == sender) return; // Nobody to trade with
+    var mine = roster.bodies[sender];
+    var theirs = roster.bodies[other];
+    mine.Add(Owner { player = other });
+    theirs.Add(Owner { player = sender });
+    roster.bodies[sender] = theirs;
+    roster.bodies[other] = mine;
+}
+
+view Point(Devices devices, mut Aim aim)
+{
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0, 0.2), 2.4);
+    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
+    GUI.SetTheme(GUITheme { radius = 6 });
+    if (GUI.Button(Rect(12, Screen.height - 44, Screen.width - 24, 32), "Trade bodies")) Send(Trade { });
+}
+
+// Every body this machine's player doesn't own: the other player's, and nobody's.
+view Others(Body body, without ownership)
+{
+    Draw2D.Circle(body.position, 0.2, body.color);
+}
+
+view Unowned(Body body, without Owner)
+{
+    Draw2D.Text("no Owner", body.position + float2(0, 0.3), 0.17, Color(0.64, 0.64, 0.68), Anchor.LowerCenter);
+}
+
+view Mine(Body body, with ownership)
+{
+    Draw2D.Circle(body.position, 0.2, body.color);
+    Draw2D.WireCircle(body.position, 0.32, 0.04, Color.white);
+    Draw2D.Text("yours", body.position + float2(0, 0.4), 0.2, Color.white, Anchor.LowerCenter);
+}

@@ -1,0 +1,74 @@
+settings { title = "Math"; }
+
+local scene Main { }
+
+local singleton Plot
+{
+    int curve = 1;
+    float x; // Goes from 0 to 1, again and again
+}
+
+// Each takes a number from 0 to 1 and gives one back.
+float Curve(int curve, float x)
+{
+    switch (curve)
+    {
+        case 0: return Math.Lerp(0, 1, x);
+        case 1: return Math.SmoothStep(0, 1, x);
+        case 2: return Math.Pow(x, 3);
+        case 3: return Math.Sin(x * Math.PI);
+        case 4: return Math.Frac(x * 3);
+    }
+    return Math.Abs(Math.Cos(x * Math.TAU * 1.5)) * (1 - x);
+}
+
+string Formula(int curve)
+{
+    switch (curve)
+    {
+        case 0: return "Math.Lerp(0, 1, x)";
+        case 1: return "Math.SmoothStep(0, 1, x)";
+        case 2: return "Math.Pow(x, 3)";
+        case 3: return "Math.Sin(x * Math.PI)";
+        case 4: return "Math.Frac(x * 3)";
+    }
+    return "Math.Abs(Math.Cos(x * Math.TAU * 1.5)) * (1 - x)";
+}
+
+view Graph(mut Plot plot)
+{
+    plot.x += Math.Min(Frame.dt, 0.05) * 0.4;
+    if (plot.x > 1) plot.x -= 1;
+
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0.62, 0.42), 0.85); // The graph goes from (0, 0) to (1, 1)
+    Draw2D.WireRect(float2(0.5), float2(1), Color(0.24, 0.25, 0.27));
+    for (var i = 0; i < 96; i++)
+    {
+        float from = i / 96.0;
+        float to = (i + 1) / 96.0;
+        Draw2D.Line(float2(from, Curve(plot.curve, from)), float2(to, Curve(plot.curve, to)), 0.012, Color(0.98, 0.75, 0.14));
+    }
+    var y = Curve(plot.curve, plot.x);
+    Draw2D.Line(float2(plot.x, 0), float2(plot.x, y), Color(0.3, 0.3, 0.33));
+    Draw2D.Line(float2(plot.x, y), float2(1.25, y), Color(0.3, 0.3, 0.33));
+    Draw2D.Circle(float2(plot.x, y), 0.03, Color.white);
+    // The same number, moving something.
+    Draw2D.Circle(float2(1.25, y), 0.06, Color(0.18, 0.83, 0.75));
+
+    Draw2D.SetScreen();
+    Draw2D.Text(Formula(plot.curve), float2(16, 14), 15, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Lerp")) plot.curve = 0;
+            if (GUILayout.Button("Smooth")) plot.curve = 1;
+            if (GUILayout.Button("Pow")) plot.curve = 2;
+            if (GUILayout.Button("Sin")) plot.curve = 3;
+            if (GUILayout.Button("Frac")) plot.curve = 4;
+            if (GUILayout.Button("Mix")) plot.curve = 5;
+        }
+    }
+}

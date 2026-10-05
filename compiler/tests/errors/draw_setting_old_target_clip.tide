@@ -1,0 +1,12 @@
+// expect: to set it for the draws that follow, write 'target.SetClip(...);'
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+view Show(Canvas canvas)
+{
+    canvas.target.Clip(Rect(0, 0, 4, 4));
+}

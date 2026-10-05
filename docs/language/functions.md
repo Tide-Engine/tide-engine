@@ -209,6 +209,24 @@ A function that takes a block is inlined where it's called, so blocks cost nothi
 
 This is how the GUI's containers work: `GUILayout.Horizontal()`, `GUILayout.Area()` and the others are functions with a block, like `Foldout`.
 
+### Several calls, one block
+
+Calls that take a block can be listed with commas before one block, which they share. It means the same as each inside the one before, without the nesting:
+
+```csharp
+view Options(mut Menu menu, mut Settings settings, Session session)
+{
+    GUILayout.Area(Anchor.MiddleCenter),
+    GUI.Disabled(session.state == SessionState.Connecting),
+    Foldout("Audio", menu.audioOpen)
+    {
+        GUILayout.Slider("Volume", settings.volume, 0, 1);
+    }
+}
+```
+
+Anything that takes a block can be in the list: the GUI's containers, [draw settings](../game/views.md#draw-settings) like `Draw.Blend(Blend.Add)`, and functions of your own. The first call is set up first and finished last. A call that takes no block doesn't belong in one, and the compiler says so; and since it's the comma that makes a list, a call that's only missing its `;` is still reported as that.
+
 ## Operators
 
 A struct can declare operators, in C#'s form. They compile to plain function calls.

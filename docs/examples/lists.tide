@@ -1,0 +1,57 @@
+settings { title = "Lists"; }
+
+local scene Main { }
+
+local singleton Bars
+{
+    List<int> heights = [5, 9, 2, 7, 12, 4, 10, 1, 8, 3, 11, 6];
+    Random random;
+}
+
+view Show(mut Bars bars)
+{
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetScreen();
+    var count = bars.heights.count;
+    var width = (Screen.width - 32.0) / Math.Max(count, 1);
+    var floor = Screen.height - 110;
+    for (var i = 0; i < count; i++)
+    {
+        float height = bars.heights[i] * (floor - 50) / 12;
+        var center = float2(16 + (i + 0.5) * width, floor - height * 0.5);
+        Draw2D.RoundRect(center, float2(width - 4, height), 4, Color(0.98, 0.45 + bars.heights[i] * 0.025, 0.14));
+        Draw2D.Text($"{bars.heights[i]}", float2(center.x, floor + 4), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+    }
+    Draw2D.Text($"{count} items: {bars.heights}", float2(16, 14), 13, Color.white);
+
+    mut var order = 0;
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Sort up")) order = 1;
+            if (GUILayout.Button("Sort down")) order = -1;
+            if (GUILayout.Button("Shuffle"))
+            {
+                for (var i = count - 1; i > 0; i--)
+                {
+                    var other = bars.random.NextInt(i + 1);
+                    var height = bars.heights[i];
+                    bars.heights[i] = bars.heights[other];
+                    bars.heights[other] = height;
+                }
+            }
+        }
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Add")) bars.heights.Add(bars.random.NextInt(1, 13));
+            if (GUILayout.Button("Insert first")) bars.heights.Insert(0, bars.random.NextInt(1, 13));
+            if (GUILayout.Button("Remove last")) bars.heights.RemoveAt(count - 1);
+            if (GUILayout.Button("Clear")) bars.heights.Clear();
+        }
+    }
+    // The block after Sort says whether the first of two goes before the second.
+    if (order > 0) bars.heights.Sort(a, b) { return a < b; }
+    if (order < 0) bars.heights.Sort(a, b) { return a > b; }
+}

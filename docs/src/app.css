@@ -417,9 +417,10 @@ button {
     font-size: 12px;
 }
 
+/* The examples draw on the dark theme's code background, in both themes. */
 .example-viewport {
     height: 400px;
-    background: #0e0e14;
+    background: #161618;
 }
 
 .example-viewport iframe {
@@ -439,7 +440,85 @@ button {
     text-align: center;
 }
 
+/* Two players: their frames side by side, and the source under them. */
+
+.example-players {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1px;
+    background: var(--divider);
+}
+
+.example-player {
+    min-width: 0;
+    background: var(--bg);
+}
+
+.prose .example-player-name {
+    margin: 0;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--divider);
+    color: var(--text-1);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.example-player-name span {
+    color: var(--text-2);
+}
+
+.tide-pair .example-viewport {
+    height: 360px;
+}
+
+.prose .tide-pair .example-status {
+    position: static;
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--divider);
+    color: var(--text-2);
+    font-size: 13px;
+    text-align: left;
+}
+
+.tide-pair .example-source {
+    border-right: 0;
+    border-top: 1px solid var(--divider);
+}
+
+.prose .tide-pair .example-source .code pre {
+    height: auto;
+    max-height: 420px;
+}
+
+.example-lag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.example-lag input {
+    width: 110px;
+    accent-color: var(--brand-1);
+}
+
+.example-lag output {
+    min-width: 48px;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+}
+
 @container (max-width: 639px) {
+    .example-players {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tide-pair .example-viewport {
+        height: 300px;
+    }
+
     .example-columns {
         grid-template-columns: minmax(0, 1fr);
     }

@@ -104,7 +104,7 @@ TIDE_TEST(views_leave_the_world_alone)
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
     TIDE_CHECK(world_is(&world, before, size));
-    TIDE_CHECK(draw.count == 22); // Drawing twice without a reset adds up
+    TIDE_CHECK(draw.count == 21); // Drawing twice without a reset adds up, but for the camera, set to what it was
 }
 
 TIDE_TEST(views_colors_in_the_world)

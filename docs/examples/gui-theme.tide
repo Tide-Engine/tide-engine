@@ -1,0 +1,60 @@
+settings { title = "Themes"; }
+
+local scene Main { }
+
+local singleton Look
+{
+    int theme = 1;
+    float radius = 10;
+    string name = "Player";
+    float volume = 0.6;
+    bool music = true;
+}
+
+// A theme is a value: it names only what it changes of the GUI's own look.
+GUITheme Pick(int theme, float radius)
+{
+    if (theme == 1)
+        return GUITheme { text = Color(0.9, 0.9, 0.88), panel = Color(0.125, 0.13, 0.15), control = Color(0.18, 0.18, 0.2),
+                          hot = Color(0.24, 0.25, 0.27), pressed = Color(0.13, 0.13, 0.15), field = Color(0.086, 0.086, 0.094),
+                          fieldHot = Color(0.11, 0.11, 0.12), accent = Color(0.18, 0.83, 0.75), radius = radius };
+    if (theme == 2)
+        return GUITheme { text = Color(0.25, 0.12, 0.1), panel = Color(1, 0.93, 0.85), control = Color(1, 0.75, 0.55),
+                          hot = Color(1, 0.84, 0.68), pressed = Color(0.95, 0.62, 0.42), field = Color(1, 1, 1),
+                          fieldHot = Color(1, 0.97, 0.93), accent = Color(0.9, 0.3, 0.35), radius = radius };
+    return GUITheme { radius = radius };
+}
+
+view Themed(mut Look look)
+{
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+
+    // These widgets have the look every frame starts with.
+    GUILayout.Area(Rect(12, 12, Screen.width - 24, 86))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Default")) look.theme = 0;
+            if (GUILayout.Button("Teal")) look.theme = 1;
+            if (GUILayout.Button("Peach")) look.theme = 2;
+        }
+        GUILayout.Slider("radius", look.radius, 0, 20);
+    }
+
+    // The block's widgets have the theme, and the look it found is back after it.
+    GUI.Theme(Pick(look.theme, look.radius))
+    {
+        GUILayout.Area(Rect(12, 116, Screen.width - 24, 200))
+        {
+            GUILayout.Label("A menu in this theme");
+            GUILayout.TextField("Name", look.name);
+            GUILayout.Slider("Volume", look.volume, 0, 1);
+            GUILayout.Toggle("Music", look.music);
+            GUILayout.Horizontal()
+            {
+                GUILayout.Button("Play");
+                GUILayout.Button("Quit");
+            }
+        }
+    }
+}

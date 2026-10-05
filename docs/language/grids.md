@@ -77,6 +77,14 @@ system Spread(mut Heat heat)
 
 Each step reads the grid as the loop found it, and changes only its own cell, `at`. So it doesn't matter which steps run first, or on which thread: the result is exactly the same on one thread as on many, on every machine. Code after the loop runs once every step is done.
 
+That loop runs below, 30 times a second, less a little heat each tick so it cools. Drag over the grid to heat its cells.
+
+::: tide-example grids Heat that spreads
+
+<<< @/examples/grids.tide
+
+:::
+
 A step can declare variables, call functions (and C) and read any cell. What it can't do is change anything else: another cell, a variable from outside the loop, the whole grid (`Clear`), or anything whose order would count. tidec says so, and what to write instead. So a step can't:
 
 - `break` out of the loop: `continue` ends the step.

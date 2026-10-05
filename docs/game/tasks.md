@@ -22,6 +22,14 @@ async event(RoundStarted) Countdown(mut Round round)
 }
 ```
 
+The round below is one task: it counts down a second at a time, lets the runners go for five seconds, and ends. While they run, tap a runner. Each dash is a task of its own, which speeds its runner up, waits, and slows it down again.
+
+::: tide-example tasks A countdown, and a dash
+
+<<< @/examples/tasks.tide
+
+:::
+
 ## Async functions
 
 `async` before a function lets it wait. It returns its value like any function, with no `Task<T>` to write: `async int`, `async string`, or `async void` for nothing.

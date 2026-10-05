@@ -1066,7 +1066,7 @@ view Start(mut Art art, mut Probe probe)
     }
     Draw2D.Clear(Color(0.1, 0.1, 0.1));
     // A unit a pixel, the origin at the screen's middle, looking along +z
-    Draw3D.Camera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
+    Draw3D.SetCamera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
 }
 
 // Three entities, three tints, one draw
@@ -1122,21 +1122,21 @@ view Sums(Art art)
 // 2D meshes go through the 2D camera, in order with the other 2D calls
 view Flat(Art art)
 {
-    Draw2D.Camera(-Spot(0, 4), Screen.height / 2);
+    Draw2D.SetCamera(-Spot(0, 4), Screen.height / 2);
     Draw2D.Rect(float2(0, 0), float2(32, 32), Color.blue);
     Draw2D.Mesh(art.flat, art.faces, Paint);
     Draw2D.Rect(float2(0, 0), float2(8, 8), Color.green);
 
-    Draw2D.Camera(-Spot(2, 4), Screen.height / 2);
+    Draw2D.SetCamera(-Spot(2, 4), Screen.height / 2);
     Draw2D.Mesh(art.dots2, art.faces);
-    Draw2D.Camera(-Spot(3, 4), Screen.height / 2);
+    Draw2D.SetCamera(-Spot(3, 4), Screen.height / 2);
     Draw2D.Mesh(art.flat, art.faces, art.four, Filter.Point);
-    Draw2D.Camera(-Spot(5, 4), Screen.height / 2);
+    Draw2D.SetCamera(-Spot(5, 4), Screen.height / 2);
     Draw2D.Mesh(art.flat, art.faces, Slide);
 
-    Draw2D.Screen();
+    Draw2D.SetScreen();
     Draw2D.Mesh(art.onScreen, art.faces, Stripe);
-    Draw2D.Camera(float2(0, 0), Screen.height / 2);
+    Draw2D.SetCamera(float2(0, 0), Screen.height / 2);
 }
 
 // Three entities in one 2D draw: the vert puts each where its component says
@@ -1152,6 +1152,48 @@ view Manual(Art art)
     Draw3D.Instanced(art.manualMesh, art.faces, art.manualTransforms, art.four, Filter.Point);
     Draw2D.Instanced(art.flat, art.faces, art.manual2, BatchPlace2, BatchPaint2);
     Draw2D.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
+}
+
+frag Bare(Corner3 vertex, mut Color color)
+{
+    color = Color.white;
+}
+
+// A draw's settings reach its frag's pixels: what tints them, how they go over
+// what's there, and where the mesh lands.
+view Settings(Art art)
+{
+    // A tint multiplies what the frag wrote: Paint's orange
+    Draw2D.Transform(Spot(7, 0)),
+    Draw.Tint(Color(0.5, 1, 1, 1))
+    {
+        Draw2D.Mesh(art.flat, art.faces, Paint);
+    }
+    // Added to what's there, and multiplying it by as much as its alpha says
+    Draw2D.Rect(Spot(7, 1), float2(24, 24), Color(0, 0, 0.5, 1));
+    Draw2D.Transform(Spot(7, 1)),
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Mesh(art.flat, art.faces, Paint);
+    }
+    Draw2D.Rect(Spot(7, 2), float2(24, 24), Color(0.5, 1, 1, 1));
+    Draw2D.Transform(Spot(7, 2)),
+    Draw.Blend(Blend.Multiply),
+    Draw.Tint(Color(1, 1, 1, 0.5))
+    {
+        Draw2D.Mesh(art.flat, art.faces, Paint);
+    }
+    // Turned an eighth and half as big: a diamond
+    Draw2D.Transform(Spot(7, 6), Math.PI / 4, 0.5)
+    {
+        Draw2D.Mesh(art.flat, art.faces, Paint);
+    }
+    // In 3D, each instance goes through the transform on its way to the world
+    Draw3D.Transform(float4x4.Translate(Cell(7, 3))),
+    Draw.Tint(Color(0, 1, 0, 1))
+    {
+        Draw3D.Mesh(art.quad, art.faces, float4x4.identity, Bare);
+    }
 }
 
 // Targets that take their size from the window, and one with pixels of its
@@ -1173,20 +1215,20 @@ view ScreenTargets(mut Art art)
     art.window = float2(w, h);
     // Where each of its pixels is, then a square in its top right corner: in logical pixels, as in the window
     Draw.Blit(art.uploaded, art.full, Where);
-    art.full.Screen();
+    art.full.SetScreen();
     art.full.Rect(float2(w - 16, 16), float2(32), Color.blue);
     // Half the window, so its own left half is a quarter of the window across
-    art.half.Screen();
+    art.half.SetScreen();
     art.half.Clear(Color.black);
     art.half.Rect(float2(w * 0.125, h * 0.25), float2(w * 0.25, h * 0.5), Color.green);
     // Four pixels by four on any display, the first one white
-    art.exact.Screen();
+    art.exact.SetScreen();
     art.exact.Clear(Color.black);
     art.exact.Rect(float2(0.5), float2(1), Color.white);
 
     Draw.Blit(art.full.color, Draw.window, TargetCopy);
-    Draw2D.Screen();
-    Draw2D.Clip();
+    Draw2D.SetScreen();
+    Draw2D.SetClip();
     // The half one over the window's bottom right quarter, pixel for pixel
     Draw2D.Mesh([Vertex { position = float2(w * 0.5, h * 0.5) },
                  Vertex { position = float2(w, h * 0.5), uv = float2(1, 0) },
@@ -1207,7 +1249,7 @@ view Targets(mut Art art)
     if (art.targetPass == 0 || art.targetPass == 6) return; // 6 is ScreenTargets'
     if (art.targetPass >= 4)
     {
-        Draw2D.Screen();
+        Draw2D.SetScreen();
         if (art.targetPass == 4)
             Draw2D.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point, TextureChecks);
         else
@@ -1215,7 +1257,7 @@ view Targets(mut Art art)
         return;
     }
 
-    art.sourceTarget.Screen();
+    art.sourceTarget.SetScreen();
     art.sourceTarget.Clear(Color.black);
     art.sourceTarget.Rect(float2(8, 8), float2(16), Color.red);
     art.sourceTarget.Rect(float2(24, 8), float2(16), Color.green);
@@ -1223,10 +1265,10 @@ view Targets(mut Art art)
     art.sourceTarget.Rect(float2(24, 24), float2(16), Color.white);
 
     art.outputTarget.Clear(Color.magenta);
-    art.outputTarget.Camera(float2(10000), 0.01);
-    art.outputTarget.Clip(Rect(0, 0, 0, 0));
-    Draw2D.Camera(float2(10000), 0.01);
-    Draw2D.Clip(Rect(0, 0, 0, 0));
+    art.outputTarget.SetCamera(float2(10000), 0.01);
+    art.outputTarget.SetClip(Rect(0, 0, 0, 0));
+    Draw2D.SetCamera(float2(10000), 0.01);
+    Draw2D.SetClip(Rect(0, 0, 0, 0));
 
     if (art.targetPass == 1)
     {

@@ -32,8 +32,11 @@ enum {
     GL_COLOR_BUFFER_BIT = 0x4000,
     GL_LEQUAL = 0x0203,
     GL_ALWAYS = 0x0207,
+    GL_ZERO = 0,
+    GL_ONE = 1,
     GL_SRC_ALPHA = 0x0302,
     GL_ONE_MINUS_SRC_ALPHA = 0x0303,
+    GL_DST_COLOR = 0x0306,
     GL_CULL_FACE = 0x0B44,
     GL_DEPTH_TEST = 0x0B71,
     GL_BLEND = 0x0BE2,
@@ -92,6 +95,8 @@ enum {
     V(BindTexture, (GLenum target, GLuint texture), (target, texture))                                                 \
     V(BindVertexArray, (GLuint array), (array))                                                                        \
     V(BlendFunc, (GLenum source, GLenum destination), (source, destination))                                           \
+    V(BlendFuncSeparate, (GLenum source, GLenum destination, GLenum source_alpha, GLenum destination_alpha),          \
+      (source, destination, source_alpha, destination_alpha))                                                         \
     V(BufferData, (GLenum target, GLsizeiptr size, const void *data, GLenum usage), (target, size, data, usage))       \
     V(BufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const void *data), (target, offset, size, data)) \
     R(GLenum, CheckFramebufferStatus, (GLenum target), (target))                                                       \
