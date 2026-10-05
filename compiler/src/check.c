@@ -122,9 +122,10 @@ static bool is_scalar_number(const type t)
     return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_FLOAT;
 }
 
-// After a type mismatch between a long and another number: how to convert,
-// since nothing converts to or from a long by itself but an int going in.
-static void note_long_conversion(const type want, const type have)
+// After a type mismatch that a conversion written out settles: how to convert.
+// Nothing converts to or from a long by itself but an int going in, and an
+// enum and its number convert neither way by themselves.
+static void note_conversion(const type want, const type have)
 {
     if (want.kind == TY_LONG && have.kind == TY_FLOAT) {
         diag_note("long(x) makes a float a long, truncated toward zero");
@@ -132,6 +133,10 @@ static void note_long_conversion(const type want, const type have)
         diag_note("float(x) makes a long a float, rounded to the nearest");
     } else if (want.kind == TY_INT && have.kind == TY_LONG) {
         diag_note("int(x) makes a long an int, keeping its low 32 bits");
+    } else if (want.kind == TY_ENUM && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+        diag_note("%s(x) makes an int the %s with that number", type_name(want), type_name(want));
+    } else if (have.kind == TY_ENUM && (want.kind == TY_INT || want.kind == TY_LONG)) {
+        diag_note("%s(x) makes it its number", type_name(want));
     }
 }
 
@@ -722,7 +727,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -783,10 +788,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1080,7 +1085,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -1329,7 +1334,7 @@ static type check_literal(checker *c, expr *e)
         if (!type_assignable(init->field->type, value)) {
             diag_error(init->value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(init->name),
                        type_name(init->field->type), type_name(value));
-            note_long_conversion(init->field->type, value);
+            note_conversion(init->field->type, value);
         }
     }
     return decl_type(d);
@@ -1616,6 +1621,64 @@ static type check_construct(checker *c, expr *e, const type target)
     return T_ERR;
 }
 
+static bool names_only(const expr *e);
+
+// Card(2), or Combat.Stance(2): the value of enum `d` with that number, as
+// int(card) is a value's number. A number none of its members has is kept, as
+// C#'s cast keeps it, cut to what the enum is stored as the way byte(x) cuts
+// an int to a byte.
+static type check_enum_conversion(checker *c, expr *e, decl *d)
+{
+    // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
+    e->type_decl = d;
+    e->ctor = CTOR_ENUM;
+    const type target = {TY_ENUM, d};
+    bool any_error = false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (check_expr_want(c, e->args.items[i], T_INT_).kind == TY_ERROR) any_error = true;
+    }
+    if (any_error) return T_ERR;
+    const char *name = type_name(target);
+    if (e->args.count != 1) {
+        diag_error(e->at, "%s(...) converts one int, a member's number", name);
+        if (d->members.count > 0) {
+            diag_note("a member is written with its enum, like '%s." STR_FMT "'", name, STR_ARG(d->members.items[0].name));
+        }
+        return T_ERR;
+    }
+    const expr *arg = e->args.items[0];
+    const type from = arg->type;
+    if (!type_assignable(T_INT_, from)) {
+        diag_error(arg->at, "%s(...) converts an int, not %s", name, type_name(from));
+        if (from.kind == TY_FLOAT) diag_note("convert it to an int first, which drops its fraction: '%s(int(x))'", name);
+        else if (from.kind == TY_LONG) diag_note("convert it to an int first, which keeps its low 32 bits: '%s(int(x))'", name);
+        else if (from.kind == TY_ENUM && from.decl == d) diag_note("it already is one: use it as it is");
+        else if (from.kind == TY_ENUM) diag_note("go through its number: '%s(int(x))'", name);
+        return T_ERR;
+    }
+    e->call = CALL_CONSTRUCT;
+    return target;
+}
+
+// The enum a call converts an int to, going by the name it's written with:
+// Card in Card(2), Combat.Stance in Combat.Stance(2). NULL for any other call.
+static decl *converted_enum(const checker *c, const expr *e)
+{
+    decl *other;
+    str name = e->name;
+    if (e->kind == E_METHOD) {
+        str ns;
+        if (!names_only(e->object) || !qualified_text(e->object, &ns)) return NULL;
+        char *text = arena_alloc((size_t)ns.len + (size_t)e->name.len + 2);
+        memcpy(text, ns.ptr, (size_t)ns.len);
+        text[ns.len] = '.';
+        memcpy(text + ns.len + 1, e->name.ptr, (size_t)e->name.len);
+        name = (str){text, ns.len + 1 + e->name.len};
+    }
+    decl *d = lookup(c->prog, c->unit, name, NAME_TYPE, &other);
+    return d && d->kind == DECL_ENUM ? d : NULL;
+}
+
 // The input code being checked, for messages.
 static const char *input_code(const checker *c)
 {
@@ -1740,6 +1803,37 @@ static bool check_io_use(checker *c, const loc at, const char *what)
     code->uses_io = true;
     code->calls_c = true; // Ordered side effects, including reads beside writes
     if (code->is_async && code->kind == DECL_FUNCTION) note_side(code, TASK_LOCAL, at);
+    return true;
+}
+
+// Frame.dt: how long this machine's frame is, which its host says before each
+// one and its local state keeps. Local code reads it, and the functions it
+// calls, which get the local state from their callers; an async function that
+// reads it is a local task. The match's time is Time's.
+static bool check_frame_time_use(checker *c, const loc at)
+{
+    if (gpu_refuses(c, at, "read Frame.dt", "the view puts what it needs in a component or a singleton, which it takes")) return false;
+    if (c->in_input) {
+        diag_error(at, "%s runs once per tick, not once per frame, so it can't read Frame.dt", input_code(c));
+        diag_note(c->in_sanitize ? "a frame's length is this machine's, and Sanitize runs on every machine"
+                                 : "a view keeps what the input needs in local state, which Sample reads");
+        return false;
+    }
+    decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_error(at, "the match runs the same on every machine, so it can't read Frame.dt");
+        diag_note("a frame's length is this machine's: the match takes 'Time time' and reads 'time.dt', a tick's length");
+        return false;
+    }
+    if (!code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)) {
+        diag_error(at, "Frame.dt can only be read in local code, and in functions it calls");
+        if (c->method) diag_note("methods can't; a function can, like 'void Fade(mut Glow glow) { ... }'");
+        else diag_note("views, local handlers and local tasks read it: it's how long this machine's frame is");
+        return false;
+    }
+    if (!code->frame_time) code->frame_time_at = at;
+    code->frame_time = true;
+    if (code->is_async && code->kind == DECL_FUNCTION) return note_side(code, TASK_LOCAL, at);
     return true;
 }
 
@@ -1984,7 +2078,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
             diag_error(arg->at, "'" STR_FMT "' takes %s for '" STR_FMT "', not %s", STR_ARG(m->name), type_name(p->type),
                        STR_ARG(p->name), type_name(arg->type));
             if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw2D.list'");
-            note_long_conversion(p->type, arg->type);
+            note_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
                 diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
@@ -2153,9 +2247,11 @@ static type check_call(checker *c, expr *e)
     decl *const fn = find_named(c, e->name, e->at, NAME_FUNCTION);
     if (fn) return check_function_call(c, e, fn);
 
+    decl *const d = find_type(c, e->name, e->at);
+    if (d && d->kind == DECL_ENUM) return check_enum_conversion(c, e, d); // Card(2)
+
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
 
-    const decl *d = find_type(c, e->name, e->at);
     if (d && (d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT || d->kind == DECL_EVENT)) {
         diag_error(e->at, "write '" STR_FMT " { ... }' to make %s value", STR_ARG(e->name),
                    d->kind == DECL_STRUCT ? "a struct" : d->kind == DECL_EVENT ? "an event" : "a component");
@@ -2178,6 +2274,10 @@ static type check_call(checker *c, expr *e)
         suggest_consider_c(&s, "Spawn");
         suggest_consider_c(&s, "Send");
         suggest_builtin_types(&s);
+        for (int i = 0; i < c->prog->decls.count; i++) { // The game's functions, and its enums, which convert an int
+            const decl *other = c->prog->decls.items[i];
+            if (other->kind == DECL_FUNCTION || other->kind == DECL_ENUM) suggest_consider(&s, other->name);
+        }
         suggest_note(&s);
     }
     return T_ERR;
@@ -3431,10 +3531,31 @@ static type check_method(checker *c, expr *e)
         memcpy(text, ns.ptr, (size_t)ns.len);
         text[ns.len] = '.';
         memcpy(text + ns.len + 1, e->name.ptr, (size_t)e->name.len);
-        decl *const fn = find_named(c, (str){text, ns.len + 1 + e->name.len}, e->at, NAME_FUNCTION);
+        const str qualified = {text, ns.len + 1 + e->name.len};
+        decl *const fn = find_named(c, qualified, e->at, NAME_FUNCTION);
         if (fn) {
             mark_namespaces(e->object);
             return check_function_call(c, e, fn);
+        }
+        // Combat.Stance(2): an enum in a namespace, converting an int.
+        decl *const named = find_type(c, qualified, e->at);
+        if (named && named->kind == DECL_ENUM) {
+            mark_namespaces(e->object);
+            return check_enum_conversion(c, e, named);
+        }
+        if (!named && !is_namespace(c->prog, qualified)) { // Nothing there to call: maybe misspelled
+            mark_namespaces(e->object);
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "namespace '" STR_FMT "' has no function '" STR_FMT "'", STR_ARG(ns), STR_ARG(e->name));
+            suggestion s = suggest_start(e->name);
+            for (int i = 0; i < c->prog->decls.count; i++) {
+                const decl *other = c->prog->decls.items[i];
+                if ((other->kind == DECL_FUNCTION || other->kind == DECL_ENUM) && str_eq(decl_ns(other), ns)) {
+                    suggest_consider(&s, other->name);
+                }
+            }
+            suggest_note(&s);
+            return T_ERR;
         }
     }
 
@@ -4164,7 +4285,11 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
-        if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
+        if (str_eq_c(e->object->name, "Frame") && member.kind == TY_ERROR) {
+            diag_note("'Frame.dt' is the seconds since this machine's previous frame started");
+        } else if (str_eq_c(e->object->name, "Frame")) {
+            if (!check_frame_time_use(c, e->at)) return T_ERR;
+        } else if (str_eq_c(e->object->name, "Cursor") && member.kind == TY_ERROR) {
             diag_note("'Cursor.locked' is whether the window holds the cursor, hidden, which 'Cursor.Lock()' asks for");
         } else if (str_eq_c(e->object->name, "Cursor")) {
             if (!check_cursor_use(c, e->at, false)) return T_ERR;
@@ -6346,13 +6471,26 @@ static void check_assign(checker *c, const stmt *s)
     // Compound byte assignments explicitly narrow the promoted integer result.
     if (!type_assignable(target, result) && !(target.kind == TY_BYTE && s->op != T_ASSIGN && type_is_integer(result))) {
         diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
-        note_long_conversion(target, result);
+        note_conversion(target, result);
     }
 }
 
 static void check_stmt(checker *c, stmt *s);
 
 static bool fold_bool(const expr *e, bool *out);
+static bool fold_int(const expr *e, int64_t *out);
+
+// Card(2) while compiling: the number, in as many bits as the enum is stored
+// in. Going by what it says it's stored as, as an enum's member can be worked
+// out from one declared after it, which isn't checked yet.
+static bool fold_enum(const expr *e, int64_t *out)
+{
+    int64_t number;
+    if (e->args.count != 1 || !fold_int(e->args.items[0], &number)) return false;
+    const str backing = e->type_decl->backing;
+    *out = str_eq_c(backing, "byte") ? (uint8_t)number : str_eq_c(backing, "ushort") ? (uint16_t)number : (int32_t)number;
+    return true;
+}
 
 // An int known while compiling, from a checked expression: a literal, an
 // enum's member, constants, integer conversions, conditionals and operators
@@ -6388,11 +6526,13 @@ static bool fold_int(const expr *e, int64_t *out)
         return fold_bool(e->cond, &cond) && fold_int(cond ? e->lhs : e->rhs, out);
     }
     case E_CALL:
+        if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out);
         if (e->call != CALL_CONSTRUCT || e->ctor != CTOR_SCALAR || !type_is_integer(e->type)
             || e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
         *out = e->type.kind == TY_LONG ? l : e->type.kind == TY_BYTE ? (uint8_t)l : tide_i_from_l(l);
         return true;
     case E_METHOD: {
+        if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out); // Combat.Stance(2)
         if (e->call != CALL_BUILTIN || !type_is_integer(e->type) || e->args.count < 1 || e->args.count > 3) return false;
         int64_t args[3];
         for (int i = 0; i < e->args.count; i++) {
@@ -6671,7 +6811,7 @@ static void check_return(checker *c, const stmt *s)
     if (!type_assignable(m->return_type, value)) {
         diag_error(s->value->at, "'" STR_FMT "' returns %s, not %s", STR_ARG(m->name), type_name(m->return_type),
                    type_name(value));
-        note_long_conversion(m->return_type, value);
+        note_conversion(m->return_type, value);
     }
 }
 
@@ -6816,7 +6956,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (!type_assignable(s->type, value)) {
             diag_error(s->value->at, "can't initialize %s with %s", type_name(s->type), type_name(value));
-            note_long_conversion(s->type, value);
+            note_conversion(s->type, value);
         }
     }
 
@@ -6886,7 +7026,9 @@ static bool stands_alone(const expr *e)
 {
     const expr *called = e->kind == E_DEFAULTED || e->kind == E_TRY ? e->lhs : e;
     const builtin_call call = called->call;
-    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY || call == CALL_DRAW))
+    return (called->kind == E_METHOD && (call == CALL_ADD || call == CALL_REMOVE || call == CALL_DESTROY
+                                         // A Draw call that gives a value only measures or converts
+                                         || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
@@ -7137,10 +7279,10 @@ static bool is_constant(const checker *c, const expr *e)
         return is_constant(c, e->lhs) && is_constant(c, e->rhs);
     case E_CONDITIONAL:
         return is_constant(c, e->cond) && is_constant(c, e->lhs) && is_constant(c, e->rhs);
-    case E_CALL: // A built-in type's constructor, and a grid's size
-        return (builtin_type_named(e->name, &ignored) || is_new_grid(e)) && all_constant(c, e);
-    case E_METHOD:
-        return e->object->kind == E_NAME && builtin_owner(e->object->name) && all_constant(c, e);
+    case E_CALL: // A built-in type's constructor, an enum's conversion, and a grid's size
+        return (builtin_type_named(e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)) && all_constant(c, e);
+    case E_METHOD: // Math.Max(...), and Combat.Stance(2)
+        return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
         return (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);
     case E_LITERAL:
@@ -7282,7 +7424,7 @@ static void check_constant(checker *c, decl *k)
         if (k->return_type.kind != TY_ERROR && t.kind != TY_ERROR && !type_assignable(k->return_type, t)) {
             diag_error(k->value->at, "constant '" STR_FMT "' is %s, not %s", STR_ARG(k->name), type_name(k->return_type),
                        type_name(t));
-            note_long_conversion(k->return_type, t);
+            note_conversion(k->return_type, t);
         }
     }
     c->unit = outer;
@@ -7505,7 +7647,7 @@ static void check_default(checker *c, const field *f)
     const type t = check_constant_expr(c, value, true, f->type);
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
         diag_error(value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
-        note_long_conversion(f->type, t);
+        note_conversion(f->type, t);
     }
 }
 
@@ -7557,11 +7699,35 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     bool has_clamp = false;
     bool has_min = false;
     bool has_max = false;
+    bool has_snap = false;
+    for (int i = 0; i < f->attributes.count; i++) has_snap |= str_eq_c(f->attributes.items[i].name, "Snap");
     for (int i = 0; i < f->attributes.count; i++) {
         attribute *a = &f->attributes.items[i];
         const bool clamp = str_eq_c(a->name, "Clamp");
         const bool min = str_eq_c(a->name, "Min");
         const bool max = str_eq_c(a->name, "Max");
+        const bool position = str_eq_c(a->name, "Position");
+        const bool rotation = str_eq_c(a->name, "Rotation");
+        if (position || rotation) {
+            if (a->values.count || a->args.count) {
+                diag_error(a->at, "[" STR_FMT "] takes no arguments", STR_ARG(a->name));
+            } else if ((d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON && d->kind != DECL_STRUCT) || d->is_local
+                       || d->part_of || f->is_local) {
+                diag_error(a->at, "[" STR_FMT "] describes a match field, not local state, input or events", STR_ARG(a->name));
+                diag_note("put it on a match component or singleton field, or a field of an ordinary struct they hold");
+            } else if (has_snap) {
+                diag_error(a->at, "[Snap] keeps a field immediate, so it can't also have [" STR_FMT "]", STR_ARG(a->name));
+            } else if (f->view_correction) {
+                diag_error(a->at, "field '" STR_FMT "' already has a view correction attribute", STR_ARG(f->name));
+            } else if (f->type.kind != TY_ERROR && (position ? !type_is_float_based(f->type) || type_dim(f->type) < 1
+                                                             : f->type.kind != TY_FLOAT && f->type.kind != TY_QUATERNION)) {
+                diag_error(a->at, position ? "[Position] works on float and floating-point vectors, not %s"
+                                          : "[Rotation] works on float radians and quaternion, not %s", type_name(f->type));
+            } else {
+                f->view_correction = position ? 1 : 2;
+            }
+            continue;
+        }
         if (str_eq_c(a->name, "Snap")) {
             check_snap_attribute(d, f, a);
             continue;
@@ -7573,6 +7739,8 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Min");
             suggest_consider_c(&s, "Max");
             suggest_consider_c(&s, "Snap");
+            suggest_consider_c(&s, "Position");
+            suggest_consider_c(&s, "Rotation");
             suggest_note(&s);
             continue;
         }
@@ -8131,6 +8299,35 @@ static void check_interpolate_decl(const checker *c, decl *d, decl *m)
         return;
     }
     d->interpolate = m;
+}
+
+// A custom interpolation replaces the whole type's field traversal. Correction
+// roles below it would otherwise be accepted but silently never applied.
+static const field *correction_field(const decl *d, const int depth)
+{
+    if (depth > 64) return NULL; // A recursive type has its own diagnostic.
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->view_correction) return f;
+        if (f->type.kind == TY_STRUCT) {
+            const field *nested = correction_field(f->type.decl, depth + 1);
+            if (nested) return nested;
+        }
+    }
+    return NULL;
+}
+
+static void check_correction_interpolates(const program *prog)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (!d->interpolate) continue;
+        const field *f = correction_field(d, 0);
+        if (!f) continue;
+        diag_error(f->at, "view correction attributes under '" STR_FMT "' are not supported with its custom Interpolate",
+                   STR_ARG(d->name));
+        diag_note("custom interpolation replaces the whole type; correction smoothing for custom Interpolate is deferred");
+    }
 }
 
 // Where methods go (structs and components), their names, and their signatures.
@@ -9074,9 +9271,10 @@ static bool call_acts(const expr *e)
     if (e->kind != E_CALL && e->kind != E_METHOD) return false;
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
-    case CALL_REMOVE: case CALL_DESTROY: case CALL_DRAW: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
+    case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
     case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID:
         return true;
+    case CALL_DRAW: return e->type.kind == TY_VOID; // Draw2D.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set");
@@ -9188,12 +9386,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     prog->time = time;
@@ -9231,7 +9429,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -9304,7 +9502,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -9324,7 +9522,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -9398,7 +9596,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -9406,7 +9604,7 @@ static void add_builtins(program *prog)
     prog->disconnected = builtin_event("Disconnected", true);
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
-    const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0},
+    const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
                                 {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
@@ -9454,7 +9652,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
     vec_push(d->fields, f);
 }
 
@@ -9631,7 +9829,7 @@ static bool is_builtin_name(const str name)
     return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw")
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
-        || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
+        || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
@@ -10906,6 +11104,39 @@ static void check_io_calls(const checker *c)
     }
 }
 
+// A function that calls one that reads Frame.dt reads it too: each is handed
+// the local state, so only local code calls them, and an async one is a local
+// task. Reading changes nothing, so a comparison and a parallel loop's steps
+// can.
+static void check_frame_time_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->frame_time || site->from->frame_time) continue;
+            site->from->frame_time = true;
+            site->from->frame_time_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        // An async one is a local task: starting it from the match is reported as that (resolve_tasks)
+        if (!site->to->frame_time || site->to->is_async) continue;
+        if (site->from->kind == DECL_FUNCTION || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' reads Frame.dt, which only local code can read", STR_ARG(site->to->name));
+        diag_note_at(site->to->frame_time_at, "it reads it on line %d, and %s", site->to->frame_time_at.line,
+                     site->from->kind == DECL_METHOD ? "methods can't"
+                     : site->from->kind == DECL_INPUT ? "the input's code runs once per tick"
+                                                      : "the match's time is Time's: 'time.dt' is a tick's length");
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && d->is_async && d->frame_time) note_side(d, TASK_LOCAL, d->frame_time_at);
+    }
+}
+
 // A function that uses a component's or singleton's local fields through a parameter is
 // given them with it, and so is one that passes the parameter on to it. So
 // only code that has them calls it: views, local handlers of Forgotten and
@@ -11248,6 +11479,7 @@ bool check(program *prog)
         else if (d->kind == DECL_SHADER) check_shader_decl(&c, d);
         else if (d->kind != DECL_SYSTEM) check_method_decls(&c, d);
     }
+    check_correction_interpolates(prog);
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == DECL_FUNCTION && !d->is_extern) check_method_body(&c, d);
@@ -11282,6 +11514,7 @@ bool check(program *prog)
     check_sends(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);
+    check_frame_time_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);

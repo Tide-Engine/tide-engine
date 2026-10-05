@@ -1,0 +1,3 @@
+// expect: [Rotation] works on float radians and quaternion, not float2
+component Body { [Rotation] float2 angle; }
+scene Main {}

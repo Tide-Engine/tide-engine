@@ -14,10 +14,14 @@ struct Hit
 // Other files call it Combat.Strength.
 int Strength(Hit hit) { return hit.amount * 2; }
 
+// Other files name it Combat.Stance, and convert a number to one with Combat.Stance(4).
+enum Stance { Low, High = 4 }
+
 [Before(Physics.Move)]
 system Damage(mut Trace trace, with Health)
 {
     trace.damage = trace.step;
     trace.step += 1;
     trace.hit = Hit { amount = 5 };
+    trace.stance = Stance(trace.hit.amount - 1); // Its own namespace's enum, by its number
 }
