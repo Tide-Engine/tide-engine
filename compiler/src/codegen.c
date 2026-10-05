@@ -2702,6 +2702,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                                         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
                 sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
             }
+            if (e->call == CALL_BUILTIN && strcmp(e->c_callee, "tide_draw_screen_flip") == 0) { // Screen.Flip: in the window
+                sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
+            }
             if (e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText")) { // As the frame's renderer draws text
                 sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height), tide_ui->measure");
             }
@@ -6649,6 +6652,25 @@ static void gen_prelude(gen *g)
                  "                                    .outline = s.outline, .outline_color = s.outlineColor,\n"
                  "                                    .soft = s.soft, .ellipse = s.ellipse});\n}\n\n",
               type_cname(g->prog->shape));
+    // ...and so do Tide's GUITheme and GUIControl and tide/gui.h's tide_gui_theme and tide_control
+    const char *theme = type_cname(g->prog->gui_theme);
+    const char *control = type_cname(g->prog->gui_control);
+    sb_printf(o, "// GUI.SetTheme and GUI.Theme: a GUITheme as tide/gui.h takes it.\n"
+                 "TIDE_HELPER tide_gui_theme tide_gui_theme_value(const %s t)\n{\n"
+                 "    return (tide_gui_theme){.text = t.text, .panel = t.panel, .control = t.control, .hot = t.hot,\n"
+                 "                            .pressed = t.pressed, .field = t.field, .field_hot = t.fieldHot,\n"
+                 "                            .accent = t.accent, .radius = t.radius};\n}\n\n"
+                 "TIDE_HELPER void tide_gui_set_theme_value(tide_gui *g, const %s t)\n{\n"
+                 "    tide_gui_set_theme(g, tide_gui_theme_value(t));\n}\n\n"
+                 "TIDE_HELPER int tide_gui_begin_theme_value(tide_gui *g, const %s t)\n{\n"
+                 "    return tide_gui_begin_theme(g, tide_gui_theme_value(t));\n}\n\n",
+              theme, theme, theme);
+    sb_printf(o, "// GUI.Control: what tide/gui.h says of a control, as a GUIControl.\n"
+                 "TIDE_HELPER %s tide_gui_control_value(tide_gui *g, const uint32_t id, const tide_rect rect)\n{\n"
+                 "    const tide_control c = tide_gui_control(g, id, rect);\n"
+                 "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked};\n"
+                 "}\n\n",
+              control, control);
 
     sb_put(o, "// Arithmetic on ints, vectors, quaternions and matrices comes from tide/math.h.\n\n");
 

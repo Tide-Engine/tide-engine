@@ -31,7 +31,7 @@ Widgets edit values through `mut` parameters, and return whether they changed th
 
 The `mut` argument is the variable itself, so its type matches exactly: `Slider` takes a `float` variable, not an `int`.
 
-Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
+Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for, and the ones a loop makes, by their turn in it.
 
 ## GUILayout and GUI
 
@@ -61,6 +61,7 @@ Widgets have no IDs to write. They're told apart by where they're called from an
 | `GUILayout.Area(rect) { ... }` | A panel at a rect |
 | `GUILayout.Modal(anchor, mut bool open) { ... }` | A panel over the whole screen while `open` is true, like a pause menu |
 | `GUI.Disabled(bool disabled) { ... }` | Grays out its widgets while `disabled` is true (see [Disabled widgets](#disabled-widgets)) |
+| `GUI.Theme(GUITheme theme) { ... }` | Gives its widgets a look of your own (see [Themes](#themes)) |
 
 ```csharp
 view Hud(mut Look look)
@@ -78,13 +79,13 @@ view Hud(mut Look look)
 
 When the screen is too narrow for them, laid out widgets shrink to fit: fields, sliders and buttons get narrower, and a label's column gives up its spare room first. Labels and toggles keep their size.
 
-The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and you can write your own the same way.
+The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and you can write your own the same way. A widget that looks nothing like these is a [control](#widgets-of-your-own): you draw it, and the GUI handles its input.
 
 ## Screen units
 
 Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. `Screen.width` and `Screen.height` are the window's size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
 
-`Rect(x, y, width, height)` is measured from the top left corner, with `y` down, as in Unity's GUI. (World drawing, the mouse and touches have `y` up.)
+`Rect(x, y, width, height)` is measured from the top left corner, with `y` down, as in Unity's GUI. World drawing, the mouse and touches have `y` up: `Screen.Flip(devices.pointer.position)` is where the pointer is counted the GUI's way, from the top left, and `Screen.Flip` of a GUI position is where it is for the devices.
 
 `Anchor` names the nine places an area can go, as Unity's `TextAnchor` does: `UpperLeft`, `UpperCenter`, `UpperRight`, `MiddleLeft`, `MiddleCenter`, `MiddleRight`, `LowerLeft`, `LowerCenter` and `LowerRight`.
 
@@ -119,9 +120,74 @@ view Menu(Session session, mut Lobby lobby)
 
 It lays nothing out: its widgets stay where they'd be without it, in the container around it, and it works with `GUI` and `GUILayout` widgets alike. Tab skips disabled widgets. One disabled while it's pressed lets go, and a field disabled while the player types into it keeps its old value. The pointer on a disabled widget is still the GUI's, so a click on it doesn't reach the game. Inside another `GUI.Disabled` that's disabled, a block stays disabled whatever its own `disabled` is.
 
+## Themes
+
+The GUI has one look, and a theme changes its colors and its corners. `GUITheme` is a struct whose defaults are that look, so a theme names only what it changes:
+
+```csharp
+const Color INK = Color(0.86, 0.92, 1);
+const Color NAVY = Color(0.07, 0.1, 0.19);
+
+view Menu(mut Lobby lobby)
+{
+    GUI.SetTheme(GUITheme { text = INK, panel = NAVY, control = Color(0.15, 0.19, 0.32), radius = 10 });
+    GUILayout.Area(Anchor.MiddleCenter)
+    {
+        GUILayout.TextField("Room", lobby.code);
+        // One button that stands out
+        GUI.Theme(GUITheme { text = NAVY, control = Color.cyan, hot = Color.white, radius = 10 })
+        {
+            if (GUILayout.Button("Join")) Session.Join(lobby.code);
+        }
+        if (GUILayout.Button("Back")) lobby.open = false;
+    }
+}
+```
+
+| Field | What has that color |
+|---|---|
+| `text` | Text, and a slider's thumb |
+| `panel` | An area's background |
+| `control` | A button, a toggle's box, a slider's rail |
+| `hot` | ...with the pointer on it |
+| `pressed` | A button held down |
+| `field` | A field to type into |
+| `fieldHot` | ...with the pointer on it |
+| `accent` | The outline of the widget that has the focus, a toggle's check, a slider's filled part |
+
+`radius` is how round the widgets' corners are, in pixels: 0, its default, is square. A part is never rounder than half its smaller side, so a big radius makes a pill of a button.
+
+A theme is set in one of two ways, as every setting of a frame is:
+
+- `GUI.Theme(theme) { ... }` wraps a block: the widgets in it have the theme, and the look it found is back when the block ends.
+- `GUI.SetTheme(theme)` stays: for the widgets that follow, in this view and the views after it, until it's set again or the frame ends.
+
+Every frame starts from the default look, so a view that sets a theme sets it every frame, and a game that sets none looks as the GUI always did. A theme a block doesn't name fields of takes those from the defaults, not from the theme around it: keep a theme in a `const` or a singleton and change a copy of it to build one on another.
+
+An area's panel has the look it opened with. The [stats overlay and the debug views](../tools/cli.md) aren't the GUI's widgets, and keep their own look whatever a game sets.
+
+That's all a theme is: there are no styles for single widgets, no text sizes and no fonts. A widget that should look like nothing here is [one you draw yourself](#widgets-of-your-own).
+
 ## Keyboard and gamepad
 
-Navigation is built in. Tab and Shift+Tab move the focus between widgets, in the order they were drawn, and so do the arrows, the d-pad and the left stick once a widget has the focus. Enter, Space and the south button press, and Escape and the east button go back. Left and right step a focused slider or number field.
+Navigation is built in. Tab and Shift+Tab move the focus between widgets, in the order they're called, and so do the arrows, the d-pad and the left stick once a widget has the focus: down and right go on to the next, up and left go back. Enter, Space and the south button press, and Escape and the east button let go. A slider and a number field keep left and right, to step their value.
+
+The arrows, the d-pad and the left stick only start moving the focus while no match reads the devices, so a button on a HUD never takes the d-pad from the player: there, Tab starts it. A menu that's up over a match says so, every frame it is, and they start it there too:
+
+```csharp
+view Paused(Pause pause)
+{
+    if (!pause.open) return;
+    GUI.Navigate();
+    GUILayout.Area(Anchor.MiddleCenter)
+    {
+        if (GUILayout.Button("Resume")) Send(Resume { });
+        if (GUILayout.Button("Leave")) Session.Leave();
+    }
+}
+```
+
+Once a widget has the focus, the keyboard and the gamepad are the GUI's, and the input's `Sample` reads neither.
 
 Typing into a field uses the characters the player types, which follow their keyboard layout, not keys by position. Clicking a number field, or pressing Enter on it, starts typing into it; Enter or leaving the field keeps a valid number, and Escape keeps the old one. On a phone, and in a phone's browser, the system's keyboard shows while the player types into a field, and goes when they stop.
 
@@ -149,7 +215,60 @@ The pointer is the GUI's wherever it's on a widget or an area, from the moment i
 
 ## Widgets of your own
 
-A view can draw widgets itself with `Draw2D` and `Draw3D`, or hand the devices to a UI library through [Calling C](../c/functions.md). The engine doesn't know those widgets are there, so the view says what they're using:
+A widget with a look of its own is a control: the view draws it, with `Draw2D` or anything else, and the GUI handles its input.
+
+```csharp
+local singleton Draft
+{
+    int picked = -1;
+}
+
+view Cards(mut Draft draft)
+{
+    Draw2D.Screen();
+    for (var slot = 0; slot < 3; slot++)
+    {
+        var rect = Rect(Screen.width * 0.5 - 330 + slot * 220, 200, 200, 280);
+        var card = GUI.Control(rect);
+        var lit = card.hovered || card.focused;
+        var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5 + (card.pressed ? 2 : 0));
+        Draw2D.RoundRect(center, float2(rect.width, rect.height), 18, lit ? Color(0.2, 0.3, 0.6) : Color(0.1, 0.14, 0.25));
+        if (card.clicked) draft.picked = slot;
+    }
+}
+```
+
+`GUI.Control(rect)` returns a `GUIControl`, which says what the player is doing with the rect:
+
+| Field | When it's true |
+|---|---|
+| `hovered` | The pointer is on it, with nothing of the GUI's over it |
+| `pressed` | The pointer holds it: from a press on it until it lets go, wherever it goes meanwhile |
+| `focused` | The keyboard and the gamepad are on it |
+| `clicked` | For one frame: a press on it let go on it, or Enter, Space or the south button went down with the focus on it |
+
+It works as a button of the GUI's does, and the GUI draws nothing for it, so showing that it's hovered or has the focus is the view's:
+
+- **The pointer on it is the GUI's.** A press there never reaches the input's `Sample` or the other views, from the frame it lands in, a finger's too. The view needs no claim.
+- **It takes the focus with the other widgets.** Tab, the arrows, the d-pad and the left stick move the focus to it and from it, alongside the GUI's own widgets, in the order they're called. A click doesn't give it the focus, as it doesn't a button.
+- **`GUI.Disabled` and modals stop it.** In a disabled block, or outside the modal that's up, nothing of it is true and the focus skips it. Draw it faded yourself.
+- **A button looks down while it's `pressed` and `hovered`.** `pressed` alone stays true while the pointer drags away, which is what a handle or a slider of your own follows.
+
+While a control has the focus, its view goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. So a menu's shortcuts still work with one of its buttons focused, and a control can be a text field: read `devices.keyboard.text`, and call `GUI.ShowKeyboard()` for phones. The input's `Sample` and the other views read none of it meanwhile.
+
+::: tip Controls in a loop
+The three cards above come from one call, so the GUI tells them apart by their turn: the first one made, the second, the third. Make the same ones every frame, in the same order, and each keeps its own hover and focus. A loop that leaves an earlier one out one frame gives its turn to the next, and the focus goes on with whatever is now in its place: leave out the drawing, not the call.
+:::
+
+A control takes its rect, and `GUILayout` has none: what a view draws is under the GUI's own widgets, an area's panel included, so a control laid out inside an area would be drawn beneath it.
+
+::: info What's drawn where
+The GUI's widgets are drawn last, over everything views draw. So a control you draw is under any widget of the GUI's that overlaps it, which also takes the pointer there, and under a modal's dim.
+:::
+
+### Widgets that read the devices themselves
+
+A UI library, reached through [Calling C](../c/functions.md), reads the devices itself, and so does a view that works its widgets out on its own. The engine doesn't know those widgets are there, so the view says what they're using:
 
 | Call | What it does |
 |---|---|
@@ -158,7 +277,7 @@ A view can draw widgets itself with `Draw2D` and `Draw3D`, or hand the devices t
 | `GUI.ClaimKeyboard()` | This view is using the keyboard: the keys and [what's typed](./input.md#typed-text) |
 | `GUI.ShowKeyboard()` | The player is typing: phones show their keyboard, as they do for a text field |
 
-What a view claims is hidden from the input's `Sample` and from the other views, as what the GUI uses is, and the view that claimed it goes on reading it. The pointer's claim covers the mouse's buttons and scroll, the pointer's press and the primary touch. A camera view that drags with the mouse needs no changes to stay still while a toolbox is dragged.
+What a view claims is hidden from the input's `Sample` and from the other views, as what the GUI uses is, and the view that claimed it goes on reading it. The pointer's claim covers the mouse's buttons and scroll, the pointer's press and the primary touch. A camera view that drags with the mouse needs no changes to stay still while a toolbox is dragged. A view whose menu covers the screen claims all of it, so a click between its controls isn't the game's either: `GUI.ClaimPointer(Rect(0, 0, Screen.width, Screen.height))`.
 
 ```csharp
 local singleton Toolbox
@@ -171,11 +290,13 @@ local singleton Toolbox
 // A toolbox in the window's lower left corner
 view Tools(Devices devices, mut Toolbox box)
 {
-    GUI.ClaimPointer(Rect(0, Screen.height - 200, 200, 200));
+    var top = Screen.height - 200;
+    GUI.ClaimPointer(Rect(0, top, 200, 200));
     if (box.dragging) GUI.ClaimPointer();
 
     var pointer = devices.pointer;
-    var over = pointer.position.x < 200 && pointer.position.y < 200;
+    var at = Screen.Flip(pointer.position); // From the top left, as the Rect is
+    var over = at.x < 200 && at.y >= top;
     if (over && pointer.press.down) box.dragging = true;
     if (!pointer.press.pressed) box.dragging = false;
 
@@ -191,7 +312,7 @@ view Tools(Devices devices, mut Toolbox box)
 
 A claim lasts one frame: make it every frame, as you draw the widget every frame. A view that stops running leaves nothing claimed. A function's claim is the view's that called it.
 
-`GUI.ClaimPointer(rect)` says where a widget is, in the GUI's pixels, from the top left like every `Rect`. Call it every frame the widget is there, whether the pointer is on it or not. A press on it is then the view's from the frame it lands in, as on the GUI's own widgets: a finger that touches it never reaches the game.
+`GUI.ClaimPointer(rect)` says where a widget is, in the GUI's pixels, from the top left like every `Rect`; the pointer's own position counts from the bottom left, which `Screen.Flip` turns into the Rect's. Call it every frame the widget is there, whether the pointer is on it or not. A press on it is then the view's from the frame it lands in, as on the GUI's own widgets: a finger that touches it never reaches the game.
 
 `GUI.ClaimPointer()`, with no rect, claims the pointer wherever it is: for a widget dragged off its rect, as in the example, or a library that only says it wants the mouse.
 

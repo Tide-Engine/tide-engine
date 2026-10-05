@@ -1,7 +1,7 @@
 // The standard host with no window (tide/run.h's --capture, --frames, --script,
 // --size and --scale), on capture.tide, which draws a block for each thing a
-// script's input did: the pictures a run takes are read back (png_read.mjs)
-// and checked for those blocks, pixel by pixel.
+// script's input did, and for what its match rolled: the pictures a run takes
+// are read back (png_read.mjs) and checked for those blocks, pixel by pixel.
 //
 //   node capture.mjs <tide_platform_capture> <scratch folder> [refused]
 //
@@ -40,7 +40,7 @@ function script(name, lines) {
 
 const same = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 const blue = [0, 0, 255], red = [255, 0, 0], green = [0, 255, 0], white = [255, 255, 255];
-const magenta = [255, 0, 255], cyan = [0, 255, 255], yellow = [255, 255, 0];
+const magenta = [255, 0, 255], cyan = [0, 255, 255], yellow = [255, 255, 0], black = [0, 0, 0];
 
 if (mode === 'refused') {
     // A run that's refused says why, with exit code 2, and starts nothing
@@ -162,11 +162,18 @@ check(block(played, 200, 40, 20, green), "a click on the GUI's button pressed it
 check(none(played, 240, 100), 'the cursor came back when the game stopped asking');
 check(block(played, 300, 150, 10, yellow) && none(played, 250, 150), 'a finger is where it moved to, from the top left');
 
+// What the match picks for itself is no machine's either: its seed is 0, which
+// the game draws as a black block, and what it rolled from it one of 12 places
+const spots = Array.from({ length: 12 }, (_, i) => 40 + i * 20).filter(x => same(played.at(x * 2, 130 * 2), magenta));
+check(block(start, 280, 100, 10, black) && block(last, 280, 100, 10, black), "the match's seed is 0, as nothing of this machine picks it");
+check(spots.length === 1 && none(played, 20, 130), `and the match rolled once, with a generator seeded from it (at ${spots.join(', ') || 'no place'})`);
+
 check(none(last, 300, 150), 'in the last frame, the finger lifted');
 check(none(last, 40, 100) && block(last, 80, 100, 10, cyan), "and the gamepad's button is up, its stick still pushed");
 check(block(last, 220, 180, 10, red) && block(last, 200, 40, 20, green), 'and what happened before stays');
 
-// The same run again is the same pictures, byte for byte
+// The same run again is the same pictures, byte for byte, the match's seed
+// and its roll among what they show
 const bytes = name => readFileSync(join(scratch, name));
 const first = ['start.png', 'locked.png', 'played.png', 'last.png'].map(bytes);
 const again = run(args);

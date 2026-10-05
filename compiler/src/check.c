@@ -768,7 +768,7 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     }
 }
 
-static bool list_element_ok(type t, loc at);
+static bool list_element_ok(type t, loc at, const type *key);
 
 // Map<K, V> or Set<K> for those types: one declaration for each, so two maps
 // from ints to text are the same type. A map's `entry` is the struct a foreach
@@ -854,7 +854,7 @@ static bool resolve_map_type(const checker *c, const str text, const loc at, typ
         }
     }
     bool ok = map_key_ok(parts[0], at, set);
-    if (!set && !list_element_ok(parts[1], at)) ok = false;
+    if (!set && !list_element_ok(parts[1], at, &parts[0])) ok = false;
     *out = ok ? map_of(c->prog, parts[0], parts[1], set) : T_ERR;
     return true;
 }
@@ -1009,8 +1009,51 @@ static void unwrap_error(const expr *e, const type t)
               type_name(error));
 }
 
-// What a list can hold: values, never ECS data, Actions or other lists.
-static bool list_element_ok(const type t, const loc at)
+// The first list, map or set a struct has in it, in a struct of its own or not:
+// its kind, with the field it's in written to `path`, like "items" or
+// "bag.items". TY_ERROR for a struct with none.
+static type_kind first_held(const type t, char *path, const size_t size)
+{
+    const size_t start = strlen(path);
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        const type_kind kind = f->type.kind;
+        snprintf(path + start, size - start, "%s" STR_FMT, start ? "." : "", STR_ARG(f->name));
+        if (kind == TY_LIST || kind == TY_MAP || kind == TY_SET) return kind;
+        if (kind == TY_STRUCT) {
+            const type_kind inner = first_held(f->type, path, size);
+            if (inner != TY_ERROR) return inner;
+        }
+        path[start] = '\0';
+    }
+    return TY_ERROR;
+}
+
+// A struct with a list, a map or a set in it, as a list's element or a map's
+// value: nothing holds one yet. Says which field is in the way, and what to
+// write instead. `key` is the map's key type, or NULL for a list.
+static void refuse_held(const type t, const loc at, const type *key)
+{
+    char path[256] = "";
+    const type_kind kind = first_held(t, path, sizeof path);
+    const char *one = kind == TY_LIST ? "list" : kind == TY_MAP ? "map" : "set";
+    char entities[160];
+    if (key) snprintf(entities, sizeof entities, "Map<%s, Entity>", type_name(*key));
+    else snprintf(entities, sizeof entities, "List<Entity>");
+    diag_error(at, "a %s can't hold '" STR_FMT "' yet: its '%s' is a %s", key ? "map" : "list", STR_ARG(t.decl->name), path, one);
+    if (kind == TY_LIST) {
+        diag_note("keep all of their '%s' in one list, and in each '" STR_FMT "' where its part starts and how many it "
+                  "has; or keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
+                  path, STR_ARG(t.decl->name), STR_ARG(t.decl->name), entities);
+    } else {
+        diag_note("keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
+                  STR_ARG(t.decl->name), entities);
+    }
+}
+
+// What a list can hold, and a map as its values: values, never ECS data,
+// Actions or other lists. `key` is the map's key type, or NULL for a list.
+static bool list_element_ok(const type t, const loc at, const type *key)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
@@ -1024,13 +1067,13 @@ static bool list_element_ok(const type t, const loc at)
             return false;
         }
         if (!holds_list(t)) return true;
-        diag_error(at, "a list or a map can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(t.decl->name));
-        diag_note("lists and maps can't hold lists or maps yet");
+        refuse_held(t, at, key);
         return false;
     case TY_LIST:
     case TY_MAP:
     case TY_SET:
-        diag_error(at, "a list or a map can't hold lists or maps yet");
+        // The parser refuses these where they're written, with what to write instead
+        diag_error(at, "a %s can't hold %s yet", key ? "map" : "list", t.kind == TY_LIST ? "lists" : t.kind == TY_MAP ? "maps" : "sets");
         return false;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
@@ -1059,7 +1102,7 @@ static bool resolve_list_type(const checker *c, const str text, const loc at, ty
             suggest_note(&sg);
         }
     }
-    *out = list_element_ok(element, at) ? list_of(c->prog, element) : T_ERR;
+    *out = list_element_ok(element, at, NULL) ? list_of(c->prog, element) : T_ERR;
     return true;
 }
 
@@ -2673,6 +2716,12 @@ static type check_gui_call(checker *c, expr *e, const type result)
         if (!e->block) {
             diag_error(e->at, "%s takes a block: '%s(...) { ... }'", name.data, name.data);
             diag_note("its widgets go in the braces after it");
+            // A setting has two forms: the plain name around a block, and Set for what follows
+            if (str_eq_c(e->name, "Theme")) {
+                diag_note("to set it for the widgets that follow, in this view and the ones after it, write "
+                          "'GUI.SetTheme(...)'");
+                suggest_replacement(e->name, "SetTheme");
+            }
         }
     } else if (result.kind != TY_VOID && c->loop_header > 0) {
         diag_error(e->at, "%s can't be in a loop's condition or a for's step", name.data);
@@ -3529,6 +3578,7 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         if ((gui || builtin_draw_owner(owner)) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
@@ -7360,7 +7410,13 @@ static void check_stmt(checker *c, stmt *s)
                 } else {
                     diag_error(e->block->at, "'" STR_FMT "' doesn't take a block", STR_ARG(e->name));
                 }
-                diag_note("is a ';' missing after the call?");
+                // A setting has two forms: Set for what follows, and the plain name around a block
+                if (call == CALL_GUI && str_eq_c(e->name, "SetTheme")) {
+                    diag_note("GUI.SetTheme sets the theme for the widgets that follow; for the widgets in a block alone, "
+                              "write 'GUI.Theme(...) { ... }'");
+                } else {
+                    diag_note("is a ';' missing after the call?");
+                }
             }
             c->block_depth++;
             check_stmt(c, e->block);
@@ -8124,10 +8180,13 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
         }
+        // A struct declared after this field had no fields yet when the field's type was resolved
         if (f->type.kind == TY_LIST && holds_list(list_element(f->type))) {
-            const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-            diag_error(at, "a list can't hold '" STR_FMT "': it has a list or a map in it", STR_ARG(list_element(f->type).decl->name));
-            diag_note("lists and maps can't hold lists or maps yet");
+            refuse_held(list_element(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, NULL);
+        }
+        if (f->type.kind == TY_MAP && holds_list(map_value(f->type))) {
+            const type key = f->type.decl->fields.items[0].type;
+            refuse_held(map_value(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, &key);
         }
         check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
@@ -9864,6 +9923,57 @@ static void add_builtins(program *prog)
     shape->fields.items[6].default_value = none;
     shape->fields.items[8].default_value = white;
     prog->shape = shape;
+    // struct GUITheme { Color text; Color panel; Color control; Color hot;
+    // Color pressed; Color field; Color fieldHot; Color accent; float radius; }:
+    // how the GUI's own widgets look, which generated C hands tide/gui.h as a
+    // tide_gui_theme. Its defaults are the look every frame starts with,
+    // tide_gui_theme_default in the engine's gui.c: a change to one goes to
+    // the other.
+    decl *theme = NEW(decl);
+    theme->kind = DECL_STRUCT;
+    theme->name = str_from("GUITheme");
+    theme->builtin = true;
+    static const char *const theme_colors[][5] = {
+        {"text", "0.93", "0.93", "0.95", "1"},  {"panel", "0.07", "0.07", "0.1", "0.9"},
+        {"control", "0.2", "0.2", "0.25", "1"}, {"hot", "0.28", "0.28", "0.34", "1"},
+        {"pressed", "0.14", "0.14", "0.18", "1"}, {"field", "0.12", "0.12", "0.15", "1"},
+        {"fieldHot", "0.16", "0.16", "0.2", "1"}, {"accent", "1", "0.77", "0.24", "1"}};
+    for (int i = 0; i < (int)(sizeof theme_colors / sizeof theme_colors[0]); i++) {
+        field f = {0};
+        f.name = str_from(theme_colors[i][0]);
+        f.type_name = str_from("Color");
+        expr *color = NEW(expr); // Color(r, g, b, a)
+        color->kind = E_CALL;
+        color->name = str_from("Color");
+        for (int k = 1; k < 5; k++) {
+            expr *part = NEW(expr);
+            part->kind = E_FLOAT;
+            part->text = str_from(theme_colors[i][k]);
+            vec_push(color->args, part);
+        }
+        f.default_value = color;
+        vec_push(theme->fields, f);
+    }
+    field theme_radius = {0};
+    theme_radius.name = str_from("radius");
+    theme_radius.type_name = str_from("float");
+    vec_push(theme->fields, theme_radius);
+    prog->gui_theme = theme;
+    // struct GUIControl { bool hovered; bool pressed; bool focused; bool
+    // clicked; }: what GUI.Control says of a control, as tide/gui.h's
+    // tide_control.
+    decl *control = NEW(decl);
+    control->kind = DECL_STRUCT;
+    control->name = str_from("GUIControl");
+    control->builtin = true;
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked"};
+    for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(control_fields[i]);
+        f.type_name = str_from("bool");
+        vec_push(control->fields, f);
+    }
+    prog->gui_control = control;
     static const char *const filters[] = {"Point", "Bilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
@@ -9934,6 +10044,8 @@ static void add_builtins(program *prog)
     vec_push(decls, vertex);
     vec_push(decls, vertex3);
     vec_push(decls, shape);
+    vec_push(decls, theme);
+    vec_push(decls, control);
     vec_push(decls, filter);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -11773,6 +11885,7 @@ bool check(program *prog)
 
     add_builtins(prog);
     builtins_use(prog->anchor, prog->shape);
+    builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
     check_units(prog);

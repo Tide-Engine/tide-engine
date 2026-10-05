@@ -1,4 +1,5 @@
-// expect: a list or a map can't hold 'Table': it has a list or a map in it
+// expect: a list can't hold 'Table' yet: its 'cells' is a map
+// expect: keep each 'Table' in a component, on an entity of its own, and hold the entities: 'List<Entity>'
 struct Table
 {
     Map<int, int> cells;

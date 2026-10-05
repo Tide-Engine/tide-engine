@@ -1637,6 +1637,35 @@ static const char *builtin_field_doc(const decl *d, const str name)
                    "Under 0, inwards from its edge, leaving its middle clear. 0 is a sharp edge, smooth over a pixel.";
         }
     }
+    if (d && d == A.prog->gui_theme) {
+        if (str_eq_c(name, "text")) return "Text, and a slider's thumb.";
+        if (str_eq_c(name, "panel")) return "An area's background.";
+        if (str_eq_c(name, "control")) return "A button, a toggle's box, a slider's rail and a color field's frame.";
+        if (str_eq_c(name, "hot")) return "A button, a toggle's box or a slider's rail with the pointer on it.";
+        if (str_eq_c(name, "pressed")) return "A button while it's held down.";
+        if (str_eq_c(name, "field")) return "A field to type into.";
+        if (str_eq_c(name, "fieldHot")) return "A field with the pointer on it.";
+        if (str_eq_c(name, "accent")) return "The outline of the widget that has the focus, a toggle's check and a slider's filled part.";
+        if (str_eq_c(name, "radius")) {
+            return "How round the widgets' corners are, in pixels, up to half a part's smaller side. 0, its default, is "
+                   "square corners.";
+        }
+    }
+    if (d && d == A.prog->gui_control) {
+        if (str_eq_c(name, "hovered")) return "Whether the pointer is on it, with nothing of the GUI's over it.";
+        if (str_eq_c(name, "pressed")) {
+            return "Whether the pointer holds it: from a press on it until it lets go, wherever it goes meanwhile. A "
+                   "button looks down while it's `pressed` and `hovered`; a handle follows the pointer while it's `pressed`.";
+        }
+        if (str_eq_c(name, "focused")) {
+            return "Whether the keyboard and the gamepad are on it: Tab, the arrows, the d-pad and the left stick move "
+                   "the focus between widgets.";
+        }
+        if (str_eq_c(name, "clicked")) {
+            return "Whether it was clicked this frame: a press on it let go on it, or Enter, Space or the gamepad's "
+                   "south button went down while it had the focus.";
+        }
+    }
     return NULL;
 }
 
@@ -2072,6 +2101,14 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, "\n\nWhat `Draw2D.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
                             "of one color or from one to another, an outline, and an edge that's sharp or fades. "
                             "`Draw2D.RoundRect`, `Ellipse` and the thick outlines and lines are short for it.");
+            } else if (o->decl == A.prog->gui_theme) {
+                sb_put(out, "\n\nHow the GUI's own widgets look: their colors, and how round their corners are. Its "
+                            "defaults are the look they have without one, so a theme names what it changes: "
+                            "`GUITheme { control = panel, radius = 10 }`. `GUI.SetTheme(theme)` sets it for the widgets "
+                            "that follow, and `GUI.Theme(theme) { ... }` for those in its block.");
+            } else if (o->decl == A.prog->gui_control) {
+                sb_put(out, "\n\nWhat `GUI.Control(rect)` says of a widget the view draws itself: whether it's hovered, "
+                            "held, focused and clicked.");
             } else if (o->decl == A.prog->random) sb_put(out, "\n\n" RANDOM_DOC);
             else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
             else if (o->decl->is_scene) {
@@ -2259,12 +2296,15 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, ", the match's ticks, this machine's frames, or seconds.");
         } else {
             sb_put(out, builtin_draw_owner(o->name)        ? "\n\nImmediate-mode drawing, in views and the functions they call."
-                      : str_eq_c(o->name, "GUI")       ? "\n\nThe GUI's widgets, each at a Rect, and claims of the pointer and "
-                                                         "the keyboard for widgets a view draws itself. In views and the "
-                                                         "functions they call."
+                      : str_eq_c(o->name, "GUI")       ? "\n\nThe GUI's widgets, each at a Rect; `Control`, a widget a view "
+                                                         "draws itself; the widgets' theme; and claims of the pointer and "
+                                                         "the keyboard for widgets that read the devices themselves. In "
+                                                         "views and the functions they call."
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
-                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels."
+                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels. `Screen.Flip` gives a "
+                                                         "position counted from its other edge: a device's, from "
+                                                         "the bottom left, as the screen's, from the top left."
                       : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
                                                          "previous one started, for what isn't the match's: particles, "
                                                          "menus, a camera's shake. Local code reads it, and the "
@@ -5331,7 +5371,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Draw3D", CK_MODULE, "3D drawing and its camera", NULL, NULL);
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
-        item(c, "Screen", CK_MODULE, "The window's size, in GUI units", NULL, NULL);
+        item(c, "Screen", CK_MODULE, "The window's size, in pixels, and Flip for the devices' positions", NULL, NULL);
     }
     // The mouse's cursor: views lock it, and they and the input's Sample read whether it's locked
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
@@ -6475,7 +6515,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "Filter", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
