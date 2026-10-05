@@ -188,8 +188,9 @@ block('tide-example', (tokens, idx) => {
 // match itself: the first hosts it in a room and the second joins that room,
 // as `tide run --host` and `tide run --join <code>` would. `lag=<ms>` after a
 // match's file name is the ping its slider starts at: the round trip between
-// the player who joins and the server. One with nothing inside shows no
-// source: for a page that has it beside another frame.
+// the player who joins and the server, whose least the page writes beside it
+// once the game measured one. One with nothing inside shows no source: for a
+// page that has it beside another frame.
 function players(name: string, match: boolean) {
     block(name, (tokens, idx) => {
         const token = tokens[idx];
@@ -201,7 +202,7 @@ function players(name: string, match: boolean) {
         const src = `/examples/${id}/`;
         const ping = Math.min(Number(lag ?? 0), 500);
         const slider = match
-            ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output></label>`
+            ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output><span class="example-lag-min" hidden></span></label>`
             : '';
         const names = match ? ['hosts the match', 'joins it'] : ['', ''];
         const frames = names

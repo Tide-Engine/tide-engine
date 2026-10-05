@@ -19,6 +19,7 @@
 // what's before the loop left it, and one pass over the code is enough.
 
 typedef struct flow {
+    program *prog;            // For the fixes editors offer
     const decl *code;         // The function or method, for its `out` parameters; NULL for other code
     VEC(const void *) vars;   // Each variable: a param of `code`, or the S_VAR an `out` argument declares
     int params;               // ...the first of them are the parameters
@@ -292,6 +293,8 @@ static void flow_leave(const flow *f, const loc at, const uint8_t *st, const boo
         }
         diag_note("an 'out' parameter is assigned on every path that returns: '" STR_FMT " = default;' fills it where there's "
                   "nothing to give", STR_ARG(p->name));
+        const fix assign = {.kind = FIX_ASSIGN_OUT, .at = at, .param = p, .method = f->code};
+        vec_push(f->prog->fixes, assign);
     }
 }
 
@@ -404,10 +407,11 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
     }
 }
 
-void check_assigned(const decl *code, const stmt *body)
+void check_assigned(program *prog, const decl *code, const stmt *body)
 {
     if (!body) return;
     flow f = {0};
+    f.prog = prog;
     f.code = code;
     for (int i = 0; code && i < code->params.count; i++) {
         if (code->params.items[i].is_out) vec_push(f.vars, &code->params.items[i]);
