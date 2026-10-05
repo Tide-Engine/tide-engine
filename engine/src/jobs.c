@@ -173,8 +173,23 @@ typedef struct loop_slot {
     atomic_uint users;
 } loop_slot;
 
+// A task C started (tide_job_start), until the thread that started it has
+// waited for it: free, being filled in, ready for a thread to take, running,
+// done.
+#define TASK_SLOTS 64u
+enum { TASK_FREE, TASK_FILLING, TASK_READY, TASK_RUNNING, TASK_DONE };
+typedef struct task_slot {
+    atomic_uint state;
+    void (*work)(void *context);
+    void *context;
+} task_slot;
+
 typedef struct tick_run {
     loop_slot loops[LOOP_SLOTS];
+    task_slot tasks[TASK_SLOTS];
+    atomic_uint tasks_ready; // Those a thread could take now
+    atomic_uint tasks_used;  // C started tasks in this tick
+    uint32_t threads;        // The pool's, and the caller's
     void *world;
     const tide_tick_systems *tick;
     system_state *state;
@@ -274,6 +289,24 @@ static bool help_loop(tick_run *r)
     return false;
 }
 
+// A task C started that no thread has taken, if there's one.
+static bool help_task(tick_run *r)
+{
+    if (!atomic_load_explicit(&r->tasks_ready, memory_order_relaxed)) return false;
+    for (uint32_t i = 0; i < TASK_SLOTS; i++) {
+        task_slot *slot = &r->tasks[i];
+        unsigned ready = TASK_READY;
+        if (atomic_load_explicit(&slot->state, memory_order_relaxed) != TASK_READY) continue;
+        if (!atomic_compare_exchange_strong(&slot->state, &ready, TASK_RUNNING)) continue;
+        atomic_fetch_sub(&r->tasks_ready, 1u);
+        tide_memory_sync(); // What the thread that started it made
+        slot->work(slot->context);
+        atomic_store(&slot->state, TASK_DONE);
+        return true;
+    }
+    return false;
+}
+
 static void work(void *context, const uint32_t thread)
 {
     (void)thread;
@@ -283,11 +316,12 @@ static void work(void *context, const uint32_t thread)
     // A thread with nothing to do spins a little, then lets the system run
     // something else on its core: with a thread on every core, one the
     // system pushes aside for a moment would otherwise hold the tick up for
-    // a whole time slice, while the rest spin. A loop a running system shares
-    // out comes first: what waits for that system waits for it.
+    // a whole time slice, while the rest spin. What a running system shares
+    // out comes first, its C's tasks and its loops: what waits for that system
+    // waits for them.
     uint32_t idle = 0;
     while (atomic_load(&r->finished) < r->tick->count) {
-        if (help_loop(r) || work_once(r)) {
+        if (help_task(r) || help_loop(r) || work_once(r)) {
             idle = 0;
         } else if (++idle < 256u) {
             relax();
@@ -327,6 +361,64 @@ void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint
     tide_memory_sync(); // What the other threads made (see tide/page.h)
 }
 
+// While a tick runs on one thread: the threads it could have had, so its C
+// knows there's a pool. And whether the last tick's C started tasks, which
+// puts the next one on threads.
+static TIDE_THREAD_LOCAL uint32_t serial_threads;
+static TIDE_THREAD_LOCAL bool tasks_wanted;
+
+tide_job tide_job_start(void (*work_fn)(void *context), void *context)
+{
+    tick_run *r = current;
+    if (r) {
+        atomic_store_explicit(&r->tasks_used, 1u, memory_order_relaxed);
+        for (uint32_t i = 0; i < TASK_SLOTS; i++) {
+            task_slot *slot = &r->tasks[i];
+            unsigned none = TASK_FREE;
+            if (!atomic_compare_exchange_strong(&slot->state, &none, TASK_FILLING)) continue;
+            slot->work = work_fn;
+            slot->context = context;
+            atomic_store(&slot->state, TASK_READY);
+            atomic_fetch_add(&r->tasks_ready, 1u);
+            return i + 1u;
+        }
+    } else if (serial_threads > 1u) {
+        tasks_wanted = true;
+    }
+    work_fn(context); // No thread to give it to, or no room to say so
+    return 0;
+}
+
+void tide_job_wait(const tide_job job)
+{
+    tick_run *r = current;
+    if (!job || !r) return;
+    task_slot *slot = &r->tasks[job - 1u];
+    unsigned ready = TASK_READY;
+    if (atomic_compare_exchange_strong(&slot->state, &ready, TASK_RUNNING)) { // Nobody took it: here, then
+        atomic_fetch_sub(&r->tasks_ready, 1u);
+        slot->work(slot->context);
+    } else {
+        uint32_t idle = 0;
+        while (atomic_load(&slot->state) != TASK_DONE) {
+            if (++idle < 256u) {
+                relax();
+            } else {
+                tide_yield();
+                idle = 0;
+            }
+        }
+    }
+    atomic_store(&slot->state, TASK_FREE);
+    tide_memory_sync(); // What the thread that ran it made (see tide/page.h)
+}
+
+uint32_t tide_job_threads(void)
+{
+    const tick_run *r = current;
+    return r ? r->threads : serial_threads > 1u ? serial_threads : 1u;
+}
+
 // Each task's queue, kept from tick to tick by the thread that runs ticks, so
 // their pages are made once rather than every tick.
 static TIDE_THREAD_LOCAL tide_queue *kept_queues;
@@ -346,11 +438,15 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 {
     const uint32_t count = tick->count;
     tick_run r = {.world = world, .tick = tick, .state = zeroed(count, sizeof(system_state)),
-                  .first_dependent = zeroed(count + 1u, sizeof(uint32_t)), .profile = jobs->profile};
+                  .first_dependent = zeroed(count + 1u, sizeof(uint32_t)), .profile = jobs->profile,
+                  .threads = jobs->threads};
     for (uint32_t i = 0; i < LOOP_SLOTS; i++) {
         atomic_init(&r.loops[i].job, NULL);
         atomic_init(&r.loops[i].users, 0u);
     }
+    for (uint32_t i = 0; i < TASK_SLOTS; i++) atomic_init(&r.tasks[i].state, TASK_FREE);
+    atomic_init(&r.tasks_ready, 0u);
+    atomic_init(&r.tasks_used, 0u);
     uint32_t tasks = 0;
     uint32_t edges = 0;
     uint32_t last_spawner = NONE;
@@ -398,6 +494,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 
     jobs->run(jobs->self, work, &r);
     tide_memory_sync(); // What the other threads made (see tide/page.h)
+    tasks_wanted = atomic_load(&r.tasks_used) != 0u;
     if (r.profile) {
         tide_profile_count(&r.profile->systems, count);
         for (uint32_t s = 0; s < count; s++) {
@@ -420,7 +517,9 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
 
 void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_jobs *jobs)
 {
-    uint64_t work_in_all = 0;
+    // C that started tasks in the last tick has work tidec can't see: on
+    // threads again, until a tick starts none
+    uint64_t work_in_all = tasks_wanted ? PARALLEL_WORK : 0;
     for (uint32_t s = 0; s < tick->count && jobs && jobs->threads > 1 && work_in_all < PARALLEL_WORK; s++) {
         uint64_t work = 0;
         tick->systems[s].count(world, &work);
@@ -431,6 +530,8 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         tide_entities_settle(tick->entities);
         return;
     }
+    if (jobs && jobs->threads > 1) tasks_wanted = false; // A tick with no threads to have says nothing of the next
+    serial_threads = jobs ? jobs->threads : 1u;
 
     // One thread, in order, recording straight into the world's queue, with
     // the same tasks, temporary handles and settling as on threads
@@ -455,5 +556,6 @@ void tide_run_systems(void *world, const tide_tick_systems *tick, const tide_job
         free(spawned);
         first += tasks;
     }
+    serial_threads = 0;
     tide_entities_settle(tick->entities);
 }

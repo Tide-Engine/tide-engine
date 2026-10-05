@@ -120,3 +120,5 @@ if(TIDE_PLATFORM)
         add_subdirectory(docs/examples)
     endif()
 endif()
+
+add_subdirectory(packages) # The packages that come with tide, and their tests

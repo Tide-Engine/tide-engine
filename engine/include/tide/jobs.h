@@ -120,3 +120,31 @@ tide_entity tide_new_entity(tide_entities *t);
 // small loop, it runs them on this thread, in order. The tasks never depend on
 // each other, so the result is the same either way.
 void tide_parallel_for(uint32_t count, void (*work)(void *context, uint32_t task), void *context, uint64_t cost);
+
+// Jobs, for C that shares its own work out: a library with a task interface
+// of its own (a physics solver's start and finish), which a loop that returns
+// once it's done can't serve. Called from a system, or from what it calls.
+//
+// tide_job_start hands work(context) to another of the tick's threads and
+// returns at once; tide_job_wait returns once it has run. A task nobody took
+// by the time it's waited for runs there, so every task runs exactly once
+// whatever the threads are doing, and with no other thread (a tick on one
+// thread, a page without threads, code outside a tick) it runs inside
+// tide_job_start, which then returns 0: nothing to wait for. Every task that
+// was started is waited for, by the thread that started it, before the code
+// that started it returns.
+//
+// tidec can't tell how much work C is, so a tick whose C started tasks runs on
+// threads the next time, whatever its systems look like, for as long as its C
+// goes on starting them: C that has little to do should start none.
+//
+// Tasks are the caller's to keep in step, as everything C does on threads is:
+// they have to come out the same however many threads take them.
+typedef uint32_t tide_job;
+tide_job tide_job_start(void (*work)(void *context), void *context);
+void tide_job_wait(tide_job job);
+
+// The threads the running tick can have at work at once, the caller's
+// included: 1 with no pool, and outside a tick. What a library sizes its
+// workers by.
+uint32_t tide_job_threads(void);

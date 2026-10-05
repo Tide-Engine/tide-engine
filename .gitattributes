@@ -6,3 +6,6 @@ compiler/tests/e2e/crlf.tide -text
 # The platform's font, and code vendored as it came.
 *.ttf binary
 platform/third_party/* -text
+
+# Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
+packages/box2d/box2d/** -text

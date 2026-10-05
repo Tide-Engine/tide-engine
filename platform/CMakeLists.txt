@@ -193,7 +193,7 @@ target_link_libraries(tide_platform_migrate PRIVATE tide_platform)
 add_test(NAME tide_platform_migrate COMMAND tide_platform_migrate)
 
 # Ticks on every core, against ticks on one thread
-tide_add_game(tide_platform_jobs SOURCES tests/jobs.tide NAME game
+tide_add_game(tide_platform_jobs SOURCES tests/jobs.tide tests/jobs_tasks.c NAME game
     HOST tests/jobs.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_jobs PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_platform_jobs PRIVATE tide_platform)
@@ -472,7 +472,7 @@ if(TIDE_WEB)
 
     # Ticks on threads in a browser: a cross-origin isolated page, whose
     # threads are workers sharing its memory, against ticks on one thread.
-    tide_add_game(tide_platform_web_threads SOURCES tests/jobs.tide NAME game HOST tests/web_threads.c)
+    tide_add_game(tide_platform_web_threads SOURCES tests/jobs.tide tests/jobs_tasks.c NAME game HOST tests/web_threads.c)
     target_link_libraries(tide_platform_web_threads PRIVATE tide_platform)
     tide_web_page(tide_platform_web_threads SHELL tests/web_threads.html)
     add_test(NAME tide_platform_web_threads

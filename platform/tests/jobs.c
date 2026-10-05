@@ -17,6 +17,8 @@ static tide_world one;      // Ticked on this thread
 static tide_world many;     // On every core
 static tide_world snapshot; // Of `many`, before each tick: it shares its pages
 
+extern atomic_int jobs_tasks_elsewhere; // jobs_tasks.c
+
 // The threads that took part in a round of work, a bit each.
 static uint32_t threads_seen;
 
@@ -63,6 +65,18 @@ TIDE_TEST(jobs_threads_change_nothing)
     }
     TIDE_CHECK(one.Stats.hits > 100 && one.Stats.spawned == 80);
     TIDE_CHECK(one.Stats.wobbled > 1000); // Tasks went on, the same on threads
+
+    // Work C shared out as tasks (jobs_tasks.c): each ran once, and the pool's
+    // threads took some. A thread only takes one when it has nothing else, so
+    // a few more ticks if none has yet.
+    TIDE_CHECK(one.Stats.lost == 0 && many.Stats.lost == 0 && one.Stats.shared > 0);
+    for (int t = 0; t < 20000 && atomic_load(&jobs_tasks_elsewhere) == 0; t++) {
+        tide_world_tick(&one);
+        tide_world_tick_on(&many, jobs);
+        TIDE_REQUIRE(tide_world_hash(&one) == tide_world_hash(&many));
+    }
+    printf("    %d of C's tasks ran on another thread than the one that started them\n", atomic_load(&jobs_tasks_elsewhere));
+    TIDE_CHECK(atomic_load(&jobs_tasks_elsewhere) > 0);
     TIDE_CHECK(tide_world_entity_count(&one) == tide_world_entity_count(&many));
 
     // Entities spawned on many threads: every handle kept is the real one

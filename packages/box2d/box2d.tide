@@ -1,0 +1,211 @@
+// Box2D, Erin Catto's 2D physics engine (box2d/, as it came, with the changes
+// box2d/TIDE.md lists), for a match: bodies and their shapes are components,
+// and every tick steps them.
+//
+// Box2D keeps its world in C's memory, where a match's rollbacks, joins and
+// reloads don't reach. So after each step its whole state goes into the match
+// as bytes (Physics.image), and before each step C's world is either at that
+// state already or is made from it again. Everything that changes Box2D's
+// world happens in these systems, from what the components say: code that
+// wants a body to move writes its component.
+
+namespace Box2D;
+
+enum BodyType
+{
+    Static,
+    Kinematic,
+    Dynamic
+}
+
+// A rigid body. Its place and speeds are Box2D's after each step, and a system
+// that writes them moves the body: the next step starts from what they say.
+component Body
+{
+    long id; // Box2D's own handle: 0 until the body's first step
+    BodyType type = BodyType.Dynamic;
+    float2 position;
+    float angle; // In radians
+    float2 velocity;
+    float spin; // In radians a second
+    float2 impulse; // Given to the body at the next step, once
+    float turn; // The same, around
+    float gravityScale = 1;
+    float linearDamping;
+    float angularDamping;
+    bool fixedRotation;
+    bool bullet;
+}
+
+// A box on the entity's body, `size` wide and high around `offset`.
+component Box
+{
+    long id;
+    float2 size = float2(1, 1);
+    float2 offset;
+    float density = 1;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+
+// A circle on the entity's body.
+component Circle
+{
+    long id;
+    float radius = 0.5;
+    float2 offset;
+    float density = 1;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+
+// Two bodies started touching, or stopped: sent to each, with the other.
+event Touched
+{
+    Entity other;
+}
+
+event Parted
+{
+    Entity other;
+}
+
+singleton Physics
+{
+    float2 gravity = float2(0, -10);
+    int substeps = 4;
+    int bodies; // Made so far
+    int shapes;
+    long stamp; // Which state `image` is: what C's world is told apart by
+    int size; // The image's bytes; the list keeps what room it had
+    List<byte> image; // Box2D's whole state after the last step
+    List<long> gone; // Bodies whose entities were destroyed, until the next step
+    Map<long, Entity> owners; // Each body's entity
+}
+
+struct Contact
+{
+    long a;
+    long b;
+    bool began;
+}
+
+[NativeName("b2t_open")]
+extern bool OpenWorld(long stamp);
+
+[NativeName("b2t_restore")]
+extern void RestoreWorld(List<byte> image, int size, long stamp);
+
+[NativeName("b2t_gone")]
+extern void RemoveBodies(List<long> bodies, int count);
+
+[NativeName("b2t_body")]
+extern int SyncBody(mut Body body);
+
+[NativeName("b2t_box")]
+extern int AttachBox(long body, mut Box box);
+
+[NativeName("b2t_circle")]
+extern int AttachCircle(long body, mut Circle circle);
+
+[NativeName("b2t_step")]
+extern long StepWorld(float dt, int substeps, float2 gravity);
+
+[NativeName("b2t_size")]
+extern int ImageSize();
+
+[NativeName("b2t_image")]
+extern void CopyImage(mut List<byte> image, int count);
+
+[NativeName("b2t_pull")]
+extern void ReadBody(mut Body body, long stamp);
+
+[NativeName("b2t_touches")]
+extern int CountTouches(long stamp);
+
+[NativeName("b2t_touch")]
+extern Contact ReadTouch(int index);
+
+// C's world for this match, at the state the match is in: the one it has, or
+// one made from the image.
+system Begin(mut Physics physics)
+{
+    if (!OpenWorld(physics.stamp))
+    {
+        RestoreWorld(physics.image, physics.size, physics.stamp);
+    }
+    RemoveBodies(physics.gone, physics.gone.count);
+    physics.gone.Clear();
+}
+
+// New bodies are made, and what code wrote into a body since the last step
+// goes to Box2D.
+system Enter(mut Body body, mut Physics physics)
+{
+    if (SyncBody(body) != 0)
+    {
+        physics.bodies += 1;
+        physics.owners[body.id] = this;
+    }
+}
+
+system AttachBoxes(Body body, mut Box box, mut Physics physics)
+{
+    physics.shapes += AttachBox(body.id, box);
+}
+
+system AttachCircles(Body body, mut Circle circle, mut Physics physics)
+{
+    physics.shapes += AttachCircle(body.id, circle);
+}
+
+// The step, and Box2D's state after it into the match.
+system Step(Time time, mut Physics physics)
+{
+    physics.stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    physics.size = ImageSize();
+    while (physics.image.count < physics.size)
+    {
+        physics.image.Add(0);
+    }
+    CopyImage(physics.image, physics.image.count);
+}
+
+// Where the step left each body.
+system Leave(mut Body body, Physics physics)
+{
+    ReadBody(body, physics.stamp);
+}
+
+system Report(Physics physics)
+{
+    int count = CountTouches(physics.stamp);
+    for (int i = 0; i < count; i++)
+    {
+        Contact contact = ReadTouch(i);
+        Entity a = physics.owners[contact.a];
+        Entity b = physics.owners[contact.b];
+        if (contact.began)
+        {
+            a.Send(Touched { other = b });
+            b.Send(Touched { other = a });
+        }
+        else
+        {
+            a.Send(Parted { other = b });
+            b.Send(Parted { other = a });
+        }
+    }
+}
+
+// An entity that goes takes its body with it, at the next step.
+event(Destroyed) Remove(Body body, mut Physics physics)
+{
+    if (body.id != 0)
+    {
+        physics.gone.Add(body.id);
+        physics.owners.Remove(body.id);
+    }
+}
