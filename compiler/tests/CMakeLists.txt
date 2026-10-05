@@ -68,6 +68,10 @@ tide_e2e_test(local)
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
 tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
+tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
+tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
+tide_e2e_test(local_events_plain) # ...which is the same without them
+tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
 tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
@@ -82,6 +86,7 @@ tide_e2e_test(strings)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
+tide_e2e_test(lists_held) # Lists in structs, and what stands in for lists inside lists
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists

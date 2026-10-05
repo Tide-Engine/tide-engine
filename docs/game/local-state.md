@@ -136,7 +136,8 @@ void Bake(mut Box box)
 A local field lives outside the match. It's never sent, hashed, snapshotted or rolled back, and the match is exactly what it would be without it: the same world, the same hash, the same download for a player who joins. A mesh of a hundred thousand corners costs a joining player nothing; their machine bakes its own.
 
 - **Every entity with the component has them**, on every machine, however that machine learned of the entity: it ran the spawn, joined later, took over as host, or hot reloaded. Nothing attaches or removes them. Each starts at its default, and takes memory only once a view writes it.
-- **Views read and write them through their parameter.** `Box box` reads them, and `mut Box box` writes them, and only them: the match's fields stay a blended copy the view can't change. A function that takes the component gets them with it, like `Bake` above, and then only views and functions like it can call it.
+- **Views read and write them through their parameter.** `Box box` reads them, and `mut Box box` writes them, and only them: the match's fields stay a blended copy the view can't change. A function that takes the component gets them with it, like `Bake` above, and then only views, local handlers and functions like it can call it.
+- **A local handler of one of the match's events writes them too**, through `mut`, for the entity the event was sent to: a hit's handler sets the flash the entity's view then fades (see [Events](./events.md#local-handlers)).
 - **The match can't see them.** Reading or writing one in a system, a match handler or a task is an error, and so is naming one in a `Spawn` or a component value. A component's value is the match's part: a copy, `var b = box;`, has no local fields.
 - **They go with the entity**, once it's in neither the world views draw nor the last one the server confirmed. So a destroy this machine predicted wrong, which the server undoes, takes nothing with it, and a spawn it predicted that never happened leaves nothing behind. Losing the component loses them, and a match that's over takes them all.
 
@@ -190,7 +191,7 @@ It takes the one component or singleton whose local fields are going, and local 
 No mistake here can reach a running game, because the compiler enforces the boundary:
 
 - **Match code** (systems, match event handlers, match scenes) can't read or write anything local, a component's [local fields](#local-fields) included, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
-- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events.
+- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
 Input and commands carry local actions into the match. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
@@ -208,4 +209,17 @@ A local `Main` starts the program outside any match, usually in a menu:
 local scene Main { }
 ```
 
-Local handlers handle local events, and `Spawned` and `Destroyed` of local entities. They only take local state for now, but a handler of [`Forgotten`](#letting-go), which takes the component whose local fields are going.
+`local event` declares an event of this machine's own, which local code sends and handles. A local handler is `local` before a handler, `local event(...)`, and what it takes depends on what it hears:
+
+- **Local events**, and `Spawned` and `Destroyed` of local entities: local state only.
+- **The match's events**, to show what happened: what it reads of the match, as the event left it, and local state. Through `mut` it writes the [local fields](#local-fields) of the entity the event was sent to. See [Events](./events.md#local-handlers).
+- **[`Forgotten`](#letting-go)**: the component or singleton whose local fields are going, and local singletons.
+
+### A frame, in order
+
+1. The local handlers of the match's events run, for each tick this machine simulated since the last frame.
+2. The local fields of entities that are gone go, with [`Forgotten`](#letting-go) first where a handler asked for it.
+3. The views run.
+4. What handlers and views spawned, changed and sent locally is handled.
+
+So a view draws what a handler left in the same frame. What a handler wrote into the local fields of an entity that's gone by then goes in that frame too, before the views.

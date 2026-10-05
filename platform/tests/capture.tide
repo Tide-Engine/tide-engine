@@ -74,5 +74,5 @@ view Panel(Devices devices, mut Seen seen)
 
     // A finger, where it is: the devices count from the bottom left
     var finger = devices.touchscreen.primaryTouch;
-    if (finger.press.pressed) Draw2D.Rect(float2(finger.position.x, Screen.height - finger.position.y), float2(20, 20), Color(1, 1, 0));
+    if (finger.press.pressed) Draw2D.Rect(Screen.Flip(finger.position), float2(20, 20), Color(1, 1, 0));
 }
