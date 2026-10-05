@@ -603,6 +603,12 @@ static void build_signatures(void)
              "position", "The world origin on the near plane of a ray through this screen point in pixels from the top left.");
     describe(add("Draw3D", "ScreenRayDirection", T_F3, "tide_draw_screen_ray_direction", 1, T_F2, T_NONE, T_NONE),
              "position", "The normalized world direction of a ray through this screen point in pixels from the top left.");
+    // The window's height comes with the call (see gen_expr)
+    describe(add("Screen", "Flip", T_F2, "tide_draw_screen_flip", 1, T_F2, T_NONE, T_NONE),
+             "position", "The same point counted from the screen's other edge. Devices count pixels from the bottom "
+             "left, with y up, and the screen, the GUI and `ScreenToWorld` from the top left, with y down: "
+             "`Screen.Flip(devices.pointer.position)` is where the pointer is on the screen. It's its own inverse, so "
+             "it takes a screen position to the devices' too.");
 
     // Text's methods: tide/text.h, with the text first. Positions and lengths
     // count characters, and are clamped to the text, never out of range.
