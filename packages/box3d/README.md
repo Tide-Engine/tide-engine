@@ -76,15 +76,15 @@ Measured on a release build, 2,400 crates in stacks (an image of 3.5 MB, and 1.4
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
-| Box3D's step | 1.1 | 0.03 | 0 |
-| Its state into an image | 0.24 | 0.17 | 0 |
-| The image into the match, and bodies in and out | 1.3 | 0.39 | 0.04 |
-| Keeping and hashing the world | 0.52 | 0.10 | 0.00 |
+| Box3D's step | 1.0 | 0.03 | 0 |
+| Its state into an image | 0.21 | 0.16 | 0 |
+| The image into the match, and bodies in and out | 0.53 | 0.18 | 0.04 |
+| Keeping and hashing the world | 0.35 | 0.09 | 0.00 |
 | Of the image, what changed | 68% | 10% | 0% |
 
 - The step runs on the tick's threads (`tide_job_start`, `tide/jobs.h`) once 512 bodies are awake, and gives the same world on any number of them: 1.3 ms on one thread and 0.5 on twelve, where every crate is awake. The step alone is quicker shared from a couple of hundred bodies, but a tick whose C shares work out runs its systems on threads too, and under about 500 bodies that costs more than the step saves.
 - The image is every body, shape and contact, about a kilobyte and a half a body, whatever is awake. Box3D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
-- What's left, with everything moving, is mostly that: each chunk of the image that changed gets a page of its own, which the tick before's snapshot can't share.
+- What the package adds to the step is memory moved, not arithmetic: the image is written (3.5 MB), compared with the last one, what changed of it copied into the match and hashed, and each body's place read back into its component (0.4 ms of the 0.53). So it goes by how big the world is, where the step goes by what's awake.
 - Making C's world from an image, which a rollback does once, takes about a millisecond.
 - On the web Box3D has no SIMD (it only knows Emscripten's WebAssembly): the same step takes about 2.2 ms there on one thread. Shared out, it takes 0.8 with a thread for each of the machine's 12 cores, and 3.6, longer than on one thread, with the 24 a page gets on that machine, one for each thread its cores run (measured under Node). Box3D's workers spin while they wait for each other, and two on one core take it from each other. Box2D's step goes the same way there: it's how many threads a page's ticks get, not either package.
 - Compiling Box3D takes about 8 seconds of one core once (14 optimized), and adds about 800 KB to a game.
