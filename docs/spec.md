@@ -1827,7 +1827,7 @@ Draw.SetBlend(Blend.Add);          // For the views that follow, as a camera is 
   - `Clip` and `SetClip`: only what's inside a rectangle draws.
   - `Camera` and `SetCamera`: the camera the draws go through.
   - `Screen` and `SetScreen`: the draws are in the screen's pixels, from the top left with `y` down, as the GUI's are. `Draw2D.Screen() { ... }` lets a view of the world draw a label in pixels, and leaves the camera as it was for the views after it. What views draw on the screen is under the GUI's widgets.
-  - Cull and mask come later, with the same rule.
+  - Cull and stencil come later, with the same rule (see What the GPU side gains).
 - A form written as the other is a compile error, whose message names the other: `Draw.Blend(x);` with no block points to `Draw.SetBlend`, and `Draw.SetBlend(x) { }` to `Draw.Blend`. The spellings from before settings had two forms are errors the same way: `Draw2D.Camera(...);`, `Draw3D.Camera(...);`, `Draw2D.Clip(rect);`, `Draw2D.Clip();` and `Draw2D.Screen();`, and each on a render target. The language server offers the rename as a quick fix.
 - Every frame starts from the defaults. The GUI and the stats overlay are never drawn with a game's settings.
 - A block that's left early (`return`, `try`, `fail`, `break`, `continue`) still puts back what it found, as a GUI container is still closed.
@@ -1847,6 +1847,30 @@ view Sparks(Spark spark, Hud hud)
     }
 }
 ```
+
+#### What the GPU side gains (agreed, not built)
+
+Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build any technique itself (shadow maps were what started it), with no lighting or shadows of the engine's own. Nearly every technique draws into an image and reads that image in a later frag, so the pieces are what an image holds, what a draw's state is, what a frag reads and what it writes.
+
+- A draw with no frag keeps the engine's default look. It never means "depth only": what a draw writes is said, never implied.
+- **A target says what it holds when it's made.** Every target has depth, and its format says what color image is beside it, if any: the color there is today, or none, for a target of depth alone. A target of depth alone is drawn into like any other, and a frag's color has nowhere to go there.
+- **A frag reads a target's depth,** as it reads its color: `target.depth` beside `target.color`. Reading it gives a number, how far the nearest thing drawn there is, from 0 to 1 as `pixel.depth` is. A second way to read it compares it with a number of the frag's and gives how much of what's stored is further, from 0 to 1, filtered by the GPU: what a shadow's edge wants.
+- **Which side of a triangle draws is a setting of `Draw3D`'s,** with both forms, and the default is that the back doesn't: `Draw3D.Cull(...) { }` and `Draw3D.SetCull(...)`. `Draw2D` never culls.
+- **How `uv` wraps is chosen where a texture is sampled,** as the filter is.
+- **Stencil is there as it is on a GPU:** a whole number from 0 to 255 for each pixel, beside its depth. A draw compares it with a number of its own, by a test it names, and doesn't draw where that fails, and it says what becomes of the stored number where it draws. It's a draw setting with both forms. It's built last.
+- **A frag's outputs are `out` parameters,** its color among them: `out Color color`, so a frag that leaves a path without writing it is an error, where `mut Color color` started as white. A vert's vertex stays `mut`: it's handed a vertex and changes it. `mut Color color` becomes an error that names `out`.
+- **A frag has more outputs than one color,** each an `out` parameter, into a target made to hold as many.
+- **A vert hands its frag a struct of its own:** an `out` parameter of the vert's, which the GPU blends across the triangle and the frag reads, so what a vert works out needs no field in every vertex of the mesh. Verts and frags stay declarations of their own, paired where a draw names them, and a frag that reads what the draw's vert doesn't write is an error at the draw.
+- There's no setting for whether a draw writes color: a target of depth alone covers it.
+- The names and details are picks, to confirm as each is built:
+  - `Format.DepthOnly` as a target's last argument, and what the format of a target with color is called.
+  - `target.depth` as a type of its own (the generated shader differs for it, so the compiler has to know), with `Sample(uv)` giving a `float` and `Compare(uv, value)`.
+  - The front of a triangle is the side its corners go clockwise on, as Unity's; the enum `Cull` with `Back`, `Front` and `None`.
+  - `Wrap` as an argument of `Sample`, after the filter.
+  - `Draw.Stencil(test, value[, operation])`, with enums for the test and the operation (keep, replace, increment, decrement, zero, invert), and none of a GPU's other stencil state (each side of a triangle apart, what a failed depth test does, bit masks).
+  - A vert's struct and the frag's are matched by type, as a system finds a component.
+- Left for later: mipmaps (a level the GPU picks can't be sampled in every branch, which code can rely on today), cube maps and 3D textures, a depth bias as state (a frag subtracts one where it compares), and reading a target's pixels back into Tide.
+- Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional
 
@@ -2047,11 +2071,11 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: a struct of its own that a vert writes for its frag (another `mut` parameter), so a vert passes on what it worked out without a field in every vertex of the list; which side of a triangle a pixel is on; the camera; render state (which side of a triangle draws, and masks; how a mesh blends and what it does with depth are draw settings); a frag's outputs other than one `Color` (a second one, or one of another type); code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan.
+- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What's agreed and not built yet (a target's format and its depth read, cull, wrap, stencil, `out` outputs, a vert's struct for its frag) is in What the GPU side gains.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
-- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
+- Textures: mipmaps; a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI
 
