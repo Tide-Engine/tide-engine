@@ -191,7 +191,8 @@ if(TIDE_PLATFORM)
                 "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
                 "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
-        set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+        # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
+        set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
     elseif(NOT TIDE_ANDROID AND TIDE_NODE)
         tide_add_game(tidec_e2e_fetch SOURCES e2e/fetch.tide NAME game
             HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_test.c")

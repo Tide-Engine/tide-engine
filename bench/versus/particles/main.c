@@ -9,8 +9,8 @@
 extern const versus_way particles_c;
 
 static versus_flag flags[] = {
-    {"count", "particles", 1000000, 10000, 0},
-    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
+    {"count", "particles", 1000000, 10000, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
 
 // With --kept 1, each tick's world is kept first, as a client keeps every tick
@@ -34,13 +34,24 @@ static void tick(void *world, const tide_jobs *jobs)
     tide_world_tick_on(world, jobs);
 }
 
-static uint64_t digest(const void *world)
+static uint64_t world_digest(const tide_world *w)
 {
-    const tide_world *w = world;
     uint64_t sum = 0;
     for (uint32_t row = 0; row < w->arch0_Particle.count; row++) {
         const Particle p = TIDE_AT(w, arch0_Particle, Particle, row);
         sum += versus_item(&p, sizeof p);
+    }
+    return sum;
+}
+
+static uint64_t digest(const void *world)
+{
+    uint64_t sum = world_digest(world);
+    if (keeps) {
+        // Reading the retained world after the tick also checks that writes
+        // left the snapshot alone.
+        const uint64_t before = world_digest(&kept);
+        sum += versus_item(&before, sizeof before);
     }
     return sum;
 }

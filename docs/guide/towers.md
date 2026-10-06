@@ -146,9 +146,9 @@ var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -S
 **A tower is loose bricks all the way down.** With the world as Box2D comes, forty meters of them is a spring: a contact gives a little, and every landing ran down the whole tower and back. So the game tunes the world, which is [three fields of `Physics`](../physics/box2d.md#the-world):
 
 ```csharp
-physics.substeps = SUBSTEPS;   // 8, where it comes with 4
-physics.stiffness = STIFFNESS; // 60, where it comes with 30
-physics.damping = DAMPING;     // 40, where it comes with 10
+physics.substeps = SUBSTEPS;          // 8, where it comes with 4
+physics.contactStiffness = STIFFNESS; // 60, where it comes with 30
+physics.contactDamping = DAMPING;     // 40, where it comes with 10
 ```
 
 Contacts are twice as stiff, which takes twice the substeps to count, and come back out four times as gently. A tower of loose bricks then stands at forty meters, and what's wrong with it low down still shows at the top.
@@ -259,9 +259,9 @@ Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws t
 
 ### What it costs
 
-Late in a round there are about 150 bodies: 120 bricks on the towers, loose but for the towers that used their Cement, and the rest falling or on the ground. On a desktop a tick takes around 0.11 ms while the towers build, with 0.04 more to keep and hash its world, 0.01 ms with everything at rest, and 0.17 ms while every tower comes down at once. In a browser those are 0.16, 0.04, 0.02 and 0.25. Box2D solves each tick in eight smaller steps here, twice what it comes with, which is what loose towers this tall take.
+Late in a round there are about 150 bodies: 120 bricks on the towers, loose but for the towers that used their Cement, and the rest falling or on the ground. On a desktop a tick takes around 0.07 ms while the towers build, with 0.03 more to keep and hash its world, 0.01 ms with everything at rest, and 0.1 ms while every tower comes down at once. In a browser those are 0.11, 0.04, 0.01 and 0.14. Box2D solves each tick in eight smaller steps here, twice what it comes with, which is what loose towers this tall take.
 
-A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.9 ms on a desktop and 1.4 ms in a browser, and 1.8 and 2.3 while everything comes down. That's a seventh of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
+A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.9 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.6 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
 
 Box2D's whole state is in the match, about 250 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 150 KB.
 

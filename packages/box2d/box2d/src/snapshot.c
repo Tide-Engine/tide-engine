@@ -15,6 +15,7 @@
 #include "island.h"
 #include "joint.h"
 #include "physics_world.h"
+#include "platform.h"
 #include "recording.h"
 #include "sensor.h"
 #include "shape.h"
@@ -141,6 +142,183 @@ static void b2SnapRCheck( b2SnapReader* r, int need )
 	}
 }
 
+// Tide: an image as what changed of the one before it (see ../TIDE.md, and b2World_GetSnapshotParts below).
+// The writer below is the one that writes an image whole, and what it appends comes here: a copy of the
+// bytes in memory of the world's own, or the bytes where they are when they go into an image as they are
+// (b2SnapW_Ref). Each is a part that says where in the image it goes. What the writer leaves out is what the
+// image before has already.
+//
+// The copies are in blocks that don't move, so a part can point into one, and they're kept from one image to
+// the next: they're as big as what changed, not as an image.
+typedef struct b2SnapBlock
+{
+	uint8_t* data;
+	int capacity;
+} b2SnapBlock;
+
+typedef struct b2SnapParts
+{
+	// What the caller gets
+	b2SnapshotPart* parts;
+	int count;
+	int capacity;
+
+	b2SnapBlock* blocks;
+	int blockCount;
+	int blockCapacity;
+	// The block being filled, and how much of it is
+	int block;
+	int used;
+
+	// The bytes appended last: where in the image, how many, and the copy. What's written over some of
+	// them after (b2SnapAt) is written there.
+	int lastOffset;
+	int lastSize;
+	uint8_t* last;
+
+	// The sizes the sections had in the image before
+	const int* sizesBefore;
+} b2SnapParts;
+
+_Static_assert( B2_SNAP_TRACK_SECTIONS == b2_sectionCount, "the sections of an image, as physics_world.h counts them" );
+
+#define B2_SNAP_BLOCK_SIZE ( 64 * 1024 )
+
+static void b2SnapPartsReset( b2SnapParts* p, const int* sizesBefore )
+{
+	// One block for all of them, so that what's written goes side by side the next time, with half as much
+	// again: a world that's waking up has more to write at each image, and would outgrow a block that
+	// just fits every time
+	if ( p->blockCount > 1 )
+	{
+		int total = 0;
+		for ( int i = 0; i < p->blockCount; ++i )
+		{
+			total += p->blocks[i].capacity;
+			b2Free( p->blocks[i].data, p->blocks[i].capacity );
+		}
+		total += total / 2;
+		p->blocks[0].data = b2Alloc( total );
+		p->blocks[0].capacity = total;
+		p->blockCount = 1;
+	}
+
+	p->count = 0;
+	p->block = 0;
+	p->used = 0;
+	p->lastOffset = 0;
+	p->lastSize = 0;
+	p->last = NULL;
+	p->sizesBefore = sizesBefore;
+}
+
+// Memory for `size` bytes side by side, which stays where it is until the next image
+static uint8_t* b2SnapPartsRoom( b2SnapParts* p, int size )
+{
+	if ( p->block < p->blockCount && p->used + size > p->blocks[p->block].capacity )
+	{
+		p->block += 1;
+		p->used = 0;
+	}
+
+	if ( p->block == p->blockCount )
+	{
+		if ( p->blockCount == p->blockCapacity )
+		{
+			int capacity = p->blockCapacity == 0 ? 8 : 2 * p->blockCapacity;
+			p->blocks =
+				b2GrowAlloc( p->blocks, p->blockCapacity * (int)sizeof( b2SnapBlock ), capacity * (int)sizeof( b2SnapBlock ) );
+			p->blockCapacity = capacity;
+		}
+
+		b2SnapBlock* block = p->blocks + p->blockCount;
+		block->capacity = size > B2_SNAP_BLOCK_SIZE ? size : B2_SNAP_BLOCK_SIZE;
+		block->data = b2Alloc( block->capacity );
+		p->blockCount += 1;
+		p->used = 0;
+	}
+	else if ( p->blocks[p->block].capacity < size )
+	{
+		// A block that was kept and is the last, and too small: a bigger one in its place
+		b2SnapBlock* block = p->blocks + p->block;
+		b2Free( block->data, block->capacity );
+		block->capacity = size;
+		block->data = b2Alloc( size );
+	}
+
+	uint8_t* at = p->blocks[p->block].data + p->used;
+	p->used += size;
+	return at;
+}
+
+// A part of the image: `size` bytes that go at `offset`. One that goes on from the last, in the image and in
+// memory, is the same part.
+static void b2SnapPartsAdd( b2SnapParts* p, int offset, int size, const uint8_t* bytes )
+{
+	if ( p->count > 0 )
+	{
+		b2SnapshotPart* last = p->parts + ( p->count - 1 );
+		if ( last->offset + last->size == offset && last->bytes + last->size == bytes )
+		{
+			last->size += size;
+			return;
+		}
+	}
+
+	if ( p->count == p->capacity )
+	{
+		int capacity = p->capacity == 0 ? 64 : 2 * p->capacity;
+		p->parts =
+			b2GrowAlloc( p->parts, p->capacity * (int)sizeof( b2SnapshotPart ), capacity * (int)sizeof( b2SnapshotPart ) );
+		p->capacity = capacity;
+	}
+
+	p->parts[p->count] = ( b2SnapshotPart ){ offset, size, bytes };
+	p->count += 1;
+}
+
+uint8_t* b2SnapPartsReserve( b2RecBuffer* buf, int size )
+{
+	b2SnapParts* p = buf->parts;
+	uint8_t* at = b2SnapPartsRoom( p, size );
+	b2SnapPartsAdd( p, buf->size, size, at );
+	p->lastOffset = buf->size;
+	p->lastSize = size;
+	p->last = at;
+	buf->size += size;
+	return at;
+}
+
+// Zeros from where the buffer is in the image up to `end`
+static void b2SnapPartsZeros( b2RecBuffer* buf, int end )
+{
+	int size = end - buf->size;
+	if ( size <= 0 )
+	{
+		return;
+	}
+
+	b2SnapParts* p = buf->parts;
+	uint8_t* at = b2SnapPartsRoom( p, size );
+	memset( at, 0, (size_t)size );
+	b2SnapPartsAdd( p, buf->size, size, at );
+	buf->size += size;
+}
+
+// Tide: where the bytes last appended are, to write over some of them: the image itself, or the copy an
+// image in parts has of them. `offset` is where in the image, at or past where they started.
+static uint8_t* b2SnapAt( b2RecBuffer* buf, int offset )
+{
+	if ( buf->parts == NULL )
+	{
+		return buf->data + offset;
+	}
+
+	b2SnapParts* p = buf->parts;
+	B2_ASSERT( p->lastOffset <= offset && offset < p->lastOffset + p->lastSize );
+	return p->last + ( offset - p->lastOffset );
+}
+
 // Tide: the next section starts here. Its size goes to the caller who asked, and with a table of bases the
 // writing goes on from this one's, over zeros. A section that ran past the next one's base says so, and from
 // there on the image is only measured, as one run of bytes: the caller places the sections again.
@@ -158,6 +336,18 @@ static void b2SnapSection( b2RecBuffer* buf, int section )
 		{
 			buf->overran = true;
 			buf->countOnly = true;
+		}
+		else if ( buf->parts != NULL )
+		{
+			// Tide: an image in parts. Between the end of the section before and this one's base the image
+			// before has zeros, but for where that section was bigger then: zeros there now.
+			if ( buf->countOnly == false && buf->section > 0 )
+			{
+				b2SnapParts* p = buf->parts;
+				int endBefore = buf->sectionStart + p->sizesBefore[buf->section - 1];
+				b2SnapPartsZeros( buf, endBefore < base ? endBefore : base );
+			}
+			buf->size = base;
 		}
 		else if ( buf->countOnly || base > buf->capacity )
 		{
@@ -224,6 +414,97 @@ static void b2SnapW_Bytes( b2RecBuffer* buf, const void* src, int n )
 	b2RecBufAppend( buf, src, n );
 }
 
+// Tide: bytes that go into an image as they are in the world, with nothing written over them after. An image
+// in parts has the big ones where they are, with no copy: what reads its parts compares them there, so they
+// stay as they are until its parts were read (see b2World_GetSnapshotParts).
+#define B2_SNAP_REF_SIZE 512
+
+static void b2SnapW_Ref( b2RecBuffer* buf, const void* src, int n )
+{
+	if ( buf->parts == NULL || buf->countOnly || n < B2_SNAP_REF_SIZE )
+	{
+		b2RecBufAppend( buf, src, n );
+		return;
+	}
+
+	b2SnapPartsAdd( buf->parts, buf->size, n, src );
+	buf->size += n;
+}
+
+// Tide: for an image in parts, whose writer leaves out what the image before has: the next bytes go at
+// `offset` in the image.
+static void b2SnapSkipTo( b2RecBuffer* buf, int offset )
+{
+	B2_ASSERT( buf->parts != NULL );
+	buf->size = offset;
+}
+
+// Tide: whether an image in parts leaves the section it's at as the image before has it, which it does when
+// nothing was done to what's in it: the buffer is then past it.
+static bool b2SnapKeepSection( b2RecBuffer* buf, bool touched )
+{
+	if ( buf->parts == NULL || buf->countOnly || touched )
+	{
+		return false;
+	}
+
+	b2SnapParts* p = buf->parts;
+	buf->size += p->sizesBefore[buf->section - 1];
+	return true;
+}
+
+// Tide: zeros over `size` bytes at `offset` in each of the `count` things of `stride` bytes that were written
+// from `start` on, which were the last bytes appended. Nothing, when they were only counted.
+static void b2SnapZero( b2RecBuffer* buf, int start, int count, int stride, int offset, int size )
+{
+	if ( buf->countOnly || count <= 0 )
+	{
+		return;
+	}
+
+	uint8_t* at = b2SnapAt( buf, start ) + offset;
+	for ( int i = 0; i < count; ++i )
+	{
+		memset( at, 0, (size_t)size );
+		at += stride;
+	}
+}
+
+// Tide: the next run of ids under `count` that are in `set`, from `*cursor` on: its first, and one past its
+// last. False when there's none left.
+static bool b2SnapNextRun( const b2SnapSet* set, int count, int* cursor, int* first, int* end )
+{
+	int limit = set->blockCount * 64 < count ? set->blockCount * 64 : count;
+	int i = *cursor;
+	while ( i < limit )
+	{
+		uint64_t word = set->bits[i >> 6] >> ( i & 63 );
+		if ( word != 0 )
+		{
+			i += (int)b2CTZ64( word );
+			break;
+		}
+		i = ( i | 63 ) + 1;
+	}
+
+	if ( i >= limit )
+	{
+		*cursor = limit;
+		return false;
+	}
+
+	int j = i + 1;
+	while ( j < limit && ( ( set->bits[j >> 6] >> ( j & 63 ) ) & 1 ) != 0 )
+	{
+		j += 1;
+	}
+
+	*first = i;
+	*end = j;
+	*cursor = j;
+	return true;
+}
+
 // Reject a count read from the image before it reaches an allocation or memset. count must be non
 // negative, its in-memory footprint must fit in int, and the stream must hold at least minStreamBytes
 // per element. A corrupt or truncated image then fails.
@@ -242,29 +523,82 @@ static bool b2SnapCheckCount( const b2SnapReader* r, int count, int memSize, int
 }
 
 // Serialize a POD array: count then raw bytes
+// Tide: which an image in parts has where they are (b2SnapW_Ref)
 #define b2SerPodArray( buf, arr )                                                                                                \
 	do                                                                                                                           \
 	{                                                                                                                            \
 		b2SnapW_I32( buf, ( arr ).count );                                                                                       \
 		if ( ( arr ).count > 0 )                                                                                                 \
 		{                                                                                                                        \
-			b2SnapW_Bytes( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                    \
+			b2SnapW_Ref( buf, ( arr ).data, ( arr ).count * (int)sizeof( *( arr ).data ) );                                      \
 		}                                                                                                                        \
 	}                                                                                                                            \
 	while ( 0 )
 
-// Serialize a sparse struct array whose element carries a host userData pointer. userData is host
+// Serialize a run of a sparse struct array whose element carries a host userData pointer. userData is host
 // wiring, not simulation state, so write it as NULL: images stay reproducible and never persist host
 // addresses across a save. On restore the field reads back NULL.
-#define b2SerSimArray( buf, arr, type )                                                                                          \
+// Tide: the elements from `first` up to `end`, which the buffer is at, as their bytes, and then zeros over
+// all 8 bytes of each one's userData (see ../TIDE.md): `start` is where the first element of all goes. An
+// image written whole has them all in one run, and an image in parts a run for each stretch of them that
+// may have changed (b2SnapNextRun), so both have the same bytes for an element. Upstream writes a copy of
+// each, one after another.
+#define b2SerSimRun( buf, arr, type, start, first, end )                                                                         \
 	do                                                                                                                           \
 	{                                                                                                                            \
-		b2SnapW_I32( buf, ( arr ).count );                                                                                       \
-		for ( int slot = 0; slot < ( arr ).count; ++slot )                                                                       \
+		int runCount = ( end ) - ( first );                                                                                      \
+		int runStart = ( start ) + ( first ) * (int)sizeof( type );                                                              \
+		b2SnapW_Bytes( buf, ( arr ).data + ( first ), runCount * (int)sizeof( type ) );                                          \
+		b2SnapZero( buf, runStart, runCount, (int)sizeof( type ), (int)offsetof( type, userDataBits ), 8 );                      \
+	}                                                                                                                            \
+	while ( 0 )
+
+// Tide: a sparse struct array, each element in the same room: the count, then all of them for an image
+// written whole, or the ones whose bit is in `set` for an image in parts, each at its place
+#define b2SerSimArray( buf, arr, type, set )                                                                                     \
+	do                                                                                                                           \
+	{                                                                                                                            \
+		int simCount = ( arr ).count;                                                                                            \
+		b2SnapW_I32( buf, simCount );                                                                                            \
+		int simStart = ( buf )->size;                                                                                            \
+		if ( ( buf )->parts != NULL && ( set ) != NULL )                                                                         \
 		{                                                                                                                        \
-			type elem = ( arr ).data[slot];                                                                                      \
-			elem.userDataBits = 0; /* Tide: all 8 bytes, see ../TIDE.md */                                                    \
-			b2SnapW_Bytes( buf, &elem, (int)sizeof( type ) );                                                                    \
+			int cursor = 0, first, end;                                                                                          \
+			while ( b2SnapNextRun( ( set ), simCount, &cursor, &first, &end ) )                                                  \
+			{                                                                                                                    \
+				b2SnapSkipTo( buf, simStart + first * (int)sizeof( type ) );                                                     \
+				b2SerSimRun( buf, arr, type, simStart, first, end );                                                             \
+			}                                                                                                                    \
+			b2SnapSkipTo( buf, simStart + simCount * (int)sizeof( type ) );                                                      \
+		}                                                                                                                        \
+		else if ( simCount > 0 )                                                                                                 \
+		{                                                                                                                        \
+			b2SerSimRun( buf, arr, type, simStart, 0, simCount );                                                                \
+		}                                                                                                                        \
+	}                                                                                                                            \
+	while ( 0 )
+
+// Tide: a POD array whose elements each take the same room and go by the ids `set` holds, as b2SerSimArray
+#define b2SerPodRuns( buf, arr, set )                                                                                            \
+	do                                                                                                                           \
+	{                                                                                                                            \
+		int podCount = ( arr ).count;                                                                                            \
+		int podStride = (int)sizeof( *( arr ).data );                                                                            \
+		b2SnapW_I32( buf, podCount );                                                                                            \
+		int podStart = ( buf )->size;                                                                                            \
+		if ( ( buf )->parts != NULL )                                                                                            \
+		{                                                                                                                        \
+			int cursor = 0, first, end;                                                                                          \
+			while ( b2SnapNextRun( ( set ), podCount, &cursor, &first, &end ) )                                                  \
+			{                                                                                                                    \
+				b2SnapSkipTo( buf, podStart + first * podStride );                                                               \
+				b2SnapW_Bytes( buf, ( arr ).data + first, ( end - first ) * podStride );                                         \
+			}                                                                                                                    \
+			b2SnapSkipTo( buf, podStart + podCount * podStride );                                                                \
+		}                                                                                                                        \
+		else if ( podCount > 0 )                                                                                                 \
+		{                                                                                                                        \
+			b2SnapW_Bytes( buf, ( arr ).data, podCount * podStride );                                                            \
 		}                                                                                                                        \
 	}                                                                                                                            \
 	while ( 0 )
@@ -365,7 +699,8 @@ static void b2SerHashSet( b2RecBuffer* buf, const b2HashSet* hs )
 	b2SnapW_U32( buf, hs->count );
 	if ( hs->capacity > 0 )
 	{
-		b2SnapW_Bytes( buf, hs->items, (int)( hs->capacity * sizeof( b2SetItem ) ) );
+		// Tide: which an image in parts has where they are (b2SnapW_Ref)
+		b2SnapW_Ref( buf, hs->items, (int)( hs->capacity * sizeof( b2SetItem ) ) );
 	}
 }
 
@@ -414,9 +749,10 @@ static void b2SerTree( b2RecBuffer* buf, const b2DynamicTree* tree )
 	b2SnapW_I32( buf, tree->proxyFreeList );
 	b2SnapW_I32( buf, tree->dfsOrdered ? 1 : 0 );
 
-	b2SnapW_Bytes( buf, tree->nodes, tree->nodeEnd * (int)sizeof( b2TreeNode ) );
-	b2SnapW_Bytes( buf, tree->parents, tree->nodeEnd * (int)sizeof( int32_t ) );
-	b2SnapW_Bytes( buf, tree->proxies, tree->proxyCapacity * (int)sizeof( b2TreeProxy ) );
+	// Tide: which an image in parts has where they are (b2SnapW_Ref)
+	b2SnapW_Ref( buf, tree->nodes, tree->nodeEnd * (int)sizeof( b2TreeNode ) );
+	b2SnapW_Ref( buf, tree->parents, tree->nodeEnd * (int)sizeof( int32_t ) );
+	b2SnapW_Ref( buf, tree->proxies, tree->proxyCapacity * (int)sizeof( b2TreeProxy ) );
 }
 
 static void b2DesTree( b2SnapReader* r, b2DynamicTree* tree )
@@ -579,6 +915,67 @@ static void b2DesWorldConfig( b2SnapReader* r, b2World* world )
 	world->enableRestitutionPropagation = ( flags & 0x10u ) != 0;
 }
 
+static inline uint8_t* b2SnapPutI32( uint8_t* at, int v )
+{
+	int32_t w = (int32_t)v;
+	memcpy( at, &w, 4 );
+	return at + 4;
+}
+
+static inline uint8_t* b2SnapPutBytes( uint8_t* at, const void* src, int n )
+{
+	if ( n > 0 )
+	{
+		memcpy( at, src, (size_t)n );
+	}
+	return at + n;
+}
+
+// Tide: the islands as upstream writes them, each its four numbers and then its bodies, its contacts and its
+// joints, each with how many first. There's an island for every few bodies and most have a few numbers, so
+// they're written into room asked for once, where upstream appends each number: the same bytes, at a fraction
+// of what they cost, in every image.
+_Static_assert( sizeof( b2ContactLink ) == 12 && sizeof( b2JointLink ) == 12, "an island's links in an image" );
+
+static void b2SerIslands( b2RecBuffer* buf, const b2World* world )
+{
+	int islandCount = world->islands.count;
+	const b2Island* islands = world->islands.data;
+
+	int size = 4;
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		const b2Island* island = islands + i;
+		size += 7 * 4 + island->bodies.count * 4 + island->contacts.count * 12 + island->joints.count * 12;
+	}
+
+	uint8_t* at = b2RecBufReserve( buf, size );
+	if ( at == NULL )
+	{
+		// Only counted
+		return;
+	}
+
+	const uint8_t* end = at + size;
+	at = b2SnapPutI32( at, islandCount );
+	for ( int i = 0; i < islandCount; ++i )
+	{
+		const b2Island* island = islands + i;
+		at = b2SnapPutI32( at, island->setIndex );
+		at = b2SnapPutI32( at, island->localIndex );
+		at = b2SnapPutI32( at, island->islandId );
+		at = b2SnapPutI32( at, island->constraintRemoveCount );
+		at = b2SnapPutI32( at, island->bodies.count );
+		at = b2SnapPutBytes( at, island->bodies.data, island->bodies.count * 4 );
+		at = b2SnapPutI32( at, island->contacts.count );
+		at = b2SnapPutBytes( at, island->contacts.data, island->contacts.count * 12 );
+		at = b2SnapPutI32( at, island->joints.count );
+		at = b2SnapPutBytes( at, island->joints.data, island->joints.count * 12 );
+	}
+	B2_ASSERT( at == end );
+	B2_UNUSED( end );
+}
+
 void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 {
 	// Image header
@@ -615,9 +1012,17 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 	b2SerIdPool( buf, &world->solverSetIdPool );
 
 	// Solver sets
+	// Tide: nothing writes the static set, the disabled set or a sleeping set but what says so
+	// (b2SnapTouchSet), so an image in parts leaves out the ones nothing was done to. How many sets there are
+	// is written with the first two.
+	b2SnapTrack* track = &world->snapTrack;
 	b2SnapSection( buf, b2_sectionFixedSets );
 	int setCount = world->solverSets.count;
-	b2SnapW_I32( buf, setCount );
+	bool keepFixed = b2SnapKeepSection( buf, track->fixedTouched || setCount != track->setCount );
+	if ( keepFixed == false )
+	{
+		b2SnapW_I32( buf, setCount );
+	}
 	for ( int i = 0; i < setCount; ++i )
 	{
 		if ( i == b2_awakeSet )
@@ -627,22 +1032,42 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 		else if ( i == b2_firstSleepingSet )
 		{
 			b2SnapSection( buf, b2_sectionSleepingSets );
+			if ( b2SnapKeepSection( buf, track->setsTouched || setCount != track->setCount ) )
+			{
+				break;
+			}
+		}
+		else if ( i < b2_awakeSet && keepFixed )
+		{
+			continue;
 		}
 		b2SerSolverSet( buf, world->solverSets.data + i );
+	}
+	// Tide: every section is come to, in order, whatever the world has: an image in parts writes zeros where
+	// a section had more in the image before, as it gets to the next one
+	if ( setCount <= b2_awakeSet )
+	{
+		b2SnapSection( buf, b2_sectionAwakeSet );
+	}
+	if ( setCount <= b2_firstSleepingSet )
+	{
+		b2SnapSection( buf, b2_sectionSleepingSets );
 	}
 
 	// Sparse arrays. Bodies, shapes and joints carry a host userData pointer scrubbed to NULL on write.
 	// Contacts have no userData, so they go out as raw POD.
+	// Tide: a body, a shape, its fat bounds and a contact each take the same room, so an image in parts
+	// has the ones that may have changed, each at its place (b2SnapTrack). The joints are all written.
 	b2SnapSection( buf, b2_sectionBodies );
-	b2SerSimArray( buf, world->bodies, b2Body );
+	b2SerSimArray( buf, world->bodies, b2Body, &track->bodies );
 	b2SnapSection( buf, b2_sectionShapes );
-	b2SerSimArray( buf, world->shapes, b2Shape );
+	b2SerSimArray( buf, world->shapes, b2Shape, &track->shapes );
 	b2SnapSection( buf, b2_sectionFatAABBs );
-	b2SerPodArray( buf, world->fatAABBs );
+	b2SerPodRuns( buf, world->fatAABBs, &track->shapes );
 	b2SnapSection( buf, b2_sectionContacts );
-	b2SerPodArray( buf, world->contacts );
+	b2SerPodRuns( buf, world->contacts, &track->contacts );
 	b2SnapSection( buf, b2_sectionJoints );
-	b2SerSimArray( buf, world->joints, b2Joint );
+	b2SerSimArray( buf, world->joints, b2Joint, (const b2SnapSet*)NULL );
 
 	// Chain shapes: POD scalars then per-live-slot heap arrays
 	b2SnapSection( buf, b2_sectionChains );
@@ -680,18 +1105,10 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 
 	// Islands: POD scalars + 3 inner arrays per slot
 	b2SnapSection( buf, b2_sectionIslands );
-	int islandCount = world->islands.count;
-	b2SnapW_I32( buf, islandCount );
-	for ( int i = 0; i < islandCount; ++i )
+	// Tide: nothing writes an island but what says so (b2SnapTouchIslands)
+	if ( b2SnapKeepSection( buf, track->islandsTouched ) == false )
 	{
-		b2Island* island = world->islands.data + i;
-		b2SnapW_I32( buf, island->setIndex );
-		b2SnapW_I32( buf, island->localIndex );
-		b2SnapW_I32( buf, island->islandId );
-		b2SnapW_I32( buf, island->constraintRemoveCount );
-		b2SerPodArray( buf, island->bodies );
-		b2SerPodArray( buf, island->contacts );
-		b2SerPodArray( buf, island->joints );
+		b2SerIslands( buf, world );
 	}
 
 	// Broad phase
@@ -702,7 +1119,11 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 		b2SerTree( buf, &bp->trees[t] );
 	}
 	b2SnapSection( buf, b2_sectionPairs );
-	b2SerHashSet( buf, &bp->pairSet );
+	// Tide: a pair comes and goes with its contact, which says so (b2SnapTouchPairs)
+	if ( b2SnapKeepSection( buf, track->pairsTouched ) == false )
+	{
+		b2SerHashSet( buf, &bp->pairSet );
+	}
 
 	// Constraint graph: B2_GRAPH_COLOR_COUNT colors
 	b2SnapSection( buf, b2_sectionGraph );
@@ -752,6 +1173,9 @@ static void b2FreeLiveSimElements( b2World* world )
 // corrupt image.
 static bool b2DeserializeIntoShell( b2SnapReader* r, b2World* world )
 {
+	// Tide: the world becomes another: its next image is written whole (see b2SnapTrack)
+	b2SnapTouchAll( world );
+
 	// Step 1: world scalars
 	b2SnapSeek( r, b2_sectionConfig );
 	b2DesWorldConfig( r, world );
@@ -1152,13 +1576,229 @@ int b2World_GetSnapshot( b2WorldId worldId, uint8_t* image, int capacity )
 	return buf.size;
 }
 
+// Tide: which bodies, shapes and contacts an image in parts writes (see ../TIDE.md, and b2SnapTrack in
+// physics_world.h).
+//
+// Between two images, a body, a shape with its fat bounds, or a contact has changed only if
+// - the body, or the shape's body, or one of the contact's two, was awake at the first image, at the second,
+//   or at some time between: the step writes those, on its worker threads, and nothing says which;
+// - or something was done to it from outside the step's workers, which is said where it's done
+//   (b2SnapTouchBody and the like): a contact that starts or ends changes the lists of both its bodies and
+//   its neighbors in them, an element taken out of an array moves another into its place, and calls change
+//   what they're for.
+// A body that's awake at some time between and at neither image woke and fell asleep, or was made and
+// destroyed, and each of those says so for the body, its shapes and its contacts. So the sets hold: what was
+// awake at the last image (b2SnapCommit), what was said since, and what's awake now (b2SnapSeed).
+//
+// What a contact is in the solver (its manifold, its impulses) isn't in the contact but in its body's solver
+// set, or in the constraint graph: the awake set and the graph are written every time, and the other sets
+// when something says they were written (b2SnapTouchSet).
+void b2SnapGrowSet( b2SnapSet* set, int blockCount )
+{
+	// Room to spare, as ids come one after another
+	int grown = blockCount + blockCount / 2 + 4;
+	uint64_t* bits = b2Alloc( (size_t)grown * sizeof( uint64_t ) );
+	memset( bits, 0, (size_t)grown * sizeof( uint64_t ) );
+	if ( set->blockCount > 0 )
+	{
+		memcpy( bits, set->bits, (size_t)set->blockCount * sizeof( uint64_t ) );
+		b2Free( set->bits, (size_t)set->blockCount * sizeof( uint64_t ) );
+	}
+	set->bits = bits;
+	set->blockCount = grown;
+}
+
+static void b2SnapClearSet( b2SnapSet* set )
+{
+	if ( set->blockCount > 0 )
+	{
+		memset( set->bits, 0, (size_t)set->blockCount * sizeof( uint64_t ) );
+	}
+}
+
+void b2SnapTouchBodyDeep( b2World* world, const b2Body* body )
+{
+	b2SnapTrack* track = &world->snapTrack;
+	if ( track->sparse == false || body->id == B2_NULL_INDEX )
+	{
+		return;
+	}
+
+	b2SnapSetBit( &track->bodies, body->id );
+
+	int shapeId = body->headShapeId;
+	while ( shapeId != B2_NULL_INDEX )
+	{
+		b2SnapSetBit( &track->shapes, shapeId );
+		shapeId = world->shapes.data[shapeId].nextShapeId;
+	}
+
+	int contactKey = body->headContactKey;
+	while ( contactKey != B2_NULL_INDEX )
+	{
+		int contactId = contactKey >> 1;
+		b2SnapSetBit( &track->contacts, contactId );
+		contactKey = world->contacts.data[contactId].edges[contactKey & 1].nextKey;
+	}
+}
+
+void b2SnapNoteOp( b2World* world, int op )
+{
+	switch ( op )
+	{
+		// The step, and the calls that say what they write where they write it
+		case b2_recOpStep:
+		case b2_recOpCreateBody:
+		case b2_recOpDestroyBody:
+		case b2_recOpBodySetTransform:
+		case b2_recOpBodySetLinearVelocity:
+		case b2_recOpBodySetAngularVelocity:
+		case b2_recOpBodyApplyLinearImpulse:
+		case b2_recOpBodyApplyLinearImpulseToCenter:
+		case b2_recOpBodyApplyAngularImpulse:
+		case b2_recOpBodySetAwake:
+		case b2_recOpBodyWakeTouching:
+		case b2_recOpCreateCircleShape:
+		case b2_recOpCreateCapsuleShape:
+		case b2_recOpCreateSegmentShape:
+		case b2_recOpCreatePolygonShape:
+		case b2_recOpDestroyShape:
+		// A setting of a body's, which is in the body or in its solver set's copy of it: said where it's
+		// written
+		case b2_recOpBodySetLinearDamping:
+		case b2_recOpBodySetAngularDamping:
+		case b2_recOpBodySetGravityScale:
+		case b2_recOpBodySetBullet:
+		case b2_recOpBodySetMotionLocks:
+		// A setting of the world's, which every image writes. Turning sleeping off also wakes every set,
+		// which says what it writes (b2WakeSolverSet).
+		case b2_recOpWorldSetGravity:
+		case b2_recOpWorldEnableSleeping:
+		case b2_recOpWorldEnableContinuous:
+		case b2_recOpWorldEnableWarmStarting:
+		case b2_recOpWorldSetRestitutionThreshold:
+		case b2_recOpWorldSetRestitutionIterations:
+		case b2_recOpWorldEnableRestitutionPropagation:
+		case b2_recOpWorldSetHitEventThreshold:
+		case b2_recOpWorldSetContactTuning:
+		case b2_recOpWorldSetContactRecycleDistance:
+		case b2_recOpWorldSetMaximumLinearSpeed:
+		// What changes nothing an image holds
+		case b2_recOpDestroyWorld:
+			return;
+
+		// Any other: the next image is written whole
+		default:
+			b2SnapTouchAll( world );
+			return;
+	}
+}
+
+// How many of a world's bodies can be awake for its images to be written in parts: one in this many. With
+// more, there's too little of an image left out for what finding it costs.
+#define B2_SNAP_AWAKE_SHARE 2
+
+static bool b2SnapMostlyAsleep( const b2World* world )
+{
+	int share = world->snapTrack.awakeShare > 0 ? world->snapTrack.awakeShare : B2_SNAP_AWAKE_SHARE;
+	int awake = world->solverSets.data[b2_awakeSet].bodySims.count;
+	return awake * share <= b2GetIdCount( &world->bodyIdPool );
+}
+
+// Every awake body, with its shapes and its contacts, into the sets
+static void b2SnapSeed( b2World* world )
+{
+	const b2SolverSet* awakeSet = world->solverSets.data + b2_awakeSet;
+	const b2BodySim* sims = awakeSet->bodySims.data;
+	int count = awakeSet->bodySims.count;
+	for ( int i = 0; i < count; ++i )
+	{
+		b2SnapTouchBodyDeep( world, world->bodies.data + sims[i].bodyId );
+	}
+}
+
+// An image in sections was taken of the world, whole or in parts: what the next one goes on from
+static void b2SnapCommit( b2World* world, const int* bases, const int* sizes )
+{
+	b2SnapTrack* track = &world->snapTrack;
+	memcpy( track->bases, bases, sizeof( track->bases ) );
+	memcpy( track->sizes, sizes, sizeof( track->sizes ) );
+	track->bodyCount = world->bodies.count;
+	track->shapeCount = world->shapes.count;
+	track->contactCount = world->contacts.count;
+	track->setCount = world->solverSets.count;
+	track->fixedTouched = false;
+	track->setsTouched = false;
+	track->pairsTouched = false;
+	track->islandsTouched = false;
+
+	track->sparse = b2SnapMostlyAsleep( world );
+	if ( track->sparse )
+	{
+		b2SnapClearSet( &track->bodies );
+		b2SnapClearSet( &track->shapes );
+		b2SnapClearSet( &track->contacts );
+		b2SnapSeed( world );
+	}
+}
+
+void b2DestroySnapshotTrack( b2World* world )
+{
+	b2SnapTrack* track = &world->snapTrack;
+	b2Free( track->bodies.bits, (size_t)track->bodies.blockCount * sizeof( uint64_t ) );
+	b2Free( track->shapes.bits, (size_t)track->shapes.blockCount * sizeof( uint64_t ) );
+	b2Free( track->contacts.bits, (size_t)track->contacts.blockCount * sizeof( uint64_t ) );
+
+	b2SnapParts* p = track->parts;
+	if ( p != NULL )
+	{
+		for ( int i = 0; i < p->blockCount; ++i )
+		{
+			b2Free( p->blocks[i].data, (size_t)p->blocks[i].capacity );
+		}
+		b2Free( p->blocks, (size_t)p->blockCapacity * sizeof( b2SnapBlock ) );
+		b2Free( p->parts, (size_t)p->capacity * sizeof( b2SnapshotPart ) );
+		b2Free( p, sizeof( b2SnapParts ) );
+	}
+
+	*track = ( b2SnapTrack ){ 0 };
+}
+
+void b2World_SetSnapshotAwakeShare( b2WorldId worldId, int share )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	world->snapTrack.awakeShare = share;
+}
+
 // Tide: an image in sections, each at its base (see the top of this file)
 int b2GetSnapshotHead( void )
 {
 	return (int)sizeof( b2SnapHeader ) + b2_sectionCount * (int)sizeof( int );
 }
 
-int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+// Tide: how much room each thing takes in a section of things that each take the same, after the section's
+// count of them: a body, a shape, its fat bounds, a contact, a joint. 0 for the other sections.
+int b2GetSnapshotRecordSize( int section )
+{
+	switch ( section )
+	{
+		case b2_sectionBodies:
+			return (int)sizeof( b2Body );
+		case b2_sectionShapes:
+			return (int)sizeof( b2Shape );
+		case b2_sectionFatAABBs:
+			return (int)sizeof( b2AABB );
+		case b2_sectionContacts:
+			return (int)sizeof( b2Contact );
+		case b2_sectionJoints:
+			return (int)sizeof( b2Joint );
+		default:
+			return 0;
+	}
+}
+
+// An image in sections written whole. With `last`, it's the one the world's next image in parts goes on from.
+static int b2SnapWhole( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes, bool last )
 {
 	b2World* world = b2GetWorldFromId( worldId );
 	B2_ASSERT( world->locked == false );
@@ -1167,14 +1807,118 @@ int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, cons
 		return 0;
 	}
 
+	int ownSizes[b2_sectionCount] = { 0 };
 	b2RecBuffer buf = { 0 };
 	buf.data = image;
 	buf.capacity = image != NULL ? capacity : 0;
 	buf.fixed = true;
 	buf.bases = bases;
-	buf.sizes = sizes;
+	buf.sizes = ownSizes;
 	b2SerializeWorld( world, &buf );
+	if ( sizes != NULL )
+	{
+		memcpy( sizes, ownSizes, sizeof( ownSizes ) );
+	}
+
+	// An image in sections that's all there is what the next one in parts goes on from. Any other leaves
+	// the world with none to go on from: the caller is about to ask again.
+	if ( last && bases != NULL )
+	{
+		if ( buf.overran == false && buf.countOnly == false )
+		{
+			b2SnapCommit( world, bases, ownSizes );
+		}
+		else
+		{
+			world->snapTrack.sparse = false;
+		}
+	}
+
 	return buf.overran ? -1 : buf.size;
+}
+
+int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	return b2SnapWhole( worldId, image, capacity, bases, sizes, true );
+}
+
+int b2World_CheckSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes )
+{
+	return b2SnapWhole( worldId, image, capacity, bases, sizes, false );
+}
+
+int b2World_GetSnapshotParts( b2WorldId worldId, const int* bases, int* sizes, const b2SnapshotPart** parts, int* partCount )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	b2SnapTrack* track = &world->snapTrack;
+	*parts = NULL;
+	*partCount = 0;
+
+	B2_ASSERT( world->locked == false );
+	if ( world->locked )
+	{
+		return 0;
+	}
+
+	// Nothing to go on from, or sections that aren't where the last image had them: everything in one that
+	// moved would be somewhere else. Or most of the world is awake. Or it has fewer bodies, shapes or
+	// contacts than its last image had room for, which only a restore does.
+	if ( track->sparse == false || bases == NULL || memcmp( bases, track->bases, sizeof( track->bases ) ) != 0 ||
+		 world->bodies.count < track->bodyCount || world->shapes.count < track->shapeCount ||
+		 world->contacts.count < track->contactCount || b2SnapMostlyAsleep( world ) == false )
+	{
+		return 0;
+	}
+
+	// What's awake now, with what was awake at the last image and what was said since
+	b2SnapSeed( world );
+
+	// A body, a shape or a contact that the last image had no room for goes after the ones it had, which
+	// stay where they are: every one of those is written
+	for ( int i = track->bodyCount; i < world->bodies.count; ++i )
+	{
+		b2SnapSetBit( &track->bodies, i );
+	}
+	for ( int i = track->shapeCount; i < world->shapes.count; ++i )
+	{
+		b2SnapSetBit( &track->shapes, i );
+	}
+	for ( int i = track->contactCount; i < world->contacts.count; ++i )
+	{
+		b2SnapSetBit( &track->contacts, i );
+	}
+
+	if ( track->parts == NULL )
+	{
+		track->parts = b2Alloc( sizeof( b2SnapParts ) );
+		memset( track->parts, 0, sizeof( b2SnapParts ) );
+	}
+	b2SnapParts* p = track->parts;
+	b2SnapPartsReset( p, track->sizes );
+
+	int ownSizes[b2_sectionCount] = { 0 };
+	b2RecBuffer buf = { 0 };
+	buf.fixed = true;
+	buf.bases = bases;
+	buf.sizes = ownSizes;
+	buf.parts = p;
+	b2SerializeWorld( world, &buf );
+	if ( sizes != NULL )
+	{
+		memcpy( sizes, ownSizes, sizeof( ownSizes ) );
+	}
+
+	if ( buf.overran )
+	{
+		// No image: the caller takes one whole, with its sections placed again
+		track->sparse = false;
+		return -1;
+	}
+
+	b2SnapCommit( world, bases, ownSizes );
+	*parts = p->parts;
+	*partCount = p->count;
+	return buf.size;
 }
 
 bool b2GetSnapshotBases( const uint8_t* image, int size, int* bases )

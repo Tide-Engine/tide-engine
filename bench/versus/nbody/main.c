@@ -9,7 +9,7 @@
 extern const versus_way nbody_c, nbody_c_simd;
 
 static versus_flag flags[] = {
-    {"count", "bodies, each pulled by every other", 2000, 100, 0},
+    {"count", "bodies, each pulled by every other", 2000, 100, 0, 1},
 };
 
 static void *make(const versus_flag *f)

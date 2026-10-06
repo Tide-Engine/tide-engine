@@ -360,18 +360,18 @@ event(Touched touched) Score(mut Goal goal, World world)
 - It has a weight like any shape, by its `density`: give it 0 where it's beside the shapes its body touches with, and shouldn't add to them.
 - What's in a sensor is looked at once a step, where things are after it. A small body that's fast enough to cross a thin sensor between two steps may come and go unreported: make such a sensor thick.
 
-`Touched` and `Parted` say who comes and who goes. `Inside` says who's there: the entities whose bodies are in a body's sensors, as the last step found them.
+`Touched` and `Parted` say who comes and who goes. `Inside` says who's there: the entities whose bodies have a shape in an entity's sensors, as the last step found them.
 
 ```csharp
 // How many are standing on the plate
-system Weigh(Body body, mut Plate plate, Physics physics)
+system Weigh(mut Plate plate, Physics physics)
 {
-    Inside(physics, body, out var found);
+    Inside(physics, this, out var found);
     plate.load = found.count;
 }
 ```
 
-- `Inside(physics, body, out found)` takes the sensor's `Body` and looks in every shape of it that's a sensor, its parts' too. `Inside(physics, part, out found)` takes a `Part` and looks in that part alone.
+- `Inside(physics, sensor, out found)` takes the entity the sensor shape is a component of: a body's, or a [part's](#more-shapes-on-a-body). An entity with no sensor has nobody in it.
 - It returns whether anybody is there. `found` has each entity once, a static body's too, in an order that's the same on every machine.
 - It's one of the functions that ask the world something: see [Asking the world](#asking-the-world) for what they see and when.
 
@@ -475,22 +475,22 @@ A system that asks runs on the tick's threads like any other.
 singleton Physics
 {
     float2 gravity = float2(0, -10);
-    int substeps = 4;      // The smaller steps Box2D solves each step in
-    float stiffness = 30;  // How stiff contacts are, in cycles a second
-    float damping = 10;    // ...and how little they spring back
-    float pushSpeed = 3;   // The fastest bodies that overlap are pushed apart, in meters a second
-    float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
-    float hitSpeed = 1;    // Bodies that meet faster than this send Hit
-    bool sleeping = true;  // Bodies at rest fall asleep
+    int substeps = 4;            // The smaller steps Box2D solves each step in
+    float contactStiffness = 30; // How stiff contacts are, in cycles a second
+    float contactDamping = 10;   // ...and how little they spring back
+    float contactSpeed = 3;      // The fastest bodies that overlap are pushed apart, in meters a second
+    float bounceSpeed = 1;       // Shapes with `bounce` only bounce when they meet faster than this
+    float hitSpeed = 1;          // Bodies that meet faster than this send Hit
+    bool sleeping = true;        // Bodies at rest fall asleep
 }
 ```
 
 Each is what Box2D comes with, so a game that sets none gets the same world as before there were any.
 
 - **`substeps`**: more make stacks and fast bodies steadier, and a step slower.
-- **`stiffness`** is how hard two bodies that touch push back as they sink into each other. Stiffer contacts hold a tall stack: a tower of thirty crates that sheds half of them when a heavy crate lands on it stands whole at twice the stiffness. It's no more than an eighth of the substeps a second, which at four substeps and 60 ticks a second is 30, the default: **to go stiffer, raise `substeps` with it**, 8 for 60.
-- **`damping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
-- **`pushSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
+- **`contactStiffness`** is how hard two bodies that touch push back as they sink into each other. Stiffer contacts hold a tall stack: a tower of thirty crates that sheds half of them when a heavy crate lands on it stands whole at twice the stiffness. It's no more than an eighth of the substeps a second, which at four substeps and 60 ticks a second is 30, the default: **to go stiffer, raise `substeps` with it**, 8 for 60.
+- **`contactDamping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
+- **`contactSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
 - **`bounceSpeed`** and **`hitSpeed`** are the speeds two bodies have to meet at for a `bounce` to count and for [`Hit`](#hits) to be sent.
 - **`sleeping`**, off, keeps every body awake. Nothing is ever at rest then, so every tick steps.
 
@@ -505,7 +505,7 @@ event(Spawned) Setup(mut Physics physics, with Main)
 
 A new gravity wakes every body that's [asleep](#bodies-at-rest), so that what was at rest feels it. A game that changes it every tick has nothing at rest. A change to any of the others is the next step's too, and that tick steps even when everything is asleep.
 
-The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `gone`, `shed`, `dropped`, `owners` and `parts` are how the package keeps Box2D's state in the match.
+The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `gone`, `shed`, `dropped`, `owners`, `parts` and `sensors` are how the package keeps Box2D's state in the match.
 
 ## Destroying
 
@@ -515,7 +515,7 @@ Removing `Body` from an entity that stays doesn't take its body out of the world
 
 ## Multiplayer
 
-There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package writes Box2D's whole state into the match, as bytes in `Physics`. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
+There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package has Box2D's whole state in the match, as bytes in `Physics`: it writes what changed of them. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
 
 That state is in the match's hash, and it's the same bytes on every machine: the same match gives the same result on desktop and on the web, so their players share one. See [Networking](../multiplayer/networking.md) and [Determinism](../multiplayer/determinism.md).
 
@@ -527,16 +527,18 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
-| The tick | 0.61 | 0.21 | 0.02 |
-| of it, Box2D's step | 0.31 | 0.01 | 0 |
+| The tick | 0.51 | 0.06 | 0.02 |
+| of it, Box2D's step | 0.30 | 0.01 | 0 |
 | Keeping and hashing the world, after it | 0.26 | 0.04 | 0.00 |
 
 - **A world at rest costs next to nothing.** It isn't stepped, and nothing of the match is written. What's left is looking at each body for what code wrote.
 - **The step goes by what's moving.** With one crate pushed among 2,400 it takes a hundredth of a millisecond.
-- **Keeping Box2D's state in the match goes by how big the world is**, while anything moves: it's about a kilobyte a body, 2.5 MB here, written and compared with the last one every tick, which is most of the 0.21 ms with one crate pushed. Only what changed of it is copied and hashed. A player who joins downloads it with the rest of the world.
+- **Keeping Box2D's state in the match goes by what's moving too**, while no more than half of the world is awake. It's about a kilobyte a body, 2.5 MB here, and Box2D says which bodies, shapes and contacts may have changed since the last tick: only those are written, which with one crate pushed takes 0.01 ms of a tick's 0.06.
+- **With more than half of the world awake, all of that state is written** and compared with the last tick's, which goes by how big the world is: 0.06 ms of the 0.51 here, before what changed of it is put into the match. A stack that wakes or falls asleep can have one tick's written whole too.
+- **Only what changed of it is copied and hashed**, either way, and a player who joins downloads it with the rest of the world.
 - **A rollback** makes Box2D's world again from that state, once: about half a millisecond for this world, before the ticks it runs again. So does the first [question](#asking-the-world) a view or a system asks when this machine has no Box2D world at the match's state, which is the tick after a rollback, or a view of a world other than the last one that ticked. In a world of a few hundred bodies that's a few hundredths of a millisecond.
 - **The step runs on the tick's threads** once 2,048 bodies are awake, 4,096 on the web, and gives the same world on any number of them.
-- **On the web** the step is slower, about 0.6 ms for this world with everything moving: Box2D has no SIMD there.
+- **On the web** the step takes about 0.46 ms for this world with everything moving. Box2D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.
 - **Building**: Box2D compiles in about 6 seconds, once, and adds about 350 KB to a game.
 
 ## Not there yet

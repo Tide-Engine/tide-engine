@@ -54,6 +54,8 @@ function(tide_add_web_test name)
         add_test(NAME ${name}_webgpu
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
                 "${CMAKE_CURRENT_BINARY_DIR}/${name}_webgpu-browser" "${webgpu_query}" ${expect})
-        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 120)
+        # The runner gives up after 100 seconds by itself, and then asks the
+        # page where it stands, which can take 30 more: this is the guard around it.
+        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 150)
     endif()
 endfunction()

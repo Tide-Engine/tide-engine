@@ -88,6 +88,20 @@ target_link_libraries(tide_box2d_course PRIVATE tide_box2d)
 add_test(NAME tide_box2d_course COMMAND tide_box2d_course)
 set_tests_properties(tide_box2d_course PROPERTIES TIMEOUT 120)
 
+# Its image written as what changed of the last one, against the image written
+# whole: a match of its own, so that the one above keeps its pinned hashes, and
+# Box2D by itself.
+tide_add_game(tide_box2d_parts SOURCES box2d/bridge.c box2d/test/yard.tide NAME yard PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/parts_test.c)
+target_include_directories(tide_box2d_parts PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_parts PRIVATE tide_box2d)
+if(TARGET tide_platform)
+    target_compile_definitions(tide_box2d_parts PRIVATE BOX2D_TEST_JOBS)
+    target_link_libraries(tide_box2d_parts PRIVATE tide_platform)
+endif()
+add_test(NAME tide_box2d_parts COMMAND tide_box2d_parts)
+set_tests_properties(tide_box2d_parts PROPERTIES TIMEOUT 300)
+
 # What a body is made of and what code asks of the world: parts, bodies that
 # change what they are, rays, shapes cast and looked into, what's in a sensor,
 # hits, and how the world is tuned.
@@ -125,7 +139,7 @@ if(TARGET tide_platform)
     target_link_libraries(tide_box3d_stack PRIVATE tide_platform)
 endif()
 add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
-# A step in 3D is several of Box2D's, and a web build has no SIMD for it
+# A step in 3D is several of Box2D's
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
 
 tide_package_order_test(tide_box3d_order Box3D "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test")

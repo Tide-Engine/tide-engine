@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "tide/math.h" // tide_hash_i2: the start Tide's Math.Hash gives
 #include "tide/page.h" // tide_alloc: memory every thread can use on the web
@@ -13,12 +14,15 @@ typedef struct particles {
     bool ready;
     float *block; // The arrays, one after the other
     float *x, *y, *vx, *vy;
+    float *kept; // The coordinates before the latest tick, when --kept is set
+    uint32_t kept_count;
 } particles;
 
 static void *make(const versus_flag *flags)
 {
     particles *p = tide_alloc_zeroed(1, sizeof *p);
     p->count = flags[0].value;
+    if (flags[1].value) p->kept = tide_alloc((size_t)p->count * 4u * sizeof(float));
     return p;
 }
 
@@ -77,6 +81,14 @@ static void move(void *context, const uint32_t piece)
 static void tick(void *state, const tide_jobs *jobs)
 {
     particles *p = state;
+    if (p->kept && p->ready) {
+        const size_t bytes = (size_t)p->count * sizeof(float);
+        memcpy(p->kept, p->x, bytes);
+        memcpy(p->kept + p->count, p->y, bytes);
+        memcpy(p->kept + (size_t)p->count * 2u, p->vx, bytes);
+        memcpy(p->kept + (size_t)p->count * 3u, p->vy, bytes);
+        p->kept_count = p->count;
+    }
     if (!p->ready) { // Tide's first tick spawns them, and they move from the next
         setup(p);
         p->ready = true;
@@ -87,13 +99,24 @@ static void tick(void *state, const tide_jobs *jobs)
     versus_for(jobs, j.pieces, move, &j);
 }
 
+static uint64_t arrays_digest(const uint32_t count, const float *x, const float *y, const float *vx, const float *vy)
+{
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const float item[4] = {x[i], y[i], vx[i], vy[i]};
+        sum += versus_item(item, sizeof item);
+    }
+    return sum;
+}
+
 static uint64_t digest(const void *state)
 {
     const particles *p = state;
-    uint64_t sum = 0;
-    for (uint32_t i = 0; i < p->count; i++) {
-        const float item[4] = {p->x[i], p->y[i], p->vx[i], p->vy[i]};
-        sum += versus_item(item, sizeof item);
+    uint64_t sum = arrays_digest(p->count, p->x, p->y, p->vx, p->vy);
+    if (p->kept) {
+        const uint64_t before = arrays_digest(p->kept_count, p->kept, p->kept + p->count,
+                                              p->kept + (size_t)p->count * 2u, p->kept + (size_t)p->count * 3u);
+        sum += versus_item(&before, sizeof before);
     }
     return sum;
 }
@@ -102,6 +125,7 @@ static void destroy(void *state)
 {
     particles *p = state;
     free(p->block);
+    free(p->kept);
     free(p);
 }
 
