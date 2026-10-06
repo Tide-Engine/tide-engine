@@ -299,7 +299,7 @@ system Aim(mut Turret turret, Position position) { ... }
 - **Overloads.** `out` doesn't tell functions that share a name apart, as `mut` doesn't: their parameters' types do. A call picks among them as ever, where an `out` argument only goes to an `out` parameter, and `out var` takes its type from the one picked.
 - **`extern` functions.** `out T` is a `T *` in C, as `mut T` is: the difference is Tide's, which passes nothing in and takes it that C writes. `out List<T>` stays the list C makes through its writer. C can't make text, so `out string` is an error there (see C functions).
 - **Code the GPU runs.** A function a frag or vert calls can have `out` parameters: `inout` in GLSL and a pointer in WGSL, as `mut` ones are. Provisional: a local an `out` argument declares can't be declared on a counting loop's own line there.
-- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets), and the `World` has `TryGet<T>(entity, out value)` (see The World).
+- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets), the `World` has `TryGet<T>(entity, out value)` (see The World), and the GUI's `TextField`, `IntField` and `FloatField` each have a version with `out bool entered` (see GUI).
 - In generated C an `out` parameter is a pointer, as a `mut` one is, and code that has none generates the C it always did.
 
 ```csharp
@@ -1046,7 +1046,7 @@ system Advance(mut Match match)
 - Text that code makes, joining and formatting, lives in a scratch area that's cleared once the system, view or handler that made it is done, for each entity. It's only ever copied into a world's heap.
 - Heap text never changes once it's written: changing a field writes new text. What's released only goes back once the code running is done, so a copy of a field made before it changed still reads the old text, with no copying.
 - An input can't hold text: what players send each tick is numbers, bools and enums.
-- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character.
+- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
 - Systems that change the match's text or lists wait for each other, as their heap is one: `tidec --schedule` says "both change text or lists".
 
 ### Open
@@ -1873,6 +1873,7 @@ view DrawHud(Arena arena)
 - `GUILayout` lays widgets out automatically: they stack top to bottom, and `GUILayout.Horizontal()` puts them side by side. `GUI` has the same widgets, each at an explicit `Rect`, which comes first, as in Unity: `GUI.Button(rect, "Quit")`.
 - Containers take a block, and they're ordinary functions with an `Action` parameter (see Functions): `GUILayout.Horizontal() { ... }`, `GUILayout.Vertical() { ... }` and `GUILayout.Area(...) { ... }`. Calls always have parentheses.
 - Widgets edit values through `mut` parameters, and return whether the value changed: `GUILayout.Toggle("Fullscreen", settings.fullscreen)`. A button returns whether it was pressed.
+- **Entered fields** (agreed 2026-10-06): a view can tell that the player pressed Enter in a field they typed into. `TextField`, `IntField` and `FloatField` each have a second version, in `GUILayout` and in `GUI`, with an `out bool entered` parameter (see Out parameters): `GUILayout.TextField("Code", lobby.code, out var entered)`. It's true in the frame Enter ends the typing in that field. What the field returns stays whether the value changed, and without the argument the field is the one there always was. The details are picks, under Provisional.
 - Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
 - The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and widgets are made of pieces games can use too.
 - Gamepad and keyboard navigation are built in: focus moves between widgets, the south button presses, the east button goes back.
@@ -1945,13 +1946,16 @@ view Cards(mut Hand hand)
     }
 }
 
-// The GUI's own widgets, with a look that names what it changes
+// The GUI's own widgets, with a look that names what it changes. Enter in the
+// field joins, as the button beside it does
 view Join(mut Lobby lobby)
 {
+    mut var entered = false;
     GUI.Theme(GUITheme { field = Color(0.1, 0.12, 0.2), accent = Color.cyan, radius = 10 })
     {
-        GUI.TextField(Rect(40, 500, 240, 36), "", lobby.code);
+        GUI.TextField(Rect(40, 500, 240, 36), "", lobby.code, out entered);
     }
+    if ((GUI.Button(Rect(290, 500, 90, 36), "Join") || entered) && lobby.code != "") Session.Join(lobby.code);
 }
 
 // A library's widget, which reads the devices itself, in the window's lower left corner
@@ -1994,6 +1998,17 @@ Implemented, awaiting approval:
 - Down and right go on to the next widget and up and left go back, in the order the widgets are called, whatever their places on the screen: three cards side by side are reached with left and right. A slider and a number field keep left and right, to step their value, and the press that brought the focus to one doesn't step it too. From a button, a toggle, a text field or a control, left and right move the focus.
 - `GUI.Navigate()` says a menu is up: the arrows, the d-pad and the left stick can start moving the focus though the match reads the devices, as in a menu over a match that goes on behind it. A view, or a function it calls, calls it every frame the menu is up, as with `GUI.ShowKeyboard()`. Without it, only Tab starts the focus there. Once a widget has the focus, the keyboard and the gamepad are hidden from the input's `Sample`, as ever.
 - Typing: clicking a number field, or pressing Enter on it, starts typing into it with its value selected, so the first character replaces it; typing a number into a focused field starts too. Enter or leaving the field keeps a valid number; Escape keeps the old value.
+- **Entered fields**, beyond what's agreed (see Decided). Picks, awaiting the owner:
+  - The versions: `TextField(string label, mut string value, out bool entered)`, `IntField(string label, mut int value, out bool entered)` and `FloatField(string label, mut float value, out bool entered)`, with `GUI`'s taking the `Rect` first. The parameter is named `entered` and comes last. `Float2Field`, `Float3Field`, `Float4Field`, `ColorField`, the sliders and `Toggle` have no such version.
+  - `entered` is false in every frame but the one Enter ends the typing in: while the player types; when Enter starts the typing in a field that has the focus; when Escape stops it; when the focus leaves by Tab or by a click elsewhere, which keeps a number field's valid number without entering it; and when the field is in a `GUI.Disabled` block, or under a modal that isn't its own. Every call assigns it, so it's never what the variable held.
+  - A number field is entered whether or not its number changed, or was a number at all: `entered` says the key, and what the field returns says the value.
+  - The numpad's Enter is Enter. A gamepad's south button enters a number field, since it ends its typing as Enter does (it always did); it doesn't end a text field's typing, so it enters none.
+  - What's typed in the frame Enter comes in is part of what's entered. Characters and Enter can arrive in one frame (a slow frame, a paste and a quick Enter, a script), and the characters used to be dropped there. It's so for every field that's typed into, with `out entered` or without.
+  - The argument is an `out` argument like any other (see Out parameters): the word is written; `out var entered` and `out bool entered` declare a local, the block's, read where the call ran; `out` before a `mut` local or a field of local state assigns it; `out _` leaves it out; it's a write, so a view can't make the match's; and the call keeps its turn among what its statement reads. A call that leaves the word out, or writes it before another argument, is told so as a function's call is, with the editors' quick fix, where the engine's other functions say that no version takes the arguments.
+  - Which version a call means goes by how many arguments it has. By name, `entered: out var done`.
+  - A phone's keyboard: its Enter, whatever the key is labelled, is the GUI's Enter on the web (a key that names itself and says no position, or a line break typed into the page's field) and on Android (the system's key event), so it enters a field there too. That's by the code and a web test with made-up events: no phone was tried.
+  - A widget still can't be on the right of `||`, so the button comes first: `if (GUILayout.Button("Join") || entered)`.
+- `mut` before an argument is an error that says to remove it, where it was "expected an expression": the word is the parameter's, and only `out` is written at a call.
 - Widgets follow the pointer: the mouse, or a finger. A finger that lifted is nowhere, so nothing stays hovered where it was.
 - Hidden from the input's `Sample` and from views' `Devices`: the keyboard and gamepad while a widget has the focus, and the mouse's buttons and scroll, the pointer's press and the primary touch while the pointer is over a widget or an area, or pressing a widget. While a modal is up, everything is, the movement of the mouse and the pointer too. A key or a gamepad's button that went down while the keyboard and the gamepad were the GUI's stays hidden until it's let go, its release too, whatever became of the widget: the key that clicked a button isn't the game's while it's still down, and one the player held before the GUI took the keyboard is the game's again as soon as the GUI lets go.
 - The pointer is over a widget or an area where it is now, against where the last frame drew them: the game samples, and views read, before the frame's GUI sees the devices. So a press is the GUI's from the frame it lands in, with nothing before it: a finger that touches a button, or a click the mouse made as it came. And a click made as the mouse left a widget is the game's. A widget takes the pointer a frame after it first appears, so a press on it in that frame reaches the game. A frame remembers the places of up to 1024 widgets and areas; past those, the pointer is the GUI's a frame after the GUI saw it there.
