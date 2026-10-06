@@ -28,8 +28,8 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 
 - [Crates, balls and a floor](../physics/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
 - [A wall of crates, and balls to throw](../physics/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
-- [Siege](./siege.md): a whole game on Box2D, two machines in one match: towers, cannons, a sensor that turns gravity over.
-- [Alley](./alley.md): a whole game on Box3D, two machines in one match: bowling with too many pins, spin, low gravity and a goal that counts.
+- [Siege](./siege.md): a whole game on Box2D, with a lobby and rooms for four: towers, cannons, a sensor that turns gravity over.
+- [Alley](./alley.md): a whole game on Box3D, with a lobby and rooms for eight: bowling with too many pins, spin, low gravity and a goal that counts.
 
 ## What a machine shows
 
