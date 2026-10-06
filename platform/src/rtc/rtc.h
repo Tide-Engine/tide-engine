@@ -333,6 +333,7 @@ typedef struct rtc_pair {
     double sent;
     int tries;
     bool nominated; // They picked it (USE-CANDIDATE)
+    bool owed;      // They checked it before we had their password: it's checked back once we do
 } rtc_pair;
 
 typedef struct rtc_ice {
@@ -388,7 +389,9 @@ typedef struct rtc_ice {
 
 bool rtc_ice_start(rtc_ice *ice, bool controlling, const rtc_ice_config *config);
 void rtc_ice_close(rtc_ice *ice);
-void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd);
+// Their description's ufrag and password. Checks of theirs that came before
+// it are checked back here, at `now`.
+void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd, double now);
 void rtc_ice_add_remote(rtc_ice *ice, const rtc_candidate *c);
 // Our next candidate to tell the other side about, if there's a new one.
 bool rtc_ice_next_local(rtc_ice *ice, rtc_candidate *c);
@@ -567,6 +570,7 @@ enum { RTC_PEER_CONNECTING, RTC_PEER_OPEN, RTC_PEER_FAILED };
 
 #define RTC_PEER_INBOX 64
 #define RTC_PEER_SIGNALS 16
+#define RTC_PEER_HELD 4
 
 typedef struct rtc_peer {
     int state;
@@ -586,6 +590,14 @@ typedef struct rtc_peer {
     char *signals[RTC_PEER_SIGNALS];
     int signal_count;
     bool description_told;
+    // Their DTLS datagrams that came before DTLS could answer them, in the
+    // order they came, each with when it arrived: DTLS gets them once it can
+    struct {
+        uint16_t size;
+        double arrived;
+        uint8_t data[2048];
+    } held[RTC_PEER_HELD];
+    int held_count;
     // Messages from the other side, each with when the datagram it came in arrived
     struct {
         uint16_t size;

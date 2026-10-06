@@ -357,8 +357,8 @@ TIDE_TEST(rtc_ice_on_this_machine)
     const rtc_ice_config none = {0};
     rtc_ice a, b;
     TIDE_REQUIRE(rtc_ice_start(&a, true, &none) && rtc_ice_start(&b, false, &none));
-    rtc_ice_set_remote(&a, b.ufrag, b.pwd);
-    rtc_ice_set_remote(&b, a.ufrag, a.pwd);
+    rtc_ice_set_remote(&a, b.ufrag, b.pwd, rtc_now());
+    rtc_ice_set_remote(&b, a.ufrag, a.pwd, rtc_now());
     rtc_candidate c;
     while (rtc_ice_next_local(&a, &c)) rtc_ice_add_remote(&b, &c);
     while (rtc_ice_next_local(&b, &c)) rtc_ice_add_remote(&a, &c);
@@ -419,7 +419,7 @@ TIDE_TEST(rtc_ice_an_answer_counts_from_where_the_check_went)
     rtc_ice agent;
     plain_socket first, second;
     TIDE_REQUIRE(rtc_ice_start(&agent, true, &none) && plain_open(&first) && plain_open(&second));
-    rtc_ice_set_remote(&agent, "them", pwd);
+    rtc_ice_set_remote(&agent, "them", pwd, rtc_now());
     const rtc_candidate there = {{0x7f000001u, rtc_socket_port(first.socket)}, 2130706431u, RTC_HOST, "1"};
     rtc_ice_add_remote(&agent, &there);
 
@@ -464,6 +464,82 @@ TIDE_TEST(rtc_ice_an_answer_counts_from_where_the_check_went)
     rtc_ice_close(&agent);
     plain_close(&first);
     plain_close(&second);
+}
+
+// A check of theirs can come before their description does. It's answered,
+// which takes our own password, and the check back, which is signed with
+// theirs, goes as soon as that's there (RFC 8445, 7.3.1.4): not in its pair's
+// turn, behind the addresses their description says they're at. Here the
+// check comes from one socket, and their description then names another,
+// which ranks higher. Time stands still throughout, so only one check ever
+// goes in turn, to the one named: the one their check came from only gets its
+// check if it goes out of turn.
+TIDE_TEST(rtc_ice_checks_back_once_it_has_their_password)
+{
+    const rtc_ice_config none = {0};
+    static const char pwd[] = "theirpasswordtheirpasswd";
+    rtc_ice agent;
+    plain_socket named, found; // Where their description says they are, and where their check comes from
+    TIDE_REQUIRE(rtc_ice_start(&agent, true, &none) && plain_open(&named) && plain_open(&found));
+    const double now = rtc_now();
+
+    // Their check, signed with the agent's password, before the agent has anything of theirs
+    static const uint8_t id[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    char username[32];
+    snprintf(username, sizeof username, "%s:them", agent.ufrag);
+    uint8_t check[256];
+    rtc_stun_writer w;
+    rtc_stun_begin(&w, check, sizeof check, RTC_STUN_BINDING_REQUEST, id);
+    rtc_stun_attr(&w, RTC_STUN_USERNAME, username, strlen(username));
+    rtc_stun_attr32(&w, RTC_STUN_PRIORITY, 110u << 24 | 65535u << 8 | 255u); // A peer-reflexive candidate's
+    rtc_stun_attr64(&w, RTC_STUN_ICE_CONTROLLED, 1);
+    rtc_stun_integrity(&w, agent.pwd, strlen(agent.pwd));
+    rtc_stun_fingerprint(&w);
+    TIDE_REQUIRE(!w.overflow);
+    rtc_udp_send(found.socket, (rtc_addr){0x7f000001u, rtc_socket_port(agent.socket)}, check, w.size);
+
+    // Answered: the agent read it, and knows the pair, which it can't check yet
+    uint8_t datagram[512], got[64];
+    rtc_addr from = {0};
+    size_t n = 0;
+    double arrived = 0.0;
+    double start = rtc_now();
+    while (rtc_now() - start < 10.0 && !n) {
+        rtc_ice_update(&agent, now);
+        rtc_ice_receive(&agent, now, got, sizeof got);
+        n = tide_arrivals_next(found.arrivals, &from.ip, &from.port, datagram, sizeof datagram, &arrived);
+    }
+    rtc_stun m;
+    TIDE_REQUIRE(n && rtc_stun_parse(datagram, n, &m) && m.type == RTC_STUN_BINDING_SUCCESS);
+    TIDE_CHECK(memcmp(m.id, id, 12) == 0 && rtc_stun_check(&m, agent.pwd, strlen(agent.pwd)));
+    TIDE_REQUIRE(agent.pair_count == 1 && agent.pairs[0].state == RTC_PAIR_WAITING);
+
+    // Their description: the check back goes with their password
+    rtc_ice_set_remote(&agent, "them", pwd, now);
+    const rtc_candidate there = {{0x7f000001u, rtc_socket_port(named.socket)}, 2130706431u, RTC_HOST, "1"};
+    rtc_ice_add_remote(&agent, &there);
+    TIDE_REQUIRE(agent.pair_count == 2 && agent.pairs[1].priority > agent.pairs[0].priority);
+    TIDE_CHECK(agent.pairs[0].state == RTC_PAIR_IN_PROGRESS);
+
+    // Each socket gets its check: the one named in its turn, and the other out of it
+    uint8_t in_turn[512];
+    size_t to_named = 0, to_found = 0;
+    start = rtc_now();
+    while (rtc_now() - start < 10.0 && !(to_named && to_found)) {
+        rtc_ice_update(&agent, now);
+        rtc_ice_receive(&agent, now, got, sizeof got);
+        if (!to_named) to_named = tide_arrivals_next(named.arrivals, &from.ip, &from.port, in_turn, sizeof in_turn, &arrived);
+        if (!to_found) to_found = tide_arrivals_next(found.arrivals, &from.ip, &from.port, datagram, sizeof datagram, &arrived);
+    }
+    TIDE_CHECK(to_named != 0);
+    TIDE_REQUIRE(to_found && rtc_stun_parse(datagram, to_found, &m) && m.type == RTC_STUN_BINDING_REQUEST);
+    TIDE_CHECK(rtc_stun_check(&m, pwd, strlen(pwd)));
+    TIDE_CHECK(agent.pairs[0].tries == 1 && agent.pairs[1].tries == 1); // Once each: nothing went again
+    TIDE_CHECK(agent.selected < 0);
+
+    rtc_ice_close(&agent);
+    plain_close(&named);
+    plain_close(&found);
 }
 
 // DTLS between our client and our server, over a wire that loses datagrams.
@@ -814,8 +890,9 @@ static void far_send(far_side *f, const bool together)
 }
 
 // A peer that joins and its far side, each told of the other as the relay
-// would tell them: the peer's offer and the far side's answer, and where each is.
-static rtc_peer *far_meet(far_side *f)
+// would tell them. First the far side, of the peer's offer and where it is:
+// from here its ICE can check the peer, which doesn't know it yet.
+static rtc_peer *far_offered(far_side *f)
 {
     static const rtc_ice_config none = {0};
     memset(f, 0, sizeof *f);
@@ -832,7 +909,7 @@ static rtc_peer *far_meet(far_side *f)
         rtc_candidate candidate;
         if (d.text && rtc_json_string(rtc_json_get(d, "type"), type, sizeof type)
             && rtc_json_string(rtc_json_get(d, "sdp"), sdp, sizeof sdp) && rtc_sdp_parse(sdp, &offer)) {
-            rtc_ice_set_remote(&f->ice, offer.ufrag, offer.pwd);
+            rtc_ice_set_remote(&f->ice, offer.ufrag, offer.pwd, rtc_now());
             memcpy(f->their_fingerprint, offer.fingerprint, 32);
         }
         if (c.text && rtc_json_string(rtc_json_get(c, "candidate"), line, sizeof line)
@@ -841,7 +918,16 @@ static rtc_peer *far_meet(far_side *f)
         }
     }
     if (!f->ice.has_remote) return NULL;
+    // On loopback too, for machines without a network
+    const rtc_candidate loop = {{0x7f000001u, rtc_socket_port(p->ice.socket)}, 2130706431u, RTC_HOST, "9"};
+    rtc_ice_add_remote(&f->ice, &loop);
+    return p;
+}
 
+// Then the peer, of the far side's answer and where it is.
+static bool far_answer(far_side *f, rtc_peer *p)
+{
+    static char sdp[4096], line[256];
     rtc_description answer;
     memset(&answer, 0, sizeof answer);
     snprintf(answer.ufrag, sizeof answer.ufrag, "%s", f->ice.ufrag);
@@ -860,12 +946,30 @@ static rtc_peer *far_meet(far_side *f)
         rtc_candidate_write(&l, &mine);
         rtc_peer_candidate(p, line);
     }
-    // And each on loopback, for machines without a network
+    // On loopback too
     snprintf(line, sizeof line, "candidate:9 1 udp 2130706431 127.0.0.1 %u typ host", (unsigned)rtc_socket_port(f->ice.socket));
     rtc_peer_candidate(p, line);
-    const rtc_candidate loop = {{0x7f000001u, rtc_socket_port(p->ice.socket)}, 2130706431u, RTC_HOST, "9"};
-    rtc_ice_add_remote(&f->ice, &loop);
-    return p->state == RTC_PEER_FAILED ? NULL : p;
+    return p->state != RTC_PEER_FAILED;
+}
+
+static rtc_peer *far_meet(far_side *f)
+{
+    rtc_peer *p = far_offered(f);
+    return p && far_answer(f, p) ? p : NULL;
+}
+
+// The far side's ClientHello, sent by hand from its socket to the peer at
+// `to`, as an agent whose ICE has a pair sooner than ours would send it: the
+// far side's own ICE has none in use yet. Its DTLS starts here, and what it
+// sends from now on waits for far_send.
+static bool far_client_hello(far_side *f, const rtc_addr to, const double now)
+{
+    f->now = now;
+    f->dtls_started = rtc_dtls_start(&f->dtls, true, &f->identity, f->their_fingerprint, far_dtls_out, far_dtls_in, f, now);
+    if (!f->dtls_started || f->out_count != 1) return false;
+    rtc_udp_send(f->ice.socket, to, f->out[0], f->out_sizes[0]);
+    f->out_count = 0;
+    return true;
 }
 
 // One turn of each at `now`: the peer's update, then the far side's ICE and
@@ -899,6 +1003,115 @@ static void far_leave(far_side *f, rtc_peer *p)
 {
     rtc_peer_free(p);
     rtc_ice_close(&f->ice);
+}
+
+// Both at `now`, turn after turn, until DTLS is open on both sides: the far
+// side sends what its DTLS has once its ICE has a pair to send it on.
+static void far_handshake(far_side *f, rtc_peer *p, const double now)
+{
+    const double start = rtc_now();
+    while (rtc_now() - start < 10.0 && !(p->dtls.state == RTC_DTLS_OPEN && f->dtls.state == RTC_DTLS_OPEN)) {
+        far_turn(f, p, now);
+        if (f->ice.state == RTC_ICE_CONNECTED) far_send(f, false);
+    }
+}
+
+// Every pair has a check on its way, and none has its answer.
+static bool all_checking(const rtc_ice *ice)
+{
+    for (int i = 0; i < ice->pair_count; i++) {
+        if (ice->pairs[i].state != RTC_PAIR_IN_PROGRESS) return false;
+    }
+    return ice->pair_count > 0;
+}
+
+// The pair whose check was answered, or -1.
+static int answered_pair(const rtc_ice *ice)
+{
+    for (int i = 0; i < ice->pair_count; i++) {
+        if (ice->pairs[i].state == RTC_PAIR_SUCCEEDED) return i;
+    }
+    return -1;
+}
+
+// Their ClientHello is answered though it came before ICE had a pair to
+// answer on: they send it as soon as their own ICE has one, which can be
+// before the answer to our check arrives. Here the far side has answered none
+// of the peer's checks when it sends it: it hasn't read them. The peer's DTLS
+// answers what it reads at once, on ICE's pair in use or nowhere, so read with
+// no pair, the answer is lost. Time stands still from the ClientHello on, so
+// neither side sends a flight again: the handshake only finishes if the peer's
+// first flight went on the pair it then found.
+TIDE_TEST(rtc_peer_answers_a_client_hello_that_came_before_its_pair)
+{
+    static far_side far;
+    rtc_peer *peer = far_meet(&far);
+    TIDE_REQUIRE(peer && peer->dtls_started && !peer->dtls_client);
+
+    // The peer checks where the far side is, which reads nothing yet
+    double now = rtc_now();
+    const double start = now;
+    while (rtc_now() - start < 10.0 && !all_checking(&peer->ice)) {
+        now = rtc_now();
+        rtc_peer_update(peer, now);
+    }
+    TIDE_REQUIRE(all_checking(&peer->ice));
+
+    TIDE_REQUIRE(far_client_hello(&far, (rtc_addr){0x7f000001u, rtc_socket_port(peer->ice.socket)}, now));
+    const double sent = rtc_now();
+    while (rtc_now() - sent < 10.0 && !peer->held_count && !peer->dtls.flight_count) rtc_peer_update(peer, now);
+    TIDE_REQUIRE(peer->held_count || peer->dtls.flight_count); // The peer read it...
+    TIDE_REQUIRE(peer->ice.state == RTC_ICE_CHECKING);          // ...with no pair to answer on
+    TIDE_CHECK(peer->held_count == 1 && peer->dtls.flight_count == 0);
+
+    // The far side reads: the peer's check is answered, and the rest follows
+    far_handshake(&far, peer, now);
+    TIDE_CHECK(peer->ice.state == RTC_ICE_CONNECTED && far.ice.state == RTC_ICE_CONNECTED);
+    TIDE_CHECK(peer->dtls.state == RTC_DTLS_OPEN && far.dtls.state == RTC_DTLS_OPEN);
+    TIDE_CHECK(peer->held_count == 0);
+    far_leave(&far, peer);
+}
+
+// ...and though it came before their description did, which says whose
+// ClientHello it is, and that the peer is the one to answer it. Chrome, when
+// it hosts, sends its ClientHello as soon as a check of its own was answered,
+// which takes nothing of its description: that can still be on its way through
+// the relay. So the far side checks the peer, sends its ClientHello, and only
+// then answers the peer's offer. Time stands still from the ClientHello on, so
+// it's never sent again: the handshake only finishes if the peer kept it.
+TIDE_TEST(rtc_peer_keeps_a_client_hello_that_came_before_their_description)
+{
+    static far_side far;
+    rtc_peer *peer = far_offered(&far);
+    TIDE_REQUIRE(peer);
+
+    // The far side's check, which the peer answers knowing nothing of the far side
+    uint8_t datagram[2048];
+    double now = rtc_now();
+    const double start = now;
+    while (rtc_now() - start < 10.0 && answered_pair(&far.ice) < 0) {
+        now = rtc_now();
+        rtc_ice_update(&far.ice, now);
+        while (rtc_ice_receive(&far.ice, now, datagram, sizeof datagram) != 0) {}
+        rtc_peer_update(peer, now);
+    }
+    const int answered = answered_pair(&far.ice);
+    TIDE_REQUIRE(answered >= 0 && far.ice.state == RTC_ICE_CHECKING); // No pair in use: the peer picks it, and can't yet
+    TIDE_REQUIRE(!peer->have_remote && !peer->dtls_started);
+
+    TIDE_REQUIRE(far_client_hello(&far, far.ice.pairs[answered].remote, now));
+    const double sent = rtc_now();
+    while (rtc_now() - sent < 10.0 && !peer->held_count) rtc_peer_update(peer, now);
+    TIDE_REQUIRE(peer->held_count == 1); // The peer read it, and kept it
+
+    // Their answer: the peer is the DTLS server, and checks back where their check came from
+    TIDE_REQUIRE(far_answer(&far, peer) && peer->dtls_started && !peer->dtls_client);
+    TIDE_CHECK(peer->held_count == 1 && peer->ice.state == RTC_ICE_CHECKING);
+    far_handshake(&far, peer, now);
+    TIDE_CHECK(peer->ice.state == RTC_ICE_CONNECTED && far.ice.state == RTC_ICE_CONNECTED);
+    TIDE_CHECK(peer->dtls.state == RTC_DTLS_OPEN && far.dtls.state == RTC_DTLS_OPEN);
+    TIDE_CHECK(peer->held_count == 0);
+    far_leave(&far, peer);
 }
 
 // The other side's first SCTP packet is heard however soon it comes after
