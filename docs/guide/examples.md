@@ -14,6 +14,10 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Whose input a system reads](../game/input.md#who-gets-which-input): `Owner`, traded between two players, and a body nobody owns.
 - [A command, and a handler that says no](../game/commands.md#handling): an action sent into the match, and the handler that checks who sent it.
 
+## From one sentence
+
+- [Games from one sentence](./from-a-sentence.md): nine whole games, each written by an AI agent from a sentence and these docs, with two players in every one.
+
 ## The match
 
 - [Spawn, Add, Remove and Destroy](../game/entities.md#changing-entities): entities and their components, changed by taps.

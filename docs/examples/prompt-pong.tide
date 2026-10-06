@@ -1,0 +1,694 @@
+// Pong for two, online. The first two players to arrive take the paddles, and a
+// paddle nobody has is played by the computer, so one player alone has a game.
+// Anyone else waits in line: the loser of each game hands their paddle on.
+
+settings
+{
+    title = "Pong";
+    maxPlayers = 8;
+    hostMigration = true;
+}
+
+// The court, in its own units: x from one goal to the other, y across.
+const float HALF_W = 8;
+const float HALF_H = 5;
+const float PADDLE_X = 7.2;
+const float PADDLE_HALF = 1.1;
+const float PADDLE_THICK = 0.32;
+const float PADDLE_REACH = HALF_H - PADDLE_HALF;
+const float PADDLE_SPEED = 15;
+const float BOT_SPEED = 4.6;
+const float BOT_SIGHT = 7.5;
+const float BALL_R = 0.22;
+const float BALL_START = 7.5;
+const float BALL_GAIN = 0.7;
+const float BALL_MAX = 17;
+const float GOAL_X = 9.2; // Past the paddles: a point is called once the ball is well gone
+const int WIN_SCORE = 7;
+
+const Color BACKGROUND = Color(0.055, 0.06, 0.075);
+const Color PANEL = Color(0.09, 0.098, 0.12);
+const Color EDGE = Color(0.21, 0.22, 0.27);
+const Color QUIET = Color(0.62, 0.64, 0.7);
+const Color GOLD = Color(0.98, 0.75, 0.14);
+const Color TEAL = Color(0.18, 0.83, 0.75);
+
+enum Phase { Serve, Rally, Over }
+
+// ---------------------------------------------------------------- the match
+
+component Paddle
+{
+    int side; // 0 on the left, 1 on the right
+    [Position] float y;
+    local float flash; // This machine's: how long a hit still shows
+}
+
+component Ball
+{
+    [Position] float2 position;
+    float2 velocity;
+}
+
+singleton Court
+{
+    Entity leftPaddle;
+    Entity rightPaddle;
+    PlayerID left; // Who has each paddle, or nobody: the computer plays it
+    PlayerID right;
+    List<PlayerID> line; // Everyone waiting for a paddle, first in line first
+    int scoreLeft;
+    int scoreRight;
+    Phase phase;
+    int timer = 90; // Ticks until the serve, or until the next game
+    int winner;
+    int serve = 1; // Which way the next serve goes: 1 to the right, -1 to the left
+    int rally;
+    int games;
+    Random random;
+}
+
+event Bounced { float2 at; float2 normal; int side; } // side: whose paddle, or -1 for a wall
+event Struck { }                                       // Sent to the paddle that hit the ball
+event Scored { int side; float y; }
+event Seated { PlayerID player; int side; }
+event Vacated { int side; }
+
+input Controls
+{
+    [Clamp(-1, 1)] float move;                 // Keys and sticks: along the paddle's track
+    [Absolute, Clamp(-5, 5)] float target;     // Mouse and fingers: where on the track
+    [Absolute] bool pointing;
+
+    Sample(Devices devices, Lens lens, Hand hand)
+    {
+        var keys = devices.keyboard;
+        var stick = devices.gamepad.leftStick;
+        if (lens.tall)
+        {
+            if (keys.d.pressed || keys.rightArrow.pressed) move += lens.flip;
+            if (keys.a.pressed || keys.leftArrow.pressed) move -= lens.flip;
+            if (Math.Abs(stick.x) > 0.2) move += stick.x * lens.flip;
+        }
+        else
+        {
+            if (keys.w.pressed || keys.upArrow.pressed) move += 1;
+            if (keys.s.pressed || keys.downArrow.pressed) move -= 1;
+            if (Math.Abs(stick.y) > 0.2) move += stick.y;
+        }
+        target = hand.target;
+        pointing = hand.active;
+    }
+}
+
+scene Main { }
+
+event(Spawned) Setup(mut Court court, with Main)
+{
+    court.leftPaddle = Spawn(Paddle { side = 0 });
+    court.rightPaddle = Spawn(Paddle { side = 1 });
+    Spawn(Ball);
+    court.serve = court.random.NextBool() ? 1 : -1;
+}
+
+event(PlayerJoined joined) Arrive(mut Court court)
+{
+    if (court.left == joined.player || court.right == joined.player) return;
+    if (court.line.Contains(joined.player)) return;
+    court.line.Add(joined.player);
+}
+
+event(PlayerLeft gone) Depart(mut Court court, Time time)
+{
+    if (court.left == gone.player)
+    {
+        court.left = default;
+        court.leftPaddle.Remove(Owner);
+        Restart(court, time.tickRate);
+        Send(Vacated { side = 0 });
+    }
+    else if (court.right == gone.player)
+    {
+        court.right = default;
+        court.rightPaddle.Remove(Owner);
+        Restart(court, time.tickRate);
+        Send(Vacated { side = 1 });
+    }
+    else
+    {
+        court.line.Remove(gone.player);
+    }
+}
+
+// A new game: nothing on the board, and a moment before the serve.
+void Restart(mut Court court, int pause)
+{
+    court.scoreLeft = 0;
+    court.scoreRight = 0;
+    court.rally = 0;
+    court.phase = Phase.Serve;
+    court.timer = pause;
+}
+
+// Whoever is first in line takes a paddle nobody has.
+system FillSeats(mut Court court, Time time)
+{
+    if (court.line.count == 0 || court.leftPaddle == default) return;
+    if (court.left == default)
+    {
+        court.left = court.line[0];
+        court.line.RemoveAt(0);
+        court.leftPaddle.Add(Owner { player = court.left });
+        Restart(court, time.tickRate * 2);
+        court.serve = 1; // The first serve goes away from whoever just sat down
+        Send(Seated { player = court.left, side = 0 });
+    }
+    if (court.right == default && court.line.count > 0)
+    {
+        court.right = court.line[0];
+        court.line.RemoveAt(0);
+        court.rightPaddle.Add(Owner { player = court.right });
+        Restart(court, time.tickRate * 2);
+        court.serve = -1;
+        Send(Seated { player = court.right, side = 1 });
+    }
+}
+
+// A player's paddle goes by its owner's input.
+system Steer(Controls input, mut Paddle paddle, Time time, with Owner)
+{
+    var step = PADDLE_SPEED * time.dt;
+    if (input.pointing)
+    {
+        paddle.y += Math.Clamp(input.target - paddle.y, -step, step);
+    }
+    else
+    {
+        paddle.y += input.move * step;
+    }
+    paddle.y = Math.Clamp(paddle.y, -PADDLE_REACH, PADDLE_REACH);
+}
+
+// A paddle nobody has follows the ball, a little too slowly to be unbeatable.
+system Bot(mut Paddle paddle, Court court, Time time, without Owner, query (Ball ball) balls)
+{
+    mut var aim = 0.0;
+    foreach (var row in balls)
+    {
+        var away = paddle.side == 0 ? row.ball.position.x + PADDLE_X : PADDLE_X - row.ball.position.x;
+        var coming = paddle.side == 0 ? row.ball.velocity.x < 0 : row.ball.velocity.x > 0;
+        // It only starts once the ball is near its half, and not always with
+        // its middle: another place on the paddle each rally
+        if (coming && away < BOT_SIGHT) aim = row.ball.position.y + (Math.Hash(int2(court.rally, court.games)) % 100 - 50) * 0.012;
+    }
+    var gap = aim - paddle.y;
+    if (Math.Abs(gap) < 0.1) return;
+    var step = BOT_SPEED * time.dt;
+    paddle.y = Math.Clamp(paddle.y + Math.Clamp(gap, -step, step), -PADDLE_REACH, PADDLE_REACH);
+}
+
+system PlayBall(mut Ball ball, mut Court court, Time time, query (Paddle paddle) paddles)
+{
+    if (court.phase != Phase.Rally)
+    {
+        // The ball waits in the middle
+        if (Math.LengthSq(ball.position) > 0 || Math.LengthSq(ball.velocity) > 0)
+        {
+            ball.position = float2(0);
+            ball.velocity = float2(0);
+            this.Snap();
+        }
+        court.timer -= 1;
+        if (court.timer > 0) return;
+        if (court.phase == Phase.Over)
+        {
+            // With someone waiting, the loser goes to the back of the line
+            if (court.line.count > 0 && court.winner == 0 && court.right != default)
+            {
+                court.line.Add(court.right);
+                court.right = default;
+                court.rightPaddle.Remove(Owner);
+            }
+            if (court.line.count > 0 && court.winner == 1 && court.left != default)
+            {
+                court.line.Add(court.left);
+                court.left = default;
+                court.leftPaddle.Remove(Owner);
+            }
+            Restart(court, time.tickRate);
+            return;
+        }
+        var tilt = court.random.NextFloat(-0.45, 0.45);
+        ball.velocity = float2(court.serve * Math.Cos(tilt), Math.Sin(tilt)) * BALL_START;
+        court.phase = Phase.Rally;
+        return;
+    }
+
+    var before = ball.position;
+    mut var at = before + ball.velocity * time.dt;
+    mut var velocity = ball.velocity;
+
+    // The walls along the court
+    var limit = HALF_H - BALL_R;
+    if (at.y > limit)
+    {
+        at.y = 2 * limit - at.y;
+        velocity.y = -Math.Abs(velocity.y);
+        Send(Bounced { at = float2(at.x, HALF_H), normal = float2(0, -1), side = -1 });
+    }
+    else if (at.y < -limit)
+    {
+        at.y = -2 * limit - at.y;
+        velocity.y = Math.Abs(velocity.y);
+        Send(Bounced { at = float2(at.x, -HALF_H), normal = float2(0, 1), side = -1 });
+    }
+
+    // The paddles: the ball turns back where it crosses a paddle's face
+    foreach (var row in paddles)
+    {
+        var way = row.paddle.side == 0 ? 1.0 : -1.0; // The way this paddle sends the ball
+        var face = -way * (PADDLE_X - PADDLE_THICK * 0.5 - BALL_R);
+        if (velocity.x * way >= 0) continue;
+        if ((before.x - face) * way < 0 || (at.x - face) * way >= 0) continue;
+        var part = (before.x - face) / (before.x - at.x);
+        var y = before.y + (at.y - before.y) * part;
+        var off = (y - row.paddle.y) / (PADDLE_HALF + BALL_R);
+        if (Math.Abs(off) > 1) continue;
+        // The further from the paddle's middle, the steeper it leaves, and each hit is faster
+        var speed = Math.Min(Math.Length(velocity) + BALL_GAIN, BALL_MAX);
+        velocity = float2(way * Math.Cos(off), Math.Sin(off)) * speed;
+        at = float2(face, y) + velocity * (time.dt * (1 - part));
+        court.rally += 1;
+        Send(Bounced { at = float2(face - way * BALL_R, y), normal = float2(way, 0), side = row.paddle.side });
+        row.entity.Send(Struck { });
+    }
+
+    ball.position = at;
+    ball.velocity = velocity;
+    if (Math.Abs(at.x) < GOAL_X) return;
+
+    // Past a goal: a point for the other side
+    var scorer = at.x > 0 ? 0 : 1;
+    if (scorer == 0)
+    {
+        court.scoreLeft += 1;
+    }
+    else
+    {
+        court.scoreRight += 1;
+    }
+    var score = scorer == 0 ? court.scoreLeft : court.scoreRight;
+    Send(Scored { side = scorer, y = at.y });
+    court.serve = scorer == 0 ? 1 : -1; // Towards whoever let it through
+    court.rally = 0;
+    if (score >= WIN_SCORE)
+    {
+        court.phase = Phase.Over;
+        court.winner = scorer;
+        court.games += 1;
+        court.timer = time.tickRate * 4;
+    }
+    else
+    {
+        court.phase = Phase.Serve;
+        court.timer = time.tickRate;
+    }
+}
+
+// ------------------------------------------------------- what a machine shows
+
+struct Spark
+{
+    float2 position; // In the court's units
+    float2 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.09;
+    Color color = Color.white;
+}
+
+// How the court lies on this screen: across a wide one, and up a tall one,
+// turned so that this machine's player is at the bottom.
+local singleton Lens
+{
+    bool tall;
+    float scale = 20; // Pixels in a court unit
+    float unit = 1;   // How big text and margins are
+    float2 origin;    // The court's middle, in pixels
+    float flip = 1;
+    int mine = -1;    // This machine's player's side, or -1 while it waits in line
+}
+
+// Where the mouse or a finger wants the paddle.
+local singleton Hand
+{
+    float target;
+    bool active;
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    float shake;
+    float flash;
+    int flashSide;
+    string toast;
+    float toastTime;
+    string notice;
+    Random random;
+}
+
+float2 ToScreen(Lens lens, float2 at)
+{
+    if (lens.tall) return lens.origin + float2(at.y, -at.x) * (lens.flip * lens.scale);
+    return lens.origin + float2(at.x, -at.y) * lens.scale;
+}
+
+float2 ToCourt(Lens lens, float2 pixel)
+{
+    var d = (pixel - lens.origin) / lens.scale;
+    if (lens.tall) return float2(-d.y, d.x) * lens.flip;
+    return float2(d.x, -d.y);
+}
+
+float2 Span(Lens lens, float2 size)
+{
+    if (lens.tall) return float2(size.y, size.x) * lens.scale;
+    return size * lens.scale;
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * alpha);
+}
+
+Color SideColor(int side)
+{
+    return side == 0 ? GOLD : TEAL;
+}
+
+string SeatName(PlayerID seat, PlayerID me, bool watching, string color)
+{
+    if (seat == default) return "COMPUTER";
+    if (seat == me) return "YOU";
+    return watching ? color : "FRIEND";
+}
+
+local event(Bounced bounced) ShowBounce(mut Fx fx)
+{
+    var count = bounced.side < 0 ? 6 : 14;
+    var color = bounced.side < 0 ? Color.white : SideColor(bounced.side);
+    for (var i = 0; i < count; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * fx.random.NextFloat(0.5, 4.5) + bounced.normal * 3;
+        fx.sparks.Add(Spark { position = bounced.at, velocity = way, life = fx.random.NextFloat(0.2, 0.5), color = color });
+    }
+    if (bounced.side >= 0) fx.shake = Math.Max(fx.shake, 0.1);
+}
+
+local event(Struck) Glow(mut Paddle paddle)
+{
+    paddle.flash = 0.18;
+}
+
+// A point is only shown once the server says it happened.
+local event(verified Scored scored) ShowGoal(mut Fx fx)
+{
+    fx.flash = 1;
+    fx.flashSide = scored.side;
+    fx.shake = 0.4;
+    var x = scored.side == 0 ? HALF_W : -HALF_W;
+    for (var i = 0; i < 40; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 9);
+        fx.sparks.Add(Spark { position = float2(x, scored.y), velocity = float2(-Math.Sign(x) * Math.Abs(way.x), way.y),
+                              life = fx.random.NextFloat(0.4, 0.9), size = 0.13, color = SideColor(scored.side) });
+    }
+}
+
+local event(Seated seated) Welcome(mut Fx fx, Session session, Lens lens)
+{
+    if (seated.player == session.player)
+    {
+        var color = seated.side == 0 ? "GOLD" : "TEAL";
+        var where = lens.tall ? "at the bottom" : (seated.side == 0 ? "on the left" : "on the right");
+        fx.toast = $"You're {color}, {where}";
+    }
+    else
+    {
+        fx.toast = "A challenger arrived: new game!";
+    }
+    fx.toastTime = 3;
+}
+
+local event(Vacated) Farewell(mut Fx fx)
+{
+    fx.toast = "A player left: new game!";
+    fx.toastTime = 3;
+}
+
+local event(Disconnected gone) Dropped(mut Fx fx)
+{
+    fx.notice = gone.reason == DisconnectReason.Refused ? "This game is full" : "The game ended: reload to play again";
+}
+
+local event(Connected) Joined(mut Fx fx)
+{
+    fx.notice = "";
+}
+
+// Lays the court out on the screen. It needs no match, so it draws while joining too.
+view Backdrop(mut Lens lens, mut Fx fx)
+{
+    Draw2D.Clear(BACKGROUND);
+    Draw2D.SetScreen();
+    float w = Screen.width;
+    float h = Screen.height;
+    var dt = Math.Min(Frame.dt, 0.05);
+    lens.unit = Math.Clamp(Math.Min(w, h) / 400, 0.75, 1.6);
+    lens.tall = h > w * 1.3;
+    var top = 62 * lens.unit;
+    var bottom = 54 * lens.unit;
+    var room = float2(w - 16, h - top - bottom);
+    if (lens.tall)
+    {
+        lens.scale = Math.Min(room.x / (2 * HALF_H), room.y / (2 * HALF_W));
+    }
+    else
+    {
+        lens.scale = Math.Min(room.x / (2 * HALF_W), room.y / (2 * HALF_H));
+    }
+    fx.shake = Math.Max(0, fx.shake - dt);
+    fx.flash = Math.Max(0, fx.flash - dt * 1.6);
+    fx.toastTime = Math.Max(0, fx.toastTime - dt);
+    lens.origin = float2(w * 0.5, top + room.y * 0.5) + fx.random.NextFloat2Direction() * (fx.shake * 16 * lens.unit);
+}
+
+view Seat(Court court, Session session, mut Lens lens)
+{
+    lens.mine = court.left == session.player ? 0 : (court.right == session.player ? 1 : -1);
+    lens.flip = lens.mine == 1 ? -1 : 1;
+}
+
+// The mouse or a finger says where the paddle should be, until a key takes over.
+view Point(Devices devices, Lens lens, mut Hand hand)
+{
+    var touch = devices.touchscreen.primaryTouch;
+    var mouse = devices.mouse;
+    var keys = devices.keyboard;
+    var keyed = keys.w.pressed || keys.s.pressed || keys.a.pressed || keys.d.pressed
+        || keys.upArrow.pressed || keys.downArrow.pressed || keys.leftArrow.pressed || keys.rightArrow.pressed
+        || Math.LengthSq(devices.gamepad.leftStick) > 0.04;
+    if (keyed)
+    {
+        hand.active = false;
+    }
+    else if (touch.press.pressed)
+    {
+        // A finger that lifts leaves the paddle where it last pointed
+        hand.active = true;
+        hand.target = ToCourt(lens, Screen.Flip(touch.position)).y;
+    }
+    else if (mouse.left.pressed || Math.LengthSq(mouse.delta) > 0)
+    {
+        hand.active = true;
+        hand.target = ToCourt(lens, Screen.Flip(mouse.position)).y;
+    }
+}
+
+view DrawTable(Lens lens, Fx fx)
+{
+    var size = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
+    Draw2D.RoundRect(lens.origin, size + float2(6, 6), 9, EDGE);
+    Draw2D.RoundRect(lens.origin, size, 6, PANEL);
+    if (fx.flash > 0) Draw2D.RoundRect(lens.origin, size, 6, Fade(SideColor(fx.flashSide), 0.35 * fx.flash));
+    // The line down the middle
+    for (var i = -5; i < 5; i++)
+    {
+        Draw2D.Rect(ToScreen(lens, float2(0, i + 0.5)), Span(lens, float2(0.07, 0.46)), EDGE);
+    }
+    // Each end in its player's color
+    Draw2D.Rect(ToScreen(lens, float2(-HALF_W + 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(GOLD, 0.55));
+    Draw2D.Rect(ToScreen(lens, float2(HALF_W - 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(TEAL, 0.55));
+}
+
+view DrawPaddles(mut Paddle paddle, Lens lens)
+{
+    paddle.flash = Math.Max(0, paddle.flash - Frame.dt);
+    var center = ToScreen(lens, float2(paddle.side == 0 ? -PADDLE_X : PADDLE_X, paddle.y));
+    var size = Span(lens, float2(PADDLE_THICK, 2 * PADDLE_HALF));
+    var radius = PADDLE_THICK * 0.5 * lens.scale;
+    var color = SideColor(paddle.side);
+    if (paddle.side == lens.mine)
+    {
+        // This machine's own paddle glows
+        Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = Fade(color, 0.5), soft = 9 * lens.unit });
+    }
+    Draw2D.RoundRect(center, size, radius, paddle.flash > 0 ? Color.white : color);
+}
+
+view DrawSparks(mut Fx fx, Lens lens)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    var field = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
+    Draw2D.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y)),
+    Draw.Blend(Blend.Add)
+    {
+        mut var i = 0;
+        while (i < fx.sparks.count)
+        {
+            mut var spark = fx.sparks[i];
+            spark.age += dt;
+            if (spark.age >= spark.life)
+            {
+                fx.sparks.RemoveAt(i);
+                continue;
+            }
+            spark.position += spark.velocity * dt;
+            fx.sparks[i] = spark;
+            var left = 1 - spark.age / spark.life;
+            Draw2D.Circle(ToScreen(lens, spark.position), spark.size * lens.scale * left, Fade(spark.color, left));
+            i++;
+        }
+    }
+}
+
+view DrawBall(Ball ball, Court court, Time time, Lens lens, mut Fx fx)
+{
+    if (court.phase == Phase.Over) return;
+    var field = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
+    var at = ToScreen(lens, ball.position);
+    var radius = BALL_R * lens.scale;
+    // The faster the ball, the hotter it looks
+    var heat = Math.Saturate((Math.Length(ball.velocity) - BALL_START) / (BALL_MAX - BALL_START));
+    var hot = Color(1, 1 - 0.4 * heat, 1 - 0.75 * heat);
+    if (court.rally >= 4)
+    {
+        var under = lens.origin + float2(0, field.y * 0.5 - 14 * lens.unit);
+        Draw2D.RoundRect(under, float2(74, 18) * lens.unit, 9 * lens.unit, PANEL);
+        Draw2D.Text($"rally {court.rally}", under, 12 * lens.unit, Fade(hot, 0.8), Anchor.MiddleCenter);
+    }
+    Draw2D.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y))
+    {
+        Draw2D.Circle(at, radius, hot);
+        if (court.phase == Phase.Rally)
+        {
+            // A trail, which fades behind it
+            fx.sparks.Add(Spark { position = ball.position, life = 0.22, size = BALL_R * 0.85, color = Fade(hot, 0.22) });
+        }
+        else
+        {
+            // A ring that runs out as the serve comes, and an arrow the way it will go
+            var wait = Math.Saturate(court.timer / float(time.tickRate));
+            Draw2D.Arc(at, radius * 2.6, -Math.PI * 0.5, Math.TAU * wait, 2 * lens.unit, QUIET);
+            var ahead = Math.Normalize(ToScreen(lens, float2(court.serve, 0)) - ToScreen(lens, float2(0, 0)));
+            var side = float2(-ahead.y, ahead.x);
+            var tip = at + ahead * radius * 5.2;
+            var color = SideColor(court.serve > 0 ? 0 : 1);
+            Draw2D.Line(tip, tip - ahead * radius + side * radius, 2 * lens.unit, color);
+            Draw2D.Line(tip, tip - ahead * radius - side * radius, 2 * lens.unit, color);
+        }
+    }
+}
+
+// The board is the server's: a point shows once it's certain.
+view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
+{
+    float w = Screen.width;
+    float h = Screen.height;
+    var u = lens.unit;
+    var watching = lens.mine < 0;
+    var row = 8 * u;
+    // The names stand over the court's corners, however wide the window is
+    var half = Span(lens, float2(2 * HALF_W, 2 * HALF_H)).x * 0.5;
+    var x0 = w * 0.5 - half + 4;
+    var x1 = w * 0.5 + half - 4;
+
+    Draw2D.Text(SeatName(court.left, session.player, watching, "GOLD"), float2(x0, row + 4 * u), 16 * u, GOLD, Anchor.UpperLeft, Font.Bold);
+    Draw2D.Text(SeatName(court.right, session.player, watching, "TEAL"), float2(x1, row + 4 * u), 16 * u, TEAL, Anchor.UpperRight, Font.Bold);
+    Draw2D.Text($"{court.scoreLeft}", float2(w * 0.5 - 14 * u, row), 36 * u, GOLD, Anchor.UpperRight, Font.Bold);
+    Draw2D.Text(":", float2(w * 0.5, row - 2 * u), 36 * u, QUIET, Anchor.UpperCenter, Font.Bold);
+    Draw2D.Text($"{court.scoreRight}", float2(w * 0.5 + 14 * u, row), 36 * u, TEAL, Anchor.UpperLeft, Font.Bold);
+    // A dot for each point it takes to win
+    for (var i = 0; i < WIN_SCORE; i++)
+    {
+        Draw2D.Circle(float2(x0 + (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreLeft ? GOLD : EDGE);
+        Draw2D.Circle(float2(x1 - (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreRight ? TEAL : EDGE);
+    }
+
+    // How to play, and where things stand
+    var foot = h - 46 * u;
+    mut var how = lens.tall ? "Drag left and right, or A / D and the arrows" : "Move: W / S, the arrows, the mouse or a finger";
+    mut var status = $"First to {WIN_SCORE} wins";
+    if (watching)
+    {
+        if (court.left != default && court.right != default)
+        {
+            var place = court.line.IndexOf(session.player);
+            status = place <= 0 ? "Two are playing: you're next in line" : $"Two are playing: you're number {place + 1} in line";
+            how = "The loser of each game hands their paddle on";
+        }
+    }
+    else if (court.left == default || court.right == default)
+    {
+        status = "Waiting for a friend: send them this link!";
+    }
+    else if (court.line.count > 0)
+    {
+        status = $"First to {WIN_SCORE} wins, and the loser swaps out";
+    }
+    Draw2D.Text(status, float2(w * 0.5, foot), 14 * u, Color.white, Anchor.UpperCenter);
+    Draw2D.Text(how, float2(w * 0.5, foot + 20 * u), 12 * u, QUIET, Anchor.UpperCenter);
+
+    if (court.phase == Phase.Over)
+    {
+        var color = SideColor(court.winner);
+        mut var title = court.winner == 0 ? "GOLD WINS" : "TEAL WINS";
+        if (!watching) title = court.winner == lens.mine ? "YOU WIN!" : "YOU LOSE";
+        var box = float2(230, 92) * u;
+        Draw2D.Shape(Shape { center = lens.origin, size = box, radius = 14 * u, color = Fade(BACKGROUND, 0.94),
+                             outline = 2 * u, outlineColor = color });
+        Draw2D.Text(title, lens.origin - float2(0, 12 * u), 32 * u, color, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text($"{court.scoreLeft} : {court.scoreRight}   next game in {court.timer / time.tickRate + 1}",
+                    lens.origin + float2(0, 24 * u), 13 * u, QUIET, Anchor.MiddleCenter);
+    }
+    else if (fx.toastTime > 0)
+    {
+        var fade = Math.Saturate(fx.toastTime * 2);
+        var at = lens.origin - float2(0, (lens.tall ? HALF_W : HALF_H) * lens.scale * 0.55);
+        var size = Draw2D.MeasureText(fx.toast, 14 * u, Font.Bold) + float2(22, 12) * u;
+        Draw2D.RoundRect(at, size, size.y * 0.5, Fade(BACKGROUND, 0.9 * fade));
+        Draw2D.Text(fx.toast, at, 14 * u, Fade(Color.white, fade), Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+// Outside a match: joining, or out of it.
+view DrawStatus(Session session, Fx fx, Lens lens)
+{
+    if (session.state == SessionState.Connected) return;
+    mut var text = "Joining the game...";
+    if (session.state == SessionState.Offline) text = fx.notice == "" ? "Not in a game" : fx.notice;
+    var u = lens.unit;
+    Draw2D.Text("PONG", float2(Screen.width * 0.5, 14 * u), 30 * u, GOLD, Anchor.UpperCenter, Font.Bold);
+    Draw2D.Text(text, lens.origin, 16 * u, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
