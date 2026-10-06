@@ -86,6 +86,15 @@ And one is for threads on the web, where upstream only knows Emscripten:
   a page's own, it goes on with the loop. A world steps the same either way,
   as it does with any number of workers.
 
+And one is for how a world is tuned, which a game sets through `Physics`:
+
+- **`box2d.h`, `physics_world.c`: `b2World_GetContactTuning`**, which gives
+  back what `b2World_SetContactTuning` set: the contacts' hertz, their damping
+  ratio and the speed bodies are pushed apart at. Upstream has the setter
+  alone. The three are in a world's image, so the package asks the world for
+  them each step and only sets, and notes, what differs: a world that came
+  from an image is asked the same way as one that was stepped here.
+
 ## What the package asks of it
 
 Nothing here is changed for these, but the package rests on them, and a new
@@ -111,12 +120,53 @@ Box2D has to be read for them again:
   A world's gravity is in its image, which is how the package tells a change.
 - **A body made with no shape weighs nothing**, so an impulse does nothing to
   it: the package gives a new body's impulses once its shapes are on it.
+- **A contact only says how hard it was when both shapes have
+  `enableHitEvents`**, off unless a shape is made with it. The package makes
+  every shape with it, for `Hit`. It's a byte of each shape in the image, and
+  it has the solver keep each contact point's `normalVelocity`, which is in
+  the image too (see `contact_solver_wide.inl` above). It changes nothing of
+  how a world steps: the package's pin of the bodies alone didn't move.
+- **A world's tuning is in its image**: gravity, the contacts' hertz, damping
+  ratio and push speed, the restitution and hit thresholds and whether bodies
+  sleep. The package compares each with what `Physics` says before a step.
+- **Contact hertz count up to an eighth of the substep rate**
+  (`physics_world.c`, `b2MinFloat( world->contactHertz, 0.125f * inv_h )`): 30 at 4
+  substeps and 60 steps a second, which is the default, so stiffer contacts
+  need more substeps. The package's docs say so.
+- **`b2Body_SetType` lets go of the body's contacts and makes them again**, so
+  the next step has end and begin events for what touched it, and it wakes the
+  body. It doesn't wake what rested on it when the body turns static: the
+  package wakes what touches it first (`b2Body_WakeTouching`).
+- **`b2DestroyShape` with its last argument true** updates the body's mass,
+  which is what the package wants when a part goes.
+- **A body's type is what Box2D says** (`b2Body_GetType`), which is in the
+  image; the package keeps no copy of it in the match.
+- **The queries read nothing that isn't in the image**: the trees, the shapes
+  and the bodies' transforms for `b2World_CastRay`, `b2World_CastShape` and
+  `b2World_OverlapShape`, and a sensor's visitors for
+  `b2Shape_GetSensorData`. They report shapes in the order the trees are
+  walked in, which a restore doesn't keep, so the package never takes the
+  first thing reported: the nearest is the least by fraction and then by the
+  shape's index, with the walk clipped a hair past the best so far, and lists
+  are sorted by the bodies' indices.
+- **The queries report sensors**, which the package passes by
+  (`b2Shape_IsSensor`).
+- **A cast shape counts as touching within its target distance**
+  (`B2_LINEAR_SLOP`, 5 mm, and a quarter of it more): one that starts that
+  near something meets it at fraction 0 with a zero normal.
+- **A cast's fraction doesn't depend on how far it was allowed to go**, while
+  that's past the fraction (`b2ShapeCast` advances conservatively from the
+  start), and a shape met exactly at the allowed fraction is a miss: which is
+  why the walk is clipped past the best, not at it.
+- **Queries change nothing of a world**, so threads may ask the same world at
+  once. The package keeps what a query needs of its own per thread.
 
 ## Updating it
 
-Copy the two folders over, apply the changes again, and run `tide_box2d_stack`
-and `tide_box2d_course` natively, in debug and release, and for the web: their
-pinned hashes are of the simulation and of every image, so a field that isn't
-the same everywhere shows there, and bytes that are whatever was in memory
-show between a debug build and a release one. A new version steps differently,
-so the hashes change with it, and so do games' matches.
+Copy the two folders over, apply the changes again, and run `tide_box2d_stack`,
+`tide_box2d_course` and `tide_box2d_kit` natively, in debug and release, and
+for the web: their pinned hashes are of the simulation, of every image and of
+every answer to a query, so a field that isn't the same everywhere shows
+there, and bytes that are whatever was in memory show between a debug build
+and a release one. A new version steps differently, so the hashes change with
+it, and so do games' matches.

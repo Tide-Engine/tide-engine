@@ -18,13 +18,13 @@ The game opens on its lobby, with all four towers building by themselves behind 
 | Use what you earned | `E` | The button at the bottom |
 | The menu | **Menu**, or Escape | **Menu** |
 
-Your tower is the one on the plinth that says **YOU**, your brick is the one with the white edge, and the lanes under it show where it will come down. The row along the top says how high every tower stands, and the bar down the left side shows the race: a mark for each tower, yours the big one, and the finish line at the top.
+Your tower is the one on the plinth that says **YOU**, your brick is the one with the white edge, and the lanes under it run down to its outline, where it will land. The row along the top says how high every tower stands, and the bar down the left side shows the race: a mark for each tower, yours the big one, and the finish line at the top.
 
-- **A brick falls where you steer it,** half a cell at a time, and turns by quarters. The moment it touches anything it eases down the last of its way and is a real brick: it has weight, it leans and it slides. Then the next one comes. **NEXT** shows which.
+- **A brick falls where you steer it,** half a cell at a time, and turns by quarters, wherever there's room for it. Where it touches down it's a real brick: it has weight, it leans and it slides. Then the next one comes. **NEXT** shows which.
 - **The first tower to stand over the finish line for three seconds takes the round.** The line is 40 meters up. Everything then comes down at once, and the next round starts from nothing. Rounds won are the dots under a plinth's name.
 - **A brick that falls off your tower costs you time:** your next brick waits longer, up to three seconds when a lot of them go at once. What fell lies where it landed for ten seconds, and is cleared.
-- **The lower part of a tower sets solid.** A brick that's at rest ten meters under its tower's top turns gray: its mortar has set, and it won't move again this round. So a tower only ever leans and comes down from its top part, which is where you're building.
-- **A tower earns something at 10, 20 and 30 meters,** which the dotted lines across your plinth mark. A **gust** shoves the top of the tallest of the other towers away from yours. **Cement** sets every brick of your tower solid at once, the loose top too. A **quake** shakes every plinth but yours. You hold one at a time, so use it before the next line.
+- **Every brick of a tower is loose,** from the plinth up: nothing holds a tower together but how it was built. One that leans low down leans all the way up, and can go from anywhere.
+- **A tower earns something at 10, 20 and 30 meters,** which the dotted lines across your plinth mark. A **gust** shoves the top of the tallest of the other towers away from yours. **Cement** sets every brick of your tower solid: they turn gray, and won't move again this round, whatever lands on them or shakes them. What you build on top of them is loose again. A **quake** shakes every plinth but yours. You hold one at a time, so use it before the next line.
 - **A round that goes on long ends anyway:** after a minute and a half the finish line starts coming down, a meter every four seconds, until a tower is over it.
 - **Towers nobody steers build by themselves,** each a little more or less careful than the next, and use what they earn. The menu has a button to stop them.
 
@@ -70,74 +70,97 @@ The game is `examples/towers` in the [repo](https://github.com/BlenMiner/tide-en
 
 ### The physics
 
-Everything that's solid is a body of Box2D's, made, moved and read through components, as the [physics page](../physics/box2d.md) says. A brick is two bodies in its time, and a third if it's set solid.
+Everything that's solid is a body of Box2D's, made, moved and read through components, as the [physics page](../physics/box2d.md) says. A brick is one entity and one body from the moment it's dealt to the end of the round. What changes is what kind of body it is, and which shapes it has.
 
-**A falling brick is a kinematic body of sensors.** It goes where its `velocity` takes it, which is down, and where its `position` and `angle` are written, which is how a player steers it: half a cell across, a quarter turn. Its shapes are [sensors](../physics/box2d.md#sensors), so it stops nothing and pushes nothing, and hears `Touched` for each shape that comes into it, a plinth's and a brick's alike. The system that steers it is [`Before` the package's stage](../physics/box2d.md#before-the-step), so the step that moves it is this tick's, and it reads the input of the player who owns the brick:
+**A falling brick is a kinematic body with no shapes.** It goes where its `velocity` takes it, which is down, and where its `position` and `angle` are written, which is how a player steers it: half a cell across, a quarter turn. With no shape it touches nothing, and nothing touches it. What's in its way, it asks:
 
 ```csharp
+float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, float2 slack)
+{
+    mut var free = 1.0;
+    var angle = Angle(quarter);
+    if (Cast(physics, Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
+    var second = Second(kind);
+    if (second.size.x > 0 && Cast(physics, Slim(second, quarter, slack), from, angle, from + way, out var other))
+    {
+        free = Math.Min(free, other.fraction);
+    }
+    return free;
+}
+```
+
+[`Cast`](../physics/box2d.md#asking-the-world) moves a box along a way through the world, and says how much of the way it went before it touched something. The seven bricks are four cells each, which is one box for the bar and the square and two for the rest, so each box is moved, and the brick is free to go as far as the first of them. `Slim` makes a box a little smaller than it is: a shape that's cast counts as touching what it's flush with, and a brick has to slide down beside a wall it only just clears.
+
+**The system that steers it asks three things each tick.** Is there room for the brick turned the way its player wants, which is the package's `Overlap`? Is it free to step half a cell across? And is it free to fall as far as this tick takes it?
+
+```csharp
+if (falling.quarter != falling.wantQuarter && Room(physics, piece.kind, body.position, falling.wantQuarter))
+{
+    falling.quarter = falling.wantQuarter;
+    body.angle = Angle(falling.quarter);
+}
 if (falling.column != falling.wantColumn && falling.age % 2 == 0)
 {
-    falling.column += falling.wantColumn > falling.column ? 1 : -1;
-    body.position.x = falling.home + falling.column * 0.5;
-}
-if (falling.eased > 0) falling.eased -= 1;
-var speed = falling.eased > 0 ? -EASE : fast ? -FAST : -FALL;
-if (body.velocity.y != speed) body.velocity = float2(0, speed);
-```
-
-**The first thing it touches stops it short.** A sensor says what's in it once a step, where things are after the step, so a brick that falls 30 centimeters a tick is that far into the tower when it hears. It's put back where it was a tick before, as it was, and comes down from there at a slow, steady speed: however fast it fell, it lands softly, and a move or a turn that ran it into a wall is undone.
-
-```csharp
-event(Touched) Touch(mut Falling falling, mut Body body, Time time)
-{
-    falling.touching += 1;
-    if (falling.eased > 0)
+    var step = falling.wantColumn > falling.column ? 1 : -1;
+    if (Free(physics, piece.kind, body.position, falling.quarter, float2(step * 0.5, 0), float2(SLACK)) >= 1)
     {
-        if (time.tick != falling.since) falling.landed = true;
-        return;
+        falling.column += step;
+        body.position.x = falling.home + falling.column * 0.5;
     }
-    falling.eased = EASED;
-    falling.since = time.tick;
-    falling.speed = -body.velocity.y;
-    falling.column = falling.freeColumn;
-    falling.quarter = falling.freeQuarter;
-    body.position = falling.free;
-    body.angle = Angle(falling.freeQuarter);
-    body.velocity = float2(0, -EASE);
 }
-```
-
-**What it touches then is where it lands: it becomes a dynamic body.** A body's `type` is read when it's made, so the falling brick's entity is destroyed, which takes its body with it, and a brick is spawned where the falling one last was free, moving down as slowly. From its first step it's Box2D's: it has weight, it rests on what's under it, and it goes over if that's not enough.
-
-```csharp
-Spawn(Body { position = falling.free, angle = Angle(falling.freeQuarter), velocity = float2(0, -EASE), angularDamping = STEADY },
-      Box { size = part.size, offset = part.offset, friction = GRIP }, Piece { kind = piece.kind },
-      Brick { seat = falling.seat, born = time.tick });
-```
-
-**A brick is one body with two boxes.** The seven bricks are four cells each, which is one box for the bar and the square, and two for the rest. The package gives an entity one `Box`, so the second is put on the body by a system of the game's, in the package's stage, with the function the package puts the first on with:
-
-```csharp
-[Stage(PhysicsStages.Step, 4)]
-system Fit(Body body, Box box, Piece piece, mut Physics physics, without Fitted)
+var speed = fast ? FAST : FALL;
+var fall = speed * time.dt;
+var free = Free(physics, piece.kind, body.position, falling.quarter, float2(0, -fall), float2(SLACK, 0));
+if (free >= 1)
 {
-    var second = Second(piece.kind);
-    if (second.size.x > 0)
-    {
-        var size = box.sensor ? second.size - float2(SLACK) : second.size;
-        physics.shapes += AttachBox(body.id, Box { size = size, offset = second.offset, friction = box.friction, sensor = box.sensor });
-    }
-    this.Add(Fitted);
+    if (body.velocity.y != -speed) body.velocity = float2(0, -speed);
+    return;
 }
 ```
 
-::: warning A stopgap
-`AttachBox` is the package's own, and a game's system in the package's stage is what its page says not to write. It's here because a brick of two boxes has no other way to be one body yet: a body takes one `Box` and one `Circle`. It works because it's the same call, at the same point of the tick, that the package makes for the first box, so the physics state the match keeps has it. When the package takes several shapes of a kind, this system goes.
-:::
+A turn or a step there's no room for doesn't happen, so a brick is never inside a wall and nothing is undone. The system is [`Before` the package's stage](../physics/box2d.md#before-the-step): the world it asks is the world as the last tick's step left it, which is where `body.position` says the brick is, and the step that moves the brick is this tick's. `controls` is the input of the player who owns the brick.
+
+**Where it isn't free to fall, it lands: the same body is a dynamic one, with its shapes on it.**
+
+```csharp
+body.position.y -= fall * free;
+body.velocity = float2(0, 0);
+body.type = BodyType.Dynamic;
+var first = First(piece.kind);
+var second = Second(piece.kind);
+this.Add(Box { size = first.size, offset = first.offset, friction = GRIP }, Brick { seat = falling.seat, born = time.tick });
+if (second.size.x > 0) Spawn(Box { size = second.size, offset = second.offset, friction = GRIP }, Part { of = this });
+this.Remove(Falling, Owner);
+```
+
+It's put where it touches, at rest, however fast it fell: it was never in the tower, so nothing pushes it out, and a landing doesn't hit what's under it. Writing `type` is [all it takes](../physics/box2d.md#changing-what-a-body-is) to change what a body is. Its first box is a `Box` on its own entity. An entity has one `Box`, so a brick of two gets the second as a [`Part`](../physics/box2d.md#more-shapes-on-a-body): an entity of its own that names the brick, whose box is on the brick's body. From the next step the brick is Box2D's: it has weight, it rests on what's under it, and it goes over if that's not enough.
+
+**Where it will land is the same question, asked by a view.** The outline under your brick is where `Free` says it stops, looking 60 meters down. A [view asks the world](../physics/box2d.md#what-they-see) like the match does, of the world it draws:
+
+```csharp
+var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -SIGHT), float2(SLACK, 0));
+```
 
 **The plinths are kinematic bodies,** which go where their `velocity` takes them, whatever stands on them. A quake is a plinth going there and back four times. A plinth rises under a player who joined late, and when a round is over the plinths sink, the winner's last, and everything on them comes down.
 
-**The lower part of a tower is set solid.** Forty meters of loose bricks is a spring: every landing would run down the whole tower and back. So a brick at rest ten meters under its tower's top becomes a kinematic body in the dynamic one's place, and goes where its plinth does from then on: the system that looks at every brick before the step gives it the plinth's velocity. What can lean, slide and fall is the top of each tower, which is where the bricks are landing. When the round is over, every one of them is a dynamic body again, from the bottom of its tower up, and all of it comes down.
+**A tower is loose bricks all the way down.** With the world as Box2D comes, forty meters of them is a spring: a contact gives a little, and every landing ran down the whole tower and back. So the game tunes the world, which is [three fields of `Physics`](../physics/box2d.md#the-world):
+
+```csharp
+physics.substeps = SUBSTEPS;   // 8, where it comes with 4
+physics.stiffness = STIFFNESS; // 60, where it comes with 30
+physics.damping = DAMPING;     // 40, where it comes with 10
+```
+
+Contacts are twice as stiff, which takes twice the substeps to count, and come back out four times as gently. A tower of loose bricks then stands at forty meters, and what's wrong with it low down still shows at the top.
+
+**Cement is a body's type again.** Every brick at rest in the tower that uses it becomes a kinematic body, and goes where its plinth does from then on: the system that looks at every brick before the step gives it the plinth's velocity, so a quake carries it with what's built on it. When the round is over each is a dynamic body again, from the bottom of its tower up, and all of it comes down.
+
+```csharp
+mut var solid = body;
+solid.type = BodyType.Kinematic;
+world.Set<Body>(this, solid);
+brick.set = true;
+```
 
 **A gust is an impulse.** That same system gives the loose bricks near the top of the tower a gust is against an `impulse` each tick it blows, more the nearer the top. It looks at every brick and writes a few, so it takes `Body` to read and puts the ones it changed back [through the World](../game/systems.md#other-entities-the-world):
 
@@ -148,6 +171,17 @@ if (depth > WIND_DEPTH) return;
 mut var pushed = body;
 pushed.impulse.x += Of(towers.winds, lot) * WIND * (1 - Math.Max(depth, 0) / WIND_DEPTH);
 world.Set<Body>(this, pushed);
+```
+
+**How hard things meet is the package's to say.** [`Hit`](../physics/box2d.md#hits) is sent to both bodies that meet faster than the world's `hitSpeed`, which the game puts at 2.5 meters a second, with where and how fast. Nothing in the match handles it. Each machine makes pieces fly of it, more the harder it was: a brick that goes over the side and meets the ground, a tower coming down.
+
+```csharp
+local event(Hit hit) Crash(Brick brick, mut Fx fx)
+{
+    var hard = Math.Saturate((hit.speed - CRASH) / 12);
+    Chunks(fx, hit.point, 1 + int(hard * 3), 1.5 + hard * 4, SeatColor(brick.seat));
+    if (brick.seat == fx.seat && !brick.down) Shake(fx, 0.03 + hard * 0.1);
+}
 ```
 
 **How high a tower stands is read from its bricks:** a system that runs for each plinth goes through every brick with a [query](../game/systems.md#another-set-of-entities), and takes the highest corner of the ones at rest over it. A brick that's under the plinths' tops, or well to one side of every plinth, is off its tower: it's marked, whoever put it there waits longer, and a few seconds later its entity is destroyed.
@@ -218,18 +252,18 @@ Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws t
 - **Whose tower is whose** is the built-in `Owner` component, on a plinth and on the bricks it's dealt: the system that steers a falling brick takes the game's input, and gets the input of the player who owns the brick it runs for. A view picks this machine's player's with [`with ownership`](../game/views.md#your-own-entities).
 - **Using what a tower earned, a new game and the bots' switch are [commands](../game/commands.md),** sent by buttons and handled in the match.
 - **The row of heights is read [`verified`](../game/views.md#confirmed-state):** what the server has confirmed. They're on the plinths, so the view goes through them with a [query](../game/views.md#other-entities).
-- **The dust, the pieces and the camera's shake come from events.** The match says what happens in it: a brick landed, one fell off, a tower earned something or used it, a round ended. Nothing in the match handles those, so they [cost it nothing](../game/events.md#events-only-local-code-handles), and each machine's [local handlers](../game/events.md#local-handlers) make an effect of them, once, however often it runs the tick again. A round's winner waits for the server, with a [`verified` handler](../game/events.md#verified-handlers).
-- **A falling brick slides across and swings round,** where the match steps it half a cell and turns it a quarter at once: where it's drawn is two [local fields](../game/local-state.md#local-fields) of the match's own component, which its view eases. A brick that just landed is lit the same way.
+- **The dust, the pieces and the camera's shake come from events.** The match says what happens in it: a brick landed, one fell off, a tower earned something or used it, a round ended. The package says when two bodies meet hard. Nothing in the match handles those, so they [cost it nothing](../game/events.md#events-only-local-code-handles), and each machine's [local handlers](../game/events.md#local-handlers) make an effect of them, once, however often it runs the tick again. A round's winner waits for the server, with a [`verified` handler](../game/events.md#verified-handlers).
+- **A falling brick slides across and swings round,** where the match steps it half a cell and turns it a quarter at once: where it's drawn is two [local fields](../game/local-state.md#local-fields) of the match's own component, which its view eases. A brick that just landed is lit the same way. Its outline where it will land is asked of the physics world, each frame.
 - **The camera follows your tower's top,** and shows more of the tower the taller it stands. While a round is over it shows the whole race, to watch everything come down.
 - **Views see every body between its last two ticks,** and gliding through a correction, because the package tags a `Body`'s `position` and `angle` for it (see [correction smoothing](../game/views.md#provisional-correction-smoothing)).
 
 ### What it costs
 
-Late in a round there are about 170 bodies: 150 bricks on the towers, three quarters of them set solid, and the rest falling or on the ground. On a desktop a tick takes around 0.07 ms while the towers build, with 0.03 more to keep and hash its world, 0.01 ms with everything at rest, and 0.1 ms while every tower comes down at once. In a browser those are 0.12, 0.03, 0.015 and 0.17.
+Late in a round there are about 150 bodies: 120 bricks on the towers, loose but for the towers that used their Cement, and the rest falling or on the ground. On a desktop a tick takes around 0.11 ms while the towers build, with 0.04 more to keep and hash its world, 0.01 ms with everything at rest, and 0.17 ms while every tower comes down at once. In a browser those are 0.16, 0.04, 0.02 and 0.25. Box2D solves each tick in eight smaller steps here, twice what it comes with, which is what loose towers this tall take.
 
-A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.7 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.8 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
+A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.9 ms on a desktop and 1.4 ms in a browser, and 1.8 and 2.3 while everything comes down. That's a seventh of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
 
-Box2D's whole state is in the match, between 230 and 320 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 130 KB.
+Box2D's whole state is in the match, about 250 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 150 KB.
 
 ### The match, whole
 
