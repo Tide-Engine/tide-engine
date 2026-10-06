@@ -25,7 +25,7 @@ install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 # and tags say, without the network, Android apps as Android checks them, and
 # zips.
 add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/libraries_test.c tests/packages_test.c tests/apk_test.c
-    tests/unzip_test.c tests/rsa_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
+    tests/unzip_test.c tests/rsa_test.c tests/upgrade_auth_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
@@ -42,6 +42,8 @@ add_test(NAME tide_cli_packages
 
 # tide publish, against the build service (builds/) on this machine.
 if(TIDE_NODE)
+    add_test(NAME tide_cli_installers
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/installers_test.mjs")
     # Assets: the pack tidec writes, and URLs fetched once and kept with their ETag, against a server on this machine
     add_test(NAME tide_cli_assets
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets_test.mjs" --tidec "$<TARGET_FILE:tidec>"

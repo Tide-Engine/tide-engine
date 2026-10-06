@@ -4,11 +4,14 @@
 # node_modules: the build bundles it all.
 FROM node:24-alpine
 
+RUN apk add --no-cache su-exec
+
 WORKDIR /site
 ENV NODE_ENV=production PORT=3000
 COPY package.json headers.js server.js ./
 COPY build ./build
 
-USER node
 EXPOSE 3000
-CMD ["node", "server.js"]
+# A new Fly volume belongs to root. Only startup owns this directory; the
+# server runs as node, and no request data is copied into the image.
+CMD ["sh", "-c", "mkdir -p /data && chown node:node /data && chmod 700 /data && exec su-exec node node server.js"]
