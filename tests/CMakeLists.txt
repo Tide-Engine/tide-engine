@@ -1,7 +1,10 @@
 # New .c files in this folder are picked up automatically on the next build.
 file(GLOB TIDE_TEST_SOURCES CONFIGURE_DEPENDS *.c)
 
-add_executable(tide_tests ${TIDE_TEST_SOURCES})
+# The PNG reader's tests read what the platform layer's writer wrote: the
+# writer's one file comes along, with no window or GPU in it.
+add_executable(tide_tests ${TIDE_TEST_SOURCES} "${PROJECT_SOURCE_DIR}/platform/src/png.c")
+target_include_directories(tide_tests PRIVATE "${PROJECT_SOURCE_DIR}/platform/src")
 target_link_libraries(tide_tests PRIVATE tide)
 
 add_test(NAME tide_tests COMMAND tide_tests)

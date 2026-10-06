@@ -26,6 +26,15 @@ component Paddle
     int ticks;
 }
 
+// The floor, which parts are put on
+component Ground { }
+
+// A shape on an entity of its own, which goes at its tick
+component Bit
+{
+    int until;
+}
+
 singleton Script
 {
     int tick;
@@ -40,7 +49,7 @@ singleton Tally
 
 event(Spawned) Build(with Main)
 {
-    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(200, 1, 200) });
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(200, 1, 200) }, Ground);
     for (int stack = 0; stack < 10; stack++)
     {
         for (int row = 0; row < 3; row++)
@@ -88,6 +97,73 @@ system Tease(mut Body body, Crate crate, Script script)
     if (script.tick == 470 && crate.stack == 6 && crate.row == 2) this.Destroy();
     // Moved while it's falling
     if (script.tick == 345 && crate.stack == 20) body.position = float3(8.4, 5, 0.2);
+    // Asleep, and made never to move, moved by code, and let go again
+    if (script.tick == 520 && crate.stack == 3 && crate.row == 2) body.type = BodyType.Static;
+    if (script.tick == 528 && crate.stack == 5 && crate.row == 1) body.type = BodyType.Kinematic;
+    if (script.tick == 560 && crate.stack == 3 && crate.row == 2) body.type = BodyType.Dynamic;
+    if (script.tick == 566 && crate.stack == 5 && crate.row == 1) body.type = BodyType.Dynamic;
+    // Asleep, and to be another way: each wakes to be it
+    if (script.tick == 536 && crate.stack == 5 && crate.row == 2) body.gravityScale = 0.5;
+    if (script.tick == 542 && crate.stack == 9 && crate.row == 0) body.linearDamping = 0.3;
+    if (script.tick == 548 && crate.stack == 9 && crate.row == 1) body.angularDamping = 0.4;
+    if (script.tick == 554 && crate.stack == 5 && crate.row == 0) body.bullet = true;
+    // Falling, and all of them at once
+    if (script.tick == 350 && crate.stack == 20)
+    {
+        body.gravityScale = 1.5;
+        body.linearDamping = 0.1;
+        body.angularDamping = 0.2;
+        body.bullet = true;
+    }
+}
+
+// Shapes on entities of their own: onto a crate that's asleep, a box and a
+// sensor, and each goes again while the crate sleeps
+system Fit(Script script, Crate crate)
+{
+    if (script.quiet) return;
+    if (script.tick == 304 && crate.stack == 9 && crate.row == 2)
+    {
+        Spawn(Box { size = float3(0.3, 0.3, 0.3), offset = float3(0, 0.65, 0) }, Part { of = this }, Bit { until = 452 });
+        Spawn(Sphere { radius = 0.8, sensor = true, density = 0 }, Part { of = this }, Bit { until = 458 });
+    }
+    // ...and onto one that's awake, which goes with them on it
+    if (script.tick == 346 && crate.stack == 20)
+    {
+        Spawn(Capsule { radius = 0.2, height = 1, offset = float3(0, 0.5, 0) }, Part { of = this }, Bit { until = 2000 });
+    }
+    if (script.tick == 474 && crate.stack == 20) this.Destroy();
+}
+
+// ...and onto the floor, which never moves: a bump that a crate is dropped
+// onto, and that goes from under it once it sleeps
+system Lay(Script script, with Ground)
+{
+    if (script.quiet) return;
+    if (script.tick == 312) Spawn(Box { size = float3(1, 0.5, 1), offset = float3(-14, 0.75, 4) }, Part { of = this }, Bit { until = 464 });
+    if (script.tick == 318) Spawn(Body { position = float3(-14, 1.6, 4) }, Box { size = float3(0.6, 0.6, 0.6) }, Crate { stack = 24, row = 0 });
+}
+
+system Unfit(Script script, Bit bit)
+{
+    if (!script.quiet && script.tick == bit.until) this.Destroy();
+}
+
+// How the world is to step, said while most of it sleeps: each is the next
+// step's
+system Tune(mut Physics physics, Script script)
+{
+    if (script.quiet) return;
+    if (script.tick == 570) physics.hitSpeed = 2;
+    if (script.tick == 574) physics.bounceSpeed = 0.5;
+    if (script.tick == 578)
+    {
+        physics.contactStiffness = 25;
+        physics.contactDamping = 8;
+        physics.contactSpeed = 2.5;
+    }
+    if (script.tick == 590) physics.sleeping = false;
+    if (script.tick == 596) physics.sleeping = true;
 }
 
 system Stage(Script script)

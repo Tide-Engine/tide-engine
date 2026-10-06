@@ -1,0 +1,207 @@
+// Containers inside containers: lists of lists, maps of lists, lists of maps
+// and sets, and structs with lists as elements, in the match, in events, in
+// locals and in local state. An element that's a container is changed where
+// it is (rows[i].Add(x), buckets[key].Add(e), rows[i][j] = v); taken out, as
+// a foreach's variable or a local, it's a copy.
+
+struct Bag
+{
+    string name;
+    List<int> parts;
+}
+
+component Grid
+{
+    List<List<int>> rows;
+    List<Bag> bags;
+    List<Map<string, int>> tallies;
+    List<Set<int>> seen;
+}
+
+singleton Buckets
+{
+    Map<int, List<Entity>> members;
+    Map<string, List<List<int>>> deep;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    string shown;
+}
+
+event Shuffled
+{
+    List<List<int>> rows;
+}
+
+local singleton Mirror
+{
+    List<List<int>> rows;
+    int seenInView;
+    int verifiedTotal;
+    int confirmedRows;
+    int confirmedFirst;
+    int confirmedBags;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Grid { rows = [[1, 2], [3]] }, Results);
+}
+
+void Expect(mut Results t, bool ok)
+{
+    t.checks++;
+    if (ok) t.passed++;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+int Sum(List<List<int>> rows)
+{
+    mut int total = 0;
+    foreach (var row in rows)
+    {
+        foreach (var x in row) total += x;
+    }
+    return total;
+}
+
+// The first tick builds and checks; later ticks churn, so the heap's use can be watched
+system Check(mut Grid grid, mut Results t, mut Buckets buckets, Time time)
+{
+    if (time.tick != 1) return;
+
+    // Literals, reads and counts
+    Expect(t, grid.rows.count == 2);
+    Expect(t, grid.rows[0].count == 2 && grid.rows[1].count == 1);
+    Expect(t, grid.rows[0][1] == 2 && grid.rows[1][0] == 3);
+    Expect(t, grid.rows[5].count == 0 && grid.rows[0][9] == 0); // Past the end: nothing
+
+    // Changed where they are
+    grid.rows[1].Add(4);
+    grid.rows[0][0] = 10;
+    grid.rows[1][1] += 5;
+    grid.rows.Add([7, 8, 9]);
+    Expect(t, grid.rows[1].count == 2 && grid.rows[1][1] == 9 && grid.rows[0][0] == 10);
+    Expect(t, Sum(grid.rows) == 10 + 2 + 3 + 9 + 7 + 8 + 9);
+    grid.rows[9].Add(1); // Past the end: nothing
+    grid.rows[9][0] = 1;
+    Expect(t, grid.rows.count == 3);
+
+    // A foreach's variable and a local are copies
+    foreach (var row in grid.rows)
+    {
+        mut var copy = row;
+        copy.Add(100);
+    }
+    mut var first = grid.rows[0];
+    first.Clear();
+    Expect(t, grid.rows[0].count == 2 && Sum(grid.rows) == 48);
+
+    // Taken out and put back
+    mut var middle = grid.rows[1];
+    middle.Insert(0, 1);
+    grid.rows[1] = middle;
+    Expect(t, grid.rows[1].count == 3 && grid.rows[1][0] == 1);
+    grid.rows[2] = grid.rows[0]; // An element from the same list: a copy
+    grid.rows[0][0] = 0;
+    Expect(t, grid.rows[2][0] == 10 && grid.rows[0][0] == 0);
+
+    // Removing lets the inner lists go; clearing and resizing too
+    grid.rows.RemoveAt(2);
+    Expect(t, grid.rows.count == 2);
+    grid.rows.Resize(4);
+    Expect(t, grid.rows[3].count == 0);
+    grid.rows[3].Add(42);
+    Expect(t, grid.rows[3][0] == 42);
+    grid.rows.Resize(2);
+    Expect(t, grid.rows.count == 2);
+
+    // Structs with lists as elements
+    grid.bags.Add(Bag { name = "nuts", parts = [1, 2, 3] });
+    grid.bags.Add(Bag { name = "bolts" });
+    Expect(t, grid.bags[0].parts.count == 3 && grid.bags[1].parts.count == 0);
+    mut var bag = grid.bags[1];
+    bag.parts.Add(5);
+    grid.bags[1] = bag;
+    Expect(t, grid.bags[1].parts[0] == 5 && grid.bags[1].name == "bolts");
+    foreach (var b in grid.bags)
+    {
+        mut var c = b;
+        c.parts.Clear();
+    }
+    Expect(t, grid.bags[0].parts.count == 3);
+
+    // Lists of maps and sets
+    grid.tallies.Add(default);
+    grid.tallies[0]["a"] = 1;
+    grid.tallies[0]["a"] += 2;
+    grid.tallies[0]["b"] = 7;
+    Expect(t, grid.tallies[0]["a"] == 3 && grid.tallies[0].count == 2);
+    grid.seen.Add([1, 2]);
+    grid.seen[0].Add(3);
+    Expect(t, grid.seen[0].Has(3) && !grid.seen[0].Has(4) && grid.seen[0].count == 3);
+    grid.seen[0].Remove(1);
+    Expect(t, !grid.seen[0].Has(1));
+
+    // A map's value that's a list: the key is added as it's first changed
+    buckets.members[7].Add(this);
+    buckets.members[7].Add(this);
+    buckets.members[2].Add(this);
+    Expect(t, buckets.members.count == 2 && buckets.members[7].count == 2 && buckets.members[2].count == 1);
+    Expect(t, buckets.members[9].count == 0 && buckets.members.count == 2); // Reading adds nothing
+    buckets.members.Remove(7);
+    Expect(t, !buckets.members.Has(7) && buckets.members[2][0] == this);
+    buckets.deep["x"].Add([1]);
+    buckets.deep["x"][0].Add(2);
+    buckets.deep["x"][0][1] += 40;
+    Expect(t, buckets.deep["x"][0][1] == 42 && buckets.deep["x"].count == 1);
+    mut var hidden = buckets.deep["x"];
+    hidden[0].Clear();
+    Expect(t, buckets.deep["x"][0].count == 2);
+
+    // Text shows them
+    t.shown = $"{grid.rows} {grid.tallies} {grid.seen}";
+    Expect(t, t.shown == "[[0, 2], [1, 3, 9]] [{\"a\": 3, \"b\": 7}] [{2, 3}]");
+
+    // An event carries one
+    this.Send(Shuffled { rows = grid.rows });
+}
+
+event(Shuffled s) Hear(mut Results t)
+{
+    Expect(t, s.rows.count == 2 && s.rows[1][2] == 9);
+}
+
+// Later ticks churn the nested lists, so the heap is watched for leaks
+system Churn(mut Grid grid, mut Buckets buckets, Time time)
+{
+    if (time.tick < 2) return;
+    grid.rows.Add([time.tick, time.tick + 1]);
+    grid.rows[grid.rows.count - 1].Add(5);
+    if (grid.rows.count > 6) grid.rows.RemoveAt(0);
+    buckets.members[time.tick % 4].Add(default);
+    if (buckets.members[time.tick % 4].count > 3) buckets.members[time.tick % 4].Clear();
+    grid.bags.Add(Bag { name = "x", parts = [1] });
+    if (grid.bags.count > 5) grid.bags.RemoveAt(0);
+}
+
+// Local state holds them too, and a view reads the match's as it is and as the server confirmed it
+view Watch(Grid grid, verified Grid confirmed, mut Mirror mirror)
+{
+    mirror.rows = grid.rows;
+    mirror.rows[0].Add(-1);
+    mirror.seenInView = Sum(grid.rows);
+    mirror.verifiedTotal = Sum(confirmed.rows);
+    mirror.confirmedRows = confirmed.rows.count;
+    mirror.confirmedFirst = confirmed.rows[0].count;
+    mirror.confirmedBags = confirmed.bags.count;
+    mut int bags = 0;
+    foreach (var b in confirmed.bags) bags += b.parts.count;
+    mirror.verifiedTotal += bags;
+}

@@ -34,6 +34,8 @@ tide_e2e_test(long)
 tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
+tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=13944507110118551999ull)
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")
@@ -50,6 +52,8 @@ tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
+tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
+tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code

@@ -49,6 +49,10 @@ add_library(tide_box2d STATIC ${box2d_sources})
 # otherwise there
 target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
+# Optimized in debug builds too: they are the libraries as they came, which nobody here steps through, and
+# their steps are most of what the tests of physics take (a debug run of Sumo's tests went from 302 s to 108).
+# The results are the same either way, which the pins say: they agree in debug and release. Asserts stay on.
+target_compile_options(tide_box2d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     # As it came, it hands memset no array where it has none to clear (0
     # bytes of it), which the sanitizer would stop on: that check is off for
@@ -99,16 +103,19 @@ endif()
 add_test(NAME tide_box2d_kit COMMAND tide_box2d_kit)
 set_tests_properties(tide_box2d_kit PROPERTIES TIMEOUT 120)
 
-# Box3D's, the same way, and with the same flags for the same reason.
+# Box3D's, the same way, and with the same flags for the same reason. Its tests'
+# games are each built with the package as tide builds a game that lists it,
+# the package's files before their own: a game needn't use all of a package.
 file(GLOB box3d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d/src/*.c")
 add_library(tide_box3d STATIC ${box3d_sources})
 target_link_libraries(tide_box3d PRIVATE tide_flags)
 target_compile_options(tide_box3d PRIVATE -w)
+target_compile_options(tide_box3d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     target_compile_options(tide_box3d PRIVATE -fno-sanitize=nonnull-attribute)
 endif()
 
-tide_add_game(tide_box3d_stack SOURCES box3d/box3d.tide box3d/bridge.c box3d/test/stack.tide NAME game
+tide_add_game(tide_box3d_stack SOURCES box3d/bridge.c box3d/test/stack.tide NAME game PACKAGES Box3D box3d/box3d.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/stack_test.c)
 target_include_directories(tide_box3d_stack PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_box3d_stack PRIVATE tide_box3d)
@@ -134,7 +141,7 @@ set_tests_properties(tide_box3d_course PROPERTIES TIMEOUT 300)
 # Its image written as what changed of the last one, against the image written
 # whole: a match of its own, so that the one above keeps its pinned hashes, and
 # Box3D by itself.
-tide_add_game(tide_box3d_parts SOURCES box3d/box3d.tide box3d/bridge.c box3d/test/yard.tide NAME yard
+tide_add_game(tide_box3d_parts SOURCES box3d/bridge.c box3d/test/yard.tide NAME yard PACKAGES Box3D box3d/box3d.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/parts_test.c)
 target_include_directories(tide_box3d_parts PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_box3d_parts PRIVATE tide_box3d)

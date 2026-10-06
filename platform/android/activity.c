@@ -19,6 +19,7 @@
 
 #include "window.h"
 
+#include <android/asset_manager.h>
 #include <android/configuration.h>
 #include <android/input.h>
 #include <android/keycodes.h>
@@ -952,4 +953,23 @@ void tide_window_close(void)
     if (app.activity) ANativeActivity_finish(app.activity);
     pthread_cond_broadcast(&app.taken);
     pthread_mutex_unlock(&app.lock);
+}
+
+// The game's pack of assets, in the APK as assets/game.pack (compiler/cli/apk.c).
+uint8_t *tide_window_pack(size_t *size)
+{
+    *size = 0;
+    AAssetManager *manager = app.activity ? app.activity->assetManager : NULL;
+    AAsset *asset = manager ? AAssetManager_open(manager, "game.pack", AASSET_MODE_BUFFER) : NULL;
+    if (!asset) return NULL;
+    const off_t length = AAsset_getLength(asset);
+    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
+    const bool ok = bytes && AAsset_read(asset, bytes, (size_t)length) == (int)length;
+    AAsset_close(asset);
+    if (!ok) {
+        free(bytes);
+        return NULL;
+    }
+    *size = (size_t)length;
+    return bytes;
 }

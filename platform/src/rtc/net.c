@@ -237,10 +237,14 @@ void rtc_debug(const char *format, ...)
     static int on = -1;
     if (on < 0) on = getenv("TIDE_RTC_DEBUG") != NULL;
     if (!on) return;
+    // A line, written whole: what the program prints meanwhile doesn't land inside it
+    char line[512];
+    int n = snprintf(line, sizeof line, "rtc %.3f: ", rtc_now());
     va_list args;
     va_start(args, format);
-    fprintf(stderr, "rtc %.3f: ", rtc_now());
-    vfprintf(stderr, format, args);
-    fputc(10, stderr);
+    n += vsnprintf(line + n, sizeof line - (size_t)n, format, args);
     va_end(args);
+    if (n > (int)sizeof line - 1) n = (int)sizeof line - 1; // Cut where it was too long
+    line[n++] = 10;
+    fwrite(line, 1, (size_t)n, stderr);
 }

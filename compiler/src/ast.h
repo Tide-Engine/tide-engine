@@ -154,6 +154,24 @@ typedef struct unit {
     VEC(loc) using_at;
 } unit;
 
+// A type as it's written: a name, maybe qualified, what it takes in <>, and
+// `?` after it. The parser builds one for every place a type is written (a
+// field's, a parameter's, a local's, a constant's, an asset's, what a function
+// returns or fails with, the types in <>, what's after `is`), and the checker
+// resolves it into a `type` (resolve_type in check.c). `text` is the type as
+// messages and editors write it: "List<Grid2<Color>>", "Map<K, V>" with that
+// comma and space, "int?".
+typedef struct type_ref {
+    str name;    // "List", "Combat.Health", "int"
+    loc at;      // Where it starts: its namespace if it's qualified
+    loc name_at; // Its last part: the name itself
+    VEC(struct type_ref *) args; // What's in its <>, in order; none for a plain name
+    bool optional;   // `T?`
+    loc question_at; // ...the '?'
+    str text;        // As written, without spaces but the one after a map's comma
+    loc end;         // Just past its last token
+} type_ref;
+
 // One parameter of a declaration that's named with its parameters, as C#'s
 // `cref` names an overload: `Position` or `with Player` in
 // [After(Move(Position, with Player))]. Its type as written, with neither a
@@ -162,6 +180,7 @@ typedef struct sig_item {
     int mode;      // PARAM_READ, PARAM_WITH, PARAM_WITHOUT or PARAM_QUERY
     bool verified; // `verified Health`, `with verified Dead`: a view's, from the world the server has
     str type_name; // "ownership" for `with ownership`; empty for a query
+    const type_ref *type_ref; // ...as written; NULL for `ownership` and a query
     loc at;        // Where it starts
     loc type_at;   // The type's name (the last part if it's qualified)
     loc type_qual_at;
@@ -209,6 +228,7 @@ typedef struct field {
     bool typed;  // ...what the keyboard typed, as text: a frame's, which only views read, and no device value
     bool is_local; // `local List<Vertex3> verts;` in a match component or singleton: this machine's, outside the match
     loc local_at;  // ...the `local` keyword
+    const type_ref *type_ref; // The type as written; NULL for the engine's own fields and a container's
 } field;
 
 typedef enum param_mode {
@@ -233,6 +253,7 @@ typedef struct device_leaf {
 typedef struct param {
     param_mode mode;
     str type_name;
+    const type_ref *type_ref; // The type as written; NULL for `ownership` and the parameters the checker makes
     str name; // Empty for with/without, and for a trigger without a name: `event(Spawned)`.
     loc at;   // The first token, a modifier or the type
     type type;
@@ -352,14 +373,16 @@ typedef enum decl_kind {
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
     DECL_SHADER,   // frag Shade(...) { ... } and vert Wave(...) { ... }: code the GPU runs for a mesh's pixels or vertices
+    DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
 } decl_kind;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
-    int param;
+    int param;    // -1 for an asset's grid
     int field;    // -1 for a direct Texture parameter; otherwise its component or singleton field
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
+    const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -483,18 +506,24 @@ typedef struct decl {
     bool shown;               // Values with fields, and lists: text shows one somewhere, so it has a text helper
     tok_kind op;              // An operator's: T_PLUS, T_EQ, ...; T_MINUS is negation with one parameter
     str return_type_name;     // "void" if it returns nothing. A constant's type.
+    const type_ref *return_type_ref; // ...as written; NULL for what has none (a system)
     loc return_type_at;       // Its last part, if it's qualified
     loc return_type_qual_at;
     type return_type;
     str fails_name;           // `int Parse(string text) fails ParseError`: the error type, or empty
+    const type_ref *fails_ref; // ...as written, or NULL
     loc fails_at;             // The `fails` keyword
     loc fails_type_at;        // The error type's last part
     loc fails_type_qual_at;
     type fails;               // The error type; TY_VOID if it can't fail
     type result;              // What a call gives: return_type, or `return_type fails E` (TY_FAILABLE)
 
-    // Constants
+    // Constants, and assets (whose value is their path, a constant text)
     struct expr *value; // A constant expression of its type (return_type)
+    // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
+    struct asset_value *asset;
+    int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
+    bool asset_many; // A List or Map of a glob's matches
 
     // Systems, views, methods, functions, and an input's Sample
     VEC(param) params;
@@ -700,6 +729,7 @@ typedef enum binding_kind {
     BIND_DEVICES,   // `Devices`: this machine's devices, in views and the input's Sample
     BIND_CONST,     // A constant, MAX_HEALTH or Combat.MAX_HEALTH: `constant` is it
     BIND_SHADER,    // A frag or vert named at mesh draw: `type_decl` is it
+    BIND_ASSET,     // An asset, hero or Art.hero: `constant` is its declaration, read as a value of its type
 } binding_kind;
 
 typedef enum input_edge {
@@ -797,6 +827,7 @@ struct expr {
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
     loc type_arg_at;      // ...its last part, if it's qualified
     loc type_arg_qual_at; // ...and where it starts
+    const type_ref *type_arg_ref; // ...as written, or NULL
 
     // E_BINARY, E_UNARY; E_CONDITIONAL's two sides. `method` is the struct's
     // operator, if one is used.
@@ -818,6 +849,7 @@ struct expr {
     // E_IS: the type after `is` as written ("ParseError", or "ParseError.Empty"),
     // and the local its name declares, an S_VAR with no value
     str pattern;
+    const type_ref *pattern_ref; // ...as written (an enum's member reads as a qualified name)
     loc pattern_at;      // Its last part
     loc pattern_qual_at; // Where it starts
     is_pattern looks_for;
@@ -904,6 +936,7 @@ struct stmt {
     bool discard;  // ...or the place `out _` makes for what the call gives, which no code names
     const expr *out_arg; // ...and the argument that declares it
     str type_name; // Empty for `var`. With its namespace if it's qualified.
+    const type_ref *type_ref; // ...as written; NULL for `var`
     str name;
     type type;
     loc type_at;      // The type's name (the last part if it's qualified)
@@ -959,6 +992,7 @@ typedef struct shader_texture {
     const field *field;
     bool blended;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
+    const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
 } shader_texture;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
@@ -1110,6 +1144,8 @@ typedef struct program {
 
     // The engine's settings for the game (builtins.h), from `settings { ... }`
     VEC(decl *) settings;      // Each block written, though a game has one
+    VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
+    const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
     uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
