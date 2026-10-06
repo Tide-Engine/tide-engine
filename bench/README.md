@@ -102,3 +102,21 @@ build/release/bin/tide_platform_draw --bench --save change-name
 The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend.
 
 These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the target's pixels back. They are useful for tracking overhead and batching, but there is no handwritten GPU API baseline yet, so they do not establish competitive graphics performance. Pixel tests of generated shaders and manual instancing verify correctness separately.
+
+## Input delay in Sumo
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+cmake --build --preset web-release --target sumo --parallel 2
+node bench/lag.mjs build/web-release/bin/sumo.html --pings 0,50,100,150 --seconds 150 --join 30 --threads 4 --save catch-up-web
+cmake --build --preset release --target bench_lag_native --parallel 2
+node bench/lag_native.mjs build/release/bin/bench_lag_native.exe --pings 0,50,100,150 --seconds 150 --join 30 --fps 144 --save catch-up-native
+```
+
+Each run has a host, a player who joins at the start, and another who joins after 30 seconds, with bots filling the remaining seats. The ping is the whole network round trip. Moving and charging inputs change throughout the run. Clients use their real tick costs to choose input delay with the existing 4 ms budget. The report gives delay over time, ticks run again, update and frame times, corrections, and the first second after each client's world arrived. The native executable also accepts `--frames n` to bound a short smoke run.
+
+The browser uses three headless Chrome processes, isolated pages with threads, hardware GPU drawing by default, and a relay on this machine. `--browser` selects Chrome; `--gpu software` explicitly selects SwiftShader. Each page gets the requested processor count so three pools do not each take the entire machine. The native run uses three sessions in one process, updated in turn on a shared pool of at most four threads. It measures simulation, generated views and draw-list recording without opening a window or submitting GPU draws. Its frame intervals include all three machines' work. Compare session update costs between the platforms; their whole-frame measurements represent different workloads. A requested native frame rate is a pace limit; work and the scheduler can make frames longer.
+
+`--save` appends summaries to `bench/results/lag.jsonl` and keeps compressed per-frame samples in `bench/results/lag-frames/*.jsonl.gz`. Saved records include relative raw-data paths and SHA-256 digests. Raw rows are `[player_index, frame_values]`, with indices 0, 1 and 2 in the order above; `lag_summary.mjs` defines the values, in `tide_run_netcode`'s order. A final object contains measurement metadata. `checkout_revision` identifies the harness checkout, and a browser page's `page_sha256` identifies its actual built artifact, including historical pages measured from elsewhere. Native `full_round` means a second ring round started; browser Sumo uses the host's confirmed ticks to establish that the first round's maximum duration passed. Check this field rather than assuming 150 seconds of wall time advanced the match far enough.
+
+Run on an otherwise idle machine and repeat comparisons when sharing CPU or GPU resources. The continuation chats serialize these rounds with `Local\TideClaudeContinuationBenchmark`. The runners themselves do not acquire that coordination gate. Input delay is the extra ticks the engine chooses, rather than the full time between a button press and its display. The measurements propose changes to the budget; they do not change its default or the delay policy.

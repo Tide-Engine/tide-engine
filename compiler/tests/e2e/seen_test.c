@@ -324,6 +324,55 @@ TIDE_TEST(seen_a_clock_far_ahead_comes_back_at_once)
     TIDE_CHECK(s.least >= 0.0f && s.longest <= 40.0f);
 }
 
+// A connection that takes longer than the prediction window isn't a server
+// whose clock stopped. Its answers took that long too, so a clock set from
+// them would still be past that window: the existing clock mustn't come
+// back. Restoring the connection also lets fresh packets pass older ones
+// still on their way, which mustn't move the server's last known tick back.
+TIDE_TEST(seen_delayed_and_reordered_answers_do_not_reset_a_running_clock)
+{
+    tide_loopback *net = tide_loopback_create(14);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03});
+    double now = 0.0;
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
+                                                                  .transports = {tide_loopback_endpoint(net, 1)}}, now);
+    player one = {0};
+    one.client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 2),
+                                                        .server = tide_loopback_address(1), .sample = sample, .user = &one,
+                                                        .lead = 1, .lead_frame = true}, now);
+    TIDE_REQUIRE(server && one.client);
+    uint32_t furthest = 0;
+    uint32_t longest_answer = 0;
+    uint32_t heard = 0;
+    for (int frame = 0; frame < 1200; frame++) {
+        if (frame == 600) tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 1.2, .jitter = 0.15});
+        if (frame == 900) tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03});
+        now += FRAME;
+        tide_loopback_set_time(net, now);
+        const tide_client_status before = tide_client_status_of(one.client);
+        tide_client_update(one.client, now);
+        tide_server_update(server, now);
+        const tide_client_status status = tide_client_status_of(one.client);
+        TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED || frame < SETTLE);
+        TIDE_CHECK(status.server_tick >= heard);
+        heard = status.server_tick;
+        if (frame >= 600 && frame < 900) {
+            TIDE_CHECK(status.predicted_tick >= before.predicted_tick);
+            const uint32_t ahead = status.predicted_tick - status.verified_tick;
+            if (ahead > furthest) furthest = ahead;
+            if (status.answer_ms > longest_answer) longest_answer = status.answer_ms;
+        }
+    }
+    const tide_client_status status = tide_client_status_of(one.client);
+    printf("    with delayed and reordered answers, a running client reached %u ticks ahead of what's confirmed, its longest"
+           " answer took %u ms, and its clock never came back\n", furthest, longest_answer);
+    TIDE_CHECK(furthest >= 60u && longest_answer >= 2400u);
+    TIDE_CHECK(status.resyncs == 0 && status.verified_tick + 6u > tide_server_tick(server));
+    tide_client_destroy(one.client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+}
+
 static bool every_other(const int frame) { return frame % 2 == 0; }
 static bool but_one_in_97(const int frame) { return frame % 97 != 0; }
 
