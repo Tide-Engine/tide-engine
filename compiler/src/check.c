@@ -3734,13 +3734,26 @@ static type check_gui_call(checker *c, expr *e, const type result)
     sb name = {0};
     sb_printf(&name, STR_FMT "." STR_FMT, STR_ARG(e->object->name), STR_ARG(e->name));
     for (int i = 0; i < e->args.count; i++) {
-        if (!(e->arg_mut & (1u << i))) continue;
+        expr *arg = e->args.items[i];
+        const bool makes = (e->arg_out & (1u << i)) != 0;
+        if (!(e->arg_mut & (1u << i)) && !arg->is_out) continue;
         // Its messages name the widget and what it changes.
         decl *widget = NEW(decl);
         widget->name = (str){name.data, (int)name.len};
         param *value = NEW(param);
         value->name = str_from("value");
-        check_writable(c, e->args.items[i], widget, value);
+        if (makes || arg->is_out) {
+            // TextField(label, value, out entered): the argument for an `out` parameter is the variable the
+            // widget makes, and says so, as a function's does; and no other argument says it
+            value->name = builtin_param_name(e, i);
+            value->type = e->arg_want.items[i];
+            if (e->arg_mut & (1u << i)) value->mode = PARAM_MUT;
+            value->is_out = makes;
+            if (arg->is_out) finish_out_arg(c, arg, makes ? value->type : T_ERR);
+            check_out_param(c, widget, value, arg);
+            continue;
+        }
+        check_writable(c, arg, widget, value);
     }
     if (e->gui & GUI_CONTAINER) {
         if (!e->block) {
@@ -4797,11 +4810,13 @@ static type check_method(checker *c, expr *e)
         const bool draws = builtin_draw_owner(owner) || str_eq_c(owner, "Draw");
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
-        // and [a, b, c] is the list the function takes there.
+        // and [a, b, c] is the list the function takes there. An `out` argument is the variable
+        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one.
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             type list;
-            if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
+            if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
+            else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
             else if (arg->kind != E_DEFAULT) check_expr(c, arg);
         }
         const bool gui = str_eq_c(owner, "GUI") || str_eq_c(owner, "GUILayout");

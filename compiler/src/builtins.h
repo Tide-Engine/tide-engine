@@ -39,9 +39,18 @@ bool builtin_list_param(str owner, str name, int index, const expr *list, type *
 
 // Resolves owner.name(args) for a call whose arguments are already checked.
 // Fills e->call, e->c_callee, e->c_pack and e->arg_want, and for the GUI and
-// the draw settings e->arg_mut and e->gui. Reports errors and returns
-// TY_ERROR on failure.
+// the draw settings e->arg_mut, e->arg_out and e->gui. Reports errors and
+// returns TY_ERROR on failure. An argument written `out` goes to the parameter
+// in its place, `out` or not: the caller says what's wrong with it.
 type resolve_builtin_call(str owner, expr *e);
+
+// Whether a version of owner.name has an `out` parameter, like
+// GUILayout.TextField(label, value, out entered): its calls' arguments can say
+// `out`.
+bool builtin_takes_out(str owner, str name);
+
+// The name of parameter `index` of the function a call was resolved to.
+str builtin_param_name(const expr *e, int index);
 
 // Resolves owner.member, such as quaternion.identity. Fills e->c_constant.
 type resolve_builtin_member(str owner, expr *e);
@@ -55,8 +64,9 @@ const char *builtin_function_owner(str name);
 typedef struct builtin_member {
     const char *name;
     bool is_function;
-    const char *detail;  // "Draw2D.Circle(float2 center, float radius, Color color)", or "Math.PI: float"
-    const char *doc;     // One line, or NULL
+    const char *detail;  // "Draw2D.Circle(float2 center, float radius, Color color)", or "Math.PI: float"; with
+                         // " (+1 version)" after a function's first version when it has others
+    const char *doc;     // One line, or NULL; then a function's other versions, each as code with what it says of its own
     const char *snippet; // "Circle(${1:center}, ...)" for functions, NULL for constants
 } builtin_member;
 

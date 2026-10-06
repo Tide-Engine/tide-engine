@@ -1,0 +1,10 @@
+// expect: 'entered' is already declared
+// expect: 'out entered' assigns the variable there is; a new one takes another name
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    mut var entered = false;
+    GUILayout.TextField("Code", lobby.code, out var entered);
+    if (entered) lobby.count += 1;
+}

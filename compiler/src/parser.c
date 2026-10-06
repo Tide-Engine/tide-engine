@@ -260,6 +260,11 @@ static void parse_args(parser *p, expr *call)
                 vec_push(call->arg_names, name ? name->text : ((str){"", 0}));
                 vec_push(call->arg_name_at, name ? name->at : ((loc){0}));
             }
+            if (at(p, T_MUT)) { // TextField("Code", mut lobby.code): the word is the parameter's
+                diag_error(peek(p)->at, "an argument takes no 'mut': a 'mut' parameter changes the variable it's given as it is");
+                diag_note("remove 'mut'; only 'out' is written at a call, as its argument can declare a variable");
+                longjmp(p->fail, 1);
+            }
             vec_push(call->args, at_out_arg(p) ? parse_out_arg(p) : parse_expr(p));
         } while (accept(p, T_COMMA));
     }

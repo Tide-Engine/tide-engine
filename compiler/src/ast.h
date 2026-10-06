@@ -760,6 +760,7 @@ struct expr {
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
+    unsigned arg_out;     // ...and per argument it makes, for an `out` parameter: its bit in arg_mut is set too
     int gui;              // CALL_GUI: GUI_ID and GUI_CONTAINER; CALL_DRAW: DRAW_BLOCK and DRAW_SET
     struct stmt *block;   // A call's block, written in braces after it: Foldout("Audio") { ... }
     bool stacked;         // One of the calls listed with commas before one block: each one's block is the

@@ -1,0 +1,9 @@
+// expect: an argument takes no 'mut': a 'mut' parameter changes the variable it's given as it is
+// expect: remove 'mut'; only 'out' is written at a call, as its argument can declare a variable
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    GUILayout.TextField("Code", mut lobby.code, out var entered);
+    if (entered) lobby.count += 1;
+}
