@@ -52,7 +52,7 @@ tide run --join K7QF2M   # Straight into a friend's
 
 - **Each player has a seat and a color of their own,** and a score beside the others' at the top. A ninth is turned away, and told the room is full.
 - **Bots have the seats nobody has,** until there are four balls in the ring. A player who joins takes a bot's ball as it is, and a bot takes over from one who leaves. **Bots** in the menu turns them off.
-- **Joining in the middle works.** The match's world is sent as it is, with Box3D's whole state in it: every crate where it is and as fast, the ones in the air too. That's two and a half megabytes here, which took two seconds in the game's test, over a network that's late and loses packets.
+- **Joining in the middle works.** The match's world is sent as it is, with Box3D's whole state in it: every crate where it is and as fast, the ones in the air too. That's 2.4 megabytes a few seconds into a round, which took two seconds in the game's test, over a network that's late and loses packets.
 - **When the host leaves, the room goes on.** Another player's machine takes the match over, with the ring as it was (the game's [`hostMigration`](../multiplayer/matches.md#host-migration) setting).
 - **A match that ends puts you back on the lobby,** with a line that says what happened.
 
@@ -138,6 +138,7 @@ A ring is raised in one tick: `arena.tide` plans it, one of three arrangements, 
 - **A column stands a hand's width from the next.** Box3D keeps a contact for every two bodies whose boxes are within 14 centimeters of each other, touching or not, and every contact is in its state, which the match holds, hashes and sends to a player who joins. A crate in a column has one contact, with the crate under it. Packed closer than that, each crate had seven, and the state of the same ring was three times the size.
 - **What's knocked about breaks up.** A crate that's hit hard enough has a few seconds left. Without that, the rubble of every tower lay in a heap in the middle of a floor that's getting smaller, most of it awake, and a tick took 2 milliseconds by the end of a round, where it takes 0.1.
 - **Nothing is sent while nothing can be driven.** A ring that's just been raised has every crate awake for about a second, which are the ticks a machine can least afford to run again. So the input sends nothing while a round is counted in: an input that stays as it was is one every other machine guesses right, and a tick that was guessed right isn't run again.
+- **How much is stacked is the match's, from its start.** The match's [scene](../game/scenes.md) has one value, how many tiles out from the middle its rings are stacked. That's every tile, unless whoever [starts the match](../multiplayer/matches.md) says less, as in `Session.Start(Main { stacked = 2 })`, and then every player who joins gets that ring, as it's in the match. The game always starts one with all of it. Its test starts some with less: its match of three players is four machines, each keeping a ring, and it has the middle's pile and the cabins around it, a tenth of the crates.
 
 ### The bots
 
