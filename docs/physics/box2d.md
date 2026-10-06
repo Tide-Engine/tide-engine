@@ -532,7 +532,7 @@ Each is what Box2D comes with, so a game that sets none gets the same world as b
 - **`contactDamping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
 - **`contactSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
 - **`bounceSpeed`** and **`hitSpeed`** are the speeds two bodies have to meet at for a `bounce` to count and for [`Hit`](#hits) to be sent.
-- **`sleeping`**, off, keeps every body awake. Nothing is ever at rest then, so every tick steps.
+- **`sleeping`**, off, keeps bodies from falling asleep by themselves. Code can still put a body to sleep with `asleep`, and a world with every body asleep waits until something wakes it.
 
 Any match code that takes it `mut` writes them, and the next step uses them:
 

@@ -1090,12 +1090,14 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     note('s', &gravity, sizeof gravity);
     push_new(w);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
-    if (turned && sleeping) {
+    if (turned) {
         // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box2D
-        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
-        // gravity, which every step notes. A world whose bodies never sleep has none to wake.
-        b2World_EnableSleeping(w->id, false);
-        b2World_EnableSleeping(w->id, true);
+        // wakes every body when sleeping changes to off, and has no other call for it. Code can put a
+        // body to sleep with automatic sleeping off too, so turn it on first in that case, then off again.
+        // Either way leave the setting as the match says. It follows from the gravity, which every step
+        // notes, and bodies code put to sleep this tick still go last (put_to_sleep).
+        b2World_EnableSleeping(w->id, !sleeping);
+        b2World_EnableSleeping(w->id, sleeping);
     }
     slept = put_to_sleep(w);
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;

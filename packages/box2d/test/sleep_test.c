@@ -433,6 +433,39 @@ TIDE_TEST(box2d_gravity_wakes_what_sleeps_and_not_what_is_put_to_sleep_with_it)
     tide_world_free(&a);
 }
 
+TIDE_TEST(box2d_gravity_wakes_manual_sleep_when_automatic_sleeping_is_off)
+{
+    start(&a, Case_Flight);
+    a.Box2D_Physics.sleeping = false;
+    tick(&a, 12);
+    lull(&a, 0, true);
+    tide_world_tick(&a);
+    const tide_float2 at = body(&a, 0).position;
+    TIDE_CHECK(body(&a, 0).asleep && still(body(&a, 0)));
+    TIDE_CHECK(stays(&a)); // Manual sleep still leaves a world that nothing steps
+
+    a.Box2D_Physics.gravity = tide_f2(0.0f, 10.0f);
+    tick(&a, 10);
+    TIDE_CHECK(!body(&a, 0).asleep && body(&a, 0).velocity.y > 1.0f && body(&a, 0).position.y > at.y);
+    TIDE_CHECK(!a.Box2D_Physics.sleeping);
+
+    // A new gravity wakes the old sleep; a sleep written in that tick still goes last
+    const tide_float2 above = body(&a, 0).position;
+    a.Box2D_Physics.gravity = tide_f2(0.0f, -10.0f);
+    lull(&a, 0, true);
+    tide_world_tick(&a);
+    TIDE_CHECK(body(&a, 0).asleep && same(body(&a, 0).position, above) && still(body(&a, 0)));
+    TIDE_CHECK(stays(&a));
+
+    // The library's automatic-sleep setting stayed off too: once woken, the crate reaches the floor
+    // and stays awake there, well past the half second after which it would otherwise fall asleep
+    lull(&a, 0, false);
+    tick(&a, 180);
+    TIDE_CHECK(body(&a, 0).position.y < 0.6f && !body(&a, 0).asleep && a.Box2D_Physics.moved);
+    TIDE_CHECK(!a.Box2D_Physics.sleeping);
+    tide_world_free(&a);
+}
+
 // ---------------------------------------------------------------------------
 // All of it is the match's
 
