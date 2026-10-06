@@ -1,0 +1,305 @@
+// Sumo, as one machine shows it: the camera, the ring and what's on it.
+// Views read the match and never change it: what they write is this machine's
+// own (Hand, Fx, Room, and a ball's local fields). The light is in
+// light.tide, the sparks and the numbers in effects.tide, the scores and the
+// buttons in hud.tide, and the lobby in lobby.tide.
+using Box3D;
+
+// The docs site's colors, and a few more for eight players.
+const Color BACK = Color(0.086, 0.086, 0.094);
+const Color RAISED = Color(0.17, 0.175, 0.19);
+const Color LINE = Color(0.24, 0.25, 0.27);
+const Color QUIET = Color(0.64, 0.64, 0.68);
+const Color INK = Color(0.93, 0.93, 0.95);
+const Color AMBER = Color(0.98, 0.75, 0.14);
+const Color TEAL = Color(0.18, 0.83, 0.75);
+const Color ROSE = Color(0.98, 0.44, 0.52);
+const Color BLUE = Color(0.47, 0.72, 1);
+const Color VIOLET = Color(0.66, 0.58, 1);
+const Color GREEN = Color(0.4, 0.92, 0.56);
+const Color ORANGE = Color(1, 0.55, 0.2);
+const Color LIME = Color(0.78, 0.92, 0.3);
+const Color PLAIN = Color(0.86, 0.87, 0.9);
+const Color GOLD = Color(1, 0.86, 0.36);
+
+// What draws over what, whichever file a view is in.
+enum Layers { Camera, Gather, Floor, Shadows, Pieces, Marks, Effects, Hud, Menu }
+
+// What this machine's player does with the pointer, which its input sends:
+// a stick, from where the button went down to where the pointer is now, and
+// the charge button.
+local singleton Hand
+{
+    float2 stick;
+    bool charge;
+    bool playing;    // No lobby or menu is up: the player's hands are on their ball
+    bool dragging;
+    float2 from;     // Where the drag began, in the devices' pixels
+}
+
+// What this machine's drawing keeps from frame to frame. None of it is the
+// match's.
+local singleton Fx
+{
+    float dt;        // Seconds this frame's effects move on by: a stall isn't a leap
+    float beat;      // Radians, for what pulses: always under a full turn
+    int seat = -1;   // This machine's player's
+    bool here;       // Their ball is in the ring
+    float3 mine;     // ...and where
+    float radius = RING; // Where the floor ends
+    float3 focus;    // What the camera looks at
+    float span = 24; // ...and how many meters around it are in view
+    float trauma;    // How hard the camera shakes, 0 to 1
+    float flash;     // The whole screen lit, fading
+    Color flashColor = Color.white;
+    Random random;   // What rolls the effects: this machine's own
+    List<Solid> tiles;    // What's drawn this frame: the floor's tiles,
+    List<Solid> solids;   // the crates, which cast shadows,
+    List<Solid> rounds;   // the balls' shadows,
+    List<Decal> decals;   // and what's flat on the floor
+    List<float> pops;     // Each seat's score, just counted up: 1, fading
+}
+
+Color SeatColor(int seat)
+{
+    return seat == 0 ? AMBER : seat == 1 ? TEAL : seat == 2 ? ROSE : seat == 3 ? BLUE
+         : seat == 4 ? VIOLET : seat == 5 ? GREEN : seat == 6 ? ORANGE : seat == 7 ? LIME : PLAIN;
+}
+
+string SeatName(int seat)
+{
+    return seat == 0 ? "AMBER" : seat == 1 ? "TEAL" : seat == 2 ? "ROSE" : seat == 3 ? "BLUE"
+         : seat == 4 ? "VIOLET" : seat == 5 ? "GREEN" : seat == 6 ? "ORANGE" : "LIME";
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(Math.Saturate(color.r * light), Math.Saturate(color.g * light), Math.Saturate(color.b * light), color.a);
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color Mix(Color from, Color to, float t)
+{
+    return from + (to - from) * Math.Saturate(t);
+}
+
+float EaseOut(float t)
+{
+    var left = 1 - Math.Saturate(t);
+    return 1 - left * left * left;
+}
+
+// Past its end and back, like something that lands.
+float EaseBack(float t)
+{
+    var left = Math.Saturate(t) - 1;
+    return 1 + left * left * (2.70158 * left + 1.70158);
+}
+
+// A mark painted on the floor: a disc, a ring, or part of one.
+void Mark(mut Fx fx, float3 at, float size, Color tint, float ring, float arc)
+{
+    fx.decals.Add(Decal { transform = float4x4.TRS(float3(at.x, 0.03 + fx.decals.count * 0.0004, at.z), quaternion.identity, float3(size, 1, size)),
+                          tint = tint, ring = ring, arc = arc });
+}
+
+// This machine's player's ball, for the camera: `with ownership` picks the
+// entities this machine's player owns.
+[Stage(Layers.Camera)]
+view Mine(Body body, Ball ball, mut Fx fx, with ownership)
+{
+    fx.seat = ball.seat;
+    fx.here = true;
+    fx.mine = body.position;
+}
+
+[Stage(Layers.Camera)]
+view Edge(Ring ring, mut Fx fx)
+{
+    fx.radius = ring.radius;
+}
+
+// The camera, over the ring and tilted down at it, always from the same
+// side, so that up on the screen is the same way in the ring for every
+// player. It shows the whole ring when a ball is still big enough to find at
+// that size, and as much of it as that takes otherwise, around this
+// machine's player's ball and towards the middle, where the others are.
+//
+// And the stick: a drag from where the pointer went down, which the input
+// sends as the way the ball is driven.
+[Stage(Layers.Camera, 1)]
+view Look(Devices devices, mut Hand hand, mut Fx fx, mut Models models, mut Room room, mut Ground ground)
+{
+    if (!models.made) MakeModels(models);
+    while (fx.pops.count < SEATS) fx.pops.Add(0);
+    fx.dt = Math.Min(Frame.dt, 0.05);
+    fx.beat += fx.dt * 3;
+    if (fx.beat > Math.TAU) fx.beat -= Math.TAU;
+    room.beat = fx.beat;
+    fx.trauma = Math.Max(0, fx.trauma - fx.dt * 1.8);
+    fx.flash = Math.Max(0, fx.flash - fx.dt * 2.4);
+    for (var seat = 0; seat < SEATS; seat++)
+        fx.pops[seat] = Math.Max(0, fx.pops[seat] - fx.dt * 2.2);
+    fx.tiles.Clear();
+    fx.solids.Clear();
+    fx.rounds.Clear();
+    fx.decals.Clear();
+    for (var i = 0; i < 15; i++)
+        for (var j = 0; j < 15; j++)
+            ground.floor[i, j] = Color(0, 0, 0, 0);
+
+    var screen = float2(Screen.width, Screen.height);
+    var pitch = 1.15;
+    var fov = 34.0;
+    var half = Math.Tan(Math.Radians(fov) * 0.5);
+    // The ring whole, or as much of it as leaves a ball 17 pixels across
+    var whole = fx.radius + 4;
+    var most = 0.6 * Math.Min(screen.x, screen.y / Math.Sin(pitch)) / 17;
+    var span = Math.Min(whole, Math.Max(most, 8));
+    mut var want = float3(0);
+    var flat = float3(fx.mine.x, 0, fx.mine.z);
+    var far = Math.Length(flat);
+    if (span < whole && far > span * 0.4) want = flat * (1 - span * 0.4 / far);
+    var ease = 1 - Math.Exp(-fx.dt * 5);
+    fx.focus += (want - fx.focus) * ease;
+    fx.span += (span - fx.span) * ease;
+    var back = Math.Max(fx.span / (half * screen.x / screen.y), fx.span * Math.Sin(pitch) * 1.12 / half);
+    var eye = fx.focus + float3(0, Math.Sin(pitch), -Math.Cos(pitch)) * back;
+    var turned = quaternion.LookRotation(Math.Normalize(fx.focus - eye), float3(0, 1, 0));
+
+    // It shakes when something big happens
+    var wobble = fx.beat * 23;
+    var shake = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6,
+                       Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0) * (fx.trauma * fx.trauma * 0.014 * back);
+    room.eye = eye + shake;
+    Draw3D.SetCamera(room.eye, turned, fov);
+    Draw2D.Clear(BACK);
+
+    // The stick
+    var pointer = devices.pointer;
+    if (pointer.press.down)
+    {
+        hand.dragging = true;
+        hand.from = pointer.position;
+    }
+    if (!pointer.press.pressed) hand.dragging = false;
+    hand.stick = float2(0);
+    if (hand.dragging && hand.playing)
+    {
+        var pulled = (pointer.position - hand.from) / 48;
+        var hard = Math.Length(pulled);
+        hand.stick = hard > 1 ? pulled / hard : pulled;
+    }
+    hand.charge = devices.mouse.right.pressed;
+    fx.here = false;
+}
+
+// The floor's tiles, each into the list that's drawn at once, and into the
+// grid the floor's paint is read from: there, about to go, or neither.
+[Stage(Layers.Gather)]
+view Tiles(Tile tile, Ring ring, mut Fx fx, mut Ground ground)
+{
+    var going = tile.reach > ring.next;
+    var falling = tile.reach > ring.radius;
+    ground.floor[int(Math.Round(tile.at.x / TILE)) + 7, int(Math.Round(tile.at.y / TILE)) + 7] = Color(1, going ? 1 : 0, 0, 1);
+    // One that's about to drop shudders
+    var shudder = falling ? Math.Sin(fx.beat * 31 + tile.at.x) * 0.04 : 0.0;
+    fx.tiles.Add(Solid { transform = float4x4.TRS(float3(tile.at.x, -0.5 + shudder, tile.at.y), quaternion.identity, float3(TILE, 1, TILE)),
+                         tint = going ? ROSE : AMBER });
+}
+
+// Every crate, plank, keg and fallen tile: one box each, in a list. A view
+// sees a body where the last step left it, blended between ticks, and gliding
+// to where the server says it is when this machine guessed otherwise.
+[Stage(Layers.Gather)]
+view Crates(Body body, Box box, Crate crate, Time time, mut Fx fx)
+{
+    // Rubble shrinks away in its last moments
+    var left = crate.until == 0 ? 1.0 : Math.Saturate((crate.until - time.tick) / 14.0);
+    var shade = 0.86 + crate.tone * 0.09;
+    var tint = crate.kind == Kind.Keg ? ROSE : crate.kind == Kind.Plank ? Color(0.74, 0.6, 0.42)
+             : crate.kind == Kind.Slab ? Color(0.25, 0.27, 0.33) : Color(0.62 * shade, 0.64 * shade, 0.71 * shade);
+    fx.solids.Add(Solid { transform = float4x4.TRS(body.position, body.rotation, box.size * left), tint = tint, kind = int(crate.kind),
+                          low = body.position.y < -0.2 ? 1 : 0 });
+}
+
+// A ball's shadow, and the marks under it: a ring in its color, the charge
+// it's winding up, and the time until it can charge again.
+[Stage(Layers.Gather)]
+view Rings(Body body, mut Ball ball, mut Fx fx)
+{
+    ball.flash = Math.Max(0, ball.flash - fx.dt * 5);
+    fx.rounds.Add(Solid { transform = float4x4.TRS(body.position, quaternion.identity, float3(ball.radius)),
+                          low = body.position.y < 0.2 ? 1 : 0 });
+    if (body.position.y > 4 || body.position.y < 0.3) return;
+    var color = SeatColor(ball.seat);
+    var mine = ball.seat == fx.seat;
+    Mark(fx, body.position, ball.radius * 2 + 0.9, Fade(mine ? Color.white : color, mine ? 0.9 : 0.6), 0.16, 1);
+    if (ball.winding) Mark(fx, body.position, ball.radius * 2 + 1.4 + ball.charge * 1.6, Fade(Mix(color, Color.white, ball.charge), 0.9), 0.14, 1);
+    else if (ball.cooldown > 0) Mark(fx, body.position, ball.radius * 2 + 1.5, Fade(color, 0.7), 0.1, 1 - ball.cooldown / float(COOLDOWN));
+}
+
+[Stage(Layers.Floor)]
+view Floor(Fx fx, Models models)
+{
+    Draw3D.Instanced(models.cube, models.cubeFaces, fx.tiles, TileLook);
+}
+
+// The shadows: everything that casts one, once more, through a transform that
+// lays it flat on the floor along the lamp's light.
+[Stage(Layers.Shadows)]
+view Shadows(Fx fx, Models models)
+{
+    Draw3D.Transform(Flatten())
+    {
+        Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, ShadowDrop, ShadowLook);
+        Draw3D.Instanced(models.ball, models.ballFaces, fx.rounds, ShadowDrop, ShadowLook);
+    }
+}
+
+// The crates, all in one draw.
+[Stage(Layers.Pieces)]
+view Solids(Fx fx, Models models)
+{
+    Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, CrateLook);
+}
+
+// The balls. Instances of one mesh drawn in a row are one draw, each with its
+// own transform and its own entity's `Ball`.
+[Stage(Layers.Pieces, 1)]
+view Balls(Body body, Ball ball, Models models)
+{
+    Draw3D.Mesh(models.ball, models.ballFaces, float4x4.TRS(body.position, body.rotation, float3(ball.radius)), BallLook);
+}
+
+// A pickup turns over the floor, with a ring under it.
+[Stage(Layers.Pieces, 2)]
+view Pickups(Body body, Pickup pickup, Models models, mut Fx fx)
+{
+    var color = pickup.power == Power.Heavy ? PLAIN : TEAL;
+    var bob = Math.Sin(fx.beat * 2 + pickup.at.x) * 0.15;
+    List<Solid> one = [Solid { transform = float4x4.TRS(body.position + float3(0, bob, 0), quaternion.Euler(float3(0.6, fx.beat, 0.4)), float3(0.62)),
+                               tint = color }];
+    Draw3D.Instanced(models.cube, models.cubeFaces, one, Plain);
+    Mark(fx, body.position, 2.2 + Math.Sin(fx.beat * 2) * 0.2, Fade(color, 0.8), 0.12, 1);
+}
+
+// What's flat on the floor, all at once, over the shadows.
+[Stage(Layers.Marks)]
+view Decals(Fx fx, Models models)
+{
+    Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+}
+
+[Stage(Layers.Hud)]
+view Words(Ring ring, query (Seat seat) seats)
+{
+    Draw2D.SetScreen();
+    mut var line = $"round {ring.round} phase {ring.phase} timer {ring.timer / 60} radius {ring.radius}";
+    foreach (var entry in seats) line += $"  {entry.seat.seat}:{entry.seat.score}";
+    Draw2D.Text(line, float2(8, 8), 12, Color.white);
+}
