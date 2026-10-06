@@ -239,3 +239,47 @@ bool folder_file_info(const char *path, unsigned long long *size, unsigned long 
     return true;
 #endif
 }
+
+bool folder_make(const char *path)
+{
+    char *copy = malloc(strlen(path) + 1);
+    if (!copy) abort();
+    strcpy(copy, path);
+    for (char *p = copy + 1; *p; p++) {
+        if (*p != '/' && *p != '\\') continue;
+        *p = '\0';
+#ifdef _WIN32
+        CreateDirectoryA(copy, NULL);
+#else
+        mkdir(copy, 0777);
+#endif
+        *p = '/';
+    }
+#ifdef _WIN32
+    CreateDirectoryA(copy, NULL);
+    const DWORD attributes = GetFileAttributesA(copy);
+    const bool made = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    mkdir(copy, 0777);
+    struct stat st;
+    const bool made = stat(copy, &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+    free(copy);
+    return made;
+}
+
+bool folder_current(char *out, const size_t size)
+{
+#ifdef _WIN32
+    const DWORD n = GetCurrentDirectoryA((DWORD)size, out);
+    if (!n || n >= size) return false;
+#else
+    if (!getcwd(out, size)) return false;
+#endif
+    for (char *c = out; *c; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    const size_t len = strlen(out);
+    if (len > 1 && out[len - 1] == '/') out[len - 1] = '\0';
+    return true;
+}

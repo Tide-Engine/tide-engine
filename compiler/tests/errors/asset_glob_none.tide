@@ -1,0 +1,6 @@
+// expect: 'art/*.png' matches no file
+asset List<Grid2<Color>> frames = "art/*.png";
+
+scene Main
+{
+}

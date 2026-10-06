@@ -17,6 +17,11 @@
 #include "shaders.h"
 #include "window.h"
 
+uint8_t *tide_platform_pack(size_t *size)
+{
+    return tide_window_pack(size);
+}
+
 #ifdef __wasm__
 #include "tide_web.h" // The page's frame loop (platform/web/tide.js)
 #endif

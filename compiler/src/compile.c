@@ -60,6 +60,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     }
 
     diag_phase("lexing and parsing");
+    prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;
 
     codegen_options named = *opts;
