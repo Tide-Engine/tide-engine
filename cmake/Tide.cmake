@@ -36,6 +36,14 @@
 # .tide file or tidec changes. Every game is also listed in
 # TIDE_GAMES_MANIFEST, so editors know which files belong together.
 #
+# A game's assets (its `asset` declarations: docs/spec.md, Assets) are packed
+# by tidec beside the generated files, <name>.pack, which the files they name
+# regenerate too. A game with a window gets it beside its program, as
+# <target>.pack (tide/run.h loads it), inside its web page, and in its APK. A
+# HOST program gets it as C instead (<name>_pack.c: tide_game_pack and
+# tide_game_pack_size), to hand tide_assets_load itself; a game with no assets
+# has an empty one.
+#
 # tidec's warnings are errors here (cmake/run_tidec.cmake), as the compiler's
 # are. WARNINGS lists the ones a game means to have, such as tests of what
 # tidec generates for programs it warns about: each is part of a warning's
@@ -156,6 +164,38 @@ function(tide_add_game target)
     set(out_dir "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}")
     set(out_c "${out_dir}/${name}.c")
     set(out_h "${out_dir}/${name}.h")
+    set(out_pack "${out_dir}/${name}.pack")
+    set(out_pack_c "${out_dir}/${name}_pack.c")
+    set(pack_c "")
+    set(pack_outputs "")
+    if(ARG_HOST)
+        set(pack_c --pack-c)
+        set(pack_outputs "${out_pack_c}")
+    endif()
+    # The files its assets name: a change to one regenerates the pack. They're
+    # found when the game is configured, as its .tide files are with no SOURCES.
+    set(asset_files "")
+    foreach(path IN LISTS sources package_sources)
+        file(STRINGS "${path}" asset_lines REGEX "^asset ")
+        foreach(line IN LISTS asset_lines)
+            if(line MATCHES "= *\"([^\"]*)\"")
+                set(asset_path "${CMAKE_MATCH_1}")
+                if(NOT asset_path MATCHES "^https?://")
+                    get_filename_component(asset_dir "${path}" DIRECTORY)
+                    if(asset_path MATCHES "[*?]")
+                        string(REGEX REPLACE "/[^/]*[*?].*$" "" asset_base "${asset_path}")
+                        if(asset_base STREQUAL asset_path)
+                            set(asset_base ".")
+                        endif()
+                        file(GLOB_RECURSE matched CONFIGURE_DEPENDS "${asset_dir}/${asset_base}/*")
+                        list(APPEND asset_files ${matched})
+                    else()
+                        list(APPEND asset_files "${asset_dir}/${asset_path}")
+                    endif()
+                endif()
+            endif()
+        endforeach()
+    endforeach()
     # The warnings it means to have, written only when they change, so tidec
     # runs again when they do.
     set(expected "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.warnings")
@@ -184,20 +224,20 @@ function(tide_add_game target)
         file(WRITE "${listed}" "${source_lines}")
     endif()
     add_custom_command(
-        OUTPUT "${out_c}" "${out_h}"
+        OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout}
-        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c}
+        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
     if(ARG_HOST AND ARG_WINDOW AND TIDE_ANDROID)
-        add_library(${target} SHARED ${ARG_HOST} "${out_c}" "${out_h}" ${c_sources})
+        add_library(${target} SHARED ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
         target_link_libraries(${target} PRIVATE tide tide_platform)
         tide_android_app(${target} LABEL "${title}")
     elseif(ARG_HOST)
-        add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" ${c_sources})
+        add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
         target_link_libraries(${target} PRIVATE tide tide_font_bold)
     else()
         if(NOT TARGET tide_platform)
@@ -222,11 +262,16 @@ int main(int argc, char **argv)
         if(TIDE_ANDROID)
             add_library(${target} SHARED "${main}" "${out_c}" "${out_h}" ${c_sources})
             target_link_libraries(${target} PRIVATE tide_platform)
-            tide_android_app(${target} LABEL "${title}")
+            tide_android_app(${target} LABEL "${title}" PACK "${out_pack}")
         else()
             add_executable(${target} "${main}" "${out_c}" "${out_h}" ${c_sources})
             target_link_libraries(${target} PRIVATE tide_platform)
-            tide_web_page(${target})
+            # Its assets beside it, as <target>.pack, when it has any (tide/run.h loads it)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" "-DFROM=${out_pack}" "-DTO=$<TARGET_FILE_DIR:${target}>/${target}.pack"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
+                VERBATIM)
+            tide_web_page(${target} PACK "${out_pack}")
         endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")

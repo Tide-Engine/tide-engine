@@ -22,6 +22,7 @@ typedef struct parser {
     // Parsing a declaration written after `override`: its name is the one it
     // replaces, which can be qualified, `Combat.Move` or `Combat.Stats.Hurt`
     bool overriding;
+    bool asset_type; // Reading an asset's type, which holds a glob's matches: a List or Map of grids or lists is allowed there
 } parser;
 
 static token *peek(const parser *p)
@@ -69,6 +70,21 @@ static token *expect(parser *p, const tok_kind kind, const char *what)
 {
     if (!at(p, kind)) fail_at(p, peek(p), what);
     return advance(p);
+}
+
+// The '>' that closes a generic type's <>. Two that close one inside another
+// (List<Grid2<Color>>) lex as one '>>' token: the first is taken, and the
+// token becomes the second.
+static void expect_close_angle(parser *p, const char *what)
+{
+    token *t = peek(p);
+    if (t->kind == T_SHR) {
+        t->kind = T_GT;
+        t->text = (str){t->text.ptr + 1, 1};
+        t->at.col++;
+        return;
+    }
+    expect(p, T_GT, what);
 }
 
 static token *expect_ident(parser *p, const char *what)
@@ -163,7 +179,9 @@ static qname parse_type_in(parser *p, const char *what, const type_place place, 
 {
     qname q = parse_qname(p, what);
     if (!at(p, T_LT) || !generic_name(q.text)) return q;
-    if (place != PLACE_OWN) refuse_nested(p, q, place, key);
+    // An asset's List<T> or Map<string, T> holds what a glob's files are read as, grids and lists among them
+    const bool asset_holds = p->asset_type && (place == PLACE_LIST || place == PLACE_MAP_VALUE);
+    if (place != PLACE_OWN && !asset_holds) refuse_nested(p, q, place, key);
     const str none = {NULL, 0};
     if (str_eq_c(q.text, "Map") || str_eq_c(q.text, "Set")) {
         const bool map = str_eq_c(q.text, "Map");
@@ -175,7 +193,7 @@ static qname parse_type_in(parser *p, const char *what, const type_place place, 
             expect(p, T_COMMA, "',' between the map's key and value types, like 'Map<int, string>'");
             value = parse_type_in(p, "the map's value type, like 'Map<int, string>'", PLACE_MAP_VALUE, key_type.text);
         }
-        expect(p, T_GT, map ? "'>' after the map's value type" : "'>' after the set's key type");
+        expect_close_angle(p, map ? "'>' after the map's value type" : "'>' after the set's key type");
         const int len = q.text.len + key_type.text.len + (map ? value.text.len + 4 : 2);
         char *text = arena_alloc((size_t)len + 1);
         if (map) snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ", " STR_FMT ">", STR_ARG(q.text), STR_ARG(key_type.text), STR_ARG(value.text));
@@ -186,7 +204,7 @@ static qname parse_type_in(parser *p, const char *what, const type_place place, 
     if (!str_eq_c(q.text, "List")) { // Grid2<T> and Grid3<T>
         advance(p);
         const qname cell = parse_type_in(p, "the grid's cell type, like 'Grid2<int>'", PLACE_GRID, none);
-        expect(p, T_GT, "'>' after the grid's cell type");
+        expect_close_angle(p, "'>' after the grid's cell type");
         const int len = cell.text.len + 7;
         char *text = arena_alloc((size_t)len + 1);
         snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(cell.text));
@@ -195,7 +213,7 @@ static qname parse_type_in(parser *p, const char *what, const type_place place, 
     }
     advance(p);
     const qname element = parse_type_in(p, "the list's element type, like 'List<int>'", PLACE_LIST, none);
-    expect(p, T_GT, "'>' after the list's element type");
+    expect_close_angle(p, "'>' after the list's element type");
     char *text = arena_alloc((size_t)element.text.len + 7);
     snprintf(text, (size_t)element.text.len + 7, "List<" STR_FMT ">", STR_ARG(element.text));
     q.text = (str){text, element.text.len + 6};
@@ -725,7 +743,7 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert");
+        || str_eq_c(text, "vert") || str_eq_c(text, "asset");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -1496,6 +1514,37 @@ static decl *parse_const(parser *p)
     return d;
 }
 
+// asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name,
+// at the top of a file (see docs/spec.md, Assets). Its value is its path, a
+// constant text, which the checker resolves.
+static decl *parse_asset(parser *p)
+{
+    if (peek(p)->kind == T_IDENT && peek_at(p, 1)->kind == T_ASSIGN) {
+        diag_error(peek(p)->at, "an asset's type is written out: 'asset Grid2<Color> " STR_FMT " = \"art/" STR_FMT ".png\";'",
+                   STR_ARG(peek(p)->text), STR_ARG(peek(p)->text));
+        diag_note("it's what the file's contents are read as: string, List<byte> or Grid2<Color>, or a List or Map<string, ...> of one for a glob");
+        longjmp(p->fail, 1);
+    }
+    p->asset_type = true;
+    const qname type = parse_type(p, "the asset's type");
+    p->asset_type = false;
+    const token *name = expect_ident(p, "asset name");
+    decl *d = new_decl(DECL_ASSET, name);
+    d->unit = p->unit;
+    d->return_type_name = type.text;
+    d->return_type_at = type.name_at;
+    d->return_type_qual_at = type.at;
+    if (!at(p, T_ASSIGN)) {
+        diag_error(peek(p)->at, "an asset needs its file's path: 'asset " STR_FMT " " STR_FMT " = \"...\";', from the folder this file is in",
+                   STR_ARG(type.text), STR_ARG(name->text));
+        longjmp(p->fail, 1);
+    }
+    advance(p);
+    d->value = parse_expr(p);
+    d->end = expect(p, T_SEMI, "';' after the asset's path")->at;
+    return d;
+}
+
 // name = value;: one of the settings in a settings block, which the checker
 // knows the types of.
 static void parse_setting(parser *p, decl *d)
@@ -2108,6 +2157,7 @@ static const char *replace_refusal(const parser *p)
     if (str_eq_c(t->text, "scene")) return "a scene is data, and data isn't replaced: only code is";
     if (str_eq_c(t->text, "input")) return "the input is data, and the game's own: only code is replaced";
     if (str_eq_c(t->text, "const")) return "a constant is a value, the same on every machine, with no code to replace";
+    if (str_eq_c(t->text, "asset")) return "an asset is data, the file it names, and data isn't replaced: only code is";
     if (str_eq_c(t->text, "extern")) {
         return "an extern function's code is C, which Tide can't replace: a virtual function can call it, and be replaced";
     }
@@ -2140,7 +2190,7 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
-    parser p = {toks, 0, {0}, recover, NULL, {0}, {0}, false, false};
+    parser p = {toks, 0, {0}, recover, NULL, {0}, {0}, false, false, false};
     p.unit = NEW(unit);
     p.unit->src = src;
     vec_push(prog->units, p.unit);
@@ -2243,11 +2293,12 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_IDENT && at(&p, T_SYSTEM) && str_eq_c(t->text, "extern")) d = parse_extern_system(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "extern")) d = parse_extern(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "const")) d = parse_const(&p);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "asset")) d = parse_asset(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "external")) {
             diag_error(t->at, "did you mean 'extern'? It declares a function written in C: 'extern float Noise(float x);'");
             longjmp(p.fail, 1);
         }
-        else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const' or a function"); // Consumed, so recovery skips it
+        else fail_at(&p, t, "'component', 'scene', 'singleton', 'struct', 'enum', 'event', 'input', 'system', 'view', 'frag', 'vert', 'extern', 'const', 'asset' or a function"); // Consumed, so recovery skips it
         d->unit = p.unit;
         p.overriding = false;
         if (local) {

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asset_files.h"
 #include "ast.h"
 #include "builtins.h"
 #include "tide/devices.h"
@@ -200,6 +201,7 @@ typedef enum name_kind {
     NAME_FUNCTION,
     NAME_CONST,
     NAME_SHADER,   // Frags and verts, where Draw2D.Mesh names them
+    NAME_ASSET,    // Assets: values, like constants, read where their type's values are
 } name_kind;
 
 static bool is_kind(const decl *d, const name_kind kind)
@@ -208,7 +210,8 @@ static bool is_kind(const decl *d, const name_kind kind)
     if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION;
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
     if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
-    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER;
+    if (kind == NAME_ASSET) return d->kind == DECL_ASSET;
+    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -5516,6 +5519,7 @@ static bool parse_swizzle(expr *e, const int dim)
 }
 
 static type use_constant(checker *c, expr *e, decl *k);
+static type use_asset(checker *c, expr *e, decl *k);
 
 // Combat.Health or Game.Combat where a value belongs: says what the name is.
 static type check_namespace_member(checker *c, expr *e)
@@ -5525,6 +5529,8 @@ static type check_namespace_member(checker *c, expr *e)
     mark_namespaces(e->object);
     decl *k = find_named(c, text, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
+    k = find_named(c, text, e->at, NAME_ASSET);
+    if (k) return use_asset(c, e, k);
     decl *d = find_type(c, text, e->at);
     if (d) {
         e->bind = BIND_TYPE;
@@ -6087,6 +6093,8 @@ static type check_name(checker *c, expr *e)
     }
     decl *k = find_named(c, e->name, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
+    k = find_named(c, e->name, e->at, NAME_ASSET);
+    if (k) return use_asset(c, e, k);
     decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {
         e->bind = BIND_SHADER;
@@ -6692,14 +6700,18 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     const expr *of = e->object;
     const bool direct = grid.kind == TY_TEXTURE && of->kind == E_NAME && of->bind == BIND_PARAM
                         && of->param->type.kind == TY_TEXTURE;
-    if (!direct && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
-                    || of->object->param->function_param)) {
+    const bool asset = grid.kind == TY_GRID && of->bind == BIND_ASSET; // A Grid2<Color> asset, by its name (docs/spec.md, Assets)
+    if (!direct && !asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                              || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a %s that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'%s",
                    shader_word(shader), grid.kind == TY_TEXTURE ? "Texture" : "grid",
-                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : "");
+                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : ", or a Grid2<Color> asset by its name");
+        if (grid.kind == TY_GRID && of->kind == E_INDEX && of->object->bind == BIND_ASSET) {
+            diag_note("the GPU can't index a list of assets: declare the one to sample as an asset of its own, 'asset Grid2<Color> name = \"...\";'");
+        }
         return T_ERR;
     }
-    if (!direct && of->object->param->type.kind == TY_STRUCT) {
+    if (!direct && !asset && of->object->param->type.kind == TY_STRUCT) {
         diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled %s in a component or singleton",
                    grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
@@ -7280,6 +7292,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         if (part->bind == BIND_CONST) {
             diag_error(target->at, "'" STR_FMT "' is a constant, so it can't change", STR_ARG(part->constant->name));
             if (called) diag_note("copy it into a 'mut var' first");
+            return false;
+        }
+        if (part->bind == BIND_ASSET) {
+            diag_error(target->at, "'" STR_FMT "' is an asset, read-only: it's the file it names, as the game was built", STR_ARG(part->constant->name));
+            if (part->constant->return_type.kind == TY_GRID) diag_note("to draw into pixels, keep a Grid2<Color> field of your own, and copy its cells in");
+            else diag_note("copy it into a 'mut var' first, or into a field");
             return false;
         }
         if (part->kind != E_MEMBER && part->kind != E_INDEX) break;
@@ -9201,6 +9219,97 @@ static type use_constant(checker *c, expr *e, decl *k)
         return T_ERR;
     }
     return k->return_type;
+}
+
+// An asset read as a value: its type's, from the file it names. One whose
+// path couldn't be resolved is still that type, so the code around it checks.
+static type use_asset(checker *c, expr *e, decl *k)
+{
+    (void)c;
+    e->bind = BIND_ASSET;
+    e->constant = k;
+    return k->return_type;
+}
+
+// ---------------------------------------------------------------------------
+// Assets: asset Grid2<Color> hero = "art/hero.png"; (docs/spec.md, Assets)
+
+// What an asset resolves to: string, List<byte> or Grid2<Color>, alone, or a
+// List<T> or Map<string, T> of one for a glob. False for anything else, which
+// is said.
+static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *is_map)
+{
+    const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
+    const str text = k->return_type_name;
+    *many = *is_map = false;
+    str inner = text;
+    if (str_eq_c(text, "List<byte>")) { // One file's bytes, not a glob's
+        inner = text;
+    } else if (str_starts_with_c(text, "List<") && text.ptr[text.len - 1] == '>') {
+        *many = true;
+        inner = (str){text.ptr + 5, text.len - 6};
+    } else if (str_starts_with_c(text, "Map<string,") && text.ptr[text.len - 1] == '>') {
+        *many = *is_map = true;
+        inner = (str){text.ptr + 11, text.len - 12};
+        while (inner.len > 0 && inner.ptr[0] == ' ') {
+            inner.ptr++;
+            inner.len--;
+        }
+    } else if (str_starts_with_c(text, "Map<")) {
+        diag_error(at, "a map of assets is keyed by their paths: 'Map<string, ...>'");
+        return false;
+    }
+    type element;
+    if (str_eq_c(inner, "string")) {
+        *kind = ASSET_TEXT;
+        element = (type){TY_STRING, NULL};
+    } else if (str_eq_c(inner, "List<byte>")) {
+        *kind = ASSET_BYTES;
+        element = list_of(c->prog, (type){TY_BYTE, NULL});
+    } else if (str_eq_c(inner, "Grid2<Color>")) {
+        *kind = ASSET_GRID;
+        element = grid_of(c->prog, (type){TY_COLOR, NULL}, 2);
+    } else {
+        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file) or a Grid2<Color> (a PNG), not '" STR_FMT "'", STR_ARG(inner));
+        diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
+        return false;
+    }
+    if (*is_map) k->return_type = map_of(c->prog, (type){TY_STRING, NULL}, element, false);
+    else if (*many) k->return_type = list_of(c->prog, element);
+    else k->return_type = element;
+    return true;
+}
+
+// Checks an asset declaration: its type, its path (a constant text) and the
+// files the path resolves to, read and decoded (asset_files.h), which codegen
+// packs. Errors at the path say what to write.
+static void check_asset_decl(checker *c, decl *k)
+{
+    const unit *const outer = c->unit;
+    c->unit = k->unit;
+    check_reserved(k->name, k->at);
+    if (k->is_local) diag_error(k->local_at, "an asset is every machine's, as the game is built with it: it can't be local");
+    asset_kind kind = ASSET_BYTES;
+    bool many = false, is_map = false;
+    const bool typed = asset_type(c, k, &kind, &many, &is_map);
+    if (!typed) k->return_type = T_ERR;
+    const expr *path = NULL;
+    const bool constant = is_constant(c, k->value);
+    if (constant) {
+        const type t = check_constant_expr(c, k->value, true, (type){TY_STRING, NULL});
+        if (t.kind == TY_STRING) path = text_literal(k->value);
+        else if (t.kind != TY_ERROR) diag_error(k->value->at, "an asset's path is text, not %s", type_name(t));
+    }
+    if (!constant) {
+        diag_error(k->value->at, "an asset's path is a constant: a string literal, or a 'const string'");
+        diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
+    }
+    if (typed && path) {
+        k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+    }
+    k->index = 2;
+    vec_push(c->prog->assets, k);
+    c->unit = outer;
 }
 
 static void check_default(checker *c, const field *f)
@@ -12285,6 +12394,9 @@ static void collect_decls(program *prog)
             case DECL_CONST:
                 diag_error(d->local_at, "constants belong to neither side: every machine has the same ones");
                 break;
+            case DECL_ASSET:
+                diag_error(d->local_at, "an asset is every machine's, as the game is built with it: it can't be local");
+                break;
             case DECL_SHADER:
                 diag_error(d->local_at, "a %s runs on the GPU for the meshes a view draws, so it's local already; drop 'local'",
                            d->is_frag ? "frag" : "vert");
@@ -12356,6 +12468,7 @@ static void collect_decls(program *prog)
         case DECL_RESULT:
         case DECL_FUNCTION:
         case DECL_CONST:
+        case DECL_ASSET:
         case DECL_SHADER:
         case DECL_SETTINGS: // Not in prog->decls
             break;
@@ -14371,6 +14484,9 @@ bool check(program *prog)
     }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind == DECL_ASSET) check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
     }
     check_settings(&c);
     add_scene_player_words(prog);

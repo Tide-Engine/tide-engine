@@ -1446,6 +1446,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_GRID: return "grid";
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
+    case DECL_ASSET: return "asset";
     case DECL_SETTINGS: return "settings";
     case DECL_SHADER: return d->is_frag ? "frag" : "vert";
     case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? d->is_command ? "command" : "event" : "system";

@@ -51,6 +51,16 @@ typedef struct tide_pack_entry {
     uint32_t extra;    // By kind, above (a map's: its live count)
 } tide_pack_entry;
 
+// The file's header, before the entries and the region.
+typedef struct tide_pack_header {
+    char magic[8];
+    uint32_t version;
+    uint32_t entries;
+    uint32_t region_at; // Where the region starts in the file
+    uint32_t region_size;
+    uint32_t reserved[2];
+} tide_pack_header;
+
 // ---------------------------------------------------------------------------
 // Building one
 

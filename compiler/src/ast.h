@@ -352,14 +352,16 @@ typedef enum decl_kind {
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
     DECL_SHADER,   // frag Shade(...) { ... } and vert Wave(...) { ... }: code the GPU runs for a mesh's pixels or vertices
+    DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
 } decl_kind;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
-    int param;
+    int param;    // -1 for an asset's grid
     int field;    // -1 for a direct Texture parameter; otherwise its component or singleton field
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
+    const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -487,8 +489,10 @@ typedef struct decl {
     type fails;               // The error type; TY_VOID if it can't fail
     type result;              // What a call gives: return_type, or `return_type fails E` (TY_FAILABLE)
 
-    // Constants
+    // Constants, and assets (whose value is their path, a constant text)
     struct expr *value; // A constant expression of its type (return_type)
+    // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
+    struct asset_value *asset;
 
     // Systems, views, methods, functions, and an input's Sample
     VEC(param) params;
@@ -684,6 +688,7 @@ typedef enum binding_kind {
     BIND_DEVICES,   // `Devices`: this machine's devices, in views and the input's Sample
     BIND_CONST,     // A constant, MAX_HEALTH or Combat.MAX_HEALTH: `constant` is it
     BIND_SHADER,    // A frag or vert named at mesh draw: `type_decl` is it
+    BIND_ASSET,     // An asset, hero or Art.hero: `constant` is its declaration, read as a value of its type
 } binding_kind;
 
 typedef enum input_edge {
@@ -942,6 +947,7 @@ typedef struct shader_texture {
     const field *field;
     bool blended;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
+    const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
 } shader_texture;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
@@ -1090,6 +1096,8 @@ typedef struct program {
 
     // The engine's settings for the game (builtins.h), from `settings { ... }`
     VEC(decl *) settings;      // Each block written, though a game has one
+    VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
+    const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set
     uint32_t max_players;      // maxPlayers, or 0 where it isn't set: TIDE_PLAYERS_DEFAULT
     const expr *title;         // title, the text it's set to, or NULL
