@@ -1,0 +1,869 @@
+// Sumo: you are a heavy ball, in a ring in the sky that's stacked with towers
+// of crates, and so are up to seven others. Plough through what's in your
+// way, shove the others over the edge, and stay on yourself while the ring
+// falls away under everyone. This file is the match, which every machine runs
+// the same way. What the ring is built of each round is in arena.tide, what
+// a machine shows of it in play.tide, light.tide, effects.tide and hud.tide,
+// and which match it's in is lobby.tide's to say.
+//
+// Everything that moves is Box3D's (the box3d package): the game spawns
+// bodies, pushes them and reads where they are, and never moves one itself.
+using Box3D;
+
+settings { title = "Sumo"; appId = "dev.tide.sumo"; maxPlayers = 8; hostMigration = true; stats = true; }
+
+const int SEATS = 8;             // The most players
+const int CROWD = 4;             // Balls in the ring at the least: bots have the seats players leave
+
+// The ring, in meters: a floor of square tiles around the middle, its top at
+// y = 0, and nothing under it or around it but the drop.
+const float TILE = 3;            // A tile's side
+const int TILES = 6;             // Tiles from the middle one to the rim
+const float RING = 18.1;         // How far out a tile's middle is at the most, as a round starts
+const float PIT = -6;            // The top of the pit: what falls into it is gone
+const float OUT = -2.5;          // A ball this low is out
+
+const float BALL = 0.8;          // A ball's radius: twice a crate's height across
+const float BALL_DENSITY = 300;  // 643 kilograms, to a crate's 23
+const float BIG = 1.3;           // ...and a heavy one's, which weighs thirteen times that
+const float BIG_DENSITY = 900;
+const float GRIP = 26;           // How hard a ball drives, in meters a second, a second
+const float DRAG = 2.0;          // What the floor takes of its speed each second while it drives: 13 m/s at the most
+const float COAST = 0.5;         // ...and while it doesn't
+const float WIND = 0.8;          // Seconds to wind a charge all the way up
+const float BURST = 7;           // The speed a charge gives at the least, and how much more wound all the way up
+const float BURST_MORE = 9;
+const float BUMP = 4;            // The speed two balls that meet are thrown apart with at the least, between them
+const float BUMP_MORE = 0.7;     // ...and how much of the speed they closed at is added to it
+const int COOLDOWN = 150;        // Ticks before a ball charges again
+const int DASH = 36;             // Ticks a burst lasts, for who it hits
+const int RESPAWN = 120;         // Ticks a ball that fell is gone for
+const int BLAME = 360;           // Ticks a touch counts for, when who it touched falls
+const int HEAVY = 480;           // Ticks of being heavy
+const int RUBBLE = 240;          // Ticks a crate lasts once it's been knocked about, at the least
+
+const float CRATE = 0.8;         // A crate's side
+const float CRATE_DENSITY = 45;
+
+// A round: the ring is set up and everyone waits, then they fight for two
+// minutes while the floor falls away from the rim in, three times.
+const int READY = 180;
+const int ROUND = 7200;
+const int RIMS = 3;              // How many times the floor's rim goes
+const int WARN = 300;            // Ticks a rim is marked before it goes
+const int OVER = 300;
+const int DROP = 420;            // Ticks between pickups
+
+enum Phase { Clear, Ready, Play, Over }
+enum Kind { Crate, Plank, Keg, Slab }
+enum Power { Heavy, Shock }
+
+// A seat: there are eight, from the match's start. A player has one, or a bot
+// plays it, or it's empty. What it scored is here, as its ball comes and goes.
+component Seat
+{
+    int seat;
+    int score;     // Ring-outs since the game started
+    int round;     // ...and this round
+    int scored;    // The tick of the last one: who got there first, in a tie
+    int wait;      // Ticks until its ball is back
+    bool up;       // Its ball is in the ring
+}
+
+// A ball: a player's, or a bot's.
+component Ball
+{
+    int seat;
+    int last = -1;     // The seat whose ball touched it last...
+    int touched;       // ...and the tick it did
+    float charge;      // How far it's wound up, 0 to 1
+    bool winding;
+    int idle;          // Ticks wound up with nobody holding
+    int cooldown;      // Ticks until it charges again
+    int dash;          // Ticks its burst still lasts
+    int dazed;         // Ticks a hard hit leaves it without its grip
+    int heavy;         // Ticks of being heavy that are left
+    int smashed;       // The tick it last smashed into something, for whoever shows it
+    float radius = BALL;
+    float mass;
+    float3 before;     // How fast it went into this tick's step: what a hit is judged by
+    float2 drive;      // Where it's driven this tick, for whoever shows it
+    // How this machine shows it: where its trail's last spark was. Nothing of
+    // these is in the match.
+    local float3 trailed;
+    local bool trailing;
+    local float flash;
+}
+
+// What plays a ball nobody's hands are on: where it would go, and whether it
+// would charge. Every ball has one, as a player's hands can come off.
+component Brain
+{
+    float2 move;
+    bool charge;
+    int held;      // Ticks it has wound up for
+    int want;      // ...and how many it means to
+    int prey = -1; // The seat it's after
+    int bored;     // Ticks until it picks again
+    float taste;   // How much sooner it goes for the next seat round than for the nearest
+    float2 roam;   // Where it goes with nobody to go for
+    Random dice;
+}
+
+// Anything loose, which a blast throws and the pit takes: its weight, so that
+// a blast throws a ball as far as a crate.
+component Loose { float mass = 1; }
+
+// A crate, a plank, a keg or a tile that fell: what it's drawn as, and the
+// tick it breaks up at, once it's been knocked about. Rubble doesn't stay.
+component Crate
+{
+    Kind kind;
+    int tone;   // One of three shades, so that a stack reads as crates
+    int until;
+}
+
+// A keg blows up when a ball hits it hard, or another blast reaches it.
+component Keg { bool lit; }
+
+// A tile of the floor: where its middle is, how far out that is, and how
+// many ticks it holds on for once the floor ends short of it.
+component Tile
+{
+    float2 at;
+    float reach;
+    int fuse;
+}
+
+// Something to pick up, floating over the floor.
+component Pickup
+{
+    Power power;
+    float2 at;
+    bool taken;
+    int life = 1500;
+}
+
+// The pit under everything: a sensor, which hears of what falls into it.
+component Pit { }
+
+// A push outward from a place, which the next step gives everything near.
+struct Blast
+{
+    float3 at;
+    float reach;
+    float push;    // The speed it gives right beside it
+    int seat = -1; // Whose it is: who it throws out scores for them
+    int due;       // The tick it goes off
+    Entity spare;  // The ball that set it off, which it leaves alone
+}
+
+singleton Ring
+{
+    Phase phase = Phase.Clear; // The first tick sets the first round up
+    int round;
+    int timer;                 // Ticks left of the phase
+    int gone;                  // How many rims have gone
+    float radius = RING;       // Where the floor ends
+    float next = RING;         // ...and where it's about to
+    int manned;                // The seats players have, a bit each
+    bool bots = true;          // Bots have the seats players leave, up to the crowd
+    bool fresh;                // The round being set up is the first of a new game
+    int drop = DROP;           // Ticks until the next pickup
+    Random dice;
+    Map<PlayerID, int> players;  // Each player's seat
+    Map<int, PlayerID> owners;   // ...and each seat's player
+    Map<int, Entity> chairs;     // The seats' entities
+    List<Blast> blasts;          // The blasts that haven't gone off yet
+}
+
+scene Main { }
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move; // Across the ring and up it, as the screen has them
+    bool charge;
+    // The player's hands are off: their lobby or menu is up. Their ball plays
+    // by itself meanwhile, like a bot's. It says how things are, not what the
+    // player does, so what another machine guesses of it stays as it was.
+    [Absolute] bool away;
+
+    Sample(Devices devices, Hand hand)
+    {
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        mut var push = hand.stick + pad.leftStick;
+        if (keys.d.pressed || keys.rightArrow.pressed) push.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) push.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) push.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) push.y -= 1;
+        // A stick is all the way over or it's let go, and points one of 32
+        // ways: an input that changes less often is one the other machines
+        // guess right more often
+        if (Math.Length(push) > 0.3)
+        {
+            var step = Math.TAU / 32;
+            var angle = Math.Round(Math.Atan2(push.y, push.x) / step) * step;
+            move = float2(Math.Cos(angle), Math.Sin(angle));
+        }
+        charge = hand.playing && (hand.charge || keys.space.pressed || pad.buttonSouth.pressed);
+        away = !hand.playing;
+        // Nothing is sent while nothing can be driven: the ring is being
+        // raised, or the player's hands are off. An input that stays as it
+        // was is one every other machine guesses right, and the ticks a ring
+        // is raised in are the ones a machine can least afford to run again
+        if (away || !hand.live)
+        {
+            move = float2(0);
+            charge = false;
+        }
+    }
+}
+
+// Sent to a seat: its ball fell, or it threw someone else's out.
+event Fell { }
+event Benched { } // Its ball was taken out: the round is over, or the seat is nobody's
+event Scored { }
+event Emptied { } // Whoever had it is gone: what it scored goes with them
+
+// Sent to a ball: it picked something up, a blast reached it, or its fuse is lit.
+event Got { Power power; }
+event Rocked { int seat; }
+event Kindled { int seat; }
+
+// What happens in the match, said for whoever shows it: nothing in the match
+// handles these, so they cost it nothing. Each machine's handlers of them are
+// in effects.tide.
+event RingOut { float3 at; int seat; int by; }
+event Clash { float3 at; float hard; int a; int b; }
+event Smash { float3 at; float hard; int seat; }
+event Burst { float3 at; float2 way; float hard; int seat; }
+event Boom { float3 at; float reach; int seat; }
+event Taken { float3 at; Power power; int seat; }
+event Dropped { float2 at; }
+event Shrinking { float to; }
+event RoundSet { int round; }
+event Go { }
+event RoundOver { int round; int winner; int best; }
+
+// What the buttons ask of the match.
+command Rebuild { }
+command Bots { }
+
+float SphereMass(float radius, float density)
+{
+    return 4.18879 * radius * radius * radius * density;
+}
+
+// Whether a seat is in the match: a player has it, or it's one of the first
+// seats nobody has, which bots play until the ring has its crowd.
+bool Live(int manned, bool bots, int seat)
+{
+    if ((manned >> seat & 1) == 1) return true;
+    if (!bots) return false;
+    mut var held = 0;
+    for (var s = 0; s < SEATS; s++) held += manned >> s & 1;
+    mut var free = 0;
+    for (var s = 0; s < seat; s++) free += 1 - (manned >> s & 1);
+    return free < CROWD - held;
+}
+
+// Where the floor ends once this many rims have gone: each is a ring of
+// tiles' middles.
+float Rim(int gone)
+{
+    return gone <= 0 ? RING : gone == 1 ? 15.1 : gone == 2 ? 12.5 : 9.6;
+}
+
+// The tick of a round its rims go at: after 35 seconds, after 65, and with
+// half a minute to go.
+int Falls(int rim)
+{
+    return rim == 1 ? 2100 : rim == 2 ? 3900 : rim == 3 ? 5400 : ROUND + 1;
+}
+
+// Where a seat's ball starts a round: on a tile that every arrangement
+// leaves clear, two to a quarter of the ring, a way in from the rim.
+float3 Start(int seat)
+{
+    mut var tile = seat % 2 == 0 ? float2(1, -4) : float2(4, -1);
+    for (var quarter = 0; quarter < seat / 2; quarter++) tile = float2(-tile.y, tile.x);
+    return float3(tile.x * TILE, BALL + 0.02, tile.y * TILE);
+}
+
+// What stays for the whole match: the seats, and the pit, a sensor far under
+// the floor. Gravity is the world's: stronger than the Earth's here, so that
+// what falls looks its size.
+event(Spawned) Build(mut Ring ring, mut Physics physics, with Main)
+{
+    physics.gravity = float3(0, -18, 0);
+    for (var seat = 0; seat < SEATS; seat++)
+        ring.chairs[seat] = Spawn(Seat { seat = seat });
+    Spawn(Body { type = BodyType.Static, position = float3(0, PIT - 10, 0) },
+          Box { size = float3(160, 20, 160), sensor = true }, Pit);
+}
+
+// A player has the first seat no player has. A bot may be playing it: its
+// ball is then theirs, as it is.
+event(PlayerJoined joined) Arrive(mut Ring ring)
+{
+    if (ring.players.Has(joined.player)) return;
+    for (var seat = 0; seat < SEATS; seat++)
+    {
+        if ((ring.manned >> seat & 1) == 1) continue;
+        ring.manned |= 1 << seat;
+        ring.players[joined.player] = seat;
+        ring.owners[seat] = joined.player;
+        if (ring.chairs.TryGet(seat, out var chair)) chair.Send(Emptied { });
+        return;
+    }
+}
+
+event(PlayerLeft left) Depart(mut Ring ring)
+{
+    if (!ring.players.TryGet(left.player, out var seat)) return;
+    ring.manned &= ~(1 << seat);
+    ring.players.Remove(left.player);
+    ring.owners.Remove(seat);
+    if (ring.chairs.TryGet(seat, out var chair)) chair.Send(Emptied { });
+}
+
+// A ball is its seat's player's: Owner ties it to them, and Drive then reads
+// their input for it. A bot's has nobody.
+[Before(PhysicsStages.Step)]
+system Hands(mut Owner owner, Ball ball, Ring ring)
+{
+    var player = ring.owners[ball.seat];
+    if (owner.player != player) owner.player = player;
+}
+
+// Where a ball would go by itself, and whether it would charge. It picks
+// someone to go for, the nearest more often than not, and sooner the next
+// seat round than the one before, so that bots don't all go for the same
+// ball. It goes round to their inside: from there a hit sends them out. Then it winds up and lets go at them. It turns back
+// from the rim before it gets there, by how far the rim is and how fast it's
+// going out to it. Every ball works this out, and only the ones nobody
+// drives use it.
+[Before(PhysicsStages.Step)]
+system Think(mut Brain brain, Body body, Ball ball, Ring ring,
+    query (Body body, Ball ball) others, query (Pickup pickup) drops)
+{
+    var at = float2(body.position.x, body.position.z);
+    var speed = float2(body.velocity.x, body.velocity.z);
+    var far = Math.Length(at);
+    var edge = Math.Min(ring.radius, ring.next) + 0.6;
+    var outward = Math.Normalize(at);
+
+    brain.bored -= 1;
+    mut var found = false;
+    mut var their = float2(0);
+    mut var nearest = -1;
+    mut var best = 1000.0;
+    foreach (var other in others)
+    {
+        if (other.entity == this || other.body.position.y < 0.3) continue;
+        var where = float2(other.body.position.x, other.body.position.z);
+        if (other.ball.seat == brain.prey)
+        {
+            found = true;
+            // Where they'll be in a moment
+            their = where + float2(other.body.velocity.x, other.body.velocity.z) * 0.22;
+        }
+        var gap = Math.Distance(at, where) + (other.ball.heavy > 0 ? 10 : 0)
+                + ((other.ball.seat - ball.seat + SEATS) % SEATS) * brain.taste;
+        if (gap >= best) continue;
+        best = gap;
+        nearest = other.ball.seat;
+    }
+    if (!found || brain.bored <= 0)
+    {
+        brain.bored = 150 + brain.dice.NextInt(240);
+        brain.prey = nearest;
+        brain.taste = brain.dice.NextFloat(0, 2.5);
+        var around = brain.dice.NextFloat(Math.TAU);
+        brain.roam = float2(Math.Sin(around), Math.Cos(around)) * (edge * 0.55);
+    }
+
+    mut var goal = brain.roam;
+    mut var hunting = false;
+    if (found)
+    {
+        var out = Math.Normalize(their);
+        var lined = Math.Dot(Math.Normalize(their - at), out);
+        hunting = lined > 0.25 || Math.Distance(at, their) < 3;
+        goal = hunting ? their : their - out * 4.5;
+    }
+    foreach (var drop in drops)
+    {
+        var gap = Math.Distance(at, drop.pickup.at);
+        if (gap > 7 || Math.Length(drop.pickup.at) > edge - 2.5) continue;
+        goal = drop.pickup.at;
+        hunting = false;
+    }
+    var gap = Math.Distance(at, goal);
+    mut var way = Math.Normalize(goal - at);
+    var danger = far - (edge - 3.2) + Math.Max(Math.Dot(speed, outward), 0) * 0.38;
+    if (danger > 0) way = Math.Normalize(way - outward * Math.Min(danger * 1.3, 6));
+    // Knocked silly: it leans against the way it's sliding
+    if (ball.dazed > 0) way = Math.Normalize(way * 0.3 - Math.Normalize(speed));
+    brain.move = way;
+
+    if (brain.charge)
+    {
+        brain.held += 1;
+        if (brain.held >= brain.want || gap < 2.6 || !hunting) brain.charge = false;
+    }
+    else if (hunting && found && ball.cooldown == 0 && ball.dazed == 0 && gap < 11 && gap > 3.4 && danger < 0
+             && brain.dice.NextInt(18) == 0)
+    {
+        brain.charge = true;
+        brain.held = 0;
+        brain.want = 14 + brain.dice.NextInt(34);
+    }
+}
+
+// A ball is driven by pushes, never put anywhere: an impulse each tick, which
+// is a force, towards where its player holds the stick, less what the floor
+// takes of its speed. It runs before the package's systems, so the step that
+// gives the push is this tick's: a ball answers its player in the tick they
+// pressed.
+//
+// A charge winds up while the button is held, and bursts when it's let go:
+// one impulse, the way the ball is driven. `controls` is the input of the
+// player who owns the ball, and `charge.up` is only ever true for a button a
+// player let go of: a machine that's guessing what another player does never
+// guesses that.
+[Before(PhysicsStages.Step)]
+system Drive(Controls controls, mut Body body, mut Ball ball, Brain brain, Ring ring, Time time)
+{
+    ball.before = body.velocity;
+    if (ball.cooldown > 0) ball.cooldown -= 1;
+    if (ball.dash > 0) ball.dash -= 1;
+    if (ball.dazed > 0) ball.dazed -= 1;
+
+    var own = (ring.manned >> ball.seat & 1) == 1 && !controls.away;
+    mut var steer = own ? controls.move : brain.move;
+    mut var hold = own ? controls.charge : brain.charge;
+    mut var let = own ? controls.charge.up : ball.winding && !brain.charge;
+    // Nobody moves until a round starts, and a ball in the air has nothing to push against
+    var grounded = body.position.y > ball.radius - 0.35;
+    if (ring.phase == Phase.Ready || ring.phase == Phase.Clear)
+    {
+        steer = float2(0);
+        hold = false;
+        let = false;
+    }
+    var hard = Math.Length(steer);
+    if (hard > 1) steer = steer / hard;
+    ball.drive = steer;
+
+    if (hold && ball.cooldown == 0)
+    {
+        ball.winding = true;
+        ball.idle = 0;
+        ball.charge = Math.Min(1, ball.charge + time.dt / WIND);
+    }
+    else if (ball.winding)
+    {
+        var flat = float2(body.velocity.x, body.velocity.z);
+        var way = hard > 0.2 ? Math.Normalize(steer) : Math.Normalize(flat);
+        ball.idle += 1;
+        if (let && grounded && Math.LengthSq(way) > 0.5)
+        {
+            var speed = BURST + BURST_MORE * ball.charge;
+            body.impulse += float3(way.x, 0, way.y) * (speed * ball.mass);
+            ball.cooldown = COOLDOWN;
+            ball.dash = DASH;
+            Send(Burst { at = body.position, way = way, hard = ball.charge, seat = ball.seat });
+        }
+        // Wound up with nobody holding: a guess that the player let go, which
+        // waits for what they did, and not for long
+        if (let || ball.idle > 20)
+        {
+            ball.winding = false;
+            ball.charge = 0;
+        }
+    }
+
+    if (!grounded) return;
+    // A ball that was hit hard has next to no grip for a moment: it slides
+    var dazed = ball.dazed > 0;
+    var grip = GRIP * (ball.winding ? 0.4 : 1) * (dazed ? 0.15 : 1);
+    var rolling = float2(body.velocity.x, body.velocity.z);
+    var push = steer * grip - rolling * (hard > 0.05 && !dazed ? DRAG : COAST);
+    body.impulse += float3(push.x, 0, push.y) * (ball.mass * time.dt);
+}
+
+// Blasts: everything loose within reach is thrown outward, and a little up,
+// by an impulse as heavy as it is. A keg in reach has its fuse lit, and a
+// ball is told whose blast it was.
+[Before(PhysicsStages.Step)]
+system Blasts(mut Ring ring, mut World world, Time time, query (Body body, Loose loose) things)
+{
+    mut var i = 0;
+    while (i < ring.blasts.count)
+    {
+        var blast = ring.blasts[i];
+        if (blast.due > time.tick)
+        {
+            i++;
+            continue;
+        }
+        ring.blasts.RemoveAt(i);
+        foreach (var thing in things)
+        {
+            if (thing.entity == blast.spare) continue;
+            var away = thing.body.position - blast.at;
+            var gap = Math.Length(away);
+            if (gap > blast.reach) continue;
+            var near = 1 - gap / blast.reach;
+            var way = Math.Normalize(float3(away.x, Math.Abs(away.y) * 0.5 + 0.45 * Math.Max(gap, 0.5), away.z));
+            mut var thrown = thing.body;
+            thrown.impulse += way * (blast.push * (0.35 + 0.65 * near) * thing.loose.mass);
+            world.Set<Body>(thing.entity, thrown);
+            if (world.Has<Keg>(thing.entity)) thing.entity.Send(Kindled { seat = blast.seat });
+            else if (world.Has<Ball>(thing.entity)) thing.entity.Send(Rocked { seat = blast.seat });
+        }
+    }
+}
+
+// A ball that's low enough has fallen off: it's gone, its seat waits for the
+// next one, and whoever touched it last, not too long ago, scores. A heavy
+// ball is its usual size again once its time is up: a body's shape is read
+// once, so a ball of another size is another ball, where this one was and as
+// fast.
+[After(PhysicsStages.Step)]
+system Roll(Body body, mut Ball ball, Brain brain, Owner owner, Ring ring, Time time)
+{
+    var gone = ring.phase == Phase.Clear || !Live(ring.manned, ring.bots, ball.seat);
+    if (body.position.y < OUT || gone)
+    {
+        if (!gone)
+        {
+            var by = ball.last >= 0 && time.tick - ball.touched < BLAME ? ball.last : -1;
+            Send(RingOut { at = body.position, seat = ball.seat, by = by });
+            if (by >= 0 && ring.phase == Phase.Play && ring.chairs.TryGet(by, out var scorer)) scorer.Send(Scored { });
+        }
+        if (ring.chairs.TryGet(ball.seat, out var chair))
+        {
+            if (gone) chair.Send(Benched { });
+            else chair.Send(Fell { });
+        }
+        this.Destroy();
+        return;
+    }
+    if (ball.heavy == 0) return;
+    ball.heavy -= 1;
+    if (ball.heavy > 0) return;
+    this.Destroy();
+    Spawn(Body { position = body.position, rotation = body.rotation, velocity = body.velocity, angularVelocity = body.angularVelocity,
+                 angularDamping = 0.3 },
+          Sphere { radius = BALL, density = BALL_DENSITY, friction = 0.8, bounce = 0.25 },
+          Ball { seat = ball.seat, last = ball.last, touched = ball.touched, cooldown = ball.cooldown, dazed = ball.dazed,
+                 mass = SphereMass(BALL, BALL_DENSITY) },
+          Brain { dice = brain.dice }, Loose { mass = SphereMass(BALL, BALL_DENSITY) }, Owner { player = owner.player });
+}
+
+// Touched comes to a body's entity when it starts touching another. Two balls
+// that meet are thrown apart: each gets an impulse away from the other, by
+// how fast they closed and by how heavy the other is, on top of what Box3D
+// made of the hit. It's given at the next step. A ball remembers whose ball
+// touched it last, and the slower of two that meet hard loses its grip for a
+// moment: that's what a charge is for.
+event(Touched touched) Bump(mut Ball ball, mut Body body, World world, Time time)
+{
+    if (!world.TryGet<Ball>(touched.other, out var other))
+    {
+        // Something it smashed into, for whoever shows it: not every crate of a wall
+        var fast = Math.Length(ball.before);
+        if (fast < 5 || time.tick - ball.smashed < 8 || !world.Has<Crate>(touched.other)) return;
+        ball.smashed = time.tick;
+        Send(Smash { at = body.position, hard = fast, seat = ball.seat });
+        return;
+    }
+    ball.last = other.seat;
+    ball.touched = time.tick;
+    var their = world.Get<Body>(touched.other).position;
+    var apart = Math.Normalize(float3(body.position.x - their.x, 0, body.position.z - their.z));
+    var closing = Math.Max(Math.Dot(other.before - ball.before, apart), 0);
+    body.impulse += apart * ((BUMP + BUMP_MORE * closing) * ball.mass * other.mass / (ball.mass + other.mass));
+    if (closing > 5 && ball.heavy == 0 && (Math.Length(ball.before) < Math.Length(other.before) || other.heavy > 0))
+        ball.dazed = Math.Min(40, int(closing * 2.5));
+    // Once for the two of them
+    if (ball.seat < other.seat) Send(Clash { at = (body.position + their) * 0.5, hard = closing, a = ball.seat, b = other.seat });
+}
+
+event(Rocked rocked) Blame(mut Ball ball, Time time)
+{
+    if (rocked.seat < 0 || rocked.seat == ball.seat) return;
+    ball.last = rocked.seat;
+    ball.touched = time.tick;
+}
+
+// What a ball picks up. Heavy: a much bigger, much heavier ball in its place,
+// for a while. Shock: a blast from where it is, which leaves it alone.
+event(Got got) Gain(mut Ball ball, Body body, Brain brain, Owner owner, mut Ring ring, Time time)
+{
+    Send(Taken { at = body.position, power = got.power, seat = ball.seat });
+    if (got.power == Power.Shock)
+    {
+        ring.blasts.Add(Blast { at = body.position, reach = 9, push = 15, seat = ball.seat, due = time.tick + 1, spare = this });
+        Send(Boom { at = body.position, reach = 9, seat = ball.seat });
+        return;
+    }
+    if (ball.heavy > 0)
+    {
+        ball.heavy = HEAVY;
+        return;
+    }
+    this.Destroy();
+    Spawn(Body { position = body.position + float3(0, BIG - BALL, 0), rotation = body.rotation, velocity = body.velocity,
+                 angularVelocity = body.angularVelocity, angularDamping = 0.3 },
+          Sphere { radius = BIG, density = BIG_DENSITY, friction = 0.8, bounce = 0.25 },
+          Ball { seat = ball.seat, last = ball.last, touched = ball.touched, cooldown = ball.cooldown, heavy = HEAVY, radius = BIG,
+                 mass = SphereMass(BIG, BIG_DENSITY) },
+          Brain { dice = brain.dice }, Loose { mass = SphereMass(BIG, BIG_DENSITY) }, Owner { player = owner.player });
+}
+
+// A pickup is a sensor: a ball that comes into it has it, the first one only.
+event(Touched touched) Take(mut Pickup pickup, World world)
+{
+    if (pickup.taken || !world.Has<Ball>(touched.other)) return;
+    pickup.taken = true;
+    touched.other.Send(Got { power = pickup.power });
+    this.Destroy();
+}
+
+// One that nobody took goes after a while, and at once when the floor under
+// it does.
+[After(PhysicsStages.Step)]
+system Expire(mut Pickup pickup, Ring ring)
+{
+    pickup.life -= 1;
+    if (pickup.life <= 0 || ring.phase == Phase.Clear || Math.Length(pickup.at) > Math.Min(ring.radius, ring.next) - 1) this.Destroy();
+}
+
+// A keg that a ball hits hard blows up, and so does one a blast reaches, a
+// moment later: a row of them goes off one after another.
+event(Touched touched) Fuse(mut Keg keg, Body body, World world, mut Ring ring, Time time)
+{
+    if (keg.lit || !world.TryGet<Ball>(touched.other, out var ball) || Math.Length(ball.before) < 4.5) return;
+    keg.lit = true;
+    ring.blasts.Add(Blast { at = body.position, reach = 5.5, push = 12, seat = ball.seat, due = time.tick + 1 });
+    Send(Boom { at = body.position, reach = 5.5, seat = ball.seat });
+    this.Destroy();
+}
+
+event(Kindled lit) Burn(mut Keg keg, Body body, mut Ring ring, Time time)
+{
+    if (keg.lit) return;
+    keg.lit = true;
+    ring.blasts.Add(Blast { at = body.position, reach = 5.5, push = 12, seat = lit.seat, due = time.tick + 7 });
+    Send(Boom { at = body.position, reach = 5.5, seat = lit.seat });
+    this.Destroy();
+}
+
+// The pit takes what falls into it: an entity that's destroyed takes its
+// body with it. A ball is gone before it gets this far, and its seat is told
+// (Roll).
+event(Touched touched) Swallow(World world, with Pit)
+{
+    if (world.Has<Crate>(touched.other)) touched.other.Destroy();
+}
+
+// A tile falls once the floor ends short of it: the static one goes, and a
+// loose one is in its place, a little smaller so that it clears its
+// neighbors, with whatever stood on it. A body's type is read once, so a tile
+// that falls is another body.
+[After(PhysicsStages.Step)]
+system Crumble(mut Tile tile, Ring ring)
+{
+    if (ring.phase == Phase.Clear)
+    {
+        this.Destroy();
+        return;
+    }
+    if (tile.reach <= ring.radius) return;
+    tile.fuse -= 1;
+    if (tile.fuse > 0) return;
+    this.Destroy();
+    var size = float3(TILE - 0.16, 1, TILE - 0.16);
+    var lean = float3(tile.at.y, 0, -tile.at.x) * (0.012 * (Math.Hash(int2(int(tile.at.x), int(tile.at.y))) % 7 - 3));
+    Spawn(Body { position = float3(tile.at.x, -0.5, tile.at.y), velocity = float3(0, -1, 0), angularVelocity = lean },
+          Box { size = size, density = 400, friction = 0.8 }, Crate { kind = Kind.Slab }, Loose { mass = size.x * size.z * 400 });
+    Send(Dropped { at = tile.at });
+}
+
+// A crate that's knocked hard enough has a few seconds left: what a ball
+// brings down is in the way for a while, and then it's gone, so the ring is
+// clearer the longer a round goes on. Nothing counts while a round is being
+// set up, when everything that's stacked touches down.
+event(Touched) Knock(mut Crate crate, Body body, Ring ring, Time time)
+{
+    if (crate.until != 0 || crate.kind == Kind.Slab || ring.phase == Phase.Ready) return;
+    if (Math.LengthSq(body.velocity) < 6) return;
+    crate.until = time.tick + RUBBLE + Math.Hash(int2(time.tick, int(body.position.x * 64))) % 120;
+}
+
+// ...and between rounds, everything a round made goes.
+[After(PhysicsStages.Step)]
+system Break(Crate crate, Ring ring, Time time)
+{
+    if (ring.phase == Phase.Clear || (crate.until != 0 && time.tick >= crate.until)) this.Destroy();
+}
+
+// A seat's ball comes back a moment after it fell: on the floor where its
+// seat starts while a round is being set up, and dropped from above the ring
+// otherwise, nearer the middle the less floor is left.
+[After(PhysicsStages.Step)]
+system Seats(mut Seat seat, Ring ring, Time time)
+{
+    if (ring.phase == Phase.Clear)
+    {
+        seat.round = 0;
+        seat.wait = 0;
+        if (ring.fresh) seat.score = 0;
+        return;
+    }
+    if (seat.up || !Live(ring.manned, ring.bots, seat.seat)) return;
+    if (seat.wait > 0)
+    {
+        seat.wait -= 1;
+        return;
+    }
+    seat.up = true;
+    mut var at = Start(seat.seat);
+    if (ring.phase != Phase.Ready)
+    {
+        // Somewhere of its own each time
+        var around = (seat.seat + 0.5) * Math.TAU / SEATS + (Math.Hash(int2(time.tick, seat.seat)) % 100) * 0.0628;
+        var out = Math.Min(ring.radius, ring.next) * 0.5;
+        at = float3(Math.Sin(around) * out, 9, -Math.Cos(around) * out);
+    }
+    Spawn(Body { position = at, angularDamping = 0.3 },
+          Sphere { radius = BALL, density = BALL_DENSITY, friction = 0.8, bounce = 0.25 },
+          Ball { seat = seat.seat, mass = SphereMass(BALL, BALL_DENSITY) }, Brain,
+          Loose { mass = SphereMass(BALL, BALL_DENSITY) }, Owner { player = ring.owners[seat.seat] });
+}
+
+event(Fell) Out(mut Seat seat)
+{
+    seat.up = false;
+    seat.wait = RESPAWN;
+}
+
+event(Benched) Bench(mut Seat seat)
+{
+    seat.up = false;
+    seat.wait = 0;
+}
+
+event(Scored) Count(mut Seat seat, Time time)
+{
+    seat.score += 1;
+    seat.round += 1;
+    seat.scored = time.tick;
+}
+
+event(Emptied) Empty(mut Seat seat)
+{
+    seat.score = 0;
+    seat.round = 0;
+}
+
+// Pickups come one at a time, while a round is played: somewhere on the
+// floor that's going to stay a while.
+[After(PhysicsStages.Step)]
+system Drops(mut Ring ring, query (with Pickup) drops)
+{
+    if (ring.phase != Phase.Play) return;
+    ring.drop -= 1;
+    if (ring.drop > 0) return;
+    ring.drop = DROP;
+    mut var there = 0;
+    foreach (var drop in drops) there += 1;
+    if (there >= 2) return;
+    var around = ring.dice.NextFloat(Math.TAU);
+    var out = ring.dice.NextFloat(0.15, 0.8) * (Math.Min(ring.radius, ring.next) - 2);
+    var at = float2(Math.Sin(around) * out, Math.Cos(around) * out);
+    Spawn(Body { type = BodyType.Static, position = float3(at.x, 1.1, at.y) }, Sphere { radius = 0.75, sensor = true },
+          Pickup { power = ring.dice.NextInt(2) == 0 ? Power.Heavy : Power.Shock, at = at });
+}
+
+// A round. The ring is set up (arena.tide), and everyone waits while what was
+// stacked comes to rest. Then they fight, and every twenty seconds the floor
+// ends nearer the middle: the rim that's going is marked first, and its tiles
+// fall one after another as the edge passes them. When the time is up it's
+// whoever threw the most out, the one who got there first if two did.
+[After(PhysicsStages.Step)]
+system Rounds(mut Ring ring, query (Seat seat) seats)
+{
+    if (ring.phase == Phase.Clear)
+    {
+        ring.round += 1;
+        ring.phase = Phase.Ready;
+        ring.timer = READY;
+        ring.gone = 0;
+        ring.radius = RING;
+        ring.next = RING;
+        ring.fresh = false;
+        ring.drop = DROP;
+        ring.blasts.Clear();
+        Send(RoundSet { round = ring.round });
+        return;
+    }
+    ring.timer -= 1;
+    if (ring.phase == Phase.Ready)
+    {
+        if (ring.timer > 0) return;
+        ring.phase = Phase.Play;
+        ring.timer = ROUND;
+        ring.gone = 0;
+        Send(Go { });
+        return;
+    }
+    if (ring.phase == Phase.Play)
+    {
+        var played = ROUND - ring.timer;
+        if (ring.gone < RIMS && played == Falls(ring.gone + 1) - WARN)
+        {
+            ring.next = Rim(ring.gone + 1);
+            Send(Shrinking { to = ring.next });
+        }
+        if (ring.gone < RIMS && played == Falls(ring.gone + 1))
+        {
+            ring.gone += 1;
+            ring.radius = Rim(ring.gone);
+        }
+        if (ring.timer > 0) return;
+        ring.phase = Phase.Over;
+        ring.timer = OVER;
+        mut var best = 0;
+        mut var first = 0;
+        mut var winner = -1;
+        foreach (var entry in seats)
+        {
+            var seat = entry.seat;
+            if (seat.round < best || seat.round == 0 || (seat.round == best && seat.scored >= first)) continue;
+            best = seat.round;
+            first = seat.scored;
+            winner = seat.seat;
+        }
+        Send(RoundOver { round = ring.round, winner = winner, best = best });
+        return;
+    }
+    if (ring.timer <= 0) ring.phase = Phase.Clear;
+}
+
+// The buttons.
+command(Rebuild rebuild, PlayerID sender) Reset(mut Ring ring)
+{
+    ring.phase = Phase.Clear;
+    ring.round = 0;
+    ring.fresh = true;
+}
+
+command(Bots bots, PlayerID sender) Idle(mut Ring ring)
+{
+    ring.bots = !ring.bots;
+}
