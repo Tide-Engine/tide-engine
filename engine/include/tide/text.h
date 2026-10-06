@@ -148,6 +148,21 @@ typedef struct tide_text {
 // so (tide_confirmed), and reading them goes to that world's heap.
 #define TIDE_IN_VERIFIED 3u
 
+// The pack (tide/pack.h): a game's assets, in a region every world can name
+// and none holds, at the top of the scratch area's offsets. A handle into it
+// says TIDE_IN_SCRATCH with an offset from here on, and the scratch area
+// itself stops short of it while a pack is loaded.
+#define TIDE_PACK_BASE (1u << 29)
+
+static inline bool tide_pack_holds(const uint32_t at)
+{
+    return at >> 30 == TIDE_IN_SCRATCH && (at & 0x3FFFFFFFu) >= TIDE_PACK_BASE;
+}
+
+// The heap a grid of the pack's cache names (tide_grid_cached_peek): one
+// whose `moves` never changes, so the cache holds. Defined in pack.c.
+extern tide_heap tide_pack_still;
+
 // The heaps of the worlds generated code runs with: the match's (or NULL),
 // and the local world's (or NULL).
 void tide_text_use(tide_heap *match_heap, tide_heap *local_heap);
