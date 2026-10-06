@@ -2,7 +2,8 @@
 // for each player. A shot shoves what's near where it lands and paints it its
 // player's color, and a crate that falls off the map scores for whoever
 // painted it last. This file is the match, which every machine runs the same
-// way. What a machine shows of it, and what it asks of it, is in play.tide.
+// way. What a machine shows of it is in play.tide, effects.tide and hud.tide,
+// and which match it's in is lobby.tide's to say.
 //
 // Everything that moves is Box2D's (the box2d package): the game spawns
 // bodies, pushes them and reads where they are, and never moves one itself.
@@ -84,6 +85,10 @@ component Ball
     bool manned;   // A player fired it, not a cannon by itself
     bool landed;   // It hit something, and its blast went off
     bool wrapped;  // It left by one side of the map and came back by the other
+    // This machine's own, for the tail the view draws behind it: where its
+    // last puff is. Nothing of them is in the match.
+    local float2 puffed;
+    local bool flying;
 }
 
 // Where a shot landed. It shoves and paints what's near at its first tick,
@@ -130,11 +135,13 @@ input Controls
     [Absolute] bool aiming;
     bool fire;
 
+    // While this machine's lobby or menu is up, its player does nothing:
+    // their cannon stays as it was.
     Sample(Devices devices, Pointer pointer)
     {
         target = pointer.world;
-        aiming = pointer.known;
-        fire = devices.pointer.press.pressed || devices.keyboard.space.pressed;
+        aiming = pointer.known && pointer.playing;
+        fire = pointer.playing && (devices.pointer.press.pressed || devices.keyboard.space.pressed);
     }
 }
 
@@ -144,6 +151,15 @@ event Struck { int seat; }
 
 // Sent to a cannon when a crate its shots painted falls off the map.
 event Scored { int worth; }
+
+// What happens in the match, said for whoever shows it: nothing in the match
+// handles these, so they cost it nothing. Each machine's handlers of them are
+// in effects.tide. A crate left the map, painted by a seat or by nobody (-1);
+// gravity turned over; a round ended, and who took it; the next one was built.
+event Dropped { float2 at; int seat; int worth; }
+event Flipped { }
+event RoundOver { int round; int winner; int best; }
+event RoundBuilt { int round; }
 
 // What the buttons ask of the match.
 command Rebuild { }
@@ -362,6 +378,7 @@ event(Touched touched) Charge(mut Orb orb, mut Siege siege, World world)
     if (orb.rest > 0 || siege.phase != Phase.Play || !world.Get<Ball>(touched.other).manned) return;
     orb.rest = FLIP_TICKS + ORB_REST;
     siege.flip = FLIP_TICKS;
+    Send(Flipped { });
 }
 
 event(Parted) Empty(mut Orb orb)
@@ -400,6 +417,7 @@ system Drop(Body body, Crate crate, mut Siege siege)
     if (body.position.y > FLOOR && Math.Abs(body.position.x) < EDGE + 8) return;
     siege.standing -= 1;
     if (crate.last >= 0) siege.cannons[crate.last].Send(Scored { worth = crate.worth });
+    Send(Dropped { at = body.position, seat = crate.last, worth = crate.worth });
     this.Destroy();
 }
 
@@ -452,6 +470,7 @@ system Rounds(mut Siege siege, query (Cannon cannon) cannons)
             best = entry.cannon.round;
             siege.winner = entry.cannon.seat;
         }
+        Send(RoundOver { round = siege.round, winner = siege.winner, best = best });
         return;
     }
     if (siege.phase == Phase.Over)
@@ -491,6 +510,7 @@ system Rounds(mut Siege siege, query (Cannon cannon) cannons)
     siege.winner = -1;
     siege.flip = 0;
     siege.fresh = false;
+    Send(RoundBuilt { round = siege.round });
 }
 
 // The Reset button: a new first round, with nothing scored.

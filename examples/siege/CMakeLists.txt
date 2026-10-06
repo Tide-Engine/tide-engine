@@ -1,13 +1,15 @@
 # Siege: two towers of crates and a cannon each, on Box2D. A game to play in a
-# window or in the docs site (docs/guide/siege.md), alone or two in a match.
+# window or in the docs site (docs/guide/siege.md), alone or up to four in a
+# room.
 #
-# Its folder is what `tide run` builds: game.tide is the match, play.tide what
-# a machine shows of it, and tide.packages lists box2d. tide_add_game reads no
-# tide.packages, so the package is named here, and built with the game as
-# tide builds a game that lists it: its Tide file before the game's, its C
-# with the game's, and Box2D's own sources, which packages/ builds as
-# tide_box2d.
-set(SIEGE_SOURCES game.tide play.tide)
+# Its folder is what `tide run` builds: game.tide is the match, the other
+# files what a machine shows of it and which match it's in, and tide.packages
+# lists box2d. tide_add_game reads no tide.packages, so the package is named
+# here, and built with the game as tide builds a game that lists it: its Tide
+# file before the game's, its C with the game's, and Box2D's own sources,
+# which packages/ builds as tide_box2d. The files are in the order of their
+# names, as tide compiles a folder's.
+set(SIEGE_SOURCES effects.tide game.tide hud.tide lobby.tide play.tide)
 set(SIEGE_PACKAGE "${PROJECT_SOURCE_DIR}/packages/box2d")
 
 if(TARGET tide_platform)
