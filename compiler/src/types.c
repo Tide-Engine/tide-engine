@@ -192,6 +192,7 @@ const char *type_name(const type t)
     case TY_MAP:
     case TY_SET:
     case TY_GRID:
+    case TY_ARRAY:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
         char *b = buf[next++ % 4];

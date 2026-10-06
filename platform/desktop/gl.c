@@ -22,5 +22,10 @@ bool tide_gl_load(tide_gl_proc (*find)(const char *name))
 #undef LOAD_V
 #undef LOAD_R
 #undef LOAD
+    // Missing timing support leaves its stats line unavailable; drawing can
+    // still use all the functions above.
+#define LOAD_TIMER(name, parameters, arguments) tide_gl.name = (__typeof__(tide_gl.name))find("gl" #name);
+    TIDE_GL_TIMER_FUNCTIONS(LOAD_TIMER, LOAD_TIMER)
+#undef LOAD_TIMER
     return found;
 }

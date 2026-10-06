@@ -28,6 +28,7 @@ if(TIDE_PLATFORM)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)
 endif()
 set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
+tide_e2e_test(query_blocks) # ...beside a comparison block and a parallel loop, which capture the code's other parameters
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
@@ -36,6 +37,10 @@ tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
 target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=13944507110118551999ull)
+tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=1956267260095108023ull)
+tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
+tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")

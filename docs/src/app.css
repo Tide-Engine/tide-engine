@@ -832,6 +832,88 @@ button {
     margin-bottom: 0;
 }
 
+/* Samples link to full games; their thumbnails load without starting one. */
+
+.prose .sample-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    gap: 24px;
+    margin: 32px 0;
+    padding: 0;
+    list-style: none;
+}
+
+.prose .sample-grid > li {
+    min-width: 0;
+    margin: 0;
+}
+
+.prose .sample-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    color: var(--text-1);
+    text-decoration: none;
+    transition: border-color 0.2s;
+}
+
+.prose .sample-card:hover {
+    border-color: var(--brand-1);
+    color: var(--text-1);
+}
+
+.prose .sample-card:focus-visible {
+    outline: 2px solid var(--brand-1);
+    outline-offset: 3px;
+}
+
+.sample-card img {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #161618;
+    border-bottom: 1px solid var(--divider);
+}
+
+.sample-copy {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+}
+
+.sample-kind {
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.sample-name {
+    font-size: 20px;
+    line-height: 1.4;
+}
+
+.sample-description {
+    color: var(--text-2);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.6;
+}
+
+.sample-play {
+    padding-top: 8px;
+    margin-top: auto;
+    color: var(--brand-1);
+    font-size: 14px;
+}
+
 /* The demos, on their pages. */
 
 .prose .demo-frame {
