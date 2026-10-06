@@ -28,6 +28,7 @@ if(TIDE_PLATFORM)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)
 endif()
 set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
+tide_e2e_test(query_blocks) # ...beside a comparison block and a parallel loop, which capture the code's other parameters
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)

@@ -246,7 +246,7 @@ static void frame_touch(tide_touch *d, const tide_touch *now, const tide_touch *
     const tide_button before = same ? last->press : (tide_button){0};
     if (now->id == 0 && last->press.held) { // It lifted, and a sample cleared its slot
         *d = *last;
-        d->press = frame_button((tide_button){0}, before);
+        d->press = frame_button((tide_button){0}, last->press);
         d->delta = tide_f2(0.0f, 0.0f);
         return;
     }

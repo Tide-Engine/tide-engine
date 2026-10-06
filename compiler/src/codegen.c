@@ -9003,7 +9003,11 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
     if (sys->per_entity && has_scenes(g->prog, sys->entity_local)) capture(&out, "tide_entity", "tide_scene");
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
+        // A query is no value: neither a loop's step nor a comparison can go through one
+        if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->mode == PARAM_QUERY ||
+            p->type.kind == TY_WORLD) {
+            continue;
+        }
         capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
         if (has_fields_ptr(p)) {
@@ -9203,7 +9207,10 @@ static capture_list sort_captures(gen *g, const expr *sort)
         if (sys->per_entity && has_scenes(g->prog, sys->entity_local)) capture(&out, "tide_entity", "tide_scene");
         for (int i = 0; i < sys->params.count; i++) {
             const param *p = &sys->params.items[i];
-            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->type.kind == TY_WORLD) continue;
+            if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT || p->mode == PARAM_QUERY ||
+                p->type.kind == TY_WORLD) {
+                continue;
+            }
             capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
             if (has_fields_ptr(p)) {
