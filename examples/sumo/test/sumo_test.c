@@ -22,6 +22,10 @@
 #include "tide/time.h"
 #include "tide_test.h"
 
+#ifdef SUMO_TEST_JOBS
+#include "tide/platform.h"
+#endif
+
 // The package's bridge: C's worlds, which a test starts without, and what it
 // says of the images it wrote and the worlds it made again
 void b3t_forget(void);
@@ -1247,6 +1251,14 @@ static uint64_t counted(void)
     return took;
 }
 
+#ifdef SUMO_TEST_JOBS
+static void no_work(void *context, const uint32_t thread)
+{
+    (void)context;
+    (void)thread;
+}
+#endif
+
 // What things cost, for whoever reads this test's output: timings aren't
 // checked, as machines differ too much. A tick with the world kept and hashed
 // after it, as a client's is: with a fresh ring at rest, while four bots are
@@ -1254,13 +1266,29 @@ static uint64_t counted(void)
 // Box3D's image a tick changes is counted too, in the 16 KiB blocks a match
 // keeps it in: those are what a tick copies and what's hashed after it. The
 // counting is inside the tick and no match's to pay, so it's taken off.
+//
+// Where the program has the platform's threads, every other tick's world is
+// hashed with what changed of it shared out over them, as a session with
+// threads hashes (tide_game.hash_world_on): the two are said apart, of ticks
+// taken in turn, so they're of the same scene.
 static void spend(const int ticks, const char *what, const bool away)
 {
     tide_world kept = {0};
     tide_world_copy(&kept, &world);
     uint64_t ticking = 0;
     uint64_t keeping = 0;
+    uint64_t sharing = 0;
+    int alone = 0;
+    int shared = 0;
     uint64_t slowest = 0;
+#ifdef SUMO_TEST_JOBS
+    const tide_jobs *jobs = tide_platform_jobs();
+    // On the web a pool's workers are made by the first round that wants them all, as a ring being
+    // raised is in the game, whose step is shared out over them
+    if (jobs) jobs->run(jobs->self, no_work, NULL);
+#else
+    const tide_jobs *jobs = NULL;
+#endif
     uint64_t step_ns, image_ns;
     uint64_t changed = 0;
     uint64_t in_all = 0;
@@ -1275,8 +1303,17 @@ static void spend(const int ticks, const char *what, const bool away)
         tide_world_tick(&world);
         const uint64_t ticked = tide_time_now_ns();
         tide_world_copy(&kept, &world);
-        (void)tide_world_hash(&world);
-        keeping += tide_time_now_ns() - ticked;
+        const bool share = jobs && i % 2 == 1;
+        if (share) (void)tide_game_api.hash_world_on(&world, jobs);
+        else (void)tide_world_hash(&world);
+        const uint64_t kept_in = tide_time_now_ns() - ticked;
+        if (share) {
+            sharing += kept_in;
+            shared++;
+        } else {
+            keeping += kept_in;
+            alone++;
+        }
         b3t_measure_blocks(&blocks, &of, &counting);
         changed += blocks;
         in_all += of;
@@ -1287,11 +1324,12 @@ static void spend(const int ticks, const char *what, const bool away)
     b3t_measure(&step_ns, &image_ns);
     b3t_images(&whole, &parts);
     const int images = whole - whole0 + parts - parts0;
-    printf("    %s: %.3f ms a tick (Box3D's step %.3f, its image %.3f), %.2f at the most, and %.3f to keep and hash the world; %d images"
-           " written whole and %d in parts, %.0f of an image's %.0f blocks changed\n",
-           what, (double)ticking / ticks / 1e6, (double)step_ns / ticks / 1e6, (double)image_ns / ticks / 1e6, (double)slowest / 1e6,
-           (double)keeping / ticks / 1e6, whole - whole0, parts - parts0, images ? (double)changed / images : 0.0,
-           images ? (double)in_all / images : 0.0);
+    printf("    %s: %.3f ms a tick (Box3D's step %.3f, its image %.3f), %.2f at the most, and %.3f to keep and hash the world", what,
+           (double)ticking / ticks / 1e6, (double)step_ns / ticks / 1e6, (double)image_ns / ticks / 1e6, (double)slowest / 1e6,
+           alone ? (double)keeping / alone / 1e6 : 0.0);
+    if (shared) printf(" (%.3f with a few of the pool's %u threads called in to hash)", (double)sharing / shared / 1e6, (unsigned)jobs->threads);
+    printf("; %d images written whole and %d in parts, %.0f of an image's %.0f blocks changed\n", whole - whole0, parts - parts0,
+           images ? (double)changed / images : 0.0, images ? (double)in_all / images : 0.0);
     tide_world_free(&kept);
 }
 
