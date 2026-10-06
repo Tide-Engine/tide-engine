@@ -750,24 +750,25 @@ static bool sync_body(body *b)
         if (b2Body_GetType(id) == b2_staticBody) {
             b->asleep = false;
         } else if (b->asleep != b->step_asleep) {
-            if (b->asleep) {
-                if (lull_count == lull_room) {
-                    const int32_t room = lull_room ? lull_room * 2 : 64;
-                    lulls = tide_realloc(lulls, (size_t)lull_room * sizeof *lulls, (size_t)room * sizeof *lulls);
-                    lull_room = room;
-                }
-                lulls[lull_count++] = b->id;
-            } else {
-                b2Body_SetAwake(id, true);
-            }
+            if (!b->asleep) b2Body_SetAwake(id, true);
             did |= 128u;
         }
+    }
+    const bool is_new = did & 1u;
+    // A new sleeping body must go last too: changing the world's sleeping setting or gravity below
+    // wakes it after creation, just as those changes wake a body code put to sleep this tick.
+    if (b->asleep && (is_new || b->asleep != b->step_asleep)) {
+        if (lull_count == lull_room) {
+            const int32_t room = lull_room ? lull_room * 2 : 64;
+            lulls = tide_realloc(lulls, (size_t)lull_room * sizeof *lulls, (size_t)room * sizeof *lulls);
+            lull_room = room;
+        }
+        lulls[lull_count++] = b->id;
     }
     b->step_asleep = b->asleep; // What Leave makes of both, once the step has had its say
     // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
     // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
     // Either way they're given once, and noted here
-    const bool is_new = did & 1u;
     if (b->impulse.x != 0 || b->impulse.y != 0) {
         if (!is_new) b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){b->impulse.x, b->impulse.y}, true);
         b->impulse = (tide_float2){0, 0};

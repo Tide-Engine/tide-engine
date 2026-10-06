@@ -345,6 +345,55 @@ TIDE_TEST(box2d_a_stack_goes_to_sleep_from_its_bottom)
 // ---------------------------------------------------------------------------
 // Spawned asleep
 
+// New bodies reach Box2D in the second tick, after Arrange's spawns were played back. Changing the
+// world's settings in that tick must not override the sleep they were spawned with.
+static void spawns_asleep_through_world_wake(const bool sleeping, const tide_float2 gravity)
+{
+    start(&a, Case_Spawned);
+    tide_world_tick(&a);
+    TIDE_REQUIRE(body(&a, 0).id == 0);
+    a.Box2D_Physics.sleeping = sleeping;
+    a.Box2D_Physics.gravity = gravity;
+    Box2D_Body lift = body(&a, 3);
+    lift.asleep = true; // Keep the whole world at rest, including its otherwise moving lift
+    put(&a, 3, lift);
+    tide_world_tick(&a);
+
+    TIDE_CHECK(body(&a, 0).asleep && same(body(&a, 0).position, tide_f2(0.0f, 5.0f)) && still(body(&a, 0)));
+    const Box2D_Body pushed = body(&a, 1);
+    TIDE_CHECK(pushed.asleep && same(pushed.position, tide_f2(3.0f, 5.0f)) && still(pushed));
+    TIDE_CHECK(pushed.impulse.x == 0.0f && pushed.impulse.y == 0.0f);
+    TIDE_CHECK(!body(&a, 2).asleep);
+    TIDE_CHECK(body(&a, 3).asleep && same(body(&a, 3).position, lift.position) && still(body(&a, 3)));
+    for (int i = 0; i < 3; i++) {
+        const Box2D_Body crate = body(&a, 4 + i);
+        TIDE_CHECK(crate.asleep && same(crate.position, tide_f2(-12.0f, 0.5f + (float)i)) && still(crate));
+    }
+    TIDE_CHECK(stays(&a)); // No steps or stamp changes while these bodies remain asleep
+
+    const int64_t stamp = a.Box2D_Physics.stamp;
+    lull(&a, 0, false);
+    tick(&a, 10);
+    const Box2D_Body woke = body(&a, 0);
+    TIDE_CHECK(!woke.asleep && woke.velocity.y * gravity.y > 0.0f);
+    TIDE_CHECK((woke.position.y - 5.0f) * gravity.y > 0.0f);
+    TIDE_CHECK(a.Box2D_Physics.moved && a.Box2D_Physics.stamp != stamp);
+    TIDE_CHECK(body(&a, 1).asleep && same(body(&a, 1).position, tide_f2(3.0f, 5.0f)));
+    TIDE_CHECK(a.Box2D_Physics.sleeping == sleeping);
+    tide_world_free(&a);
+}
+
+TIDE_TEST(box2d_spawns_asleep_when_automatic_sleeping_turns_off)
+{
+    spawns_asleep_through_world_wake(false, tide_f2(0.0f, -10.0f));
+    spawns_asleep_through_world_wake(false, tide_f2(0.0f, 10.0f));
+}
+
+TIDE_TEST(box2d_spawns_asleep_when_gravity_changes)
+{
+    spawns_asleep_through_world_wake(true, tide_f2(0.0f, 10.0f));
+}
+
 TIDE_TEST(box2d_spawns_a_body_asleep)
 {
     start(&a, Case_Spawned);
