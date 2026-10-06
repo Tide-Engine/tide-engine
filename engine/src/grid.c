@@ -779,9 +779,8 @@ static bool enter_layer(tide_grid_rows *r, uint32_t i)
 void tide_grid_rows_begin(tide_grid_rows *r, const tide_grid g, const tide_grid_shape *s)
 {
     *r = (tide_grid_rows){.done = true};
-    const tide_heap *heap = tide_heap_read(g.at >> 30);
-    if (!heap || !g.at) return;
-    const tide_grid_dir *d = dir_of(heap, g);
+    if (!g.at || (!tide_heap_read(g.at >> 30) && !tide_pack_holds(g.at))) return; // Empty, or the scratch area's
+    const tide_grid_dir *d = tide_grid_dir_of(g); // A world's, or the pack's (tide/pack.h)
     bool open = false;
     for (uint32_t a = 0; a < 3; a++) {
         r->size[a] = a < s->dims ? d->size[a] : 1;

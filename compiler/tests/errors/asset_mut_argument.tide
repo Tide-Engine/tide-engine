@@ -1,0 +1,22 @@
+// expect: 'table' is an asset, read-only
+asset List<byte> table = "../e2e/assets/table.bin";
+
+void Fill(mut List<byte> bytes)
+{
+    bytes.Add(1);
+}
+
+singleton Paint
+{
+    int strokes;
+}
+
+system Draw(mut Paint paint)
+{
+    Fill(table);
+    paint.strokes++;
+}
+
+scene Main
+{
+}

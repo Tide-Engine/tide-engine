@@ -754,6 +754,7 @@ static bool fail(char *error, const size_t error_size, const char *message, cons
 // What goes in the app from disk: its icon, its libraries and those they need
 typedef struct app_files {
     bytes icon;
+    bytes pack;
     bytes libs[APK_MAX_LIBS];
     bytes *needed;
     int needed_count;
@@ -762,6 +763,7 @@ typedef struct app_files {
 static void free_app(app_files *a)
 {
     free(a->icon.data);
+    free(a->pack.data);
     for (int i = 0; i < APK_MAX_LIBS; i++) free(a->libs[i].data);
     for (int i = 0; i < a->needed_count; i++) free(a->needed[i].data);
     free(a->needed);
@@ -774,6 +776,10 @@ static bool read_app(const apk_desc *desc, app_files *a, char *error, const size
     if (desc->icon && (!read_file(desc->icon, &a->icon) || a->icon.size < 8 || memcmp(a->icon.data, png, 8) != 0)) {
         free_app(a);
         return fail(error, error_size, "the icon isn't a PNG: ", desc->icon);
+    }
+    if (desc->pack && !read_file(desc->pack, &a->pack)) {
+        free_app(a);
+        return fail(error, error_size, "can't read ", desc->pack);
     }
     for (int i = 0; i < desc->lib_count; i++) {
         if (!read_file(desc->libs[i], &a->libs[i])) {
@@ -930,6 +936,7 @@ bool apk_write(const char *path, const apk_desc *desc, const apk_key *key, char 
         free(table);
         zip_add(&z, ICON_PATH, app.icon.data, app.icon.size, 4);
     }
+    if (desc->pack) zip_add(&z, "assets/game.pack", app.pack.data, app.pack.size, 16); // Stored: read as it is (tide_window_pack)
     char name[LIB_PATH_MAX], file[LIB_PATH_MAX];
     for (int i = 0; i < desc->lib_count; i++) {
         snprintf(file, sizeof file, "lib%s.so", desc->lib_name);

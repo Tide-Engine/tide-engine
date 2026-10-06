@@ -1,0 +1,6 @@
+// expect: is a glob, which matches many files, and the type holds one
+asset Grid2<Color> hero = "../e2e/assets/run/*.png";
+
+scene Main
+{
+}
