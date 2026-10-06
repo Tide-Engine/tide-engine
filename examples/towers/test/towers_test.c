@@ -1266,11 +1266,11 @@ TIDE_TEST(towers_costs)
            standing(&world, 0) + standing(&world, 1) + standing(&world, 2) + standing(&world, 3), set);
     cost("late in a round, the towers building", 300);
     again("the towers building");
-    // The same world with the bots off: what's falling lands, and everything comes to rest
+    // The same world with the bots off: what's falling lands, what fell is cleared, and everything comes to rest
     tide_world playing = {0};
     tide_world_copy(&playing, &world);
     world.Towers.bots = false;
-    tick(600);
+    tick(RUBBLE + 400);
     cost("the same towers at rest", 300);
     // And with the round over: every plinth sinks, and every tower comes down
     tide_world_copy(&world, &playing);

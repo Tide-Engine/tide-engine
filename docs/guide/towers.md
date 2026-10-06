@@ -227,9 +227,9 @@ Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws t
 
 Late in a round there are about 170 bodies: 150 bricks on the towers, three quarters of them set solid, and the rest falling or on the ground. On a desktop a tick takes around 0.07 ms while the towers build, with 0.03 more to keep and hash its world, 0.01 ms with everything at rest, and 0.1 ms while every tower comes down at once. In a browser those are 0.12, 0.03, 0.015 and 0.17.
 
-A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.8 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.8 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
+A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.7 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.8 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
 
-Box2D's whole state is in the match, between 220 and 300 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 130 KB.
+Box2D's whole state is in the match, between 230 and 320 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 130 KB.
 
 ### The match, whole
 
