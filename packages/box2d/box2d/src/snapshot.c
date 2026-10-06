@@ -1105,7 +1105,11 @@ void b2SerializeWorld( b2World* world, b2RecBuffer* buf )
 
 	// Islands: POD scalars + 3 inner arrays per slot
 	b2SnapSection( buf, b2_sectionIslands );
-	b2SerIslands( buf, world );
+	// Tide: nothing writes an island but what says so (b2SnapTouchIslands)
+	if ( b2SnapKeepSection( buf, track->islandsTouched ) == false )
+	{
+		b2SerIslands( buf, world );
+	}
 
 	// Broad phase
 	b2BroadPhase* bp = &world->broadPhase;
@@ -1723,6 +1727,7 @@ static void b2SnapCommit( b2World* world, const int* bases, const int* sizes )
 	track->fixedTouched = false;
 	track->setsTouched = false;
 	track->pairsTouched = false;
+	track->islandsTouched = false;
 
 	track->sparse = b2SnapMostlyAsleep( world );
 	if ( track->sparse )

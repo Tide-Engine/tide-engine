@@ -176,6 +176,8 @@ void b2WakeSolverSet( b2World* world, int setIndex )
 		{
 			b2IslandSim* islandSrc = set->islandSims.data + i;
 			b2Island* island = b2Array_Get( world->islands, islandSrc->islandId );
+			// Tide: an island that's told its set (see b2SnapTrack)
+			b2SnapTouchIslands( world );
 			island->setIndex = b2_awakeSet;
 			island->localIndex = awakeSet->islandSims.count;
 			b2IslandSim* islandDst = b2Array_Emplace( awakeSet->islandSims );
@@ -448,6 +450,10 @@ void b2TrySleepIsland( b2World* world, int islandId )
 	// move island struct
 	{
 		B2_ASSERT( island->setIndex == b2_awakeSet );
+
+		// Tide: an island that's told its set, and another of the awake set, which is told where it is in it
+		// now (see b2SnapTrack)
+		b2SnapTouchIslands( world );
 
 		int islandIndex = island->localIndex;
 		b2IslandSim* sleepIsland = b2Array_Emplace( sleepSet->islandSims );
