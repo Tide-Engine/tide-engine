@@ -2,6 +2,10 @@
 // (sleep.tide): a crate at rest and one on its way, what goes to sleep with a
 // body, bodies spawned asleep, and all of it through what a match does to a
 // world.
+//
+// Every image that's written as what changed of the last one is compared with
+// the image written whole (b2t_check), as in the package's other tests:
+// putting a body to sleep and waking one are calls an image in parts follows.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,6 +20,8 @@
 
 // bridge.c
 void b2t_forget(void);
+void b2t_check(bool on, bool whenever);
+void b2t_images(int32_t *whole, int32_t *in_parts);
 int32_t b2t_restores(void);
 
 #define DT (1.0f / 60.0f)
@@ -27,6 +33,7 @@ static tide_world kept;
 static void start(tide_world *w, const Case which)
 {
     b2t_forget();
+    b2t_check(true, true);
     tide_world_init(w, DT);
     w->Nap.which = which;
 }
@@ -482,13 +489,20 @@ static void play(tide_world *w, uint64_t *hashes, const bool again, tide_world *
 TIDE_TEST(box2d_sleep_is_the_matchs)
 {
     static uint64_t went[SCRIPT_TICKS];
+    int32_t whole;
+    int32_t parts_before;
+    int32_t parts_after;
+    b2t_images(&whole, &parts_before);
     play(&a, went, false, &kept);
+    b2t_images(&whole, &parts_after);
     uint64_t images = 0;
     for (int i = 0; i < SCRIPT_TICKS; i++) images = tide_hash_more(images, &went[i], sizeof went[i]);
-    printf("    the world's hash is %016llx, and its %d images' %016llx\n", (unsigned long long)went[SCRIPT_TICKS - 1], (int)SCRIPT_TICKS,
-           (unsigned long long)tide_hash_end(images));
+    printf("    the world's hash is %016llx, and its %d images' %016llx; %d of them were written in parts\n",
+           (unsigned long long)went[SCRIPT_TICKS - 1], (int)SCRIPT_TICKS, (unsigned long long)tide_hash_end(images),
+           (int)(parts_after - parts_before));
     TIDE_CHECK(went[SCRIPT_TICKS - 1] == SCRIPT_HASH);
     TIDE_CHECK(tide_hash_end(images) == SCRIPT_IMAGES_HASH);
+    TIDE_CHECK(parts_after - parts_before > SCRIPT_TICKS / 2);
 
     // A snapshot goes on as the world it was taken of did, three times over, as a client that predicted
     // wrong does: bodies are put to sleep and woken in the ticks it runs again
@@ -528,4 +542,5 @@ TIDE_TEST(box2d_sleep_is_the_matchs)
     tide_world_free(&a);
     tide_world_free(&b);
     tide_world_free(&kept);
+    b2t_check(false, false);
 }

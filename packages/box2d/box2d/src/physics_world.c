@@ -422,6 +422,9 @@ void b2DestroyWorld( b2WorldId worldId )
 
 	b2DestroyStack( &world->stack );
 
+	// Tide: what follows the world's images
+	b2DestroySnapshotTrack( world );
+
 	// Wipe world but preserve generation
 	uint16_t generation = world->generation;
 	*world = (b2World){ 0 };
@@ -649,6 +652,8 @@ static void b2AddNonTouchingContact( b2World* world, b2Contact* contact, b2Conta
 static void b2RemoveNonTouchingContact( b2World* world, int setIndex, int localIndex )
 {
 	b2SolverSet* set = b2Array_Get( world->solverSets, setIndex );
+	// Tide: the set, and another contact of it (see b2SnapTrack)
+	b2SnapTouchSet( world, setIndex );
 	int movedIndex = b2Array_RemoveSwap( set->contactSims, localIndex );
 	if ( movedIndex != B2_NULL_INDEX )
 	{
@@ -658,6 +663,7 @@ static void b2RemoveNonTouchingContact( b2World* world, int setIndex, int localI
 		B2_ASSERT( movedContact->localIndex == movedIndex );
 		B2_ASSERT( movedContact->colorIndex == B2_NULL_INDEX );
 		movedContact->localIndex = localIndex;
+		b2SnapTouchContact( world, movedContactSim->contactId );
 	}
 }
 
@@ -761,6 +767,10 @@ static void b2Collide( b2StepContext* context )
 
 			b2Contact* contact = b2Array_Get( world->contacts, contactId );
 			B2_ASSERT( contact->setIndex == b2_awakeSet );
+
+			// Tide: a contact that starts or stops touching, or ends: its flags, and where it is in the
+			// awake set or the graph (see b2SnapTrack)
+			b2SnapTouchContact( world, contactId );
 
 			int colorIndex = contact->colorIndex;
 			int localIndex = contact->localIndex;
