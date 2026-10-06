@@ -34,6 +34,8 @@ tide_e2e_test(long)
 tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
+tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=13944507110118551999ull)
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")
