@@ -4,6 +4,7 @@
 // moves. On threads, each piece takes a run of buckets.
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "cap.h"
 #include "tide/math.h" // tide_hash_i2: the random numbers Tide's Math.Hash gives
@@ -16,6 +17,7 @@ typedef struct buckets {
     int32_t *cells;
     int32_t *heads;
     int32_t *counts;
+    int32_t *kept; // Cells, heads and counts before the latest tick
 } buckets;
 
 static void *make(const versus_flag *flags)
@@ -25,6 +27,7 @@ static void *make(const versus_flag *flags)
     b->cells = tide_alloc_zeroed((size_t)b->count * CAP, sizeof(int32_t));
     b->heads = tide_alloc_zeroed(b->count, sizeof(int32_t));
     b->counts = tide_alloc_zeroed(b->count, sizeof(int32_t));
+    if (flags[1].value) b->kept = tide_alloc((size_t)b->count * (CAP + 2u) * sizeof(int32_t));
     return b;
 }
 
@@ -56,6 +59,12 @@ static void push(void *context, const uint32_t piece)
 static void tick(void *state, const tide_jobs *jobs)
 {
     buckets *b = state;
+    if (b->kept) {
+        const size_t bytes = (size_t)b->count * sizeof(int32_t);
+        memcpy(b->kept, b->cells, bytes * CAP);
+        memcpy(b->kept + (size_t)b->count * CAP, b->heads, bytes);
+        memcpy(b->kept + (size_t)b->count * (CAP + 1u), b->counts, bytes);
+    }
     push_job job = {b, versus_pieces(jobs, b->count, 2048)};
     versus_for(jobs, job.pieces, push, &job);
     b->tick++; // As Tide's Time.tick: 0 in the first tick
@@ -67,15 +76,26 @@ typedef struct held {
     int32_t value;
 } held;
 
+static uint64_t arrays_digest(const uint32_t count, const int32_t *cells, const int32_t *heads, const int32_t *counts)
+{
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        for (int32_t k = 0; k < counts[i]; k++) {
+            const held h = {(int32_t)i, k, cells[(size_t)i * CAP + (uint32_t)(heads[i] + k) % CAP]};
+            sum += versus_item(&h, sizeof h);
+        }
+    }
+    return sum;
+}
+
 static uint64_t digest(const void *state)
 {
     const buckets *b = state;
-    uint64_t sum = 0;
-    for (uint32_t i = 0; i < b->count; i++) {
-        for (int32_t k = 0; k < b->counts[i]; k++) {
-            const held h = {(int32_t)i, k, b->cells[(size_t)i * CAP + (uint32_t)(b->heads[i] + k) % CAP]};
-            sum += versus_item(&h, sizeof h);
-        }
+    uint64_t sum = arrays_digest(b->count, b->cells, b->heads, b->counts);
+    if (b->kept) {
+        const uint64_t before = arrays_digest(b->count, b->kept, b->kept + (size_t)b->count * CAP,
+                                              b->kept + (size_t)b->count * (CAP + 1u));
+        sum += versus_item(&before, sizeof before);
     }
     return sum;
 }
@@ -86,6 +106,7 @@ static void destroy(void *state)
     free(b->cells);
     free(b->heads);
     free(b->counts);
+    free(b->kept);
     free(b);
 }
 

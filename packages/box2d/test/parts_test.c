@@ -221,7 +221,6 @@ typedef struct lab {
     b2JointId old_joints[JOINTS];
     bool sleeping; // b2World_EnableSleeping
     bool recorded; // Box2D is recording what's done: the world isn't made again from an image meanwhile
-    bool restored_now; // ...and it was, since the last step
     int images_whole;
     int images_in_parts;
     int restored;
@@ -503,9 +502,8 @@ static void act(lab *l)
         did(l, "a body disabled or enabled", at);
     } else if (what < 69) {
         if (!enabled(l, at) || b2Body_GetType(body) == b2_staticBody) return;
-        // Not to sleep right after a restore: Box2D then looks the body up among the last step's events,
-        // which a restore clears (b2TrySleepIsland)
-        if (!wake && l->restored_now) return;
+        // To sleep right after a restore too, before the world's first step: its island goes with it, and
+        // the body no longer looks for the event it had in a step the world never took (box2d/TIDE.md)
         if (roll(l, 3) == 0) b2Body_WakeTouching(body);
         else b2Body_SetAwake(body, wake);
         did(l, wake ? "a body woken" : "a body put to sleep, or what it touches woken", at);
@@ -578,7 +576,6 @@ static void act(lab *l)
             abort();
         }
         l->restored++;
-        l->restored_now = true;
         did(l, "the world restored", 0);
     } else if (what < 88 && l->old_size > 0 && !l->recorded) {
         // ...or from an older one, as a rollback does: the image a match holds is then that one
@@ -593,7 +590,6 @@ static void act(lab *l)
         memcpy(l->bodies, l->old_bodies, sizeof l->bodies);
         memcpy(l->joints, l->old_joints, sizeof l->joints);
         l->restored++;
-        l->restored_now = true;
         did(l, "the world rolled back", 0);
     } else if (what < 91) {
         // A shape's geometry set, or what it collides with: calls an image in parts doesn't follow
@@ -730,7 +726,6 @@ static bool go_on(lab *l, const int steps)
             }
         }
         b2World_Step(l->world, DT, 4);
-        l->restored_now = false;
         right = take_image(l);
         // And once more with nothing done: no part of it is another
         if (right && l->step % 97 == 0) right = take_image(l);

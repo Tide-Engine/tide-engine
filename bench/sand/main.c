@@ -6,7 +6,7 @@
 #include "sand.h"
 
 static bench_flag flags[] = {
-    {"size", "the grid's width and height, in cells", 256, 96, 0},
+    {"size", "the grid's width and height, in cells", 256, 96, 0, 1},
 };
 
 static void make_world(const bench_flag *f, void *world, const float dt)
