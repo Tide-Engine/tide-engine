@@ -32,7 +32,9 @@ typedef struct tide_page {
     uint32_t first;  // A heap's: where it starts, in pages
     uint32_t hashed; // The bytes `hash` covers, or UINT32_MAX until it's hashed again
     uint64_t hash;
-    uint64_t unused; // The data after the header starts 16 bytes in, as malloc's does
+    // 0, but while a chunk's rows are written in pieces (tide_table_lanes_begin_pieces): the page this one
+    // takes the place of, as a number. It also keeps the data 16 bytes in from the header's start, as malloc's is
+    uint64_t was;
 } tide_page;
 
 // Ends the program, saying it ran out of memory. Worlds grow as they need, so

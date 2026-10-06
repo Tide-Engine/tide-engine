@@ -49,7 +49,7 @@ Spawn(Body, Owner { player = joined.player });
 
 It's a normal component: it can be read, written, added and removed, and writing it hands control over.
 
-Entities without an `Owner`, or whose owner isn't a known player, get the **server's input**, and so do systems that run once per tick. That's how the server controls what no player owns. An input parameter doesn't pick entities: add `with Owner` to only run on owned ones.
+Entities without an `Owner`, or whose owner is no player the match has a place for (`default`, or a `PlayerID` past its `maxPlayers`), get the **server's input**, and so do systems that run once per tick. An owner the match has a place for who isn't in it right now is still that player: the entity reads their input, not the server's. That's how the server controls what no player owns. An input parameter doesn't pick entities: add `with Owner` to only run on owned ones.
 
 Below are two machines in one match. Move the pointer over a frame to steer that machine's player. One system moves every body, and for each it reads the input of whoever owns that body. The gray body has no `Owner`, so it reads the server's input, which here is player 1's machine's: it follows player 1's pointer, slowly. **Trade bodies** writes the two `Owner`s the other way round, and from then on each player steers the other's body.
 
@@ -112,7 +112,7 @@ input Controls
   - `press`, a button: `.down` when the finger touched, and `.up` when it lifted
   - `id`, the same while the finger touches, and a new one for each touch
   - `position`, `delta` and `startPosition` (`float2`)
-- **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last.
+- **Pointer:** `position`, `delta` and `press`: the mouse, with its left button, or the primary touch, whichever was used last. Once a finger lifts, the pointer stays where it lifted, until another finger touches or the mouse is used.
 
 Each part has a type of its own: `Keyboard`, `Mouse`, `Gamepad`, `Dpad`, `Touchscreen`, `Touch`, `Pointer` and `Button`. Functions take them, and `Devices`, as parameters to read:
 

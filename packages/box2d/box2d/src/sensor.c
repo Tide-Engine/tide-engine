@@ -405,5 +405,7 @@ void b2DestroySensor( b2World* world, b2Shape* sensorShape )
 		b2Sensor* movedSensor = b2Array_Get( world->sensors, sensorShape->sensorIndex );
 		b2Shape* otherSensorShape = b2Array_Get( world->shapes, movedSensor->shapeId );
 		otherSensorShape->sensorIndex = sensorShape->sensorIndex;
+		// Tide: another sensor's shape, which is told where its sensor is now (see b2SnapTrack)
+		b2SnapTouchShape( world, movedSensor->shapeId );
 	}
 }

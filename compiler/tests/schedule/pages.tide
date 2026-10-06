@@ -1,0 +1,66 @@
+// Systems that never run for the same entity still wait for each other where
+// their entities' rows are in the same pages: a sparse component is the row's,
+// not the archetype's, so one that needs it and one that excludes it go
+// through the same chunks. Only archetypes keep two writers apart. And a
+// system that reads its entities' input reads whose each is, their Owner.
+
+component Body { float x; }
+component Soldier { }
+component Beast { }
+component Timer { int left; }
+[Sparse] component Frozen { }
+[Sparse] component Stunned { int left; }
+
+input Controls
+{
+    float move;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body, Soldier, Timer, Owner { player = PlayerID(0) });
+    Spawn(Body, Soldier, Frozen);
+    Spawn(Body, Beast, Stunned { left = 2 });
+}
+
+// One needs Frozen, the other excludes it: both change Body, in the same chunks
+system Shiver(mut Body body, with Frozen)
+{
+    body.x += 0.5;
+}
+
+system March(mut Body body, with Soldier, without Frozen)
+{
+    body.x += 1;
+}
+
+// Another archetype: no row of it is in a page of the soldiers'
+system Prowl(mut Body body, with Beast)
+{
+    body.x -= 1;
+}
+
+// Reads a component a system changes for entities it leaves out
+system Count(Body body, mut Timer timer, without Frozen)
+{
+    timer.left += int(body.x);
+}
+
+// Whose input an entity gets is its Owner's: handing it over comes first
+system Pass(mut Owner owner, Timer timer)
+{
+    if (timer.left > 100) owner.player = PlayerID(1);
+}
+
+system Drive(mut Body body, Controls controls)
+{
+    body.x += controls.move;
+}
+
+// ...and this one's entities have no Owner, so it reads no one's
+system Wander(mut Body body, Controls controls, with Beast)
+{
+    body.x += controls.move;
+}

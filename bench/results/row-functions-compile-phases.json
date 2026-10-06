@@ -1,0 +1,794 @@
+{
+  "benchmark": "row-functions-compile-phases",
+  "date": "2026-10-06T16:07:39.0383186Z",
+  "rounds": 5,
+  "baseline_commit": "6e4b60eb3d64e01422fb7adaf78480676c32c336",
+  "implementation_commit": "e1bb4bec95e4aa132ac543a744a76d593c6f95f3",
+  "generated_implementation_commit": "faee8d0d355427a096b73ab897a807f6a4ea5120",
+  "note": "The benchmark-script HEAD is distinct from installation provenance. Before is from 6e4b60e; final after is implementation_commit, passed explicitly or defaulted to invocation HEAD after the CLI is refreshed. Binary hashes identify the actual executables. Direct C files retain the original faee8d0 rows implementation; the later parameter-cap fix does not change this fixture.",
+  "fixture": {
+    "systems": 100,
+    "component_float_lanes": 12,
+    "body_archetypes": 4,
+    "sparse_filtered_systems": 25,
+    "tide_source": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\loops.tide",
+    "tide_sha256": "8FF5E5D9861460928BDAB44543897F5037631181F95F67DF7A9541B7E85F59CD"
+  },
+  "compiler": {
+    "path": "C:/Program Files/LLVM/bin/clang.exe",
+    "sha256": "E7956E325BC32A1A96838A19A14C58A18916E710F202776C62F27C621EC79411",
+    "version": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)\nTarget: x86_64-pc-windows-msvc\nThread model: posix\nInstalledDir: C:\\Program Files\\LLVM\\bin\nBuild config: +alloc:rpmalloc"
+  },
+  "generated": {
+    "before": {
+      "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+      "sha256": "BD95D484C83625C5FE12B62FB95B059B6F55578F589E25C546F09F69DA9F77DD",
+      "bytes": 1997218,
+      "lines": 29295
+    },
+    "after": {
+      "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+      "sha256": "02A276FC9B9502F82A4A0224F98E96168284E05CB124D0D9F0822F952A19F9F1",
+      "bytes": 2106690,
+      "lines": 29399
+    }
+  },
+  "samples": [
+    {
+      "variant": "before",
+      "optimization": "O0",
+      "round": 1,
+      "wall_ms": 436.9356,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-1-before.log",
+      "object_bytes": 1164463,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-before.o"
+      ]
+    },
+    {
+      "variant": "after",
+      "optimization": "O0",
+      "round": 1,
+      "wall_ms": 522.7249,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-1-after.log",
+      "object_bytes": 1403509,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-after.o"
+      ]
+    },
+    {
+      "variant": "before",
+      "optimization": "O0",
+      "round": 2,
+      "wall_ms": 478.3097,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-2-before.log",
+      "object_bytes": 1164463,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-before.o"
+      ]
+    },
+    {
+      "variant": "after",
+      "optimization": "O0",
+      "round": 2,
+      "wall_ms": 536.9445,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-2-after.log",
+      "object_bytes": 1403509,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-after.o"
+      ]
+    },
+    {
+      "variant": "before",
+      "optimization": "O0",
+      "round": 3,
+      "wall_ms": 433.2138,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-3-before.log",
+      "object_bytes": 1164463,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-before.o"
+      ]
+    },
+    {
+      "variant": "after",
+      "optimization": "O0",
+      "round": 3,
+      "wall_ms": 524.0194,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-3-after.log",
+      "object_bytes": 1403509,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-after.o"
+      ]
+    },
+    {
+      "variant": "before",
+      "optimization": "O0",
+      "round": 4,
+      "wall_ms": 428.6007,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-4-before.log",
+      "object_bytes": 1164463,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-before.o"
+      ]
+    },
+    {
+      "variant": "after",
+      "optimization": "O0",
+      "round": 4,
+      "wall_ms": 514.9818,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-O0-4-after.log",
+      "object_bytes": 1403509,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-batched-cc-after.o"
+      ]
+    },
+    {
+      "variant": "before",
+      "optimization": "O0",
+      "round": 5,
+      "wall_ms": 431.7925,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O0-5-before.log",
+      "object_bytes": 1164463,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O0",
+      "round": 5,
+      "wall_ms": 538.4054,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O0-5-after.log",
+      "object_bytes": 1403509,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O0",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "before",
+      "optimization": "O2",
+      "round": 1,
+      "wall_ms": 34208.4103,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-1-before.log",
+      "object_bytes": 2657193,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O2",
+      "round": 1,
+      "wall_ms": 3510.8773,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-1-after.log",
+      "object_bytes": 993113,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "before",
+      "optimization": "O2",
+      "round": 2,
+      "wall_ms": 33462.6465,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-2-before.log",
+      "object_bytes": 2657193,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O2",
+      "round": 2,
+      "wall_ms": 3474.4119,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-2-after.log",
+      "object_bytes": 993113,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "before",
+      "optimization": "O2",
+      "round": 3,
+      "wall_ms": 33943.2753,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-3-before.log",
+      "object_bytes": 2657193,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O2",
+      "round": 3,
+      "wall_ms": 3474.6808,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-3-after.log",
+      "object_bytes": 993113,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "before",
+      "optimization": "O2",
+      "round": 4,
+      "wall_ms": 33471.5859,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-4-before.log",
+      "object_bytes": 2657193,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O2",
+      "round": 4,
+      "wall_ms": 3552.1443,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-4-after.log",
+      "object_bytes": 993113,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "before",
+      "optimization": "O2",
+      "round": 5,
+      "wall_ms": 33873.4771,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-5-before.log",
+      "object_bytes": 2657193,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before-src\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-before.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "variant": "after",
+      "optimization": "O2",
+      "round": 5,
+      "wall_ms": 3444.0601,
+      "exit_code": 0,
+      "log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-cc-O2-5-after.log",
+      "object_bytes": 993113,
+      "arguments": [
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-IC:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after",
+        "-ID:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\engine\\include",
+        "-O2",
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report",
+        "-c",
+        "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+        "-o",
+        "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-cc-after.o"
+      ],
+      "continuation": "20261006T1729458893813Z"
+    }
+  ],
+  "ok": true,
+  "cpu_log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-measure-batched-cpu.jsonl",
+  "cpu_samples": [
+    {
+      "date": "2026-10-06T16:10:13.5695468Z",
+      "series": "complete runtime round 1/5 (13 cases)",
+      "cpu_percent": 8.0,
+      "waited_ms": 1683.8106,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:17:04.3228536Z",
+      "series": "complete runtime round 2/5 (13 cases)",
+      "cpu_percent": 12.0,
+      "waited_ms": 498.1174,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:20:49.5905843Z",
+      "series": "complete runtime round 3/5 (13 cases)",
+      "cpu_percent": 20.0,
+      "waited_ms": 505.2754,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:21:09.8907996Z",
+      "series": "complete runtime round 3/5 (13 cases)",
+      "cpu_percent": 2.0,
+      "waited_ms": 20805.493,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:22:22.276645Z",
+      "series": "complete runtime round 4/5 (13 cases)",
+      "cpu_percent": 2.0,
+      "waited_ms": 473.3136,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:23:33.0026011Z",
+      "series": "complete runtime round 5/5 (13 cases)",
+      "cpu_percent": 1.0,
+      "waited_ms": 281.9521,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:24:43.5985193Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 37.0,
+      "waited_ms": 287.077,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:03.8985215Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 44.0,
+      "waited_ms": 20587.0803,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:24.2231558Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 41.0,
+      "waited_ms": 40911.7132,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:44.5154351Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 27.0,
+      "waited_ms": 61203.9936,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:04.8421973Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 39.0,
+      "waited_ms": 81530.7533,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:31.3403665Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 59.0,
+      "waited_ms": 108028.9245,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:51.6296524Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 53.0,
+      "waited_ms": 128318.2076,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:33:48.5954128Z",
+      "series": "compile round 1/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 496.9322,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:39:37.739161Z",
+      "series": "compile round 2/5 a1",
+      "cpu_percent": 1.0,
+      "waited_ms": 482.8048,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:43:24.4424474Z",
+      "series": "compile round 2/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 5628.407,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:46:41.6086104Z",
+      "series": "compile round 3/5 a1",
+      "cpu_percent": 0.0,
+      "waited_ms": 474.5546,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:47:55.5775234Z",
+      "series": "compile round 3/5 a4",
+      "cpu_percent": 2.0,
+      "waited_ms": 526.2862,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:58:36.076652Z",
+      "series": "compile round 4/5 a1",
+      "cpu_percent": 4.0,
+      "waited_ms": 494.4997,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:02:22.4244572Z",
+      "series": "compile round 4/5 a4",
+      "cpu_percent": 1.0,
+      "waited_ms": 5667.6543,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:05:39.8389668Z",
+      "series": "compile round 5/5 a1",
+      "cpu_percent": 11.0,
+      "waited_ms": 485.5567,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:06:56.8221764Z",
+      "series": "compile round 5/5 a4",
+      "cpu_percent": 28.0,
+      "waited_ms": 478.6363,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T17:07:17.1210703Z",
+      "series": "compile round 5/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 20777.5282,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:12:26.2695589Z",
+      "series": "direct clang -O0 round 1/5 a4",
+      "cpu_percent": 5.0,
+      "waited_ms": 486.6017,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:15:05.8354285Z",
+      "series": "direct clang -O0 round 2/5 a4",
+      "cpu_percent": 5.0,
+      "waited_ms": 288.8822,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:21:12.8401401Z",
+      "series": "direct clang -O0 round 3/5 a4",
+      "cpu_percent": 6.0,
+      "waited_ms": 1881.6928,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:26:52.2495682Z",
+      "series": "direct clang -O0 round 4/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 534.7717,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:29:46.7776624Z",
+      "series": "direct finish -O0 round 5/5 a4",
+      "cpu_percent": 6.0,
+      "waited_ms": 552.8855,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:29:48.0643184Z",
+      "series": "direct finish -O2 round 1/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 269.7875,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:30:26.0782898Z",
+      "series": "direct finish -O2 round 2/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 285.497,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:31:03.3110328Z",
+      "series": "direct finish -O2 round 3/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 286.7675,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:31:41.0093566Z",
+      "series": "direct finish -O2 round 4/5 a4",
+      "cpu_percent": 10.0,
+      "waited_ms": 272.0384,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:32:18.3425121Z",
+      "series": "direct finish -O2 round 5/5 a4",
+      "cpu_percent": 14.0,
+      "waited_ms": 295.6858,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    }
+  ],
+  "measurement_log": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-measure-batched.log",
+  "continuation": {
+    "date": "2026-10-06T17:29:45.8893813Z",
+    "reason": "Cooperative public Runspace.Close stopped the original runner while it waited for the benchmark gate; consolidate remaining direct compiler pairs into one acquisition.",
+    "original_runner_pid": 75700,
+    "original_phase_archive": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-original-phases.json",
+    "original_phase_sha256": "BD544392E921FC6BC4B518E3EF895EB4F135CBC22A507D348CC94A84A4DDCB38",
+    "original_metadata_archive": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-original-metadata.json",
+    "original_metadata_sha256": "8155BB265B836116EB1C41B50D24BEF3AFA799F3F9831C3191A33E671F2CC04D",
+    "original_phase_failure": null,
+    "original_metadata_failure": null,
+    "original_successful_samples": 8,
+    "missing_pairs": [
+      {
+        "optimization": "O0",
+        "round": 5
+      },
+      {
+        "optimization": "O2",
+        "round": 1
+      },
+      {
+        "optimization": "O2",
+        "round": 2
+      },
+      {
+        "optimization": "O2",
+        "round": 3
+      },
+      {
+        "optimization": "O2",
+        "round": 4
+      },
+      {
+        "optimization": "O2",
+        "round": 5
+      }
+    ],
+    "gate": "One benchmark mutex acquisition for all remaining complete before/after pairs; CPU idle check before every pair.",
+    "helper_path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish.ps1",
+    "helper_sha256": "BE8D55F6DAFA14E868809A57B844E8526F989C8F318CFD21AF73AB4A944CE359",
+    "completed_utc": "2026-10-06T17:32:55.6761745Z"
+  }
+}

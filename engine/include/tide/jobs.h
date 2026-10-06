@@ -78,10 +78,15 @@ typedef struct tide_system_tasks {
     // task, in one piece; one with fewer chunks than there are threads gets
     // them in pieces, so a few heavy chunks still keep every thread busy.
     void (*run)(void *world, uint32_t task, uint32_t pieces);
-    // Before its chunks run in more than one piece: the pages of what it
-    // changes made the world's own, since the pieces of one chunk write the
-    // same pages at once (see tide_table_lanes_begin). NULL: it changes nothing.
+    // Before its chunks run in more than one piece, once the systems it waits
+    // for are done: the pages of what it changes made the world's to write,
+    // since the pieces of one chunk write the same pages at once (see
+    // tide_table_lanes_begin_pieces). NULL: it changes nothing.
     void (*own)(void *world);
+    // After its chunks ran in more than one piece, before anything that waits
+    // for it starts: what `own` began, ended (tide_table_lanes_end_pieces).
+    // NULL: nothing to end.
+    void (*done)(void *world);
     bool splits;           // Its entities go across threads, a chunk (in pieces) a task; else it's one task, whatever its work
     uint32_t wait_count;
     const uint32_t *waits; // Systems before it in the tick that it waits for

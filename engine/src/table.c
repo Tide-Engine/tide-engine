@@ -122,6 +122,62 @@ void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t c
     }
 }
 
+// In pieces: the page a lane is written into is in the table from the start,
+// where every piece finds it, and says which page it's read from (tide_page.was).
+
+void tide_table_lanes_begin_pieces(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                                   const uint32_t lanes, const bool apart)
+{
+    const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+    for (uint32_t k = 0; k < lanes; k++) {
+        tide_page **p = &t->pages[chunk * c->count + first + k];
+        if (!apart) { // The table's alone, or else a copy that is
+            *p = tide_page_own(*p, 1, rows * c->sizes[first + k]);
+            continue;
+        }
+        tide_page *own = tide_page_take((*p)->size);
+        *own = (tide_page){1, (*p)->size, (*p)->first, UINT32_MAX, 0, (uint64_t)(uintptr_t)*p};
+        *p = own; // Its reference to the page it was goes with `was`
+    }
+}
+
+bool tide_table_lanes_piece(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                            const uint32_t lanes, const uint8_t **in, uint8_t **out)
+{
+    bool apart = false;
+    for (uint32_t k = 0; k < lanes; k++) {
+        const tide_page *p = t->pages[chunk * c->count + first + k];
+        out[k] = tide_page_data(p);
+        in[k] = out[k];
+        if (!p->was) continue;
+        in[k] = tide_page_data((const tide_page *)(uintptr_t)p->was);
+        apart = true;
+    }
+    return apart;
+}
+
+void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                                 const uint32_t lanes)
+{
+    const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+    for (uint32_t k = lanes; k-- > 0;) {
+        tide_page **p = &t->pages[chunk * c->count + first + k];
+        tide_page *own = *p;
+        if (!own->was) continue; // Written in place
+        tide_page *was = (tide_page *)(uintptr_t)own->was;
+        own->was = 0;
+        const size_t bytes = (size_t)rows * c->sizes[first + k];
+        if (memcmp(tide_page_data(own), tide_page_data(was), bytes) == 0) { // No row changed: still shared, still hashed
+            *p = was;
+            tide_page_give(own);
+            continue;
+        }
+        memset((uint8_t *)tide_page_data(own) + bytes, 0, own->size - bytes); // Past its rows a page is zeros
+        if (was->refs == 1u) tide_page_give(was);
+        else was->refs--;
+    }
+}
+
 uint32_t tide_table_add(tide_table *t, const tide_columns *c)
 {
     if (t->count == UINT32_MAX) tide_out_of_memory();

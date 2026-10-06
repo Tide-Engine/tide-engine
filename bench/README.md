@@ -2,6 +2,36 @@
 
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
+Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.
+
+## Coverage and the October 6 audit
+
+The suite covers ECS streaming, grid blocks and stencils, entity churn, event dispatch, pairwise list calculations, nested lists, ordered maps/sets, and networked prediction/joining. `versus_lookup` adds map/set hits and misses, score updates, deletion/reinsertion and duplicate set additions. Its digest includes insertion order and observed results. `--changes 0` isolates hits, misses and updates without key replacement. The C implementation uses separate ordered open-addressed tables with backshift deletion; it calls no Tide container functions. Quick checks include empty/single collections and replacement past the collection's size, on native and WebAssembly.
+
+`versus_particles --kept 1` and `versus_buckets --kept 1` keep the previous state before each tick. Tide shares pages and copies them when written; C copies its arrays. Both keep equivalent logical data, and the final digest checks the retained contents as well as the live state. The buckets fixture checks both nested and flat Tide layouts. Before this audit, particles' C reference ignored `--kept`, so its old retained-world ratios excluded C's snapshot cost. Those ratios are not comparable to the corrected variant.
+
+Three repeated full runs on Windows 11, Ryzen 9 7900X and Clang 23.1.2 are saved as `benchmark-audit`, with `benchmark-audit-kept` and `benchmark-audit-lookup-steady` for the variants. These are medians of reported tick medians and per-run Tide/C ratios, rounded; each run offers one thread and twelve. The flags remain deterministic (`-O2`, no fast math or FMA).
+
+| Workload | Tide, 1 thread (ms) | Tide / best C, 1 thread | Tide, 12 threads (ms) | Tide / best C, 12 threads |
+| --- | ---: | ---: | ---: | ---: |
+| Particles, 1 million | 0.508 | 1.20× | 0.289 | 1.06× |
+| Sand, 1024² | 1.016 | 2.42× | 0.227 | 3.59× |
+| Life, 1024² | 0.585 | 7.50× | 0.205 | 2.63× |
+| Entity churn, 2,000 spawns/tick | 0.573 | 2.82× | 0.526 | 2.61× |
+| Events, 200,000 sends | 0.885 | 7.39× | 0.892 | 7.45× |
+| N-body, 2,000 bodies | 3.423 | 1.72× | 0.411 | 1.69× |
+| Nested buckets, 4,096 | 0.043 | 5.94× | 0.043 | 2.25× |
+| Map/set, 16,384 keys, 1,024 replacements | 1.773 | 5.50× | 1.781 | 5.51× |
+| Map/set, same keys, no replacements | 2.003 | 10.96× | 1.995 | 10.90× |
+| Particles with previous state retained | 1.032 | 1.11× | 0.651 | 0.79× |
+| Nested buckets with previous state retained | 0.066 | 4.28× | 0.066 | 2.12× |
+
+All end-state digests agree. Offering workers does not make shared mutable map/set operations parallel. Life and Events remain the previously diagnosed bottlenecks described below. The new steady map/set case reveals another substantial gap: source inspection finds repeated list header/page resolution in `tide_map_find`, repeated entry lookups for read/update, and probe resolution in erase; this is an investigation target, not a measured attribution. The replacement case can be faster because index capacity grows with dead entries, reducing probe lengths; compare each variant with its matching C work.
+
+The session runs retain matching worlds and join times: Sand's clients run about 30 ms of simulation per simulated second, while Gallery's largest initial world is 4.41 MB as sent and its slowest catch-up is 2.67 s under the configured 50 ms each-way delay and 1% loss. One OpenGL drawing run is saved with the RTX 4080 SUPER; its empty-scene median readback is 0.296 ms and 65,536 rectangles take 1.111 ms including recording/readback. These measurements describe this machine; the audit changes the benchmarks and their validation, and makes no engine speedup claim. [Audit metadata](results/benchmark-audit-metadata.json) identifies the runs and binaries.
+
+Remaining coverage opportunities include a retained window of multiple snapshots with restore/replay, asset-heavy compilation, and a handwritten graphics baseline. Networked Sand/Gallery already measure replay, snapshot, hash, packing, transfer and joining costs together; the new retained-state variants isolate snapshot/write costs against C.
+
 ## Native runtime measurements
 
 The 2026-10-04 `native-performance-before` and `native-performance-fixed` records compare five alternating runs on Windows 11, a Ryzen 9 7900X and Clang 23.1.2, after all builds and tests finished. Both builds use `-O2`, `-fno-fast-math` and `-ffp-contract=off`. These are medians of the five reported tick medians; the C ratio is the median of each run's ratio to its fastest C implementation (the explicit SIMD implementation for N-body).
@@ -61,6 +91,16 @@ Events' paired profile/control variation is around measurement noise. Phase medi
 
 A dense Life path can remove window/output/chunk staging after the compiler proves complete writes, keeping old inputs immutable, separate outputs, snapshot ownership and fallback paths for sparse or skipped writes. Events can process eligible adjacent queue runs without repeating generic dispatch scaffolding for every hit. These are implementation opportunities, not measured speedups; full-write and handler-side-effect proofs are prerequisites.
 
+## Rows and lanes measurements
+
+The [rows and lanes report](results/row-functions.md) compares the compiler/engine baseline at `6e4b60e` with the tested implementation recorded in its [measurement metadata](results/row-functions-measurement-metadata.json). `7a7ba9e` is the compiler/engine full-suite validation point; subsequent benchmark corrections have their own measured source and binary identities. These records describe the benchmark implementation used for the measurement, before later dev integration.
+
+`versus_wide` covers a component of twelve float lanes, six changed by each tick, both unfiltered and with a sparse tag. `--tagged 1 --frozen 0`, `50` or `100` selects all, half or none of the rows. The wide and particles `--kept 1` variants retain equivalent prior state in both Tide and handwritten C and validate its contents along with the live state. The same corrected benchmark sources are used in both builds. Historical kept-C records that omitted retained state remain in the ledger for context; their snapshot comparisons are not comparable to these corrected measurements, and their digests belong to separate benchmark groups.
+
+Five before/after rounds run in turn, offering one and twelve threads. The report takes the minimum saved per-round tick median, and the minimum saved per-round end-to-end build median. Session values instead use minimum per-round recorded milliseconds per second of play, averaged per client where applicable; direct compiler diagnostics use minimum recorded wall times. These estimators differ from the median-of-medians summaries elsewhere on this page. The handwritten comparator is the fastest applicable C way. The benchmark mutex serializes cooperating sibling batches, while other work can still contend; metadata retains the pre-run CPU checks and uncertainty. Each runtime batch completes one 13-case alternating before/after round; end-to-end compiler pairs each take the gate, while the remaining direct compiler pairs share one finishing acquisition, as recorded in the metadata. Earlier partial runtime pairs remain in the ledgers but are excluded from the final tables through metadata date/options identities.
+
+`bench/compile.mjs --loops 100 --archetypes 1` (or `4`) adds entity-system loops to its reachable-function fixture. The report covers native/web debug/release builds, cold and unchanged builds, and Tide/C/header edits. The [direct compiler records](results/row-functions-compile-phases.json) separate whole-command wall time, available LLVM IR/backend phase wall times and object size; unavailable phase logs do not imply a phase timing. Raw [runtime](results/versus.jsonl), [Sand](results/sand.jsonl), [Gallery](results/gallery.jsonl) and [compile](results/compile.jsonl) records retain the rounds. Mixed passing/skipped rows and unchanged lanes inside a `mut` component remain implementation gaps.
+
 ## Compile and iteration time
 
 Run the compile benchmark against a complete Tide installation, with Node:
@@ -72,6 +112,8 @@ node bench/compile.mjs --tide C:/path/to/tide/bin/tide.exe --targets native,web 
 
 The defaults measure native debug builds of 100 reachable functions across 11 Tide files, five times. `--files 1000 --sizes 1000` also measures a game spread across a thousand source files. Each function runs in a system, so the frontend and C optimizer must process reachable code. These are synthetic source-size measurements; declaration count alone does not describe the complexity of a real game.
 
+That game has one system, which runs once a tick, so it has none of the code tidec generates for a system's loop over its entities. `--loops 100` adds a hundred systems that each run for every entity of a component of a dozen floats and change it, one in four leaving out the entities with a sparse tag, and `--archetypes` (1 to 4, 4 unless it says) is how many archetypes those entities come in: each loop is for all of them.
+
 Each repetition uses a temporary game and measures a sequence:
 
 | Scenario | What changes before `tide build` |
@@ -82,7 +124,7 @@ Each repetition uses a temporary game and measures a sequence:
 | `c-body` | Change one of two C translation units' calculations |
 | `header` | Change a header used by one C translation unit; the other does not include it |
 
-Wall times include process startup, the frontend, native compilation, linking and web page creation. The cold measurement includes compiling engine objects kept in the game's cache. It leaves the installed toolchain and OS file cache warm. The harness also records which cached object files were written, making unnecessary recompilation visible. These are build completion times; hot reload also includes watching the file and swapping the running game.
+Wall times include process startup, the frontend, native compilation, linking and web page creation. The cold measurement includes compiling engine objects kept in the game's cache. It leaves the installed toolchain and OS file cache warm. The harness records which cached object files were written and which changed content, making unnecessary recompilation visible. It rejects Tide/C/header edit samples whose dependent object still has the old content, even if a timestamp changed. Object hashing runs outside the build timer. These are build completion times; hot reload also includes watching the file and swapping the running game.
 
 Use `--tidec build/release/bin/tidec.exe` to measure the frontend and code generation separately. This measurement runs after one warm-up and includes starting `tidec` and writing generated files; it does not include C compilation or linking. Use `TIDEC_TIMES=1` with `tidec` directly for its individual phase timings.
 

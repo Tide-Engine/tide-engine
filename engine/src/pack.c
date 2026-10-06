@@ -246,8 +246,9 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     tide_pack_header h = {{0}, TIDE_PACK_VERSION, b->entry_count, region_at, b->size, {0, 0}};
     memcpy(h.magic, TIDE_PACK_MAGIC, 8);
     memcpy(out, &h, sizeof h);
-    memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
-    memcpy(out + region_at, b->region, b->size);
+    // A pack of nothing has no entries and no region to copy from
+    if (b->entry_count) memcpy(out + table, b->entries, (size_t)b->entry_count * sizeof(tide_pack_entry));
+    if (b->size) memcpy(out + region_at, b->region, b->size);
     free(b->region);
     free(b->shared);
     free(b->entries);

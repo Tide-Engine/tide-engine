@@ -12,6 +12,8 @@
 //
 // Each time is the last one measured, and a total since the profile was last
 // cleared, so a host shows them over as many ticks and frames as it likes.
+// The measurement counters survive a clear: independent readers can average
+// the same profile over different intervals without clearing each other's data.
 // Names are copied, as a game's code may be swapped out under `tide run`
 // between a tick and a frame that shows them.
 #define TIDE_PROFILE_NAME 48
@@ -19,6 +21,8 @@ typedef struct tide_profile_time {
     char name[TIDE_PROFILE_NAME];
     double ms;    // The last time it ran
     double total; // ...and every time since the profile was cleared, in milliseconds
+    double measured_ms;    // Every measurement of this name, independent of clears
+    uint64_t measurements; // ...and how many, including ones below the clock's resolution
 } tide_profile_time;
 
 typedef struct tide_profile_times {

@@ -1,0 +1,85 @@
+// A comparison block (`Sort`) and a parallel loop in code that also takes a
+// query. Each becomes a function of its own, handed what it reads of the code
+// around it: the code's other parameters, but never the query, which is no
+// value and which neither can go through.
+
+component Racer
+{
+    int score;
+    int place;    // How many racers score more
+    int nearest;  // The lowest score above this racer's, or 0
+}
+
+singleton Board
+{
+    List<int> scores;   // Every racer's, highest first
+    List<int> doubled;  // The same, each twice as much
+    int racers;
+    int first;
+    int last;
+    int doubledSum;
+}
+
+local singleton Shown
+{
+    List<int> order;    // What the view sorted, lowest first
+    int count;
+    int lowest;
+    int highest;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Racer { score = 3 });
+    Spawn(Racer { score = 9 });
+    Spawn(Racer { score = 1 });
+    Spawn(Racer { score = 5 });
+}
+
+// Once a tick: a sort and a parallel loop beside a query, each reading a
+// local of the system's and the sort a parameter's field.
+system Rank(mut Board board, Time time, query (Racer racer) racers)
+{
+    board.scores.Clear();
+    foreach (var row in racers) board.scores.Add(row.racer.score);
+    var bias = 0;
+    board.scores.Sort(a, b) { return a + bias > b + board.racers * 0 + time.tick * 0; }
+    board.doubled = board.scores;
+    var factor = 2;
+    parallel (var i in board.doubled)
+    {
+        board.doubled[i] = board.doubled[i] * factor;
+    }
+    board.racers = board.scores.count;
+    board.first = board.scores[0];
+    board.last = board.scores[board.scores.count - 1];
+    board.doubledSum = 0;
+    for (var i = 0; i < board.doubled.count; i++) board.doubledSum += board.doubled[i];
+}
+
+// For each entity: a list of its own, filled from the query and sorted.
+system Place(mut Racer racer, query (Racer other) others)
+{
+    mut List<int> above = [];
+    foreach (var row in others)
+    {
+        if (row.other.score > racer.score) above.Add(row.other.score);
+    }
+    var own = racer.score;
+    above.Sort(a, b) { return a - own < b - own; }
+    racer.place = above.count;
+    racer.nearest = above.count > 0 ? above[0] : 0;
+}
+
+// A view's rows are made before it runs: a sort beside them is the same.
+view Show(mut Shown shown, query (Racer racer) racers)
+{
+    shown.order.Clear();
+    foreach (var row in racers) shown.order.Add(row.racer.score);
+    shown.order.Sort(a, b) { return a < b; }
+    shown.count = shown.order.count;
+    shown.lowest = shown.order[0];
+    shown.highest = shown.order[shown.order.count - 1];
+}

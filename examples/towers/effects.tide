@@ -145,11 +145,22 @@ local event(Landed landed) Thump(mut Fx fx)
     if (landed.seat == fx.seat) Shake(fx, 0.06 + hard * 0.16);
 }
 
-// The brick that landed is lit for a moment: `lit` is a local field of the
-// match's Brick, which its view lets fade.
-local event(Spawned) Fresh(mut Brick brick)
+// Bricks that meet something hard: the package says so (its Hit, sent to each
+// body's entity, with where and how fast), and pieces fly from there, more
+// the harder it was. This machine's camera feels its own player's.
+local event(Hit hit) Crash(Brick brick, mut Fx fx)
 {
-    if (!brick.set) brick.lit = 1;
+    var hard = Math.Saturate((hit.speed - CRASH) / 12);
+    Chunks(fx, hit.point, 1 + int(hard * 3), 1.5 + hard * 4, SeatColor(brick.seat));
+    if (brick.seat == fx.seat && !brick.down) Shake(fx, 0.03 + hard * 0.1);
+}
+
+// The brick that landed is lit for a moment: `lit` is a local field of the
+// match's Brick, which its view lets fade. Landed is sent to the brick, so
+// this runs for it.
+local event(Landed) Fresh(mut Brick brick)
+{
+    brick.lit = 1;
 }
 
 // A brick fell off its tower: once that's certain, pieces of it fly where it

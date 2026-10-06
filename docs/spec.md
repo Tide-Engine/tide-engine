@@ -578,7 +578,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - `Add`, `Remove` and `Destroy` on an entity that was already destroyed do nothing.
 - In a system that splits its entities across threads, `Spawn` returns a temporary handle: the entity gets its ID once the system is done, in the order one thread would have given them, and the handles the system kept in the components it changes, the changes it recorded and its events become the real one, before any system that waits for it starts. So such systems don't wait for each other to spawn. Until then, text shows the handle as `Entity(new)`, and C can tell with `tide_entity_is_temporary`.
 - `Spawn` can't appear on the right side of `&&` or `||`, or in a side of `?:`. Those parts only run sometimes, while spawns run first, in order (see Evaluation order). Spawn into a local before the condition, or use `if`/`else`.
-- **Sparse components.** A component marked `[Sparse]` is kept as a presence bit and its value in every archetype it can reach, rather than making an archetype of its own with each combination: `Add` and `Remove` of it move no entity. A component with no fields (a tag) that any `Add` or `Remove` names is sparse by itself; a tag only set at `Spawn` isn't, so filtering on it costs nothing per entity. Systems, views and handlers that take or filter on a sparse component skip the entities that haven't got it, row by row. Two systems can't meet the same entity when one needs a sparse component the other excludes, as with any component. Toggled status like `Stunned`, `Burning` or `Selected` wants `[Sparse]`; a component most entities of a kind have, or that's set once, doesn't.
+- **Sparse components.** A component marked `[Sparse]` is kept as a presence bit and its value in every archetype it can reach, rather than making an archetype of its own with each combination: `Add` and `Remove` of it move no entity. A component with no fields (a tag) that any `Add` or `Remove` names is sparse by itself; a tag only set at `Spawn` isn't, so filtering on it costs nothing per entity. Systems, views and handlers that take or filter on a sparse component skip the entities that haven't got it, row by row. Two systems can't meet the same entity when one needs a sparse component the other excludes, but their entities are rows of the same archetype, kept side by side: where one of them writes a component the other reads or writes, they wait for each other all the same. Only archetypes keep two systems apart. Toggled status like `Stunned`, `Burning` or `Selected` wants `[Sparse]`; a component most entities of a kind have, or that's set once, doesn't.
 
 ### Built-ins
 
@@ -1076,6 +1076,82 @@ system Advance(mut Match match)
 - Text with a caret that moves, and selection, in text fields.
 - Case for letters past ASCII.
 
+## Generics
+
+### Decided
+
+- Generics are a proper part of Tide, in three steps (the owner, 2026-10-06: "we clearly need generics and I don't like making them just an engine thing that you can't touch"): a type is read as a tree, containers nest by one rule (both built: see Lists, and `AGENTS.md`, Language), and games declare generic structs and functions of their own, below.
+
+### Open
+
+A proposal for the third step (Claude, 2026-10-06), for the owner to approve before it's built. Each point is a pick unless it says otherwise.
+
+- **Declaring.** A struct, a function or a method takes type parameters in `<>` after its name, as C#'s do:
+
+```csharp
+struct Pair<T>
+{
+    T a;
+    T b;
+}
+
+T Max<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+struct Stack<T>
+{
+    List<T> items;
+
+    mut void Push(T item) { items.Add(item); }
+
+    T? Pop()
+    {
+        if (items.count == 0) return null;
+        var top = items[items.count - 1];
+        items.RemoveAt(items.count - 1);
+        return top;
+    }
+}
+```
+
+  A method of a generic struct uses its struct's parameters, and can have parameters of its own, `U Map<U>(...)`. Not components, singletons, events, commands, inputs, scenes, systems, views or handlers: what the engine stores by name and schedules is concrete (a `component Slot<T>` would be an archetype for each instantiation, and a system over it a system for each: left for when a game asks). Not enums. A type parameter is a name; it shadows nothing, so a `T` that's also a type of the game's is an error at the declaration.
+- **Using.** `Pair<int> p;`, `Stack<Entity> enemies;`, `Max<float>(a, b)`, or `Max(a, b)` with the type arguments inferred (below). A type argument is what a list's element can be, the same rule in the same table (`GENERIC_ELEMENT`): built-in types, text, enums, structs (generic ones instantiated, `Pair<Pair<int>>`), lists, maps and sets. Not grids, ECS data, `Action`, `Devices`, `World`, nor a `T?`. A generic struct holds what a struct holds, so no grid.
+- **Monomorphization.** Each instantiation is a declaration of its own, as `List<int>` is one today: `Pair<int>` and `Pair<float>` are two structs in generated C, each checked once with its arguments bound, and two instantiations with the same arguments are one declaration, found by them. Its C name is the generic's with the arguments' C names after it, `Pair_int`, `Pair_List_Entity`, `tide_function_Max_float` (a name that reads in a debugger, over a number like `tide_list3`), and tools show it as written, `Pair<int>`, `Max<float>`: the schedule, the profiler, hovers. The game's layout has an instantiation as a struct of its name, so hot reloading carries a world over field by field as for any struct, and renaming a type parameter changes nothing.
+- **No constraints in v1.** A generic body uses a `T` for anything, and what the `T` doesn't support is found at the instantiation: `Max<Pair<int>>` is an error at `a > b` in `Max`, with a note at the instantiation that led there ("instantiated as `Max<Pair<int>>` here", through a chain of them where one generic instantiates another), as Tide's errors say what and where. What doesn't depend on `T` (names, syntax, the shape of calls, what a `T` is passed to as a plain value) is checked once with the parameters unbound, so an error that's the generic's own is found with no instantiation at all. Constraints (`where T : ...`) can come later, as a check at the declaration; Tide has nothing to constrain with yet but the built-in rules (`==`, `<`, hashable), which would be the first.
+- **Inference**, as C#'s: a call with no `<>` takes each type argument from the arguments whose parameters mention it, `T` against the argument's type and `List<T>` or `Pair<T, U>` against its parts; two arguments that give the same `T` have to give it exactly (`Max(1, 2.5)` is an error that says to write `Max<float>(1, 2.5)`: no widening picks between `int` and `float`); a `T` no argument gives is an error that says to write the `<>`; the return type takes no part. Defaults and named arguments go as for any call. A generic and a non-generic function can share a name: the non-generic wins where it fits, as in C#, and two generics that differ in how many type parameters they take are two overloads. A generic can't be `virtual` or overridden in v1, which keeps `override` matching by name and parameters alone.
+- **The GPU.** A generic function a frag or a vert reaches is instantiated like any function and written per instantiation, with its C name; a generic struct as a vertex or an instance struct is instantiated the same way. What the GPU refuses of a type (text, lists, entities) it refuses of a type argument, where it's used.
+- **Text** shows an instantiation's value with its written name: `Pair<int> { a = 1, b = 2 }`.
+- **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders, as `Map<$1, $2>` is offered; the formatter keeps `Pair<int>` tight as it keeps `List<int>`; the grammar colors a type parameter as a type.
+- **Recursion.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself. An instantiation that instantiates forever (`Grow<T>` calling `Grow<Pair<T>>`) stops at 8 levels, with an error that shows the chain.
+- **Tests and docs** that come with it: `compiler/tests/e2e/generics` (structs, functions, methods, inference, nested instantiations, instantiations that are one declaration, hot reloading's layout, the GPU), `compiler/tests/errors/generic_*.tide` one per diagnostic, `compiler/tests/shaders/generics`, `lsp_generics`, the grammar's probe, and `docs/language/generics.md` with a live example.
+
+## Arrays
+
+### Decided
+
+- `T[N]` is an array: `N` values of `T`, side by side, in the bytes of whatever holds it. `int[32] cells;` (the owner, 2026-10-06: fixed-length arrays, to avoid a list's indirection; `int[32]` over `Array<int, 32>`).
+
+### Provisional
+
+Built 2026-10-06 on that; each point beyond it is a pick, awaiting the owner.
+
+- An array is a value, copied with its struct, and needs no heap: a component's array is lanes of the component, like its other fields, so a system's loop over rows runs with SIMD, and snapshots, hashes, deltas, the world as bytes and hot reloading see component data and nothing new. Hot reloading carries one over by its type's name, `int[32]`: another length is another type, and the field starts over.
+- `N` is a constant: a literal, or a constant and operators on them (`int[CAP] cells`), from 1 to 4096; `int[4][8]` is 4 arrays of 8 (`a[i]` is an `int[8]`, `a.count` is 4), and all the lengths together stay under 4096 too.
+- Elements are plain values: numbers, bools, enums, vectors, matrices, quaternions, `Color`, `Rect`, `Entity`, `LocalEntity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps, sets or grids, which need the heap, nor ECS data or rendering resources.
+- An array goes where a plain value goes: fields of components, singletons, structs, events and scenes, locals, parameters and what functions return (copies), a list's elements and a map's values (`List<int[32]>`), a grid's cells. And an input's fields, which a bounded list could never be: `[Clamp]`, `[Min]` and `[Max]` on one apply to every element, and NaN and infinite floats in one are repaired element by element. Not a map's or a set's key, and not a constant yet.
+- `a[i]` reads an element, or the element type's zero past the end; `a[i] = v` and `a[i] += v` write one, and past the end do nothing, as a list's do. `a.count` is `N`. `foreach (var x in a)` goes through the elements, each a copy. `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `N` values (`default` is all zeros). An element that's an array is changed where it is, `a[i][j] = v`, and so is an array that's an element of a list or a map's value, `rows[i][j] = v`, `buckets[key][j] = v`, through any number of indexes, and a plain field of an element that's a struct, `a[i].x = 1`, `rings[b].cells[j] = v` (see Lists, Changing an element where it is).
+- Text shows an array as it shows a list: `[1, 2, 3]`.
+- Views don't blend arrays between ticks: an array is seen as it is at the latest tick, as `[Snap]` fields are.
+- Not on the GPU yet, and not sorted, searched or compared with `==`.
+
+### Open
+
+- Blending arrays of floats in views.
+- Arrays on the GPU, as GLSL and WGSL arrays.
+- Constants that are arrays.
+
 ## Lists
 
 ### Decided
@@ -1089,11 +1165,17 @@ system Advance(mut Match match)
 - A list starts empty. `[a, b, c]` is a list where one goes, from what it goes into: `List<int> scores = [1, 2, 3];`, `scores = [];`, a field's default, an argument. `var x = [1, 2]` is an error, as it doesn't say the type.
 - `count`, `items[i]` to read, `items[i] = x` and `items[i] += x` to write, and the methods `Add(item)`, `Insert(index, item)` (the index clamped), `RemoveAt(index)`, `Clear()`, and for elements that `==` compares (numbers, bools, enums, text, entities and players) `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 - Provisional, awaiting the owner: `Resize(count)` makes the list `count` elements long in one call, as Unity's `NativeList.Resize` does. New elements are the element type's zero: zero bytes, empty text. With fewer, the rest go, and the text they held with them. A count under 0 is 0, and one past what a list holds (see Limits) leaves the list as it is. It changes the list as `Add` and `Clear` do, with their rules: something that can change, not in a parallel loop's step or a `Sort`'s comparison, and not on the GPU. Picked beyond that: its name and its one `int` argument; no `Capacity` or `Reserve` beside it; a list in a world gives back the room it no longer needs, where `Clear` keeps its room for what's added next.
-- An element is a copy, as with C#'s List of structs: `items[i].count = 1` is an error that says to take it out, change it and put it back. A `mut` parameter or a mut method can't change an element in place either.
+- An element is a copy, as with C#'s List of structs, when it's taken out: a local, a foreach's variable, an argument. A `mut` parameter or a mut method can't change an element in place. But a plain field of an element that's a struct is changed where it is (below, Changing an element where it is).
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.
 - Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead).
 - Components, singletons, structs and events can hold lists; inputs can't. A struct that holds a list, a map or text is a value like any other: a field of a component, a singleton, an event or another struct, a local, a parameter. Copying it copies what it holds.
-- What isn't supported yet is one inside another's elements: a list can't hold lists, maps, sets or grids (`List<List<int>>`), nor a struct that has a list, a map or a set in it, at any depth (`List<Bag>` where `Bag` has a `List<int>`). A list of structs that hold text is fine. The errors say which field is in the way, and what to write instead: one flat list with where each part starts (and how many it has), or a component on an entity of its own for each inner list, held as a `List<Entity>`.
+- A list holds lists, maps and sets as elements, and structs that hold them, at any depth: `List<List<int>>`, `List<Bag>` where `Bag` has a `List<int>`, `Map<int, List<Entity>>`, `Map<string, List<List<int>>>`. Not grids, which are never copied (but in an asset, which is never written: see Assets). A key is still a plain value (see Maps and sets), and so is a grid's cell (see Grids). One rule says what each built-in type takes, the same in the parser and the checker (`generic_forms` in `compiler/src/types.c`): a list's element and a map's value take any value but a grid; a key takes a value with a hash and `==`, of a fixed size; a cell takes a plain value; a `T?` takes any value a function can return; `fails E` takes a value that isn't a `T?`. (Provisional, built 2026-10-06 as the second of the three steps generics take: the owner decided the steps, and that containers nest, 2026-10-06; the picks here await them.)
+- An element that's a container is changed where it is: `rows[i].Add(x)`, `rows[i][j] = v`, `rows[i][j] += v`, `buckets[key].Add(e)`, through any number of indexes. `buckets[key].Add(e)` adds the key when it isn't there, as `buckets[key] = ...` does. Past the end of the list it's in, nothing happens, as any write past the end. Not through a struct element's field (`bags[i].parts.Add(x)`): the struct is a copy, taken out and put back, as before. An element isn't sorted in place either: a copy is sorted and put back. (Picked: a slot in the list it's in, where C#'s `rows[i].Add(x)` works because its lists are references.)
+- Changing an element where it is (Provisional, built 2026-10-06 with arrays, so that `rings[b].cells[j] = v` costs what the write costs): a field of a struct that's a list's element, a map's value or an array's element is written where it is when what's written holds nothing of the heap (`rows[i].x = 1`, `rows[i].count++`, `rings[b].cells[j] = v`), through fields and arrays' indexes after the first container's. Generated code finds the element's slot and writes into it; past the end nothing happens, and a map's value is added when the key isn't there. A field that holds text or a list, anything in a list or a map inside the element, and a grid's cell are still copies, taken out and put back; a `mut` method on an element still is too. A field read through an element, `rows[i].x`, goes through a pointer at the element, never a copy of it.
+- Whatever takes a whole element out of a list copies it, its lists too, so no copy ever reaches what it was copied from: a `foreach`'s variable, a local assigned from an element, an argument (unless a `mut` argument of the same call could change it, as for any list), a map's `Get` or `TryGet`. Reading `rows[i][j]` or `rows[i].count` copies nothing. A `foreach` over a `List<List<int>>` copies each row as it comes to it: a loop that only counts them wants `rows[i].count` in a `for`.
+- Text shows them as it shows a list, inside out: `[[1, 2], [3]]`, `[{"a": 1}]`, `[{1, 2}]`.
+- Not to C: an extern function's list holds plain values, and a list of lists is refused as a list of text is. Not in a parallel loop's list, whose elements are plain, as text is refused there. Not in an input or a command, which hold no lists but a command's `List<byte>`.
+- A snapshot, a hash, a delta and the world as bytes see nothing new: an inner list is a block in the same heap, with its own pages, which they already cover block by block. Hot reloading carries the field over by its type's name (`List<List<int>>`) with the heap, as it carries any list.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt`, `Resize` or `Clear`), can't end the loop, wait, spawn or send, and so on.
@@ -1102,8 +1184,8 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, lists of maps, and lists of structs that hold either.
 - Searching with a condition, and sorting by a key.
+- Changing a list inside a struct element where it is (`bags[i].parts.Add(x)`), and sorting an inner list in place.
 - Fixed-size arrays inside components, which need no heap.
 
 ## Maps and sets
@@ -1119,20 +1201,19 @@ system Advance(mut Match match)
 
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
-- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
-- A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value, or the value type's `default`: C#'s `TryGetValue`, see Out parameters), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
+- Values are what a list's elements can be: built-in types, text, enums, structs, lists, maps and sets, and structs with any of them in them (see Lists), not ECS data and not grids. A value that's a container is changed where it is, `buckets[key].Add(e)`, which adds the key when it isn't there; a value read is a copy, as a list's element is (see Lists).
+- A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value, or the value type's `default`: C#'s `TryGetValue`, see Out parameters), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is, when it's taken out; a plain field of a struct value is changed where it is, `scores[k].x = 1`, which adds the key when it isn't there (see Lists, Changing an element where it is).
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
 - Text shows maps as `{1: "a", 2: "b"}` and sets as `{1, 2}`, the keys in their order.
 - Changing a map or a set needs something that can change: a `mut` component or singleton, or a `mut` local. Systems that change the match's maps wait for each other, as they do for text and lists: they share its heap.
-- Components, singletons, structs and events can hold maps and sets; inputs can't, and neither can lists, grids' cells or other maps. They don't go to C.
+- Components, singletons, structs and events can hold maps and sets, and so can lists and other maps, as values (see Lists); inputs can't, nor grids' cells. They don't go to C.
 - How they're kept (`tide/map.h`): a map is two lists in the heap. Its entries, each a live flag, the key and the value, in the order they were added, a removed one left dead in its place until more than half are dead, when adding a key packs the live ones together; and an index, a power of two of slots by the key's hash, kept under half full. So an entry's bytes depend on nothing but what's in it, and the same adds and removes give the same bytes on every machine.
 
 ### Open
 
 - Map literals, `[1: "a", 2: "b"]`.
 - Struct keys, and keys by several values.
-- Maps of maps or of lists, maps in lists, and structs that hold any of them as a list's elements or a map's values.
 
 ## Grids
 
@@ -2521,10 +2602,10 @@ Implemented, awaiting approval:
 - `appId` is text written out, or a constant that is: what Android and iOS, and their app stores, know the app by, like `com.studio.game`, the same for every version. It's two parts or more between dots, of letters and digits, each starting with a letter: what Android and iOS both take. Without it, apps are `dev.tide.<the game's name>`, which is fine to test with; an app made to ship (`tide build --android --release`) needs one.
 - `stats` is true or false, or a constant that is. With it, the window shows the stats in its bottom right corner with no option asking for them, as `tide run --stats` and CMake's `STATS` do. It's part of the build like every setting, so what `tide build` makes shows them too: a game takes it out before players get it, unless the frame rate is theirs to see. Under `tide run`, setting it or taking it out shows at the next reload. In generated C it's `tide_game_api.stats`, which the standard host reads beside its own `tide_run_desc.stats`.
 - The stats are a drawer (`tide/stats.h`), which the standard host draws over the game:
-  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list: what a frame's work takes on its thread (`cpu`: everything but the wait for the display), the ping of a match this machine runs, the input delay when there is one, the bandwidth, the tick, the entity count, the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls, and the three systems that took longest in the last tick. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
+  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list: what a frame's work takes on its thread (`cpu`: everything but the wait for the display), the ping of a match this machine runs, the input delay when there is one, the bandwidth, the tick, the entity count, the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls, and the three systems that took longest on average per measured run over the last half second, with their order held between updates. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
   - It starts closed when the game's setting, `tide build --stats` or CMake's `STATS` asks for the stats, and open under `tide run --stats` (`tide_run_desc.stats_open`). Open or closed is the host's own, whatever build of the game runs, so a reload keeps it.
   - A press that lands on it is the drawer's until it's let go, wherever it goes meanwhile: the mouse's buttons, and any finger. The game's input never samples it and its views and GUI never read it, from the frame it lands in. A press that began elsewhere stays the game's when it crosses the drawer, and a mouse whose cursor is locked is on nothing. The game reads F8 like any key.
-  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open.
+  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render cpu` line. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
   - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
 - A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The last two say that a game's own values are constants.

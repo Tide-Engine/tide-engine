@@ -1,4 +1,6 @@
-# Duel
+# Duel code tour
+
+This code tour follows Duel's match rules, local effects and menus. [The code](#the-code) explains how predicted and verified events drive its presentation, and how its views use queries, render targets and draw settings.
 
 A small 2D arena game inspired by Rounds, made with Tide. Jump, aim, shoot and block, then build a stronger fighter between rounds. Click the game to give it the mouse and keyboard.
 

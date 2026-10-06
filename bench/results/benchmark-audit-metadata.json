@@ -1,0 +1,994 @@
+{
+  "date": "2026-10-06",
+  "base_commit": "b27673a56e3b34172687588216236c12d2555534",
+  "changes": "Benchmark harness, snapshots, ordered map/set fixture and compile validation only; engine/compiler behavior unchanged",
+  "machine": {
+    "os": "Windows 11",
+    "release": "10.0.26200",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physical_cores": 12,
+    "logical_cpus": 24,
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "node": "v24.15.0",
+    "clang": "23.1.2"
+  },
+  "protocol": {
+    "simulation": "Three repetitions, implementations sequential, then one/twelve offered threads; full descriptor defaults",
+    "session": "Three full repetitions with descriptor network defaults",
+    "drawing": "One OpenGL 3.3 run, each scene 20 warmup/100 measured frames; includes readback",
+    "compile": "Three sequences per native/web debug/release combination; 100 reachable functions in 11 Tide files, plus three frontend samples",
+    "reference": "benchmark-audit-dev records the fetched dev build before harness/snapshot changes; unidentified legacy metadata compares separately",
+    "correctness": "17 native and 16 WASI CTest checks, plus full/irregular equivalent-state comparisons",
+    "binary_hash_note": "Hashes identify the final verified binaries. Simulation measurement binaries preceded a cosmetic invalid-option diagnostic wording edit; timed paths are identical. Compile uses the same installed CLI/runtime in both audits.",
+    "validation_node": "v24.16.0 portable runtime in this checkout; all 17 native and 16 WASI checks passed"
+  },
+  "verified_binary_sha256": {
+    "bench_sand": "efcf6111b7cc0e442a2cfa428937ef989bc288b103e1a081be5660706634eb7d",
+    "bench_gallery": "95ef75f2ccbaa0a857be9505710f0a6033fc39a7fb6069008654ab7db361f862",
+    "versus_particles": "6d0a024e0f3baff12ca1dba2fcd54940664f69cb5ee58d0579508ea741c98a1b",
+    "versus_sand": "c770e762c8517ef04eddc65604c83cdbad9f43e4ce4f73e73896a9de3f0de10a",
+    "versus_life": "6bef05115e73a81aa452bf727aadb2daf25b167b575fb2f1a56ff7fa6a9e555d",
+    "versus_churn": "ff9d2510f92cefa0349c8539fcc4b5dab60b2ba22c26f1f8da3c64ec8c7220ba",
+    "versus_events": "ca38b151d70d2b60811a76a532ae5c8a1e6b63b43d14250b27c5de3cb4413178",
+    "versus_nbody": "bb3d72fbf74b6596356cfeb190b1a74ad8c9d1bd9b5c4b0b5094731c0255a8c0",
+    "versus_buckets": "48da5656067592ffde68aca1d5c2fde974ee742e582f2ea111cfca3b11ba501d",
+    "versus_lookup": "1a9a31bb7f4b86efc07ccbe13f9aba0aa7fd3a8adbcaed3e1f9a3fd6d0d922e4",
+    "tide_platform_draw": "15ebee0824b96e00ef949a77b5ea8e42e3857627690721c0a9b8b7a9a462f24a",
+    "tidec": "08266269d109a18e88e21bbecfbcc0dbffd78561bb4a8e23be9da884179fc496",
+    "tide": "430d96c086491e96efeb991285cb47b98fb2f79e0400aca7dd9b8b2c052a8b71"
+  },
+  "records": {
+    "versus": [
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:41Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:42Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:42Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:42Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:43Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:43Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:43Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "buckets": 4096
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:44Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:45Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:45Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:45Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:46Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:46Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:46Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "buckets": 4096
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:47Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:47Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:48Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:48Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:49Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:49Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:49Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "buckets": 4096
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:01Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:01Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:02Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:02Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "split": false,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:03Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:03Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "split": false,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:03Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:04Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 1024
+        },
+        "ok": true,
+        "digest": "0x2901a1387f671ee7"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:05Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x927e5a2c0eed4917"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:05Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x9d7a1405608c2ecf"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit-lookup-steady",
+        "date": "2026-10-06T14:53:06Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 0
+        },
+        "ok": true,
+        "digest": "0x3f5c3d27f57cedb7"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:11Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:11Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:12Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:12Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "split": false,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:13Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:13Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "split": false,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:13Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:14Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 1024
+        },
+        "ok": true,
+        "digest": "0x2901a1387f671ee7"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:15Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x927e5a2c0eed4917"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:16Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x9d7a1405608c2ecf"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit-lookup-steady",
+        "date": "2026-10-06T14:53:17Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 0
+        },
+        "ok": true,
+        "digest": "0x3f5c3d27f57cedb7"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:21Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xe36abf3eafdfb876"
+      },
+      {
+        "benchmark": "versus_sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:22Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xdb94fbcfc47575aa"
+      },
+      {
+        "benchmark": "versus_life",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:22Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "split": false,
+          "size": 1024
+        },
+        "ok": true,
+        "digest": "0xa8face01f7dcf932"
+      },
+      {
+        "benchmark": "versus_churn",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:22Z",
+        "options": {
+          "warmup": 200,
+          "ticks": 300,
+          "split": false,
+          "rate": 2000
+        },
+        "ok": true,
+        "digest": "0xf5c728bb7fc00803"
+      },
+      {
+        "benchmark": "versus_events",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:23Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "targets": 50000,
+          "turrets": 200000
+        },
+        "ok": true,
+        "digest": "0x83c5fb492d556932"
+      },
+      {
+        "benchmark": "versus_nbody",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:23Z",
+        "options": {
+          "warmup": 2,
+          "ticks": 30,
+          "split": false,
+          "count": 2000
+        },
+        "ok": true,
+        "digest": "0xd5bf49e60e24dc2f"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:23Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 0
+        },
+        "ok": true,
+        "digest": "0xbfaee3e2f0e8cba6"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:24Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 1024
+        },
+        "ok": true,
+        "digest": "0x2901a1387f671ee7"
+      },
+      {
+        "benchmark": "versus_particles",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:25Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 1000000,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x927e5a2c0eed4917"
+      },
+      {
+        "benchmark": "versus_buckets",
+        "label": "benchmark-audit-kept",
+        "date": "2026-10-06T14:53:25Z",
+        "options": {
+          "warmup": 40,
+          "ticks": 300,
+          "split": false,
+          "buckets": 4096,
+          "kept": 1
+        },
+        "ok": true,
+        "digest": "0x9d7a1405608c2ecf"
+      },
+      {
+        "benchmark": "versus_lookup",
+        "label": "benchmark-audit-lookup-steady",
+        "date": "2026-10-06T14:53:26Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 200,
+          "split": false,
+          "count": 16384,
+          "changes": 0
+        },
+        "ok": true,
+        "digest": "0x3f5c3d27f57cedb7"
+      }
+    ],
+    "sand": [
+      {
+        "benchmark": "sand",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:52Z",
+        "options": {
+          "players": 8,
+          "join_every": 0.25,
+          "seconds": 10,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 256
+        },
+        "ok": true,
+        "digest": "0xaa1f17c28395f54b"
+      },
+      {
+        "benchmark": "sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:09Z",
+        "options": {
+          "players": 8,
+          "join_every": 0.25,
+          "seconds": 10,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 256
+        },
+        "ok": true,
+        "digest": "0xaa1f17c28395f54b"
+      },
+      {
+        "benchmark": "sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:20Z",
+        "options": {
+          "players": 8,
+          "join_every": 0.25,
+          "seconds": 10,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 256
+        },
+        "ok": true,
+        "digest": "0xaa1f17c28395f54b"
+      },
+      {
+        "benchmark": "sand",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:29Z",
+        "options": {
+          "players": 8,
+          "join_every": 0.25,
+          "seconds": 10,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 256
+        },
+        "ok": true,
+        "digest": "0xaa1f17c28395f54b"
+      }
+    ],
+    "gallery": [
+      {
+        "benchmark": "gallery",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:45:53Z",
+        "options": {
+          "players": 8,
+          "join_every": 3,
+          "seconds": 5,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 512,
+          "archived": 4
+        },
+        "ok": true,
+        "digest": "0xd73bd300537806ae"
+      },
+      {
+        "benchmark": "gallery",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:10Z",
+        "options": {
+          "players": 8,
+          "join_every": 3,
+          "seconds": 5,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 512,
+          "archived": 4
+        },
+        "ok": true,
+        "digest": "0xd73bd300537806ae"
+      },
+      {
+        "benchmark": "gallery",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:20Z",
+        "options": {
+          "players": 8,
+          "join_every": 3,
+          "seconds": 5,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 512,
+          "archived": 4
+        },
+        "ok": true,
+        "digest": "0xd73bd300537806ae"
+      },
+      {
+        "benchmark": "gallery",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:30Z",
+        "options": {
+          "players": 8,
+          "join_every": 3,
+          "seconds": 5,
+          "latency_ms": 50,
+          "jitter_ms": 10,
+          "loss_percent": 1,
+          "size": 512,
+          "archived": 4
+        },
+        "ok": true,
+        "digest": "0xd73bd300537806ae"
+      }
+    ],
+    "draw": [
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:30Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:31Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:31Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:31Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:31Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:32Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:32Z",
+        "ok": null,
+        "digest": null
+      },
+      {
+        "benchmark": "draw",
+        "label": "benchmark-audit",
+        "date": "2026-10-06T14:53:32Z",
+        "ok": null,
+        "digest": null
+      }
+    ],
+    "compile": [
+      {
+        "benchmark": "compile",
+        "label": "benchmark-audit-dev",
+        "date": "2026-10-06T14:48:30.215Z",
+        "options": {
+          "targets": [
+            "native",
+            "web"
+          ],
+          "configs": [
+            "debug",
+            "release"
+          ],
+          "sizes": [
+            100
+          ],
+          "files": 10,
+          "repeat": 3,
+          "frontend": true
+        },
+        "ok": true,
+        "digest": null
+      },
+      {
+        "benchmark": "compile",
+        "label": "benchmark-audit-validated",
+        "date": "2026-10-06T14:54:44.760Z",
+        "options": {
+          "targets": [
+            "native",
+            "web"
+          ],
+          "configs": [
+            "debug",
+            "release"
+          ],
+          "sizes": [
+            100
+          ],
+          "files": 10,
+          "repeat": 3,
+          "frontend": true
+        },
+        "ok": true,
+        "digest": null
+      }
+    ]
+  }
+}

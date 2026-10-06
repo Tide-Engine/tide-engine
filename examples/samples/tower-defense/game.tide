@@ -1,0 +1,1216 @@
+const string SampleTitle = "Tower Defense";
+
+// Tower defense for up to four friends. Creeps walk the road to the base, and
+// everyone places and upgrades towers to stop them. Each player has a cursor,
+// a color, a purse of gold and a kill count of their own; the base's lives and
+// the waves are the team's.
+
+settings
+{
+    title = "Tower Defense";
+    tickRate = 30;
+    maxPlayers = 4;
+    hostMigration = true;
+}
+
+const int COLS = 10;
+const int ROWS = 8;
+const int SEATS = 4;
+const int KINDS = 3;
+const int MAX_LEVEL = 3;
+const int LIVES = 20;
+const int START_GOLD = 120;
+const float FIRST_BREAK = 12;
+const float BREAK = 5;
+const float OVER_TIME = 7;
+const float CHILL_TIME = 1.6;
+const int WAYPOINTS = 6;
+const float PATH_LENGTH = 25;
+
+const Color BG = Color(0.086, 0.086, 0.094);
+const Color QUIET = Color(0.64, 0.64, 0.68);
+const Color AMBER = Color(0.98, 0.75, 0.14);
+const Color TEAL = Color(0.18, 0.83, 0.75);
+const Color ROSE = Color(0.98, 0.44, 0.52);
+const Color VIOLET = Color(0.7, 0.6, 1);
+const Color LIME = Color(0.62, 0.86, 0.36);
+const Color ICE = Color(0.6, 0.86, 1);
+const Color STEEL = Color(0.85, 0.85, 0.88);
+
+enum Phase { Build, Fight, Over, Wipe }
+enum TowerKind { Gun, Bomb, Frost }
+enum CreepKind { Grunt, Runner, Brute, Boss }
+
+scene Main { }
+
+// ---------------------------------------------------------------- The match
+
+// A player's cursor: the tile they point at, which their friends see too.
+component Builder
+{
+    int2 cell = int2(4, 4);
+    int seat;
+}
+
+component Tower
+{
+    int2 cell;
+    TowerKind kind;
+    int level = 1;
+    int seat;                 // Whose it is: its color, and who its kills count for
+    float reload;
+    [Rotation] float aim = -1.5708;
+    local float pop = 1;      // This machine's: it grows in as it's built or upgraded
+    local float kick;         // ...and its barrel jumps back as it fires
+}
+
+component Creep
+{
+    CreepKind kind;
+    float along;              // How far down the road it is
+    float2 position = float2(-1, 1);
+    float hp = 10;
+    float maxHp = 10;
+    float speed = 1;
+    float chill;              // Seconds it's still slowed for
+    float slow = 1;
+    int bounty = 4;
+    local float flash;
+}
+
+singleton Game
+{
+    Phase phase;
+    int wave;
+    int lives = LIVES;
+    int best;
+    float timer = FIRST_BREAK;
+    int toSpawn;
+    int spawned;
+    float spawnIn;
+    int left;                 // Creeps still to beat this wave
+    int leaks;                // ...and how many of it got through
+}
+
+singleton Team
+{
+    Map<PlayerID, int> seatOf;
+    Map<PlayerID, Entity> builders;
+    List<bool> taken = [false, false, false, false];
+    List<int> gold = [0, 0, 0, 0];
+    List<int> kills = [0, 0, 0, 0];
+    int pot;                  // Gold earned and not yet shared out
+    int players;
+}
+
+singleton Board
+{
+    Grid2<Entity> towers = Grid2(COLS, ROWS);
+}
+
+// Where a player points, every tick.
+input Pointing
+{
+    [Absolute, Clamp(0, COLS - 1)] int x = 4;
+    [Absolute, Clamp(0, ROWS - 1)] int y = 4;
+
+    Sample(Devices devices, Hand hand)
+    {
+        x = hand.cell.x;
+        y = hand.cell.y;
+    }
+}
+
+// What a tap asks of the match: build here, or upgrade what's here.
+command Act
+{
+    int x;
+    int y;
+    TowerKind kind;
+    bool upgrade;             // What the player saw there: a tower to upgrade, or a free tile
+}
+
+event Hit { float damage; float slow; int seat; }
+event Upgrade { int seat; }
+event Leaked { int cost; }
+
+// Sent only for what each machine shows.
+event Upgraded { }
+event Shot { float2 to; float radius; }
+event Killed { float2 at; CreepKind kind; int bounty; }
+event WaveStarted { int wave; bool boss; }
+event WaveCleared { int bonus; bool clean; }
+event NewGame { }
+
+// The road, from where creeps come in to the base.
+int2 Waypoint(int index)
+{
+    if (index <= 0) return int2(-1, 1);
+    if (index == 1) return int2(7, 1);
+    if (index == 2) return int2(7, 3);
+    if (index == 3) return int2(2, 3);
+    if (index == 4) return int2(2, 6);
+    return int2(9, 6);
+}
+
+bool OnPath(int x, int y)
+{
+    for (var i = 0; i + 1 < WAYPOINTS; i++)
+    {
+        var a = Waypoint(i);
+        var b = Waypoint(i + 1);
+        if (x >= Math.Min(a.x, b.x) && x <= Math.Max(a.x, b.x) && y >= Math.Min(a.y, b.y) && y <= Math.Max(a.y, b.y)) return true;
+    }
+    return false;
+}
+
+float2 PathPoint(float along)
+{
+    mut var rest = Math.Max(along, 0);
+    for (var i = 0; i + 1 < WAYPOINTS; i++)
+    {
+        var a = float2(Waypoint(i));
+        var b = float2(Waypoint(i + 1));
+        var length = Math.Distance(a, b);
+        if (rest <= length) return a + (b - a) * (rest / length);
+        rest -= length;
+    }
+    return float2(Waypoint(WAYPOINTS - 1));
+}
+
+int Cost(TowerKind kind)
+{
+    if (kind == TowerKind.Gun) return 40;
+    if (kind == TowerKind.Bomb) return 75;
+    return 55;
+}
+
+int UpgradeCost(TowerKind kind, int level)
+{
+    return (Cost(kind) + 10) * level;
+}
+
+float Range(TowerKind kind, int level)
+{
+    if (kind == TowerKind.Gun) return 1.9 + 0.3 * level;
+    if (kind == TowerKind.Bomb) return 2.2 + 0.3 * level;
+    return 1.4 + 0.3 * level;
+}
+
+float Damage(TowerKind kind, int level)
+{
+    if (kind == TowerKind.Gun) return level == 1 ? 8.0 : level == 2 ? 17.0 : 34.0;
+    if (kind == TowerKind.Bomb) return level == 1 ? 15.0 : level == 2 ? 28.0 : 52.0;
+    return level == 1 ? 2.0 : level == 2 ? 4.0 : 7.0;
+}
+
+float Reload(TowerKind kind)
+{
+    if (kind == TowerKind.Gun) return 0.45;
+    if (kind == TowerKind.Bomb) return 1.25;
+    return 0.9;
+}
+
+int WaveSize(int wave)
+{
+    return Math.Min(7 + wave, 24);
+}
+
+CreepKind KindOf(int wave, int index, bool last)
+{
+    if (last && wave % 5 == 0) return CreepKind.Boss;
+    if (wave >= 4 && index % 5 == 4) return CreepKind.Brute;
+    if (wave >= 2 && (index + wave) % 3 == 0) return CreepKind.Runner;
+    return CreepKind.Grunt;
+}
+
+float CreepHp(int wave, CreepKind kind)
+{
+    var hp = 48 * Math.Pow(1.22, float(wave - 1));
+    if (kind == CreepKind.Runner) return hp * 0.55;
+    if (kind == CreepKind.Brute) return hp * 2.6;
+    if (kind == CreepKind.Boss) return hp * 12;
+    return hp;
+}
+
+float CreepSpeed(CreepKind kind)
+{
+    if (kind == CreepKind.Runner) return 1.9;
+    if (kind == CreepKind.Brute) return 0.75;
+    if (kind == CreepKind.Boss) return 0.65;
+    return 1.1;
+}
+
+int Bounty(int wave, CreepKind kind)
+{
+    var bounty = 3 + wave / 5;
+    if (kind == CreepKind.Brute) return bounty * 2;
+    if (kind == CreepKind.Boss) return bounty * 12;
+    return bounty;
+}
+
+int LifeCost(CreepKind kind)
+{
+    if (kind == CreepKind.Brute) return 2;
+    if (kind == CreepKind.Boss) return 10;
+    return 1;
+}
+
+// Everyone who joins gets a seat: a color, a cursor and gold to start with.
+event(PlayerJoined joined) Arrive(mut Team team, Game game)
+{
+    if (team.seatOf.Has(joined.player)) return;
+    mut var seat = 0;
+    for (var i = SEATS - 1; i >= 0; i--)
+    {
+        if (!team.taken[i]) seat = i;
+    }
+    team.taken[seat] = true;
+    team.gold[seat] = START_GOLD + game.wave * 10;
+    team.kills[seat] = 0;
+    team.seatOf[joined.player] = seat;
+    team.builders[joined.player] = Spawn(Builder { seat = seat }, Owner { player = joined.player });
+    team.players += 1;
+}
+
+// Their towers stay and keep shooting for the team.
+event(PlayerLeft gone) Depart(mut Team team)
+{
+    if (!team.seatOf.TryGet(gone.player, out var seat)) return;
+    team.taken[seat] = false;
+    team.seatOf.Remove(gone.player);
+    team.builders[gone.player].Destroy();
+    team.builders.Remove(gone.player);
+    team.players -= 1;
+}
+
+// The waves, one after another, and a new game when the base has fallen.
+system Flow(mut Game game, mut Team team, mut Board board, Time time, query (with Creep) creeps)
+{
+    // What the team earned is shared out evenly.
+    if (team.players > 0 && team.pot >= team.players)
+    {
+        var share = team.pot / team.players;
+        team.pot -= share * team.players;
+        for (var i = 0; i < SEATS; i++)
+        {
+            if (team.taken[i]) team.gold[i] += share;
+        }
+    }
+
+    mut var alive = 0;
+    foreach (var creep in creeps) alive += 1;
+    game.left = alive + game.toSpawn;
+
+    if (game.phase == Phase.Build)
+    {
+        game.timer -= time.dt;
+        if (game.timer > 0) return;
+        game.wave += 1;
+        game.toSpawn = WaveSize(game.wave);
+        game.spawned = 0;
+        game.spawnIn = 0;
+        game.leaks = 0;
+        game.phase = Phase.Fight;
+        Send(WaveStarted { wave = game.wave, boss = game.wave % 5 == 0 });
+        return;
+    }
+    if (game.phase == Phase.Fight)
+    {
+        if (game.toSpawn == 0)
+        {
+            if (alive > 0) return;
+            var bonus = 15 + game.wave * 3;
+            team.pot += bonus;
+            game.phase = Phase.Build;
+            game.timer = BREAK;
+            Send(WaveCleared { bonus = bonus, clean = game.leaks == 0 });
+            return;
+        }
+        game.spawnIn -= time.dt;
+        if (game.spawnIn > 0) return;
+        var kind = KindOf(game.wave, game.spawned, game.toSpawn == 1);
+        var hp = CreepHp(game.wave, kind);
+        Spawn(Creep { kind = kind, hp = hp, maxHp = hp, speed = CreepSpeed(kind), bounty = Bounty(game.wave, kind) });
+        game.spawned += 1;
+        game.toSpawn -= 1;
+        game.spawnIn = Math.Max(0.4, 0.95 - game.wave * 0.025);
+        return;
+    }
+    if (game.phase == Phase.Over)
+    {
+        game.timer -= time.dt;
+        if (game.timer <= 0) game.phase = Phase.Wipe;
+        return;
+    }
+    // Wipe lasted a tick, in which every tower and creep went. Start over.
+    board.towers.Clear();
+    for (var i = 0; i < SEATS; i++)
+    {
+        team.gold[i] = START_GOLD;
+        team.kills[i] = 0;
+    }
+    team.pot = 0;
+    game.wave = 0;
+    game.lives = LIVES;
+    game.toSpawn = 0;
+    game.timer = FIRST_BREAK;
+    game.phase = Phase.Build;
+    Send(NewGame { });
+}
+
+system Point(Pointing pointing, mut Builder builder, with Owner)
+{
+    builder.cell = int2(pointing.x, pointing.y);
+}
+
+system March(mut Creep creep, Game game, Time time)
+{
+    if (game.phase == Phase.Wipe)
+    {
+        this.Destroy();
+        return;
+    }
+    if (game.phase == Phase.Over) return;
+    mut var speed = creep.speed;
+    if (creep.chill > 0)
+    {
+        creep.chill -= time.dt;
+        speed *= creep.slow;
+    }
+    creep.along += speed * time.dt;
+    creep.position = PathPoint(creep.along);
+    if (creep.along < PATH_LENGTH) return;
+    Send(Leaked { cost = LifeCost(creep.kind) });
+    this.Destroy();
+}
+
+// A tower aims at the creep furthest down the road that it reaches.
+system Fire(mut Tower tower, Game game, Time time, query (Creep creep) creeps)
+{
+    if (game.phase == Phase.Wipe)
+    {
+        this.Destroy();
+        return;
+    }
+    if (game.phase == Phase.Over) return;
+    tower.reload = Math.Max(0, tower.reload - time.dt);
+
+    var from = float2(tower.cell);
+    var range = Range(tower.kind, tower.level);
+    mut var furthest = -1.0;
+    mut var target = from;
+    mut Entity victim = default;
+    foreach (var row in creeps)
+    {
+        if (row.creep.along <= furthest) continue;
+        if (Math.DistanceSq(row.creep.position, from) > range * range) continue;
+        furthest = row.creep.along;
+        target = row.creep.position;
+        victim = row.entity;
+    }
+    if (furthest < 0) return;
+    if (tower.kind != TowerKind.Frost)
+    {
+        var way = target - from;
+        tower.aim = Math.Atan2(way.y, way.x);
+    }
+    if (tower.reload > 0) return;
+    tower.reload = Reload(tower.kind);
+    var damage = Damage(tower.kind, tower.level);
+    if (tower.kind == TowerKind.Gun)
+    {
+        victim.Send(Hit { damage = damage, seat = tower.seat });
+        this.Send(Shot { to = target });
+        return;
+    }
+    // A bomb bursts around its target, and frost chills everything in reach.
+    var frost = tower.kind == TowerKind.Frost;
+    var center = frost ? from : target;
+    var radius = frost ? range : 0.75 + 0.15 * tower.level;
+    var slow = frost ? 0.7 - 0.1 * tower.level : 0.0;
+    foreach (var row in creeps)
+    {
+        if (Math.DistanceSq(row.creep.position, center) > radius * radius) continue;
+        row.entity.Send(Hit { damage = damage, slow = slow, seat = tower.seat });
+    }
+    this.Send(Shot { to = center, radius = radius });
+}
+
+event(Hit hit) TakeHit(mut Creep creep, mut Team team)
+{
+    if (creep.hp <= 0) return; // Another hit this tick already killed it
+    if (hit.slow > 0)
+    {
+        creep.slow = creep.chill > 0 ? Math.Min(creep.slow, hit.slow) : hit.slow;
+        creep.chill = CHILL_TIME;
+    }
+    creep.hp -= hit.damage;
+    if (creep.hp > 0) return;
+    team.kills[hit.seat] += 1;
+    team.pot += creep.bounty;
+    Send(Killed { at = creep.position, kind = creep.kind, bounty = creep.bounty });
+    this.Destroy();
+}
+
+event(Leaked leak) LoseLives(mut Game game)
+{
+    if (game.phase != Phase.Fight) return;
+    game.leaks += 1;
+    game.lives = Math.Max(0, game.lives - leak.cost);
+    if (game.lives > 0) return;
+    game.best = Math.Max(game.best, game.wave);
+    game.phase = Phase.Over;
+    game.timer = OVER_TIME;
+}
+
+// The player's connection says who sent it; the match checks the rest.
+command(Act act, PlayerID sender) OnAct(mut Team team, mut Board board, Game game)
+{
+    if (game.phase == Phase.Over || game.phase == Phase.Wipe) return;
+    if (!team.seatOf.TryGet(sender, out var seat)) return;
+    if (act.x < 0 || act.x >= COLS || act.y < 0 || act.y >= ROWS) return;
+    if (OnPath(act.x, act.y)) return;
+    var there = board.towers[act.x, act.y];
+    if (act.upgrade)
+    {
+        if (there != default) there.Send(Upgrade { seat = seat });
+        return;
+    }
+    // Someone else may have built here a moment before.
+    if (there != default) return;
+    if (int(act.kind) < 0 || int(act.kind) >= KINDS) return;
+    var cost = Cost(act.kind);
+    if (team.gold[seat] < cost) return;
+    team.gold[seat] -= cost;
+    board.towers[act.x, act.y] = Spawn(Tower { cell = int2(act.x, act.y), kind = act.kind, seat = seat });
+}
+
+event(Upgrade upgrade) UpgradeTower(mut Tower tower, mut Team team)
+{
+    if (tower.level >= MAX_LEVEL) return;
+    var price = UpgradeCost(tower.kind, tower.level);
+    if (team.gold[upgrade.seat] < price) return;
+    team.gold[upgrade.seat] -= price;
+    tower.level += 1;
+    this.Send(Upgraded { });
+}
+
+// ------------------------------------------------------- What a machine shows
+
+local singleton Layout
+{
+    float2 origin;            // The board's top left corner, in pixels
+    float cell = 32;          // A tile's side
+    float ui = 1;             // How big text and buttons are
+    float top;                // Where the lines above the board start
+}
+
+local singleton Hand
+{
+    int2 cell = int2(4, 4);   // The tile this machine's player points at
+    TowerKind kind;           // The tower they'd build
+    int seat = -1;
+    bool byKeys;
+    float hold;
+    float told;               // Shows for a moment what the tower just picked does
+    float deny;               // Shows for a moment that the gold isn't there...
+    int short;                // ...for something of this price
+    float wait;               // Until the next command can go
+    float rest;               // Until a press can upgrade, after one that built
+    float clock;              // Turns the line of help over
+    bool byTouch;             // A finger played: the keyboard's help isn't for them
+    bool blocked;             // What's under the cursor: the road...
+    bool tower;               // ...or a tower, of this kind and level
+    TowerKind towerKind;
+    int towerLevel;
+    int price;                // What a press here would cost
+}
+
+struct Tracer { float2 from; float2 to; float age; bool bomb; }
+struct Ring { float2 at; float radius; float age; bool frost; bool built; }
+struct Bit { float2 position; float2 velocity; float age; Color color; }
+struct Note { float2 at; float age; int amount; }
+
+local singleton Fx
+{
+    Random random;
+    List<Tracer> tracers;
+    List<Ring> rings;
+    List<Bit> bits;
+    List<Note> notes;
+    float hurt;
+    float banner = 3.5;
+    string title = "HOLD THE ROAD";
+    string sub = "Build towers before the creeps come";
+}
+
+Color SeatColor(int seat)
+{
+    if (seat == 0) return AMBER;
+    if (seat == 1) return TEAL;
+    if (seat == 2) return VIOLET;
+    return LIME;
+}
+
+Color CreepColor(CreepKind kind)
+{
+    if (kind == CreepKind.Runner) return Color(1, 0.62, 0.35);
+    if (kind == CreepKind.Brute) return Color(0.78, 0.3, 0.42);
+    if (kind == CreepKind.Boss) return Color(0.95, 0.32, 0.78);
+    return ROSE;
+}
+
+float CreepRadius(CreepKind kind)
+{
+    if (kind == CreepKind.Runner) return 0.17;
+    if (kind == CreepKind.Brute) return 0.3;
+    if (kind == CreepKind.Boss) return 0.4;
+    return 0.22;
+}
+
+Color Faded(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * alpha);
+}
+
+// A place on the board, in tiles, as pixels on the screen.
+float2 ToScreen(Layout layout, float2 at)
+{
+    return layout.origin + (at + 0.5) * layout.cell;
+}
+
+Rect ButtonRect(Layout layout, int index)
+{
+    var gap = 6 * layout.ui;
+    var width = (COLS * layout.cell - gap * (KINDS - 1)) / KINDS;
+    var y = layout.origin.y + ROWS * layout.cell + 6 * layout.ui;
+    return Rect(layout.origin.x + index * (width + gap), y, width, 44 * layout.ui);
+}
+
+bool Inside(Rect rect, float2 at)
+{
+    return at.x >= rect.x && at.x < rect.x + rect.width && at.y >= rect.y && at.y < rect.y + rect.height;
+}
+
+void DrawTurret(float2 center, float size, TowerKind kind, float aim, float kick, Color tint)
+{
+    var way = float2(Math.Cos(aim), Math.Sin(aim));
+    if (kind == TowerKind.Gun)
+    {
+        Draw2D.Line(center, center + way * size * (0.4 - kick * 0.12), size * 0.13, STEEL);
+        Draw2D.Circle(center, size * 0.2, tint);
+        return;
+    }
+    if (kind == TowerKind.Bomb)
+    {
+        Draw2D.Line(center, center + way * size * (0.28 - kick * 0.12), size * 0.26, STEEL);
+        Draw2D.Circle(center, size * 0.25, tint);
+        Draw2D.Circle(center, size * 0.1, Color(0.1, 0.1, 0.12));
+        return;
+    }
+    Draw2D.Circle(center, size * (0.3 + kick * 0.06), Faded(ICE, 0.35));
+    Draw2D.Rect(center, float2(size * 0.34), Math.PI * 0.25, ICE);
+    Draw2D.Circle(center, size * 0.09, tint);
+}
+
+void DrawHeart(float2 center, float size, Color color)
+{
+    Draw2D.Circle(center + float2(-size * 0.25, -size * 0.18), size * 0.3, color);
+    Draw2D.Circle(center + float2(size * 0.25, -size * 0.18), size * 0.3, color);
+    Draw2D.Rect(center + float2(0, size * 0.1), float2(size * 0.56), Math.PI * 0.25, color);
+}
+
+// First each frame: the screen is laid out from its size, around the board.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Begin(Session session, mut Layout layout, mut Hand hand)
+{
+    Draw2D.Clear(BG);
+    Draw2D.SetScreen();
+    float w = Screen.width;
+    float h = Screen.height;
+    var ui = Math.Clamp(Math.Min(w, h) / 400, 1.0, 1.6);
+    var above = Math.Round(46 * ui);
+    var below = Math.Round(70 * ui);
+    var cell = Math.Max(8, Math.Floor(Math.Min((w - 8) / COLS, (h - 52 - above - below) / ROWS)));
+    layout.ui = ui;
+    layout.cell = cell;
+    layout.top = 52 + Math.Max(0, Math.Floor((h - 52 - above - below - cell * ROWS) * 0.5));
+    layout.origin = float2(Math.Floor((w - cell * COLS) * 0.5), layout.top + above);
+    hand.seat = -1;
+    if (session.state == SessionState.Connected) return;
+    Draw2D.Text("Joining the game...", float2(w, h) * 0.5, 18 * ui, QUIET, Anchor.MiddleCenter);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Me(Builder builder, mut Hand hand, with ownership)
+{
+    hand.seat = builder.seat;
+}
+
+// The keyboard, the mouse and fingers all move one cursor, and a press on a
+// tile goes to the match as a command.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Play(Devices devices, Session session, Game game, Team team, Board board, World world, Layout layout, mut Hand hand, SampleLobby lobby)
+{
+    if (!lobby.playing) { hand.hold = 0; return; }
+    var dt = Math.Min(Frame.dt, 0.05);
+    hand.deny = Math.Max(0, hand.deny - dt);
+    hand.wait = Math.Max(0, hand.wait - dt);
+    hand.rest = Math.Max(0, hand.rest - dt);
+    hand.clock += dt;
+    if (hand.clock >= 9) hand.clock -= 9;
+    if (devices.touchscreen.primaryTouch.press.pressed) hand.byTouch = true;
+
+    hand.told = Math.Max(0, hand.told - dt);
+
+    var keys = devices.keyboard;
+    var before = hand.kind;
+    if (keys.digit1.down) hand.kind = TowerKind.Gun;
+    if (keys.digit2.down) hand.kind = TowerKind.Bomb;
+    if (keys.digit3.down) hand.kind = TowerKind.Frost;
+
+    mut var step = int2(0, 0);
+    if (keys.leftArrow.pressed || keys.a.pressed) step.x -= 1;
+    if (keys.rightArrow.pressed || keys.d.pressed) step.x += 1;
+    if (keys.upArrow.pressed || keys.w.pressed) step.y -= 1;
+    if (keys.downArrow.pressed || keys.s.pressed) step.y += 1;
+    var tapped = keys.leftArrow.down || keys.a.down || keys.rightArrow.down || keys.d.down
+        || keys.upArrow.down || keys.w.down || keys.downArrow.down || keys.s.down;
+    mut var move = false;
+    if (step.x == 0 && step.y == 0)
+    {
+        hand.hold = 0;
+    }
+    else if (tapped)
+    {
+        move = true;
+        hand.hold = 0.3;
+    }
+    else
+    {
+        // A key that's held goes on stepping
+        hand.hold -= dt;
+        if (hand.hold <= 0)
+        {
+            move = true;
+            hand.hold = 0.09;
+        }
+    }
+    if (move)
+    {
+        hand.cell = int2(Math.Clamp(hand.cell.x + step.x, 0, COLS - 1), Math.Clamp(hand.cell.y + step.y, 0, ROWS - 1));
+        hand.byKeys = true;
+        hand.told = 0;
+        hand.deny = 0;
+    }
+
+    var pointer = devices.pointer;
+    var screen = Screen.Flip(pointer.position);
+    var over = int2(Math.Floor((screen - layout.origin) / layout.cell));
+    var inside = over.x >= 0 && over.x < COLS && over.y >= 0 && over.y < ROWS;
+    mut var act = keys.space.down || keys.enter.down;
+    mut var arrived = false; // This press brought the cursor here
+    if (pointer.press.down)
+    {
+        for (var i = 0; i < KINDS; i++)
+        {
+            if (Inside(ButtonRect(layout, i), screen)) hand.kind = TowerKind(i);
+        }
+        if (inside)
+        {
+            arrived = over.x != hand.cell.x || over.y != hand.cell.y;
+            hand.cell = over;
+            hand.byKeys = false;
+            hand.told = 0;
+            if (arrived) hand.deny = 0;
+            act = true;
+        }
+    }
+    else if (inside && Math.LengthSq(pointer.delta) > 0)
+    {
+        hand.cell = over;
+        hand.byKeys = false;
+    }
+    if (hand.kind != before) hand.told = 3; // Say what the tower they picked does
+
+    // What's under the cursor, for this view and the ones that draw it.
+    var there = board.towers[hand.cell];
+    hand.blocked = OnPath(hand.cell.x, hand.cell.y);
+    hand.tower = world.Has<Tower>(there);
+    hand.price = Cost(hand.kind);
+    if (hand.tower)
+    {
+        var tower = world.Get<Tower>(there);
+        hand.towerKind = tower.kind;
+        hand.towerLevel = tower.level;
+        hand.price = tower.level >= MAX_LEVEL ? 0 : UpgradeCost(tower.kind, tower.level);
+    }
+
+    if (!act || hand.seat < 0 || hand.blocked) return;
+    if (game.phase == Phase.Over || game.phase == Phase.Wipe) return;
+    // Not while the match changes hands, and never faster than the match can take them.
+    if (session.state != SessionState.Connected || hand.wait > 0) return;
+    // A tap on a tower somewhere else only picks it: the next one upgrades it.
+    // And a double click that built a tower doesn't upgrade it too.
+    if (hand.tower && (arrived || hand.rest > 0 || hand.towerLevel >= MAX_LEVEL)) return;
+    if (team.gold[hand.seat] < hand.price)
+    {
+        hand.deny = 1;
+        hand.short = hand.price;
+        return;
+    }
+    hand.wait = 0.12;
+    if (!hand.tower) hand.rest = 0.5;
+    Send(Act { x = hand.cell.x, y = hand.cell.y, kind = hand.kind, upgrade = hand.tower });
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawBoard(Game game, Layout layout)
+{
+    var c = layout.cell;
+    var size = float2(COLS, ROWS) * c;
+    Draw2D.RoundRect(layout.origin + size * 0.5, size + float2(6), 6, Color(0.16, 0.17, 0.19));
+    for (var y = 0; y < ROWS; y++)
+    {
+        for (var x = 0; x < COLS; x++)
+        {
+            var shade = (x + y) % 2 == 0 ? Color(0.118, 0.125, 0.135) : Color(0.128, 0.136, 0.147);
+            Draw2D.Rect(ToScreen(layout, float2(x, y)), float2(c), shade);
+        }
+    }
+    // From here on, nothing draws past the board's edge.
+    Draw2D.SetClip(Rect(layout.origin.x, layout.origin.y, size.x, size.y));
+    // The road reddens as the base runs out of lives.
+    var danger = 1 - Math.Saturate(game.lives / 10.0);
+    var road = Color(0.23 + danger * 0.1, 0.215 - danger * 0.035, 0.2 - danger * 0.03);
+    for (var i = 0; i + 1 < WAYPOINTS; i++)
+    {
+        Draw2D.Line(ToScreen(layout, float2(Waypoint(i))), ToScreen(layout, float2(Waypoint(i + 1))), c * 0.84, road);
+    }
+    // Chevrons along the road say which way the creeps go.
+    for (var i = 0; i + 1 < WAYPOINTS; i++)
+    {
+        var a = float2(Waypoint(i));
+        var b = float2(Waypoint(i + 1));
+        var way = Math.Normalize(b - a);
+        var side = float2(-way.y, way.x);
+        var steps = int(Math.Distance(a, b));
+        for (var k = 1; k < steps; k++)
+        {
+            var at = ToScreen(layout, a + way * k);
+            var tip = at + way * c * 0.1;
+            var color = Color(0.33, 0.31, 0.29);
+            Draw2D.Line(tip, at - way * c * 0.08 + side * c * 0.14, Math.Max(1.5, c * 0.05), color);
+            Draw2D.Line(tip, at - way * c * 0.08 - side * c * 0.14, Math.Max(1.5, c * 0.05), color);
+        }
+    }
+}
+
+// The base, at the road's end: creeps walk in under it.
+[After(DrawCreeps)]
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawBase(Game game, Layout layout, Fx fx)
+{
+    var c = layout.cell;
+    var home = ToScreen(layout, float2(Waypoint(WAYPOINTS - 1)));
+    var glow = Math.Saturate(fx.hurt);
+    var size = c * (0.92 + glow * 0.12);
+    Draw2D.RoundRect(home, float2(size), c * 0.22, Color(0.2 + glow * 0.7, 0.12 + glow * 0.5, 0.15 + glow * 0.5));
+    Draw2D.WireRoundRect(home, float2(size), c * 0.22, Math.Max(2, c * 0.06), ROSE);
+    DrawHeart(home + float2(0, -c * 0.1), c * 0.42, ROSE);
+    Draw2D.Text($"{game.lives}", home + float2(0, c * 0.22), Math.Max(10, c * 0.3), Color.white, Anchor.MiddleCenter);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawTowers(mut Tower tower, Layout layout)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    tower.pop = Math.Max(0, tower.pop - dt * 3.5);
+    tower.kick = Math.Max(0, tower.kick - dt * 9);
+    var size = layout.cell * (1 + tower.pop * tower.pop * 0.4);
+    var center = ToScreen(layout, float2(tower.cell));
+    var tint = SeatColor(tower.seat);
+    Draw2D.RoundRect(center, float2(size * 0.86), size * 0.2, Color(tint.r * 0.22, tint.g * 0.22, tint.b * 0.22));
+    Draw2D.WireRoundRect(center, float2(size * 0.86), size * 0.2, Math.Max(1.5, size * 0.045), Faded(tint, 0.85));
+    DrawTurret(center, size, tower.kind, tower.aim, tower.kick, tint);
+    for (var i = 0; i < tower.level; i++)
+    {
+        var x = (i - (tower.level - 1) * 0.5) * size * 0.16;
+        Draw2D.Circle(center + float2(x, size * 0.32), size * 0.045, Color.white);
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawCreeps(mut Creep creep, Layout layout)
+{
+    creep.flash = Math.Max(0, creep.flash - Frame.dt);
+    var c = layout.cell;
+    var at = ToScreen(layout, creep.position);
+    var radius = CreepRadius(creep.kind) * c;
+    var color = creep.flash > 0 ? Color.white : CreepColor(creep.kind);
+    Draw2D.Circle(at + float2(0, radius * 0.3), radius, Color(0, 0, 0, 0.3));
+    if (creep.kind == CreepKind.Runner)
+    {
+        Draw2D.Rect(at, float2(radius * 1.7), Math.PI * 0.25, color);
+    }
+    else if (creep.kind == CreepKind.Brute)
+    {
+        Draw2D.RoundRect(at, float2(radius * 1.9), radius * 0.5, color);
+    }
+    else
+    {
+        Draw2D.Circle(at, radius, color);
+    }
+    if (creep.kind == CreepKind.Boss)
+    {
+        Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.06), Color.white);
+    }
+    // Two eyes, on the way it's going
+    var way = Math.Normalize(PathPoint(creep.along + 0.4) - PathPoint(creep.along));
+    var side = float2(-way.y, way.x);
+    var eye = Color(0.16, 0.05, 0.1);
+    Draw2D.Circle(at + (way * 0.4 + side * 0.38) * radius, radius * 0.2, eye);
+    Draw2D.Circle(at + (way * 0.4 - side * 0.38) * radius, radius * 0.2, eye);
+    if (creep.chill > 0) Draw2D.WireCircle(at, radius + c * 0.06, Math.Max(1.5, c * 0.05), ICE);
+    if (creep.hp >= creep.maxHp) return;
+    var wide = Math.Max(radius * 2.2, c * 0.5);
+    var part = Math.Saturate(creep.hp / creep.maxHp);
+    var y = at.y - radius - c * 0.14;
+    Draw2D.Rect(float2(at.x, y), float2(wide + 2, 5), Color(0, 0, 0, 0.7));
+    Draw2D.Rect(float2(at.x - wide * (1 - part) * 0.5, y), float2(wide * part, 3), part > 0.5 ? LIME : part > 0.25 ? AMBER : ROSE);
+}
+
+// Where the friends point.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawCursors(Builder builder, Layout layout, without ownership)
+{
+    var center = ToScreen(layout, float2(builder.cell));
+    var tint = SeatColor(builder.seat);
+    Draw2D.WireRoundRect(center, float2(layout.cell * 0.98), layout.cell * 0.2, 2, Faded(tint, 0.8));
+    // Their name goes over the tile, or under it along the board's top row
+    if (builder.cell.y > 0)
+    {
+        Draw2D.Text($"P{builder.seat + 1}", center - float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.LowerCenter);
+    }
+    else
+    {
+        Draw2D.Text($"P{builder.seat + 1}", center + float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.UpperCenter);
+    }
+}
+
+// This player's cursor: the tower it would build, and how far that reaches.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawHand(Team team, Layout layout, Hand hand)
+{
+    if (hand.seat < 0) return;
+    var c = layout.cell;
+    var center = ToScreen(layout, float2(hand.cell));
+    var tint = SeatColor(hand.seat);
+    if (hand.blocked)
+    {
+        Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Faded(QUIET, 0.6));
+        return;
+    }
+    var kind = hand.tower ? hand.towerKind : hand.kind;
+    var reach = Range(kind, hand.tower ? hand.towerLevel : 1) * c;
+    Draw2D.Circle(center, reach, Faded(tint, 0.06));
+    Draw2D.WireCircle(center, reach, 1.5, Faded(tint, 0.55));
+    if (!hand.tower)
+    {
+        Draw.Tint(Color(1, 1, 1, team.gold[hand.seat] >= hand.price ? 0.6 : 0.25))
+        {
+            DrawTurret(center, c, kind, -1.5708, 0, tint);
+        }
+    }
+    Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Color.white);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawFx(mut Fx fx, Layout layout)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    var c = layout.cell;
+    Draw.Blend(Blend.Add)
+    {
+        mut var i = 0;
+        while (i < fx.tracers.count)
+        {
+            mut var tracer = fx.tracers[i];
+            tracer.age += dt;
+            if (tracer.age >= 0.12)
+            {
+                fx.tracers.RemoveAt(i);
+                continue;
+            }
+            fx.tracers[i] = tracer;
+            var fade = 1 - tracer.age / 0.12;
+            var width = Math.Max(1.5, c * (tracer.bomb ? 0.1 : 0.06));
+            Draw2D.Line(ToScreen(layout, tracer.from), ToScreen(layout, tracer.to), width, Color(1, 0.9, 0.6, fade * 0.9));
+            i++;
+        }
+        i = 0;
+        while (i < fx.rings.count)
+        {
+            mut var ring = fx.rings[i];
+            ring.age += dt;
+            if (ring.age >= 0.35)
+            {
+                fx.rings.RemoveAt(i);
+                continue;
+            }
+            fx.rings[i] = ring;
+            var grown = ring.age / 0.35;
+            var at = ToScreen(layout, ring.at);
+            var radius = ring.radius * c * (0.35 + 0.65 * Math.Sqrt(grown));
+            if (ring.built)
+            {
+                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.07), Color(1, 1, 1, 0.6 * (1 - grown)));
+            }
+            else if (ring.frost)
+            {
+                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.08), Faded(ICE, 0.7 * (1 - grown)));
+            }
+            else
+            {
+                Draw2D.Circle(at, radius, Color(1, 0.55, 0.2, 0.5 * (1 - grown)));
+                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.06), Color(1, 0.85, 0.5, 0.8 * (1 - grown)));
+            }
+            i++;
+        }
+    }
+    mut var b = 0;
+    while (b < fx.bits.count)
+    {
+        mut var bit = fx.bits[b];
+        bit.age += dt;
+        if (bit.age >= 0.45)
+        {
+            fx.bits.RemoveAt(b);
+            continue;
+        }
+        bit.position += bit.velocity * dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - 4 * dt);
+        fx.bits[b] = bit;
+        Draw2D.Circle(ToScreen(layout, bit.position), c * 0.07 * (1 - bit.age / 0.45) + 1, Faded(bit.color, 1 - bit.age / 0.45));
+        b++;
+    }
+    mut var n = 0;
+    while (n < fx.notes.count)
+    {
+        mut var note = fx.notes[n];
+        note.age += dt;
+        if (note.age >= 0.8)
+        {
+            fx.notes.RemoveAt(n);
+            continue;
+        }
+        fx.notes[n] = note;
+        var at = ToScreen(layout, note.at) - float2(0, c * (0.3 + note.age * 0.7));
+        Draw2D.Text($"+{note.amount}", at, 12 * layout.ui, Faded(AMBER, Math.Saturate(2.4 - note.age * 3)), Anchor.MiddleCenter);
+        n++;
+    }
+}
+
+// Over everything: who's winning, the gold, the towers to pick from, and how to play.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Hud(Devices devices, Session session, Game game, Team team, Layout layout, Hand hand, mut Fx fx)
+{
+    Draw2D.SetClip();
+    var dt = Math.Min(Frame.dt, 0.05);
+    var ui = layout.ui;
+    var c = layout.cell;
+    var left = layout.origin.x;
+    var right = left + COLS * c;
+    var middle = layout.origin + float2(COLS, ROWS) * c * 0.5;
+    var top = layout.top;
+
+    // The wave and how much of it is left, the base's lives, and this player's gold.
+    var building = game.phase == Phase.Build;
+    var seconds = int(Math.Ceil(game.timer));
+    var number = building ? game.wave + 1 : game.wave;
+    var title = $"WAVE {number}";
+    Draw2D.Text(title, float2(left, top + 4 * ui), 18 * ui, Color.white, Font.Bold);
+    Draw2D.Text(building ? $"in {seconds}" : $"{game.left} to go",
+                float2(left + Draw2D.MeasureText(title, 18 * ui, Font.Bold).x + 8 * ui, top + 9 * ui), 12 * ui, building ? TEAL : QUIET);
+    DrawHeart(float2(middle.x - 12 * ui, top + 14 * ui), 14 * ui, ROSE);
+    Draw2D.Text($"{game.lives}", float2(middle.x, top + 5 * ui), 16 * ui, game.lives <= 5 ? ROSE : Color.white);
+    var gold = $"{team.gold[hand.seat]}";
+    var goldWide = Draw2D.MeasureText(gold, 16 * ui).x;
+    var shake = hand.deny > 0 ? Math.Sin(hand.deny * 40) * 3 * ui * hand.deny : 0.0;
+    Draw2D.Text(gold, float2(right + shake, top + 5 * ui), 16 * ui, hand.deny > 0 ? ROSE : AMBER, Anchor.UpperRight);
+    Draw2D.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 6 * ui, AMBER);
+    Draw2D.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 3.5 * ui, Color(0.75, 0.5, 0.05));
+
+    // Who's beaten how many creeps.
+    var line = top + 28 * ui;
+    Draw2D.Text("Kills", float2(left, line), 12 * ui, QUIET);
+    mut var x = left + Draw2D.MeasureText("Kills", 12 * ui).x + 9 * ui;
+    for (var seat = 0; seat < SEATS; seat++)
+    {
+        if (!team.taken[seat]) continue;
+        var mine = seat == hand.seat;
+        var label = mine ? $"You {team.kills[seat]}" : $"P{seat + 1} {team.kills[seat]}";
+        Draw2D.Circle(float2(x + 5 * ui, line + 6.5 * ui), 4.5 * ui, SeatColor(seat));
+        Draw2D.Text(label, float2(x + 13 * ui, line), 12 * ui, mine ? Color.white : QUIET);
+        x += Draw2D.MeasureText(label, 12 * ui).x + 23 * ui;
+    }
+    var aside = team.players == 1 ? "Invite friends from the menu" : game.best > 0 ? $"Best: wave {game.best}" : "";
+    if (x + Draw2D.MeasureText(aside, 12 * ui).x <= right)
+    {
+        Draw2D.Text(aside, float2(right, line), 12 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
+    }
+
+    // The towers to pick from.
+    var pointer = Screen.Flip(devices.pointer.position);
+    var tint = SeatColor(hand.seat);
+    for (var i = 0; i < KINDS; i++)
+    {
+        var kind = TowerKind(i);
+        var rect = ButtonRect(layout, i);
+        var size = float2(rect.width, rect.height);
+        var center = float2(rect.x, rect.y) + size * 0.5;
+        var picked = hand.kind == kind;
+        var lit = picked || Inside(rect, pointer);
+        Draw2D.RoundRect(center, size, 8 * ui, lit ? Color(0.2, 0.21, 0.24) : Color(0.14, 0.145, 0.16));
+        if (picked) Draw2D.WireRoundRect(center, size, 8 * ui, 2, tint);
+        Draw.Tint(Color(1, 1, 1, team.gold[hand.seat] >= Cost(kind) ? 1 : 0.4))
+        {
+            DrawTurret(float2(rect.x + rect.height * 0.5, center.y), rect.height * 0.95, kind, -0.7, 0, tint);
+            Draw2D.Text($"{kind}", float2(rect.x + rect.height * 0.98, rect.y + 7 * ui), 14 * ui, Color.white);
+            Draw2D.Text($"{Cost(kind)} gold", float2(rect.x + rect.height * 0.98, rect.y + 24 * ui), 12 * ui, AMBER);
+        }
+        Draw2D.Text($"{i + 1}", float2(rect.x + rect.width - 7 * ui, rect.y + 5 * ui), 11 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
+    }
+
+    // One line that says how to play, or what a press here would do.
+    var keysHelp = hand.byKeys || (hand.clock > 5 && !hand.byTouch);
+    mut var hint = keysHelp ? "Arrows move. Space builds or upgrades. 1 2 3 pick." : "Tap a tile to build. Tap a tower to upgrade it.";
+    mut var hintColor = QUIET;
+    if (hand.tower)
+    {
+        var press = hand.byKeys ? "Space" : "tap";
+        hint = hand.towerLevel >= MAX_LEVEL ? $"{hand.towerKind}, level {hand.towerLevel}: as strong as it gets"
+            : $"{hand.towerKind}, level {hand.towerLevel}: {press} to upgrade for {hand.price} gold";
+        hintColor = Color.white;
+    }
+    if (hand.told > 0)
+    {
+        hint = KindHint(hand.kind);
+        hintColor = Color.white;
+    }
+    if (hand.deny > 0)
+    {
+        hint = $"Not enough gold: that takes {hand.short}";
+        hintColor = ROSE;
+    }
+    var under = ButtonRect(layout, 0);
+    Draw2D.Text(hint, float2(middle.x, under.y + under.height + 4 * ui), 12 * ui, hintColor, Anchor.UpperCenter);
+
+    // A wave's name as it starts, and what clearing one paid.
+    fx.banner = Math.Max(0, fx.banner - dt);
+    fx.hurt = Math.Max(0, fx.hurt - dt * 2);
+    var over = game.phase == Phase.Over || game.phase == Phase.Wipe;
+    if (fx.banner > 0 && !over)
+    {
+        // Along the board's top row, where no creep walks
+        Draw.Tint(Color(1, 1, 1, Math.Saturate(fx.banner * 2)))
+        {
+            var tall = fx.sub == "" ? 34 * ui : 52 * ui;
+            var at = float2(middle.x, layout.origin.y + tall * 0.5);
+            Draw2D.Rect(at, float2(COLS * c, tall), Color(0.05, 0.05, 0.06, 0.82));
+            Draw2D.Text(fx.title, at - float2(0, fx.sub == "" ? 0 : 9 * ui), 22 * ui, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text(fx.sub, at + float2(0, 13 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
+        }
+    }
+    if (fx.hurt > 0)
+    {
+        var whole = float2(Screen.width, Screen.height);
+        Draw2D.Shape(Shape { center = whole * 0.5, size = whole, color = Color(0.95, 0.15, 0.25, 0.55 * fx.hurt), soft = -70 * ui });
+    }
+    if (session.state != SessionState.Connected)
+    {
+        // The match is changing hands: it goes on from here in a moment
+        Draw2D.Rect(middle, float2(COLS * c, 40 * ui), Color(0.05, 0.05, 0.06, 0.85));
+        Draw2D.Text("Reconnecting...", middle, 16 * ui, Color.white, Anchor.MiddleCenter);
+    }
+    if (!over) return;
+    Draw2D.Rect(middle, float2(COLS, ROWS) * c, Color(0.05, 0.05, 0.06, 0.8));
+    Draw2D.Text("THE BASE FELL", middle - float2(0, 40 * ui), 28 * ui, ROSE, Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text($"You held out until wave {game.wave}", middle, 15 * ui, Color.white, Anchor.MiddleCenter);
+    Draw2D.Text($"Best so far: wave {game.best}", middle + float2(0, 22 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
+    Draw2D.Text($"A new game starts in {seconds}", middle + float2(0, 48 * ui), 13 * ui, QUIET, Anchor.MiddleCenter);
+}
+
+string KindHint(TowerKind kind)
+{
+    if (kind == TowerKind.Gun) return "Gun: quick shots at one creep";
+    if (kind == TowerKind.Bomb) return "Bomb: a burst that hits a whole group";
+    return "Frost: slows the creeps around it";
+}
+
+// What happened in the match, as this machine shows it. A window nobody looks
+// at hears all of it and draws none, so each list only holds so much.
+local event(Shot shot) ShowShot(mut Tower tower, mut Fx fx)
+{
+    tower.kick = 1;
+    if (fx.tracers.count > 150 || fx.rings.count > 100) return;
+    var from = float2(tower.cell);
+    if (tower.kind != TowerKind.Frost) fx.tracers.Add(Tracer { from = from, to = shot.to, bomb = tower.kind == TowerKind.Bomb });
+    if (tower.kind != TowerKind.Gun) fx.rings.Add(Ring { at = shot.to, radius = shot.radius, frost = tower.kind == TowerKind.Frost });
+}
+
+local event(Hit) ShowHit(mut Creep creep)
+{
+    creep.flash = 0.06;
+}
+
+// A tower that's just been built, by anyone.
+local event(Spawned) ShowBuilt(Tower tower, mut Fx fx)
+{
+    if (fx.rings.count > 100) return;
+    fx.rings.Add(Ring { at = float2(tower.cell), radius = 0.9, built = true });
+}
+
+local event(Upgraded) ShowUpgrade(mut Tower tower)
+{
+    tower.pop = 1;
+}
+
+local event(Killed dead) ShowKill(mut Fx fx)
+{
+    if (fx.bits.count > 300 || fx.notes.count > 40) return;
+    var count = dead.kind == CreepKind.Boss ? 28 : 7;
+    for (var i = 0; i < count; i++)
+    {
+        var velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 4);
+        fx.bits.Add(Bit { position = dead.at, velocity = velocity, color = CreepColor(dead.kind) });
+    }
+    fx.notes.Add(Note { at = dead.at, amount = dead.bounty });
+}
+
+local event(Leaked) ShowLeak(mut Fx fx)
+{
+    fx.hurt = 1;
+}
+
+local event(WaveStarted start) ShowWave(mut Fx fx)
+{
+    fx.banner = 2.2;
+    fx.title = $"WAVE {start.wave}";
+    fx.sub = start.boss ? "A boss is coming!" : "";
+}
+
+local event(NewGame) ShowNewGame(mut Fx fx)
+{
+    fx.banner = 3;
+    fx.title = "NEW GAME";
+    fx.sub = "Build towers before the creeps come";
+}
+
+local event(WaveCleared cleared) ShowCleared(mut Fx fx)
+{
+    fx.banner = 2;
+    fx.title = cleared.clean ? "WAVE CLEARED" : "WAVE SURVIVED";
+    fx.sub = $"+{cleared.bonus} gold for the team";
+}
