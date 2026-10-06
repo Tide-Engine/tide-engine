@@ -1,0 +1,224 @@
+// What the ring is built of: the floor's tiles, and what's stacked on them,
+// which is another arrangement every round. It's part of the match: every
+// machine builds the same ring from the round's number and the match's seed.
+//
+// Everything stacked is a body of its own, standing still until something
+// hits it. Box3D puts a body that has come to rest to sleep, so two thousand
+// crates cost a tick next to nothing until a ball gets to them.
+//
+// What's stacked is square to the floor, and a column of crates stands a
+// hand's width from the next. That's for what the match carries: Box3D keeps
+// a contact for every two bodies whose boxes are within a tenth of a meter of
+// each other, touching or not, and each contact is in its state, which the
+// match holds, hashes, and sends to a player who joins. A crate in a column
+// has one, with the crate under it. Packed side by side, each had ten, and
+// the state of the same ring was three times the size.
+using Box3D;
+
+const float PITCH = 0.96;        // From a column's middle to the next one's: a crate, and the gap
+
+// One crate, plank, beam or keg of a ring that's being planned: a box, where
+// it stands and how it's turned.
+struct Brick
+{
+    float3 at;
+    float3 size = float3(CRATE);
+    bool turned;   // A quarter turn: its length runs along x
+    Kind kind;
+    int tone;
+}
+
+// What stands on a tile.
+enum Stand
+{
+    Nothing,
+    Stack,   // Crates in columns, three each way
+    Pile,    // ...two each way
+    Steps,   // A small pyramid of columns
+    Cabin,   // Beams laid crosswise, two a level
+    Wall,    // Crates laid like bricks, along the ring
+    Planks,  // Planks on end in a row, along the ring: the first to fall takes the rest
+    Gate,    // Two pillars and a beam across them
+    Kegs     // A keg, with a crate on it
+}
+
+// Crates in columns: `wide` each way, `high` up, around `at`.
+void Columns(mut List<Brick> plan, float2 at, int wide, int high)
+{
+    for (var i = 0; i < wide; i++)
+        for (var j = 0; j < wide; j++)
+            for (var level = 0; level < high; level++)
+                plan.Add(Brick { at = float3(at.x + (i - (wide - 1) * 0.5) * PITCH, CRATE * 0.5 + level * CRATE,
+                                             at.y + (j - (wide - 1) * 0.5) * PITCH), tone = (i + j * 2 + level) % 3 });
+}
+
+// A pyramid of columns: `base` each way, higher each column in from its
+// edge, `rise` crates a step.
+void Pyramid(mut List<Brick> plan, float2 at, int base, int rise)
+{
+    for (var i = 0; i < base; i++)
+        for (var j = 0; j < base; j++)
+        {
+            var high = rise * Math.Min(Math.Min(i + 1, base - i), Math.Min(j + 1, base - j));
+            for (var level = 0; level < high; level++)
+                plan.Add(Brick { at = float3(at.x + (i - (base - 1) * 0.5) * PITCH, CRATE * 0.5 + level * CRATE,
+                                             at.y + (j - (base - 1) * 0.5) * PITCH), tone = (i + j * 2 + level) % 3 });
+        }
+}
+
+// Beams laid crosswise, two a level: each lies on the two under it.
+void Cabin(mut List<Brick> plan, float2 at, int levels)
+{
+    for (var level = 0; level < levels; level++)
+        for (var side = -1; side <= 1; side += 2)
+        {
+            var across = level % 2 == 0;
+            plan.Add(Brick { at = float3(at.x + (across ? 0 : side * 0.9), 0.35 + level * 0.7, at.y + (across ? side * 0.9 : 0)),
+                             size = float3(0.7, 0.7, 2.5), turned = across, kind = Kind.Plank });
+        }
+}
+
+// Crates laid like bricks, each on the two under it, a row one shorter than
+// the row below: `long` of them at the bottom, along x or along z, `deep`
+// such walls one behind the other.
+void Wall(mut List<Brick> plan, float2 at, bool along, int long, int deep)
+{
+    for (var row = 0; row < deep; row++)
+        for (var level = 0; level < long; level++)
+            for (var k = 0; k < long - level; k++)
+            {
+                var far = (k - (long - 1 - level) * 0.5) * PITCH;
+                var back = (row - (deep - 1) * 0.5) * PITCH;
+                plan.Add(Brick { at = float3(at.x + (along ? far : back), CRATE * 0.5 + level * CRATE, at.y + (along ? back : far)),
+                                 tone = (k + level * 2 + row) % 3 });
+            }
+}
+
+// Planks on end, one behind the other.
+void Planks(mut List<Brick> plan, float2 at, bool along, int count)
+{
+    for (var k = 0; k < count; k++)
+    {
+        var far = (k - (count - 1) * 0.5) * 1.0;
+        plan.Add(Brick { at = float3(at.x + (along ? far : 0), 0.9, at.y + (along ? 0 : far)), size = float3(1.2, 1.8, 0.3),
+                         turned = along, kind = Kind.Plank });
+    }
+}
+
+// Two pillars and a beam across them.
+void Gate(mut List<Brick> plan, float2 at, bool along)
+{
+    for (var side = -1; side <= 1; side += 2)
+        plan.Add(Brick { at = float3(at.x + (along ? side * 1.0 : 0), 1.2, at.y + (along ? 0 : side * 1.0)),
+                         size = float3(0.8, 2.4, 0.8), kind = Kind.Plank });
+    plan.Add(Brick { at = float3(at.x, 2.7, at.y), size = float3(0.9, 0.6, 2.9), turned = along, kind = Kind.Plank });
+}
+
+// What stands on the tile `far` tiles out along one of the floor's axes and
+// `side` across it, with `far` the greater: an eighth of the ring, which the
+// other seven mirror, so that every seat starts with the same ring around
+// it. The balls start on the tile 5 out and 2 across, which stays clear.
+Stand Stands(int kind, int far, int side)
+{
+    if (far <= 1 || (far == 5 && side == 2)) return Stand.Nothing; // The middle's own, and where the balls start
+    if (kind == 1)
+    {
+        // The citadel: a pyramid in the middle, four cabins at its corners,
+        // gates on the way in, and tall stacks out by the rim
+        if (far == 2) return side == 2 ? Stand.Cabin : Stand.Nothing;
+        if (far == 3) return side == 0 ? Stand.Gate : side == 3 ? Stand.Stack : Stand.Nothing;
+        if (far == 4) return side == 1 ? Stand.Planks : side == 4 ? Stand.Pile : Stand.Nothing;
+        if (far == 5) return side == 0 ? Stand.Stack : side == 3 ? Stand.Kegs : side == 5 ? Stand.Stack : Stand.Nothing;
+        if (far == 6) return side == 1 ? Stand.Pile : side == 3 ? Stand.Planks : Stand.Nothing;
+        return side == 0 ? Stand.Wall : Stand.Nothing;
+    }
+    if (kind == 2)
+    {
+        // The henge: one tall tower, a circle of gates around it, and thin
+        // towers and walls all the way out
+        if (far == 2) return side <= 1 ? Stand.Gate : Stand.Nothing;
+        if (far == 3) return side == 2 ? Stand.Pile : Stand.Nothing;
+        if (far == 4) return side == 0 ? Stand.Cabin : side == 3 ? Stand.Kegs : side == 4 ? Stand.Pile : Stand.Nothing;
+        if (far == 5) return side == 0 ? Stand.Planks : side == 4 ? Stand.Stack : Stand.Nothing;
+        if (far == 6) return side == 0 ? Stand.Pile : side == 2 ? Stand.Wall : Stand.Nothing;
+        return side == 1 ? Stand.Planks : Stand.Nothing;
+    }
+    // The pyramids: a wide one in the middle, and smaller ones all around
+    if (far == 2) return side == 2 ? Stand.Planks : Stand.Nothing;
+    if (far == 3) return side == 0 ? Stand.Steps : side == 3 ? Stand.Steps : Stand.Nothing;
+    if (far == 4) return side == 1 ? Stand.Kegs : side == 4 ? Stand.Stack : Stand.Nothing;
+    if (far == 5) return side == 0 ? Stand.Steps : side == 4 ? Stand.Pile : Stand.Nothing;
+    if (far == 6) return side == 0 ? Stand.Cabin : side == 3 ? Stand.Steps : Stand.Nothing;
+    return side == 1 ? Stand.Pile : Stand.Nothing;
+}
+
+// A round's ring: what stands on each tile, by the round's arrangement, as
+// high as the round's own dice say, and the arrangement's middle.
+void Plan(mut List<Brick> plan, int round, int seed)
+{
+    mut var dice = Random(Math.Hash(int2(seed, round)));
+    var kind = round % 3;
+    if (kind == 1) Pyramid(plan, float2(0), 7, 2);
+    else if (kind == 2) Columns(plan, float2(0), 4, 13 + dice.NextInt(3));
+    else Pyramid(plan, float2(0), 9, 1);
+    for (var i = -TILES; i <= TILES; i++)
+        for (var j = -TILES; j <= TILES; j++)
+        {
+            var at = float2(i * TILE, j * TILE);
+            if (Math.Length(at) > RING) continue;
+            var far = Math.Max(Math.Abs(i), Math.Abs(j));
+            var side = Math.Min(Math.Abs(i), Math.Abs(j));
+            // Along the ring: along x where the tile is out along z
+            var along = Math.Abs(j) > Math.Abs(i);
+            var stand = Stands(kind, far, side);
+            var tall = dice.NextInt(4);
+            if (stand == Stand.Stack) Columns(plan, at, 3, 9 + tall);
+            else if (stand == Stand.Pile) Columns(plan, at, 2, 8 + tall * 2);
+            else if (stand == Stand.Steps) Pyramid(plan, at, 3, 3 + tall % 2);
+            else if (stand == Stand.Cabin) Cabin(plan, at, 10 + tall * 2);
+            else if (stand == Stand.Wall) Wall(plan, at, along, 3, 2 + tall % 2);
+            else if (stand == Stand.Planks) Planks(plan, at, along, 3);
+            else if (stand == Stand.Gate) Gate(plan, at, along);
+            else if (stand == Stand.Kegs)
+            {
+                plan.Add(Brick { at = float3(at.x, CRATE * 0.5, at.y), kind = Kind.Keg });
+                plan.Add(Brick { at = float3(at.x, CRATE * 1.5, at.y) });
+            }
+        }
+}
+
+// The ring is raised in the tick a round is cleared in: the floor, every tile
+// whose middle is in the ring, and what the plan says stands on it. A tile is
+// a static body, which never moves: one that's due to fall is replaced by a
+// loose one (game.tide). How long each holds on once its rim goes is its own,
+// so that a rim crumbles. A function can't spawn, so the plan is a list, and
+// this spawns what's on it.
+[After(PhysicsStages.Step), Before(Rounds)]
+system Raise(Ring ring, Time time)
+{
+    if (ring.phase != Phase.Clear) return;
+    for (var i = -TILES; i <= TILES; i++)
+        for (var j = -TILES; j <= TILES; j++)
+        {
+            var at = float2(i * TILE, j * TILE);
+            var reach = Math.Length(at);
+            if (reach > RING) continue;
+            Spawn(Body { type = BodyType.Static, position = float3(at.x, -0.5, at.y) },
+                  Box { size = float3(TILE, 1, TILE), friction = 0.8 },
+                  Tile { at = at, reach = reach, fuse = 1 + Math.Hash(int3(i, j, 7)) % 110 });
+        }
+    mut List<Brick> plan = [];
+    Plan(plan, ring.round + 1, time.seed);
+    var quarter = quaternion.AxisAngle(float3(0, 1, 0), Math.PI / 2);
+    foreach (var brick in plan)
+    {
+        var mass = brick.size.x * brick.size.y * brick.size.z * CRATE_DENSITY;
+        var turn = brick.turned ? quarter : quaternion.identity;
+        if (brick.kind == Kind.Keg)
+            Spawn(Body { position = brick.at, rotation = turn }, Box { size = brick.size, density = CRATE_DENSITY },
+                  Crate { kind = brick.kind }, Loose { mass = mass }, Keg);
+        else
+            Spawn(Body { position = brick.at, rotation = turn }, Box { size = brick.size, density = CRATE_DENSITY },
+                  Crate { kind = brick.kind, tone = brick.tone }, Loose { mass = mass });
+    }
+}
