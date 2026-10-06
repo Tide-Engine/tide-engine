@@ -33,7 +33,7 @@ export default defineConfig(({ command }) => ({
                 handleHttpError: ({ path, message }) => {
                     // The games in static/ are built by CMake and copied in;
                     // a build without them still works.
-                    if (['/sand/', '/duel/', '/siege/', '/alley/'].includes(path) || /^\/examples\/[a-z][a-z0-9-]*\/$/.test(path)) return;
+                    if (['/sand/', '/duel/', '/siege/', '/sumo/'].includes(path) || /^\/examples\/[a-z][a-z0-9-]*\/$/.test(path)) return;
                     throw new Error(message);
                 },
             },

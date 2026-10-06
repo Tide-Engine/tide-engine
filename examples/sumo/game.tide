@@ -18,15 +18,15 @@ const int CROWD = 4;             // Balls in the ring at the least: bots have th
 // The ring, in meters: a floor of square tiles around the middle, its top at
 // y = 0, and nothing under it or around it but the drop.
 const float TILE = 3;            // A tile's side
-const int TILES = 7;             // Tiles from the middle one to the rim
-const float RING = 21.3;         // How far out a tile's middle is at the most, as a round starts
+const int TILES = 6;             // Tiles from the middle one to the rim
+const float RING = 18.1;         // How far out a tile's middle is at the most, as a round starts
 const float PIT = -6;            // The top of the pit: what falls into it is gone
 const float OUT = -2.5;          // A ball this low is out
 
-const float BALL = 0.6;          // A ball's radius
-const float BALL_DENSITY = 500;
-const float BIG = 1.0;           // ...and a heavy one's
-const float BIG_DENSITY = 1200;
+const float BALL = 0.8;          // A ball's radius: twice a crate's height across
+const float BALL_DENSITY = 300;  // 643 kilograms, to a crate's 23
+const float BIG = 1.3;           // ...and a heavy one's, which weighs thirteen times that
+const float BIG_DENSITY = 900;
 const float GRIP = 26;           // How hard a ball drives, in meters a second, a second
 const float DRAG = 2.0;          // What the floor takes of its speed each second while it drives: 13 m/s at the most
 const float COAST = 0.5;         // ...and while it doesn't
@@ -40,16 +40,16 @@ const int DASH = 36;             // Ticks a burst lasts, for who it hits
 const int RESPAWN = 120;         // Ticks a ball that fell is gone for
 const int BLAME = 360;           // Ticks a touch counts for, when who it touched falls
 const int HEAVY = 480;           // Ticks of being heavy
-const int RUBBLE = 300;          // Ticks a crate lasts once it's been knocked about, at the least
+const int RUBBLE = 240;          // Ticks a crate lasts once it's been knocked about, at the least
 
 const float CRATE = 0.8;         // A crate's side
 const float CRATE_DENSITY = 45;
 
-// A round: the ring is set up and everyone waits, then they fight while the
-// floor falls away from the rim in, six rims of twenty seconds each.
+// A round: the ring is set up and everyone waits, then they fight for two
+// minutes while the floor falls away from the rim in, three times.
 const int READY = 180;
-const int RIMS = 6;
-const int RIM = 1200;
+const int ROUND = 7200;
+const int RIMS = 3;              // How many times the floor's rim goes
 const int WARN = 300;            // Ticks a rim is marked before it goes
 const int OVER = 300;
 const int DROP = 420;            // Ticks between pickups
@@ -105,6 +105,7 @@ component Brain
     int want;      // ...and how many it means to
     int prey = -1; // The seat it's after
     int bored;     // Ticks until it picks again
+    float taste;   // How much sooner it goes for the next seat round than for the nearest
     float2 roam;   // Where it goes with nobody to go for
     Random dice;
 }
@@ -162,6 +163,7 @@ singleton Ring
     Phase phase = Phase.Clear; // The first tick sets the first round up
     int round;
     int timer;                 // Ticks left of the phase
+    int gone;                  // How many rims have gone
     float radius = RING;       // Where the floor ends
     float next = RING;         // ...and where it's about to
     int manned;                // The seats players have, a bit each
@@ -206,7 +208,15 @@ input Controls
         }
         charge = hand.playing && (hand.charge || keys.space.pressed || pad.buttonSouth.pressed);
         away = !hand.playing;
-        if (away) move = float2(0);
+        // Nothing is sent while nothing can be driven: the ring is being
+        // raised, or the player's hands are off. An input that stays as it
+        // was is one every other machine guesses right, and the ticks a ring
+        // is raised in are the ones a machine can least afford to run again
+        if (away || !hand.live)
+        {
+            move = float2(0);
+            charge = false;
+        }
     }
 }
 
@@ -258,17 +268,25 @@ bool Live(int manned, bool bots, int seat)
     return free < CROWD - held;
 }
 
-// Where the floor ends once this many rims have gone.
+// Where the floor ends once this many rims have gone: each is a ring of
+// tiles' middles.
 float Rim(int gone)
 {
-    return gone <= 0 ? RING : gone == 1 ? 18.1 : gone == 2 ? 15.1 : gone == 3 ? 12.5 : gone == 4 ? 9.6 : 6.8;
+    return gone <= 0 ? RING : gone == 1 ? 15.1 : gone == 2 ? 12.5 : 9.6;
+}
+
+// The tick of a round its rims go at: after 35 seconds, after 65, and with
+// half a minute to go.
+int Falls(int rim)
+{
+    return rim == 1 ? 2100 : rim == 2 ? 3900 : rim == 3 ? 5400 : ROUND + 1;
 }
 
 // Where a seat's ball starts a round: on a tile that every arrangement
-// leaves clear, two to a quarter of the ring.
+// leaves clear, two to a quarter of the ring, a way in from the rim.
 float3 Start(int seat)
 {
-    mut var tile = seat % 2 == 0 ? float2(2, -5) : float2(5, -2);
+    mut var tile = seat % 2 == 0 ? float2(1, -4) : float2(4, -1);
     for (var quarter = 0; quarter < seat / 2; quarter++) tile = float2(-tile.y, tile.x);
     return float3(tile.x * TILE, BALL + 0.02, tile.y * TILE);
 }
@@ -320,8 +338,9 @@ system Hands(mut Owner owner, Ball ball, Ring ring)
 }
 
 // Where a ball would go by itself, and whether it would charge. It picks
-// someone to go for, the nearest, and goes round to their inside: from there
-// a hit sends them out. Then it winds up and lets go at them. It turns back
+// someone to go for, the nearest more often than not, and sooner the next
+// seat round than the one before, so that bots don't all go for the same
+// ball. It goes round to their inside: from there a hit sends them out. Then it winds up and lets go at them. It turns back
 // from the rim before it gets there, by how far the rim is and how fast it's
 // going out to it. Every ball works this out, and only the ones nobody
 // drives use it.
@@ -350,7 +369,8 @@ system Think(mut Brain brain, Body body, Ball ball, Ring ring,
             // Where they'll be in a moment
             their = where + float2(other.body.velocity.x, other.body.velocity.z) * 0.22;
         }
-        var gap = Math.Distance(at, where) + (other.ball.heavy > 0 ? 10 : 0);
+        var gap = Math.Distance(at, where) + (other.ball.heavy > 0 ? 10 : 0)
+                + ((other.ball.seat - ball.seat + SEATS) % SEATS) * brain.taste;
         if (gap >= best) continue;
         best = gap;
         nearest = other.ball.seat;
@@ -359,6 +379,7 @@ system Think(mut Brain brain, Body body, Ball ball, Ring ring,
     {
         brain.bored = 150 + brain.dice.NextInt(240);
         brain.prey = nearest;
+        brain.taste = brain.dice.NextFloat(0, 2.5);
         var around = brain.dice.NextFloat(Math.TAU);
         brain.roam = float2(Math.Sin(around), Math.Cos(around)) * (edge * 0.55);
     }
@@ -643,10 +664,11 @@ event(Kindled lit) Burn(mut Keg keg, Body body, mut Ring ring, Time time)
 }
 
 // The pit takes what falls into it: an entity that's destroyed takes its
-// body with it. Balls are gone before they get this far.
+// body with it. A ball is gone before it gets this far, and its seat is told
+// (Roll).
 event(Touched touched) Swallow(World world, with Pit)
 {
-    if (world.Has<Loose>(touched.other)) touched.other.Destroy();
+    if (world.Has<Crate>(touched.other)) touched.other.Destroy();
 }
 
 // A tile falls once the floor ends short of it: the static one goes, and a
@@ -781,6 +803,7 @@ system Rounds(mut Ring ring, query (Seat seat) seats)
         ring.round += 1;
         ring.phase = Phase.Ready;
         ring.timer = READY;
+        ring.gone = 0;
         ring.radius = RING;
         ring.next = RING;
         ring.fresh = false;
@@ -794,20 +817,24 @@ system Rounds(mut Ring ring, query (Seat seat) seats)
     {
         if (ring.timer > 0) return;
         ring.phase = Phase.Play;
-        ring.timer = RIMS * RIM;
+        ring.timer = ROUND;
+        ring.gone = 0;
         Send(Go { });
         return;
     }
     if (ring.phase == Phase.Play)
     {
-        var played = RIMS * RIM - ring.timer;
-        var gone = played / RIM;
-        if (gone < RIMS - 1 && played % RIM == RIM - WARN)
+        var played = ROUND - ring.timer;
+        if (ring.gone < RIMS && played == Falls(ring.gone + 1) - WARN)
         {
-            ring.next = Rim(gone + 1);
+            ring.next = Rim(ring.gone + 1);
             Send(Shrinking { to = ring.next });
         }
-        ring.radius = Rim(gone);
+        if (ring.gone < RIMS && played == Falls(ring.gone + 1))
+        {
+            ring.gone += 1;
+            ring.radius = Rim(ring.gone);
+        }
         if (ring.timer > 0) return;
         ring.phase = Phase.Over;
         ring.timer = OVER;

@@ -39,7 +39,7 @@ enum Stand
     Wall,    // Crates laid like bricks, along the ring
     Planks,  // Planks on end in a row, along the ring: the first to fall takes the rest
     Gate,    // Two pillars and a beam across them
-    Kegs     // A keg, with a crate on it
+    Kegs     // Two kegs, with a crate on each
 }
 
 // Crates in columns: `wide` each way, `high` up, around `at`.
@@ -117,39 +117,41 @@ void Gate(mut List<Brick> plan, float2 at, bool along)
 // What stands on the tile `far` tiles out along one of the floor's axes and
 // `side` across it, with `far` the greater: an eighth of the ring, which the
 // other seven mirror, so that every seat starts with the same ring around
-// it. The balls start on the tile 5 out and 2 across, which stays clear.
+// it. The balls start on the tile 4 out and 1 across, which stays clear,
+// and so does a way round the middle.
+//
+// The floor's rim goes three times in a round, and what's on it goes with
+// it, so what's tallest isn't out by the rim.
 Stand Stands(int kind, int far, int side)
 {
-    if (far <= 1 || (far == 5 && side == 2)) return Stand.Nothing; // The middle's own, and where the balls start
+    if (far <= 1 || (far == 4 && side == 1)) return Stand.Nothing; // The middle's own, and where the balls start
     if (kind == 1)
     {
-        // The citadel: a pyramid in the middle, four cabins at its corners,
-        // gates on the way in, and tall stacks out by the rim
+        // The citadel: a pyramid in the middle, cabins at its corners, gates
+        // on the way in, and stacks all around
         if (far == 2) return side == 2 ? Stand.Cabin : Stand.Nothing;
-        if (far == 3) return side == 0 ? Stand.Gate : side == 3 ? Stand.Stack : Stand.Nothing;
-        if (far == 4) return side == 1 ? Stand.Planks : side == 4 ? Stand.Pile : Stand.Nothing;
-        if (far == 5) return side == 0 ? Stand.Stack : side == 3 ? Stand.Kegs : side == 5 ? Stand.Stack : Stand.Nothing;
-        if (far == 6) return side == 1 ? Stand.Pile : side == 3 ? Stand.Planks : Stand.Nothing;
-        return side == 0 ? Stand.Wall : Stand.Nothing;
+        if (far == 3) return side == 0 ? Stand.Gate : side == 2 ? Stand.Pile : side == 3 ? Stand.Stack : Stand.Nothing;
+        if (far == 4) return side == 0 ? Stand.Planks : side == 2 ? Stand.Pile : side == 4 ? Stand.Stack : Stand.Nothing;
+        if (far == 5) return side == 0 ? Stand.Cabin : side == 1 ? Stand.Planks : side == 2 ? Stand.Pile : Stand.Kegs;
+        return Stand.Wall;
     }
     if (kind == 2)
     {
         // The henge: one tall tower, a circle of gates around it, and thin
-        // towers and walls all the way out
-        if (far == 2) return side <= 1 ? Stand.Gate : Stand.Nothing;
-        if (far == 3) return side == 2 ? Stand.Pile : Stand.Nothing;
-        if (far == 4) return side == 0 ? Stand.Cabin : side == 3 ? Stand.Kegs : side == 4 ? Stand.Pile : Stand.Nothing;
-        if (far == 5) return side == 0 ? Stand.Planks : side == 4 ? Stand.Stack : Stand.Nothing;
-        if (far == 6) return side == 0 ? Stand.Pile : side == 2 ? Stand.Wall : Stand.Nothing;
-        return side == 1 ? Stand.Planks : Stand.Nothing;
+        // towers further out
+        if (far == 2) return side <= 1 ? Stand.Gate : Stand.Pile;
+        if (far == 3) return side == 2 ? Stand.Pile : side == 3 ? Stand.Cabin : Stand.Nothing;
+        if (far == 4) return side == 0 ? Stand.Stack : side == 2 ? Stand.Kegs : side == 3 ? Stand.Pile : Stand.Stack;
+        if (far == 5) return side == 0 ? Stand.Planks : side == 1 ? Stand.Wall : side == 2 ? Stand.Planks : Stand.Pile;
+        return Stand.Gate;
     }
-    // The pyramids: a wide one in the middle, and smaller ones all around
+    // The pyramids: a wide one in the middle, smaller ones all around it, and
+    // stacks at the corners
     if (far == 2) return side == 2 ? Stand.Planks : Stand.Nothing;
-    if (far == 3) return side == 0 ? Stand.Steps : side == 3 ? Stand.Steps : Stand.Nothing;
-    if (far == 4) return side == 1 ? Stand.Kegs : side == 4 ? Stand.Stack : Stand.Nothing;
-    if (far == 5) return side == 0 ? Stand.Steps : side == 4 ? Stand.Pile : Stand.Nothing;
-    if (far == 6) return side == 0 ? Stand.Cabin : side == 3 ? Stand.Steps : Stand.Nothing;
-    return side == 1 ? Stand.Pile : Stand.Nothing;
+    if (far == 3) return side == 0 ? Stand.Steps : side == 2 ? Stand.Steps : side == 3 ? Stand.Stack : Stand.Nothing;
+    if (far == 4) return side == 0 ? Stand.Kegs : side == 3 ? Stand.Steps : side == 4 ? Stand.Stack : Stand.Nothing;
+    if (far == 5) return side == 0 ? Stand.Stack : side == 1 ? Stand.Planks : side == 2 ? Stand.Pile : Stand.Nothing;
+    return Stand.Cabin;
 }
 
 // A round's ring: what stands on each tile, by the round's arrangement, as
@@ -181,8 +183,13 @@ void Plan(mut List<Brick> plan, int round, int seed)
             else if (stand == Stand.Gate) Gate(plan, at, along);
             else if (stand == Stand.Kegs)
             {
-                plan.Add(Brick { at = float3(at.x, CRATE * 0.5, at.y), kind = Kind.Keg });
-                plan.Add(Brick { at = float3(at.x, CRATE * 1.5, at.y) });
+                // Two kegs, with a crate on each
+                for (var half = -1; half <= 1; half += 2)
+                {
+                    var spot = float2(at.x + (along ? half * PITCH * 0.5 : 0), at.y + (along ? 0 : half * PITCH * 0.5));
+                    plan.Add(Brick { at = float3(spot.x, CRATE * 0.5, spot.y), kind = Kind.Keg });
+                    plan.Add(Brick { at = float3(spot.x, CRATE * 1.5, spot.y), tone = 1 });
+                }
             }
         }
 }

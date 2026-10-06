@@ -26,7 +26,7 @@ const profile = mkdtempSync(join(tmpdir(), 'tide-docs-examples-'));
 // the Markdown: a page is its file's path, and `index.md` its folder's.
 const pages = [];
 const written = new Set();
-// The whole games that open on a lobby (Siege, Alley), each in a frame of its
+// The whole games that open on a lobby (Siege, Sumo), each in a frame of its
 // page: the game's own page on the site, `/<name>/`, as the page's Markdown
 // names it.
 const games = [];
