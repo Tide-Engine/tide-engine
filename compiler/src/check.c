@@ -2620,6 +2620,26 @@ static type refuse_out_arg(checker *c, expr *e)
     return T_ERR;
 }
 
+// `out` before an argument of one of the GUI's widgets that has no version
+// with an `out` parameter, where other widgets have: those say when the player
+// entered what they typed, which is what the argument was after, so the error
+// says which they are. False, saying nothing, where that isn't so: the
+// argument is refused as anywhere else. What it's before is still checked.
+static bool refuse_entered_arg(checker *c, const expr *call, expr *arg)
+{
+    const str owner = call->object->name;
+    sb names = {0}, example = {0};
+    if (!str_eq_c(owner, "GUI") && !str_eq_c(owner, "GUILayout")) return false;
+    if (!builtin_out_versions(owner, call->name, &names, &example)) return false;
+    diag_error(arg->out_at, "'" STR_FMT "." STR_FMT "' has no version that says when it was entered, so it takes no 'out' argument",
+               STR_ARG(owner), STR_ARG(call->name));
+    diag_note("remove the argument: the widgets with such a version are %s, like '%s'", names.data, example.data);
+    begin_out_arg(c, arg);
+    if (arg->out_local) arg->out_local->type = T_ERR; // Said: its uses say nothing more
+    arg->type = T_ERR;
+    return true;
+}
+
 // An argument and its parameter that disagree about `out`: the word is
 // written for an `out` parameter, as in C#, and for no other.
 static void out_mismatch(checker *c, const decl *m, const param *p, const expr *arg)
@@ -4670,7 +4690,8 @@ static str target_draw_owner(const expr *e)
 {
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
-        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
+        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
+        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"); // Only 3D meshes have depth
     const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
     const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
     if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
@@ -4824,11 +4845,13 @@ static type check_method(checker *c, expr *e)
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
-        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one.
+        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
+        // and a widget with no such version says which widgets have one.
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             type list;
             if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
+            else if (arg->is_out && refuse_entered_arg(c, e, arg)) continue;
             else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
             else if (arg->kind != E_DEFAULT) check_expr(c, arg);
         }
@@ -5741,8 +5764,7 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths", false)) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
-            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and meshes "
-                      "are theirs");
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -9569,6 +9591,19 @@ static bool holds_list(const type t)
     return false;
 }
 
+// Whether a value of type `t` is or holds a list, map or set, but for
+// List<byte>, a file's bytes, which a command can hold
+static bool holds_list_but_bytes(const type t)
+{
+    if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
+    if (t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
 // Whether a value of type `t` has a grid in it, or is one: a component's or a
 // singleton's, as only those hold grids.
 static bool holds_grid(const type t)
@@ -9597,9 +9632,9 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
-        if (d->is_command && (holds_list(f->type) || f->type.kind == TY_GRID)) {
+        if (d->is_command && (holds_list_but_bytes(f->type) || f->type.kind == TY_GRID)) {
             diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
-            diag_note("send numbers, bools, enums, strings or structs containing those");
+            diag_note("send numbers, bools, enums, strings, a file's bytes as List<byte>, or structs containing those");
         }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
@@ -11873,8 +11908,8 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
-    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth,
-    // with tide/draw.h's tide_depth's values. Generated C has it only in a
+    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
+    // (Draw3D.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named), so the others' is as it was.
     static const char *const depths[] = {"ReadWrite", "Read", "None"};
     decl *depth = NEW(decl);
@@ -12836,6 +12871,8 @@ static bool fold_cell(const expr *e, const int dims, int64_t out[3])
 // An ordering attribute can name an enum's member as well as a declaration.
 // The enum name uses the same namespace and using rules as an ordinary type.
 // With `required`, this is Stage's argument, so every other name is an error.
+static bool resolve_enum_member(checker *c, const decl *d, qname *q, bool required, str enum_name, str member_name);
+
 static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool required)
 {
     str enum_name;
@@ -12845,6 +12882,13 @@ static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool
         diag_error(q->name_at, "Stage names an enum member, like [Stage(RenderStages.Objects)]");
         return true;
     }
+    return resolve_enum_member(c, d, q, required, enum_name, member_name);
+}
+
+// The rest of resolve_order_member, which [Channel] shares: the enum, and its member
+static bool resolve_enum_member(checker *c, const decl *d, qname *q, const bool required, const str enum_name,
+                                const str member_name)
+{
     decl *other;
     decl *enumeration = lookup(c->prog, decl_home(d), enum_name, NAME_TYPE, &other);
     if (!enumeration) {
@@ -12930,6 +12974,78 @@ static void order_after(decl *later, decl *earlier)
     vec_push(later->after, earlier);
 }
 
+// [Channel(Channels.Uploads)] puts a command in a channel of the game's: an
+// enum member, as a Stage names one. [Unordered] takes it out of every order.
+static void check_channel_attribute(checker *c, decl *d, attribute *attr)
+{
+    const bool unordered = str_eq_c(attr->name, "Unordered");
+    if (d->kind != DECL_EVENT || !d->is_command) {
+        diag_error(attr->at, "%s orders a command's delivery, and '" STR_FMT "' isn't a command",
+                   unordered ? "Unordered" : "Channel", STR_ARG(d->name));
+        diag_note("it goes before a 'command' declaration: '[%s] command Ping { int at; }'",
+                  unordered ? "Unordered" : "Channel(Channels.Chat)");
+        return;
+    }
+    if (d->channel_at.line) {
+        diag_error(attr->at, "'" STR_FMT "' already has its ordering: one of Channel and Unordered, once", STR_ARG(d->name));
+        return;
+    }
+    d->channel_at = attr->at;
+    if (unordered) {
+        if (attr->values.count > 0 || attr->args.count > 0) {
+            diag_error(attr->at, "Unordered takes nothing: '[Unordered]'");
+            return;
+        }
+        d->unordered = true;
+        return;
+    }
+    if (attr->args.count != 1 || attr->values.count > 0) {
+        diag_error(attr->at, "Channel takes an enum member, the channel's name: [Channel(Channels.Uploads)]");
+        return;
+    }
+    qname *q = &attr->args.items[0];
+    str enum_name;
+    str member_name;
+    if (!split_qualified(q->text, &enum_name, &member_name)) {
+        diag_error(q->name_at, "Channel names an enum member, like [Channel(Channels.Uploads)]");
+        diag_note("declare the channels as an enum of the game's: 'enum Channels { Uploads, Chat }'");
+        return;
+    }
+    resolve_enum_member(c, d, q, true, enum_name, member_name);
+    if (!q->enum_member) return;
+    d->channel_enum = q->decl;
+    d->channel_member = q->enum_member;
+}
+
+// Numbers the channels [Channel] names, from 1: in the order their enums are
+// declared, then their members, so the number is the game's, not the file's
+static void number_channels(program *prog)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *e = prog->decls.items[i];
+        if (e->kind != DECL_ENUM) continue;
+        for (int m = 0; m < e->members.count; m++) {
+            bool named = false;
+            for (int k = 0; k < prog->command_types.count; k++) {
+                decl *d = prog->command_types.items[k];
+                if (d->channel_member != &e->members.items[m]) continue;
+                if (!named) {
+                    named = true;
+                    const command_channel channel = {prog->decls.items[i], &e->members.items[m]};
+                    vec_push(prog->channels, channel);
+                }
+                d->channel = (uint32_t)prog->channels.count;
+            }
+        }
+    }
+    // One of the default channel and TIDE_COMMAND_CHANNELS_MOST - 1 of the game's own (tide/session.h)
+    if (prog->channels.count > 63) {
+        const command_channel *last = &prog->channels.items[63];
+        diag_error(last->member->at, "a game's commands can be in 63 channels of its own at most, and '" STR_FMT "." STR_FMT
+                   "' is the 64th", STR_ARG(last->enumeration->name), STR_ARG(last->member->name));
+    }
+}
+
 // [Before(X)] and [After(X)] order declarations or whole enum phases.
 // Stage assigns one of those phases and an offset within it.
 static void check_attributes(checker *c)
@@ -12964,6 +13080,10 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Channel") || str_eq_c(attr->name, "Unordered")) {
+                check_channel_attribute(c, d, attr);
+                continue;
+            }
             if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
                 if (d->kind != DECL_COMPONENT || d->is_scene) {
                     diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
@@ -12984,11 +13104,13 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Sparse");
+                suggest_consider_c(&s, "Channel");
+                suggest_consider_c(&s, "Unordered");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
-                          "NativeName, which names an extern function's or system's C function, and Sparse, for a component that "
-                          "entities gain and lose");
+                          "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
+                          "entities gain and lose, and Channel and Unordered, which order a command's delivery");
                 continue;
             }
             if (attr->values.count > 0) {
@@ -14533,6 +14655,7 @@ bool check(program *prog)
     }
 
     check_attributes(&c);
+    number_channels(prog);
     if (diag_error_count() == 0) {
         order_phases(prog->systems.items, prog->systems.count);
         order_phases(prog->views.items, prog->views.count);

@@ -5,9 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "assets.h"
 #include "ast.h"
 #include "builtins.h"
 #include "cdefs.h"
+#include "folders.h"
 #include "lexer.h"
 #include "types.h"
 
@@ -94,6 +96,33 @@ typedef struct afile {
 // Lines no code is read from (see lex_all_spans).
 enum { LINE_DIRECTIVE = 1, LINE_LEFT_OUT = 2 };
 
+// The file an `asset` declaration names (see Assets, at the end).
+typedef struct asset_site {
+    int file;           // The declaring file
+    int string;         // Its path's token there
+    str path;           // As written, between the quotes
+    str type;           // The type's text as written
+    const char *folder; // The declaring file's, absolute, ending in '/'
+    const char *abs;    // The path resolved from it, a glob as written where it's one; NULL for a URL
+    bool glob;
+    bool url;
+    bool many;          // A List or Map: a glob's matches
+    const char *format; // The files it takes: ".png" for a Grid2<Color>; NULL for any
+} asset_site;
+
+// A path to write at a site whose file is missing, fixing its diagnostic.
+typedef struct asset_fix {
+    int site;
+    int diag;
+    const char *path;
+    bool preferred;
+} asset_fix;
+
+typedef struct asset_file {
+    const char *path;
+    unsigned long long size;
+} asset_file;
+
 static struct {
     afile *files; // Index i is source file i: locations' `file` indexes this
     int file_count;
@@ -107,7 +136,14 @@ static struct {
     // where what it replaced was, and nothing of what was replaced. This one has both, each where its file
     // has it, and an override of a method, which the program keeps in the method's type.
     VEC(const decl *) written;
+    VEC(asset_site) assets;        // The files `asset` declarations name
+    VEC(asset_fix) asset_fixes;
+    VEC(asset_file) asset_files;   // Every file of the game's folders, once it's been listed
+    bool asset_files_listed;
 } A;
+
+static void collect_assets(void);
+static void check_assets(void);
 
 // The document requests are about.
 #define DOC (&A.files[A.doc])
@@ -1228,6 +1264,8 @@ void analysis_run(const analysis_file *files, const int count)
 
     list_written();
     index_program();
+    collect_assets();
+    check_assets();
 }
 
 bool analysis_select(const char *uri)
@@ -2815,6 +2853,13 @@ static void describe(const occurrence *o, sb *out)
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
+            {"Channel", "[Channel(Channels.Uploads)]",
+             "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
+             "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
+             "upload. Without it a command is in the default channel."},
+            {"Unordered", "[Unordered]",
+             "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
+             "commands sent earlier, exactly once."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -3570,12 +3615,15 @@ static void replace_word_action(const fix *f, jbuf *out, int *written)
     quick_fix_edits(out, written, title.data, true, diagnostic_at(f->at), &edits);
 }
 
+static void asset_fix_actions(int start_line, int end_line, jbuf *out, int *written);
+
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
 {
     jb_put(out, "[");
     int written = 0;
     suggestion_actions(start_line, end_line, out, &written);
     namespace_actions(start_line, end_line, out, &written);
+    asset_fix_actions(start_line, end_line, out, &written);
     for (int i = 0; i < A.prog->fixes.count; i++) {
         const fix *f = &A.prog->fixes.items[i];
         if (f->at.file != A.doc || f->at.line - 1 < start_line || f->at.line - 1 > end_line) continue;
@@ -5009,6 +5057,8 @@ typedef struct completion {
     int count;
     VEC(const char *) seen;
 } completion;
+
+static void complete_asset_path(completion *c, int tok, loc at);
 
 static void item(completion *c, const char *label, const int kind, const char *detail, const char *doc,
                  const char *snippet)
@@ -7071,7 +7121,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
     if (last >= 0) {
         const token *t = &DOC->toks[last];
         const bool inside = t->at.line == at.line && at.col <= t->at.col + token_len(t);
-        if (inside && t->kind == T_STRING) goto done; // No completion in text
+        if (inside && t->kind == T_STRING) { // No completion in text, but for an asset's path
+            complete_asset_path(&c, last, at);
+            goto done;
+        }
         // In text with values: not in its text, but in its values.
         const bool text_end = at.col == t->at.col + token_len(t) && t->text.ptr[t->text.len - 1] == '"';
         if ((t->kind == T_INTERP || t->kind == T_INTERP_PART) && t->at.line == at.line
@@ -7210,6 +7263,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
                  "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
+            item(&c, "Channel", CK_FUNCTION, "[Channel(Channels.Uploads)]",
+                 "Puts the command in a channel of the game's: in order among that channel's commands, and in no order against the others.",
+                 "Channel($1)");
+            item(&c, "Unordered", CK_FUNCTION, "[Unordered]",
+                 "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
+                 "Unordered");
         }
         break;
 
@@ -9182,4 +9241,577 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
     }
     jb_put(out, "]");
     return NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Assets: the files `asset` declarations name (docs/spec.md, Assets)
+//
+// A site is read off the tokens: `asset` at the start of a line, a type, a
+// name, `=`, text and `;`. Once the declaration is in the parser
+// (DECL_ASSET), collect_assets goes through the program's declarations
+// instead, and nothing after it changes: a site is where its path is written,
+// resolved from its file.
+
+// The folders of the analysed game: set by the server before each analysis,
+// and kept across them (malloc'd).
+static struct {
+    char *game_folder; // Where its .tide/ is; NULL for a game a manifest lists
+    char **roots;      // Where a moved file is looked for: the game's folder and its packages'
+    int root_count;
+} asset_roots;
+
+void analysis_set_game_folders(const char *game_folder, const char *const *roots, const int root_count)
+{
+    free(asset_roots.game_folder);
+    for (int i = 0; i < asset_roots.root_count; i++) free(asset_roots.roots[i]);
+    free(asset_roots.roots);
+    memset(&asset_roots, 0, sizeof asset_roots);
+    if (game_folder) {
+        asset_roots.game_folder = malloc(strlen(game_folder) + 1);
+        if (!asset_roots.game_folder) abort();
+        strcpy(asset_roots.game_folder, game_folder);
+    }
+    if (root_count > 0) {
+        asset_roots.roots = calloc((size_t)root_count, sizeof(char *));
+        if (!asset_roots.roots) abort();
+        for (int i = 0; i < root_count; i++) {
+            asset_roots.roots[i] = malloc(strlen(roots[i]) + 1);
+            if (!asset_roots.roots[i]) abort();
+            strcpy(asset_roots.roots[i], roots[i]);
+        }
+        asset_roots.root_count = root_count;
+    }
+}
+
+// The hash of each file hashed so far, by its size and when it was written,
+// so an analysis reads no file again that hasn't changed (malloc'd, kept
+// across analyses).
+typedef struct hashed_file {
+    char *path;
+    unsigned long long size;
+    unsigned long long modified;
+    char hex[65];
+} hashed_file;
+
+static struct {
+    hashed_file *items;
+    int count;
+    int cap;
+} hashed;
+
+static char *arena_copy(const char *text)
+{
+    return str_to_cstr(str_from(text));
+}
+
+// The SHA-256 of the file at `path`, as hex. False when it can't be read.
+static bool read_hash(const char *path, const unsigned long long size, char hex[65])
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    char *data = malloc(size > 0 ? (size_t)size : 1);
+    if (!data) abort();
+    const size_t n = fread(data, 1, (size_t)size, f);
+    fclose(f);
+    asset_hash_of(data, n, hex);
+    free(data);
+    return true;
+}
+
+// The SHA-256 of the file at `path`, as hex: the one hashed before, unless
+// its size or time changed. False when it can't be read.
+static bool file_hash(const char *path, const unsigned long long size, const unsigned long long modified, char hex[65])
+{
+    hashed_file *known = NULL;
+    for (int i = 0; i < hashed.count && !known; i++) {
+        if (asset_path_same(hashed.items[i].path, path)) known = &hashed.items[i];
+    }
+    if (known && known->size == size && known->modified == modified) {
+        memcpy(hex, known->hex, 65);
+        return true;
+    }
+    if (!read_hash(path, size, hex)) return false;
+    if (!known) {
+        if (hashed.count == hashed.cap) {
+            hashed.cap = hashed.cap ? hashed.cap * 2 : 16;
+            hashed.items = realloc(hashed.items, sizeof(hashed_file) * (size_t)hashed.cap);
+            if (!hashed.items) abort();
+        }
+        known = &hashed.items[hashed.count++];
+        known->path = malloc(strlen(path) + 1);
+        if (!known->path) abort();
+        strcpy(known->path, path);
+    }
+    known->size = size;
+    known->modified = modified;
+    memcpy(known->hex, hex, 65);
+    return true;
+}
+
+static char fold_path_char(const char c)
+{
+#ifdef _WIN32
+    return (char)tolower((unsigned char)(c == '\\' ? '/' : c));
+#else
+    return c == '\\' ? '/' : c;
+#endif
+}
+
+// Whether `path` (forward slashes) is what the glob `p` says: `*` within a
+// name, `**` across folders, `?` a character.
+static bool glob_match(const char *p, const char *s)
+{
+    while (*p) {
+        if (p[0] == '*' && p[1] == '*') {
+            const char *rest = p + 2;
+            while (*rest == '/') rest++;
+            for (const char *t = s;; t++) {
+                if (glob_match(rest, t)) return true;
+                if (!*t) return false;
+            }
+        }
+        if (*p == '*') {
+            for (const char *t = s;; t++) {
+                if (glob_match(p + 1, t)) return true;
+                if (!*t || *t == '/') return false;
+            }
+        }
+        if (*p == '?') {
+            if (!*s || *s == '/') return false;
+        } else if (!*s || fold_path_char(*p) != fold_path_char(*s)) {
+            return false;
+        }
+        p++;
+        s++;
+    }
+    return *s == '\0';
+}
+
+// The type an asset resolves to says which files it takes.
+static const char *asset_format(const str type)
+{
+    for (int i = 0; i + 5 <= type.len; i++) {
+        if (memcmp(type.ptr + i, "Grid2", 5) == 0) return ".png";
+    }
+    return NULL;
+}
+
+static void collect_assets(void)
+{
+    for (int f = 0; f < A.file_count; f++) {
+        const afile *file = &A.files[f];
+        for (int i = 0; i < file->tok_count; i++) {
+            const token *t = &file->toks[i];
+            if (t->kind != T_IDENT || t->at.col != 1 || !str_eq_c(t->text, "asset")) continue;
+            int j = i + 1;
+            while (j < file->tok_count && file->toks[j].kind != T_SEMI && file->toks[j].kind != T_LBRACE) j++;
+            if (j >= file->tok_count || file->toks[j].kind != T_SEMI || j - i < 5) continue;
+            if (file->toks[j - 1].kind != T_STRING || file->toks[j - 2].kind != T_ASSIGN || file->toks[j - 3].kind != T_IDENT) continue;
+            const token *first = &file->toks[i + 1];
+            const token *last = &file->toks[j - 4];
+            asset_site site = {0};
+            site.file = f;
+            site.string = j - 1;
+            site.path = file->toks[j - 1].text;
+            site.type = (str){first->text.ptr, (int)(last->text.ptr + last->text.len - first->text.ptr)};
+            site.many = str_starts_with_c(site.type, "List<") || str_starts_with_c(site.type, "Map<");
+            site.format = asset_format(site.type);
+            site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
+            site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
+            char *folder = asset_path_folder(file->src.path);
+            site.folder = arena_copy(folder);
+            if (!site.url) {
+                char *abs = asset_path_join(folder, site.path.ptr, (size_t)site.path.len);
+                site.abs = arena_copy(abs);
+                free(abs);
+            }
+            free(folder);
+            vec_push(A.assets, site);
+        }
+    }
+}
+
+// The site whose path is token `tok` of the document, or NULL.
+static const asset_site *asset_site_at(const int tok)
+{
+    for (int i = 0; i < A.assets.count; i++) {
+        if (A.assets.items[i].file == A.doc && A.assets.items[i].string == tok) return &A.assets.items[i];
+    }
+    return NULL;
+}
+
+static void add_asset_file(void *user, const char *path, const unsigned long long size)
+{
+    (void)user;
+    const asset_file file = {arena_copy(path), size};
+    vec_push(A.asset_files, file);
+}
+
+static int asset_file_order(const void *a, const void *b)
+{
+    return path_compare(((const asset_file *)a)->path, ((const asset_file *)b)->path);
+}
+
+// Every file of the game's folder and its packages', once per analysis, for
+// finding a missing one: by the roots the server gave, or else the folders of
+// the analysed files.
+static void list_asset_files(void)
+{
+    if (A.asset_files_listed) return;
+    A.asset_files_listed = true;
+    if (asset_roots.root_count > 0) {
+        for (int i = 0; i < asset_roots.root_count; i++) folder_find_files(asset_roots.roots[i], add_asset_file, NULL);
+    } else {
+        VEC(const char *) folders = {0};
+        for (int f = 0; f < A.file_count; f++) {
+            char *folder = asset_path_folder(A.files[f].src.path);
+            bool seen = false;
+            for (int k = 0; k < folders.count && !seen; k++) seen = asset_path_same(folders.items[k], folder);
+            if (!seen) {
+                vec_push(folders, arena_copy(folder));
+                folder_find_files(folder, add_asset_file, NULL);
+            }
+            free(folder);
+        }
+    }
+    if (A.asset_files.count > 0) {
+        qsort(A.asset_files.items, (size_t)A.asset_files.count, sizeof(asset_file), asset_file_order);
+    }
+}
+
+typedef VEC(const char *) asset_paths;
+
+// A glob's matches, as absolute paths in the order of their relative paths.
+static void glob_matches(const asset_site *site, asset_paths *out)
+{
+    // The folders before the first wildcard are where to look
+    int fixed = 0;
+    for (int i = 0; i < site->path.len && site->path.ptr[i] != '*' && site->path.ptr[i] != '?'; i++) {
+        if (site->path.ptr[i] == '/' || site->path.ptr[i] == '\\') fixed = i + 1;
+    }
+    char *base = asset_path_join(site->folder, site->path.ptr, (size_t)fixed);
+    const size_t n = strlen(base);
+    if (n == 0 || base[n - 1] != '/') {
+        base = realloc(base, n + 2);
+        if (!base) abort();
+        base[n] = '/';
+        base[n + 1] = '\0';
+    }
+    const char *pattern = str_to_cstr((str){site->path.ptr + fixed, site->path.len - fixed});
+    // Walk from there, matching each file's path from the base
+    VEC(asset_file) found = {0};
+    const int before = A.asset_files.count;
+    folder_find_files(base, add_asset_file, NULL);
+    for (int i = before; i < A.asset_files.count; i++) {
+        char *relative = asset_path_relative(base, A.asset_files.items[i].path);
+        if (glob_match(pattern, relative)) vec_push(found, A.asset_files.items[i]);
+        free(relative);
+    }
+    A.asset_files.count = before; // Not the game's whole list
+    if (found.count > 0) qsort(found.items, (size_t)found.count, sizeof(asset_file), asset_file_order);
+    for (int i = 0; i < found.count; i++) vec_push(*out, found.items[i].path);
+    free(base);
+}
+
+// A diagnostic at a site's path.
+static int asset_diagnostic(const asset_site *site, const char *message)
+{
+    diagnostic d = {DIAG_ERROR, A.files[site->file].toks[site->string].at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}};
+    sb_put(&d.message, message);
+    vec_push(A.diags, d);
+    return A.diags.count - 1;
+}
+
+// Nothing at a site's path: where a file with the same bytes is now, with a
+// fix that writes its path, or else the files of the same name, a fix each.
+static void asset_missing(const asset_site *site, const asset_hashes *known, asset_hashes *now)
+{
+    sb message = {0};
+    sb_printf(&message, "there's no file at '" STR_FMT "' (%s)", STR_ARG(site->path), site->abs);
+    const int diag = asset_diagnostic(site, message.data);
+    char *from_game = asset_roots.game_folder ? asset_path_relative(asset_roots.game_folder, site->abs) : NULL;
+    const asset_hash *hash = from_game ? asset_hashes_find(known, from_game) : NULL;
+    if (from_game) asset_hashes_keep(now, known, from_game);
+    free(from_game);
+    list_asset_files();
+    asset_paths found = {0};
+    bool by_bytes = false;
+    if (hash) {
+        for (int i = 0; i < A.asset_files.count; i++) {
+            const asset_file *file = &A.asset_files.items[i];
+            unsigned long long modified = 0;
+            char hex[65];
+            if (file->size != hash->size || !folder_file_info(file->path, NULL, &modified)) continue;
+            if (file_hash(file->path, file->size, modified, hex) && strcmp(hex, hash->hex) == 0) vec_push(found, file->path);
+        }
+        by_bytes = found.count > 0;
+    }
+    if (found.count == 0) {
+        const char *name = asset_path_name(site->abs);
+        for (int i = 0; i < A.asset_files.count; i++) {
+            if (asset_path_same(asset_path_name(A.asset_files.items[i].path), name)) vec_push(found, A.asset_files.items[i].path);
+        }
+    }
+    if (found.count == 0) return;
+    diagnostic *d = &A.diags.items[diag];
+    sb_put(&d->message, by_bytes ? "\nnote: a file with the same bytes is at " : "\nnote: files of that name: ");
+    for (int i = 0; i < found.count; i++) {
+        char *relative = asset_path_relative(site->folder, found.items[i]);
+        if (i > 0) sb_put(&d->message, ", ");
+        sb_printf(&d->message, "'%s'", relative);
+        const asset_fix fix = {(int)(site - A.assets.items), diag, arena_copy(relative), by_bytes && i == 0};
+        vec_push(A.asset_fixes, fix);
+        free(relative);
+        if (by_bytes) break; // One place: the first
+    }
+}
+
+// Checks every site's file is there, and keeps the hashes of those that are
+// in the game's .tide/ (assets.h).
+static void check_assets(void)
+{
+    asset_hashes known = {0};
+    asset_hashes now = {0};
+    if (asset_roots.game_folder) asset_hashes_load(&known, asset_roots.game_folder);
+    for (int i = 0; i < A.assets.count; i++) {
+        const asset_site *site = &A.assets.items[i];
+        if (site->url) continue;
+        asset_paths files = {0};
+        if (site->glob) {
+            glob_matches(site, &files);
+            if (files.count == 0) {
+                sb message = {0};
+                sb_printf(&message, "'" STR_FMT "' matches no file", STR_ARG(site->path));
+                asset_diagnostic(site, message.data);
+            }
+        } else {
+            unsigned long long size = 0;
+            if (folder_file_info(site->abs, &size, NULL)) vec_push(files, site->abs);
+            else asset_missing(site, &known, &now);
+        }
+        for (int k = 0; asset_roots.game_folder && k < files.count; k++) {
+            unsigned long long size = 0;
+            unsigned long long modified = 0;
+            char hex[65];
+            if (!folder_file_info(files.items[k], &size, &modified) || !file_hash(files.items[k], size, modified, hex)) continue;
+            char *from_game = asset_path_relative(asset_roots.game_folder, files.items[k]);
+            asset_hashes_set(&now, from_game, hex, size);
+            free(from_game);
+        }
+    }
+    if (asset_roots.game_folder) asset_hashes_save(&now, asset_roots.game_folder);
+    asset_hashes_free(&known);
+    asset_hashes_free(&now);
+}
+
+// Where a site's path is written, between the quotes.
+static loc asset_path_start(const asset_site *site)
+{
+    const loc at = A.files[site->file].toks[site->string].at;
+    return (loc){at.line, at.col + 1, at.file};
+}
+
+static void asset_fix_actions(const int start_line, const int end_line, jbuf *out, int *written)
+{
+    for (int i = 0; i < A.asset_fixes.count; i++) {
+        const asset_fix *f = &A.asset_fixes.items[i];
+        const asset_site *site = &A.assets.items[f->site];
+        if (site->file != A.doc) continue;
+        const loc start = asset_path_start(site);
+        if (start.line - 1 < start_line || start.line - 1 > end_line) continue;
+        const loc end = {start.line, start.col + site->path.len, start.file};
+        sb title = {0};
+        sb_printf(&title, "Change to '%s'", f->path);
+        quick_fix(out, written, title.data, f->preferred, &A.diags.items[f->diag], start, end, f->path);
+    }
+}
+
+int analysis_asset_count(void)
+{
+    return A.assets.count;
+}
+
+const char *analysis_asset_path(const int i)
+{
+    return A.assets.items[i].abs;
+}
+
+bool analysis_asset_is_glob(const int i)
+{
+    return A.assets.items[i].glob;
+}
+
+const char *analysis_asset_folder(const int i)
+{
+    return A.assets.items[i].folder;
+}
+
+// Where `path` is once the renames happen: malloc'd, or NULL where it stays.
+static char *moved_to(const char *path, const asset_rename *renames, const int count)
+{
+    for (int i = 0; i < count; i++) {
+        const asset_rename *r = &renames[i];
+        if (asset_path_same(path, r->old_path)) {
+            char *out = malloc(strlen(r->new_path) + 1);
+            if (!out) abort();
+            strcpy(out, r->new_path);
+            return out;
+        }
+        if (asset_path_under(path, r->old_path)) {
+            const char *rest = path + strlen(r->old_path);
+            char *out = malloc(strlen(r->new_path) + strlen(rest) + 1);
+            if (!out) abort();
+            sprintf(out, "%s%s", r->new_path, rest);
+            return out;
+        }
+    }
+    return NULL;
+}
+
+void analysis_rename_files(const asset_rename *renames, const int count, jbuf *out)
+{
+    jb_put(out, "{\"changes\":{");
+    int files_written = 0;
+    for (int file = 0; file < A.file_count; file++) {
+        int written = 0;
+        for (int i = 0; i < A.assets.count; i++) {
+            const asset_site *site = &A.assets.items[i];
+            if (site->file != file || site->glob || site->url) continue;
+            char *target = moved_to(site->abs, renames, count);
+            char *declaring = moved_to(A.files[file].src.path, renames, count);
+            if (!target && !declaring) continue;
+            char *folder = declaring ? asset_path_folder(declaring) : NULL;
+            char *relative = asset_path_relative(folder ? folder : site->folder, target ? target : site->abs);
+            const char *was = str_to_cstr(site->path);
+            if (!asset_path_same(relative, was)) {
+                if (written++ == 0) {
+                    if (files_written++) jb_put(out, ",");
+                    jb_string(out, A.files[file].uri);
+                    jb_put(out, ":[");
+                } else {
+                    jb_put(out, ",");
+                }
+                const loc start = asset_path_start(site);
+                jb_put(out, "{\"range\":");
+                write_edit_range(out, start, (loc){start.line, start.col + site->path.len, start.file});
+                jb_put(out, ",\"newText\":");
+                jb_string(out, relative);
+                jb_put(out, "}");
+            }
+            free(relative);
+            free(folder);
+            free(declaring);
+            free(target);
+        }
+        if (written) jb_put(out, "]");
+    }
+    jb_put(out, "}}");
+}
+
+// Completion inside a site's path: the folders and files where the path so
+// far leads, relative to the declaring file, the files of the type's format,
+// and for a list or map, globs.
+typedef struct asset_entries {
+    VEC(const char *) folders;
+    VEC(const char *) files;
+} asset_entries;
+
+static void add_asset_entry(void *user, const char *name, const bool is_folder)
+{
+    asset_entries *entries = user;
+    if (is_folder) vec_push(entries->folders, arena_copy(name));
+    else vec_push(entries->files, arena_copy(name));
+}
+
+static int name_order(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+// A completion item that replaces `start` to `end` with `text`.
+static void asset_item(completion *c, const char *label, const int kind, const loc start, const loc end, const char *text,
+                       const char *detail, const char sort)
+{
+    if (c->count++) jb_put(c->out, ",");
+    jb_put(c->out, "{\"label\":");
+    jb_string(c->out, label);
+    jb_printf(c->out, ",\"kind\":%d,\"filterText\":", kind);
+    jb_string(c->out, text);
+    jb_printf(c->out, ",\"sortText\":\"%c", sort);
+    jb_put(c->out, label);
+    jb_put(c->out, "\",\"textEdit\":{\"range\":");
+    write_edit_range(c->out, start, end);
+    jb_put(c->out, ",\"newText\":");
+    jb_string(c->out, text);
+    jb_put(c->out, "}");
+    if (detail) {
+        jb_put(c->out, ",\"detail\":");
+        jb_string(c->out, detail);
+    }
+    jb_put(c->out, "}");
+}
+
+static bool ends_with_fold(const char *name, const char *suffix)
+{
+    const size_t n = strlen(name);
+    const size_t s = strlen(suffix);
+    if (n < s) return false;
+    for (size_t i = 0; i < s; i++) {
+        if (tolower((unsigned char)name[n - s + i]) != tolower((unsigned char)suffix[i])) return false;
+    }
+    return true;
+}
+
+static void complete_asset_path(completion *c, const int tok, const loc at)
+{
+    enum { KIND_FILE = 17, KIND_FOLDER = 19 };
+    const asset_site *site = asset_site_at(tok);
+    if (!site || site->url) return;
+    const token *t = &DOC->toks[tok];
+    int offset = at.col - (t->at.col + 1);
+    if (offset < 0) offset = 0;
+    if (offset > site->path.len) offset = site->path.len;
+    int segment = 0; // Where the part being typed starts
+    for (int i = 0; i < offset; i++) {
+        if (site->path.ptr[i] == '/' || site->path.ptr[i] == '\\') segment = i + 1;
+    }
+    char *base = asset_path_join(site->folder, site->path.ptr, (size_t)segment);
+    const size_t n = strlen(base);
+    if (n == 0 || base[n - 1] != '/') {
+        base = realloc(base, n + 2);
+        if (!base) abort();
+        base[n] = '/';
+        base[n + 1] = '\0';
+    }
+    const loc start = {at.line, t->at.col + 1 + segment, A.doc};
+    asset_entries entries = {{0}, {0}};
+    folder_list(base, add_asset_entry, &entries);
+    if (entries.folders.count > 0) qsort(entries.folders.items, (size_t)entries.folders.count, sizeof(char *), name_order);
+    if (entries.files.count > 0) qsort(entries.files.items, (size_t)entries.files.count, sizeof(char *), name_order);
+    // Up a folder, while there's one above
+    size_t top = 0;
+    while (top < strlen(base) && !(base[top] == '/' && (top == 0 || base[top - 1] == ':'))) top++;
+    if (strlen(base) > top + 1) asset_item(c, "../", KIND_FOLDER, start, at, "../", "The folder above", '0');
+    for (int i = 0; i < entries.folders.count; i++) {
+        sb label = {0};
+        sb_printf(&label, "%s/", entries.folders.items[i]);
+        if (strcmp(entries.folders.items[i], "build") == 0 && asset_roots.game_folder
+            && asset_path_same(base, asset_roots.game_folder)) continue; // What tide makes
+        asset_item(c, label.data, KIND_FOLDER, start, at, label.data, "A folder", '1');
+    }
+    if (site->many) {
+        sb any = {0};
+        sb all = {0};
+        sb_printf(&any, "*%s", site->format ? site->format : "");
+        sb_printf(&all, "**/*%s", site->format ? site->format : "");
+        asset_item(c, any.data, KIND_FILE, start, at, any.data, "Every matching file in this folder", '2');
+        asset_item(c, all.data, KIND_FILE, start, at, all.data, "Every matching file in this folder and its subfolders", '2');
+    }
+    for (int i = 0; i < entries.files.count; i++) {
+        const char *name = entries.files.items[i];
+        if (ends_with_fold(name, ".tide")) continue;
+        if (site->format && !ends_with_fold(name, site->format)) continue;
+        asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
+    }
+    free(base);
 }

@@ -1,10 +1,10 @@
-// expect: no version of Draw.Depth takes (bool)
-// expect: Draw.Depth(Depth mode, Block content)
+// expect: no version of Draw3D.Depth takes (bool)
+// expect: Draw3D.Depth(Depth mode, Block content)
 scene Main { }
 
 view Show()
 {
-    Draw.Depth(false)
+    Draw3D.Depth(false)
     {
         Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
     }
