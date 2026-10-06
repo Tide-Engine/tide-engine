@@ -285,6 +285,7 @@ typedef struct fresh_inputs {
     bool watch;
     uint32_t sampled;
     uint32_t stale;
+    uint32_t next; // The tick after the last input sampled, even while unwatched
 } fresh_inputs;
 
 // Freshness is judged when an input is sampled: a tick the server has
@@ -296,20 +297,27 @@ static void sample_fresh(void *user, const uint32_t tick, void *input)
         f->sampled++;
         if (tick < tide_client_status_of(f->client).server_tick) f->stale++;
     }
+    f->next = tick + 1u;
     sample(NULL, tick, input);
 }
 
-static void join_fresh(watched *w, fresh_inputs *f, const bool twice)
+static void join_fresh_at_cost(watched *w, fresh_inputs *f, const bool twice, const uint64_t cost, const double budget)
 {
-    slow_clock = slow_cost = 0;
+    static tide_game slow;
+    slow = tide_game_api;
+    slow.tick = slow_tick;
+    slow_clock = 0;
+    slow_cost = cost;
     *f = (fresh_inputs){0};
     *w = (watched){.net = tide_loopback_create(25), .twice = twice};
     tide_loopback_set_conditions(w->net, (tide_net_conditions){.latency = 0.05});
     w->server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
                                      .transports = {tide_loopback_endpoint(w->net, 1)}}, w->now);
     TIDE_REQUIRE(w->server != NULL);
-    w->client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(w->net, 2),
-                                     .server = tide_loopback_address(1), .sample = sample_fresh, .user = f, .lead = 2}, w->now);
+    w->client = tide_client_create(&(tide_client_desc){.game = cost ? &slow : &tide_game_api,
+                                     .transport = tide_loopback_endpoint(w->net, 2), .server = tide_loopback_address(1),
+                                     .sample = sample_fresh, .user = f, .lead = 2, .now_ns = cost ? slow_now : NULL,
+                                     .resim_budget = budget}, w->now);
     TIDE_REQUIRE(w->client != NULL);
     f->client = w->client;
     watch(w);
@@ -317,6 +325,11 @@ static void join_fresh(watched *w, fresh_inputs *f, const bool twice)
         TIDE_REQUIRE(w->now < 30.0);
         step(w, true, true);
     }
+}
+
+static void join_fresh(watched *w, fresh_inputs *f, const bool twice)
+{
+    join_fresh_at_cost(w, f, twice, 0, 0.0);
 }
 
 // Catching up can take several frames, and a later frame can itself be
@@ -374,6 +387,46 @@ TIDE_TEST(net_join_big_world_fresh_inputs_can_still_be_counted_as_late)
     TIDE_CHECK(s.late_ticks > late);
     TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED && s.resyncs == 0);
     leave(&w);
+}
+
+// With enough input delay, the world is behind the sampled inputs. A short
+// pause can leave fewer than eight ticks since the last sample but more than
+// eight authoritative ticks to run: bounded playback mustn't then sample
+// the old inputs it hasn't reached. Expensive ticks and a small, made-up
+// re-simulation budget give the client that delay without private hooks.
+TIDE_TEST(net_join_big_world_a_delayed_client_keeps_inputs_fresh_after_a_short_pause)
+{
+    for (int twice = 0; twice < 2; twice++) {
+        watched w;
+        fresh_inputs f;
+        join_fresh_at_cost(&w, &f, twice == 1, 1000000u, 0.0001);
+        const double connected = w.now;
+        while (w.now < connected + 6.0) step(&w, true, true);
+        const tide_client_status before = tide_client_status_of(w.client);
+        TIDE_REQUIRE(before.state == TIDE_SESSION_CONNECTED && before.resyncs == 0 && before.delay_ticks >= 6u);
+        const uint32_t next = f.next;
+        for (int frame = 0; frame < 12; frame++) step(&w, false, true);
+        f.watch = true;
+        step(&w, true, true);
+        const tide_client_status resumed = tide_client_status_of(w.client);
+        // This is the case a trigger based on >8 ticks past the last sample
+        // misses, although the confirmed world has more than eight to run.
+        TIDE_REQUIRE(resumed.server_tick > next && resumed.server_tick - next <= 8u);
+        TIDE_REQUIRE(resumed.server_tick > before.verified_tick + 8u);
+        TIDE_REQUIRE(resumed.verified_tick < resumed.server_tick);
+        TIDE_CHECK(resumed.predicted_tick == resumed.verified_tick);
+        TIDE_CHECK(f.sampled > 0 && f.stale == 0);
+        printf("    updated %s a frame with %u ticks of delay: after a short pause, the server was %u ticks past the last"
+               " sample and %u past the verified world; sampled %u inputs, %u already known to be stale\n",
+               twice ? "twice" : "once", before.delay_ticks, resumed.server_tick - next,
+               resumed.server_tick - before.verified_tick, f.sampled, f.stale);
+        const double resumed_at = w.now;
+        while (w.now < resumed_at + 3.0) step(&w, true, true);
+        const tide_client_status s = tide_client_status_of(w.client);
+        TIDE_CHECK(f.stale == 0 && s.state == TIDE_SESSION_CONNECTED && s.resyncs == 0);
+        TIDE_CHECK(s.verified_tick + 12u > tide_server_tick(w.server));
+        leave(&w);
+    }
 }
 
 // A machine with a clock, on which the game's ticks are dear: 5 ms each, where

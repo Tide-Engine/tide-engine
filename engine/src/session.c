@@ -158,7 +158,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define EARLY_START 1.0 // ...but in its first second in a match: a machine starting up stutters, and that doesn't come again
 #define CLOCK_SLOW 0.1  // The share of the time that passes a clock loses, while it has some to lose
 #define MAX_TICKS 8u    // Ticks a server runs in one update at most: after a stall it drops the time instead
-#define CATCH_UP_TICKS 8u // Ticks the server sent that a client runs in one frame at most, while it's behind (catch_up_room)
+#define CATCH_UP_TICKS 8u // Normal frame allowance for server ticks while a client is behind (catch_up_room)
 #define PRESENT_SECONDS 20.0  // How long players of a world a server went on from have to come back
 #define HANDOVER_EVERY 1.0    // Seconds between HANDOVERs, once it's been the same that long
 
@@ -3384,8 +3384,9 @@ static void fall_behind(tide_client *c)
 // With a clock (tide_client_desc.now_ns), a game whose ticks are dear takes
 // half the time between its updates at the most, so its frames stay about as
 // long as they were: but as many ticks as came due since its last update, and
-// one, or it would never be level, up to CATCH_UP_TICKS. Not more than that
-// whatever came due: a machine that can't run the match's ticks in the time
+// one, or it would never be level, up to CATCH_UP_TICKS mandatory ticks. Past
+// those, the time budget applies whatever came due: a machine that can't run
+// the match's ticks in the time
 // they take falls behind, which the server answers with the world again, and
 // its frames stay as long as those ticks take, where running all that came
 // due would make each frame longer than the last.
@@ -3661,6 +3662,7 @@ static void play(tide_client *c)
     // work.
     bool stale = false;
     bool waits = false; // The next tick's frame is there, and its time hasn't come
+    bool out_of_room = false; // A complete, due confirmed tick is left for another frame
     const int64_t due = due_tick(c);
     while (!c->need_snapshot && !c->receiving) {
         const uint32_t tick = c->verified;
@@ -3671,10 +3673,16 @@ static void play(tide_client *c)
             break;
         }
         const bool predicted = tick < c->ahead && !stale && tick < c->let_go && as_predicted(c, f);
-        if (!predicted && c->ran_now >= c->room.most) break;
+        if (!predicted && c->ran_now >= c->room.most) {
+            out_of_room = true;
+            break;
+        }
         if (!predicted && c->desc.now_ns) {
             if (c->ran_now == 0) c->began_now = c->desc.now_ns();
-            else if (c->ran_now >= c->room.least && c->desc.now_ns() - c->began_now >= c->room.time) break;
+            else if (c->ran_now >= c->room.least && c->desc.now_ns() - c->began_now >= c->room.time) {
+                out_of_room = true;
+                break;
+            }
         }
         // An input it sampled came too late: not a tick it sampled none for,
         // as before it had a world, or while it was behind
@@ -3701,6 +3709,10 @@ static void play(tide_client *c)
         if (c->ahead < c->verified) c->ahead = c->verified;
         skip_inputs(c, c->ahead); // Behind the server: no input was sampled for those ticks
     }
+    // Input delay can leave the world behind inputs already sampled. A
+    // shorter pause then misses few inputs but leaves more confirmed work
+    // than this frame may run: finish that work before making predictions.
+    if (!c->catching_up && out_of_room && c->heard_tick > c->sampled) fall_behind(c);
     // Level with the server once it has run every tick the server said it
     // ran, or the next one's time hasn't come: from there it predicts
     if (c->catching_up && !c->need_snapshot && !c->receiving && (c->verified >= c->heard_tick || waits)) {
@@ -3718,6 +3730,10 @@ static void play(tide_client *c)
     // further than its clock is
     const int64_t due_in = due_input(c);
     const uint32_t past = sampled_past(c);
+    // Even a short pause, without catch-up, can miss a tick the server ran.
+    // Sampling one now cannot make it arrive in time. Inputs already stored
+    // remain available for confirmation and genuine late-input accounting.
+    skip_inputs(c, c->heard_tick);
     for (uint32_t n = 0; (int64_t)c->sampled < due_in && (c->sampled < past || c->sampled - past < c->w.prediction) && n < 16u; n++) {
         sample_input(c);
     }

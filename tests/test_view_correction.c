@@ -215,21 +215,21 @@ static uint64_t correction_clock(void)
     return correction_clock_ns;
 }
 
-// With `burst`, the client's frames are long for a while: after frame 199 its
-// next are 234 and 269, 19 ticks apart. A client runs 8 of the server's ticks
-// in a frame, and the rest in the frames after, but a machine whose frames
-// are that long runs as many as have piled up: the update at 269 confirms
-// past the pair that was drawn at 234. A gap of 30 to 40 frames does it, as
-// the netcode is: under that, too little piles up to get past the pair, which
-// this client, whose inputs are 8 ticks early, draws 13 ticks ahead of what's
-// confirmed; over it, the server has run further than the client sampled
-// inputs for, so it counts as behind, and what it drew is replaced, not
-// corrected. 35 is the middle.
-#define BURST_GAP 35u
+// With `burst`, the client's next updates after frame 199 are 222 and 257:
+// about 12 ticks, then 19. The first gap stays inside its sampled input lead,
+// so its normal 8-tick allowance leaves confirmed work without replacing
+// presentation. The second update has an allowance of about 25 ticks from
+// twice the shorter interval: enough to reconstruct the pair drawn at 222
+// and confirm past it. Equal 35-frame gaps would instead miss inputs on the
+// first update, exhausting its allowance and correctly entering catch-up,
+// which discards that presentation anchor rather than correcting it.
+#define BURST_FIRST_GAP 23u
+#define BURST_SECOND_GAP 35u
 
 static bool correction_updates(const bool burst, const uint32_t frame)
 {
-    return !burst || frame < 200u || frame >= 199u + 2u * BURST_GAP || frame == 199u + BURST_GAP;
+    return !burst || frame < 200u || frame >= 199u + BURST_FIRST_GAP + BURST_SECOND_GAP
+        || frame == 199u + BURST_FIRST_GAP;
 }
 
 static correction_result correction_run(bool callback, bool mark, bool changing, bool budget, bool resync, bool burst)
