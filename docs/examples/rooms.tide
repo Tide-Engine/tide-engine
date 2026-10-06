@@ -64,8 +64,8 @@ view Lobby(Session session, mut Menu menu)
             if (GUILayout.Button("Start a match")) Session.Start(Arena);
             GUILayout.Horizontal()
             {
-                GUILayout.TextField("Code", menu.code);
-                if (GUILayout.Button("Join") && menu.code != "") Session.Join(menu.code);
+                GUILayout.TextField("Code", menu.code, out var entered);
+                if ((GUILayout.Button("Join") || entered) && menu.code != "") Session.Join(menu.code);
             }
         }
         else if (session.state == SessionState.Connecting)

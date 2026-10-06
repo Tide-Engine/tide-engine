@@ -84,8 +84,27 @@ static int frame(void *user, const float seconds)
         tide_web_eval("{ const f = document.activeElement;"
                       " f.dispatchEvent(new InputEvent('input', {inputType: 'deleteContentBackward'})); }");
         return TIDE_KEEP_RUNNING;
-    default:
+    case 8:
         check(devices.keyboard.backspace.down && devices.keyboard.text.count == 0, "and deleting, as Backspace");
+        // Its Enter, whatever the keyboard calls the key (Go, Done): a key that
+        // says its name and no position, down and up at once. It's what enters
+        // a field of the GUI's.
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));"
+                      " f.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', keyCode: 13, bubbles: true})); }");
+        return TIDE_KEEP_RUNNING;
+    case 9:
+        check(devices.keyboard.enter.held && devices.keyboard.enter.down, "its Enter reads as Enter, though it says no position");
+        check(devices.keyboard.text.count == 0, "and types nothing");
+        return TIDE_KEEP_RUNNING;
+    case 10:
+        check(!devices.keyboard.enter.held && devices.keyboard.enter.up, "and as released the next frame");
+        // ...or a line break typed into the field, from a keyboard that sends no key
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertLineBreak'})); }");
+        return TIDE_KEEP_RUNNING;
+    default:
+        check(devices.keyboard.enter.down && devices.keyboard.text.count == 0, "a line break typed into the field is Enter too");
         tide_platform_typing(false);
         return failures == 0 ? 0 : 1;
     }

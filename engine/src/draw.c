@@ -129,6 +129,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->place = d->window = (tide_draw_place){0};
     d->unsettled = d->altered = d->tinted = 0;
     d->blend = TIDE_BLEND_ALPHA;
+    d->depth = TIDE_DEPTH_READ_WRITE;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->bold = NULL;
     // The textures the frame drew with stay, for the next to find its pixels
@@ -311,6 +312,8 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
         const tide_draw_saved *s = &d->saved[--d->saved_count];
         if (s->setting == TIDE_DRAW_SAVED_BLEND) {
             d->blend = s->value;
+        } else if (s->setting == TIDE_DRAW_SAVED_DEPTH) {
+            d->depth = s->value;
         } else if (s->setting == TIDE_DRAW_SAVED_TINT) {
             d->tint = s->tint;
             d->tinted = 1;
@@ -353,6 +356,24 @@ uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
     const uint32_t mark = d->saved_count;
     save(d, TIDE_DRAW_SAVED_BLEND)->value = d->blend;
     tide_draw_set_blend(d, blend);
+    return mark;
+}
+
+void tide_draw_set_depth(tide_draw_list *d, const tide_depth depth)
+{
+    d->depth = (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
+}
+
+void tide_draw_unset_depth(tide_draw_list *d)
+{
+    d->depth = TIDE_DEPTH_READ_WRITE;
+}
+
+uint32_t tide_draw_push_depth(tide_draw_list *d, const tide_depth depth)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_DEPTH)->value = d->depth;
+    tide_draw_set_depth(d, depth);
     return mark;
 }
 
@@ -611,6 +632,7 @@ void tide_draw_defaults(tide_draw_list *d)
 {
     tide_draw_to(d, 0, 0, 0);
     d->blend = TIDE_BLEND_ALPHA;
+    d->depth = TIDE_DEPTH_READ_WRITE;
     d->tinted = 0;
     for (uint32_t i = 0; i <= d->target_count; i++) {
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
@@ -1359,11 +1381,12 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32
 // A run of instances through a shader. `with` says what tints it and, for a
 // 2D one, what it goes through before the camera: the rest of it is made here.
 // `through` is what a 3D one's instances go through on their way to the
-// world, or NULL.
+// world, or NULL, and `depth` what a 3D one does with depth: a 2D one, and a
+// blit, have none.
 static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                              const uint32_t count, const void *uniforms, const uint32_t *textures,
                              const uint32_t blended, const tide_draw_kind kind, const tide_blend blend,
-                             const tide_draw_run *with, const tide_float4x4 *through)
+                             const tide_depth depth, const tide_draw_run *with, const tide_float4x4 *through)
 {
     if (count == 0 || !shader || mesh == 0 || mesh > d->mesh_count) return;
     const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
@@ -1392,7 +1415,10 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     d->instance_used += (uint32_t)bytes;
     // More instances of the run before it, when nothing came between them and they draw with the same
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
-    if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend) {
+    // What has no depth says 0 whatever is set, so the setting never comes between two 2D runs
+    const uint8_t deep = kind == TIDE_DRAW_SHADED && shader->dims == 3 && (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint8_t)depth : 0;
+    if (kind == TIDE_DRAW_SHADED && last && last->kind == TIDE_DRAW_SHADED && last->blend == (uint8_t)blend
+        && last->depth == deep) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
             && r->mesh == mesh && r->blended == blended
@@ -1414,6 +1440,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     d->runs[d->run_count] = run;
     tide_draw_command *c = push(d, kind, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
     c->blend = (uint8_t)blend;
+    c->depth = deep;
     c->shaded.run = d->run_count++;
 }
 
@@ -1428,7 +1455,8 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         with.transform = p->transform;
     }
     shaded_instances(d, shader, mesh, instances, count, uniforms, textures, blended, TIDE_DRAW_SHADED,
-                     (tide_blend)d->blend, &with, p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
+                     (tide_blend)d->blend, (tide_depth)d->depth, &with,
+                     p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
 }
 
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_blend blend, const void *instance,
@@ -1456,7 +1484,8 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
     // None of the settings is a blit's: it's the whole destination, as its frag writes it
     const tide_draw_run with = {.tint = TIDE_COLOR_WHITE};
     shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, blended, TIDE_DRAW_BLIT,
-                     (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, &with, NULL);
+                     (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, TIDE_DEPTH_READ_WRITE, &with,
+                     NULL);
 }
 
 // A run of instances of a 3D mesh, tinted by `tint`: `through` is what they
@@ -1464,7 +1493,7 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
 // frame of instances spends its time here.
 static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
                            const uint32_t texture, const tide_filter filter, const tide_blend blend,
-                           const tide_color tint, const tide_float4x4 *through)
+                           const tide_depth depth, const tide_color tint, const tide_float4x4 *through)
 {
     if (count == 0 || !transforms) return;
     if (mesh == 0 || mesh > d->mesh_count || d->meshes[mesh - 1u].index_count == 0 || texture > d->texture_count) return;
@@ -1478,14 +1507,15 @@ static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list 
     d->matrix_count += count;
     // More instances of the mesh before it, when nothing came between them
     tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
-    if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->mesh3.mesh == mesh
-        && last->mesh3.texture == texture && last->mesh3.filter == (uint32_t)filter
+    if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->depth == (uint8_t)depth
+        && last->mesh3.mesh == mesh && last->mesh3.texture == texture && last->mesh3.filter == (uint32_t)filter
         && last->mesh3.first + last->mesh3.count == at && same_color(last->color, tint)) {
         last->mesh3.count += count;
         return;
     }
     tide_draw_command *c = push(d, TIDE_DRAW_MESH_3D, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), tint);
     c->blend = (uint8_t)blend;
+    c->depth = (uint8_t)depth;
     c->mesh3.mesh = mesh;
     c->mesh3.first = at;
     c->mesh3.count = count;
@@ -1503,8 +1533,8 @@ void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_floa
                          const uint32_t texture, const tide_filter filter)
 {
     const tide_draw_place *p = &d->place;
-    mesh_instances(d, mesh, transforms, count, texture, filter, (tide_blend)d->blend, tide_draw_tint(d),
-                   p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
+    mesh_instances(d, mesh, transforms, count, texture, filter, (tide_blend)d->blend, (tide_depth)d->depth,
+                   tide_draw_tint(d), p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
 }
 
 uint64_t tide_mesh_version(const tide_mesh *mesh)
@@ -1622,7 +1652,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
             const uint32_t texture = append_texture(d, from, c->mesh3.texture);
             mesh_instances(d, slot, from->matrices + c->mesh3.first, c->mesh3.count, texture,
-                           (tide_filter)c->mesh3.filter, (tide_blend)c->blend, c->color, NULL);
+                           (tide_filter)c->mesh3.filter, (tide_blend)c->blend,
+                           c->depth <= TIDE_DEPTH_NONE ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE, c->color, NULL);
         } else if (c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT) {
             const tide_draw_run *r = &from->runs[c->shaded.run];
             if (!r->shader || !r->mesh || r->count == 0) continue;
@@ -1635,7 +1666,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const uint32_t size = tide_shader_instance_size(r->shader);
             shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
                              tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL, textures,
-                             r->blended, (tide_draw_kind)c->kind, (tide_blend)c->blend, r, NULL);
+                             r->blended, (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, r, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
         } else {

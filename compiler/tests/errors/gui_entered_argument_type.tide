@@ -1,0 +1,5 @@
+// expect: 'GUI.FloatField' makes its 'entered' bool, not int
+// expect: an 'out' argument is the variable itself, so its type is the parameter's: 'out var entered' declares one of that type
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUI.FloatField(Rect(0, 0, 200, 30), "Ratio", lobby.ratio, out lobby.count); }

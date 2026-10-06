@@ -1393,8 +1393,11 @@ static bool parse_number(tide_gui *g, const number_kind kind, double *out)
     return true;
 }
 
-// One box of a number field. Returns whether the player changed `value`.
-static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, double *value, const number_kind kind)
+// One box of a number field. Returns whether the player changed `value`, and
+// says in `entered`, where there's one, whether Enter or the south button
+// ended its typing now.
+static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, double *value, const number_kind kind,
+                       bool *entered)
 {
     const bool hover = hovered(g, id, box);
     if (hover && g->mouse_pressed && !g->claimed) {
@@ -1404,11 +1407,16 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
     }
     const bool focused = focusable(g, id, true);
     bool changed = false;
+    if (entered) *entered = false;
     if (g->editing == id) {
         g->editing_seen = true;
         if (grayed(g)) {
             g->editing = 0; // Disabled while typing: keeps the old value, as Escape does
         } else if (!focused || pressed(g, KEY_ENTER | PAD_ACCEPT)) {
+            if (focused) { // Entered, with what was typed before it in this frame
+                type_into(g, kind);
+                if (entered) *entered = true;
+            }
             double v;
             if (parse_number(g, kind, &v) && v != *value) {
                 *value = v;
@@ -1447,16 +1455,17 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
     return changed;
 }
 
-// A field of `n` floats side by side.
+// A field of `n` floats side by side. `entered` is its one box's, for a field
+// of one: NULL for the others.
 static bool float_parts(tide_gui *g, const uint32_t id, const tide_rect r, float *parts, const int n,
-                        const number_kind kind)
+                        const number_kind kind, bool *entered)
 {
     const float w = max_f((r.width - SPACING * (float)(n - 1)) / (float)n, 0.0f);
     bool changed = false;
     for (int i = 0; i < n; i++) {
         const tide_rect box = {r.x + (float)i * (w + SPACING), r.y, w, r.height};
         double v = parts[i];
-        if (number_box(g, tide_gui_seed(id, (uint32_t)i + 1u), box, &v, kind) && (float)v != parts[i]) {
+        if (number_box(g, tide_gui_seed(id, (uint32_t)i + 1u), box, &v, kind, entered) && (float)v != parts[i]) {
             parts[i] = (float)v;
             changed = true;
         }
@@ -1464,26 +1473,40 @@ static bool float_parts(tide_gui *g, const uint32_t id, const tide_rect r, float
     return changed;
 }
 
-bool tide_gui_int_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, int32_t *value)
+bool tide_gui_int_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, int32_t *value,
+                                bool *entered)
 {
     double v = *value;
-    if (!number_box(g, id, after_label(g, rect, label), &v, NUMBER_INT) || (int32_t)v == *value) return false;
+    if (!number_box(g, id, after_label(g, rect, label), &v, NUMBER_INT, entered) || (int32_t)v == *value) return false;
     *value = (int32_t)v;
+    return true;
+}
+
+bool tide_gui_int_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, int32_t *value)
+{
+    bool entered;
+    return tide_gui_int_field_entered(g, id, rect, label, value, &entered);
+}
+
+bool tide_gui_float_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, float *value,
+                                  bool *entered)
+{
+    float parts[1] = {*value};
+    if (!float_parts(g, id, after_label(g, rect, label), parts, 1, NUMBER_FLOAT, entered)) return false;
+    *value = parts[0];
     return true;
 }
 
 bool tide_gui_float_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, float *value)
 {
-    float parts[1] = {*value};
-    if (!float_parts(g, id, after_label(g, rect, label), parts, 1, NUMBER_FLOAT)) return false;
-    *value = parts[0];
-    return true;
+    bool entered;
+    return tide_gui_float_field_entered(g, id, rect, label, value, &entered);
 }
 
 bool tide_gui_float2_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float2 *value)
 {
     float parts[2] = {value->x, value->y};
-    if (!float_parts(g, id, after_label(g, rect, label), parts, 2, NUMBER_FLOAT)) return false;
+    if (!float_parts(g, id, after_label(g, rect, label), parts, 2, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f2(parts[0], parts[1]);
     return true;
 }
@@ -1491,7 +1514,7 @@ bool tide_gui_float2_field(tide_gui *g, const uint32_t id, const tide_rect rect,
 bool tide_gui_float3_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float3 *value)
 {
     float parts[3] = {value->x, value->y, value->z};
-    if (!float_parts(g, id, after_label(g, rect, label), parts, 3, NUMBER_FLOAT)) return false;
+    if (!float_parts(g, id, after_label(g, rect, label), parts, 3, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f3(parts[0], parts[1], parts[2]);
     return true;
 }
@@ -1499,7 +1522,7 @@ bool tide_gui_float3_field(tide_gui *g, const uint32_t id, const tide_rect rect,
 bool tide_gui_float4_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, tide_float4 *value)
 {
     float parts[4] = {value->x, value->y, value->z, value->w};
-    if (!float_parts(g, id, after_label(g, rect, label), parts, 4, NUMBER_FLOAT)) return false;
+    if (!float_parts(g, id, after_label(g, rect, label), parts, 4, NUMBER_FLOAT, NULL)) return false;
     *value = tide_f4(parts[0], parts[1], parts[2], parts[3]);
     return true;
 }
@@ -1513,14 +1536,15 @@ bool tide_gui_color_field(tide_gui *g, const uint32_t id, const tide_rect rect, 
     float parts[4] = {value->r, value->g, value->b, value->a};
     const float skip = swatch.width + SPACING;
     const tide_rect rest = {r.x + skip, r.y, max_f(r.width - skip, 0.0f), r.height};
-    if (!float_parts(g, id, rest, parts, 4, NUMBER_UNIT)) return false;
+    if (!float_parts(g, id, rest, parts, 4, NUMBER_UNIT, NULL)) return false;
     *value = (tide_color){parts[0], parts[1], parts[2], parts[3]};
     return true;
 }
 
 // ---------------------------------------------------------------------------
 // Text fields: click, or press Enter or type with the focus, to type; the
-// value changes as you type. Enter or Escape stop typing.
+// value changes as you type. Enter or Escape stop typing, and Enter is the one
+// a view can ask about (`entered`).
 
 static void start_text(tide_gui *g, const uint32_t id, const tide_str value)
 {
@@ -1555,7 +1579,8 @@ static bool type_text(tide_gui *g)
     return changed;
 }
 
-bool tide_gui_text_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, const tide_textref value)
+bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label,
+                                 const tide_textref value, bool *entered)
 {
     const tide_rect box = after_label(g, rect, label);
     const bool hover = hovered(g, id, box);
@@ -1566,10 +1591,18 @@ bool tide_gui_text_field(tide_gui *g, const uint32_t id, const tide_rect rect, c
     }
     const bool focused = focusable(g, id, false);
     bool changed = false;
+    *entered = false;
     if (g->editing == id) {
         g->editing_seen = true;
-        if (!focused || pressed(g, KEY_ENTER)) g->editing = 0;
-        else changed = type_text(g);
+        if (!focused) {
+            g->editing = 0;
+        } else {
+            changed = type_text(g);
+            if (pressed(g, KEY_ENTER)) { // Entered, with what was typed before it in this frame
+                g->editing = 0;
+                *entered = true;
+            }
+        }
     } else if (focused && (pressed(g, KEY_ENTER) || g->text.count > 0)) {
         start_text(g, id, tide_textref_get(value));
         changed = type_text(g);
@@ -1589,19 +1622,45 @@ bool tide_gui_text_field(tide_gui *g, const uint32_t id, const tide_rect rect, c
     return changed;
 }
 
+bool tide_gui_text_field(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label, const tide_textref value)
+{
+    bool entered;
+    return tide_gui_text_field_entered(g, id, rect, label, value, &entered);
+}
+
+bool tide_gui_layout_text_field_entered(tide_gui *g, const uint32_t id, const char *label, const tide_textref value,
+                                        bool *entered)
+{
+    const tide_rect rect = labelled(g, label, 2.0f * FIELD_WIDTH, 2.0f * LEAST_FIELD);
+    return tide_gui_text_field_entered(g, id, rect, "", value, entered);
+}
+
 bool tide_gui_layout_text_field(tide_gui *g, const uint32_t id, const char *label, const tide_textref value)
 {
-    return tide_gui_text_field(g, id, labelled(g, label, 2.0f * FIELD_WIDTH, 2.0f * LEAST_FIELD), "", value);
+    bool entered;
+    return tide_gui_layout_text_field_entered(g, id, label, value, &entered);
+}
+
+bool tide_gui_layout_int_field_entered(tide_gui *g, const uint32_t id, const char *label, int32_t *value, bool *entered)
+{
+    return tide_gui_int_field_entered(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value, entered);
 }
 
 bool tide_gui_layout_int_field(tide_gui *g, const uint32_t id, const char *label, int32_t *value)
 {
-    return tide_gui_int_field(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value);
+    bool entered;
+    return tide_gui_layout_int_field_entered(g, id, label, value, &entered);
+}
+
+bool tide_gui_layout_float_field_entered(tide_gui *g, const uint32_t id, const char *label, float *value, bool *entered)
+{
+    return tide_gui_float_field_entered(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value, entered);
 }
 
 bool tide_gui_layout_float_field(tide_gui *g, const uint32_t id, const char *label, float *value)
 {
-    return tide_gui_float_field(g, id, labelled(g, label, FIELD_WIDTH, LEAST_FIELD), "", value);
+    bool entered;
+    return tide_gui_layout_float_field_entered(g, id, label, value, &entered);
 }
 
 static float parts_width(const int n, const float each)

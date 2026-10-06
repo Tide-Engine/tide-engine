@@ -191,7 +191,7 @@ frag World(Corner3 vertex, mut Color color, Pixel pixel, Marks marks)
     color = pixel.world.x > marks.world ? Color.green : Color.red;
 }
 
-frag Depth(Corner3 vertex, mut Color color, Pixel pixel)
+frag ByDepth(Corner3 vertex, mut Color color, Pixel pixel)
 {
     color = Color(pixel.depth * 10, 0, 0);
 }
@@ -1110,7 +1110,7 @@ view Singles(Art art)
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 2)), Split);
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 2)), Hole);
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 2)), World);
-    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 2)), Depth);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 2)), ByDepth);
     var turned = float4x4.TRS(Cell(4, 2), quaternion.AxisAngle(float3(0, 0, 1), Math.Radians(90)), float3(1));
     Draw3D.Mesh(art.quad, art.faces, turned, Turn, Normal);
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 2)), Placed);

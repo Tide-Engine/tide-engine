@@ -413,6 +413,20 @@ bool tide_gui_float4_field(tide_gui *g, uint32_t id, tide_rect rect, const char 
 bool tide_gui_color_field(tide_gui *g, uint32_t id, tide_rect rect, const char *label, tide_color *value);
 bool tide_gui_text_field(tide_gui *g, uint32_t id, tide_rect rect, const char *label, tide_textref value);
 
+// The fields that are typed into, saying whether the player entered what they
+// typed (TextField(rect, label, value, out entered)): `entered` is true in the
+// frame Enter ends the typing in this field (the numpad's too, and for a
+// number field the south button, which ends its typing as well), with what
+// was typed before it in that frame in the value, and false in every other:
+// while it's typed into, when Enter starts the typing, and when the typing
+// ends another way (Escape, the focus moving on, a click elsewhere, the field
+// disabled or under a modal). What they return is as ever: whether the value
+// changed, which a number field's does as it's entered.
+bool tide_gui_int_field_entered(tide_gui *g, uint32_t id, tide_rect rect, const char *label, int32_t *value, bool *entered);
+bool tide_gui_float_field_entered(tide_gui *g, uint32_t id, tide_rect rect, const char *label, float *value, bool *entered);
+bool tide_gui_text_field_entered(tide_gui *g, uint32_t id, tide_rect rect, const char *label, tide_textref value,
+                                 bool *entered);
+
 // The same, laid out automatically (GUILayout).
 void tide_gui_layout_label(tide_gui *g, const char *text);
 bool tide_gui_layout_button(tide_gui *g, uint32_t id, const char *text);
@@ -426,6 +440,9 @@ bool tide_gui_layout_float3_field(tide_gui *g, uint32_t id, const char *label, t
 bool tide_gui_layout_float4_field(tide_gui *g, uint32_t id, const char *label, tide_float4 *value);
 bool tide_gui_layout_color_field(tide_gui *g, uint32_t id, const char *label, tide_color *value);
 bool tide_gui_layout_text_field(tide_gui *g, uint32_t id, const char *label, tide_textref value);
+bool tide_gui_layout_int_field_entered(tide_gui *g, uint32_t id, const char *label, int32_t *value, bool *entered);
+bool tide_gui_layout_float_field_entered(tide_gui *g, uint32_t id, const char *label, float *value, bool *entered);
+bool tide_gui_layout_text_field_entered(tide_gui *g, uint32_t id, const char *label, tide_textref value, bool *entered);
 void tide_gui_layout_space(tide_gui *g, float size);
 
 // Containers. Each returns how many were open before it, which the matching

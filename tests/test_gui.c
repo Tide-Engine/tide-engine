@@ -2054,3 +2054,428 @@ TIDE_TEST(gui_a_set_theme_holds_for_the_views_after_and_ends_with_the_frame)
     end();
     TIDE_CHECK(drawn_with(1, usual) && drawn_with(3, usual));
 }
+
+// ---------------------------------------------------------------------------
+// The fields that say whether the player entered what they typed: a text field,
+// an int field and a float field, one under the other.
+
+static tide_str entry_name;
+static int32_t entry_count;
+static float entry_ratio;
+static int entry_shown;            // The fields a frame calls, a bit each
+static int entry_off;              // ...and the ones in a Disabled block
+static tide_devices entry_sampled; // What the frame's sample had of the devices
+static tide_devices entry_viewed;  // ...and what its views read
+
+// A field's bit: in what entries() returns, that it was entered, and times
+// ENTRY_CHANGED, that it returned true.
+enum { ENTRY_NAME = 1, ENTRY_COUNT = 2, ENTRY_RATIO = 4, ENTRY_CHANGED = 8 };
+
+#define ENTRY_X 170.0f // Past the label column
+#define NAME_Y 14.0f   // Each one's row, with all three shown
+#define COUNT_Y 47.0f
+#define RATIO_Y 80.0f
+#define RATIO_ID tide_gui_seed(7, 1) // A float field's one box
+
+static void entry_start(void)
+{
+    start();
+    entry_name = TIDE_STR_EMPTY;
+    entry_count = 4;
+    entry_ratio = 0.5f;
+    entry_shown = ENTRY_NAME | ENTRY_COUNT | ENTRY_RATIO;
+    entry_off = 0;
+}
+
+// A frame of them in a host's order: the game's sample, then the frame.
+static int entries(void)
+{
+    entry_sampled = devices;
+    tide_gui_hide(&gui, &entry_sampled);
+    tide_devices_consume(&devices);
+    begin();
+    entry_viewed = gui.devices;
+    const tide_textref name = {.local = &entry_name};
+    bool entered[3] = {true, true, true}; // Whatever the variable held, each call says
+    bool changed[3] = {false, false, false};
+    for (int i = 0; i < 3; i++) {
+        if (!(entry_shown >> i & 1)) {
+            entered[i] = false;
+            continue;
+        }
+        const int depth = tide_gui_begin_disabled(&gui, (entry_off >> i & 1) != 0);
+        if (i == 0) changed[i] = tide_gui_layout_text_field_entered(&gui, 5, "Name", name, &entered[i]);
+        if (i == 1) changed[i] = tide_gui_layout_int_field_entered(&gui, 6, "Count", &entry_count, &entered[i]);
+        if (i == 2) changed[i] = tide_gui_layout_float_field_entered(&gui, 7, "Ratio", &entry_ratio, &entered[i]);
+        tide_gui_close(&gui, depth);
+    }
+    end();
+    int said = 0;
+    for (int i = 0; i < 3; i++) said |= ((entered[i] ? 1 : 0) | (changed[i] ? ENTRY_CHANGED : 0)) << i;
+    return said;
+}
+
+// A click at a row: the press, then the release. What the two frames said.
+static int entry_click(const float x, const float y)
+{
+    mouse(x, y, true);
+    const int pressed = entries();
+    mouse(x, y, false);
+    const int released = entries();
+    return pressed | released;
+}
+
+// A key down for a frame, then up for one. What the first frame said.
+static int entry_tap(tide_button *b)
+{
+    key(b, true);
+    const int said = entries();
+    key(b, false);
+    entries();
+    return said;
+}
+
+static bool name_is(const char *text)
+{
+    return entry_name.bytes == (int32_t)strlen(text) && memcmp(entry_name.ptr, text, strlen(text)) == 0;
+}
+
+TIDE_TEST(gui_a_field_says_when_its_typing_is_entered)
+{
+    entry_start();
+    mouse(ENTRY_X, NAME_Y, false);
+    TIDE_CHECK(entries() == 0);
+
+    // The text field: a click starts the typing, and it changes as it's typed
+    TIDE_CHECK(entry_click(ENTRY_X, NAME_Y) == 0);
+    TIDE_REQUIRE(gui.editing == 5);
+    type("K7");
+    TIDE_CHECK(entries() == ENTRY_NAME * ENTRY_CHANGED);
+    TIDE_CHECK(entries() == 0);
+    // Enter ends the typing: entered, in that frame and no other
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == ENTRY_NAME);
+    TIDE_CHECK(gui.editing == 0 && gui.focus == 5 && name_is("K7"));
+    TIDE_CHECK(entries() == 0); // The key is still down
+    key(&devices.keyboard.enter, false);
+    TIDE_CHECK(entries() == 0);
+    // It still has the focus, so Enter starts the typing again: that's not entering
+    TIDE_CHECK(entry_tap(&devices.keyboard.enter) == 0);
+    TIDE_CHECK(gui.editing == 5);
+    type("Q");
+    TIDE_CHECK(entries() == ENTRY_NAME * ENTRY_CHANGED);
+    // The numpad's Enter is Enter
+    TIDE_CHECK(entry_tap(&devices.keyboard.numpadEnter) == ENTRY_NAME);
+    TIDE_CHECK(gui.editing == 0 && name_is("K7Q"));
+
+    // The int field keeps its number as it's entered: changed, in the same call
+    TIDE_CHECK(entry_click(ENTRY_X, COUNT_Y) == 0);
+    TIDE_REQUIRE(gui.editing == 6);
+    type("12");
+    TIDE_CHECK(entries() == 0 && entry_count == 4);
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == (ENTRY_COUNT | ENTRY_COUNT * ENTRY_CHANGED));
+    TIDE_CHECK(entry_count == 12 && gui.editing == 0 && gui.focus == 6);
+    TIDE_CHECK(entries() == 0);
+    key(&devices.keyboard.enter, false);
+    TIDE_CHECK(entries() == 0);
+    // Enter starts its typing, and Enter again enters the number it had: nothing changed
+    TIDE_CHECK(entry_tap(&devices.keyboard.enter) == 0);
+    TIDE_CHECK(gui.editing == 6);
+    TIDE_CHECK(entry_tap(&devices.keyboard.numpadEnter) == ENTRY_COUNT);
+    TIDE_CHECK(entry_count == 12 && gui.editing == 0);
+
+    // The float field the same
+    TIDE_CHECK(entry_click(ENTRY_X, RATIO_Y) == 0);
+    TIDE_REQUIRE(gui.editing == RATIO_ID);
+    type("0.25");
+    TIDE_CHECK(entries() == 0 && entry_ratio == 0.5f);
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == (ENTRY_RATIO | ENTRY_RATIO * ENTRY_CHANGED));
+    TIDE_CHECK(entry_ratio == 0.25f && gui.editing == 0);
+    TIDE_CHECK(entries() == 0);
+    key(&devices.keyboard.enter, false);
+    TIDE_CHECK(entries() == 0);
+    TIDE_CHECK(entry_tap(&devices.keyboard.enter) == 0);
+    TIDE_CHECK(gui.editing == RATIO_ID);
+    TIDE_CHECK(entry_tap(&devices.keyboard.enter) == ENTRY_RATIO);
+}
+
+// What's typed and Enter can come in one frame, a slow one or a script's: the
+// field is entered with all of it.
+TIDE_TEST(gui_what_is_typed_in_the_frame_of_enter_is_entered)
+{
+    entry_start();
+    entry_click(ENTRY_X, NAME_Y);
+    type("K7QF2M");
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == (ENTRY_NAME | ENTRY_NAME * ENTRY_CHANGED));
+    TIDE_CHECK(name_is("K7QF2M") && gui.editing == 0);
+    key(&devices.keyboard.enter, false);
+    entries();
+
+    entry_click(ENTRY_X, COUNT_Y);
+    type("12");
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == (ENTRY_COUNT | ENTRY_COUNT * ENTRY_CHANGED));
+    TIDE_CHECK(entry_count == 12);
+    key(&devices.keyboard.enter, false);
+    entries();
+
+    entry_click(ENTRY_X, RATIO_Y);
+    type("2.5");
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == (ENTRY_RATIO | ENTRY_RATIO * ENTRY_CHANGED));
+    TIDE_CHECK(entry_ratio == 2.5f);
+    key(&devices.keyboard.enter, false);
+    entries();
+
+    // The fields that don't say are entered the same way
+    start();
+    int32_t players = 4;
+    mouse(ENTRY_X, NAME_Y, false);
+    int_field(&players);
+    mouse(ENTRY_X, NAME_Y, true);
+    int_field(&players);
+    mouse(ENTRY_X, NAME_Y, false);
+    type("31");
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(int_field(&players) && players == 31);
+}
+
+TIDE_TEST(gui_typing_that_ends_another_way_isnt_entered)
+{
+    entry_start();
+    mouse(ENTRY_X, NAME_Y, false);
+    entries();
+
+    // Escape stops the typing: text stays as it was typed, and a number as it was
+    entry_click(ENTRY_X, NAME_Y);
+    type("K7");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.escape) == 0);
+    TIDE_CHECK(gui.editing == 0 && name_is("K7"));
+    entry_click(ENTRY_X, COUNT_Y);
+    type("99");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.escape) == 0);
+    TIDE_CHECK(gui.editing == 0 && entry_count == 4);
+    entry_click(ENTRY_X, RATIO_Y);
+    type("9");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.escape) == 0);
+    TIDE_CHECK(gui.editing == 0 && entry_ratio == 0.5f);
+
+    // Tab moves the focus on: a number is kept, and nothing is entered
+    entry_click(ENTRY_X, NAME_Y);
+    type("Q");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.tab) == 0);
+    TIDE_CHECK(gui.editing == 0 && gui.focus == 6 && name_is("K7Q"));
+    entry_click(ENTRY_X, COUNT_Y);
+    type("7");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.tab) == ENTRY_COUNT * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == 0 && gui.focus == RATIO_ID && entry_count == 7);
+    entry_click(ENTRY_X, RATIO_Y);
+    type("3");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.keyboard.tab) == ENTRY_RATIO * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == 0 && entry_ratio == 3.0f);
+
+    // So does a click elsewhere, and on the field after it
+    entry_click(ENTRY_X, NAME_Y);
+    type("F");
+    entries();
+    TIDE_CHECK(entry_click(900.0f, 900.0f) == 0);
+    TIDE_CHECK(gui.editing == 0 && name_is("K7QF"));
+    entry_click(ENTRY_X, RATIO_Y);
+    type("6");
+    entries();
+    TIDE_CHECK(entry_click(900.0f, 900.0f) == ENTRY_RATIO * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == 0 && entry_ratio == 6.0f);
+    entry_click(ENTRY_X, COUNT_Y);
+    type("8");
+    entries();
+    TIDE_CHECK(entry_click(ENTRY_X, RATIO_Y) == ENTRY_COUNT * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == RATIO_ID && entry_count == 8);
+
+    // A field disabled while it's typed into isn't entered, with Enter down in that frame or not
+    for (int field = 0; field < 3; field++) {
+        const float y = field == 0 ? NAME_Y : field == 1 ? COUNT_Y : RATIO_Y;
+        for (int enter = 0; enter < 2; enter++) {
+            entry_off = 0;
+            entry_click(900.0f, 900.0f);
+            entry_click(ENTRY_X, y);
+            TIDE_REQUIRE(gui.editing != 0);
+            type("1");
+            entries();
+            entry_off = 1 << field;
+            key(&devices.keyboard.enter, enter == 1);
+            TIDE_CHECK(entries() == 0);
+            TIDE_CHECK(gui.editing == 0);
+            key(&devices.keyboard.enter, false);
+            TIDE_CHECK(entries() == 0);
+            // ...nor while it stays disabled
+            TIDE_CHECK(entry_tap(&devices.keyboard.enter) == 0);
+        }
+    }
+    TIDE_CHECK(entry_count == 8 && entry_ratio == 6.0f); // What was typed into a number then is dropped
+}
+
+// A gamepad's south button ends a number field's typing, as Enter does, so it
+// enters it. It doesn't end a text field's, where nothing is entered.
+TIDE_TEST(gui_a_gamepads_south_button_enters_a_number)
+{
+    entry_start();
+    devices.gamepad.connected = true;
+    mouse(ENTRY_X, COUNT_Y, false);
+    entries();
+    entry_click(ENTRY_X, COUNT_Y);
+    type("9");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.gamepad.buttonSouth) == (ENTRY_COUNT | ENTRY_COUNT * ENTRY_CHANGED));
+    TIDE_CHECK(entry_count == 9 && gui.editing == 0);
+    entry_click(ENTRY_X, RATIO_Y);
+    type("2");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.gamepad.buttonSouth) == (ENTRY_RATIO | ENTRY_RATIO * ENTRY_CHANGED));
+    TIDE_CHECK(entry_ratio == 2.0f && gui.editing == 0);
+
+    entry_click(ENTRY_X, NAME_Y);
+    type("K7");
+    entries();
+    TIDE_CHECK(entry_tap(&devices.gamepad.buttonSouth) == 0);
+    TIDE_CHECK(gui.editing == 5); // Still typed into
+}
+
+// A frame with the text field outside a modal and the int field in it, the
+// modal up while `up`. What entries() says.
+static int modal_entries(bool *up)
+{
+    begin();
+    const tide_textref name = {.local = &entry_name};
+    bool entered[2] = {true, true};
+    bool changed[2] = {false, false};
+    changed[0] = tide_gui_layout_text_field_entered(&gui, 5, "Name", name, &entered[0]);
+    const int depth = tide_gui_begin_modal(&gui, 30, TIDE_ANCHOR_MIDDLE_CENTER, up);
+    if (depth >= 0) {
+        changed[1] = tide_gui_layout_int_field_entered(&gui, 6, "Count", &entry_count, &entered[1]);
+        tide_gui_close(&gui, depth);
+    } else {
+        entered[1] = false;
+    }
+    end();
+    return (entered[0] ? ENTRY_NAME : 0) | (entered[1] ? ENTRY_COUNT : 0) | (changed[0] ? ENTRY_NAME * ENTRY_CHANGED : 0)
+         | (changed[1] ? ENTRY_COUNT * ENTRY_CHANGED : 0);
+}
+
+TIDE_TEST(gui_a_field_under_a_modal_isnt_entered)
+{
+    entry_start();
+    bool up = false;
+    mouse(ENTRY_X, NAME_Y, false);
+    modal_entries(&up);
+    mouse(ENTRY_X, NAME_Y, true);
+    modal_entries(&up);
+    mouse(ENTRY_X, NAME_Y, false);
+    type("K7");
+    TIDE_CHECK(modal_entries(&up) == ENTRY_NAME * ENTRY_CHANGED);
+    TIDE_REQUIRE(gui.editing == 5);
+    // A modal comes up over it: it's up from the frame after it first drew
+    up = true;
+    TIDE_CHECK(modal_entries(&up) == 0);
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(modal_entries(&up) == 0); // The field under it stops being typed into, and isn't entered
+    TIDE_CHECK(gui.editing == 6 && name_is("K7")); // The modal's first widget has the focus, and Enter started its typing
+    key(&devices.keyboard.enter, false);
+    type("3");
+    TIDE_CHECK(modal_entries(&up) == 0);
+    // The field in the modal is entered as any
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(modal_entries(&up) == (ENTRY_COUNT | ENTRY_COUNT * ENTRY_CHANGED));
+    TIDE_CHECK(entry_count == 3 && up);
+}
+
+// Enter while a field is typed into is the GUI's, in the frame it enters the
+// field too, and until it's let go, though the field is gone the frame after:
+// a lobby's page that joins as its code is entered.
+TIDE_TEST(gui_the_enter_that_entered_a_field_is_never_the_games)
+{
+    entry_start();
+    entry_shown = ENTRY_NAME;
+    mouse(ENTRY_X, NAME_Y, false);
+    entries();
+    entry_click(ENTRY_X, NAME_Y);
+    type("K7QF2M");
+    entries();
+    key(&devices.keyboard.enter, true);
+    TIDE_CHECK(entries() == ENTRY_NAME);
+    TIDE_CHECK(!any_of(entry_sampled.keyboard.enter) && !any_of(entry_viewed.keyboard.enter));
+    entry_shown = 0; // Joining: the page goes, with the key still down
+    for (int i = 0; i < 5; i++) {
+        TIDE_CHECK(entries() == 0);
+        TIDE_CHECK(!any_of(entry_sampled.keyboard.enter) && !any_of(entry_viewed.keyboard.enter));
+    }
+    TIDE_CHECK(gui.focus == 0 && gui.editing == 0);
+    // Let go: neither the game nor the views hear of it
+    key(&devices.keyboard.enter, false);
+    for (int i = 0; i < 2; i++) {
+        entries();
+        TIDE_CHECK(!any_of(entry_sampled.keyboard.enter) && !any_of(entry_viewed.keyboard.enter));
+    }
+    // Pressed again, it's the game's
+    key(&devices.keyboard.enter, true);
+    entries();
+    TIDE_CHECK(entry_sampled.keyboard.enter.pressed && entry_sampled.keyboard.enter.down && entry_viewed.keyboard.enter.down);
+
+    // The numpad's, and a number entered with a gamepad's south button, the same
+    entry_start();
+    devices.gamepad.connected = true;
+    entry_shown = ENTRY_COUNT;
+    mouse(ENTRY_X, NAME_Y, false);
+    entries();
+    entry_click(ENTRY_X, NAME_Y); // The one row
+    type("5");
+    entries();
+    key(&devices.gamepad.buttonSouth, true);
+    key(&devices.keyboard.numpadEnter, true);
+    TIDE_CHECK(entries() == (ENTRY_COUNT | ENTRY_COUNT * ENTRY_CHANGED));
+    entry_shown = 0;
+    for (int i = 0; i < 3; i++) {
+        entries();
+        TIDE_CHECK(!any_of(entry_sampled.gamepad.buttonSouth) && !any_of(entry_viewed.gamepad.buttonSouth));
+        TIDE_CHECK(!any_of(entry_sampled.keyboard.numpadEnter) && !any_of(entry_viewed.keyboard.numpadEnter));
+    }
+}
+
+// GUI's fields, at a rect, say it as GUILayout's do.
+TIDE_TEST(gui_fields_at_a_rect_say_when_they_are_entered)
+{
+    entry_start();
+    const tide_rect rect = {600.0f, 400.0f, 300.0f, 30.0f};
+    const tide_textref name = {.local = &entry_name};
+    int said = 0;
+    for (int field = 0; field < 3; field++) {
+        // Six frames: the pointer comes, presses and lets go, the player types, Enter goes down, and up
+        for (int frame = 0; frame < 6; frame++) {
+            mouse(700.0f, 415.0f, frame == 1);
+            if (frame == 3) type("7");
+            key(&devices.keyboard.enter, frame == 4);
+            begin();
+            bool entered = true;
+            bool changed = false;
+            if (field == 0) changed = tide_gui_text_field_entered(&gui, 5, rect, "", name, &entered);
+            if (field == 1) changed = tide_gui_int_field_entered(&gui, 6, rect, "", &entry_count, &entered);
+            if (field == 2) changed = tide_gui_float_field_entered(&gui, 7, rect, "", &entry_ratio, &entered);
+            end();
+            TIDE_CHECK(entered == (frame == 4));
+            TIDE_CHECK(changed == (field == 0 ? frame == 3 : frame == 4));
+            if (entered) said |= 1 << field;
+        }
+        mouse(100.0f, 100.0f, true); // Away, for the next one
+        begin();
+        end();
+    }
+    TIDE_CHECK(said == 7 && name_is("7") && entry_count == 7 && entry_ratio == 7.0f);
+}
