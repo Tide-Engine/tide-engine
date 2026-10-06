@@ -132,7 +132,7 @@ static bool command(tide_world *w, const uint32_t id, const int sender)
 {
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = plain_command(id, bytes);
-    return tide_game_api.command(w, player(sender), tide_game_api.command_sequence(w, player(sender)) + 1, bytes, size);
+    return tide_game_api.command(w, player(sender), 0, tide_game_api.command_sequence(w, player(sender), 0) + 1, bytes, size);
 }
 
 TIDE_TEST(siege_builds_two_towers_and_seats_its_players)
@@ -738,7 +738,7 @@ TIDE_TEST(siege_three_players_stay_in_one_match_over_a_bad_network)
     // The second player presses Reset: a command, which the server gives a tick
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = plain_command(TIDE_COMMAND_ID_Rebuild, bytes);
-    TIDE_REQUIRE(tide_game_api.check_command(bytes, size));
+    TIDE_REQUIRE(tide_game_api.check_command(bytes, size, NULL));
     TIDE_REQUIRE(tide_client_send_command(m.players[1], bytes, size));
     while (tide_server_tick(m.server) < 760) advance(&m);
     authority = tide_server_world(m.server);
