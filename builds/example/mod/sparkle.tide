@@ -3,7 +3,8 @@ namespace Sparkle;
 // A mod for the build service's example game. It's a package: what it
 // declares is in its namespace, and it names the game's own declarations
 // (Body, Ball) as the game's code does. It compiles with the game, so its
-// system is in the match's schedule and its views draw with the game's.
+// systems are in the match's schedule and its views draw with the game's.
+// It adds to the game (a system, two views) and replaces one thing of it.
 
 singleton Said
 {
@@ -26,6 +27,14 @@ system Quicken(mut Body body, with Ball)
     var speed = Math.Length(body.velocity);
     var onEdge = Math.Abs(body.position.x) > 160 || Math.Abs(body.position.y) > 160;
     if (onEdge && speed < 400) body.velocity *= 1.02;
+}
+
+// The game marked how the ball is drawn as virtual, so a mod can replace it:
+// this takes its place in the build, and the game's own isn't in it.
+override view DrawBalls(Body body, with Ball)
+{
+    Draw2D.Circle(body.position, body.radius, Color(0.18, 0.83, 0.75));
+    Draw2D.Circle(body.position, body.radius * 0.55, Color(0.086, 0.086, 0.094));
 }
 
 // A ring that pulses around everything that moves, over what the game drew.

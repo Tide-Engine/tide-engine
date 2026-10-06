@@ -15,7 +15,7 @@ tide <command> [folder] [options]
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
-| `tide publish [folder]` | Sends this version of the game's source to the build service, which builds it with mods (see [publish](#publish)) |
+| `tide publish [folder]` | Sends this version of the game's source to the service that builds it with [mods](mods.md) (see [publish](#publish)) |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
@@ -299,10 +299,10 @@ Both add the lines of the packages the game's packages need that it doesn't list
 ## publish
 
 ::: warning
-This is the first part of [mods](../spec.md#mods), and it will change. Builds are for the web only, and a game's key comes from us.
+This is the first part of [mods](mods.md), and it will change. Builds are for the web only, and a game's key comes from us.
 :::
 
-A mod is a [package](packages.md) that someone other than the game's developer adds to it, and a game with mods is built by a service we run, since every player of a match runs the same build. `tide publish` sends the service a version of the game's source to build from:
+`tide publish` sends a version of the game's source to the service that builds the game with [mods](mods.md):
 
 ```
 $ tide publish
@@ -313,15 +313,7 @@ Published duel version 5d0c3f...e9
 - **What's sent** is what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent: they're named by their commit. A package in a folder outside the game's can't be published with it.
 - **A version** is named by what was sent: the same files are the same version, from any machine, whenever they're published.
 
-Whoever has the game's key then asks for a build of a version with a set of mods, each written as `tide.packages` writes a package from git, pinned to its commit:
-
-```
-curl https://builds.tide-engine.dev/games/duel/builds \
-  -H "Authorization: Bearer $TIDE_GAME_KEY" \
-  -d '{"version": "5d0c3f...e9", "mods": ["github.com/someone/sparkle 0123456789abcdef0123456789abcdef01234567"]}'
-```
-
-The answer has the build's name and its `status`, which is `pending` while it builds. Asking again with the same version and mods, in any order, is the same build, and builds nothing twice. `GET` on `/games/duel/builds/<build>`, with the key, says how it went, with what `tide` said. Once it's `built`, its page is at `https://builds.tide-engine.dev/b/<build>/` for anyone, and players of that link can share its rooms: `?host` after it opens one, and `?join=<code>` joins it (see [In a web page's address](#in-a-web-page-s-address)). `DELETE` on the build's address revokes it: its link then says it's gone.
+[Mods](mods.md) has the rest: asking for a build of a version with a set of mods, the link it's played at, and revoking it.
 
 ## upgrade
 
