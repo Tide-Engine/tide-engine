@@ -290,7 +290,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
                 if (session.room != "")
                 {
                     Draw2D.Text(session.room, float2(left + 16, y + 42), 30, Color.white, Anchor.MiddleLeft, Font.Bold);
-                    copy = Pill(Rect(left + wide - 90, y + 23, 86, 38), lobby.copied < 1.5 ? "COPIED" : "COPY", AMBER, false, true);
+                    copy = Pill(Rect(left + wide - 91, y + 20, 90, 44), lobby.copied < 1.5 ? "COPIED" : "COPY", AMBER, false, true);
                 }
                 else
                 {
