@@ -125,7 +125,7 @@ if(TARGET tide_platform)
     target_link_libraries(tide_box3d_stack PRIVATE tide_platform)
 endif()
 add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
-# A step in 3D is several of Box2D's, and a web build has no SIMD for it
+# A step in 3D is several of Box2D's
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
 
 tide_package_order_test(tide_box3d_order Box3D "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test")
