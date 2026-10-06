@@ -410,17 +410,17 @@ system AskOwnBefore(Body body, Box box, Physics physics, mut Asked asked, with P
 }
 
 [Before(PhysicsStages.Step)]
-system AskTrapBefore(Body body, Physics physics, mut Asked asked, with Trap)
+system AskTrapBefore(Physics physics, mut Asked asked, with Trap)
 {
-    Inside(physics, body, out var found);
+    Inside(physics, this, out var found);
     asked.trapBefore = Few(found);
 }
 
 [Before(PhysicsStages.Step)]
-system AskEyeBefore(Part part, Physics physics, mut Asked asked, Kit kit, with Eye)
+system AskEyeBefore(Physics physics, mut Asked asked, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, part, out var found);
+    Inside(physics, this, out var found);
     asked.eyeBefore = Few(found);
 }
 
@@ -437,17 +437,17 @@ system AskOwnAfter(Body body, Box box, Physics physics, mut Asked asked, with Pr
 }
 
 [After(PhysicsStages.Step)]
-system AskTrapAfter(Body body, Physics physics, mut Asked asked, with Trap)
+system AskTrapAfter(Physics physics, mut Asked asked, with Trap)
 {
-    Inside(physics, body, out var found);
+    Inside(physics, this, out var found);
     asked.trapAfter = Few(found);
 }
 
 [After(PhysicsStages.Step)]
-system AskEyeAfter(Part part, Physics physics, mut Asked asked, Kit kit, with Eye)
+system AskEyeAfter(Physics physics, mut Asked asked, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, part, out var found);
+    Inside(physics, this, out var found);
     asked.eyeAfter = Few(found);
 }
 
@@ -461,15 +461,15 @@ view SeeOwn(Body body, Box box, Physics physics, mut Seen seen, with Prober)
     seen.own = ProbeOwn(physics, body, box);
 }
 
-view SeeTrap(Body body, Physics physics, mut Seen seen, with Trap)
+view SeeTrap(Physics physics, mut Seen seen, with Trap)
 {
-    Inside(physics, body, out var found);
+    Inside(physics, this, out var found);
     seen.trap = Few(found);
 }
 
-view SeeEye(Part part, Physics physics, mut Seen seen, Kit kit, with Eye)
+view SeeEye(Physics physics, mut Seen seen, Kit kit, with Eye)
 {
     if (kit.which != Case.Asks) return;
-    Inside(physics, part, out var found);
+    Inside(physics, this, out var found);
     seen.eye = Few(found);
 }

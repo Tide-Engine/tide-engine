@@ -125,8 +125,8 @@ static bool stays(tide_world *w)
 // The match of parts after its ticks, on every platform and in every
 // configuration: its parts' shapes are in Box2D's image, and whose each is in
 // the match.
-#define PARTS_HASH UINT64_C(0x257a9ff0e01c7c1b)
-#define PARTS_IMAGES_HASH UINT64_C(0xa42a7c0b28e0a16c)
+#define PARTS_HASH UINT64_C(0xc24abbd6365d0ee4)
+#define PARTS_IMAGES_HASH UINT64_C(0x2ea63f16bd4bdd10)
 
 enum { PART_TICKS = 420, SNIP = 200, FELL = 260, LOOK = 180 };
 
@@ -420,8 +420,8 @@ static bool same_bytes(const void *x, const void *y, const size_t size, const ch
 
 // The match of questions after its ticks, and every answer the match was
 // given along the way, on every platform and in every configuration.
-#define ASKS_HASH UINT64_C(0x053a99aedfac7ef6)
-#define ANSWERS_HASH UINT64_C(0x7707fb066bceec1f)
+#define ASKS_HASH UINT64_C(0xc54efb65d5c1e38e)
+#define ANSWERS_HASH UINT64_C(0x53abf452b7c6e40b)
 
 enum { ASK_TICKS = 150, FADE = 100 };
 
@@ -489,14 +489,13 @@ TIDE_TEST(box2d_answers_what_code_asks)
     printf("    a crate's own box is free to go 2 m left, and goes %g of 8 m to the right before it touches the ball\n", (double)own.reach.fraction);
     TIDE_CHECK(!own.step.any);
     TIDE_CHECK(own.reach.any && same(own.reach.entity, the(w, tide_has_Ball)) && own.reach.fraction > 0.4f && own.reach.fraction < 0.55f);
-    // What's in a sensor now: the floor it reaches, the two crates in the trap and the one in its part, which is a
-    // sensor of the same body. The part alone has the floor and the one
+    // What's in an entity's sensors now: the floor the trap reaches and the two crates in it, and for its part, a
+    // sensor of the same body that's an entity of its own, the floor and the one crate in that
     const Some trap = w->Asked.trapAfter;
     const Some eye = w->Asked.eyeAfter;
     printf("    the trap has %d bodies in its sensors, and its part %d\n", (int)trap.count, (int)eye.count);
-    TIDE_CHECK(trap.count == 4 && same(trap.a, floor) && tide_has_Caught(w, trap.b) && tide_has_Caught(w, trap.c) && tide_has_Caught(w, trap.d));
-    TIDE_CHECK(!same(trap.b, trap.c) && !same(trap.c, trap.d) && !same(trap.b, trap.d));
-    TIDE_CHECK(eye.count == 2 && same(eye.a, floor) && same(eye.b, trap.d));
+    TIDE_CHECK(trap.count == 3 && same(trap.a, floor) && tide_has_Caught(w, trap.b) && tide_has_Caught(w, trap.c) && !same(trap.b, trap.c));
+    TIDE_CHECK(eye.count == 2 && same(eye.a, floor) && tide_has_Caught(w, eye.b) && !same(eye.b, trap.b) && !same(eye.b, trap.c));
 
     // Asked by the match after its step, by a view of that tick, and by the match before the next tick's step:
     // the same world, so the same answers. And the same from a world that's made from the image to answer
@@ -641,9 +640,9 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
     TIDE_CHECK(stays(&a));
     // A change that's made while the world sleeps is a step, so that it's in the world's image, as everything of
     // the world is: a world that's then made from the image is tuned the same, and has nothing to step for
-    a.Box2D_Physics.stiffness = 12.0f;
-    a.Box2D_Physics.damping = 2.0f;
-    a.Box2D_Physics.pushSpeed = 1.0f;
+    a.Box2D_Physics.contactStiffness = 12.0f;
+    a.Box2D_Physics.contactDamping = 2.0f;
+    a.Box2D_Physics.contactSpeed = 1.0f;
     a.Box2D_Physics.bounceSpeed = 0.25f;
     a.Box2D_Physics.hitSpeed = 3.0f;
     tide_world_tick(&a);
@@ -674,7 +673,7 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
     float apart[2];
     for (int round = 0; round < 2; round++) {
         start(&a, Case_Tuning);
-        if (round) a.Box2D_Physics.pushSpeed = 0.5f;
+        if (round) a.Box2D_Physics.contactSpeed = 0.5f;
         tick(&a, 8);
         apart[round] = body_of(&a, tide_has_Right).position.x - body_of(&a, tide_has_Left).position.x;
         tide_world_free(&a);
@@ -690,8 +689,8 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
     for (int round = 0; round < 3; round++) {
         start(&a, Case_Tuning);
         a.Box2D_Physics.substeps = 8; // Room for stiffer than the usual, which is as stiff as four substeps take
-        a.Box2D_Physics.stiffness = round == 0 ? 15.0f : 60.0f;
-        a.Box2D_Physics.damping = round == 2 ? 0.2f : 10.0f;
+        a.Box2D_Physics.contactStiffness = round == 0 ? 15.0f : 60.0f;
+        a.Box2D_Physics.contactDamping = round == 2 ? 0.2f : 10.0f;
         sunk[round] = 1.0f;
         sprung[round] = 0.0f;
         for (int i = 0; i < 180; i++) {
@@ -728,7 +727,7 @@ static int falls(const float stiffness, const int substeps, int *first)
     start(&a, Case_Tower);
     a.Kit.floors = FLOORS;
     a.Kit.drop = 3.0f;
-    a.Box2D_Physics.stiffness = stiffness;
+    a.Box2D_Physics.contactStiffness = stiffness;
     a.Box2D_Physics.substeps = substeps;
     int off = 0;
     *first = -1;
@@ -783,14 +782,27 @@ TIDE_TEST(box2d_answers_on_every_thread)
     tide_world_init(&b, DT);
     b.Kit.which = Case_Crowd;
     b2t_share_from(64); // So that the steps are shared out, and with them the tick's systems, on every platform
+    // Nothing falls asleep here: a world at rest isn't stepped, a tick that shares no step out runs on one thread,
+    // and no other thread would ever have anything to answer
+    a.Box2D_Physics.sleeping = false;
+    b.Box2D_Physics.sleeping = false;
+    // Both on this thread first, until there's an image to ask of: this thread has asked from here on, so the
+    // threads counted after it are other ones
+    for (int i = 0; i < 3; i++) {
+        tide_world_tick(&a);
+        tide_world_tick(&b);
+    }
     const int32_t asked_before = b2t_asking_threads();
     const int32_t restored_before = b2t_restores();
-    for (int i = 0; i < TICKS; i++) {
+    // As many ticks as it takes for another thread to have answered, which is the threads' to say: a thread only
+    // takes a task when it has nothing else
+    int ticks = 0;
+    for (; ticks < 20000 && (ticks < TICKS || b2t_asking_threads() == asked_before); ticks++) {
         b2t_forget();
         tide_world_tick(&a);
         b2t_forget();
         tide_world_tick_on(&b, jobs);
-        if (tide_world_hash(&a) != tide_world_hash(&b)) printf("    tick %d came out different\n", i);
+        if (tide_world_hash(&a) != tide_world_hash(&b)) printf("    tick %d came out different\n", ticks);
         TIDE_REQUIRE(tide_world_hash(&a) == tide_world_hash(&b));
     }
     int askers = 0;
@@ -801,17 +813,13 @@ TIDE_TEST(box2d_answers_on_every_thread)
         askers++;
         const Asker asker = tide_get_Asker(&b, e);
         if (asker.under >= 0.0f && (tide_has_Asker(&b, asker.on) || tide_has_Floor(&b, asker.on))) answered++;
-        else if (getenv("B2T_SYSTEMS")) {
-            printf("        an asker at %g, %g has %g under it\n", (double)tide_get_Box2D_Body(&b, e).position.x,
-                   (double)tide_get_Box2D_Body(&b, e).position.y, (double)asker.under);
-        }
     }
-    printf("    %d crates each asked what's under it for %d ticks, on %d threads in all (of %u), with Box2D's world made from the image "
-           "%d times to answer\n",
-           askers, (int)TICKS, (int)(b2t_asking_threads() - asked_before), (unsigned)jobs->threads, (int)(b2t_restores() - restored_before));
+    printf("    %d crates each asked what's under it for %d ticks, on %d threads beside this one (of %u in all), with Box2D's world "
+           "made from the image %d times to answer\n",
+           askers, ticks, (int)(b2t_asking_threads() - asked_before), (unsigned)jobs->threads, (int)(b2t_restores() - restored_before));
     TIDE_CHECK(askers == 1200 && answered == askers);
-    TIDE_CHECK(b2t_asking_threads() - asked_before > 1);
-    TIDE_CHECK(b2t_restores() - restored_before == 2 * (TICKS - 1)); // Each match, each tick but its first, which had no image yet
+    TIDE_CHECK(b2t_asking_threads() > asked_before);
+    TIDE_CHECK(b2t_restores() - restored_before == 2 * ticks); // Each match, each tick: once, whichever thread asked first
     b2t_share_from(0);
     tide_world_free(&a);
     tide_world_free(&b);
