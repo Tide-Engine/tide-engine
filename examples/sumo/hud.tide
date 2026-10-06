@@ -300,7 +300,8 @@ view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
     else if (!flow.charged) words = touch ? "Hold CHARGE and let go to ram" : "Hold Space and let go to ram";
     if (words == "") return;
     var wide = Draw2D.MeasureText(words, 14).x + 28;
-    var at = float2(screen.x * 0.5, screen.y - 132 + Math.Sin(fx.beat * 2) * 2);
+    // Under the clock, out of the way of the ball it is about
+    var at = float2(screen.x * 0.5, SCORES + 50 + Math.Sin(fx.beat * 2) * 2);
     Draw2D.Shape(Shape { center = at, size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
                          outline = 1.5, outlineColor = LINE });
     Draw2D.Text(words, at, 14, INK, Anchor.MiddleCenter);

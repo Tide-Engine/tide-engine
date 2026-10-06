@@ -1198,6 +1198,20 @@ TIDE_TEST(sumo_costs)
            knocked(&world), world.Box3D_Physics.size);
     // The worst: a shock beside the middle's pyramid of a full ring
     start(1, false);
+    // And what a frame's views take with all of it standing: every crate into the list that's drawn at once
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+    frame(&world);
+    uint64_t views = UINT64_MAX;
+    for (int i = 0; i < 40; i++) {
+        began = tide_time_now_ns();
+        frame(&world);
+        const uint64_t took = tide_time_now_ns() - began;
+        if (took < views) views = took;
+    }
+    printf("    a frame's views, with %d crates standing: %.2f ms at the least, for %u commands in its draw list\n",
+           count(&world, tide_has_Crate), (double)views / 1e6, (unsigned)draw.count);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
     put(0, 0, BALL, -4.6f);
     world.Ring.drop = 1;
     tick(2);
