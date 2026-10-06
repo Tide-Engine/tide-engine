@@ -60,25 +60,31 @@ function player(args, name, anywhere = false) {
     child.stdin.on('error', () => {}); // Gone already
     const lines = [];
     const waiting = [];
-    let buffer = '';
-    const take = chunk => {
-        buffer += chunk;
-        let at;
-        while ((at = buffer.indexOf('\n')) >= 0) {
-            const line = buffer.slice(0, at).trim();
-            buffer = buffer.slice(at + 1);
-            noted(name, line);
-            lines.push(line);
-            for (const w of [...waiting]) {
-                if (w.test(line)) {
-                    waiting.splice(waiting.indexOf(w), 1);
-                    w.resolve(line);
+    // What it prints and what its stack says (stderr) are cut into lines
+    // apart: both come in pieces, and a line of one that arrived in the middle
+    // of a line of the other would be taken for part of it, and never be the
+    // line a case waits for
+    const take = () => {
+        let buffer = '';
+        return chunk => {
+            buffer += chunk;
+            let at;
+            while ((at = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, at).trim();
+                buffer = buffer.slice(at + 1);
+                noted(name, line);
+                lines.push(line);
+                for (const w of [...waiting]) {
+                    if (w.test(line)) {
+                        waiting.splice(waiting.indexOf(w), 1);
+                        w.resolve(line);
+                    }
                 }
             }
-        }
+        };
     };
-    child.stdout.setEncoding('utf8').on('data', take);
-    child.stderr.setEncoding('utf8').on('data', take);
+    child.stdout.setEncoding('utf8').on('data', take());
+    child.stderr.setEncoding('utf8').on('data', take());
     const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
     const line = test => {
         const found = lines.find(l => test.test(l));
