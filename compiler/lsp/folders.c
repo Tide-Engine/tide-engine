@@ -133,3 +133,109 @@ char *folder_of_program(void)
     slash[1] = '\0';
     return join(path, "", "");
 }
+
+// ---------------------------------------------------------------------------
+// Assets: every file, by size, and a folder's entries
+
+#ifdef _WIN32
+static void find_files(const char *folder, const folder_sized_fn found, void *user, const bool root)
+{
+    char *pattern = join(folder, "*", "");
+    WIN32_FIND_DATAA entry;
+    const HANDLE search = FindFirstFileA(pattern, &entry);
+    free(pattern);
+    if (search == INVALID_HANDLE_VALUE) return;
+    do {
+        const char *name = entry.cFileName;
+        if (name[0] == '.') continue; // ".", ".." and hidden folders and files
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
+            if (root && _stricmp(name, "build") == 0) continue;
+            char *sub = join(folder, name, "/");
+            find_files(sub, found, user, false);
+            free(sub);
+        } else {
+            char *path = join(folder, name, "");
+            found(user, path, ((unsigned long long)entry.nFileSizeHigh << 32) | entry.nFileSizeLow);
+            free(path);
+        }
+    } while (FindNextFileA(search, &entry));
+    FindClose(search);
+}
+#else
+static void find_files(const char *folder, const folder_sized_fn found, void *user, const bool root)
+{
+    DIR *dir = opendir(folder);
+    if (!dir) return;
+    for (const struct dirent *entry; (entry = readdir(dir));) {
+        const char *name = entry->d_name;
+        if (name[0] == '.') continue;
+        char *path = join(folder, name, "");
+        struct stat info;
+        if (lstat(path, &info) == 0) {
+            if (S_ISDIR(info.st_mode)) {
+                if (!(root && strcmp(name, "build") == 0)) {
+                    char *sub = join(folder, name, "/");
+                    find_files(sub, found, user, false);
+                    free(sub);
+                }
+            } else if (S_ISREG(info.st_mode)) {
+                found(user, path, (unsigned long long)info.st_size);
+            }
+        }
+        free(path);
+    }
+    closedir(dir);
+}
+#endif
+
+void folder_find_files(const char *folder, const folder_sized_fn found, void *user)
+{
+    find_files(folder, found, user, true);
+}
+
+void folder_list(const char *folder, const folder_entry_fn found, void *user)
+{
+#ifdef _WIN32
+    char *pattern = join(folder, "*", "");
+    WIN32_FIND_DATAA entry;
+    const HANDLE search = FindFirstFileA(pattern, &entry);
+    free(pattern);
+    if (search == INVALID_HANDLE_VALUE) return;
+    do {
+        if (entry.cFileName[0] == '.') continue;
+        found(user, entry.cFileName, (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+    } while (FindNextFileA(search, &entry));
+    FindClose(search);
+#else
+    DIR *dir = opendir(folder);
+    if (!dir) return;
+    for (const struct dirent *entry; (entry = readdir(dir));) {
+        if (entry->d_name[0] == '.') continue;
+        char *path = join(folder, entry->d_name, "");
+        struct stat info;
+        if (stat(path, &info) == 0) found(user, entry->d_name, S_ISDIR(info.st_mode));
+        free(path);
+    }
+    closedir(dir);
+#endif
+}
+
+bool folder_file_info(const char *path, unsigned long long *size, unsigned long long *modified)
+{
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        return false;
+    }
+    if (size) *size = ((unsigned long long)info.nFileSizeHigh << 32) | info.nFileSizeLow;
+    if (modified) *modified = ((unsigned long long)info.ftLastWriteTime.dwHighDateTime << 32) | info.ftLastWriteTime.dwLowDateTime;
+    return true;
+#else
+    struct stat info;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) return false;
+    if (size) *size = (unsigned long long)info.st_size;
+    if (modified) *modified = (unsigned long long)info.st_mtime;
+    return true;
+#endif
+}
