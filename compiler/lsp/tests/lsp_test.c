@@ -784,40 +784,55 @@ TIDE_TEST(lsp_draw_settings)
     TIDE_CHECK(has(actions_at(3), "Change to 'SetClip'") && has(actions_at(4), "Change to 'SetClip'"));
 }
 
-// What 3D meshes do with depth is a setting of the same family: both forms, its
-// modes, what each is on hover, and each form's mistake a rename away.
+// What 3D meshes do with depth is a setting of the same family, Draw3D's: both
+// forms, its modes, what each is on hover, each form's mistake a rename away,
+// and where it is for whoever asks Draw or Draw2D.
 TIDE_TEST(lsp_draw_depth)
 {
     start();
-    open_document("scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Depth(Depth.Read)\n    {\n"
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                  "    Draw.Blend(Blend.Add),\n    Draw3D.Depth(Depth.Read)\n    {\n"
                   "        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
-                  "    Draw.SetDepth(Depth.None);\n    Draw.SetDepth();\n}\n");
+                  "    Draw3D.SetDepth(Depth.None);\n    Draw3D.SetDepth();\n"
+                  "    look.target.Depth(Depth.Read)\n    {\n"
+                  "        look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    look.target.SetDepth();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    TIDE_CHECK(offers(three, "Depth") && offers(three, "SetDepth") && offers(three, "Transform"));
+    TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
+    // It's neither Draw's nor Draw2D's: only 3D meshes have depth
     const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(offers(shared, "Depth") && offers(shared, "SetDepth") && offers(shared, "Blend"));
-    TIDE_CHECK(has(shared, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(shared, "\"SetDepth(${1:mode})\""));
-    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
+    TIDE_CHECK(!offers(shared, "Depth") && !offers(shared, "SetDepth") && offers(shared, "Blend"));
+    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
+    TIDE_CHECK(!offers(two, "Depth") && !offers(two, "SetDepth") && offers(two, "Clip"));
+    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.$);\n}\n");
     TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
 
-    open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.De$pth(Depth.Read)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
-    TIDE_CHECK(has(around, "Draw.Depth(Depth mode, Block content)") && has(around, "For the draws in its block"));
-    TIDE_CHECK(has(around, "hidden behind what's nearer, and hides nothing") && has(around, "The Draw2D calls have no depth"));
-    open_document("scene Main { }\nview V()\n{\n    Draw.SetDe$pth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(around, "Draw3D.Depth(Depth mode, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "nearer, and hides nothing") && has(around, "Only 3D meshes have depth"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDe$pth(Depth.Read);\n}\n");
     const char *set = request("textDocument/hover");
-    TIDE_CHECK(has(set, "Draw.SetDepth(Depth mode)") && has(set, "Draw.SetDepth()") && has(set, "For the draws after it"));
+    TIDE_CHECK(has(set, "Draw3D.SetDepth(Depth mode)") && has(set, "Draw3D.SetDepth()") && has(set, "For the draws after it"));
 
     // Each form written as the other is a rename away
-    open_document("scene Main { }\nview V()\n{\n    Draw.Depth(Depth.Read);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw.Depth sets it around a block") && has(last_sent(), "Draw.SetDepth(...);"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Depth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.Depth sets it around a block") && has(last_sent(), "Draw3D.SetDepth(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetDepth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw.SetDepth sets it for the draws that follow, and takes no block"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetDepth sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // It's Draw's, not a destination's: asked of Draw3D, the note says where it is
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'SetDepth'") && has(last_sent(), "'Draw.SetDepth(...);'"));
+    // Asked of Draw or of Draw2D, the note says whose it is
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw has no function 'SetDepth'") && has(last_sent(), "it's Draw3D's: 'Draw3D.SetDepth(...)'"));
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.Depth(Depth.Read)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'Depth'") && has(last_sent(), "Only 3D meshes have depth"));
+    // ...as for a setting of Draw's asked of a destination
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetBlend(Blend.Add);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'SetBlend'") && has(last_sent(), "'Draw.SetBlend(...);'"));
     // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Lay$er { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));

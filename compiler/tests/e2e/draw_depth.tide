@@ -1,8 +1,8 @@
-// What 3D meshes do with depth, as a draw setting: around a block and set for
-// the views that follow, listed with other settings, around each entity's
-// mesh, left early, in a function, kept in a value, on a target's meshes,
-// through a frag and for a list's instances. And what has no depth: the 2D
-// calls, a clear and a blit.
+// What 3D meshes do with depth, as a draw setting of Draw3D's: around a block
+// and set for the views that follow, listed with other settings, around each
+// entity's mesh, left early, in a function, kept in a value, through a frag
+// and for a list's instances. A render target has its own, as it has its own
+// camera. And what has no depth: the 2D calls and a clear.
 
 enum Trouble
 {
@@ -60,10 +60,10 @@ view Blocks(mut Look look)
         look.spots = [Spot { }, Spot { transform = float4x4.Translate(float3(3, 0, 0)) }];
     }
     Draw3D.Cube(float3(0, 0, 9), float3(1, 1, 1), Color.white);
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Cube(float3(0, 0, 8), float3(1, 1, 1), Color.white);
-        Draw.Depth(Depth.None)
+        Draw3D.Depth(Depth.None)
         {
             Draw3D.Cube(float3(0, 0, 7), float3(1, 1, 1), Color.white);
         }
@@ -73,7 +73,7 @@ view Blocks(mut Look look)
 
     // Listed with commas, beside the other settings
     Draw.Blend(Blend.Add),
-    Draw.Depth(Depth.Read),
+    Draw3D.Depth(Depth.Read),
     Draw.Tint(Color(1, 0.5, 0.25, 1))
     {
         Draw3D.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
@@ -84,7 +84,7 @@ view Blocks(mut Look look)
 // The same setting around each entity's mesh: still one run of instances.
 view Panes(Pane pane)
 {
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Sphere(pane.position, 1, Color.white);
     }
@@ -92,7 +92,7 @@ view Panes(Pane pane)
 
 void Guarded(bool leave) fails Trouble
 {
-    Draw.Depth(Depth.None),
+    Draw3D.Depth(Depth.None),
     Draw.Blend(Blend.Add)
     {
         try Hide(leave); // Its error leaves through both
@@ -102,7 +102,7 @@ void Guarded(bool leave) fails Trouble
 
 int Counted(bool leave)
 {
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         if (leave) return 1;
     }
@@ -116,7 +116,7 @@ view Early(Look look)
     var counted = Counted(look.leave);
     for (var i = 0; i < 3; i++)
     {
-        Draw.Depth(Depth.None)
+        Draw3D.Depth(Depth.None)
         {
             if (i == 0) continue;
             if (i == 2) break;
@@ -143,7 +143,7 @@ frag Plain(Vertex vertex, mut Color color)
 // A mesh through a frag, and a list's instances, do with depth what the draw says.
 view Shaded(Look look)
 {
-    Draw.Depth(look.kept)
+    Draw3D.Depth(look.kept)
     {
         Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
         Draw3D.Instanced(look.corners, look.faces, look.spots, Dot);
@@ -154,7 +154,7 @@ view Shaded(Look look)
 // Nothing else has depth: what's set changes none of these.
 view Flats()
 {
-    Draw.Depth(Depth.None)
+    Draw3D.Depth(Depth.None)
     {
         Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
         Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
@@ -162,25 +162,39 @@ view Flats()
     }
 }
 
-// Set, it holds for the views that follow, wherever they draw.
+// Set, it holds for the views that follow.
 view Sets()
 {
-    Draw.SetDepth(Depth.Read);
+    Draw3D.SetDepth(Depth.Read);
 }
 
-view Follows(Look look)
+view Follows()
 {
     Draw3D.Cube(float3(2, 0, 9), float3(1, 1, 1), Color.white);
-    look.target.Cube(float3(2, 0, 8), float3(1, 1, 1), Color.white);
     // Set inside a block, it's for the rest of the block
-    Draw.Depth(Depth.ReadWrite)
+    Draw3D.Depth(Depth.ReadWrite)
     {
-        Draw.SetDepth(Depth.None);
+        Draw3D.SetDepth(Depth.None);
         Draw3D.Cube(float3(2, 0, 7), float3(1, 1, 1), Color.white);
     }
     Draw3D.Cube(float3(2, 0, 6), float3(1, 1, 1), Color.white);
+}
+
+// A target's own: the window's isn't its, nor its the window's.
+view Targets(Look look)
+{
+    look.target.Cube(float3(3, 0, 9), float3(1, 1, 1), Color.white);
+    look.target.Depth(Depth.None)
+    {
+        look.target.Cube(float3(3, 0, 8), float3(1, 1, 1), Color.white);
+        Draw3D.Cube(float3(3, 0, 7), float3(1, 1, 1), Color.white);
+    }
+    look.target.SetDepth(Depth.Read);
+    look.target.Cube(float3(3, 0, 6), float3(1, 1, 1), Color.white);
     // With no arguments, a Set puts back what each frame starts with
-    Draw.SetDepth();
-    Draw3D.Cube(float3(2, 0, 5), float3(1, 1, 1), Color.white);
-    Draw.SetDepth(Depth.None); // Left set by the last view: the next frame starts over
+    look.target.SetDepth();
+    look.target.Cube(float3(3, 0, 5), float3(1, 1, 1), Color.white);
+    Draw3D.SetDepth();
+    Draw3D.Cube(float3(3, 0, 4), float3(1, 1, 1), Color.white);
+    Draw3D.SetDepth(Depth.None); // Left set by the last view: the next frame starts over
 }
