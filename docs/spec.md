@@ -2585,12 +2585,14 @@ Packages that come with tide: a package in tide's installation, which a game opt
 
 **Decided** is what the owner agreed (2026-10-05); the design proposed for the rest is under **Open**. Of it all, two parts are built (**Provisional**, below): `virtual` and `override`, as the language has them for any package, and the service's first slice, for web games, with `tide publish`. What a mod may be, games that load builds, and the sandbox aren't.
 
+**Open again** (the owner, 2026-10-06: "its no longer decided"): who builds a game with its mods. That a service we run does was agreed, and built as a first slice, which is on hold. It isn't decided any more, and neither is what rested on it, each marked below: where a player's build comes from, who signs it and how it's revoked, what the `mods` setting lets a game run, and a closed game's source being the service's alone. What's being weighed instead, with nothing of it agreed: a game loads a build of itself for its platform, as `tide run`'s host loads one, and that build is compiled on the player's own machine from the mods' source where the platform allows a compiler (the developer opting in to ship it), or made elsewhere and fetched where it doesn't. What stands: a mod is a package and its code is game code, every machine of a match runs the same build, `virtual` and `override`, a mod being Tide alone, the prompt being the game's, memory safety, the sandbox on desktop, and what stores forbid.
+
 ### Decided
 
 - A mod is a package that someone other than a game's developer adds to it. It builds as packages do: its files compile with the game's, as one program, so a mod's code is game code, with the same language, storage, schedule and speed. There's no scripting layer, nothing is interpreted, and games carry no runtime for mods.
-- Mods are built by a service we run, beside the relay and hosting, not on players' machines: it has the game's source and the mods', builds the game with them for each platform, and signs what it built. A game runs only builds signed for it.
+- (Open again, see above.) Mods are built by a service we run, beside the relay and hosting, not on players' machines: it has the game's source and the mods', builds the game with them for each platform, and signs what it built. A game runs only builds signed for it.
 - Every machine of a match runs the same build, as ever, its local code included: mods never differ between the players of a match, not even ones that only change views, since a view can show a player what gives them an advantage.
-- A player who joins a match with other mods gets its build from the service, never from the match's host. The game is told first, with the mods' names and where they're from, so that it can ask its player ("this match runs these mods"), who then knows that code from outside the game is about to be downloaded. It joins once local code says yes, and nothing is fetched before that.
+- (Open again, see above.) A player who joins a match with other mods gets its build from the service, never from the match's host. The game is told first, with the mods' names and where they're from, so that it can ask its player ("this match runs these mods"), who then knows that code from outside the game is about to be downloaded. It joins once local code says yes, and nothing is fetched before that.
 - That prompt is the game's own, in its look and its language. The engine draws none and enforces none: it can't tell whether a game asked, one of its own wouldn't fit the game, and it isn't what keeps a player safe. A game whose code never says yes joins no such match, so none skips the prompt by accident. For mods a developer listed, whether to ask is the game's choice, as the developer approved them. For mods from anyone, telling the player is a condition of the service, which turns such mods off for a game that doesn't.
 - A build's mods are a set: the order they're listed in changes nothing, since what would depend on it is an error.
 - A mod is Tide alone: no `extern`, no C or C++ files, no libraries.
@@ -2615,9 +2617,9 @@ override system Move(mut Position position, Velocity velocity, Time time)
 
 - A mod's code sees files as a web page's does: files of its own, and nothing else of the machine.
 - A mod's code calls nothing that reaches outside the game: `Session.Connect` and `Clipboard.Copy` are the first two. Which calls those are is part of the sandbox's work.
-- `mods` is a setting, false by default. With it, what `tide build` makes can also run the builds the service signed for the game. A game without it has none of this.
-- A closed game's source is seen by the service alone. Its modders have its declarations, each without its body.
-- Builds are signed with a key per game, and a build can be revoked: a game stops running one the service says no longer stands.
+- (Open again, see above.) `mods` is a setting, false by default. With it, what `tide build` makes can also run the builds the service signed for the game. A game without it has none of this.
+- (Open again, see above.) A closed game's source is seen by the service alone. Its modders have its declarations, each without its body.
+- (Open again, see above.) Builds are signed with a key per game, and a build can be revoked: a game stops running one the service says no longer stands.
 - On desktop, a build with mods runs inside the system's sandbox, as a second layer under the language's own rules. On the web, the browser's is that layer. A system that can't sandbox a build runs no mods, and the game says why: making the sandbox work wherever games ship is our job, so that's the exception.
 - That no Tide code can corrupt memory is the language's promise to every game, and mods rest on it: it isn't a rule for mods.
 - Where a store forbids code downloaded after installing (iOS, consoles), a game has the mods its developer built into it and no others.
