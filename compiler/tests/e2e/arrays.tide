@@ -41,11 +41,23 @@ event Dealt
     int[3] hand;
 }
 
+struct InputDial
+{
+    bool enabled;
+    [Clamp(0, 10)] int value;
+}
+
+struct InputBank
+{
+    InputDial[3] dials;
+}
+
 input Hand
 {
     [Clamp(0, 10)] int[3] dials;
     float[2] sticks;
     [Absolute] int cursor;
+    InputBank[2] banks;
 }
 
 local singleton Mirror

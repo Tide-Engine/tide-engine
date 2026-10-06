@@ -68,18 +68,16 @@ system PushArrays(mut Pool pool, Time time)
         var value = Math.Hash(int2(time.tick, b)) & 0xFFFF;
         var head = pool.rings[b].head;
         var count = pool.rings[b].count;
-        mut var ring = pool.rings[b];
         if (count < CAP)
         {
-            ring.cells[(head + count) % CAP] = value;
-            ring.count = count + 1;
+            pool.rings[b].cells[(head + count) % CAP] = value;
+            pool.rings[b].count = count + 1;
         }
         else
         {
-            ring.cells[head] = value;
-            ring.head = (head + 1) % CAP;
+            pool.rings[b].cells[head] = value;
+            pool.rings[b].head = (head + 1) % CAP;
         }
-        pool.rings[b] = ring;
     }
 }
 

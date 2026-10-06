@@ -11809,7 +11809,9 @@ static bool needs_repair(const decl *d)
             if (!str_eq_c(f->attributes.items[k].name, "Absolute")) return true;
         }
         if (f->type.kind == TY_RECORD) return true; // The devices
-        if (f->type.kind == TY_STRUCT && needs_repair(f->type.decl)) return true;
+        type inner = f->type;
+        while (inner.kind == TY_ARRAY) inner = inner.decl->fields.items[0].type;
+        if (inner.kind == TY_STRUCT && needs_repair(inner.decl)) return true;
     }
     return false;
 }
@@ -11904,9 +11906,16 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
     }
 }
 
+// Whether an array's elements are structs, through its levels.
+static bool array_holds_struct(type t)
+{
+    while (t.kind == TY_ARRAY) t = t.decl->fields.items[0].type;
+    return t.kind == TY_STRUCT;
+}
+
 // The fields' [Clamp], [Min] and [Max] in `d`, the structs it holds included.
 // `in` is the C access to the value, ending in '.'.
-static void gen_bounds(gen *g, const decl *d, const char *in)
+static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
 {
     sb *o = &g->c;
     for (int i = 0; i < d->fields.count; i++) {
@@ -11922,10 +11931,11 @@ static void gen_bounds(gen *g, const decl *d, const char *in)
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
-                line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", levels, levels, et.decl->array_length, levels);
+                const int index = depth + levels;
+                line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
                 g->indent++;
                 const size_t len = strlen(path);
-                snprintf(path + len, sizeof path - len, ".at[tide_b%d]", levels);
+                snprintf(path + len, sizeof path - len, ".at[tide_b%d]", index);
             }
             indent(g, o);
             sb_printf(o, "%s = tide_%s_%s(%s", path, fn, type_suffix(et), path);
@@ -11942,21 +11952,33 @@ static void gen_bounds(gen *g, const decl *d, const char *in)
         if (f->type.kind == TY_STRUCT) {
             char inner[256];
             snprintf(inner, sizeof inner, "%s%s.", in, field_cname(f));
-            gen_bounds(g, f->type.decl, inner);
+            gen_bounds(g, f->type.decl, inner, depth);
+        } else if (f->type.kind == TY_ARRAY && array_holds_struct(f->type)) {
+            type et = f->type;
+            char path[256];
+            snprintf(path, sizeof path, "%s%s", in, field_cname(f));
+            int levels = 0;
+            for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
+                const int index = depth + levels;
+                line(g, o, "for (int32_t tide_b%d = 0; tide_b%d < %d; tide_b%d++) {", index, index, et.decl->array_length, index);
+                g->indent++;
+                const size_t len = strlen(path);
+                snprintf(path + len, sizeof path - len, ".at[tide_b%d]", index);
+            }
+            const size_t len = strlen(path);
+            snprintf(path + len, sizeof path - len, ".");
+            gen_bounds(g, et.decl, path, depth + levels);
+            for (; levels > 0; levels--) {
+                g->indent--;
+                line(g, o, "}");
+            }
         }
     }
 }
 
-// Whether an array's elements are structs, through its levels.
-static bool array_holds_struct(type t)
-{
-    while (t.kind == TY_ARRAY) t = t.decl->fields.items[0].type;
-    return t.kind == TY_STRUCT;
-}
-
 // Clears the padding of `d` and the structs it holds: bytes from outside could
 // be anything, and the world's bytes must only depend on its fields.
-static void gen_clear_padding(gen *g, const decl *d, const char *in)
+static void gen_clear_padding(gen *g, const decl *d, const char *in, const int depth)
 {
     const int *pad = field_padding(d, NULL);
     int pads = 0;
@@ -11967,22 +11989,23 @@ static void gen_clear_padding(gen *g, const decl *d, const char *in)
         if (f->type.kind == TY_STRUCT) {
             char inner[256];
             snprintf(inner, sizeof inner, "%s%s.", in, field_cname(f));
-            gen_clear_padding(g, f->type.decl, inner);
+            gen_clear_padding(g, f->type.decl, inner, depth);
         } else if (f->type.kind == TY_ARRAY && array_holds_struct(f->type)) { // The padding of the structs in it, each element's
             type et = f->type;
             char path[256];
             snprintf(path, sizeof path, "%s%s", in, field_cname(f));
             int levels = 0;
             for (; et.kind == TY_ARRAY; et = et.decl->fields.items[0].type, levels++) {
-                line(g, &g->c, "for (int32_t tide_p%d = 0; tide_p%d < %d; tide_p%d++) {", levels, levels, et.decl->array_length, levels);
+                const int index = depth + levels;
+                line(g, &g->c, "for (int32_t tide_p%d = 0; tide_p%d < %d; tide_p%d++) {", index, index, et.decl->array_length, index);
                 g->indent++;
                 const size_t len = strlen(path);
-                snprintf(path + len, sizeof path - len, ".at[tide_p%d]", levels);
+                snprintf(path + len, sizeof path - len, ".at[tide_p%d]", index);
             }
             if (et.kind == TY_STRUCT) {
                 const size_t len = strlen(path);
                 snprintf(path + len, sizeof path - len, ".");
-                gen_clear_padding(g, et.decl, path);
+                gen_clear_padding(g, et.decl, path, depth + levels);
             }
             for (; levels > 0; levels--) {
                 g->indent--;
@@ -12018,8 +12041,8 @@ static void gen_repair(gen *g)
         gen_repair_value(g, in, def, f->type);
     }
     if (g->prog->match_devices) line(g, o, "tide_keep_devices(&tide_in.tide_dev);");
-    gen_bounds(g, input, "tide_in.");
-    gen_clear_padding(g, input, "tide_in.");
+    gen_bounds(g, input, "tide_in.", 0);
+    gen_clear_padding(g, input, "tide_in.", 0);
     line(g, o, "return tide_in;");
     g->indent = 0;
     sb_put(o, "}\n\n");
@@ -14285,7 +14308,7 @@ static void gen_commands_api(gen *g)
             snprintf(def, sizeof def, "defaults.%s", field_cname(f));
             gen_repair_value(g, in, def, f->type);
         }
-        gen_bounds(g, d, "value.");
+        gen_bounds(g, d, "value.", 0);
         sb_printf(o, "        tide_command *c = tide_cmd_push(w, TIDE_CMD_EVENT, %d, target, TIDE_COMMAND_SIZE(event_%s));\n"
                      "        c->sender = sender;\n        c->data.event_%s = value;\n", d->index, name, name);
         if (decl_has_text(d)) sb_printf(o, "        tide_own_%s(&c->data.event_%s, TIDE_IN_MATCH);\n", name, name);

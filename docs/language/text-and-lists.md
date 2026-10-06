@@ -139,7 +139,7 @@ system Record(mut Trail trail, Body body)
 }
 ```
 
-Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a bounded list of what a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 

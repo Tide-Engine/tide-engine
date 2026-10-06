@@ -763,7 +763,7 @@ static void walk_value(const expr *e)
         } else if (e->bind == BIND_CONST || e->bind == BIND_ASSET) { // MAX_HEALTH in Combat.MAX_HEALTH, or an asset
             o.kind = OCC_CONST;
             o.decl = e->constant;
-        } else if (e->c_constant) {
+        } else if (e->c_constant && e->object->type.kind != TY_ARRAY) {
             o.kind = OCC_CONSTANT;
             o.owner = e->object->name;
             o.c_name = e->c_constant;
@@ -1731,6 +1731,7 @@ static const method_form session_calls[] = {
     "picks one, as in tests."
 
 #define LIST_COUNT_DOC "How many elements the list has."
+#define ARRAY_COUNT_DOC "How many elements the array holds: its length, a constant."
 #define MAP_COUNT_DOC "How many keys it has."
 #define DEVICE_ARRAY_COUNT_DOC "How many fingers the touchscreen follows at once: every slot, touching or not."
 #define TEXT_LENGTH_DOC "How many characters the text has."
@@ -2839,6 +2840,7 @@ static void describe(const occurrence *o, sb *out)
         if (o->object_type.kind == TY_STRING && str_eq_c(o->name, "length")) sb_put(out, "\n\n" TEXT_LENGTH_DOC);
         if (keyboard_text(o->object_type, o->name)) sb_put(out, "\n\n" KEYBOARD_TEXT_DOC);
         if (o->object_type.kind == TY_LIST && str_eq_c(o->name, "count")) sb_put(out, "\n\n" LIST_COUNT_DOC);
+        if (o->object_type.kind == TY_ARRAY && str_eq_c(o->name, "count")) sb_put(out, "\n\n" ARRAY_COUNT_DOC);
         if ((o->object_type.kind == TY_MAP || o->object_type.kind == TY_SET) && str_eq_c(o->name, "count")) sb_put(out, "\n\n" MAP_COUNT_DOC);
         if (o->object_type.kind == TY_RECORD && o->object_type.decl && o->object_type.decl->array_of
             && str_eq_c(o->name, "count")) {
@@ -5556,7 +5558,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
     if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
     if (t.kind == TY_RECORD && t.decl->array_of) item(c, "count", CK_PROPERTY, "int", DEVICE_ARRAY_COUNT_DOC, NULL);
-    if (t.kind == TY_ARRAY) item(c, "count", CK_PROPERTY, "int", "How many elements the array holds: its length, a constant.", NULL);
+    if (t.kind == TY_ARRAY) item(c, "count", CK_PROPERTY, "int", ARRAY_COUNT_DOC, NULL);
     if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
     if (t.kind == TY_STRING) {
         item(c, "length", CK_PROPERTY, "int", TEXT_LENGTH_DOC, NULL);
