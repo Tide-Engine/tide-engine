@@ -120,7 +120,10 @@ typedef struct gen {
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
     const char *row_queries; // Before the view being generated first runs for an entity: its queries' rows, made once (gen_query_fill)
     VEC(const param *) heard_rows; // The rows ticks record for local handlers' queries, one for each shape (collect_heard_rows)
-    bool list_caches;      // The function being generated has tide_lc, a cache for each list type (gen_grid_caches)
+    bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
+    VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
+    size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
+    sb *lc_sb;
     VEC(task_info) tasks;  // Every async function and handler that runs, callees before what awaits them
     gen_task *task;        // The task whose code is being generated, or NULL
     const decl *code;      // The system, view or handler whose body is being generated, or NULL
@@ -1155,6 +1158,66 @@ static void indent(const gen *g, sb *o)
     for (int i = 0; i < g->indent; i++) sb_put(o, "    ");
 }
 
+// What names the list an expression indexes, for its cache: a place's path
+// ("pool.heads", "this.items"), so every read and write of a list goes through
+// one cache, and for any other expression the node itself, a slot of its own.
+static void cache_key(const expr *e, sb *out)
+{
+    if (e->kind == E_NAME) {
+        sb_printf(out, STR_FMT, STR_ARG(e->name));
+    } else if (e->kind == E_THIS) {
+        sb_put(out, "this");
+    } else if (e->kind == E_MEMBER) {
+        cache_key(e->object, out);
+        sb_printf(out, "." STR_FMT, STR_ARG(e->member));
+    } else {
+        sb_printf(out, "%p", (const void *)e);
+    }
+}
+
+// The slot in tide_lc of the cache for the list `list` names, in the function
+// being generated: one for each list it indexes, found again by its key.
+static int cache_slot(gen *g, const expr *list)
+{
+    sb key = {0};
+    cache_key(list, &key);
+    for (int i = 0; i < g->lc_keys.count; i++) {
+        if (strcmp(g->lc_keys.items[i], key.data) == 0) return i;
+    }
+    vec_push(g->lc_keys, key.data);
+    return g->lc_keys.count - 1;
+}
+
+static void close_list_caches(gen *g);
+
+// The run caches of the function whose body comes next: one for each list it
+// indexes (tide/list.h), through which its reads find each run once and its
+// writes make each run's page the world's own once. How many it has is known
+// once the body is generated, so the size is patched in then.
+static void declare_list_caches(gen *g, sb *o)
+{
+    close_list_caches(g); // One left open by a body that ended elsewhere
+    indent(g, o);
+    sb_put(o, "tide_list_cache tide_lc[");
+    g->lc_patch = o->len;
+    g->lc_sb = o;
+    sb_put(o, "    1] = {{0}};\n");
+    line(g, o, "(void)tide_lc;");
+    g->lc_keys.count = 0;
+    g->list_caches = true;
+}
+
+static void close_list_caches(gen *g)
+{
+    if (!g->lc_patch) return;
+    char n[8];
+    snprintf(n, sizeof n, "%5d", g->lc_keys.count > 0 ? g->lc_keys.count : 1);
+    memcpy(g->lc_sb->data + g->lc_patch, n, 5);
+    g->lc_patch = 0;
+    g->lc_keys.count = 0;
+    g->list_caches = false;
+}
+
 static void line_directive(gen *g, const loc at)
 {
     if (g->opts->line_directives) sb_printf(&g->c, "#line %d \"%s\"\n", at.line, g->paths[at.file]);
@@ -1533,7 +1596,8 @@ static void gen_slot(gen *g, sb *o, const expr *e)
 {
     const expr *holder = e->object;
     const bool map = holder->type.kind == TY_MAP;
-    sb_printf(o, "tide_%s%d_slot(", map ? "map" : "list", holder->type.decl->index);
+    if (!map && g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder));
+    else sb_printf(o, "tide_%s%d_slot(", map ? "map" : "list", holder->type.decl->index);
     if (holder->kind == E_INDEX && (holder->object->type.kind == TY_LIST || holder->object->type.kind == TY_MAP)) {
         gen_slot(g, o, holder);
     } else {
@@ -2493,7 +2557,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         if (g->list_caches) {
-            sb_printf(o, "tide_list%d_cget(&tide_lc[%d], ", e->object->type.decl->index, e->object->type.decl->index);
+            sb_printf(o, "tide_list%d_cget(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object));
         } else {
             sb_printf(o, "tide_list%d_get(", e->object->type.decl->index);
         }
@@ -5208,7 +5272,8 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         if (target->kind == E_INDEX) { // items[i] = x
             indent(g, o);
-            sb_printf(o, "tide_list%d_set(", target->object->type.decl->index);
+            if (g->list_caches) sb_printf(o, "tide_list%d_cset(&tide_lc[%d], ", target->object->type.decl->index, cache_slot(g, target->object));
+            else sb_printf(o, "tide_list%d_set(", target->object->type.decl->index);
             if (is_slot(target->object)) { // rows[i][j] = x: the element's slot (gen_slot)
                 gen_slot(g, o, target->object);
             } else {
@@ -6208,6 +6273,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER %s tide_list%d_cget(tide_list_cache *cache, tide_list l, int32_t i);\n", vc, k);
             if (!text) sb_printf(o, "TIDE_HELPER %s tide_list%d_flatget(const %s *elements, int32_t count, int32_t i);\n", vc, k, ec);
             sb_printf(o, "TIDE_HELPER void tide_list%d_set(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
+            sb_printf(o, "TIDE_HELPER void tide_list%d_cset(tide_list_cache *cache, tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_add(tide_list *l, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_insert(tide_list *l, int32_t i, %s v, uint32_t where);\n", k, vc);
             sb_printf(o, "TIDE_HELPER void tide_list%d_remove_at(tide_list *l, int32_t i, uint32_t where);\n", k);
@@ -6220,6 +6286,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER void tide_list%d_own(tide_list *l, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_list%d_release(tide_list *l, uint32_t where);\n", k);
             if (container) sb_printf(o, "TIDE_HELPER %s *tide_list%d_slot(tide_list *l, int32_t i);\n", ec, k);
+            if (container) sb_printf(o, "TIDE_HELPER %s *tide_list%d_cslot(tide_list_cache *cache, tide_list *l, int32_t i);\n", ec, k);
             if (compares) {
                 sb_printf(o, "TIDE_HELPER int32_t tide_list%d_index_of(tide_list l, %s v);\n", k, vc);
                 sb_printf(o, "TIDE_HELPER bool tide_list%d_contains(tide_list l, %s v);\n", k, vc);
@@ -6265,6 +6332,10 @@ static void gen_list_helpers(gen *g, const bool bodies)
         sb_printf(o, "TIDE_HELPER void tide_list%d_set(tide_list *l, const int32_t i, const %s v, const uint32_t where)\n{\n"
                      "    %s *p = %stide_list_at_mut(*l, i, sizeof(%s))%s;\n    if (p) tide_list%d_put(p, v, where);\n}\n\n",
                   k, vc, ec, has, sz, or_none, k);
+        // The same through the function's cache (tide_lc): a run's page made the world's own once
+        sb_printf(o, "TIDE_HELPER void tide_list%d_cset(tide_list_cache *cache, tide_list *l, const int32_t i, const %s v, const uint32_t where)\n{\n"
+                     "    %s *p = %stide_list_cached_at_mut(cache, *l, i, sizeof(%s))%s;\n    if (p) tide_list%d_put(p, v, where);\n}\n\n",
+                  k, vc, ec, has, sz, or_none, k);
         sb_printf(o, "TIDE_HELPER void tide_list%d_add(tide_list *l, const %s v, const uint32_t where)\n{\n"
                      "    %s *p = %stide_list_add(l, sizeof(%s), where)%s;\n    if (p) tide_list%d_put(p, v, where);\n}\n\n",
                   k, vc, ec, has, sz, or_none, k);
@@ -6277,6 +6348,8 @@ static void gen_list_helpers(gen *g, const bool bodies)
         if (container) { // An element changed where it is, by its own helpers: its slot, or NULL past the end
             sb_printf(o, "TIDE_HELPER %s *tide_list%d_slot(tide_list *l, const int32_t i)\n{\n"
                          "    return l ? tide_list_at_mut(*l, i, sizeof(%s)) : NULL;\n}\n\n", ec, k, sz);
+            sb_printf(o, "TIDE_HELPER %s *tide_list%d_cslot(tide_list_cache *cache, tide_list *l, const int32_t i)\n{\n"
+                         "    return l ? tide_list_cached_at_mut(cache, *l, i, sizeof(%s)) : NULL;\n}\n\n", ec, k, sz);
         }
         // Each element's text goes, or comes, for clearing, assigning, owning or releasing a list
         sb drop_all = {0};
@@ -6559,11 +6632,7 @@ void grid_shape(const decl *grid, int *cell, int shift[3])
 // doesn't use costs nothing, as the compiler drops it.
 static void gen_grid_caches(gen *g)
 {
-    if (g->prog->lists.count) { // And a run cache for each list type (tide/list.h)
-        line(g, &g->c, "tide_list_cache tide_lc[%d] = {{0}};", g->prog->lists.count);
-        line(g, &g->c, "(void)tide_lc;");
-        g->list_caches = true;
-    }
+    if (g->prog->lists.count) declare_list_caches(g, &g->c); // And a run cache for each list it indexes (tide/list.h)
     if (g->prog->grids.count == 0) return;
     line(g, &g->c, "tide_grid_cache tide_gc[%d] = {{0}};", g->prog->grids.count);
     line(g, &g->c, "(void)tide_gc;");
@@ -8899,7 +8968,7 @@ static void gen_sort_functions(gen *g, const decl *code, const decl *routine)
         g->comparing = sort;
         gen_body_stmt(g, sort->block);
         g->comparing = NULL;
-        g->list_caches = false;
+        close_list_caches(g);
         g->indent = 0;
         sb_put(o, "}\n\n");
         line_reset(g);
@@ -9173,7 +9242,7 @@ static void gen_par_list_batch(gen *g, const decl *sys, const stmt *s, const cap
     }
     g->frame = NULL;
     g->par_loop = NULL;
-    g->list_caches = false;
+    close_list_caches(g);
     g->indent = 1;
     line(g, o, "}");
 }
@@ -9198,7 +9267,12 @@ static void gen_par_steps(gen *g, const decl *sys)
                       c->name, c->name, c->name);
         }
         if (g->prog->grids.count) sb_printf(o, "    tide_grid_cache tide_gc[%d] = {{0}};\n    (void)tide_gc;\n", g->prog->grids.count);
-        if (g->prog->lists.count) sb_printf(o, "    tide_list_cache tide_lc[%d] = {{0}};\n    (void)tide_lc;\n", g->prog->lists.count);
+        if (g->prog->lists.count) {
+            const int outer_indent = g->indent;
+            g->indent = 1;
+            declare_list_caches(g, o);
+            g->indent = outer_indent;
+        }
         if (list) { // Its blocks of the list, and its copy of their elements, which its steps write
             const char *element = elem_ctype(list_elem(grid));
             g->par_flat = flat_list_loop(s);
@@ -9606,7 +9680,7 @@ static void gen_system_body(gen *g, const decl *sys)
     gen_grid_caches(g);
     for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
     g->reserved_send = false;
-    g->list_caches = false;
+    close_list_caches(g);
     g->indent = 0;
     sb_put(o, "}\n");
     line_reset(g);
@@ -10729,7 +10803,7 @@ static void gen_routine(gen *g, const decl *m)
         gen_stmt(g, &set);
     }
     for (int i = 0; i < m->body->stmts.count; i++) gen_stmt(g, m->body->stmts.items[i]);
-    g->list_caches = false;
+    close_list_caches(g);
     // A function that can fail and returns nothing succeeds at its end.
     if (m->result.kind == TY_FAILABLE && m->return_type.kind == TY_VOID) line(g, o, "return (%s){.ok = true};", c_type(m->result));
     g->routine = NULL;
@@ -10814,7 +10888,7 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
     line(g, o, "goto tide_dispatch;");
     line(g, o, "tide_start:;");
     for (int i = 0; i < fn->body->stmts.count; i++) gen_stmt(g, fn->body->stmts.items[i]);
-    g->list_caches = false;
+    close_list_caches(g);
     // Its end: a function that can fail and returns nothing succeeds there
     if (fn->kind == DECL_FUNCTION && fn->result.kind == TY_FAILABLE && fn->return_type.kind == TY_VOID) {
         line(g, o, "tide_f->tide_result_ok = true;");
