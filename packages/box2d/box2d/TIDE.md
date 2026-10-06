@@ -283,9 +283,11 @@ compares the two after every step.
     destroying a body, its transform, its speeds and impulses, waking it or
     putting it to sleep, waking what touches it, its dampings, its gravity
     scale, whether it's a bullet and what it's locked from, making a circle, a
-    capsule, a segment or a polygon, and destroying a shape. So are the world's settings that are numbers of its own, which
-    every image writes (its gravity, its contact tuning and the rest), and
-    turning sleeping off, which wakes every set the way anything does. A
+    capsule, a segment or a polygon, and destroying a shape. So are the
+    world's settings that are numbers of its own, which every image writes
+    (its gravity, its contact tuning and the rest), and turning sleeping off,
+    which wakes every set the way anything does. The queries write nothing,
+    and never come here: they're recorded apart (`b2RecQueryCommit`). A
     body's type, enabling and disabling, forces and torques, its mass and its
     other settings, a shape's settings and geometry, chains, joints, a blast,
     and whatever upstream adds: all of it is right, at the
@@ -346,9 +348,12 @@ Box2D has to be read for them again:
 - **`b2Body_SetType` lets go of the body's contacts and makes them again**, so
   the next step has end and begin events for what touched it, and it wakes the
   body. It doesn't wake what rested on it when the body turns static: the
-  package wakes what touches it first (`b2Body_WakeTouching`).
+  package wakes what touches it first (`b2Body_WakeTouching`). It moves the
+  body from one solver set to another (`b2TransferBody`), which an image in
+  parts doesn't follow: the image after it is written whole.
 - **`b2DestroyShape` with its last argument true** updates the body's mass,
-  which is what the package wants when a part goes.
+  which is what the package wants when a part goes. An image in parts follows
+  it, the mass too (`b2DestroyShapeInternal`, `b2UpdateBodyMassData`).
 - **A body's type is what Box2D says** (`b2Body_GetType`), which is in the
   image; the package keeps no copy of it in the match.
 - **The queries read nothing that isn't in the image**: the trees, the shapes
