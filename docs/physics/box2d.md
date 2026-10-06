@@ -527,14 +527,14 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
-| The tick | 0.67 | 0.07 | 0.02 |
-| of it, Box2D's step | 0.36 | 0.01 | 0 |
-| Keeping and hashing the world, after it | 0.27 | 0.04 | 0.00 |
+| The tick | 0.51 | 0.06 | 0.02 |
+| of it, Box2D's step | 0.30 | 0.01 | 0 |
+| Keeping and hashing the world, after it | 0.26 | 0.04 | 0.00 |
 
 - **A world at rest costs next to nothing.** It isn't stepped, and nothing of the match is written. What's left is looking at each body for what code wrote.
 - **The step goes by what's moving.** With one crate pushed among 2,400 it takes a hundredth of a millisecond.
-- **Keeping Box2D's state in the match goes by what's moving too**, while no more than half of the world is awake. It's about a kilobyte a body, 2.5 MB here, and Box2D says which bodies, shapes and contacts may have changed since the last tick: only those are written, which with one crate pushed takes 0.01 ms of a tick's 0.07.
-- **With more than half of the world awake, all of that state is written** and compared with the last tick's, which goes by how big the world is: 0.08 ms of the 0.67 here, before what changed of it is put into the match. A stack that wakes or falls asleep can have one tick's written whole too.
+- **Keeping Box2D's state in the match goes by what's moving too**, while no more than half of the world is awake. It's about a kilobyte a body, 2.5 MB here, and Box2D says which bodies, shapes and contacts may have changed since the last tick: only those are written, which with one crate pushed takes 0.01 ms of a tick's 0.06.
+- **With more than half of the world awake, all of that state is written** and compared with the last tick's, which goes by how big the world is: 0.06 ms of the 0.51 here, before what changed of it is put into the match. A stack that wakes or falls asleep can have one tick's written whole too.
 - **Only what changed of it is copied and hashed**, either way, and a player who joins downloads it with the rest of the world.
 - **A rollback** makes Box2D's world again from that state, once: about half a millisecond for this world, before the ticks it runs again. So does the first [question](#asking-the-world) a view or a system asks when this machine has no Box2D world at the match's state, which is the tick after a rollback, or a view of a world other than the last one that ticked. In a world of a few hundred bodies that's a few hundredths of a millisecond.
 - **The step runs on the tick's threads** once 2,048 bodies are awake, 4,096 on the web, and gives the same world on any number of them.
