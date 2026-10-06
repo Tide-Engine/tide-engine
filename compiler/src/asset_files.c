@@ -696,3 +696,40 @@ void asset_watched(const char *declaring_as_given, const str path, asset_path_fn
     }
     free(folder);
 }
+
+void asset_files_save_hashes(const char *game_folder, const asset_named *named, const int count)
+{
+    if (!game_folder) return;
+    asset_hashes known = {0};
+    asset_hashes now = {0};
+    asset_hashes_load(&known, game_folder);
+    for (int i = 0; i < count; i++) {
+        const asset_named *n = &named[i];
+        const char *written = written_path(n->path);
+        if (!*written || asset_path_is_url(written, strlen(written))) continue;
+        if (n->value) {
+            for (int k = 0; k < n->value->count; k++) {
+                const asset_match *item = &n->value->items[k];
+                char hex[65];
+                for (int b = 0; b < 32; b++) snprintf(hex + b * 2, 3, "%02x", item->hash[b]);
+                char *from_game = asset_path_relative(game_folder, item->abs);
+                asset_hashes_set(&now, from_game, hex, item->size);
+                free(from_game);
+            }
+        } else if (!asset_path_is_glob(written, strlen(written))) {
+            // Missing, or unreadable: what was known of it stays, for finding it
+            char *declaring = declaring_abs(n->declaring);
+            char *folder = asset_path_folder(declaring);
+            char *abs = asset_path_join(folder, written, strlen(written));
+            char *from_game = asset_path_relative(game_folder, abs);
+            asset_hashes_keep(&now, &known, from_game);
+            free(from_game);
+            free(abs);
+            free(folder);
+            free(declaring);
+        }
+    }
+    asset_hashes_save(&now, game_folder);
+    asset_hashes_free(&known);
+    asset_hashes_free(&now);
+}
