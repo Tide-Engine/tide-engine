@@ -16,6 +16,10 @@ const help = `Usage: node bench/compile.mjs [options]
   --configs <list>          debug,release (default: debug)
   --sizes <list>            Reachable Tide function counts (default: 100)
   --files <n>               Tide source files, besides game.tide (default: 10)
+  --loops <n>               Also this many systems that run for every entity of a
+                            component of a dozen floats, one in four leaving out
+                            the entities with a sparse tag (default: 0)
+  --archetypes <n>          Archetypes those entities come in, 1 to 4 (default: 4)
   --repeat <n>              Samples per scenario (default: 5)
   --save <label>            Label saved results (default: working-tree)
   --results <path>          JSONL destination (default: bench/results/compile.jsonl)
@@ -48,7 +52,7 @@ function command(text) {
 function options(args) {
     const out = {
         tide: "tide", tidec: null, targets: ["native"], configs: ["debug"],
-        sizes: [100], files: 10, repeat: 5, label: "working-tree",
+        sizes: [100], files: 10, loops: 0, archetypes: 4, repeat: 5, label: "working-tree",
         results: join(repo, "bench", "results", "compile.jsonl"), keep: false,
     };
     for (let i = 0; i < args.length; i++) {
@@ -63,6 +67,11 @@ function options(args) {
         else if (option === "--configs") out.configs = list(value, option, ["debug", "release"]);
         else if (option === "--sizes") out.sizes = [...new Set(value.split(",").map((v) => positive(v, option)))];
         else if (option === "--files") out.files = positive(value, option);
+        else if (option === "--loops") out.loops = positive(value, option);
+        else if (option === "--archetypes") {
+            out.archetypes = positive(value, option);
+            if (out.archetypes > 4) throw new Error("--archetypes takes 1 to 4");
+        }
         else if (option === "--repeat") out.repeat = positive(value, option);
         else if (option === "--save") out.label = value;
         else if (option === "--results") out.results = resolve(value);
@@ -164,9 +173,59 @@ function removeOwned(ownedRoot, path) {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-function fixture(folder, count, files) {
+// Systems that each run for every entity of one wide component and change it:
+// what generated C has a loop over a chunk's rows for. The entities come in
+// several archetypes, by tags they're spawned with, so each loop is for all of
+// them, and one system in four leaves out the entities with a sparse tag.
+function loopsSource(loops, archetypes) {
+    const tags = ["", ", Left", ", Right", ", Left, Right"].slice(0, archetypes);
+    const systems = [];
+    for (let i = 0; i < loops; i++) {
+        const filtered = i % 4 === 3;
+        systems.push(`system Loop${i}(mut Body body, Time time${filtered ? ", without Frozen" : ""})
+{
+    body.velocity += body.push * (time.dt * ${(i % 7) + 1}.0);
+    body.velocity *= 1 - body.drag * time.dt;
+    body.position += body.velocity * time.dt;
+    if (body.position.y < body.radius)
+    {
+        body.position.y = body.radius * 2 - body.position.y;
+        body.velocity.y = -body.velocity.y * body.bounce;
+    }
+}
+`);
+    }
+    return `component Body
+{
+    float3 position;
+    float3 velocity;
+    float3 push;
+    float drag;
+    float bounce;
+    float radius;
+}
+
+component Left { }
+component Right { }
+
+[Sparse]
+component Frozen { }
+
+event(Spawned) Fill(with Main)
+{
+${tags.map((tag) => `    Spawn(Body${tag});\n    Spawn(Body${tag}).Add(Frozen);`).join("\n")}
+}
+
+${systems.join("\n")}`;
+}
+
+function fixture(folder, count, files, loops, archetypes) {
     mkdirSync(folder, { recursive: true });
     const sources = [join(folder, "game.tide")];
+    if (loops) {
+        sources.push(join(folder, "loops.tide"));
+        writeFileSync(sources[1], loopsSource(loops, archetypes));
+    }
     const calls = Array.from({ length: count }, (_, i) => `    state.value = Step${i}(state.value);`).join("\n");
     writeFileSync(sources[0], `scene Main { }\nsingleton State { float value = 1; }\nextern float BenchA(float value);\nextern float BenchB(float value);\nsystem Update(mut State state)\n{\n${calls}\n    state.value = BenchB(BenchA(state.value));\n}\n`);
     for (let file = 0; file < files; file++) {
@@ -176,7 +235,7 @@ function fixture(folder, count, files) {
         writeFileSync(path, functions.join(""));
         sources.push(path);
     }
-    const editedTide = sources[1];
+    const editedTide = sources[loops ? 2 : 1];
     const originalTide = readFileSync(editedTide, "utf8");
     const changedTide = originalTide.replace("+ 1.0;", "+ 2.0;");
     if (originalTide === changedTide) throw new Error("fixture has no Tide body to edit");
@@ -242,8 +301,9 @@ function summarize(samples) {
 async function benchmark(opts, record, ownedRoot) {
     for (const count of opts.sizes) {
         const files = Math.min(opts.files, count);
+        const tideFiles = files + 1 + (opts.loops ? 1 : 0);
         const folder = join(ownedRoot, `game-${count}-${files}`);
-        const game = fixture(folder, count, files);
+        const game = fixture(folder, count, files, opts.loops, opts.archetypes);
         for (const target of opts.targets) for (const config of opts.configs) {
             const cache = join(folder, ".tide", `${target}-${config}`);
             const args = ["build", folder];
@@ -259,13 +319,13 @@ async function benchmark(opts, record, ownedRoot) {
                     if (scenario === "c-body") game.cEdit();
                     if (scenario === "header") game.headerEdit();
                     const before = objects(cache);
-                    console.log(`${target} ${config}, ${count} functions / ${files + 1} Tide files, sample ${repeat + 1}/${opts.repeat}: ${scenario}`);
+                    console.log(`${target} ${config}, ${count} functions / ${tideFiles} Tide files, sample ${repeat + 1}/${opts.repeat}: ${scenario}`);
                     const result = await run(opts.tide, args, folder);
                     const after = objects(cache);
                     const changed = [...after].filter(([path, stamp]) => before.get(path) !== stamp).map(([path]) => path);
                     const code = digest(join(cache, "gen", "game.c"));
                     if (scenario === "tide-body" && code === previousCode) throw new Error("Tide body edit did not change generated C");
-                    record.samples.push({ target, config, functions: count, files: files + 1, repetition: repeat + 1, scenario, wall_ms: result.wall_ms, changed_objects: changed, total_objects: after.size, generated_code_changed: previousCode === null ? null : code !== previousCode });
+                    record.samples.push({ target, config, functions: count, files: tideFiles, repetition: repeat + 1, scenario, wall_ms: result.wall_ms, changed_objects: changed, total_objects: after.size, generated_code_changed: previousCode === null ? null : code !== previousCode });
                     previousCode = code;
                     console.log(`  ${result.wall_ms.toFixed(2)} ms; ${changed.length}/${after.size} object files written`);
                 }
@@ -278,9 +338,9 @@ async function benchmark(opts, record, ownedRoot) {
             // Warm filesystem/process caches once; frontend has no persistent game cache.
             await run(opts.tidec, [`@${game.inputs}`, "-o", output, "--name", "game"], folder);
             for (let repeat = 0; repeat < opts.repeat; repeat++) {
-                console.log(`frontend, ${count} functions / ${files + 1} Tide files, sample ${repeat + 1}/${opts.repeat}`);
+                console.log(`frontend, ${count} functions / ${tideFiles} Tide files, sample ${repeat + 1}/${opts.repeat}`);
                 const result = await run(opts.tidec, [`@${game.inputs}`, "-o", output, "--name", "game"], folder);
-                record.samples.push({ target: "frontend", config: "codegen", functions: count, files: files + 1, repetition: repeat + 1, scenario: "full", wall_ms: result.wall_ms });
+                record.samples.push({ target: "frontend", config: "codegen", functions: count, files: tideFiles, repetition: repeat + 1, scenario: "full", wall_ms: result.wall_ms });
                 console.log(`  ${result.wall_ms.toFixed(2)} ms`);
             }
         }
@@ -292,7 +352,7 @@ async function main() {
     if (!opts) { console.log(help); return; }
     const record = {
         benchmark: "compile", schema: 1, label: opts.label, date: new Date().toISOString(),
-        options: { targets: opts.targets, configs: opts.configs, sizes: opts.sizes, files: opts.files, repeat: opts.repeat, frontend: Boolean(opts.tidec) },
+        options: { targets: opts.targets, configs: opts.configs, sizes: opts.sizes, files: opts.files, loops: opts.loops, archetypes: opts.loops ? opts.archetypes : undefined, repeat: opts.repeat, frontend: Boolean(opts.tidec) },
         metadata: await metadata(opts), samples: [], ok: false,
     };
     const ownedRoot = resolve(mkdtempSync(join(tmpdir(), "tide-compile-bench-")));

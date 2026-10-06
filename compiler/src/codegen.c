@@ -7273,6 +7273,9 @@ static void gen_prelude(gen *g)
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
     sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+    sb_put(o, "// A system's loop over a chunk's rows (tide_rows_<System>_<n>): never inlined, so that what its\n");
+    sb_put(o, "// parameters say of the lanes, that each is apart from the rest, stays said of the loop.\n");
+    sb_put(o, "#define TIDE_ROWS static __attribute__((noinline))\n\n");
 
     // Tide's Shape and tide/draw.h's tide_shape have the same fields, and are two types in C
     sb_printf(o, "// Draw2D.Shape: a Shape as tide/draw.h takes it.\n"
@@ -9963,12 +9966,15 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
     }
 }
 
-// Row tide_i's Owner, as tide_owner, from its lanes (gen_chunk_columns).
-static void gen_row_owner(gen *g, const char *pad)
+// Row tide_i's Owner, as tide_owner, from its lanes (gen_chunk_columns): where
+// the loop reads them, which is another place than it writes them when it
+// changes the Owner and writes apart.
+static void gen_row_owner(gen *g, const decl *sys, const char *pad)
 {
     const char *owner = type_cname(g->prog->owner);
-    sb_printf(&g->c, "%s%s tide_owner;\n%stide_gather_%s(&tide_owner, (const uint8_t *const *)tide_col_%s, tide_i);\n", pad, owner,
-              pad, owner, owner);
+    const bool changed = g->lanes_in && changes_component(sys, g->prog->owner->index, false);
+    sb_printf(&g->c, "%s%s tide_owner;\n%stide_gather_%s(&tide_owner, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, owner,
+              pad, owner, changed ? "in" : "col", owner);
 }
 
 // Before a row runs: skip it (`skip`: "continue" in a loop, "break" in a
@@ -9986,7 +9992,7 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
         else if (mask_has(sys->without_mask, c)) sb_printf(&g->c, "%sif (tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
     }
     if (!filters_owner(g, sys, a)) return;
-    gen_row_owner(g, pad);
+    gen_row_owner(g, sys, pad);
     sb_printf(&g->c, "%sif (%stide_player_equal(tide_owner.%s, tide_me)) %s;\n", pad, sys->ownership == OWNERSHIP_WITH ? "!" : "",
               field_cname(&prog->owner->fields.items[0]), skip);
 }
@@ -10085,14 +10091,19 @@ static void gen_row_fields(gen *g, const param *p, const int i, const char *pad)
 
 // Before a system or handler runs for row tide_i of a chunk: copies of its
 // components from their lanes (gen_chunk_columns), blended for a view, and its
-// Owner, for its input. After: the ones it changed, put back.
-static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad)
+// Owner, for its input. After: the ones it changed, put back. A loop that
+// writes back the rows it leaves out too (gen_rows_loop) makes the copies it
+// changes for every row, and the rest for the rows it runs for.
+typedef enum { COPIES_ALL, COPIES_CHANGED, COPIES_READ } row_copies;
+
+static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad, const row_copies which)
 {
     sb *o = &g->c;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
         if (joined(sys, p)) continue; // From the confirmed world's row (gen_row_join)
+        if (which != COPIES_ALL && (which == COPIES_CHANGED) != (p->mode == PARAM_MUT)) continue;
         const char *c = type_cname(p->type.decl);
         sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
@@ -10113,7 +10124,8 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         }
         if (sys->is_view && has_fields_ptr(p)) gen_row_fields(g, p, i, pad);
     }
-    if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, pad); // Its filter got it already
+    if (which == COPIES_CHANGED) return;
+    if (reads_owner(g, sys, a) && !filters_owner(g, sys, a)) gen_row_owner(g, sys, pad); // Its filter got it already
 }
 
 // A view that takes components of the entity as the server confirmed it,
@@ -10364,7 +10376,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
             gen_chunk_columns(g, h, a, "        ", false, false, NULL);
             gen_row_filter(g, h, a, "        ", "break");
-            gen_row_copies(g, h, a, "        ");
+            gen_row_copies(g, h, a, "        ", COPIES_ALL);
             sb_printf(o, "        %s", call.data);
             gen_system_args(g, h, a);
             sb_printf(o, ");%s\n", clear);
@@ -11807,8 +11819,29 @@ static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
     sb_printf(o, "%sconst uint32_t tide_to = (uint32_t)((uint64_t)tide_n * (tide_piece + 1u) / tide_pieces);\n", pad);
 }
 
-// The code for one chunk, tide_c of tide_t in archetype `a`: the body called
-// for each of its entities (its piece of them, `pieced`), with `clear` after each.
+// Whether a sparse component leaves rows of archetype `a` out of a system's
+// or view's loop: it needs one its rows may lack, or excludes one they may have.
+static bool rows_filtered(const gen *g, const decl *sys, const int a)
+{
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) return true;
+    }
+    return false;
+}
+
+// Whether a system's loop over archetype `a`'s rows fills a run of the sends a
+// one-Send system records (gen_chunk): only where no row is left out.
+static bool rows_batched(const gen *g, const decl *sys, const int a)
+{
+    return batch_event(sys) && !rows_filtered(g, sys, a);
+}
+
+// The code for one chunk, tide_c of tide_t in archetype `a`, of a view's
+// entities, or of a system's whose one Send fills a run of the queue: the
+// body called for each of them (its piece of them, `pieced`), with `clear`
+// after each. A view only changes the local world's lanes, which no snapshot
+// shares: they're read and written in one place. Any other system's loop is a
+// function of its own (gen_system_chunk).
 static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, const char *clear, const char *pad,
                       const bool read_only, const bool pieced)
 {
@@ -11817,42 +11850,11 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     sb_printf(&inner, "%s    ", pad);
     sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
     gen_piece_rows(o, pad, pieced);
-    const expr *send = batch_event(sys);
-    bool batch = send != NULL;
-    for (int c = 0; batch && c < g->prog->components.count; c++) {
-        if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) batch = false;
-    }
-    // A system that reads through its World a component it changes reads rows
-    // it changed earlier in this run: so they're written in place, the same
-    // everywhere, rather than into a copy some pages would have and others not
     const bool staged = !world_reads_own_writes(sys);
-    // A loop that writes every row of the chunk reads the lanes it changes
-    // where they are and writes them apart, when a snapshot shares their
-    // pages: nothing is copied first. Every row: no row is left out by what
-    // it has or whose it is, and the task has the whole chunk.
-    bool changes = false;
-    // (The owner's own lanes, read to tell whose a row is, are read where the loop writes them)
-    bool every_row = !filters_owner(g, sys, a) && !sys->verified_join && !reads_owner(g, sys, a);
-    for (int c = 0; c < g->prog->components.count; c++) {
-        if (!arch_stores(g, a, c)) continue;
-        if (changes_component(sys, c, read_only)) changes = true;
-        if (comp_sparse(g, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) every_row = false;
-    }
-    const bool can_part = staged && changes && every_row && !batch;
-    if (can_part) {
-        sb_printf(o, "%sconst bool tide_apart = %s(", pad, pieced ? "tide_pieces == 1u && " : "");
-        bool first = true;
-        for (int c = 0; c < g->prog->components.count; c++) {
-            if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
-            sb_printf(o, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
-                      arch_column(g, a, c), comp_lanes(g->prog->components.items[c]));
-            first = false;
-        }
-        sb_put(o, ");\n");
-    }
-    gen_chunk_columns(g, sys, a, pad, read_only, staged, !staged ? NULL : can_part ? "tide_apart" : "false");
-    if (staged && !can_part) gen_lanes_places(g, sys, a, pad, read_only, false, -1);
-    if (batch) {
+    gen_chunk_columns(g, sys, a, pad, read_only, staged, staged ? "false" : NULL);
+    if (staged) gen_lanes_places(g, sys, a, pad, read_only, false, -1);
+    if (rows_batched(g, sys, a)) {
+        const expr *send = batch_event(sys);
         sb_printf(o, "%stide_queue *restrict const tide_queue_out = tide_recording(&tide_w->commands);\n", pad);
         sb_printf(o, "%sconst uint32_t tide_record_size = (TIDE_COMMAND_SIZE(event_%s) + 7u) & ~7u;\n", pad, type_cname(send->type_decl));
         sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to;) {\n", pad);
@@ -11862,46 +11864,478 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
         sb_printf(o, "%s        tide_command *const tide_reserved = (tide_command *)(tide_records + tide_record * tide_record_size);\n", pad);
         sb inner_batch = {0};
         sb_printf(&inner_batch, "%s        ", pad);
-        gen_row_copies(g, sys, a, inner_batch.data);
+        gen_row_copies(g, sys, a, inner_batch.data, COPIES_ALL);
         sb_printf(o, "%s%s", inner_batch.data, call);
         gen_system_args(g, sys, a);
         sb_printf(o, ");%s\n", clear);
         sb_printf(o, "%s    }\n%s}\n", pad, pad);
         return;
     }
-    if (send) sb_printf(o, "%stide_command *const tide_reserved = NULL;\n", pad);
-    const size_t loop_at = o->len;
-    const int loop_line = o->line;
     g->lanes_in = staged && !read_only;
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_join(g, sys, inner.data);
     if (g->blending == sys && g->row_queries) sb_printf(o, "%s%s\n", inner.data, g->row_queries);
-    gen_row_copies(g, sys, a, inner.data);
+    gen_row_copies(g, sys, a, inner.data, COPIES_ALL);
     sb_printf(o, "%s%s", inner.data, call);
     gen_system_args(g, sys, a);
     sb_printf(o, ");%s\n", clear);
     gen_row_puts(g, sys, inner.data, read_only);
     sb_printf(o, "%s}\n", pad);
     g->lanes_in = false;
-    if (can_part) {
-        // The loop twice over, as the C compiler has to know which it is to
-        // run either as SIMD: in place, where each lane is read and written
-        // through one pointer, and apart, where they're two
-        sb loop = {0};
-        sb_put(&loop, o->data + loop_at);
-        o->len = loop_at;
-        o->data[o->len] = '\0';
-        o->line = loop_line;
-        sb_printf(o, "%sif (tide_apart) {\n", pad);
-        gen_lanes_places(g, sys, a, pad, read_only, true, -1);
-        sb_put(o, loop.data);
+    gen_chunk_lanes_end(g, sys, a, pad, read_only, staged);
+}
+
+// ---------------------------------------------------------------------------
+// A system's loop over a chunk's rows
+//
+// The loop is a function of its own, tide_rows_<System>_<n>, which its task
+// calls for each chunk (or piece of one). Its parameters are the chunk's
+// columns: the entities, their scenes, which rows have each sparse component
+// it filters by, and each lane of the components it takes, a parameter a lane,
+// every one `restrict`. That's what lets the C compiler run the loop as SIMD
+// however many lanes there are: a loop that writes some arrays and reads
+// others is only SIMD if none it writes overlaps another, which the compiler
+// otherwise checks as the loop starts, and it gives up past a handful of
+// arrays. Parameters are where it takes `restrict` at its word, and only while
+// the function isn't inlined (TIDE_ROWS).
+//
+// A system that changes components has the loop twice, as two functions. In
+// place: each lane it changes is read and written through one pointer, for
+// pages the table alone has. Apart: each is read where it is and written into
+// a page of the table's own, for pages a snapshot shares, as a client's all
+// are every tick, so nothing is copied first (tide_table_lanes_begin).
+//
+// A loop that leaves rows out by a sparse component counts the rows it's for
+// in each chunk first (gen_rows_count). With none, the chunk is left as it
+// is. With all of them, it goes through a version of the loop with no filter
+// (`every`), which is the SIMD loop any other system has: a row that's only
+// sometimes written is a branch, and SIMD only where the CPU can leave lanes
+// of a store out (AVX2). Otherwise the filter is in the loop. Apart, such a
+// loop writes the rows it leaves out too, as they were: each row's copies are
+// made, changed if the row is one the system runs for, and put back.
+//
+// The functions depend on the archetype only through what its rows have (a
+// scene, an Owner, the sparse components), so archetypes share them: a system
+// that runs on twenty has the loop once or twice, not twenty times.
+
+// Lanes that are parameters of their own in one rows function, at most. Past
+// it, a component's lanes come as its arrays, which says nothing of them being
+// apart: such a loop is as it would be with no `restrict`. The whole signature
+// has a limit too: V8 allows Wasm functions 1000 parameters at most, counting
+// the presence columns, the arrays of lanes and the parameters before them.
+#define ROWS_LANES_MOST 240
+#define ROWS_PARAMS_MOST 1000
+
+// Whether a system's loop over archetype `a`'s rows takes component `c`'s
+// lanes: a parameter of it, or the Owner its input is read through.
+static bool rows_take(const gen *g, const decl *sys, const int a, const int c)
+{
+    if (!arch_stores(g, a, c)) return false;
+    if (c == g->prog->owner->index && reads_owner(g, sys, a)) return true;
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_COMPONENT && p->type.decl->index == c && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
+    }
+    return false;
+}
+
+// Whether a system's loop changes any component of archetype `a`'s rows
+// through pages it begins and ends (tide_table_lanes_begin): then it has an
+// apart version too.
+static bool rows_part(const gen *g, const decl *sys, const int a)
+{
+    if (world_reads_own_writes(sys)) return false; // Written in place, where it reads them back
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (arch_stores(g, a, c) && changes_component(sys, c, false)) return true;
+    }
+    return false;
+}
+
+// Whether nothing but a system's loop reaches the lanes it reads and writes
+// while it runs, which is what `restrict` says of them. Not when its code
+// reaches components through its World beside the loop (a Set, or a read of
+// one it changes), nor when it starts tasks, which get and put back their
+// entity's components themselves.
+static bool rows_alone(const decl *sys)
+{
+    if (world_reads_own_writes(sys) || sys->starts_tasks) return false;
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        if (sys->world_uses.items[i].writes) return false;
+    }
+    return true;
+}
+
+// The lanes component `c` takes of a rows function's parameters: twice its
+// own where each is read in one place and written in another.
+static int rows_lanes(const decl *sys, const decl *d, const bool apart)
+{
+    return comp_lanes(d) * (apart && !world_reads_own_writes(sys) && changes_component(sys, d->index, false) ? 2 : 1);
+}
+
+// Parameters a component's lanes take when they're handed over as arrays.
+static int rows_arrays(const decl *sys, const int c, const bool apart)
+{
+    const bool changed = changes_component(sys, c, false);
+    const bool two = apart && changed && !world_reads_own_writes(sys);
+    return (changed ? 1 : 0) + (two || !changed ? 1 : 0);
+}
+
+// A rows function's parameters with every component's lanes passed as arrays:
+// reserve those, its filters' presence columns, and its leading parameters
+// before spreading lanes. Even the most components fit this way.
+static int rows_parameters(const gen *g, const decl *sys, const int a, const bool apart)
+{
+    int count = 4 + (g->prog->uses_text ? 1 : 0) + (arch_scene_column(g, a) ? 1 : 0);
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) count++;
+        if (rows_take(g, sys, a, c)) count += rows_arrays(sys, c, apart);
+    }
+    return count;
+}
+
+// Whether component `c`'s lanes are parameters of their own in a system's rows
+// function for archetype `a`: while they fit both limits. `parameters` starts
+// with the signature whose lanes all come as arrays (rows_parameters).
+static bool rows_spread(const gen *g, const decl *sys, const int a, const bool apart, const int c, int parameters)
+{
+    int lanes = 0;
+    for (int k = 0; k <= c; k++) {
+        if (!rows_take(g, sys, a, k)) continue;
+        const int n = rows_lanes(sys, g->prog->components.items[k], apart);
+        const int extra = n - rows_arrays(sys, k, apart);
+        lanes += n;
+        const bool spread = lanes <= ROWS_LANES_MOST && parameters + extra <= ROWS_PARAMS_MOST;
+        if (k == c) return spread;
+        if (spread) parameters += extra;
+    }
+    return false;
+}
+
+typedef enum { ROWS_PARAMS, ROWS_ARGS, ROWS_PLACES } rows_part_kind;
+
+// A rows function's columns, three ways: its parameters after the first ones
+// (ROWS_PARAMS), what its task passes for them (ROWS_ARGS), and in its body,
+// the arrays its loop reads and writes each component's lanes through
+// (ROWS_PLACES): tide_in_<Component> and tide_col_<Component>, as a loop over
+// a chunk's rows has them anywhere (gen_lanes_places), made of its own
+// parameters, which is where the compiler has to find them.
+static void gen_rows_columns(gen *g, const decl *sys, const int a, const bool apart, const rows_part_kind kind)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const bool staged = !world_reads_own_writes(sys);
+    const char *apart_word = rows_alone(sys) ? "restrict " : "";
+    const int parameters = rows_parameters(g, sys, a, apart);
+    if (kind == ROWS_PARAMS) {
+        sb_printf(o, ", const tide_entity *%stide_ent", apart_word);
+        if (arch_scene_column(g, a)) sb_printf(o, ", const tide_entity *%stide_scn", apart_word);
+    } else if (kind == ROWS_ARGS) {
+        sb_put(o, ", tide_ent");
+        if (arch_scene_column(g, a)) sb_put(o, ", tide_scn");
+    }
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+        const char *comp = type_cname(prog->components.items[c]);
+        if (kind == ROWS_PARAMS) sb_printf(o, ", const uint8_t *%stide_pres_%s", apart_word, comp);
+        else if (kind == ROWS_ARGS) sb_printf(o, ", tide_pres_%s", comp);
+    }
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!rows_take(g, sys, a, c)) continue;
+        const decl *d = prog->components.items[c];
+        const char *comp = type_cname(d);
+        const int n = comp_lanes(d);
+        const bool changed = changes_component(sys, c, false);
+        const bool two = apart && changed && staged; // Read in one place, written in another
+        const bool spread = rows_spread(g, sys, a, apart, c, parameters);
+        switch (kind) {
+        case ROWS_PARAMS:
+            if (!spread) {
+                if (two || !changed) sb_printf(o, ", const uint8_t *const *tide_rp%d", c);
+                if (changed) sb_printf(o, ", uint8_t *const *tide_wp%d", c);
+                break;
+            }
+            for (int k = 0; (two || !changed) && k < n; k++) sb_printf(o, ", const uint8_t *%stide_r%d_%d", apart_word, c, k);
+            for (int k = 0; changed && k < n; k++) sb_printf(o, ", uint8_t *%stide_w%d_%d", apart_word, c, k);
+            break;
+        case ROWS_ARGS: {
+            // What the task has: tide_was_ and tide_own_ from the table for
+            // the lanes it began, and tide_col_ for the rest (gen_system_chunk)
+            const char *read = changed ? "was" : "col", *write = staged ? "own" : "col";
+            if (!spread) {
+                if (two || !changed) sb_printf(o, ", tide_%s_%s", read, comp);
+                if (changed) sb_printf(o, ", tide_%s_%s", write, comp);
+                break;
+            }
+            for (int k = 0; (two || !changed) && k < n; k++) sb_printf(o, ", tide_%s_%s[%d]", read, comp, k);
+            for (int k = 0; changed && k < n; k++) sb_printf(o, ", tide_%s_%s[%d]", write, comp, k);
+            break;
+        }
+        case ROWS_PLACES:
+            if (!spread) { // Arrays of its own all the same, so that no write is taken to change where a lane is
+                if (changed && staged) {
+                    sb_printf(o, "    const uint8_t *tide_in_%s[%d];\n    memcpy(tide_in_%s, tide_%sp%d, sizeof tide_in_%s);\n", comp, n,
+                              comp, two ? "r" : "w", c, comp);
+                    sb_printf(o, "    (void)tide_in_%s;\n", comp);
+                }
+                sb_printf(o, "    %suint8_t *tide_col_%s[%d];\n    memcpy(tide_col_%s, tide_%sp%d, sizeof tide_col_%s);\n",
+                          changed ? "" : "const ", comp, n, comp, changed ? "w" : "r", c, comp);
+                break;
+            }
+            if (changed && staged) {
+                sb_printf(o, "    const uint8_t *const tide_in_%s[%d] = {", comp, n);
+                for (int k = 0; k < n; k++) sb_printf(o, "%stide_%c%d_%d", k ? ", " : "", two ? 'r' : 'w', c, k);
+                sb_printf(o, "};\n    (void)tide_in_%s;\n", comp);
+            }
+            sb_printf(o, "    %suint8_t *const tide_col_%s[%d] = {", changed ? "" : "const ", comp, n);
+            for (int k = 0; k < n; k++) sb_printf(o, "%stide_%c%d_%d", k ? ", " : "", changed ? 'w' : 'r', c, k);
+            sb_put(o, "};\n");
+            break;
+        }
+    }
+}
+
+// A rows function from its parameters on: `apart` for the one that reads each
+// lane the system changes in one place and writes it in another, `every` for
+// the one called with rows that are all the system's to run for, whatever
+// sparse components it filters by.
+static void gen_rows_function(gen *g, const decl *sys, const int a, const char *call, const char *clear, const bool apart,
+                              const bool every)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const bool staged = !world_reads_own_writes(sys);
+    sb_printf(o, "(tide_world *tide_w%s, const uint32_t tide_from, const uint32_t tide_to", g->prog->uses_text ? ", const uint32_t tide_mark" : "");
+    gen_rows_columns(g, sys, a, apart, ROWS_PARAMS);
+    sb_printf(o, ")\n{\n    (void)tide_w;\n    (void)tide_ent;\n%s%s", g->prog->uses_text ? "    (void)tide_mark;\n" : "",
+              arch_scene_column(g, a) ? "    (void)tide_scn;\n" : "");
+    gen_rows_columns(g, sys, a, apart, ROWS_PLACES);
+    for (int c = 0; every && c < prog->components.count; c++) { // Its filters' columns, which it doesn't look at
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c) || (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c))) continue;
+        sb_printf(o, "    (void)tide_pres_%s;\n", type_cname(prog->components.items[c]));
+    }
+    if (batch_event(sys)) sb_put(o, "    tide_command *const tide_reserved = NULL;\n"); // Its sends aren't a run here (rows_batched)
+    g->lanes_in = staged;
+    // Apart, a loop that leaves rows out puts those back as they were: every
+    // row's copies of what it changes are made and put back, and what's
+    // between only runs for the rows it's for
+    const bool through = apart && !every && rows_filtered(g, sys, a);
+    sb_put(o, "    for (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n");
+    const char *pad = "        ";
+    if (through) {
+        gen_row_copies(g, sys, a, pad, COPIES_CHANGED);
+        sb_printf(o, "%sdo {\n", pad);
+        pad = "            ";
+        gen_row_filter(g, sys, a, pad, "break");
+        gen_row_copies(g, sys, a, pad, COPIES_READ);
+    } else {
+        if (!every) gen_row_filter(g, sys, a, pad, "continue");
+        gen_row_copies(g, sys, a, pad, COPIES_ALL);
+    }
+    sb_printf(o, "%s%s", pad, call);
+    gen_system_args(g, sys, a);
+    sb_printf(o, ");%s\n", clear);
+    if (through) sb_put(o, "        } while (0);\n");
+    gen_row_puts(g, sys, "        ", false);
+    sb_put(o, "    }\n}\n\n");
+    g->lanes_in = false;
+}
+
+// The rows functions a system has so far: each one's text from its parameters
+// on, which is what tells two apart.
+typedef VEC(const char *) rows_list;
+
+// tide_rows_<System>_<n> for archetype `a`, `apart` or in place, for `every`
+// row or with its filters: its number. It's made unless an archetype before
+// had the same one.
+static int gen_rows(gen *g, const decl *sys, const int a, const char *call, const char *clear, const bool apart, const bool every,
+                    rows_list *made)
+{
+    const sb out = g->c;
+    g->c = (sb){0};
+    gen_rows_function(g, sys, a, call, clear, apart, every);
+    const sb text = g->c;
+    g->c = out;
+    for (int i = 0; i < made->count; i++) {
+        if (strcmp(made->items[i], text.data) == 0) return i;
+    }
+    vec_push(*made, text.data);
+    sb *o = &g->c;
+    bool changes = false;
+    for (int c = 0; c < g->prog->components.count; c++) changes |= arch_stores(g, a, c) && changes_component(sys, c, false);
+    sb_printf(o, "// " STR_FMT "'s rows%s, %s%s\n", STR_ARG(tool_name(sys)), every ? ", when it's for every one of them" : "",
+              !changes ? "which it changes no component of"
+              : apart ? "each lane it changes read in one place and written in another" : "each lane it changes read and written in one place",
+              rows_alone(sys) ? "" : ": its code reaches components beside the loop, so nothing says the lanes are apart");
+    sb_printf(o, "TIDE_ROWS void tide_rows_%s_%d", decl_cname(sys), made->count - 1);
+    sb_put(o, text.data);
+    return made->count - 1;
+}
+
+// How many of the rows from tide_from to tide_to a system's loop runs for, by
+// the sparse components it filters archetype `a`'s rows by, as tide_pass. A
+// chunk with none is left as it is, its pages too, and one where it's all of
+// them goes through the loop that has no filter.
+static void gen_rows_count(gen *g, const decl *sys, const int a, const char *pad)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    sb_printf(o, "%suint32_t tide_pass = 0u;\n%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) tide_pass += ", pad, pad);
+    bool first = true;
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+        sb_printf(o, "%s(tide_pres_%s[tide_i] %s 0)", first ? "" : " & ", type_cname(prog->components.items[c]),
+                  mask_has(sys->need_mask, c) ? "!=" : "==");
+        first = false;
+    }
+    sb_put(o, ";\n");
+}
+
+// Which rows have each sparse component a system filters archetype `a`'s rows
+// by, as tide_pres_<Component> (gen_row_filter).
+static void gen_rows_presence(gen *g, const decl *sys, const int a, const char *pad)
+{
+    const program *prog = g->prog;
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+        sb_printf(&g->c, "%sconst uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n", pad,
+                  type_cname(prog->components.items[c]), arch_columns(g, a), arch_presence(g, a, c));
+    }
+}
+
+// Whether a snapshot shares a page of any lane a system changes in chunk
+// tide_c of archetype `a`, as C: then it writes them all apart.
+static void gen_rows_shared(gen *g, const decl *sys, const int a)
+{
+    bool first = true;
+    for (int c = 0; c < g->prog->components.count; c++) {
+        if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+        sb_printf(&g->c, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
+                  arch_column(g, a, c), comp_lanes(g->prog->components.items[c]));
+        first = false;
+    }
+    if (first) sb_put(&g->c, "false");
+}
+
+// A call to a system's rows function number `rows` for archetype `a`.
+static void gen_rows_call(gen *g, const decl *sys, const int a, const int rows, const bool apart)
+{
+    sb_printf(&g->c, "tide_rows_%s_%d(tide_w%s, tide_from, tide_to", decl_cname(sys), rows, g->prog->uses_text ? ", tide_mark" : "");
+    gen_rows_columns(g, sys, a, apart, ROWS_ARGS);
+    sb_put(&g->c, ");\n");
+}
+
+// A system's rows functions for an archetype (gen_rows): in place and apart,
+// and for a loop that leaves rows out and changes components, the two with no
+// filter. -1 for one it hasn't.
+typedef struct rows_set {
+    int place, apart;
+    int place_every, apart_every;
+} rows_set;
+
+// The code for one chunk of a system's entities, tide_c of tide_t in
+// archetype `a`: one of its rows functions called for its rows, or with
+// `pieced`, for the task's piece of them. `skip` leaves the chunk: "continue"
+// among a task's chunks, "return" from a task that has one.
+static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_set rows, const char *pad, const bool pieced,
+                             const char *skip)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const char *columns = arch_columns(g, a);
+    // A system that reads through its World a component it changes reads rows
+    // it changed earlier in this run: so they're written in place, the same
+    // everywhere, rather than into pages some would be in and others not
+    const bool staged = !world_reads_own_writes(sys);
+    const bool part = rows_part(g, sys, a);
+    sb_printf(o, "%sconst uint32_t tide_n = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
+    gen_piece_rows(o, pad, pieced);
+    sb_printf(o, "%sconst tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n", pad, columns);
+    if (arch_scene_column(g, a)) sb_printf(o, "%sconst tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n", pad, columns);
+    gen_rows_presence(g, sys, a, pad);
+    // A chunk with no row for it is left as it is: no page of it is taken,
+    // written or looked at again. One that goes in pieces was looked at whole
+    // before they started (gen_system_pieces), and a piece of a chunk that's
+    // written apart writes its rows whatever they are
+    if (rows_filtered(g, sys, a)) {
+        gen_rows_count(g, sys, a, pad);
+        sb_printf(o, "%sif (!tide_pass%s) %s;\n", pad, pieced && part ? " && tide_pieces == 1u" : "", skip);
+    }
+    // The lanes it reads, and those it changes in place
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!rows_take(g, sys, a, c)) continue;
+        const decl *d = prog->components.items[c];
+        const bool changed = changes_component(sys, c, false);
+        if (changed && staged) continue;
+        sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, changed ? "" : "const ", type_cname(d), comp_lanes(d));
+        for (int k = 0; k < comp_lanes(d); k++) {
+            sb_printf(o, "%s(%suint8_t *)tide_table_column%s(tide_t, %s, tide_c, %d)", k ? ", " : "", changed ? "" : "const ",
+                      changed ? "_mut" : "", columns, arch_column(g, a, c) + k);
+        }
+        sb_put(o, "};\n");
+    }
+    if (!part) {
+        sb_put(o, pad);
+        gen_rows_call(g, sys, a, rows.place, false);
+        return;
+    }
+    // The lanes it changes: where the table says each is read and written. A
+    // whole chunk's are begun here, apart when a snapshot shares any; a
+    // piece's were begun before the pieces started, and it only asks where
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+        const decl *d = prog->components.items[c];
+        sb_printf(o, "%sconst uint8_t *tide_was_%s[%d];\n%suint8_t *tide_own_%s[%d];\n", pad, type_cname(d), comp_lanes(d), pad,
+                  type_cname(d), comp_lanes(d));
+    }
+    sb in = {0};
+    sb_printf(&in, "%s%s", pad, pieced ? "    " : "");
+    if (pieced) sb_printf(o, "%sbool tide_apart = false;\n%sif (tide_pieces == 1u) {\n%s    tide_apart = ", pad, pad, pad);
+    else sb_printf(o, "%sconst bool tide_apart = ", pad);
+    gen_rows_shared(g, sys, a);
+    sb_put(o, ";\n");
+    for (int c = 0; c < prog->components.count; c++) {
+        if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+        const decl *d = prog->components.items[c];
+        sb_printf(o, "%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_apart, tide_was_%s, tide_own_%s);\n", in.data, columns,
+                  arch_column(g, a, c), comp_lanes(d), type_cname(d), type_cname(d));
+    }
+    if (pieced) {
         sb_printf(o, "%s} else {\n", pad);
-        gen_lanes_places(g, sys, a, pad, read_only, false, -1);
-        sb_put(o, loop.data);
+        for (int c = 0; c < prog->components.count; c++) {
+            if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+            const decl *d = prog->components.items[c];
+            sb_printf(o, "%stide_apart |= tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, tide_was_%s, tide_own_%s);\n", in.data,
+                      columns, arch_column(g, a, c), comp_lanes(d), type_cname(d), type_cname(d));
+        }
         sb_printf(o, "%s}\n", pad);
     }
-    gen_chunk_lanes_end(g, sys, a, pad, read_only, staged);
+    if (rows.place_every >= 0) { // Every row of these is one it's for: the loop with no filter
+        sb_printf(o, "%sconst bool tide_every = tide_pass == tide_to - tide_from;\n", pad);
+        sb_printf(o, "%sif (tide_apart && tide_every) ", pad);
+        gen_rows_call(g, sys, a, rows.apart_every, true);
+        sb_printf(o, "%selse if (tide_every) ", pad);
+        gen_rows_call(g, sys, a, rows.place_every, false);
+        sb_printf(o, "%selse if (tide_apart) ", pad);
+    } else {
+        sb_printf(o, "%sif (tide_apart) ", pad);
+    }
+    gen_rows_call(g, sys, a, rows.apart, true);
+    sb_printf(o, "%selse ", pad);
+    gen_rows_call(g, sys, a, rows.place, false);
+    // The lanes go back, in the reverse order they were taken: a page with no
+    // row changed is let go, and the one a snapshot shares stays the table's
+    if (pieced) sb_printf(o, "%sif (tide_pieces == 1u) {\n", pad);
+    for (int c = prog->components.count; c-- > 0;) {
+        if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+        const decl *d = prog->components.items[c];
+        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_own_%s);\n", in.data, columns, arch_column(g, a, c),
+                  comp_lanes(d), type_cname(d));
+    }
+    if (pieced) sb_printf(o, "%s}\n", pad);
 }
 
 // Whether a system's spawns get temporary handles, settled once it's done
@@ -11981,8 +12415,9 @@ static bool system_owns(const gen *g, const decl *sys)
     return false;
 }
 
-// tide_own_<System>: the pages of the components it changes made the world's
-// own, in every chunk it runs on, before its chunks run in pieces.
+// tide_own_<System> for a system written in C: the pages of the components it
+// changes made the world's own, in every chunk it runs on, before its chunks
+// run in pieces. One written in Tide writes shared pages apart (gen_system_pieces).
 static void gen_system_own(gen *g, const decl *sys)
 {
     const program *prog = g->prog;
@@ -12002,6 +12437,46 @@ static void gen_system_own(gen *g, const decl *sys)
         sb_put(o, "        }\n    }\n");
     }
     sb_put(o, "    (void)tide_w;\n}\n\n");
+}
+
+// tide_own_<System> and tide_done_<System> (tide_system_tasks.own and done),
+// for a system whose chunks can go in pieces. Before the pieces: each chunk's
+// lanes of what it changes are begun for all of them, apart when a snapshot
+// shares any, so nothing is copied; a chunk with no row for it is left as it
+// is. After them: they're ended, and a page that came out as it was is let go.
+static void gen_system_pieces(gen *g, const decl *sys)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const char *pad = "            ";
+    for (int done = 0; done < 2; done++) {
+        sb_printf(o, "static void tide_%s_%s(void *tide_world_v)\n{\n    tide_world *tide_w = tide_world_v;\n", done ? "done" : "own",
+                  decl_cname(sys));
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (!runs_on(g, sys, a)) continue;
+            sb_printf(o, "    { // %s\n        tide_table *tide_t = &tide_w->%s;\n", arch_label(g, a), arch_name(g, a));
+            sb_put(o, "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n");
+            if (!done && rows_filtered(g, sys, a)) {
+                sb_printf(o, "%sconst uint32_t tide_from = 0u, tide_to = tide_table_rows(tide_t, %d, tide_c);\n", pad, arch_shift(g, a));
+                gen_rows_presence(g, sys, a, pad);
+                gen_rows_count(g, sys, a, pad);
+                sb_printf(o, "%sif (!tide_pass) continue;\n", pad);
+            }
+            if (!done) {
+                sb_printf(o, "%sconst bool tide_apart = ", pad);
+                gen_rows_shared(g, sys, a);
+                sb_put(o, ";\n");
+            }
+            for (int i = 0; i < prog->components.count; i++) {
+                const int c = done ? prog->components.count - 1 - i : i; // Ended in the reverse order they were begun
+                if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+                sb_printf(o, "%stide_table_lanes_%s_pieces(tide_t, %s, tide_c, %d, %d%s);\n", pad, done ? "end" : "begin",
+                          arch_columns(g, a), arch_column(g, a, c), comp_lanes(prog->components.items[c]), done ? "" : ", tide_apart");
+            }
+            sb_put(o, "        }\n    }\n");
+        }
+        sb_put(o, "    (void)tide_w;\n}\n\n");
+    }
 }
 
 // tide_settle_item: a change or event recorded by a system whose spawns got
@@ -12350,6 +12825,30 @@ static void gen_system_run(gen *g, const decl *sys)
     bool fresh_mark = false; // A view's: it borrowed text for its entities' default local fields
     bool confirmed_mark = false; // ...and copied elements out of the confirmed world
 
+    // Text the code made goes once it's done: after each entity. Released heap
+    // blocks only come from systems that change text.
+    sb clear_text = {0};
+    const bool text = view || touches_text(sys);
+    if (prog->uses_text && text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
+    if (world_heap(prog, view) && text && (view || sys->writes_text)) {
+        sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", view ? "tide_l" : "tide_w");
+    }
+    const char *clear = clear_text.data ? clear_text.data : "";
+
+    // A system's loop over a chunk's rows is a function of its own for each
+    // kind of archetype it runs on (gen_rows): which each archetype calls, for
+    // pages the table alone has and for pages a snapshot shares
+    rows_set *rows = arena_alloc(sizeof(rows_set) * (size_t)(prog->archetypes.count + 1));
+    rows_list rows_made = {0};
+    for (int a = 0; !view && sys->per_entity && a < prog->archetypes.count; a++) {
+        if (!runs_on(g, sys, a) || rows_batched(g, sys, a)) continue;
+        const bool part = rows_part(g, sys, a), every = part && rows_filtered(g, sys, a);
+        rows[a].place = gen_rows(g, sys, a, call.data, clear, false, false, &rows_made);
+        rows[a].apart = part ? gen_rows(g, sys, a, call.data, clear, true, false, &rows_made) : -1;
+        rows[a].place_every = every ? gen_rows(g, sys, a, call.data, clear, false, true, &rows_made) : -1;
+        rows[a].apart_every = every ? gen_rows(g, sys, a, call.data, clear, true, true, &rows_made) : -1;
+    }
+
     if (view) {
         // A view with `verified` parameters is handed the world the server has confirmed too
         sb_printf(o, "static void tide_run_view_%s(const tide_world *tide_w, const tide_world *tide_prev, float tide_alpha, "
@@ -12468,15 +12967,6 @@ static void gen_system_run(gen *g, const decl *sys)
         }
     }
 
-    // Text the code made goes once it's done: after each entity. Released heap
-    // blocks only come from systems that change text.
-    sb clear_text = {0};
-    const bool text = view || touches_text(sys);
-    if (prog->uses_text && text) sb_put(&clear_text, " tide_scratch_reset(tide_mark);");
-    if (world_heap(prog, view) && text && (view || sys->writes_text)) {
-        sb_printf(&clear_text, " tide_heap_flush(&%s->heap);", view ? "tide_l" : "tide_w");
-    }
-    const char *clear = clear_text.data ? clear_text.data : "";
     if (prog->uses_text) {
         sb_printf(o, "    %suint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n", queries ? "" : "const ");
     }
@@ -12497,13 +12987,17 @@ static void gen_system_run(gen *g, const decl *sys)
             any = true;
             sb_printf(o, "    { // %s\n", arch_label(g, a));
             sb_printf(o, "        %stide_table *tide_t = &%s->%s;\n", read_only ? "const " : "", world, arch_name(g, a));
+            // A view's loop, and a run of a one-Send system's sends, are here; any other system's is its rows function
+            const bool here = view || rows_batched(g, sys, a);
             if (split) { // Its task's chunk, counting through its archetypes' chunks
                 sb_put(o, "        if (tide_chunk < tide_t->chunks) {\n            const uint32_t tide_c = tide_chunk;\n");
-                gen_chunk(g, sys, a, call.data, clear, "            ", read_only, true);
+                if (here) gen_chunk(g, sys, a, call.data, clear, "            ", read_only, true);
+                else gen_system_chunk(g, sys, a, rows[a], "            ", true, "return");
                 sb_put(o, "            return;\n        }\n        tide_chunk -= tide_t->chunks;\n    }\n");
             } else {
                 sb_put(o, "        for (uint32_t tide_c = 0; tide_c < tide_t->chunks; tide_c++) {\n");
-                gen_chunk(g, sys, a, call.data, clear, "            ", read_only, false);
+                if (here) gen_chunk(g, sys, a, call.data, clear, "            ", read_only, false);
+                else gen_system_chunk(g, sys, a, rows[a], "            ", false, "continue");
                 sb_put(o, "        }\n    }\n");
             }
         }
@@ -12520,7 +13014,7 @@ static void gen_system_run(gen *g, const decl *sys)
     if (confirmed_mark) sb_put(o, "    tide_scratch_reset(tide_confirmed_mark);\n");
     sb_put(o, "}\n\n");
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
-    if (!view && split && system_owns(g, sys)) gen_system_own(g, sys);
+    if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
 }
 
 // ---------------------------------------------------------------------------
@@ -12882,7 +13376,10 @@ static void gen_api(gen *g)
             const bool settles = system_settles(sys);
             any_settles |= settles;
             sb_printf(o, "    {tide_tasks_%s, tide_task_%s, ", name, name);
-            if (system_splits(sys) && system_owns(g, sys)) sb_printf(o, "tide_own_%s, ", name);
+            const bool owns = system_splits(sys) && system_owns(g, sys);
+            if (owns) sb_printf(o, "tide_own_%s, ", name);
+            else sb_put(o, "NULL, ");
+            if (owns && !sys->extern_system) sb_printf(o, "tide_done_%s, ", name); // One written in C made them the world's own
             else sb_put(o, "NULL, ");
             int own_waits = 0;
             for (int k = 0; k < sys->waits.count; k++) own_waits += !sys->waits.items[k].through;

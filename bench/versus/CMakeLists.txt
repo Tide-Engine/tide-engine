@@ -20,6 +20,8 @@ function(versus_add concept)
 endfunction()
 
 versus_add(particles particles/particles.tide)
+versus_add(wide wide/wide.tide) # A dozen arrays of one component at once
+add_test(NAME versus_wide_kept COMMAND versus_wide --quick --kept 1 --tagged 1 --frozen 50)
 versus_add(sand ../sand/sand.tide) # The game itself
 versus_add(life life/life.tide)
 versus_add(churn churn/churn.tide)

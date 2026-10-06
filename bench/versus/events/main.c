@@ -11,7 +11,14 @@ extern const versus_way events_c;
 static versus_flag flags[] = {
     {"targets", "entities that turrets hit", 50000, 500, 0},
     {"turrets", "entities that each hit a target every tick", 200000, 2000, 0},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
 };
+
+// With --kept 1, each tick's world is kept first, as a client keeps every tick
+// it predicts: the snapshot shares the world's pages, so the tick writes none
+// of them in place.
+static tide_world kept;
+static bool keeps;
 
 static void *make(const versus_flag *f)
 {
@@ -19,11 +26,13 @@ static void *make(const versus_flag *f)
     tide_world_init(w, VERSUS_DT);
     w->Range.targets = (int32_t)f[0].value;
     w->Range.turrets = (int32_t)f[1].value;
+    keeps = f[2].value != 0;
     return w;
 }
 
 static void tick(void *world, const tide_jobs *jobs)
 {
+    if (keeps) tide_world_copy(&kept, world);
     tide_world_tick_on(world, jobs);
 }
 
@@ -42,6 +51,7 @@ static uint64_t digest(const void *world)
 static void destroy(void *world)
 {
     tide_world_free(world);
+    tide_world_free(&kept);
     free(world);
 }
 

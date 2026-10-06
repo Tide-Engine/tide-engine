@@ -43,6 +43,9 @@
 
 #define NONE UINT32_MAX
 
+// A system's pages for chunks that go in pieces (system_state.owned)
+enum { OWNING = 1, OWNED };
+
 // The task running on this thread, while systems run.
 typedef struct task_context {
     tide_queue *queue; // Its own, on threads; NULL: the world's
@@ -151,6 +154,7 @@ typedef struct system_state {
     atomic_uint waiting;         // Systems it waits for that aren't done
     atomic_uint settle_waiting;  // Before it settles: its tasks, and the system that spawns before it
     atomic_uint settle_claimed;
+    atomic_uint owned;           // Its pages, for chunks that go in pieces (tide_system_tasks.own): not made, being made, made
     uint32_t tasks;
     uint32_t pieces;      // Each of its chunks runs in this many
     uint32_t first;       // Its first task among all the tick's
@@ -244,6 +248,10 @@ static void finish_task(tick_run *r, const uint32_t s)
 {
     system_state *st = &r->state[s];
     if (atomic_fetch_add(&st->done, 1u) + 1u != st->tasks) return;
+    if (st->pieces > 1u && r->tick->systems[s].done) {
+        tide_memory_sync(); // The pages its pieces wrote on other threads
+        r->tick->systems[s].done(r->world);
+    }
     if (r->tick->systems[s].settles) atomic_fetch_sub(&st->settle_waiting, 1u);
     else finish_system(r, s);
 }
@@ -264,6 +272,18 @@ static bool work_once(tick_run *r)
             return true;
         }
         if (atomic_load(&st->waiting) || atomic_load(&st->next) >= st->tasks) continue;
+        // Its pages, before its chunks' pieces write them at once: made by the
+        // first thread that gets here, now that what it waits for is done and
+        // has left them as this system finds them. The others look elsewhere
+        // meanwhile
+        if (st->pieces > 1u && system->own && atomic_load(&st->owned) != OWNED) {
+            unsigned not_yet = 0u;
+            if (!atomic_compare_exchange_strong(&st->owned, &not_yet, OWNING)) continue;
+            tide_memory_sync(); // What the systems before it made on other threads
+            system->own(r->world);
+            atomic_store(&st->owned, OWNED);
+            ask(r, st->tasks - 1u); // The threads asked for its tasks may have left while there were none to take
+        }
         const uint32_t task = atomic_fetch_add(&st->next, 1u);
         if (task >= st->tasks) continue;
         tide_memory_sync(); // What the systems before it made on other threads
@@ -540,7 +560,6 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         uint64_t work;
         const uint32_t chunks = system->count(world, &work);
         st->pieces = system->splits ? pieces_for(chunks, work, jobs->threads) : 1u;
-        if (st->pieces > 1u && system->own) system->own(world); // Its pages, before pieces write them at once
         st->tasks = chunks * st->pieces;
         st->first = tasks;
         st->next_settle = NONE;
@@ -549,6 +568,7 @@ static void run_on_threads(void *world, const tide_tick_systems *tick, const tid
         atomic_init(&st->done, 0u);
         atomic_init(&st->waiting, system->wait_count);
         atomic_init(&st->settle_claimed, 0u);
+        atomic_init(&st->owned, 0u);
         atomic_init(&st->began, 0u);
         atomic_init(&st->ended, 0u);
         // Spawns hand out IDs in the tick's order: a system that settles its
