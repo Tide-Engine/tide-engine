@@ -83,9 +83,10 @@ static void move_rows(const uint32_t from, const uint32_t to, const float dt, fl
                       const float *restrict ax, const float *restrict ay, const float *restrict az,
                       const float *restrict drag, const float *restrict bounce, const float *restrict radius)
 {
-    // Sanitizer checks can prevent vectorization; keep checking the scalar loop.
+#if defined(__clang__)
 #if !__has_feature(address_sanitizer) && !__has_feature(undefined_behavior_sanitizer)
 #pragma clang loop vectorize(enable)
+#endif
 #endif
     for (uint32_t i = from; i < to; i++) {
         const float keep = 1.0f - drag[i] * dt;
@@ -125,8 +126,10 @@ static void shift_rows(const uint32_t from, const uint32_t to, const float dt, c
                        float *restrict vz, const float *restrict ax, const float *restrict ay, const float *restrict az,
                        const float *restrict drag, const float *restrict bounce, const float *restrict radius)
 {
+#if defined(__clang__)
 #if !__has_feature(address_sanitizer) && !__has_feature(undefined_behavior_sanitizer)
 #pragma clang loop vectorize(enable)
+#endif
 #endif
     for (uint32_t i = from; i < to; i++) {
         const uint32_t still = frozen[i];
