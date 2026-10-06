@@ -28,6 +28,7 @@
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
 #include "lld/Common/Driver.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -70,6 +71,45 @@ static void init_targets()
     TIDE_INIT_TARGET(AArch64)
     TIDE_INIT_TARGET(WebAssembly)
 }
+
+// lld's drivers register every target LLVM was built with, for link-time
+// optimization, and naming a target's functions links the whole of it: 20 CPUs
+// and GPUs in LLVM's Linux release, a third of tide. So those of the targets
+// tide doesn't build for are defined here, empty, and the linker never takes
+// theirs out of LLVM's libraries. LLVM's own lists say which there are, so a
+// target a new LLVM adds is left out too.
+#define TIDE_BUILDS_X86 ,
+#define TIDE_BUILDS_AArch64 ,
+#define TIDE_BUILDS_WebAssembly ,
+#define TIDE_THIRD(first, second, third, ...) third
+#define TIDE_PICK(...) TIDE_THIRD(__VA_ARGS__)
+#define TIDE_KEPT(name, part)
+#define TIDE_LEFT_OUT(name, part)                                                                                      \
+    void LLVMInitialize##name##part() {}
+// TIDE_LEFT_OUT, unless tide builds for the target: TIDE_BUILDS_<name> is then
+// a comma, which puts TIDE_KEPT third.
+#define TIDE_OTHER_TARGET(name, part) TIDE_PICK(TIDE_BUILDS_##name, TIDE_KEPT, TIDE_LEFT_OUT, )(name, part)
+extern "C" {
+#define LLVM_TARGET(name)                                                                                              \
+    TIDE_OTHER_TARGET(name, TargetInfo)                                                                                \
+    TIDE_OTHER_TARGET(name, Target)                                                                                    \
+    TIDE_OTHER_TARGET(name, TargetMC)
+#include "llvm/Config/Targets.def"
+#define LLVM_ASM_PRINTER(name) TIDE_OTHER_TARGET(name, AsmPrinter)
+#include "llvm/Config/AsmPrinters.def"
+#define LLVM_ASM_PARSER(name) TIDE_OTHER_TARGET(name, AsmParser)
+#include "llvm/Config/AsmParsers.def"
+}
+
+// The same for what LLVM's release builds into every pass pipeline (Polly, in
+// its Linux one: an optimizer that only runs when asked for, which tide never
+// does): each is an extension that registers nothing.
+#define HANDLE_EXTENSION(name)                                                                                         \
+    llvm::PassPluginLibraryInfo get##name##PluginInfo()                                                                \
+    {                                                                                                                  \
+        return {LLVM_PLUGIN_API_VERSION, #name, "", [](llvm::PassBuilder &) {}};                                       \
+    }
+#include "llvm/Support/Extension.def"
 
 // The linkers games need: the web's, Android's (ELF, as Linux's), and the
 // machine's own.

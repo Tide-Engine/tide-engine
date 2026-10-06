@@ -123,6 +123,27 @@ if(APPLE)
         "LINKER:-cache_path_lto,${CMAKE_BINARY_DIR}/lto-cache")
 endif()
 
+# tide is nearly all LLVM, so how it's linked decides how big it is. Windows'
+# linker (lld-link) leaves out what nothing reaches and keeps one of the
+# functions that are the same code by itself, and a program there has no table
+# of its functions' names. The others have to be told each: without it, tide
+# for Linux was 210 MB to Windows' 121, a sixth of it names. Not in a build to
+# debug.
+set(_tide_small "$<CONFIG:Release,MinSizeRel>")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(tide_cc INTERFACE "$<${_tide_small}:LINKER:--gc-sections,-s>")
+    # Folding functions takes lld (GNU ld has none of it), where clang finds one.
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX -fuse-ld=lld TIDE_LLD_LINKS)
+    if(TIDE_LLD_LINKS)
+        target_link_options(tide_cc INTERFACE -fuse-ld=lld "$<${_tide_small}:LINKER:--icf=safe>")
+    endif()
+elseif(APPLE)
+    # Nothing loads into tide, so it exports nothing, which makes every name
+    # one the table can leave out.
+    target_link_options(tide_cc INTERFACE "$<${_tide_small}:LINKER:-dead_strip,-x,-no_exported_symbols,--icf=safe>")
+endif()
+
 # LLVM's releases are built with zlib and zstd, and on Windows with libxml2
 # (for lld's manifests), without including them: build them for tide, only as
 # the static libraries. A function, so these settings stay local.
