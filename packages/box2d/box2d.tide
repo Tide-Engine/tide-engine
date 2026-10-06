@@ -7,7 +7,8 @@
 // as bytes (Physics.image), and before each step C's world is either at that
 // state already or is made from it again. Everything that changes Box2D's
 // world happens in these systems, from what the components say: code that
-// wants a body to move writes its component.
+// wants a body to move writes its component. What code asks of the world
+// (Raycast, Cast, Overlap, Inside) changes nothing of it.
 
 namespace Box2D;
 
@@ -33,6 +34,8 @@ enum BodyType
 
 // A rigid body. Its place and speeds are Box2D's after each step, and a system
 // that writes them moves the body: the next step starts from what they say.
+// What it is can be written too: a body that's `Dynamic` and is made
+// `Kinematic` is that from the next step on, with the shapes it had.
 //
 // Whether it's asleep is Box2D's after each step too: at rest, and stepped no
 // more until something wakes it. A system that writes `asleep` puts the body
@@ -60,6 +63,7 @@ component Body
     float gravityScale = 1;
     float linearDamping;
     float angularDamping;
+    float sleepSpeed = 0.05; // It falls asleep once it has been slower than this for a while, in meters a second
     // The package's own: where the last step left the body, which is how
     // what's written since is told, without asking Box2D
     float2 stepPosition;
@@ -96,6 +100,21 @@ component Circle
     bool sensor;
 }
 
+// A shape on another entity's body. An entity has one Box and one Circle at
+// the most, so a body of more shapes than that has the others as entities of
+// their own, each with its Box or its Circle and this, which names the entity
+// whose Body it's on: Spawn(Box { offset = float2(0, 1) }, Part { of = brick }).
+// The shape is on the body from the next step, like any shape. Destroying the
+// part's entity takes that one shape off, and destroying the body's takes its
+// parts with it. A part whose entity names none with a Body is destroyed.
+component Part
+{
+    Entity of;
+    // The package's own: its shapes in Box2D, 0 until they're on the body
+    long box;
+    long circle;
+}
+
 // The package's own: the entity's box, or its circle, is on its body in Box2D
 [Sparse]
 component BoxMade { }
@@ -103,40 +122,118 @@ component BoxMade { }
 [Sparse]
 component CircleMade { }
 
-// Two bodies started touching, or stopped: sent to each, with the other. A
-// shape that's a sensor stops nothing, and sends them for what comes into it
-// and leaves it, to its own entity and to the other's; two sensors say nothing
-// of each other. `other` is no entity when the other one was destroyed while
-// they touched: its parting still comes, from `default`.
+// Two bodies started touching, or stopped: sent to each body's entity, with
+// the other's, once for each pair of their shapes. A shape that's a sensor
+// stops nothing, and sends them for what comes into it and leaves it, to its
+// own body's entity and to the other's; two sensors say nothing of each other.
+//
+// `part` is which of this body's shapes it was, and `otherPart` which of the
+// other's: the body's own entity for a shape that's on it, and the part's
+// entity for a part.
+//
+// `other` is no entity when the other one was destroyed while they touched:
+// its parting still comes, from `default`. A part that was destroyed while it
+// touched is `default` too, but its body still says whose it was.
 event Touched
 {
     Entity other;
+    Entity part;
+    Entity otherPart;
 }
 
 event Parted
 {
     Entity other;
+    Entity part;
+    Entity otherPart;
+}
+
+// Two bodies met faster than Physics.hitSpeed: sent to each body's entity,
+// with the other's, in the tick whose step they met in. `point` is where,
+// `normal` the way from this body into the other, and `speed` how fast they
+// closed, in meters a second. For what shows and sounds of a collision: how
+// hard it was, and where.
+event Hit
+{
+    Entity other;
+    Entity part;
+    Entity otherPart;
+    float2 point;
+    float2 normal;
+    float speed;
+}
+
+// What a ray or a shape that's cast met first (Raycast, Cast).
+struct RayHit
+{
+    Entity entity; // Whose body it met
+    Entity part; // ...and which of its shapes: that entity for a shape on it, a part's for a part
+    float2 point; // Where
+    float2 normal; // The way out of what was met, there: towards where the ray came from
+    float fraction; // How far along the way that was, from 0 at its start to 1 at its end
 }
 
 singleton Physics
 {
     float2 gravity = float2(0, -10);
     int substeps = 4;
+    // How the world is tuned. Each is Box2D's own default, and a change is the next step's.
+    float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
+    float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
+    float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
+    float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
+    float hitSpeed = 1; // Bodies that meet faster than this send Hit
+    bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
     int bodies; // Made so far
     int shapes;
     long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
     int size; // The image's bytes
     bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
+    int dropped; // Bodies whose entities were destroyed before this tick's step: their parts go too
     List<byte> image; // Box2D's whole state after the last step
     List<long> gone; // Bodies whose entities were destroyed, until the next step
+    List<long> shed; // ...and the shapes of parts whose entities were
     Map<long, Entity> owners; // Each body's entity
+    Map<long, Entity> parts; // ...and each part's shape's
+    Map<Entity, Sensors> sensors; // The sensors of each entity that has any
+}
+
+// An entity's sensors: Box2D's handle to each of its shapes that is one
+struct Sensors
+{
+    long box;
+    long circle;
 }
 
 struct Contact
 {
     long a;
     long b;
+    long shapeA;
+    long shapeB;
     bool began;
+}
+
+struct Blow
+{
+    long a;
+    long b;
+    long shapeA;
+    long shapeB;
+    float2 point;
+    float2 normal;
+    float speed;
+}
+
+// What a query found in C's world, by Box2D's own handles
+struct Met
+{
+    long body;
+    long shape;
+    float2 point;
+    float2 normal;
+    float fraction;
+    bool any;
 }
 
 [NativeName("b2t_open")]
@@ -148,17 +245,21 @@ extern void RestoreWorld(List<byte> image, int size, long stamp);
 [NativeName("b2t_gone")]
 extern void RemoveBodies(List<long> bodies, int count);
 
+[NativeName("b2t_shed")]
+extern void RemoveShapes(List<long> shapes, int count);
+
 [NativeName("b2t_made")]
 extern long TakeMade(Entity entity);
 
 [NativeName("b2t_box")]
-extern int AttachBox(long body, in Box box);
+extern long AttachBox(long body, in Box box);
 
 [NativeName("b2t_circle")]
-extern int AttachCircle(long body, in Circle circle);
+extern long AttachCircle(long body, in Circle circle);
 
 [NativeName("b2t_step")]
-extern long StepWorld(float dt, int substeps, float2 gravity);
+extern long StepWorld(float dt, int substeps, float2 gravity, float contactStiffness, float contactDamping, float contactSpeed, float bounceSpeed,
+                      float hitSpeed, bool sleeping);
 
 [NativeName("b2t_image")]
 extern int WriteImage(out List<byte> image);
@@ -169,8 +270,42 @@ extern int CountTouches(long stamp);
 [NativeName("b2t_touch")]
 extern Contact ReadTouch(int index);
 
+[NativeName("b2t_hits")]
+extern int CountHits();
+
+[NativeName("b2t_hit")]
+extern Blow ReadHit(int index);
+
+[NativeName("b2t_seek")]
+extern bool SeekWorld(long stamp);
+
+[NativeName("b2t_recall")]
+extern void RecallWorld(List<byte> image, int size, long stamp);
+
+[NativeName("b2t_hide")]
+extern void HideGone(List<long> bodies, int bodyCount, List<long> shapes, int shapeCount);
+
+[NativeName("b2t_ray")]
+extern Met CastRay(float2 from, float2 to, long ignore);
+
+[NativeName("b2t_cast_box")]
+extern Met CastBox(in Box shape, float2 from, float angle, float2 to, long ignore);
+
+[NativeName("b2t_cast_circle")]
+extern Met CastCircle(in Circle shape, float2 from, float angle, float2 to, long ignore);
+
+[NativeName("b2t_overlap_box")]
+extern int OverlapBox(in Box shape, float2 at, float angle, out List<long> bodies);
+
+[NativeName("b2t_overlap_circle")]
+extern int OverlapCircle(in Circle shape, float2 at, float angle, out List<long> bodies);
+
+[NativeName("b2t_inside")]
+extern int VisitorsOf(long box, long circle, out List<long> bodies);
+
 // C's world for this match, at the state the match is in: the one it has, or
-// one made from the image.
+// one made from the image. The bodies whose entities were destroyed since the
+// last step go, and the shapes of the parts whose entities were.
 //
 // Each of these systems says where it is in the stage, so that nothing a game
 // orders its own systems by, naming the stage or one of these, can put them in
@@ -182,8 +317,11 @@ system Begin(mut Physics physics)
     {
         RestoreWorld(physics.image, physics.size, physics.stamp);
     }
+    physics.dropped = physics.gone.count;
     RemoveBodies(physics.gone, physics.gone.count);
     physics.gone.Clear();
+    RemoveShapes(physics.shed, physics.shed.count);
+    physics.shed.Clear();
 }
 
 // New bodies are made, and what code wrote into a body since the last step
@@ -217,24 +355,104 @@ system Own(mut Physics physics, with Body)
 [Stage(PhysicsStages.Step, 3)]
 system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
 {
-    physics.shapes += AttachBox(body.id, box);
+    long shape = AttachBox(body.id, box);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (box.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.box = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(BoxMade);
 }
 
 [Stage(PhysicsStages.Step, 4)]
 system AttachCircles(Body body, Circle circle, mut Physics physics, without CircleMade)
 {
-    physics.shapes += AttachCircle(body.id, circle);
+    long shape = AttachCircle(body.id, circle);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (circle.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.circle = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(CircleMade);
+}
+
+// A part's shape goes on the body of the entity it names, and the match keeps
+// which shape that is: for the events, which say the part, and for the day the
+// part goes. A part that names an entity with no Body, or one whose body went
+// before the part's first step, is destroyed.
+[Stage(PhysicsStages.Step, 5)]
+system AttachPartBoxes(mut Part part, Box box, mut Physics physics, World world, without Body, without BoxMade)
+{
+    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    part.box = AttachBox(body.id, box);
+    if (part.box != 0)
+    {
+        physics.shapes += 1;
+        physics.parts[part.box] = this;
+        if (box.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.box = part.box;
+            physics.sensors[this] = sensors;
+        }
+    }
+    this.Add(BoxMade);
+}
+
+[Stage(PhysicsStages.Step, 6)]
+system AttachPartCircles(mut Part part, Circle circle, mut Physics physics, World world, without Body, without CircleMade)
+{
+    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    part.circle = AttachCircle(body.id, circle);
+    if (part.circle != 0)
+    {
+        physics.shapes += 1;
+        physics.parts[part.circle] = this;
+        if (circle.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.circle = part.circle;
+            physics.sensors[this] = sensors;
+        }
+    }
+    this.Add(CircleMade);
+}
+
+// A body's parts go with it: the tick after an entity with a body was
+// destroyed, each part looks whether the one it names is still there. In any
+// other tick it's passed by.
+[Stage(PhysicsStages.Step, 7)]
+system DropParts(Part part, Physics physics, World world)
+{
+    if (physics.dropped > 0 && !world.Has<Body>(part.of)) this.Destroy();
 }
 
 // The step, and Box2D's state after it into the match. It isn't named Step,
 // so that a game's [Before(Step)] is an error and not a place in the middle of
 // these, after what code wrote has gone to Box2D: the stage is what to name.
-[Stage(PhysicsStages.Step, 5)]
+[Stage(PhysicsStages.Step, 8)]
 system Simulate(Time time, mut Physics physics)
 {
-    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
+                           physics.contactSpeed, physics.bounceSpeed, physics.hitSpeed, physics.sleeping);
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
@@ -242,29 +460,52 @@ system Simulate(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
-[Stage(PhysicsStages.Step, 6)]
+[Stage(PhysicsStages.Step, 9)]
 [NativeName("b2t_leave")]
 extern system Leave(mut Body body, Physics physics);
 
-[Stage(PhysicsStages.Step, 6)]
+// Which of a body's shapes one is, as an entity: the part it's the shape of,
+// or the body's own entity. A shape that's gone is no entity's.
+Entity PartOf(Physics physics, long shape, Entity body)
+{
+    if (shape == 0) return default;
+    if (physics.parts.count > 0 && physics.parts.TryGet(shape, out var part)) return part;
+    return body;
+}
+
+[Stage(PhysicsStages.Step, 9)]
 system Report(Physics physics)
 {
-    int count = physics.moved ? CountTouches(physics.stamp) : 0;
+    if (!physics.moved) return;
+    int count = CountTouches(physics.stamp);
     for (int i = 0; i < count; i++)
     {
         Contact contact = ReadTouch(i);
         Entity a = physics.owners[contact.a];
         Entity b = physics.owners[contact.b];
+        Entity partA = PartOf(physics, contact.shapeA, a);
+        Entity partB = PartOf(physics, contact.shapeB, b);
         if (contact.began)
         {
-            a.Send(Touched { other = b });
-            b.Send(Touched { other = a });
+            a.Send(Touched { other = b, part = partA, otherPart = partB });
+            b.Send(Touched { other = a, part = partB, otherPart = partA });
         }
         else
         {
-            a.Send(Parted { other = b });
-            b.Send(Parted { other = a });
+            a.Send(Parted { other = b, part = partA, otherPart = partB });
+            b.Send(Parted { other = a, part = partB, otherPart = partA });
         }
+    }
+    int hits = CountHits();
+    for (int i = 0; i < hits; i++)
+    {
+        Blow blow = ReadHit(i);
+        Entity a = physics.owners[blow.a];
+        Entity b = physics.owners[blow.b];
+        Entity partA = PartOf(physics, blow.shapeA, a);
+        Entity partB = PartOf(physics, blow.shapeB, b);
+        a.Send(Hit { other = b, part = partA, otherPart = partB, point = blow.point, normal = blow.normal, speed = blow.speed });
+        b.Send(Hit { other = a, part = partB, otherPart = partA, point = blow.point, normal = -blow.normal, speed = blow.speed });
     }
 }
 
@@ -276,4 +517,186 @@ event(Destroyed) Remove(Body body, mut Physics physics)
         physics.gone.Add(body.id);
         physics.owners.Remove(body.id);
     }
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
+}
+
+// ...and a part that goes takes its shape off its body.
+event(Destroyed) Shed(Part part, mut Physics physics)
+{
+    if (part.box != 0)
+    {
+        physics.shed.Add(part.box);
+        physics.parts.Remove(part.box);
+    }
+    if (part.circle != 0)
+    {
+        physics.shed.Add(part.circle);
+        physics.parts.Remove(part.circle);
+    }
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
+}
+
+// ---------------------------------------------------------------------------
+// Asking the world
+//
+// These ask something of the world and change nothing of it. Each takes the
+// Physics of the code that asks, a system's, a handler's or a view's, and
+// answers for the world as that Physics has it: as its last step left it. So
+// a system before the step asks of the last tick's world, one after it of
+// this tick's, and a view of the world it draws. What code wrote into a body
+// since isn't in the answer, nor is a body that was spawned since: they're the
+// next step's. An entity that was destroyed since isn't met any more.
+//
+// The answers are the same on every machine, as the world is.
+
+// C's world as this Physics has it, for the questions that follow: the one
+// that's there, or one made from the image. False for a world nothing stepped
+// yet, where there's nothing to find.
+bool Ask(Physics physics)
+{
+    if (physics.size == 0) return false;
+    if (!SeekWorld(physics.stamp)) RecallWorld(physics.image, physics.size, physics.stamp);
+    if (physics.gone.count > 0 || physics.shed.count > 0)
+    {
+        HideGone(physics.gone, physics.gone.count, physics.shed, physics.shed.count);
+    }
+    return true;
+}
+
+// What C found, by the entities the match knows it as.
+bool Told(Physics physics, Met met, out RayHit hit)
+{
+    if (!met.any)
+    {
+        hit = default;
+        return false;
+    }
+    var entity = physics.owners[met.body];
+    hit = RayHit { entity = entity, part = PartOf(physics, met.shape, entity), point = met.point, normal = met.normal,
+                   fraction = met.fraction };
+    return true;
+}
+
+// The first thing a ray from one place to another meets, if anything. Sensors
+// aren't met. A ray that starts inside a shape meets it there, at fraction 0,
+// with no normal.
+bool Raycast(Physics physics, float2 from, float2 to, out RayHit hit)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastRay(from, to, 0), out hit);
+}
+
+// ...leaving out one body: its own, for a ray from inside it.
+bool Raycast(Physics physics, float2 from, float2 to, out RayHit hit, Body ignore)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastRay(from, to, ignore.id), out hit);
+}
+
+// A shape moved from one place to another, turned by `angle` all the way:
+// where it first touches something. The shape is around `from` as it would be
+// around a body's place there, by its `offset`, so a body's own box, cast from
+// where the body is, is the box where it is. `fraction` is how much of the way
+// it went before it touched. A shape that touches something where it starts
+// meets it at fraction 0, with no normal.
+bool Cast(Physics physics, Box shape, float2 from, float angle, float2 to, out RayHit hit)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastBox(shape, from, angle, to, 0), out hit);
+}
+
+bool Cast(Physics physics, Box shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastBox(shape, from, angle, to, ignore.id), out hit);
+}
+
+bool Cast(Physics physics, Circle shape, float2 from, float angle, float2 to, out RayHit hit)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastCircle(shape, from, angle, to, 0), out hit);
+}
+
+bool Cast(Physics physics, Circle shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+{
+    if (!Ask(physics))
+    {
+        hit = default;
+        return false;
+    }
+    return Told(physics, CastCircle(shape, from, angle, to, ignore.id), out hit);
+}
+
+// The entities C found by their bodies, in its order, less the ones that are
+// gone since: whether there are any.
+bool Owners(Physics physics, List<long> bodies, out List<Entity> found)
+{
+    mut List<Entity> entities = [];
+    foreach (var body in bodies)
+    {
+        var entity = physics.owners[body];
+        if (entity != default) entities.Add(entity);
+    }
+    found = entities;
+    return entities.count > 0;
+}
+
+// The entities whose bodies have a shape in a shape at a place, or touching
+// it, each once, in an order that's the same on every machine. Sensors aren't
+// found.
+bool Overlap(Physics physics, Box shape, float2 at, float angle, out List<Entity> found)
+{
+    if (!Ask(physics))
+    {
+        found = [];
+        return false;
+    }
+    OverlapBox(shape, at, angle, out List<long> bodies);
+    return Owners(physics, bodies, out found);
+}
+
+bool Overlap(Physics physics, Circle shape, float2 at, float angle, out List<Entity> found)
+{
+    if (!Ask(physics))
+    {
+        found = [];
+        return false;
+    }
+    OverlapCircle(shape, at, angle, out List<long> bodies);
+    return Owners(physics, bodies, out found);
+}
+
+// The entities whose bodies have a shape in an entity's sensors, as the last
+// step found them, each once. `sensor` is the entity the sensor shape is a
+// component of: a body's, or a part's. Nobody, for an entity with no sensor.
+// Touched and Parted say who comes and goes; this says who's there.
+bool Inside(Physics physics, Entity sensor, out List<Entity> found)
+{
+    if (physics.sensors.count == 0 || !physics.sensors.TryGet(sensor, out var sensors) || !Ask(physics))
+    {
+        found = [];
+        return false;
+    }
+    VisitorsOf(sensors.box, sensors.circle, out List<long> bodies);
+    return Owners(physics, bodies, out found);
 }

@@ -1076,6 +1076,57 @@ system Advance(mut Match match)
 - Text with a caret that moves, and selection, in text fields.
 - Case for letters past ASCII.
 
+## Generics
+
+### Decided
+
+- Generics are a proper part of Tide, in three steps (the owner, 2026-10-06: "we clearly need generics and I don't like making them just an engine thing that you can't touch"): a type is read as a tree, containers nest by one rule (both built: see Lists, and `AGENTS.md`, Language), and games declare generic structs and functions of their own, below.
+
+### Open
+
+A proposal for the third step (Claude, 2026-10-06), for the owner to approve before it's built. Each point is a pick unless it says otherwise.
+
+- **Declaring.** A struct, a function or a method takes type parameters in `<>` after its name, as C#'s do:
+
+```csharp
+struct Pair<T>
+{
+    T a;
+    T b;
+}
+
+T Max<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+struct Stack<T>
+{
+    List<T> items;
+
+    mut void Push(T item) { items.Add(item); }
+
+    T? Pop()
+    {
+        if (items.count == 0) return null;
+        var top = items[items.count - 1];
+        items.RemoveAt(items.count - 1);
+        return top;
+    }
+}
+```
+
+  A method of a generic struct uses its struct's parameters, and can have parameters of its own, `U Map<U>(...)`. Not components, singletons, events, commands, inputs, scenes, systems, views or handlers: what the engine stores by name and schedules is concrete (a `component Slot<T>` would be an archetype for each instantiation, and a system over it a system for each: left for when a game asks). Not enums. A type parameter is a name; it shadows nothing, so a `T` that's also a type of the game's is an error at the declaration.
+- **Using.** `Pair<int> p;`, `Stack<Entity> enemies;`, `Max<float>(a, b)`, or `Max(a, b)` with the type arguments inferred (below). A type argument is what a list's element can be, the same rule in the same table (`GENERIC_ELEMENT`): built-in types, text, enums, structs (generic ones instantiated, `Pair<Pair<int>>`), lists, maps and sets. Not grids, ECS data, `Action`, `Devices`, `World`, nor a `T?`. A generic struct holds what a struct holds, so no grid.
+- **Monomorphization.** Each instantiation is a declaration of its own, as `List<int>` is one today: `Pair<int>` and `Pair<float>` are two structs in generated C, each checked once with its arguments bound, and two instantiations with the same arguments are one declaration, found by them. Its C name is the generic's with the arguments' C names after it, `Pair_int`, `Pair_List_Entity`, `tide_function_Max_float` (a name that reads in a debugger, over a number like `tide_list3`), and tools show it as written, `Pair<int>`, `Max<float>`: the schedule, the profiler, hovers. The game's layout has an instantiation as a struct of its name, so hot reloading carries a world over field by field as for any struct, and renaming a type parameter changes nothing.
+- **No constraints in v1.** A generic body uses a `T` for anything, and what the `T` doesn't support is found at the instantiation: `Max<Pair<int>>` is an error at `a > b` in `Max`, with a note at the instantiation that led there ("instantiated as `Max<Pair<int>>` here", through a chain of them where one generic instantiates another), as Tide's errors say what and where. What doesn't depend on `T` (names, syntax, the shape of calls, what a `T` is passed to as a plain value) is checked once with the parameters unbound, so an error that's the generic's own is found with no instantiation at all. Constraints (`where T : ...`) can come later, as a check at the declaration; Tide has nothing to constrain with yet but the built-in rules (`==`, `<`, hashable), which would be the first.
+- **Inference**, as C#'s: a call with no `<>` takes each type argument from the arguments whose parameters mention it, `T` against the argument's type and `List<T>` or `Pair<T, U>` against its parts; two arguments that give the same `T` have to give it exactly (`Max(1, 2.5)` is an error that says to write `Max<float>(1, 2.5)`: no widening picks between `int` and `float`); a `T` no argument gives is an error that says to write the `<>`; the return type takes no part. Defaults and named arguments go as for any call. A generic and a non-generic function can share a name: the non-generic wins where it fits, as in C#, and two generics that differ in how many type parameters they take are two overloads. A generic can't be `virtual` or overridden in v1, which keeps `override` matching by name and parameters alone.
+- **The GPU.** A generic function a frag or a vert reaches is instantiated like any function and written per instantiation, with its C name; a generic struct as a vertex or an instance struct is instantiated the same way. What the GPU refuses of a type (text, lists, entities) it refuses of a type argument, where it's used.
+- **Text** shows an instantiation's value with its written name: `Pair<int> { a = 1, b = 2 }`.
+- **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders, as `Map<$1, $2>` is offered; the formatter keeps `Pair<int>` tight as it keeps `List<int>`; the grammar colors a type parameter as a type.
+- **Recursion.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself. An instantiation that instantiates forever (`Grow<T>` calling `Grow<Pair<T>>`) stops at 8 levels, with an error that shows the chain.
+- **Tests and docs** that come with it: `compiler/tests/e2e/generics` (structs, functions, methods, inference, nested instantiations, instantiations that are one declaration, hot reloading's layout, the GPU), `compiler/tests/errors/generic_*.tide` one per diagnostic, `compiler/tests/shaders/generics`, `lsp_generics`, the grammar's probe, and `docs/language/generics.md` with a live example.
+
 ## Lists
 
 ### Decided
@@ -1093,7 +1144,12 @@ system Advance(mut Match match)
 - Changing a list needs it to be something that can change: a `mut` component or singleton, or a `mut` local.
 - Elements are values: built-in types, text, enums and structs, not ECS data (keep an `Entity` instead).
 - Components, singletons, structs and events can hold lists; inputs can't. A struct that holds a list, a map or text is a value like any other: a field of a component, a singleton, an event or another struct, a local, a parameter. Copying it copies what it holds.
-- What isn't supported yet is one inside another's elements: a list can't hold lists, maps, sets or grids (`List<List<int>>`), nor a struct that has a list, a map or a set in it, at any depth (`List<Bag>` where `Bag` has a `List<int>`). A list of structs that hold text is fine. The errors say which field is in the way, and what to write instead: one flat list with where each part starts (and how many it has), or a component on an entity of its own for each inner list, held as a `List<Entity>`.
+- A list holds lists, maps and sets as elements, and structs that hold them, at any depth: `List<List<int>>`, `List<Bag>` where `Bag` has a `List<int>`, `Map<int, List<Entity>>`, `Map<string, List<List<int>>>`. Not grids, which are never copied (but in an asset, which is never written: see Assets). A key is still a plain value (see Maps and sets), and so is a grid's cell (see Grids). One rule says what each built-in type takes, the same in the parser and the checker (`generic_forms` in `compiler/src/types.c`): a list's element and a map's value take any value but a grid; a key takes a value with a hash and `==`, of a fixed size; a cell takes a plain value; a `T?` takes any value a function can return; `fails E` takes a value that isn't a `T?`. (Provisional, built 2026-10-06 as the second of the three steps generics take: the owner decided the steps, and that containers nest, 2026-10-06; the picks here await them.)
+- An element that's a container is changed where it is: `rows[i].Add(x)`, `rows[i][j] = v`, `rows[i][j] += v`, `buckets[key].Add(e)`, through any number of indexes. `buckets[key].Add(e)` adds the key when it isn't there, as `buckets[key] = ...` does. Past the end of the list it's in, nothing happens, as any write past the end. Not through a struct element's field (`bags[i].parts.Add(x)`): the struct is a copy, taken out and put back, as before. An element isn't sorted in place either: a copy is sorted and put back. (Picked: a slot in the list it's in, where C#'s `rows[i].Add(x)` works because its lists are references.)
+- Whatever takes a whole element out of a list copies it, its lists too, so no copy ever reaches what it was copied from: a `foreach`'s variable, a local assigned from an element, an argument (unless a `mut` argument of the same call could change it, as for any list), a map's `Get` or `TryGet`. Reading `rows[i][j]` or `rows[i].count` copies nothing. A `foreach` over a `List<List<int>>` copies each row as it comes to it: a loop that only counts them wants `rows[i].count` in a `for`.
+- Text shows them as it shows a list, inside out: `[[1, 2], [3]]`, `[{"a": 1}]`, `[{1, 2}]`.
+- Not to C: an extern function's list holds plain values, and a list of lists is refused as a list of text is. Not in a parallel loop's list, whose elements are plain, as text is refused there. Not in an input or a command, which hold no lists but a command's `List<byte>`.
+- A snapshot, a hash, a delta and the world as bytes see nothing new: an inner list is a block in the same heap, with its own pages, which they already cover block by block. Hot reloading carries the field over by its type's name (`List<List<int>>`) with the heap, as it carries any list.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt`, `Resize` or `Clear`), can't end the loop, wait, spawn or send, and so on.
@@ -1102,8 +1158,8 @@ system Advance(mut Match match)
 
 ### Open
 
-- Lists of lists, lists of maps, and lists of structs that hold either.
 - Searching with a condition, and sorting by a key.
+- Changing a list inside a struct element where it is (`bags[i].parts.Add(x)`), and sorting an inner list in place.
 - Fixed-size arrays inside components, which need no heap.
 
 ## Maps and sets
@@ -1119,20 +1175,19 @@ system Advance(mut Match match)
 
 - A map or set starts empty. `[a, b]` is a set where one goes, from what it goes into: `Set<int> ids = [1, 2];`, a field's default, an argument. There's no map literal yet: add entries one by one.
 - Keys are `byte`, `int`, `long`, enums, `Entity`, `LocalEntity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys (key by an int instead), nor are structs (key by one of their fields).
-- Values are what a list's elements can be: built-in types, text, enums and structs, not ECS data, and not lists, maps, sets or structs with one in them (see Lists). A struct that holds a map or a set goes wherever a struct goes but there.
+- Values are what a list's elements can be: built-in types, text, enums, structs, lists, maps and sets, and structs with any of them in them (see Lists), not ECS data and not grids. A value that's a container is changed where it is, `buckets[key].Add(e)`, which adds the key when it isn't there; a value read is a copy, as a list's element is (see Lists).
 - A map: `count`, `scores[key]` to read (the value type's zero when the key isn't there), `scores[key] = value` and `scores[key] += x` to write (adding the key, or replacing its value), and the methods `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value, or the value type's `default`: C#'s `TryGetValue`, see Out parameters), `Remove(key)` (whether it was there) and `Clear()`. A value read is a copy, as a list's element is: `scores[k].x = 1` is an error that says to take it out, change it and put it back.
 - A set: `count`, and the methods `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`. A set has no values to index.
 - `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each a copy with `key` and `value` (an `Entry<K, V>`, named by `var`); `foreach (var k in ids)` goes through a set's keys. Entries added while going through are reached too; removed ones aren't.
 - Text shows maps as `{1: "a", 2: "b"}` and sets as `{1, 2}`, the keys in their order.
 - Changing a map or a set needs something that can change: a `mut` component or singleton, or a `mut` local. Systems that change the match's maps wait for each other, as they do for text and lists: they share its heap.
-- Components, singletons, structs and events can hold maps and sets; inputs can't, and neither can lists, grids' cells or other maps. They don't go to C.
+- Components, singletons, structs and events can hold maps and sets, and so can lists and other maps, as values (see Lists); inputs can't, nor grids' cells. They don't go to C.
 - How they're kept (`tide/map.h`): a map is two lists in the heap. Its entries, each a live flag, the key and the value, in the order they were added, a removed one left dead in its place until more than half are dead, when adding a key packs the live ones together; and an index, a power of two of slots by the key's hash, kept under half full. So an entry's bytes depend on nothing but what's in it, and the same adds and removes give the same bytes on every machine.
 
 ### Open
 
 - Map literals, `[1: "a", 2: "b"]`.
 - Struct keys, and keys by several values.
-- Maps of maps or of lists, maps in lists, and structs that hold any of them as a list's elements or a map's values.
 
 ## Grids
 

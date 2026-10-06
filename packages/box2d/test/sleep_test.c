@@ -152,6 +152,32 @@ TIDE_TEST(box2d_a_resting_crate_put_to_sleep_costs_nothing)
     throw_ball(&a, 5.0f, 6.0f, 0.0f, -12.0f);
     TIDE_REQUIRE(wakes(&a, 1, 120));
     TIDE_CHECK(body(&a, 0).asleep); // And not the first, which it never touched
+
+    // A sleeping body that's made static is neither asleep nor awake, and says so
+    crate = body(&a, 0);
+    crate.type = Box2D_BodyType_Static;
+    put(&a, 0, crate);
+    tide_world_tick(&a);
+    TIDE_CHECK(!body(&a, 0).asleep);
+    tide_world_free(&a);
+}
+
+// A world whose bodies don't fall asleep by themselves: one that code puts to
+// sleep sleeps all the same.
+TIDE_TEST(box2d_sleeps_a_body_where_none_falls_asleep)
+{
+    start(&a, Case_Rest);
+    a.Box2D_Physics.sleeping = false;
+    tick(&a, 150);
+    TIDE_CHECK(!body(&a, 0).asleep && !body(&a, 1).asleep && a.Box2D_Physics.moved); // At rest for two seconds, and awake
+    const tide_float2 at = body(&a, 0).position;
+    lull(&a, 0, true);
+    tick(&a, 90);
+    TIDE_CHECK(body(&a, 0).asleep && same(body(&a, 0).position, at) && !body(&a, 1).asleep);
+    throw_ball(&a, 0.0f, 6.0f, 0.0f, -12.0f);
+    TIDE_REQUIRE(wakes(&a, 0, 120));
+    tick(&a, 120);
+    TIDE_CHECK(!body(&a, 0).asleep); // ...and doesn't fall asleep again
     tide_world_free(&a);
 }
 
@@ -406,8 +432,8 @@ TIDE_TEST(box2d_gravity_wakes_what_sleeps_and_not_what_is_put_to_sleep_with_it)
 // The scripted match after its ticks, on every platform and in every
 // configuration: whether a body is asleep is in its component and in Box2D's
 // image.
-#define SCRIPT_HASH UINT64_C(0xc75b2e11f3a91c15)
-#define SCRIPT_IMAGES_HASH UINT64_C(0xf67a860c382361f9)
+#define SCRIPT_HASH UINT64_C(0x1c7cb7edcd2d31ef)
+#define SCRIPT_IMAGES_HASH UINT64_C(0xc6df198a8492fd32)
 
 enum { SCRIPT_TICKS = 320, KEPT_AT = 95 };
 
