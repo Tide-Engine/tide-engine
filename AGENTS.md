@@ -816,7 +816,7 @@ What's agreed (2026-10-05); the design proposed for the rest, and its open quest
 - (Open again, above.) A closed game's source is seen by the service alone; its modders get its declarations without their bodies.
 - That Tide code can't corrupt memory is Tide's own promise, for every game (the owner: "a Tide issue, not a mod issue"): mods rest on it, and it has to be tested as one.
 - On desktop, a modded build runs in the OS's sandbox as a second layer, since the compiler was never a security boundary. The web has the browser's. WebAssembly isn't that layer on desktop: mod code compiles with the game, so it would put the whole game in a runtime. A system that can't sandbox a build runs no mods; making the sandbox work wherever games ship is our job.
-- Stores that forbid downloaded code (iOS, consoles) have the mods a developer built in, and no others.
+- Mods are the same on every platform Tide targets (the owner, 2026-10-06: "we should allow it and keep parity"), phones and consoles included: the engine holds no platform back for what a store allows. Whether a store or a system lets a game load code that came after it was installed is the game's developer's to know and to deal with (another store, an app that updates itself), and so is mods being less useful somewhere for it. This replaces what was agreed before, that such platforms have the mods a developer built in and no others.
 
 ### The build service
 
