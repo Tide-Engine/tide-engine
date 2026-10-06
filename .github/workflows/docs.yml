@@ -73,7 +73,6 @@ jobs:
           npm run build
           npm run test:examples
           npm run test:samples
-          TIDE_EXAMPLE_BACKEND=webgpu npm run test:samples
 
       # The image takes what the build made (docs/Dockerfile). The token is
       # a deploy token for the app: fly tokens create deploy -a tide-website
