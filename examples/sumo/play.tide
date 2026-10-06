@@ -189,7 +189,8 @@ view Look(mut Fx fx, mut Room room)
     mut var want = float3(0);
     var flat = float3(fx.mine.x, 0, fx.mine.z);
     var far = Math.Length(flat);
-    if (span < whole && far > span * 0.4) want = flat * (1 - span * 0.4 / far);
+    // With no ball of this machine's in the ring, it looks at the middle, where one is about to land
+    if (fx.here && span < whole && far > span * 0.4) want = flat * (1 - span * 0.4 / far);
     var ease = 1 - Math.Exp(-fx.dt * 5);
     fx.focus += (want - fx.focus) * ease;
     fx.span += (span - fx.span) * ease;

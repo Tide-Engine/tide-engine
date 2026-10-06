@@ -227,7 +227,8 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
     {
         if (entry.seat.seat != fx.seat || entry.seat.up || ring.phase == Phase.Ready || flow.since < 3.4) continue;
         var back = (entry.seat.wait + 59) / 60;
-        var at = float2(screen.x * 0.5, screen.y * 0.5);
+        // Under the clock: the ring is the others' meanwhile, and worth watching
+        var at = float2(screen.x * 0.5, SCORES + 70);
         Draw2D.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 24, 250), 62), radius = 16, color = Color(0.1, 0.1, 0.11, 0.92),
                              outline = 1.5, outlineColor = ROSE });
         Draw2D.Text(flow.by >= 0 && flow.fell < 4 ? $"{SeatName(flow.by)} THREW YOU OUT" : "YOU FELL", at - float2(0, 11), 16,
