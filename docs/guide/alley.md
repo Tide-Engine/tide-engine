@@ -147,7 +147,7 @@ if (!lobby.started)
 }
 ```
 
-While a page is up, the player's hands are off the ball: the [input](../game/input.md)'s `Sample` reads a local singleton the lobby writes, and sends nothing to throw with. A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show. [Siege](./siege.md#the-lobby) has the same lobby, with its file whole.
+While a page is up, the player's hands are off the ball: the [input](../game/input.md)'s `Sample` reads a local singleton the lobby writes, and sends nothing to throw with. A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show. [Towers](./towers.md#the-lobby) has the same lobby, with its file whole.
 
 Its buttons, and the game's own **Spin** slider, are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, a finger, the keyboard and a gamepad all work them. A control says while the pointer holds it, wherever the pointer goes meanwhile, which is all a slider needs:
 
