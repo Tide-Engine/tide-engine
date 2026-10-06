@@ -11,11 +11,13 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
-Each change is marked `Tide:` where it is. All but one are for one thing: a
+Each change is marked `Tide:` where it is. All but two are for one thing: a
 world's image is kept in the match, where it's hashed and sent between players,
 so it has to be the same bytes on every machine for the same state, and one
-machine's has to load on another. The one that isn't is for how long a step
-takes on a page's threads (the last under Threads where upstream knows none).
+machine's has to load on another. The two that aren't are for how long a step
+takes in a browser: WebAssembly's SIMD (the last under The same bytes whatever
+the CPU, as it had to leave them the same) and workers that sleep (the last
+under Threads where upstream knows none).
 
 ### Calls to take an image and to restore one
 
@@ -118,6 +120,46 @@ match has no recording, and a player who joins has only the match's bytes.
   (`vminq_f32`, `vmaxq_f32`) take -0 for less than 0, which is a third
   answer. x64's is the one kept, as its code is the one that can't change.
   The Neon path gives the test's pins too: CI's ARM Macs run it.
+- **`core.h`, `simd.h`, `simd_wasm.h`: wide floats on WebAssembly's own SIMD**
+  (`B3_SIMD_WASM`), for any WebAssembly built with `-msimd128`, as Tide's web
+  builds are. Upstream's one path for WebAssembly is SSE2's headers as
+  Emscripten emulates them, which clang's own target has none of, so there
+  Box3D took its scalar path. `simd_wasm.h` is ours, beside `simd_sse2.h` and
+  `simd_neon.h`: the 4-wide floats that the contact solver and the hulls'
+  separating axis test are written with (`wide4.c`), and the trees' bounds
+  (`b3AABBV`). `core.h` has one branch for WebAssembly, Emscripten's too,
+  where this stands in for the emulation; built without `-msimd128` it's the
+  scalar path, as before.
+
+  Each function gives, bit for bit, what `simd_sse2.h`'s gives for the same
+  numbers, so a browser steps the world x64 does:
+  - The least and the greatest are `f32x4.pmin` and `f32x4.pmax` with their
+    operands the other way around, which are `minps` and `maxps` exactly: the
+    first where it's less, or greater, and else the second, whichever zero
+    that is and whatever is NaN. WebAssembly's `f32x4.min` and `f32x4.max`
+    take -0 for less than 0, as Neon's do, and would bring back the zeros of
+    the change above.
+  - Comparisons are the ordered ones, false for a NaN. A blend takes each bit
+    by its mask's bit. `b3NegW4` and `b3AbsW4` change the sign's bit and
+    nothing else. `b3AnyTrueW4` and `b3AllZeroW4` go by each lane's top bit,
+    as `movmskps` does.
+  - Sums, products, quotients and square roots are IEEE 754's on both, each
+    rounded by itself: nothing here is relaxed SIMD, whose fused multiply-add
+    differs between machines, and Tide's flags fuse nothing.
+  - Loads, stores, transposes and the bounds' shuffles only move lanes.
+
+  A single 3D vector (`b3V32`, which SSE2 keeps in a register: ray casts, and
+  the triangles of meshes and height fields) is still plain code there, as it
+  is with Neon, and `simd.c` is as it was.
+
+  The package's pins are what they were, in debug and release web builds.
+  Beside them, a check outside the tests ran every function of the header on
+  awkward numbers (every three of 24 values with both zeros, denormals,
+  infinities and NaNs among them, 40,000 of any bits at all, and 40,000 small
+  ones of which many are equal), built for x64 and for the web: the same bits
+  from both for all 27 kinds of result, where the scalar path differs in 11.
+  Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
+  NaN is ever in a world.
 
 ### Threads where upstream knows none
 
@@ -271,11 +313,14 @@ compares the two after every step.
 
 ## What isn't changed
 
-- On the web Box3D takes its scalar path, as it only knows Emscripten's
-  WebAssembly: a step there takes about three times a desktop's.
 - The scalar and SSE2 code differ in a zero's sign in two more places
   (`b3AbsW4` of -0, and `b3NegV`), whose results only feed comparisons. A new
-  use that keeps one would show in the test.
+  use that keeps one would show in the test. The first is the scalar wide
+  floats', which x64, ARM64 and the web no longer take; the second is a single
+  vector's, which is plain code on ARM64 and on the web.
+- On the web a step still takes longer than a desktop's: WebAssembly's SIMD is
+  4 wide where x64 solves 8 contacts at a time with AVX2, and a browser's
+  compiler isn't clang.
 - Joints, sensors, meshes and height fields go into an image as upstream
   writes them, with the changes above. Of those the package makes sensors, and
   `tide_box3d_course` pins its match of them, in debug, in release and on the
@@ -335,6 +380,11 @@ and `tide_box3d_course` natively, in debug and release, and for the web: their
 pinned hashes are of the simulation and of every image, so a field that isn't
 the same everywhere shows there. A new version steps differently, so the
 hashes change with it, and so do games' matches.
+
+`simd_wasm.h` follows `simd_sse2.h`. A function upstream adds to that file's
+wide floats or bounds needs its twin, or the web build doesn't compile; one it
+changes has to change there too, which nothing says but the pins, so the two
+files are read side by side at each update.
 
 Then `tide_box3d_parts`, for the image in parts. Whatever upstream added that
 writes a body, a shape or a contact of a body that isn't awake has to say so
