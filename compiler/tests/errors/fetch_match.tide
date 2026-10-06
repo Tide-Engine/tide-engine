@@ -1,0 +1,3 @@
+// expect: Web.Fetch can only be used in local code
+scene Main { }
+async event(Spawned) Setup(with Main) { var bytes = await Web.Fetch("http://example.com/file")!; }

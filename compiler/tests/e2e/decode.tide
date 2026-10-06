@@ -1,0 +1,72 @@
+settings { appId = "tests.tide.decode"; }
+
+// grid.Decode(bytes) in the match: a PNG the match holds, decoded in a
+// command handler on every machine, the same pixels (the world's hash is
+// pinned, the same natively and on the web). A command can't carry the bytes
+// yet (see docs/spec.md, Commands), so here the match has them from the start.
+
+singleton Art
+{
+    List<byte> png;      // 12 by 8 pixels, red x * 20, green y * 30, blue x * y * 7 % 256, from platform/src/png.c's writer
+    Grid2<Color> pixels;
+    int decoded;         // Decodes that went well
+    int bad;             // ...and that failed with InvalidData
+    int other;           // ...and with anything else
+}
+
+scene Main { }
+
+// 0: the picture; 1: bytes that are no PNG; 2: the picture cut short
+command Paint { int which; }
+
+event(Spawned) Setup(with Main, mut Art art)
+{
+    art.png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 12, 0, 0, 0, 8,
+        8, 2, 0, 0, 0, 66, 134, 137, 166, 0, 0, 1, 50, 73, 68, 65, 84, 120, 1, 99, 0, 2, 17, 6,
+        6, 13, 6, 6, 27, 6, 134, 0, 6, 134, 20, 6, 134, 10, 6, 134, 30, 6, 134, 5, 12, 12, 91, 24,
+        24, 78, 48, 48, 220, 1, 41, 145, 99, 16, 145, 99, 215, 144, 227, 179, 145, 19, 13, 144, 147, 73, 145, 83,
+        174, 144, 211, 234, 145, 51, 92, 32, 103, 177, 69, 206, 254, 132, 156, 219, 29, 57, 95, 144, 9, 34, 54, 124,
+        26, 54, 50, 54, 54, 90, 1, 54, 22, 41, 54, 110, 21, 54, 33, 61, 54, 73, 11, 108, 10, 182, 216, 212,
+        157, 176, 233, 185, 99, 51, 139, 129, 33, 138, 65, 36, 74, 84, 35, 74, 203, 38, 202, 62, 32, 42, 36, 37,
+        42, 179, 34, 170, 174, 39, 106, 242, 130, 168, 21, 91, 162, 246, 158, 136, 186, 116, 39, 234, 57, 200, 9, 34,
+        21, 50, 26, 21, 22, 54, 21, 33, 1, 21, 5, 41, 21, 61, 21, 21, 43, 122, 42, 142, 44, 168, 120, 176,
+        165, 226, 207, 137, 10, 137, 59, 21, 38, 12, 12, 211, 24, 68, 166, 41, 107, 76, 115, 179, 153, 150, 25, 48,
+        173, 39, 101, 218, 250, 138, 105, 151, 122, 166, 125, 93, 48, 77, 98, 203, 52, 235, 19, 211, 226, 238, 76, 107,
+        4, 249, 65, 100, 139, 150, 198, 150, 16, 155, 45, 117, 1, 91, 86, 164, 108, 185, 84, 177, 229, 79, 207, 22,
+        181, 5, 91, 2, 182, 108, 169, 58, 177, 101, 201, 157, 45, 231, 24, 24, 46, 49, 136, 92, 50, 212, 184, 148,
+        100, 115, 105, 114, 192, 165, 35, 41, 151, 190, 86, 92, 82, 235, 185, 20, 190, 224, 82, 199, 150, 75, 59, 79,
+        92, 122, 117, 231, 146, 52, 0, 202, 142, 113, 41, 167, 135, 105, 80, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+        66, 96, 130];
+}
+
+command(Paint paint, PlayerID sender) Apply(mut Art art)
+{
+    if (paint.which == 0)
+    {
+        if (art.pixels.Decode(art.png) is IOError error) art.other += 1;
+        else art.decoded += 1;
+    }
+    else if (paint.which == 1)
+    {
+        List<byte> noise = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+        if (art.pixels.Decode(noise) is IOError.InvalidData) art.bad += 1;
+        else art.other += 1;
+    }
+    else
+    {
+        mut var cut = art.png;
+        cut.Resize(300);
+        if (art.pixels.Decode(cut) is IOError.InvalidData) art.bad += 1;
+        else art.other += 1;
+    }
+}
+
+// The host says what to send, and a view sends it: a command is local code's to send
+local singleton Ui { int send = -1; }
+
+view Sender(mut Ui ui)
+{
+    if (ui.send < 0) return;
+    Send(Paint { which = ui.send });
+    ui.send = -1;
+}

@@ -8,18 +8,30 @@
 // on threads, sharing its memory with them. WebGPU is the browser's software
 // one, so no GPU is needed: SwiftShader, which the flags below turn on.
 //
-//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>]
+//   node run_web_served_test.mjs <browser> <page.html> <scratch folder> [<query>] [--expect <text>] [--routes <module.mjs>]
+//
+// With --routes, the module's default export, `(request, response) => boolean`,
+// answers the requests the page makes beside the test's own (what a program
+// fetches), and the page's address says `port=<the server's port>`, which the
+// program gets as `--port=<port>` among its arguments.
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
-const expectAt = rest.indexOf('--expect');
-const expected = expectAt >= 0 ? rest[expectAt + 1] : null; // A line the program has to print
-const query = rest.length && expectAt !== 0 ? rest[0] : '';
+let expected = null; // A line the program has to print
+let routesPath = null;
+let query = '';
+for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--expect') expected = rest[++i];
+    else if (rest[i] === '--routes') routesPath = rest[++i];
+    else query = rest[i];
+}
+const routes = routesPath ? (await import(pathToFileURL(resolve(routesPath)).href)).default : null;
 if (!browser || !existsSync(browser)) {
     console.log('SKIPPED: no Chrome or Edge found. Set TIDE_BROWSER to run web tests.');
     process.exit(0);
@@ -53,7 +65,7 @@ const server = createServer(async (request, response) => {
         const code = await body(request);
         response.end();
         finish(code);
-    } else {
+    } else if (!routes || !routes(request, response)) {
         response.writeHead(404);
         response.end();
     }
@@ -82,7 +94,8 @@ const child = spawn(browser, [
     '--disable-extensions',
     `--user-data-dir=${profileDir}`,
     ...flags,
-    `http://127.0.0.1:${server.address().port}/${query ? '?' + query : ''}`,
+    `http://127.0.0.1:${server.address().port}/${[query, routes ? `port=${server.address().port}` : ''].filter(Boolean).length
+        ? '?' + [query, routes ? `port=${server.address().port}` : ''].filter(Boolean).join('&') : ''}`,
 ], { stdio: 'ignore' });
 child.on('error', error => {
     console.log(`${browser}: ${error.message}`);
