@@ -1624,8 +1624,9 @@ static void ex_construct(emit *em, const expr *e)
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
-    const bool direct = of->kind == E_NAME;
-    const param *p = direct ? of->param : of->object->param;
+    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> asset, by name
+    const bool direct = of->kind == E_NAME && !asset;
+    const param *p = asset ? NULL : direct ? of->param : of->object->param;
     const bool blended = e->args.count < 2 || e->args.items[1]->enum_member->number != 0;
     int slot = 0;
     if (em->checking) {
@@ -1633,19 +1634,23 @@ static void ex_sample(emit *em, const expr *e)
             refuse(em, e->at, "a texture is sampled in the frag or vert that takes it, not in a function it calls");
             return;
         }
-        const decl *holds = direct ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
-        const shader_sample sample = {param_index(em->root, p), direct ? -1 : field_index(holds, of->field),
-                                      of->local_field, blended};
+        const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
+        const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
+                                      of->local_field && !asset, blended, asset};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
-            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended;
+            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
+                  && s->asset == sample.asset;
         }
         if (!known) vec_push(em->root->samples, sample);
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
-            if (t->direct == direct && t->source == p->type.decl && t->field == of->field && t->blended == blended) break;
+            if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
+                && t->blended == blended) {
+                break;
+            }
             slot++;
         }
     }
@@ -2599,7 +2604,10 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
         const field *uv = field_called(v, "uv");
         if (color) sb_printf(o, "    tide_color = %stide_s%d;\n", in, field_index(v, color));
         int texture = 0;
-        while (texture < sh->textures.count && (sh->textures.items[texture].source || sh->textures.items[texture].direct)) texture++;
+        while (texture < sh->textures.count
+               && (sh->textures.items[texture].source || sh->textures.items[texture].direct || sh->textures.items[texture].asset)) {
+            texture++;
+        }
         if (sh->textured && wgsl) {
             sb_printf(o, "    tide_color = tide_color * textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0);\n",
                       texture, texture, in, field_index(v, uv));
@@ -2802,14 +2810,14 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
     }
     for (int i = 0; i < code->samples.count; i++) {
         const shader_sample *s = &code->samples.items[i];
-        const decl *source = code->params.items[s->param].type.decl;
+        const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
-                                  .blended = s->blended, .direct = s->field < 0};
+                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
-                  && sh->textures.items[k].blended == t.blended;
+                  && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset;
         }
         if (!known) vec_push(sh->textures, t);
         if (source) add_bound(sh, (decl *)source);
@@ -2822,7 +2830,7 @@ bool shader_reads_local(const shader *sh, const decl *d)
         if (sh->values.items[i].source == d && sh->values.items[i].field && sh->values.items[i].field->is_local) return true;
     }
     for (int i = 0; i < sh->textures.count; i++) {
-        if (sh->textures.items[i].source == d && sh->textures.items[i].field->is_local) return true;
+        if (sh->textures.items[i].source == d && sh->textures.items[i].field && sh->textures.items[i].field->is_local) return true;
     }
     return false;
 }

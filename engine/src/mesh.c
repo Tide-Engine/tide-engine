@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "tide/net.h"
+#include "tide/pack.h"
 
 static uint8_t channel(const float v)
 {
@@ -40,8 +41,15 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide
     const tide_grid_dir *dir = tide_grid_dir_of(g);
     // The confirmed world's too: only its pages' hashes are asked of it, which it keeps
     tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(g.at >> 30);
-    if (!dir || !heap || dir->dims != 2u || dir->size[0] <= 0 || dir->size[1] <= 0 || s->cell != sizeof(tide_color)) {
+    const bool packed = !heap && tide_pack_holds(g.at); // The pack's (tide/pack.h): its chunks in the scratch area's slots
+    if (!dir || (!heap && !packed) || dir->dims != 2u || dir->size[0] <= 0 || dir->size[1] <= 0 || s->cell != sizeof(tide_color)) {
         return 0;
+    }
+    if (packed) { // Its version is its file's, in its directory's header, as the builder put it
+        uint8_t *pixels;
+        const uint32_t slot = tide_draw_texture_slot(d, TIDE_PIXELS_GRID, g.at, tide_pack_grid_version(g), dir->size[0], dir->size[1], &pixels);
+        if (pixels) grid_pixels(dir, NULL, s, pixels);
+        return slot;
     }
     // What its cells are: its size, and each chunk's place and hash, which its
     // heap keeps until the chunk changes
