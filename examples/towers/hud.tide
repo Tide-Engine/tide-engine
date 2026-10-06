@@ -54,8 +54,9 @@ Color PowerColor(Power power)
     return power == Power.Gust ? TEAL : power == Power.Cement ? STONE : ROSE;
 }
 
-// Whatever just lit the whole screen fades here, and the wind against this
-// machine's player's tower blows across it.
+// Whatever just lit the whole screen fades here, the wind against this
+// machine's player's tower blows across it, and its edges glow while a brick
+// of that tower is on the move.
 [Stage(Layers.Hud)]
 view Glare(Fx fx, Flow flow)
 {
@@ -73,6 +74,9 @@ view Glare(Fx fx, Flow flow)
                 Draw2D.Line(float2(x, y), float2(x - flow.windWay * (50 + i * 9), y), 2, Fade(TEAL, flow.wind * 0.5));
             }
         }
+        // A brick of this machine's player's tower is on the move: the screen's edges say so
+        if (fx.alarm > 0)
+            Draw2D.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.22 * fx.alarm), soft = -Math.Min(screen.x, screen.y) * 0.22 });
         if (fx.flash > 0) Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
     }
 }
@@ -84,7 +88,7 @@ view Glare(Fx fx, Flow flow)
 view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2) return;
+    if (lobby.page != Page.None) return;
     // Side by side in the screen's middle, as wide as a narrow one lets them be
     var slot = Math.Min(Screen.width / SEATS, 112);
     var first = (Screen.width - slot * SEATS) * 0.5;
@@ -126,43 +130,44 @@ view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified 
     }
 }
 
-// The race, down the screen's left side: the finish line at the top, the
-// plinths' tops at the bottom, and a mark for each tower where it stands.
-// It says who's ahead while only one tower is in sight.
+// The race, down the screen's left side: the plinths' tops at the bottom, the
+// finish line where it is, and a mark for each tower where it stands. It says
+// who's ahead while only one tower is in sight.
 [Stage(Layers.Hud, 12)]
 view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2) return;
-    var top = HEADROOM + 26;
-    var bottom = Screen.height - 76;
+    if (lobby.page != Page.None) return;
+    var top = HEADROOM + 22;
+    var bottom = Screen.height - FOOT - 14;
     if (bottom - top < 80) return;
-    var x = 14.0;
-    Draw2D.RoundRect(float2(x, (top + bottom) * 0.5), float2(6, bottom - top + 6), 3, Color(0.115, 0.118, 0.13, 0.9));
-    Draw2D.RoundRect(float2(x, top), float2(16, 3), 1.5, GOLD);
-    Draw2D.Text("FINISH", float2(x + 12, top), 9, GOLD, Anchor.MiddleLeft, Font.Bold);
-    // The quarters, where a tower earns something
-    for (var i = 1; i < 4; i++)
-        Draw2D.Rect(float2(x, bottom - (bottom - top) * i / 4), float2(10, 1), LINE);
+    var x = 12.0;
+    var tall = bottom - top;
+    Draw2D.RoundRect(float2(x, (top + bottom) * 0.5), float2(8, tall + 8), 4, Color(0.115, 0.118, 0.13, 0.92));
+    // The quarters, where a tower earns something, each in what it earns' color
+    for (var mark = 1; mark <= 3; mark++)
+        Draw2D.Circle(float2(x, bottom - tall * mark / 4), 2.5, Fade(PowerColor(Power(mark)), 0.9));
+    var line = bottom - tall * Math.Saturate(towers.line / FINISH);
+    Draw2D.RoundRect(float2(x + 3, line), float2(20, 3), 1.5, GOLD);
     foreach (var entry in seats)
     {
         var mine = entry.seat.index == fx.seat;
-        var y = bottom - (bottom - top) * Math.Saturate(entry.seat.top / FINISH);
+        if (mine) continue;
+        var y = bottom - tall * Math.Saturate(entry.seat.top / FINISH);
         var color = SeatColor(entry.seat.index);
-        var out = mine ? 0.0 : 3.0 + entry.seat.index * 1.5;
-        if (mine)
-        {
-            Draw2D.Shape(Shape { center = float2(x + 10, y), size = float2(22, 12), radius = 6, color = color, outline = 1.5,
-                                 outlineColor = Color.white });
-        }
-        else
-        {
-            Draw2D.Circle(float2(x + out, y), 4.5, Shade(color, 0.35));
-            Draw2D.Circle(float2(x + out, y), 3.5, color);
-        }
-        // Over the line: how long it has to stand there still
+        Draw2D.Shape(Shape { center = float2(x + 8, y), size = float2(12, 7), radius = 3.5, color = color, outline = 1, outlineColor = Shade(color, 0.4) });
         if (entry.seat.above > 0 && towers.phase == Phase.Play)
-            Draw2D.Arc(float2(x + (mine ? 10 : out), y), 9, Math.PI / 2, -Math.TAU * entry.seat.above / HOLD, 2, Color.white);
+            Draw2D.Arc(float2(x + 8, y), 9, Math.PI / 2, -Math.TAU * entry.seat.above / HOLD, 2, Color.white);
+    }
+    // This machine's player's, over the others
+    foreach (var entry in seats)
+    {
+        if (entry.seat.index != fx.seat) continue;
+        var y = bottom - tall * Math.Saturate(entry.seat.top / FINISH);
+        Draw2D.Shape(Shape { center = float2(x + 10, y), size = float2(22, 11), radius = 5.5, color = SeatColor(entry.seat.index), outline = 1.5,
+                             outlineColor = Color.white });
+        if (entry.seat.above > 0 && towers.phase == Phase.Play)
+            Draw2D.Arc(float2(x + 10, y), 12, Math.PI / 2, -Math.TAU * entry.seat.above / HOLD, 2.5, Color.white);
     }
 }
 
@@ -173,7 +178,7 @@ view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2) return;
+    if (lobby.page != Page.None) return;
     var screen = float2(Screen.width, Screen.height);
     var at = float2(screen.x - 38, HEADROOM + 36);
     Draw2D.Shape(Shape { center = at, size = float2(60, 56), radius = 10, color = Color(0.115, 0.118, 0.13, 0.9), outline = 1,
@@ -198,7 +203,7 @@ view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lob
         Draw2D.Shape(Shape { center = Middle(rect), size = float2(rect.width, rect.height), radius = 12, color = Fade(color, 0.2 + pulse * 0.2),
                              soft = 10 });
     }
-    if (Pill(rect, PowerName(seat.power), color, true, true) || devices.keyboard.e.down || devices.keyboard.enter.down) Send(Use { });
+    if (Pill(rect, PowerName(seat.power), color, true, true) || devices.keyboard.e.down) Send(Use { });
 }
 
 // A band across the screen, in a color, with a line of words and a smaller
@@ -228,10 +233,10 @@ void Band(float2 middle, float open, bool big, Color tint, string words, string 
 // was just used against whom. A round's winner is the server's to say, so it
 // comes from a `verified` event's handler (effects.tide).
 [Stage(Layers.Hud, 20)]
-view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx)
+view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2) return;
+    if (lobby.page != Page.None) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
     var middle = float2(screen.x * 0.5, HEADROOM + (screen.y - HEADROOM) * 0.3);
@@ -261,6 +266,29 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
         }
     }
 
+    // A tower is over the line: whose, and how long it has to stand there
+    // still. It's read as this machine predicts it, to count with the tower.
+    mut var over = -1;
+    mut var stood = 0;
+    foreach (var entry in seats)
+    {
+        if (entry.seat.above <= stood) continue;
+        stood = entry.seat.above;
+        over = entry.seat.index;
+    }
+    if (over >= 0 && towers.phase == Phase.Play)
+    {
+        var mine = over == fx.seat;
+        var color = SeatColor(over);
+        var left = Math.Max(HOLD - stood, 0) / 60.0;
+        var at = float2(screen.x * 0.5, middle.y + (big ? 70 : 52));
+        var words = mine ? "HOLD IT" : $"{SeatName(over)} IS OVER THE LINE";
+        var wide = Math.Max(Draw2D.MeasureText(words, 14, Font.Bold).x + 64, 150);
+        Draw2D.Shape(Shape { center = at, size = float2(wide, 36), radius = 18, color = Color(0.1, 0.1, 0.11, 0.94), outline = 2, outlineColor = color });
+        Draw2D.Text(words, at - float2(18, 0), 14, color, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text($"{int(left)}.{int(left * 10) % 10}", at + float2(wide * 0.5 - 14, 0), 15, Color.white, Anchor.MiddleRight, Font.Bold);
+    }
+
     if (flow.cast < 2.2 && flow.since >= 3.2 && flow.striker >= 0)
     {
         // Under the top row: who used what, against whom
@@ -276,6 +304,16 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
                              outlineColor = color });
         if (enter > 0.9) Draw2D.Text(what, at, 13, color, Anchor.MiddleCenter, Font.Bold);
     }
+    else if (towers.phase == Phase.Play && towers.clock > LIMIT && towers.clock < LIMIT + 300)
+    {
+        // A round that has gone on long: the line comes down to the towers
+        var at = float2(screen.x * 0.5, HEADROOM + 24);
+        var shown = Math.Saturate((towers.clock - LIMIT) / 12.0) * Math.Saturate((LIMIT + 300 - towers.clock) / 20.0);
+        var what = "THE LINE IS COMING DOWN";
+        Draw2D.Shape(Shape { center = at, size = float2(Draw2D.MeasureText(what, 13, Font.Bold).x + 30, 30), radius = 15,
+                             color = Fade(Color(0.1, 0.1, 0.11), 0.94 * shown), outline = 1.5, outlineColor = Fade(GOLD, shown) });
+        Draw2D.Text(what, at, 13, Fade(GOLD, shown), Anchor.MiddleCenter, Font.Bold);
+    }
 
     // The match's host left, and another machine is taking it over
     if (session.state == SessionState.Connecting)
@@ -287,21 +325,25 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
     }
 }
 
-// What to do first, until the player has done it.
+// What to do first, until the player has done it: move and turn a brick, drop
+// one, and use what the tower earned.
 [Stage(Layers.Hud, 30)]
-view Hints(Towers towers, Session session, Devices devices, Fx fx, Lobby lobby)
+view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2 || fx.seat < 0 || towers.phase != Phase.Play || fx.steered) return;
+    if (lobby.page != Page.None || fx.seat < 0 || towers.phase != Phase.Play || !hand.playing) return;
     var screen = float2(Screen.width, Screen.height);
-    var words = devices.touchscreen.connected ? "Drag to move, tap to turn, swipe down to drop" : "Drag or arrows to move, tap or up to turn";
-    var wide = Draw2D.MeasureText(words, 13).x + 28;
-    // In the screen's middle: on a wide one, as far left as leaves the bottom
-    // right corner to the stats, and on a narrow one, above them
-    var at = screen.x < 520 ? float2(screen.x * 0.5, screen.y - 72)
-           : float2(Math.Min(screen.x * 0.5, screen.x - StatsCorner(session) - wide * 0.5), screen.y - 30);
+    var touch = devices.touchscreen.connected;
+    mut var words = "";
+    if (!fx.steered) words = touch ? "Drag to move it, tap to turn it" : "Arrows move and turn it. Or drag, and tap";
+    else if (!fx.dropped) words = touch ? "Swipe down and hold to drop it" : "Hold down to drop it";
+    else if (fx.power != Power.None && !fx.used) words = touch ? $"Tap {PowerName(fx.power)} to use it" : $"Press E, or the button, for {PowerName(fx.power)}";
+    if (words == "") return;
+    var wide = Math.Min(Draw2D.MeasureText(words, 13).x + 28, screen.x - 12);
+    // Over the buttons along the bottom
+    var at = float2(screen.x * 0.5, screen.y - FOOT - 22);
     var bob = Math.Sin(fx.beat * 2) * 2;
-    Draw2D.Shape(Shape { center = at + float2(0, bob), size = float2(Math.Min(wide, screen.x - 12), 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
+    Draw2D.Shape(Shape { center = at + float2(0, bob), size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
                          outline = 1.5, outlineColor = LINE });
     Draw2D.Text(words, at + float2(0, bob), 13, INK, Anchor.MiddleCenter);
 }
@@ -312,7 +354,7 @@ view Hints(Towers towers, Session session, Devices devices, Fx fx, Lobby lobby)
 view Corner(Session session, Devices devices, mut Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None && WATCH != 2) return;
+    if (lobby.page != Page.None) return;
     var bottom = Screen.height;
     if (session.room != "")
     {
@@ -325,7 +367,6 @@ view Corner(Session session, Devices devices, mut Lobby lobby)
         lobby.page = Page.Room;
         lobby.resume = true;
     }
-    if (devices.keyboard.r.down && session.state == SessionState.Connected) Send(Rebuild { });
 }
 
 // Paper for a round's winner, over everything but the menu.

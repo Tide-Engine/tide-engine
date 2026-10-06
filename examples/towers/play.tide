@@ -19,8 +19,6 @@ const Color BLUE = Color(0.47, 0.72, 1);
 const Color STONE = Color(0.56, 0.57, 0.62); // A brick that's set solid
 const Color GOLD = Color(1, 0.86, 0.36);     // The finish line, and a crown
 
-const int WATCH = 2; // DEV: 1, the title's page isn't drawn, to watch the towers build; 2, the same with the camera on this machine's seat
-
 // What draws over what, whichever file a view is in.
 enum Layers { Camera, Scenery, Bricks, Falling, Effects, Hud, Menu }
 
@@ -63,7 +61,10 @@ local singleton Fx
     int serial;        // The brick of theirs that's falling: 0 for none
     int column;        // Where it is
     float2 brick;
-    bool steered;      // The player has moved or turned a brick
+    bool steered;      // The player has moved or turned a brick, dropped one, and used what their tower earned
+    bool dropped;
+    bool used;
+    Power power;       // What their tower has earned, and not used
     float alarm;       // A brick of their tower is on the move: 1, fading
     float trauma;      // How hard the camera shakes, 0 to 1
     float2 shake;      // Where that puts it this frame, in meters
@@ -139,6 +140,7 @@ view Mine(Seat seat, mut Fx fx, with ownership)
     fx.home = seat.home;
     fx.base = seat.base;
     fx.top = seat.top;
+    fx.power = seat.power;
 }
 
 [Stage(Layers.Camera, 2)]
@@ -168,13 +170,13 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     for (var seat = 0; seat < SEATS; seat++) tallest = Math.Max(tallest, Of(towers.tops, seat));
     mut var half = Math.Max(all / aspect, (tallest + DROP + 6 - GROUND) * 0.5);
     mut var center = float2(0, GROUND - 2 + half);
-    if (fx.seat >= 0 && (lobby.page == Page.None || WATCH == 2) && towers.phase == Phase.Play)
+    if (fx.seat >= 0 && lobby.page == Page.None && towers.phase == Phase.Play)
     {
         var under = Math.Min(3 + Math.Max(fx.top, 0) * 0.3, 12);
         var meter = Math.Min(Math.Max(height - HEADROOM - FOOT, 100) / (DROP + 2 + under), width / 13);
         half = height / (2 * meter);
         var across = half * aspect;
-        center = float2(across >= all ? 0 : Math.Clamp(fx.home, across - all, all - across), fx.top + DROP + 2 + HEADROOM / meter - half);
+        center = float2(across >= all ? 0 : fx.home, fx.top + DROP + 2 + HEADROOM / meter - half);
     }
     if (fx.half <= 0)
     {
@@ -305,7 +307,8 @@ view Hands(Devices devices, mut Fx fx, mut Hand hand)
     var asks = down || (hand.held && (hand.swiped || (hand.time > 0.35 && hand.moved <= 8)));
     if (!asks) hand.stale = false;
     hand.drop = asks && !hand.stale;
-    if (hand.column != column || hand.quarter != quarter || hand.drop) fx.steered = true;
+    if (hand.column != column || hand.quarter != quarter) fx.steered = true;
+    if (hand.drop) fx.dropped = true;
 }
 
 // A plinth: a column, with its seat's color along its top and whose it is
@@ -355,13 +358,13 @@ void Cells(Kind kind, Color color, float lit, float shown)
 // it fade. One that's on the move in this machine's player's tower, and
 // didn't just land, has a red edge: the tower is going.
 [Stage(Layers.Bricks)]
-view Bricks(Body body, Piece piece, mut Brick brick, Time time, mut Fx fx)
+view Bricks(Body body, Piece piece, mut Brick brick, Towers towers, Time time, mut Fx fx)
 {
     brick.lit = Math.Max(0, brick.lit - fx.dt * 3.5);
     if (body.position.x < fx.low.x - 3 || body.position.x > fx.high.x + 3 || body.position.y < fx.low.y - 3 || body.position.y > fx.high.y + 3) return;
-    var color = brick.set ? Mix(STONE, SeatColor(brick.seat), 0.22) : SeatColor(brick.seat);
+    var color = brick.set ? Mix(STONE, SeatColor(brick.seat), 0.3) : SeatColor(brick.seat);
     var shown = brick.down ? Math.Saturate(brick.rubble / 50.0) * 0.6 : 1.0;
-    var loose = !brick.down && !brick.set && fx.seat >= 0 && Math.Abs(body.position.x - fx.home) < PLINTH / 2 + 1.5
+    var loose = !brick.down && !brick.set && fx.seat >= 0 && towers.phase == Phase.Play && Math.Abs(body.position.x - fx.home) < PLINTH / 2 + 1.5
              && time.tick - brick.born > 45 && Math.LengthSq(body.velocity) > 0.3;
     if (loose) fx.alarm = 1;
     Draw2D.Transform(body.position, body.angle)
