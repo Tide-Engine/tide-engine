@@ -1,0 +1,11 @@
+// expect: 'entered' is read-only
+// expect: 'GUILayout.TextField' makes its 'entered'
+// expect: declare it as 'mut var entered = ...' to change it
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    var entered = false;
+    GUILayout.TextField("Code", lobby.code, out entered);
+    if (entered) lobby.count += 1;
+}

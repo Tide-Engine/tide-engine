@@ -308,7 +308,7 @@ try {
             if (match) await paired(id); // They're in one match
             if (id === 'rooms') {
                 // The reader's part, played here: one frame starts a match and
-                // opens it, the other types the room's code and joins. The
+                // opens it, the other types the room's code and enters it. The
                 // clicks are on the lobby's widgets, where its layout puts them.
                 const click = async (player, x, y) => {
                     const at = await evaluate(`(() => { const r = ${frame(player)}.getBoundingClientRect(); return { x: r.x + ${x}, y: r.y + ${y} }; })()`);
@@ -333,8 +333,12 @@ try {
                     await command('Input.dispatchKeyEvent', { type: 'keyDown', key, text: key });
                     await command('Input.dispatchKeyEvent', { type: 'keyUp', key });
                 }
-                await click(1, 333, 100); // Join
-                await until(`${frame(1)}.contentWindow.Tide.room === '${code}'`, 'rooms: the code typed is the room joined');
+                // Enter in the field joins, as the Join button beside it does: with the
+                // code's last character, whether a frame came between the two or not
+                const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+                await command('Input.dispatchKeyEvent', { type: 'keyDown', ...enter });
+                await command('Input.dispatchKeyEvent', { type: 'keyUp', ...enter });
+                await until(`${frame(1)}.contentWindow.Tide.room === '${code}'`, 'rooms: the code entered is the room joined');
                 await until(`${frame(0)}.contentWindow.__heard > 30 && ${frame(1)}.contentWindow.__heard > 30`, 'rooms: a match between the two');
             }
             if (id === 'gui-controls') {

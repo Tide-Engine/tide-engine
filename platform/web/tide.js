@@ -1191,6 +1191,7 @@
         glDeleteTextures: (n, ptr) => remove('texture', o => gl.deleteTexture(o), n, ptr),
         glDeleteVertexArrays: (n, ptr) => remove('vertexArray', o => gl.deleteVertexArray(o), n, ptr),
         glDepthFunc: f => gl.depthFunc(f),
+        glDepthMask: write => gl.depthMask(!!write),
         glDisable: cap => gl.disable(cap),
         glDrawArrays(mode, first, count) {
             drew = true;
@@ -1472,6 +1473,12 @@
           alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
         undefined,
     ];
+    const depths = [ // tide_gpu_depth: neither, tested and written, tested, written whatever is there
+        { depthWriteEnabled: false, depthCompare: 'always' },
+        { depthWriteEnabled: true, depthCompare: 'less-equal' },
+        { depthWriteEnabled: false, depthCompare: 'less-equal' },
+        { depthWriteEnabled: true, depthCompare: 'always' },
+    ];
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1563,8 +1570,7 @@
                 fragment: { module, entryPoint: 'fragment', targets: [{ format: gpuFormat,
                     blend: blends[b.blend] }] },
                 primitive: { topology: 'triangle-list', cullMode: 'none' }, // Either side of a triangle draws
-                depthStencil: { format: 'depth24plus', depthWriteEnabled: b.depth !== 0,
-                    depthCompare: b.depth === 1 ? 'less-equal' : 'always' },
+                depthStencil: { format: 'depth24plus', ...depths[b.depth] },
             });
             return gpuAdd('pipeline', { pipeline, textures: b.textures });
         },

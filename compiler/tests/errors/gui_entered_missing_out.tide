@@ -1,0 +1,5 @@
+// expect: 'GUILayout.TextField' makes its 'entered', so the argument says 'out'
+// expect: 'out' before a variable assigns it, 'out var entered' declares one there, and 'out _' leaves it out
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUILayout.TextField("Code", lobby.code, lobby.entered); }

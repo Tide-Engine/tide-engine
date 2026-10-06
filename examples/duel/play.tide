@@ -294,16 +294,18 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
         inviteNow = Pill(invite, UI_ORANGE, false, !busy && session.server && !session.open);
     }
     // The room's code is typed into a field of the GUI's, in the menu's colors:
-    // its frame is drawn here, under it
+    // its frame is drawn here, under it. Enter in the field joins, as the
+    // button beside it does.
     Panel(Middle(frame), float2(frame.width, frame.height), 13, FIELD_INK, FIELD_INK, 1.5, Color(0.3, 0.39, 0.58));
+    mut var entered = false;
     GUI.Theme(GUITheme { text = UI_INK, field = FIELD_INK, fieldHot = Color(0.07, 0.09, 0.17), accent = UI_BLUE, radius = 10 })
     {
         GUI.Disabled(busy)
         {
-            GUI.TextField(field, "", menu.code);
+            GUI.TextField(field, "", menu.code, out entered);
         }
     }
-    var joinNow = Pill(join, UI_INK, false, !busy && menu.code.Trim() != "");
+    var joinNow = Pill(join, UI_INK, false, !busy && menu.code.Trim() != "") || (entered && menu.code.Trim() != "");
 
     // The title, with each side's color off to its side
     var bob = Math.Sin(fx.now * 1.6) * 2;
