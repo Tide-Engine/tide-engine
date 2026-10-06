@@ -1,0 +1,912 @@
+settings { title = "Marble Rush"; maxPlayers = 8; hostMigration = true; }
+
+const float HALF = 10;      // The island is 20 across, and has no walls
+const float RADIUS = 0.6;   // A marble's
+const float REACH = 1.05;   // How near a coin's middle a marble takes it
+const float PUSH = 20;      // How hard a player pushes their marble
+const float GRAVITY = 16;   // How hard a slope pulls it
+const float DRAG = 1.3;
+const float GRIP = 1.2;     // What the ground takes off a marble's speed each second
+const float TOP = 8;        // The fastest a marble rolls
+const int GOAL = 20;        // Coins that win a round
+const int COINS = 9;        // Coins on the island
+const int BUMPERS = 5;
+const float3 SUN = float3(0.37, 0.78, -0.5); // Towards the light
+
+// ---------------------------------------------------------------- The island
+
+float Hill(float2 at, float2 middle, float height, float width)
+{
+    return height * Math.Exp(-Math.DistanceSq(at, middle) / (width * width));
+}
+
+// How high the ground is. It's level along the rim, so nothing rolls off by itself.
+float Height(float2 at)
+{
+    float2 edge = float2(HALF) - Math.Abs(at);
+    float inside = Math.Saturate(Math.Min(edge.x, edge.y) / 3);
+    float hills = Hill(at, float2(-5.5, 5), 2, 2.7) + Hill(at, float2(6, -5), 1.5, 2.4)
+                - Hill(at, float2(5.5, 5.5), 1.1, 2.6) - Hill(at, float2(-6, -5.5), 1, 2.4);
+    return hills * inside * inside * (3 - 2 * inside);
+}
+
+// Which way is uphill, and how steep.
+float2 Slope(float2 at)
+{
+    float2 across = float2(0.05, 0);
+    float2 along = float2(0, 0.05);
+    return float2(Height(at + across) - Height(at - across), Height(at + along) - Height(at - along)) * 10;
+}
+
+// Where bumper i stands, and in z how big it is.
+float3 Bumper(int i)
+{
+    switch (i)
+    {
+        case 0: return float3(0, 0, 1.1);
+        case 1: return float3(-7.2, -0.8, 0.8);
+        case 2: return float3(7.2, 0.8, 0.8);
+        case 3: return float3(0.8, 7.2, 0.8);
+    }
+    return float3(-0.8, -7.2, 0.8);
+}
+
+bool OpenGround(float2 at)
+{
+    for (var i = 0; i < BUMPERS; i++)
+    {
+        var bumper = Bumper(i);
+        if (Math.Distance(at, bumper.xy) < bumper.z + 1) return false;
+    }
+    return true;
+}
+
+// Somewhere on the island for a coin.
+float2 Place(mut Random random)
+{
+    mut var at = float2(0, 3);
+    for (var attempt = 0; attempt < 8; attempt++)
+    {
+        at = random.NextFloat2(float2(1.5 - HALF), float2(HALF - 1.5));
+        if (OpenGround(at)) break;
+    }
+    return at;
+}
+
+// Where a seat's marble starts, and comes back to after a fall.
+float3 Start(int seat)
+{
+    float angle = seat * Math.TAU / 8 + 0.4;
+    var at = float2(Math.Cos(angle), Math.Sin(angle)) * 3.4;
+    return float3(at.x, Height(at) + RADIUS, at.y);
+}
+
+Color SeatColor(int seat)
+{
+    switch (seat)
+    {
+        case 0: return Color(0.93, 0.26, 0.28);
+        case 1: return Color(0.22, 0.5, 0.98);
+        case 2: return Color(0.66, 0.36, 0.95);
+        case 3: return Color(0.98, 0.55, 0.14);
+        case 4: return Color(0.98, 0.5, 0.75);
+        case 5: return Color(0.93, 0.93, 0.9);
+        case 6: return Color(0.2, 0.85, 0.9);
+    }
+    return Color(0.22, 0.22, 0.26);
+}
+
+string SeatName(int seat)
+{
+    switch (seat)
+    {
+        case 0: return "Red";
+        case 1: return "Blue";
+        case 2: return "Purple";
+        case 3: return "Orange";
+        case 4: return "Pink";
+        case 5: return "White";
+        case 6: return "Cyan";
+    }
+    return "Black";
+}
+
+// ---------------------------------------------------------------- The match
+
+scene Main { }
+
+component Marble
+{
+    [Position] float3 position;
+    float3 velocity;
+    Color tint;
+    int seat;
+    int coins;
+    int round;      // The round its coins are from
+    bool falling;   // Off the island, on its way down
+    Random random;
+    local quaternion roll = quaternion.identity; // How it's turned, which only shows
+    local float flash;                           // It just took a coin
+}
+
+// What the other marbles do to one this tick, worked out from where they all were.
+component Knock
+{
+    float2 shift;
+    float2 push;
+}
+
+component Coin
+{
+    float2 position;
+    int value = 1;
+    bool dropped; // A marble lost it in a fall: no other coin takes its place
+}
+
+singleton Field { Random random; }
+singleton Round
+{
+    int number;
+    bool over;    // Somebody won, and the next round hasn't started
+    int winner;   // Their seat
+    int until;    // The tick the next round starts at
+    int started;  // The tick this one started at
+    int took;     // How many ticks the last one took
+    int best;     // The fewest a round of this match took, or 0
+}
+singleton Roster { Map<PlayerID, Entity> marbles; int seats; } // seats: a bit for each one taken
+
+event Picked { float3 at; int value; }   // To the marble that took a coin
+event Fell { int lost; }                 // To a marble that's back from a fall
+event Bounced { float3 at; int bumper; } // To a marble a bumper kicked
+event Clack { float3 at; }               // Two marbles met
+event Won { float3 at; }                 // To the marble that won the round
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move; // x is to the right on the screen, y away from the camera
+
+    Sample(Devices devices, Stick stick)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick;
+        // Where the pointer is held, which a view worked out. Not without the press, so
+        // a window that stopped drawing doesn't go on pushing.
+        if (devices.pointer.press.pressed) move += stick.move;
+    }
+}
+
+event(Spawned) Setup(with Main, mut Field field)
+{
+    for (var i = 0; i < COINS; i++) Spawn(Coin { position = Place(field.random) });
+}
+
+// Everyone who joins gets a marble, in the first color nobody has.
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    mut var seat = 0;
+    while (seat < 7 && ((roster.seats >> seat) & 1) == 1) seat += 1;
+    roster.seats |= 1 << seat;
+    roster.marbles[joined.player] = Spawn(
+        Marble { position = Start(seat), tint = SeatColor(seat), seat = seat },
+        Knock,
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster, World world)
+{
+    if (!roster.marbles.Has(left.player)) return;
+    var marble = roster.marbles[left.player];
+    roster.seats &= ~(1 << world.Get<Marble>(marble).seat);
+    marble.Destroy();
+    roster.marbles.Remove(left.player);
+}
+
+// A round that was won starts over after a moment.
+system Referee(mut Round round, Time time)
+{
+    if (round.over && time.tick >= round.until)
+    {
+        round.over = false;
+        round.number += 1;
+        round.started = time.tick;
+    }
+}
+
+// Marbles that meet trade what speed they had towards each other.
+system Collide(Marble marble, mut Knock knock, query (Marble body) others)
+{
+    knock.shift = float2(0);
+    knock.push = float2(0);
+    if (marble.falling) return;
+    foreach (var other in others)
+    {
+        if (other.entity == this || other.body.falling) continue;
+        var apart = marble.position.xz - other.body.position.xz;
+        var gap = Math.Length(apart);
+        if (gap >= RADIUS * 2 || gap < 0.0001) continue;
+        var away = apart / gap;
+        knock.shift += away * (RADIUS * 2 - gap) * 0.5;
+        var closing = Math.Dot(marble.velocity.xz - other.body.velocity.xz, away);
+        if (closing >= 0) continue;
+        knock.push -= away * closing * 1.1;
+        if (closing < -2 && marble.seat < other.body.seat)
+        {
+            Send(Clack { at = (marble.position + other.body.position) * 0.5 });
+        }
+    }
+}
+
+system Roll(Controls input, mut Marble marble, Knock knock, Round round, Time time, with Owner)
+{
+    if (marble.round != round.number)
+    {
+        marble.round = round.number;
+        marble.coins = 0;
+    }
+    if (marble.falling)
+    {
+        marble.velocity.y -= 30 * time.dt;
+        marble.position += marble.velocity * time.dt;
+        if (marble.position.y > -9) return;
+        // Back on the island, a few coins lighter: they land somewhere on it.
+        var lost = Math.Min(marble.coins, 3);
+        marble.coins -= lost;
+        for (var i = 0; i < lost; i++) Spawn(Coin { position = Place(marble.random), dropped = true });
+        marble.position = Start(marble.seat);
+        marble.velocity = float3(0);
+        marble.falling = false;
+        this.Snap();
+        this.Send(Fell { lost = lost });
+        return;
+    }
+
+    mut var push = input.move;
+    if (Math.LengthSq(push) > 1) push = Math.Normalize(push);
+    mut var speed = marble.velocity.xz + knock.push;
+    mut var place = marble.position.xz + knock.shift;
+    speed += (push * PUSH - Slope(place) * GRAVITY) * time.dt;
+    speed *= Math.Max(0, 1 - DRAG * time.dt);
+    // The ground holds a marble a little, so one left alone comes to rest on a gentle slope
+    var pace = Math.Length(speed);
+    var kept = Math.Min(Math.Max(pace - GRIP * time.dt, 0), TOP);
+    speed = pace > 0.0001 ? speed * (kept / pace) : float2(0);
+    place += speed * time.dt;
+
+    // A bumper throws back whatever touches it, harder than it came.
+    for (var i = 0; i < BUMPERS; i++)
+    {
+        var bumper = Bumper(i);
+        var apart = place - bumper.xy;
+        var gap = Math.Length(apart);
+        if (gap >= bumper.z + RADIUS || gap < 0.0001) continue;
+        var away = apart / gap;
+        var into = Math.Dot(speed, away);
+        place = bumper.xy + away * (bumper.z + RADIUS);
+        speed += away * (Math.Abs(into) + 5 - into);
+        this.Send(Bounced { at = float3(place.x, Height(place) + RADIUS, place.y) - float3(away.x, 0, away.y) * RADIUS, bumper = i });
+    }
+
+    marble.position = float3(place.x, Height(place) + RADIUS, place.y);
+    marble.velocity = float3(speed.x, 0, speed.y);
+    if (Math.Max(Math.Abs(place.x), Math.Abs(place.y)) > HALF + 0.15) marble.falling = true;
+}
+
+// A coin goes to the first marble that reaches it, and another turns up elsewhere.
+system Collect(Coin coin, mut Field field, Round round, query (Marble body) marbles)
+{
+    if (round.over) return;
+    foreach (var marble in marbles)
+    {
+        if (marble.body.falling) continue;
+        if (Math.DistanceSq(marble.body.position.xz, coin.position) > REACH * REACH) continue;
+        marble.entity.Send(Picked { at = float3(coin.position.x, Height(coin.position) + 0.7, coin.position.y), value = coin.value });
+        if (!coin.dropped)
+        {
+            // One coin in six is a big one.
+            Spawn(Coin { position = Place(field.random), value = field.random.NextInt(6) == 0 ? 3 : 1 });
+        }
+        this.Destroy();
+        return;
+    }
+}
+
+event(Picked picked) Gain(mut Marble marble, mut Round round, Time time)
+{
+    marble.coins += picked.value;
+    if (round.over || marble.coins < GOAL) return;
+    round.over = true;
+    round.winner = marble.seat;
+    round.until = time.tick + time.tickRate * 6;
+    round.took = time.tick - round.started;
+    if (round.best == 0 || round.took < round.best) round.best = round.took;
+    this.Send(Won { at = marble.position });
+}
+
+// ---------------------------------------------------------------- What a machine shows
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+struct Dome
+{
+    float4x4 transform = float4x4.identity;
+    float glow;
+}
+
+struct Spark
+{
+    float3 position;
+    float3 velocity;
+    float age;
+    float life = 0.6;
+    float size = 3;
+    Color color;
+}
+
+struct Popup
+{
+    float3 at;
+    string text;
+    float age;
+    Color color;
+}
+
+struct Row
+{
+    int seat;
+    int coins;
+    bool mine;
+}
+
+local singleton Scenery
+{
+    List<Corner> ground;
+    List<int> groundFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> disc;
+    List<int> discFaces;
+    List<Dome> domes;
+}
+
+local singleton Look
+{
+    float3 goal;   // Where the camera wants to look
+    float3 focus;  // Where it looks
+    float3 eye = float3(0, 15, -11.5);
+    float clock;   // Seconds, always under a full turn's worth
+    float shake;
+    float scale = 1; // How much bigger than in a small window text is drawn
+    bool joined;     // This machine has been in the match
+}
+
+// Where the player holds the pointer, as a push for the input.
+local singleton Stick
+{
+    float2 move;
+    float3 target;
+    bool held;
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    List<Popup> popups;
+    List<float> glow; // How lit each bumper is
+    Random random;
+}
+
+void Burst(mut Fx fx, float3 at, Color color, int count, float speed)
+{
+    for (var i = 0; i < count; i++)
+    {
+        fx.sparks.Add(Spark {
+            position = at,
+            velocity = fx.random.NextFloat3Direction() * fx.random.NextFloat(speed * 0.3, speed) + float3(0, speed * 0.7, 0),
+            life = fx.random.NextFloat(0.35, 0.8),
+            size = fx.random.NextFloat(2.5, 5),
+            color = color });
+    }
+}
+
+local event(Picked picked) ShowPick(mut Marble marble, mut Fx fx)
+{
+    marble.flash = 1;
+    Burst(fx, picked.at, Color(1, 0.9, 0.35), 6 + picked.value * 6, 3.5);
+    Burst(fx, picked.at, Color.white, 4, 2.5);
+    fx.popups.Add(Popup { at = picked.at + float3(0, 1.2, 0), text = $"+{picked.value}", color = Color(1, 0.92, 0.4) });
+}
+
+local event(Fell fell) ShowFall(Marble marble, Owner owner, Session session, mut Fx fx, mut Look look)
+{
+    if (fell.lost > 0) fx.popups.Add(Popup { at = marble.position + float3(0, 2, 0), text = $"-{fell.lost}", color = Color(1, 0.45, 0.4) });
+    if (owner.player == session.player) look.shake = 1;
+}
+
+local event(Bounced bounced) ShowBounce(Owner owner, Session session, mut Fx fx, mut Look look)
+{
+    fx.glow[bounced.bumper] = 1;
+    Burst(fx, bounced.at, Color(1, 0.6, 0.5), 8, 3);
+    if (owner.player == session.player) look.shake = Math.Max(look.shake, 0.5);
+}
+
+local event(Clack clack) ShowClack(mut Fx fx)
+{
+    Burst(fx, clack.at, Color.white, 8, 2.5);
+}
+
+local event(Won won) ShowWin(Marble marble, mut Fx fx)
+{
+    Burst(fx, won.at + float3(0, 1, 0), marble.tint, 40, 7);
+    Burst(fx, won.at + float3(0, 1, 0), Color(1, 0.85, 0.3), 40, 5);
+}
+
+// A ball of radius 1, whose corners' normals are where they are.
+void BuildBall(mut Scenery scenery)
+{
+    for (var ring = 0; ring <= 12; ring++)
+    {
+        for (var step = 0; step <= 20; step++)
+        {
+            float across = step * Math.TAU / 20;
+            float down = ring * Math.PI / 12;
+            var at = float3(Math.Sin(down) * Math.Cos(across), Math.Cos(down), Math.Sin(down) * Math.Sin(across));
+            scenery.ball.Add(Corner { position = at, normal = at });
+            if (ring < 12 && step < 20)
+            {
+                int first = ring * 21 + step;
+                scenery.ballFaces.Add(first);
+                scenery.ballFaces.Add(first + 21);
+                scenery.ballFaces.Add(first + 1);
+                scenery.ballFaces.Add(first + 1);
+                scenery.ballFaces.Add(first + 21);
+                scenery.ballFaces.Add(first + 22);
+            }
+        }
+    }
+}
+
+// A coin of radius 1, standing on its edge: its faces look along z.
+void BuildDisc(mut Scenery scenery)
+{
+    float thick = 0.14;
+    for (var face = 0; face < 2; face++)
+    {
+        float side = face * 2 - 1;
+        int middle = scenery.disc.count;
+        scenery.disc.Add(Corner { position = float3(0, 0, side * thick), normal = float3(0, 0, side) });
+        for (var step = 0; step <= 20; step++)
+        {
+            float angle = step * Math.TAU / 20;
+            scenery.disc.Add(Corner { position = float3(Math.Cos(angle), Math.Sin(angle), side * thick), normal = float3(0, 0, side) });
+            if (step < 20)
+            {
+                scenery.discFaces.Add(middle);
+                scenery.discFaces.Add(middle + 1 + step);
+                scenery.discFaces.Add(middle + 2 + step);
+            }
+        }
+    }
+    int rim = scenery.disc.count;
+    for (var step = 0; step <= 20; step++)
+    {
+        float angle = step * Math.TAU / 20;
+        var outward = float3(Math.Cos(angle), Math.Sin(angle), 0);
+        scenery.disc.Add(Corner { position = outward - float3(0, 0, thick), normal = outward });
+        scenery.disc.Add(Corner { position = outward + float3(0, 0, thick), normal = outward });
+        if (step < 20)
+        {
+            int first = rim + step * 2;
+            scenery.discFaces.Add(first);
+            scenery.discFaces.Add(first + 1);
+            scenery.discFaces.Add(first + 2);
+            scenery.discFaces.Add(first + 2);
+            scenery.discFaces.Add(first + 1);
+            scenery.discFaces.Add(first + 3);
+        }
+    }
+}
+
+// The island: its top as a sheet of squares, and its four sides.
+void BuildGround(mut Scenery scenery)
+{
+    int cells = 40;
+    float step = 2 * HALF / cells;
+    for (var row = 0; row <= cells; row++)
+    {
+        for (var column = 0; column <= cells; column++)
+        {
+            var at = float2(column, row) * step - HALF;
+            var slope = Slope(at);
+            scenery.ground.Add(Corner { position = float3(at.x, Height(at), at.y), normal = Math.Normalize(float3(-slope.x, 1, -slope.y)) });
+            if (row < cells && column < cells)
+            {
+                int first = row * (cells + 1) + column;
+                scenery.groundFaces.Add(first);
+                scenery.groundFaces.Add(first + cells + 1);
+                scenery.groundFaces.Add(first + 1);
+                scenery.groundFaces.Add(first + 1);
+                scenery.groundFaces.Add(first + cells + 1);
+                scenery.groundFaces.Add(first + cells + 2);
+            }
+        }
+    }
+    for (var side = 0; side < 4; side++)
+    {
+        var outward = side == 0 ? float3(0, 0, -1) : side == 1 ? float3(1, 0, 0) : side == 2 ? float3(0, 0, 1) : float3(-1, 0, 0);
+        for (var i = 0; i <= cells; i++)
+        {
+            float along = i * step - HALF;
+            var at = float2(outward.x, outward.z) * HALF + float2(Math.Abs(outward.z), Math.Abs(outward.x)) * along;
+            int first = scenery.ground.count;
+            scenery.ground.Add(Corner { position = float3(at.x, 0, at.y), normal = outward });
+            scenery.ground.Add(Corner { position = float3(at.x, -4, at.y), normal = outward });
+            if (i < cells)
+            {
+                scenery.groundFaces.Add(first);
+                scenery.groundFaces.Add(first + 1);
+                scenery.groundFaces.Add(first + 2);
+                scenery.groundFaces.Add(first + 2);
+                scenery.groundFaces.Add(first + 1);
+                scenery.groundFaces.Add(first + 3);
+            }
+        }
+    }
+}
+
+// Grass in squares, lighter on the hills, with a sandy path around the rim.
+frag Ground(Corner corner, mut Color color)
+{
+    float3 normal = Math.Normalize(corner.normal);
+    float light = 0.5 + 0.5 * Math.Max(Math.Dot(normal, SUN), 0);
+    if (normal.y < 0.5)
+    {
+        // The island's sides, darker further down
+        color = Color(0.5, 0.36, 0.27) * (0.55 + 0.45 * Math.Saturate(1 + corner.position.y * 0.3));
+    }
+    else
+    {
+        float2 tile = Math.Floor(corner.position.xz * 0.5);
+        mut Color paint = Math.Frac((tile.x + tile.y) * 0.5) > 0.25 ? Color(0.33, 0.7, 0.4) : Color(0.29, 0.64, 0.37);
+        // A line every so much higher, as on a map, so the hills and hollows read
+        if (Math.Frac(corner.position.y * 2.5 + 0.5) < 0.07) paint = paint * 0.88;
+        float rim = HALF - Math.Max(Math.Abs(corner.position.x), Math.Abs(corner.position.z));
+        if (rim < 0.4) paint = Color(0.93, 0.85, 0.6);
+        color = paint * (1 + corner.position.y * 0.16) * light;
+    }
+    color.a = 1;
+}
+
+// A marble in its player's color, with a white band and a spot that show it rolling.
+frag Glass(Corner corner, mut Color color, Instance instance, Pixel pixel, Marble marble, Look look)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float diffuse = Math.Max(Math.Dot(normal, SUN), 0);
+    float3 toEye = Math.Normalize(look.eye - pixel.world);
+    float glint = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40);
+    mut Color paint = marble.tint;
+    if (corner.position.y < 0) paint = marble.tint * 0.78;
+    if (Math.Abs(corner.position.y) < 0.16 || corner.position.x > 0.86) paint = Color(1, 1, 1);
+    color = paint * (0.55 + 0.6 * diffuse) + Color(1, 1, 1, 0) * (glint * 0.8 + marble.flash * 0.5);
+    color.a = 1;
+}
+
+frag Gold(Corner corner, mut Color color, Instance instance, Pixel pixel, Look look)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float diffuse = Math.Abs(Math.Dot(normal, SUN));
+    float3 toEye = Math.Normalize(look.eye - pixel.world);
+    float glint = Math.Pow(Math.Abs(Math.Dot(normal, Math.Normalize(SUN + toEye))), 20);
+    // A ring pressed into each face
+    float across = Math.Length(corner.position.xy);
+    Color paint = across > 0.78 || across < 0.35 ? Color(1, 0.82, 0.22) : Color(0.93, 0.64, 0.1);
+    color = paint * (0.6 + 0.4 * diffuse) + Color(1, 1, 0.8, 0) * glint * 0.7;
+    color.a = 1;
+}
+
+frag Bump(Corner corner, mut Color color, Dome dome, Instance instance)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float light = 0.45 + 0.55 * Math.Max(Math.Dot(normal, SUN), 0);
+    Color paint = Math.Frac(corner.position.y * 2.5 + 0.25) < 0.5 ? Color(0.95, 0.33, 0.4) : Color(0.98, 0.94, 0.9);
+    color = paint * light + Color(1, 0.85, 0.5, 0) * dome.glow * 0.6;
+    color.a = 1;
+}
+
+void Caption(string text, float2 at, float size, Color color, Anchor anchor, Font font = Font.Regular)
+{
+    Draw2D.Text(text, at + float2(1, 1), size, Color(0, 0, 0, 0.55), anchor, font);
+    Draw2D.Text(text, at, size, color, anchor, font);
+}
+
+// Seconds as a stopwatch shows them.
+string Clock(int seconds)
+{
+    return $"{seconds / 60}:{(seconds % 60):D2}";
+}
+
+void Rank(mut List<Row> rows)
+{
+    rows.Sort(a, b) { return a.coins > b.coins; }
+}
+
+// The camera leans towards this machine's own marble.
+view Follow(Marble marble, mut Look look, with ownership)
+{
+    look.goal = float3(marble.position.x * 0.6, 0, marble.position.z * 0.6);
+}
+
+view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Session session)
+{
+    if (scenery.ground.count == 0)
+    {
+        BuildGround(scenery);
+        BuildBall(scenery);
+        BuildDisc(scenery);
+        scenery.domes.Resize(BUMPERS);
+        fx.glow.Resize(BUMPERS);
+    }
+    var dt = Math.Min(Frame.dt, 0.05);
+    look.clock += dt;
+    if (look.clock > Math.TAU) look.clock -= Math.TAU;
+    look.focus += (look.goal - look.focus) * Math.Min(1, dt * 4);
+    look.shake = Math.Max(0, look.shake - dt * 4);
+
+    // A tall window sees as much across as a square one.
+    float shape = 1.0 * Screen.width / Screen.height;
+    float fov = Math.Clamp(Math.Degrees(2 * Math.Atan(Math.Tan(Math.Radians(25)) / Math.Min(shape, 1))), 50, 78);
+    var jolt = float3(Math.Sin(look.clock * 61), Math.Cos(look.clock * 47), 0) * look.shake * 0.12;
+    // A wide window has room for more of the island, from further back.
+    look.eye = look.focus + float3(0, 15, -11.5) * (1 + 0.25 * Math.Saturate(shape - 1)) + jolt;
+    look.scale = Math.Clamp(Math.Min(Screen.width, Screen.height) / 380.0, 1, 1.7);
+    var rotation = quaternion.LookRotation(Math.Normalize(look.focus + float3(0, 0, -1) - look.eye), float3(0, 1, 0));
+
+    Draw2D.Clear(Color(0.5, 0.76, 0.95));
+    Draw2D.Screen()
+    {
+        Draw2D.Shape(Shape { center = float2(Screen.width, Screen.height) * 0.5, size = float2(Screen.width, Screen.height),
+                             color = Color(0.3, 0.56, 0.9), color2 = Color(0.72, 0.88, 0.98) });
+    }
+    Draw3D.SetCamera(look.eye, rotation, fov);
+    Draw3D.Mesh(scenery.ground, scenery.groundFaces, float4x4.identity, Ground);
+
+    for (var i = 0; i < BUMPERS; i++)
+    {
+        var bumper = Bumper(i);
+        var lit = Math.Max(0, fx.glow[i] - dt * 3);
+        fx.glow[i] = lit;
+        scenery.domes[i] = Dome {
+            transform = float4x4.TRS(float3(bumper.x, Height(bumper.xy), bumper.y), quaternion.identity, float3(bumper.z * (1 + lit * 0.15))),
+            glow = lit };
+    }
+    Draw3D.Instanced(scenery.ball, scenery.ballFaces, scenery.domes, Bump);
+
+    stick.move = float2(0);
+    stick.held = false;
+    if (session.state == SessionState.Connected) look.joined = true;
+    else
+    {
+        // Before the match is here, while it changes hands, or once it's gone
+        var words = !look.joined ? "Joining the game..."
+                  : session.state == SessionState.Connecting ? "Finding the game again..."
+                  : "The game is over.\nOpen the link again to play.";
+        Draw2D.Screen()
+        {
+            Caption(words, float2(Screen.width, Screen.height) * 0.5, 20 * look.scale, Color.white, Anchor.MiddleCenter);
+        }
+    }
+}
+
+// Holding the mouse or a finger on the island rolls this machine's marble that way.
+view Steer(Marble marble, Devices devices, mut Stick stick, with ownership)
+{
+    var pointer = devices.pointer;
+    if (!pointer.press.pressed || marble.falling) return;
+    var screen = Screen.Flip(pointer.position);
+    var origin = Draw3D.ScreenRayOrigin(screen);
+    var direction = Draw3D.ScreenRayDirection(screen);
+    if (direction.y > -0.001) return;
+    // Where the pointer is on the ground, kept on the island: holding the sky rolls to the rim, not off it
+    mut var target = origin + direction * ((marble.position.y - RADIUS - origin.y) / direction.y);
+    target.x = Math.Clamp(target.x, 0.8 - HALF, HALF - 0.8);
+    target.z = Math.Clamp(target.z, 0.8 - HALF, HALF - 0.8);
+    target.y = Height(target.xz);
+    // Push towards it, and against the marble's own speed as it gets near, so it stops there
+    var from = marble.position.xz;
+    var far = Math.Distance(target.xz, from);
+    mut var way = (target.xz - from) * 0.4 - marble.velocity.xz * 0.2;
+    if (far > 0.01)
+    {
+        // With a bumper in the way, go round it: for the side of it the straight line passes
+        var heading = (target.xz - from) / far;
+        for (var i = 0; i < BUMPERS; i++)
+        {
+            var bumper = Bumper(i);
+            var ahead = Math.Dot(bumper.xy - from, heading);
+            if (ahead < 0 || ahead > far) continue;
+            var side = from + heading * ahead - bumper.xy;
+            var room = bumper.z + RADIUS + 0.5;
+            var off = Math.Length(side);
+            if (off >= room) continue;
+            var round = off > 0.01 ? side / off : float2(-heading.y, heading.x);
+            way = Math.Normalize(bumper.xy + round * (room + 0.4) - from);
+        }
+    }
+    stick.move = Math.Length(way) > 1 ? Math.Normalize(way) : way;
+    stick.target = target;
+    stick.held = true;
+}
+
+view Shadows(Marble marble)
+{
+    if (marble.falling) return;
+    var slope = Slope(marble.position.xz);
+    var up = Math.Normalize(float3(-slope.x, 1, -slope.y));
+    var lie = quaternion.LookRotation(Math.Normalize(Math.Cross(float3(1, 0, 0), up)), up);
+    Draw3D.Depth(Depth.Read)
+    {
+        Draw3D.Cylinder(float3(marble.position.x, Height(marble.position.xz) + 0.04, marble.position.z), RADIUS * 0.95, 0.01, lie, Color(0, 0, 0, 0.3));
+    }
+}
+
+view CoinShadows(Coin coin)
+{
+    Draw3D.Depth(Depth.Read)
+    {
+        Draw3D.Cylinder(float3(coin.position.x, Height(coin.position) + 0.04, coin.position.y), 0.3, 0.01, Color(0, 0, 0, 0.22));
+    }
+}
+
+view Pointing(Stick stick)
+{
+    if (!stick.held) return;
+    Draw3D.Depth(Depth.Read)
+    {
+        Draw3D.Cylinder(stick.target + float3(0, 0.05, 0), 0.4, 0.01, Color(1, 1, 1, 0.45));
+    }
+}
+
+view Coins(Coin coin, Look look, Scenery scenery)
+{
+    float phase = coin.position.x * 1.3 + coin.position.y * 0.7;
+    float size = coin.value > 1 ? 0.6 : 0.4;
+    var at = float3(coin.position.x, Height(coin.position) + size + 0.2 + Math.Sin(look.clock * 3 + phase) * 0.1, coin.position.y);
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), look.clock * 2 + phase);
+    Draw3D.Mesh(scenery.disc, scenery.discFaces, float4x4.TRS(at, turn, float3(size)), Gold);
+}
+
+view Marbles(mut Marble marble, Scenery scenery)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    marble.flash = Math.Max(0, marble.flash - dt * 4);
+    var pace = Math.Length(marble.velocity.xz);
+    if (pace > 0.01 && !marble.falling)
+    {
+        // It turns about the line across its way, as far as it went
+        var axis = float3(marble.velocity.z, 0, -marble.velocity.x) / pace;
+        marble.roll = Math.Normalize(Math.Mul(quaternion.AxisAngle(axis, pace * dt / RADIUS), marble.roll));
+    }
+    Draw3D.Mesh(scenery.ball, scenery.ballFaces, float4x4.TRS(marble.position, marble.roll, float3(RADIUS)), Glass);
+}
+
+view Mine(Marble marble, Look look, with ownership)
+{
+    var above = Draw3D.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
+    Draw2D.Screen()
+    {
+        Caption("you", above.xy, 13 * look.scale, Color.white, Anchor.LowerCenter, Font.Bold);
+    }
+}
+
+view Effects(mut Fx fx, Look look)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    Draw2D.Screen()
+    {
+        mut var i = 0;
+        while (i < fx.sparks.count)
+        {
+            mut var spark = fx.sparks[i];
+            spark.age += dt;
+            if (spark.age >= spark.life)
+            {
+                fx.sparks.RemoveAt(i);
+                continue;
+            }
+            spark.velocity.y -= 9 * dt;
+            spark.position += spark.velocity * dt;
+            fx.sparks[i] = spark;
+            var left = 1 - spark.age / spark.life;
+            var on = Draw3D.WorldToScreen(spark.position);
+            mut var paint = spark.color;
+            paint.a = Math.Saturate(left * 2);
+            Draw2D.Circle(on.xy, spark.size * look.scale * (0.5 + 0.5 * left), paint);
+            i++;
+        }
+        mut var p = 0;
+        while (p < fx.popups.count)
+        {
+            mut var popup = fx.popups[p];
+            popup.age += dt;
+            if (popup.age >= 1)
+            {
+                fx.popups.RemoveAt(p);
+                continue;
+            }
+            fx.popups[p] = popup;
+            var on = Draw3D.WorldToScreen(popup.at + float3(0, popup.age * 1.6, 0));
+            mut var color = popup.color;
+            color.a = Math.Saturate(2 - popup.age * 2);
+            Draw2D.Text(popup.text, on.xy + float2(1, 1), 20 * look.scale, Color(0, 0, 0, color.a * 0.5), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text(popup.text, on.xy, 20 * look.scale, color, Anchor.MiddleCenter, Font.Bold);
+            p++;
+        }
+    }
+}
+
+view Hud(Round round, Session session, Time time, Look look, query (Marble body, Owner owner) marbles)
+{
+    mut List<Row> rows = [];
+    foreach (var entry in marbles)
+    {
+        rows.Add(Row { seat = entry.body.seat, coins = entry.body.coins, mine = entry.owner.player == session.player });
+    }
+    Rank(rows);
+
+    // Laid out for a small window, and scaled up in a big one.
+    float width = Screen.width / look.scale;
+    float height = Screen.height / look.scale;
+    Draw2D.Screen(),
+    Draw2D.Transform(float2(0), 0, look.scale)
+    {
+        // Who has how many, the leader first
+        mut var y = 8.0;
+        foreach (var row in rows)
+        {
+            float full = Math.Min(1.0 * row.coins / GOAL, 1);
+            Draw2D.RoundRect(float2(64, y + 11), float2(112, 20), 10, Color(0, 0, 0, row.mine ? 0.6 : 0.36));
+            Draw2D.RoundRect(float2(10 + 54 * full, y + 11), float2(108 * full, 16), 8, SeatColor(row.seat) * Color(1, 1, 1, 0.45));
+            Draw2D.Circle(float2(19, y + 11), 6, SeatColor(row.seat));
+            Draw2D.Text(row.mine ? "You" : SeatName(row.seat), float2(31, y + 11), 13, Color.white, Anchor.MiddleLeft);
+            Draw2D.Text($"{row.coins}", float2(112, y + 11), 13, Color(1, 0.88, 0.4), Anchor.MiddleRight, Font.Bold);
+            y += 23;
+        }
+        Caption($"First to {GOAL} coins wins", float2(width - 10, 10), 14, Color.white, Anchor.UpperRight, Font.Bold);
+        var clock = Clock((round.over ? round.took : time.tick - round.started) / time.tickRate);
+        var record = round.best > 0 ? $"{clock}   best {Clock(round.best / time.tickRate)}" : clock;
+        Caption(record, float2(width - 10, 29), 13, Color(1, 0.9, 0.5), Anchor.UpperRight);
+        if (rows.count < 2) Caption("Send the link to a friend\nto race them", float2(width - 10, 48), 12, Color(1, 1, 1, 0.9), Anchor.UpperRight);
+
+        var foot = float2(width * 0.5, height - 12);
+        var how = "Roll: WASD or arrows, or hold where to go";
+        var why = "Grab coins. A fall off the edge drops 3!";
+        var wide = Math.Max(Draw2D.MeasureText(how, 13).x, Draw2D.MeasureText(why, 13).x);
+        Draw2D.RoundRect(foot - float2(0, 16), float2(wide + 24, 42), 12, Color(0, 0, 0, 0.42));
+        Draw2D.Text(how, foot - float2(0, 17), 13, Color.white, Anchor.LowerCenter);
+        Draw2D.Text(why, foot, 13, Color(1, 0.9, 0.5), Anchor.LowerCenter);
+
+        if (round.over)
+        {
+            var middle = float2(width * 0.5, height * 0.36);
+            mut var won = false;
+            foreach (var row in rows)
+            {
+                if (row.mine && row.seat == round.winner) won = true;
+            }
+            var title = won ? "You win!" : $"{SeatName(round.winner)} wins!";
+            var size = Draw2D.MeasureText(title, 40, Font.Bold);
+            Draw2D.RoundRect(middle + float2(0, 12), size + float2(48, 56), 16, Color(0, 0, 0, 0.6));
+            Draw2D.Text(title, middle, 40, SeatColor(round.winner), Anchor.MiddleCenter, Font.Bold);
+            var seconds = (round.until - time.tick) / time.tickRate + 1;
+            Draw2D.Text($"in {Clock(round.took / time.tickRate)}. Next round in {seconds}", middle + float2(0, 36), 15, Color.white, Anchor.MiddleCenter);
+        }
+    }
+}
