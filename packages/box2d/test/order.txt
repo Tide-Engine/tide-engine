@@ -9,6 +9,9 @@ Box2D.Own
 Box2D.AttachBoxes
 BeforeAttachCircles
 Box2D.AttachCircles
+Box2D.AttachPartBoxes
+Box2D.AttachPartCircles
+Box2D.DropParts
 BeforeSimulate
 Box2D.Simulate
 BeforeLeave

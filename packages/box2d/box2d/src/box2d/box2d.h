@@ -182,6 +182,10 @@ B2_API void b2World_Explode( b2WorldId worldId, const b2ExplosionDef* explosionD
 /// @note Advanced feature
 B2_API void b2World_SetContactTuning( b2WorldId worldId, float hertz, float dampingRatio, float pushSpeed );
 
+/// Tide: the contact tuning a world has. It's in a world's image, so it's what a caller compares its own with
+/// to tell whether to set it (see src/TIDE.md).
+B2_API void b2World_GetContactTuning( b2WorldId worldId, float* hertz, float* dampingRatio, float* pushSpeed );
+
 /// Set the contact point recycling distance. Setting this to zero disables contact point recycling.
 /// Usually in meters.
 B2_API void b2World_SetContactRecycleDistance( b2WorldId worldId, float recycleDistance );

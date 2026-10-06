@@ -51,19 +51,54 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 }
 ```
 
-(`test/stack.tide` is a game like this one, which the package's tests run, and `test/course.tide` one with a sensor, a body spawned with an impulse, a system before the step and bodies at rest that code moves.)
+(`test/stack.tide` is a game like this one, which the package's tests run, `test/course.tide` one with a sensor, a body spawned with an impulse, a system before the step and bodies at rest that code moves, and `test/kit.tide` one with parts, bodies that change type, every question code can ask, hits and each field the world is tuned by.)
 
-- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `fixedRotation` and `bullet`, which are read when the body is made. After each step the first four are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once: the ones a body is spawned with at its first, once its shapes are on it.
-- A body at rest is asleep, and whatever code writes into it wakes it: a speed, an impulse, and a `position` or an `angle` too, which also wake what was touching it.
+- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `sleepSpeed`, `fixedRotation` and `bullet`, which are read when the body is made. After each step the first four are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once: the ones a body is spawned with at its first, once its shapes are on it.
+- **A body's `type` can be written**, any to any: the next step has it as the new kind, with its shapes. What touched it parts and is found again, and what rested on it wakes.
+- A body at rest is asleep, and whatever code writes into it wakes it: a speed, an impulse, a `type`, and a `position` or an `angle` too, which also wake what was touching it. `sleepSpeed` is how slow it has to be to fall asleep.
 - `position` is a `[Position]` and `angle` a `[Rotation]`, for views: they see a body turn the short way through half a turn, where its angle goes from pi to -pi, and get to where the server says it is over a few frames when this machine predicted otherwise.
-- **`Box`** and **`Circle`** are shapes on the entity's body: `size` or `radius`, `offset`, `density`, `friction`, `bounce`, `sensor`.
-- **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`, once for each pair of shapes. A shape with `sensor` stops nothing, and sends them for the shapes that come into it and leave it, static bodies' too; two sensors say nothing of each other. When the other entity was destroyed while they touched, `Parted` comes with `default` for it.
-- **`Physics`** is the world: `gravity` and `substeps`. A gravity that changes wakes every body.
+- **`Box`** and **`Circle`** are shapes on the entity's body: `size` or `radius`, `offset`, `density`, `friction`, `bounce`, `sensor`. An entity has one of each at the most.
+- **`Part`** is a shape on another entity's body: `Spawn(Box { offset = float2(1, 1) }, Part { of = brick });`. The entity has a `Box` or a `Circle` and no `Body`; its shape is on the body of the entity it names from the next step. Destroying the part takes that one shape off, destroying the body's entity takes its parts with it, and a part that names no entity with a body is destroyed. A part can be a sensor.
+- **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`, once for each pair of shapes, and with which shapes they were: `part` and `otherPart`, the body's own entity for a shape on it and the part's entity for a part. A shape with `sensor` stops nothing, and sends them for the shapes that come into it and leave it, static bodies' too; two sensors say nothing of each other. When the other entity was destroyed while they touched, `Parted` comes with `default` for it; when only a part was, with the right `other` and `default` for the part.
+- **`Hit`** is sent to both entities when their bodies meet faster than `Physics.hitSpeed`: the `other`, the parts, the `point`, the `normal` (from this body into the other) and the `speed` they closed at.
+- **Asking the world**: `Raycast(physics, from, to, out hit)`, `Cast(physics, shape, from, angle, to, out hit)` for a `Box` or a `Circle` moved along a way, `Overlap(physics, shape, at, angle, out found)`, and `Inside(physics, sensor, out found)` for who's in a body's sensors, or in one part's. They return whether they found anything; `RayHit` is the `entity`, its `part`, the `point`, the `normal` and the `fraction` of the way. `Raycast` and `Cast` take one `Body` to leave out, last (`ignore: body`). They work from the match anywhere in a tick, and from views.
+- **`Physics`** is the world: `gravity`, `substeps`, and how it's tuned: `stiffness` and `damping` (contacts), `pushSpeed`, `bounceSpeed`, `hitSpeed` and `sleeping`. Each is Box2D's own default, and a change is the next step's. A gravity that changes wakes every body.
 - An entity that's destroyed takes its body with it.
+
+### What a question sees
+
+The world as its last step left it: a system before the step asks of the last tick's world, which is what it reads in the bodies' components too; a system after it, and a handler, of this tick's; a view of the world it draws, as its last tick left it. What code wrote into a body since isn't in the answer, nor a body or a shape made since: they're the next step's. An entity that was destroyed since isn't met any more (the match says which bodies and parts are gone, and the question leaves them out).
+
+Sensors are never met, and `Overlap` doesn't find them. A ray or a shape that starts in something meets it there, at `fraction` 0 with no normal, and a shape that only touches something where it starts counts as in it: Box2D takes two shapes within about 6 mm of each other for touching, so a crate's own box, cast along the floor it rests on, meets the floor at once. A slightly smaller shape slides.
+
+### The same answer on every machine
+
+Match code acts on the answers, so they have to be the same everywhere, in a world that was stepped here and in one made from its image:
+
+- **Everything a question reads is in the image**: the bodies' places, the shapes, the trees and what's in each sensor. The image is the same bytes on every machine for the same state, and a world made from it answers from those bytes.
+- **Nothing depends on the order Box2D comes to things in.** Its trees can be walked in another order in a world that was restored. So the first thing met is the least by how far along the way it is and then by which shape was made first (the shape's slot in Box2D, which is in the image), and Box2D is told to go on looking a hair past the best so far, so that one as near isn't cut off before it's compared. `Overlap` and `Inside` sort what they found by the bodies' slots and give each once.
+- **The arithmetic is Box2D's own**, compiled with the engine's flags like its step: no fused multiply-adds, the same on x64, ARM and the web.
+- `box2d_answers_what_code_asks` pins a hash of every answer of 150 ticks, the same in debug, release and on the web, asks each tick from a system before the step, one after it and a view, and again of a world that's made from the image to answer.
+
+Systems that ask run on the tick's threads like any others: a question changes nothing of C's world, each thread has its own scratch memory, and finding the world for a stamp (or making it) is behind a lock. What changes the world takes `Physics` to write, so the schedule never has it beside a question.
+
+### Picks
+
+The owner decided what there is; these are the names and the edges picked while building it, for them to confirm:
+
+- **Names**: `Part` and its `of`; `Hit`; `RayHit`; `Raycast`, `Cast`, `Overlap`, `Inside`; `part` and `otherPart` on the events; `Physics.stiffness`, `damping`, `pushSpeed`, `bounceSpeed`, `hitSpeed`, `sleeping`; `Body.sleepSpeed`.
+- **A part that names no body is destroyed**, in the tick that finds it so, with nothing said: an error would stop a match over an entity that went a tick before its part was made.
+- **`Inside` takes the sensor's `Body` or its `Part`**, not an `Entity`: a function has what its caller hands it, and the caller has the component.
+- **One body can be left out of a ray or a cast**, as a `Body` after the `out`. No layers or masks: Towers needed none.
+- **A body that turns kinematic keeps its `velocity`.**
+- **`Hit` goes to both bodies**, each with the normal pointing from itself, and its threshold is the world's alone.
+- **Tuning is the world's, but for `sleepSpeed`**, which is a body's. Whether one body may sleep at all, and a shape's fields after it's made, were left out.
+
+### When its systems run
 
 The package's systems run before the game's, in this order: bodies and shapes that are new are made and what code wrote goes to Box2D, the world steps, bodies' components get where it left them, and the events are sent. So a game's systems read this tick's positions, and what they write is the next step's.
 
-They're one stage, `PhysicsStages.Step`. A system that has to write into this tick's step says `[Before(PhysicsStages.Step)]`, and runs before all of them:
+They're one stage, `PhysicsStages.Step`: `Begin`, `Enter`, `Own`, `AttachBoxes`, `AttachCircles`, `AttachPartBoxes`, `AttachPartCircles`, `DropParts`, `Simulate`, then `Leave` and `Report`. A system that has to write into this tick's step says `[Before(PhysicsStages.Step)]`, and runs before all of them:
 
 ```csharp
 [Before(PhysicsStages.Step)]
@@ -82,8 +117,11 @@ Box2D keeps its world in C's memory, outside the match, where rollbacks, joins, 
 - **Everything that changes Box2D's world goes through the match**, which is why code moves a body by writing its component, and never calls Box2D. The stamp is the stamp before it and everything done to the world since, hashed: Box2D's next state is its last and what's done to it, so the image is never read to name it.
 - **The image is in the match's hash**, so it's the same bytes on every machine for the same state, 32-bit web builds and 64-bit desktops alike, whatever their SIMD. Box2D doesn't promise that by itself: `box2d/TIDE.md` lists the changes that took. `tide_box2d_stack` pins the simulation's hash and every tick's image on each platform.
 - **The image is in sections that keep their place**, so what changes of it from tick to tick is what changed in the world, and the match's snapshots share the rest. As Box2D writes it, a contact that starts or ends moves every byte after it.
-- **A world at rest isn't stepped.** Nothing awake, nothing written to any body and the gravity it had: there's no step and no image, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
+- **A world at rest isn't stepped.** Nothing awake, nothing written to any body and the gravity and tuning it had: there's no step and no image, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
 - **What a sensor has in it is in the image too**, so a world made from one says the same of its sensors after its next step. Box2D writes it with two bytes of every entry that are whatever was in memory: the package's copy writes zeros there (`box2d/TIDE.md`).
+- **A body's type is asked of Box2D, not kept in the match**: `Body` gained no field for it. `Enter` compares what the component says with what Box2D has, which is in the image, so it's right wherever the world came from. Asking each body every tick tripled what `Enter` takes at rest, so each of C's worlds remembers Box2D's answer (`kinds` in `bridge.c`), forgotten when the world is made again.
+- **How the world is tuned is in the image**, as its gravity is: the step compares `Physics`' fields with what C's world has and sets the ones that differ, each noted into the stamp. So a game that sets none has the stamps it had.
+- **Every shape is made with hit events on**, which is a byte of each shape in the image, and has Box2D keep how fast each contact closed. `Hit`'s threshold is the world's.
 
 ## What it costs
 
@@ -102,13 +140,15 @@ Measured on a release build, 2,400 crates in stacks (an image of 2.5 MB), one th
 - The image is every body, shape and contact, about a kilobyte a body, whatever is awake. Box2D writes it straight into memory the match's list is then compared with, chunk by chunk (`out List<byte>`), so only what changed is copied and hashed.
 - What the package adds to the step is memory moved, not arithmetic: the image is written (2.5 MB), compared with the last one, what changed of it copied into the match and hashed, and each body's place read back into its component. So it goes by how big the world is, where the step goes by what's awake.
 - Bodies go in and out through two systems written in C (`extern system`, `tide/rows.h`), which read and write the bodies' fields as the arrays the match keeps them in. Every body is looked at every tick, and a system written in Tide copies each one out to look at it. With every crate moving, reading the 2,400 back took 0.17 ms that way (a call, a copy and a `world.Set` for each) and takes 0.015: Box2D says which bodies it moved and where they are, and those are written, 12 fields of a body's 22. Finding what code wrote took 0.034 ms and takes 0.015, or 0.006 at rest, where it took 0.024. Giving new bodies their entities stayed in Tide, as the match keeps that in a map: it asks C of each body whether it's new, and takes 0.009 to 0.012. A tick went from 0.75 ms to 0.61 with everything moving, from 0.26 to 0.21 with one crate pushed, and from 0.031 to 0.017 at rest (seven runs of each, old and new in turn, on a machine that was building other things meanwhile: the runs agree to within a tenth).
-- Making C's world from an image, which a rollback does once, takes about half a millisecond.
+- Making C's world from an image, which a rollback does once, takes about half a millisecond. The first question asked where C has no world at the match's stamp does the same: the tick after a rollback, or a view of a world that isn't the last one stepped. For a world of 17 KB it's 0.008 ms.
+- A question costs what Box2D's query does: 23 of them, rays, casts, overlaps and sensors, asked by a frame's views of a small world take 0.011 ms.
+- What parts, types, hits and tuning added to a tick of these 2,400 crates, old and new in turn, the least of seven runs each: 0.601 ms to 0.611 with everything moving, 0.213 to 0.214 with one crate pushed, 0.017 to 0.018 at rest (of which `Enter`, 0.006 to 0.008: it looks at each body's type too).
 - Compiling Box2D takes about 6 seconds once (9 optimized), and adds about 350 KB to a game.
 
 ## Not there yet
 
-- Joints, chains, polygons other than boxes, capsules, ray casts and overlap tests.
-- `Touched` and `Parted` don't say which shape of an entity's it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
-- A body's `type` and the fields read when it's made don't follow later changes, and a shape's don't either.
-- Removing `Body` from an entity that stays leaves its body in the world.
-- Reading the world from views.
+- Joints, chains, polygons other than boxes, and capsules.
+- Rays and casts give the first thing met, not everything along the way, and leave out one body at the most. No layers or masks, for collisions or for questions, and a sensor is never met.
+- `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
+- The fields of a body that are read when it's made don't follow later changes, and a shape's don't either.
+- Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves its shape on.
