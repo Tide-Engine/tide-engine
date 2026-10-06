@@ -1,0 +1,9 @@
+// expect: GUILayout.Button can't be on the right side of && or ||
+// expect: that part only runs sometimes, so the widget would come and go; call it in an 'if' of its own
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    GUILayout.TextField("Code", lobby.code, out var entered);
+    if (entered || GUILayout.Button("Join")) lobby.count += 1;
+}

@@ -1,0 +1,10 @@
+// expect: 'GUI.IntField' makes its 'entered', so the argument says 'out'
+// expect: 'out' before a variable assigns it, 'out var entered' declares one there, and 'out _' leaves it out
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    mut var entered = false;
+    GUI.IntField(Rect(0, 0, 200, 30), "Count", lobby.count, entered);
+    if (entered) lobby.count += 1;
+}

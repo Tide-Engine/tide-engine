@@ -5,7 +5,8 @@
 // the order they were recorded whatever the renderer batches together, that
 // a frame can draw far more than a list used to hold, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
-// that 3D meshes draw through their cameras, nearest in front, that meshes
+// that 3D meshes draw through their cameras, nearest in front, or with depth
+// as a setting says, that meshes
 // draw through shaders of the game's, with what those read, that the shapes
 // with smooth edges are where they should be, edge by edge, that the GUI's
 // widgets have their theme's colors and corners, that text is as big as it
@@ -1970,6 +1971,7 @@ static uint32_t wrapped_draw_calls(const int kind)
     for (int i = 0; i < 200; i++) {
         const float x = 8.0f + (float)(i % 20) * 12.0f, y = 8.0f + (float)(i / 20) * 12.0f;
         const uint32_t mark = tide_draw_push_blend(&list, TIDE_BLEND_ADD);
+        tide_draw_push_depth(&list, TIDE_DEPTH_READ);
         tide_draw_push_clip(&list, (tide_rect){at(0, screen.y).x, at(0, screen.y).y, screen.x, screen.y});
         if (kind == KIND_MESH_3D) { // A 3D mesh's tint is its run's, and each instance goes through the transform
             tide_draw_push_tint(&list, tint);
@@ -2150,10 +2152,201 @@ static void settings(void)
 
     for (int kind = 0; kind < KINDS; kind++) {
         const uint32_t calls = wrapped_draw_calls(kind);
-        snprintf(what, sizeof what, "%s 200 times, a blend, a clip, a tint and a transform around each, is one draw call (%u, "
-                                    "with the clear)", kind_names[kind], (unsigned)calls);
+        snprintf(what, sizeof what, "%s 200 times, a blend, a depth, a clip, a tint and a transform around each, is one draw "
+                                    "call (%u, with the clear)", kind_names[kind], (unsigned)calls);
         expect(calls == 2u, what);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Depth: what a 3D mesh does with it, as a setting says
+
+// A rect `width` by `height` pixels around the screen's (x, y), `z` away
+// under pixel_camera_3d, facing it: an ordinary 3D mesh, or one through a
+// shader of the game's.
+static void deep_rect(const bool through_shader, const float x, const float y, const float z, const float width,
+                      const float height, const tide_color color)
+{
+    const tide_float2 world = at(x, y);
+    const tide_float4x4 placed = tide_trs_f4x4(tide_f3(world.x, world.y, z), tide_identity_q(), tide_f3(width, height, 1.0f));
+    if (through_shader) {
+        static const lit_vertex lit_corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0, 0, -1}}, {{0.5f, 0.5f, 0.0f}, {0, 0, -1}},
+                                                  {{0.5f, -0.5f, 0.0f}, {0, 0, -1}}, {{-0.5f, -0.5f, 0.0f}, {0, 0, -1}}};
+        const lit_instance instance = {placed, color};
+        tide_draw_shaded(&list, &lit_shader, quad_mesh(14, lit_corners, sizeof lit_corners[0]), &instance, NULL, NULL, 0);
+        return;
+    }
+    static tide_vertex3 corners[4]; // In one place every call, as square_3d's are
+    corners[0] = (tide_vertex3){{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, color};
+    corners[1] = (tide_vertex3){{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, color};
+    corners[2] = (tide_vertex3){{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, color};
+    corners[3] = (tide_vertex3){{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}, color};
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    tide_mesh mesh = {corners, 4, indices, 6, 0};
+    mesh.version = tide_mesh_version(&mesh);
+    tide_draw_mesh_3d(&list, &mesh, placed, NULL, TIDE_FILTER_POINT);
+}
+
+static const tide_color glass_blue = {0.0f, 0.0f, 1.0f, 0.5f}, glass_green = {0.0f, 1.0f, 0.0f, 0.5f};
+
+// `top` over `bottom`, by its alpha.
+static tide_color onto(const tide_color bottom, const tide_color top)
+{
+    return (tide_color){bottom.r + (top.r - bottom.r) * top.a, bottom.g + (top.g - bottom.g) * top.a,
+                        bottom.b + (top.b - bottom.b) * top.a, 1.0f};
+}
+
+// What the depth scenes' rows start with, around the screen's (x0 + 40, y):
+// something far, 72 by 24 pixels, and at its right end something opaque and
+// near.
+static void depth_ground(const bool shaded_mesh, const float x0, const float y)
+{
+    deep_rect(shaded_mesh, x0 + 40, y, 50, 72, 24, under);
+    deep_rect(shaded_mesh, x0 + 62, y, 5, 12, 28, red);
+}
+
+// ...then two see-through meshes between those, one over the other's end:
+// the second behind the first, and drawn after it.
+static void depth_glass(const bool shaded_mesh, const float x0, const float y)
+{
+    deep_rect(shaded_mesh, x0 + 26, y, 20, 28, 16, glass_blue);
+    deep_rect(shaded_mesh, x0 + 44, y, 21, 32, 16, glass_green);
+}
+
+// Where a kind's rows start: ordinary meshes on the left, shaded ones beside them.
+static float depth_column(const int shaded_mesh)
+{
+    return 8.0f + 120.0f * (float)shaded_mesh;
+}
+
+// A row for each thing a mesh does with depth, for each kind of 3D mesh.
+static void depth_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    for (int kind = 0; kind < 2; kind++) {
+        const bool shaded_mesh = kind != 0;
+        const float x0 = depth_column(kind);
+        // Read and not written: what's see-through, around a block
+        depth_ground(shaded_mesh, x0, 24);
+        const uint32_t read = tide_draw_push_depth(&list, TIDE_DEPTH_READ);
+        depth_glass(shaded_mesh, x0, 24);
+        tide_draw_pop(&list, read);
+        deep_rect(shaded_mesh, x0 + 34, 29, 40, 6, 6, white); // Behind both, drawn after them, as a mesh is again
+
+        // As a frame starts: read and written
+        depth_ground(shaded_mesh, x0, 64);
+        depth_glass(shaded_mesh, x0, 64);
+        deep_rect(shaded_mesh, x0 + 34, 69, 40, 6, 6, white);
+
+        // Neither: far, over what's near; and near, hiding nothing drawn after it
+        deep_rect(shaded_mesh, x0 + 40, 104, 50, 72, 24, under);
+        deep_rect(shaded_mesh, x0 + 24, 104, 5, 16, 16, red);
+        const uint32_t none = tide_draw_push_depth(&list, TIDE_DEPTH_NONE);
+        deep_rect(shaded_mesh, x0 + 34, 104, 90, 20, 12, cyan);
+        deep_rect(shaded_mesh, x0 + 60, 104, 2, 12, 12, magenta);
+        tide_draw_pop(&list, none);
+        deep_rect(shaded_mesh, x0 + 60, 104, 40, 6, 6, yellow);
+
+        // Set for what follows, a block inside it, and put back as a frame starts
+        deep_rect(shaded_mesh, x0 + 40, 144, 50, 72, 24, under);
+        deep_rect(shaded_mesh, x0 + 20, 144, 5, 16, 16, red);
+        deep_rect(shaded_mesh, x0 + 52, 144, 5, 16, 16, red);
+        tide_draw_set_depth(&list, TIDE_DEPTH_NONE);
+        const uint32_t inner = tide_draw_push_depth(&list, TIDE_DEPTH_READ);
+        deep_rect(shaded_mesh, x0 + 36, 144, 40, 8, 8, white); // In front of what's far, which is all there is there
+        tide_draw_pop(&list, inner);
+        deep_rect(shaded_mesh, x0 + 20, 144, 80, 8, 8, purple);
+        tide_draw_unset_depth(&list);
+        deep_rect(shaded_mesh, x0 + 52, 144, 80, 8, 8, orange);
+    }
+}
+
+// Both kinds' meshes as a frame starts, in the screen's top left corner:
+// with nothing said about depth, with what a frame starts with said outright,
+// and with it around a block that follows another's.
+static void depth_default_scene(const int said)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    uint32_t mark = 0;
+    if (said == 1) tide_draw_set_depth(&list, TIDE_DEPTH_READ_WRITE);
+    if (said == 2) {
+        tide_draw_pop(&list, tide_draw_push_depth(&list, TIDE_DEPTH_READ));
+        mark = tide_draw_push_depth(&list, TIDE_DEPTH_READ_WRITE);
+    }
+    for (int kind = 0; kind < 2; kind++) {
+        const float y = 18.0f + 30.0f * (float)kind;
+        depth_ground(kind != 0, 8, y);
+        depth_glass(kind != 0, 8, y);
+        deep_rect(kind != 0, 42, y + 5, 40, 6, 6, white);
+    }
+    if (said == 2) tide_draw_pop(&list, mark);
+}
+
+static void depth_settings(void)
+{
+    static const char *const kinds[2] = {"a 3D mesh", "a 3D mesh through a shader"};
+    static char names[2][17][160];
+    char what[160];
+    const tide_color one = onto(under, glass_blue), other = onto(under, glass_green), both = onto(one, glass_green);
+    // Twice: the second frame draws with the pipelines the first made
+    for (int frame = 0; frame < 2; frame++) {
+        depth_scene();
+        for (int kind = 0; kind < 2; kind++) {
+            const float x0 = depth_column(kind);
+            const check checks[17] = {
+                {x0 + 18, 24, one, "that only reads depth, see-through, over what's behind it"},
+                {x0 + 34, 20, both, "and another behind it, drawn after it: they blend, where the first would have hidden it"},
+                {x0 + 50, 24, other, "which is alone past the first one's end"},
+                {x0 + 58, 24, red, "and hidden, as the first is, behind an opaque mesh in front of them"},
+                {x0 + 34, 29, white, "and neither hid a mesh behind them that was drawn after"},
+                {x0 + 34, 60, one, "as a frame starts: one behind another, drawn after it, is hidden"},
+                {x0 + 34, 69, one, "and so is the next, drawn where depth is read and written again"},
+                {x0 + 50, 64, other, "and it shows past the first one's end"},
+                {x0 + 58, 64, red, "and not through what's in front of it"},
+                {x0 + 27, 104, cyan, "that neither reads nor writes depth, far away, over a mesh that's near"},
+                {x0 + 20, 104, red, "which is whole beside it"},
+                {x0 + 40, 104, cyan, "and over what's behind it too"},
+                {x0 + 56, 104, magenta, "and one that's near"},
+                {x0 + 60, 104, yellow, "which hid nothing: a mesh behind it, drawn after it, is over it"},
+                {x0 + 20, 144, purple, "after a block inside a Set: what was set is back, and it draws over what's near"},
+                {x0 + 36, 144, white, "and the block's own, in front of what's far"},
+                {x0 + 52, 144, red, "and once that's put back too, a mesh behind another is hidden again"},
+            };
+            check named[17];
+            for (int i = 0; i < 17; i++) {
+                snprintf(names[kind][i], sizeof names[0][0], "%s %s", kinds[kind], checks[i].what);
+                named[i] = (check){checks[i].x, checks[i].y, checks[i].color, names[kind][i]};
+            }
+            check_pixels(named, 17);
+        }
+    }
+    // The steps: what's far and what's near at once, the glass, and so on. A depth is no more draw calls than the
+    // runs it tells apart, and its block's end is none
+    const uint32_t calls = tide_platform_draw_calls();
+    snprintf(what, sizeof what, "the depth scene's draw calls are its runs', and the clear (%u)", (unsigned)calls);
+    expect(calls > 2u && calls < 80u, what);
+
+    // What a frame starts with is what meshes always did: said outright, or around a block, it's the same pixels
+    enum { W = 96, H = 64 };
+    static uint32_t unsaid[W * H], set[W * H], around[W * H];
+    depth_default_scene(0);
+    corner_pixels(unsaid, W, H);
+    depth_default_scene(1);
+    corner_pixels(set, W, H);
+    depth_default_scene(2);
+    corner_pixels(around, W, H);
+    int drawn = 0, different = 0;
+    for (int i = 0; i < W * H; i++) {
+        drawn += !near(unsaid[i], rgba(background), 0);
+        different += unsaid[i] != set[i] || unsaid[i] != around[i];
+    }
+    snprintf(what, sizeof what, "Depth.ReadWrite, set or around a block, is what a frame starts with, pixel for pixel "
+                                "(%d differ, of %d drawn)", different, drawn);
+    expect(different == 0 && drawn > 2000, what);
 }
 
 // ---------------------------------------------------------------------------
@@ -2380,7 +2573,8 @@ static int frame(void *user, const float seconds)
         themed_gui();
         tiles_leave_no_gaps();
         text_checks();
-    settings();
+        settings();
+        depth_settings();
         return run_checks();
     }
 #endif
@@ -2393,6 +2587,7 @@ static int frame(void *user, const float seconds)
     tiles_leave_no_gaps();
     text_checks();
     settings();
+    depth_settings();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

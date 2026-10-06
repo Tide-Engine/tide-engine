@@ -269,7 +269,8 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
     for (int i = index->first[h & (uint32_t)(index->buckets - 1)]; i >= 0; i = index->next[i]) {
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
-            if (d == prog->random && builds(prog)) d->named = true; // Generated C only has it in games that name it
+            // Generated C only has these in games that name them
+            if ((d == prog->random || d == prog->depth) && builds(prog)) d->named = true;
             return d;
         }
     }
@@ -3734,13 +3735,26 @@ static type check_gui_call(checker *c, expr *e, const type result)
     sb name = {0};
     sb_printf(&name, STR_FMT "." STR_FMT, STR_ARG(e->object->name), STR_ARG(e->name));
     for (int i = 0; i < e->args.count; i++) {
-        if (!(e->arg_mut & (1u << i))) continue;
+        expr *arg = e->args.items[i];
+        const bool makes = (e->arg_out & (1u << i)) != 0;
+        if (!(e->arg_mut & (1u << i)) && !arg->is_out) continue;
         // Its messages name the widget and what it changes.
         decl *widget = NEW(decl);
         widget->name = (str){name.data, (int)name.len};
         param *value = NEW(param);
         value->name = str_from("value");
-        check_writable(c, e->args.items[i], widget, value);
+        if (makes || arg->is_out) {
+            // TextField(label, value, out entered): the argument for an `out` parameter is the variable the
+            // widget makes, and says so, as a function's does; and no other argument says it
+            value->name = builtin_param_name(e, i);
+            value->type = e->arg_want.items[i];
+            if (e->arg_mut & (1u << i)) value->mode = PARAM_MUT;
+            value->is_out = makes;
+            if (arg->is_out) finish_out_arg(c, arg, makes ? value->type : T_ERR);
+            check_out_param(c, widget, value, arg);
+            continue;
+        }
+        check_writable(c, arg, widget, value);
     }
     if (e->gui & GUI_CONTAINER) {
         if (!e->block) {
@@ -4797,11 +4811,13 @@ static type check_method(checker *c, expr *e)
         const bool draws = builtin_draw_owner(owner) || str_eq_c(owner, "Draw");
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
-        // and [a, b, c] is the list the function takes there.
+        // and [a, b, c] is the list the function takes there. An `out` argument is the variable
+        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one.
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             type list;
-            if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
+            if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
+            else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
             else if (arg->kind != E_DEFAULT) check_expr(c, arg);
         }
         const bool gui = str_eq_c(owner, "GUI") || str_eq_c(owner, "GUILayout");
@@ -5542,6 +5558,10 @@ static type check_enum_member(expr *e, decl *d)
     if (d->builtin && str_eq_c(d->name, "Font")) {
         diag_note("the engine's font has two weights, 'Font.Regular' and 'Font.Bold'");
     }
+    if (d->builtin && str_eq_c(d->name, "Depth")) {
+        diag_note("a 3D mesh reads depth and writes it, 'Depth.ReadWrite', as each frame starts; only reads it, "
+                  "'Depth.Read', hidden behind what's nearer and hiding nothing; or does neither, 'Depth.None'");
+    }
     return T_ERR;
 }
 
@@ -5704,7 +5724,8 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
-            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and meshes "
+                      "are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -11794,6 +11815,19 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
+    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth,
+    // with tide/draw.h's tide_depth's values. Generated C has it only in a
+    // game whose code names it (decl.named), so the others' is as it was.
+    static const char *const depths[] = {"ReadWrite", "Read", "None"};
+    decl *depth = NEW(decl);
+    depth->kind = DECL_ENUM;
+    depth->name = str_from("Depth");
+    depth->builtin = true;
+    for (int i = 0; i < (int)(sizeof depths / sizeof depths[0]); i++) {
+        const enum_member m = {str_from(depths[i]), {0, 0, 0}, NULL, i};
+        vec_push(depth->members, m);
+    }
+    prog->depth = depth;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -11858,6 +11892,7 @@ static void add_builtins(program *prog)
     vec_push(decls, control);
     vec_push(decls, filter);
     vec_push(decls, blend);
+    vec_push(decls, depth);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -14296,7 +14331,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->blend, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->font);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);

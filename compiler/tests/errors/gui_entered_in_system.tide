@@ -1,0 +1,4 @@
+// expect: The GUI can only be used in views, and in functions they call
+scene Main { }
+singleton Rules { string code; bool entered; }
+system Join(mut Rules rules) { GUILayout.TextField("Code", rules.code, out rules.entered); }

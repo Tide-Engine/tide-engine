@@ -783,6 +783,45 @@ TIDE_TEST(lsp_draw_settings)
     TIDE_CHECK(has(actions_at(3), "Change to 'SetClip'") && has(actions_at(4), "Change to 'SetClip'"));
 }
 
+// What 3D meshes do with depth is a setting of the same family: both forms, its
+// modes, what each is on hover, and each form's mistake a rename away.
+TIDE_TEST(lsp_draw_depth)
+{
+    start();
+    open_document("scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Depth(Depth.Read)\n    {\n"
+                  "        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    Draw.SetDepth(Depth.None);\n    Draw.SetDepth();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(shared, "Depth") && offers(shared, "SetDepth") && offers(shared, "Blend"));
+    TIDE_CHECK(has(shared, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(shared, "\"SetDepth(${1:mode})\""));
+    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
+    TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
+    const char *around = request("textDocument/hover");
+    TIDE_CHECK(has(around, "Draw.Depth(Depth mode, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "hidden behind what's nearer, and hides nothing") && has(around, "The Draw2D calls have no depth"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetDe$pth(Depth.Read);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw.SetDepth(Depth mode)") && has(set, "Draw.SetDepth()") && has(set, "For the draws after it"));
+
+    // Each form written as the other is a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw.Depth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Depth sets it around a block") && has(last_sent(), "Draw.SetDepth(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetDepth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetDepth sets it for the draws that follow, and takes no block"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // It's Draw's, not a destination's: asked of Draw3D, the note says where it is
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'SetDepth'") && has(last_sent(), "'Draw.SetDepth(...);'"));
+    // A game can't rename one of its own to the enum's name
+    open_document("scene Main { }\ncomponent Lay$er { int z; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
+}
+
 // Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
 TIDE_TEST(lsp_format_stacked_calls)
 {
@@ -6085,6 +6124,141 @@ TIDE_TEST(lsp_map_try_get)
     TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value', so the argument says 'out'"));
     open_document(OUT_RUN "    tally.scores.TryGet(3, out tally.total);\n}\n");
     TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value' float, not int"));
+}
+
+// The GUI's fields that say whether the player entered what they typed: an
+// engine function with an `out` parameter, in a version beside the one without.
+#define ENTERED_LOBBY "local singleton Lobby { string code; int count; float ratio; bool entered; int joins; }\nscene Main { }\n"
+#define ENTERED_VIEW ENTERED_LOBBY "view Join(mut Lobby lobby)\n{\n"
+
+TIDE_TEST(lsp_gui_entered)
+{
+    start();
+    // Every way to write the argument, laid out and at a rect, beside the version that doesn't say
+    static const char game[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n"
+                                            "    if (GUILayout.Button(\"Join\") || entered) lobby.joins += 1;\n"
+                                            "    GUI.IntField(Rect(0, 0, 200, 30), \"Count\", lobby.count, out lobby.entered);\n"
+                                            "    GUILayout.FloatField(\"Ratio\", lobby.ratio, out _);\n"
+                                            "    GUILayout.FloatField(label: \"Ratio\", entered: out bool typed, value: lobby.ratio);\n"
+                                            "    if (typed) lobby.joins += 1;\n"
+                                            "    GUILayout.TextField(\"Code\", lobby.code);\n}\n";
+    open_document(game);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
+
+    // The field's hover has both versions, and what each says
+    open_document(game);
+    const char *field = hover_at(4, 16);
+    TIDE_CHECK(has(field, "GUILayout.TextField(string label, mut string value) -> bool\\n"
+                          "GUILayout.TextField(string label, mut string value, out bool entered) -> bool"));
+    TIDE_CHECK(has(field, "It changes `value` as the player types, and returns whether it did."));
+    TIDE_CHECK(has(field, "true in the frame Enter ends the typing in this field"));
+    const char *number = hover_at(6, 10);
+    TIDE_CHECK(has(number, "GUI.IntField(Rect rect, string label, mut int value) -> bool\\n"
+                           "GUI.IntField(Rect rect, string label, mut int value, out bool entered) -> bool"));
+    TIDE_CHECK(has(number, "or a gamepad's south button, ends the typing in this field"));
+    // The word, the local it declares and its uses are an `out` argument's, as a function's
+    const char *word = hover_at(4, 46);
+    TIDE_CHECK(has(word, "out bool entered") && has(word, "Declares `entered` here, a local the call makes: read-only afterwards"));
+    const char *local = hover_at(4, 54);
+    TIDE_CHECK(has(local, "bool entered") && has(local, "Local variable, read-only. An `out` argument declares it"));
+    TIDE_CHECK(has(hover_at(5, 40), "An `out` argument declares it"));
+    TIDE_CHECK(has(hover_at(6, 62), "The call makes the variable after it: it's written, as by an assignment"));
+    TIDE_CHECK(has(hover_at(7, 48), "Leaves out what the call makes there"));
+    // `out var`'s type is a hint after its name; a type that's written has none
+    const char *hints = all_hints();
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":59},\"label\":\": bool\",\"kind\":1,\"paddingLeft\":true}"));
+    TIDE_CHECK(count(hints, "\"label\":\": bool\"") == 1);
+    // The field of local state is written by the call, as by an assignment
+    const char *marks = request_at("file:///test.tide", "textDocument/documentHighlight", 6, 74, "");
+    TIDE_CHECK(has(marks, "{\"range\":{\"start\":{\"line\":6,\"character\":70},\"end\":{\"line\":6,\"character\":77}},\"kind\":3}"));
+    TIDE_CHECK(count(marks, "\"kind\":2") == 0);
+    // Renaming the local renames its uses
+    rename_at(5, 40, "joined");
+    const char *renamed = apply_reply(game, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "lobby.code, out var joined);\n    if (GUILayout.Button(\"Join\") || joined) lobby.joins += 1;\n"));
+
+    // Signature help: both versions, with the one the arguments so far can be as the active one
+    open_document(ENTERED_VIEW "    GUILayout.TextField(\"Code\", $\n}\n");
+    const char *second = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(second, "\"label\":\"GUILayout.TextField(string label, mut string value) -> bool\""));
+    TIDE_CHECK(has(second, "\"label\":\"GUILayout.TextField(string label, mut string value, out bool entered) -> bool\""));
+    TIDE_CHECK(has(second, "\"activeSignature\":0,\"activeParameter\":1"));
+    open_document(ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, $\n}\n");
+    const char *third = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(third, "\"activeSignature\":1,\"activeParameter\":2"));
+    TIDE_CHECK(has(third, "\"parameters\":[{\"label\":[20,32]},{\"label\":[34,50]},{\"label\":[52,68]}]")); // `out bool entered` is 52 to 68
+    open_document(ENTERED_VIEW "    GUI.FloatField(Rect(0, 0, 200, 30), \"Ratio\", lobby.ratio, out var $\n}\n");
+    const char *rect = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(rect, "\"label\":\"GUI.FloatField(Rect rect, string label, mut float value, out bool entered) -> bool\""));
+    TIDE_CHECK(has(rect, "\"activeSignature\":1,\"activeParameter\":3"));
+
+    // Completion: the field once, with how many versions it has and each of them under its doc
+    const char *members = complete(ENTERED_VIEW "    GUILayout.$\n}\n");
+    TIDE_CHECK(count(members, "\"label\":\"TextField\"") == 1);
+    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.TextField(string label, mut string value) -> bool (+1 version)\""));
+    TIDE_CHECK(has(members, "returns whether it did.\\n\\n```tide\\nGUILayout.TextField(string label, mut string value, out bool entered) -> bool"
+                            "\\n```\\nWith `out entered`, it also says whether the player entered the text"));
+    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.IntField(string label, mut int value) -> bool (+1 version)\""));
+    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.FloatField(string label, mut float value) -> bool (+1 version)\""));
+    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.Float2Field(string label, mut float2 value) -> bool\"")); // One version
+    TIDE_CHECK(has(members, "\"insertText\":\"TextField(${1:label}, ${2:value})\""));
+    // ...and where its `out` argument goes, what one can be, as for a function of the game's
+    const char *argument = complete(ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, $);\n}\n");
+    TIDE_CHECK(offers(argument, "out var entered") && offers(argument, "out") && offers(argument, "out _"));
+    TIDE_CHECK(has(argument, "\"insertText\":\"out var ${1:entered}\",\"insertTextFormat\":2"));
+    TIDE_CHECK(has(argument, "A read-only local of the parameter's type, `bool`, which the call makes"));
+    TIDE_CHECK(!offers(argument, "lobby") && !offers(argument, "true"));
+    const char *after = complete(ENTERED_VIEW "    mut var done = false;\n    mut var tries = 0;\n"
+                                              "    GUI.IntField(Rect(0, 0, 200, 30), \"Count\", lobby.count, out $);\n}\n");
+    TIDE_CHECK(offers(after, "var") && offers(after, "bool") && offers(after, "mut") && offers(after, "_"));
+    TIDE_CHECK(offers(after, "done") && offers(after, "lobby") && !offers(after, "tries"));
+    TIDE_CHECK(offers(complete(ENTERED_VIEW "    GUILayout.FloatField(\"Ratio\", lobby.ratio, entered: $);\n}\n"), "out var entered"));
+    // Its other arguments are values, and so are those of a field with no such version
+    const char *value = complete(ENTERED_VIEW "    GUILayout.TextField(\"Code\", $);\n}\n");
+    TIDE_CHECK(!offers(value, "out var entered") && !offers(value, "out _") && offers(value, "lobby"));
+    TIDE_CHECK(!offers(complete(ENTERED_VIEW "    GUILayout.Slider(\"Ratio\", lobby.ratio, $);\n}\n"), "out var entered"));
+
+    // What's wrong with a call, with its note, and the change that puts it right
+    static const char missing[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, lobby.entered);\n}\n";
+    open_document(missing);
+    TIDE_CHECK(has(last_sent(), "'GUILayout.TextField' makes its 'entered', so the argument says 'out'"));
+    TIDE_CHECK(has(last_sent(), "'out var entered' declares one there, and 'out _' leaves it out"));
+    actions_at(4);
+    const char *added = apply_fix(missing, "Add 'out'");
+    TIDE_REQUIRE(added != NULL);
+    TIDE_CHECK(has(added, "    GUILayout.TextField(\"Code\", lobby.code, out lobby.entered);\n"));
+    static const char extra[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", out lobby.code);\n}\n";
+    open_document(extra);
+    TIDE_CHECK(has(last_sent(), "'GUILayout.TextField' changes its 'value', a 'mut' parameter: it takes the variable as it is, without 'out'"));
+    actions_at(4);
+    const char *removed = apply_fix(extra, "Remove 'out'");
+    TIDE_REQUIRE(removed != NULL);
+    TIDE_CHECK(has(removed, "    GUILayout.TextField(\"Code\", lobby.code);\n"));
+    static const char typed[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, out int entered);\n    lobby.count = entered;\n}\n";
+    open_document(typed);
+    TIDE_CHECK(has(last_sent(), "'GUILayout.TextField' makes its 'entered' bool, not int"));
+    actions_at(4);
+    const char *takes = apply_fix(typed, "Change to 'var'");
+    TIDE_REQUIRE(takes != NULL);
+    TIDE_CHECK(has(takes, "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n"));
+    // One nothing reads: the field that doesn't say, or `out _`
+    static const char unread[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n}\n";
+    open_document(unread);
+    TIDE_CHECK(has(last_sent(), "local 'entered' is never used") && has(last_sent(), "write 'out _' to leave it out"));
+    actions_at(4);
+    const char *left = apply_fix(unread, "Leave 'entered' out: 'out _'");
+    TIDE_REQUIRE(left != NULL);
+    TIDE_CHECK(has(left, "    GUILayout.TextField(\"Code\", lobby.code, out _);\n"));
+    // A view makes its own variables and local state, never the match's
+    open_document("singleton Rules { bool entered; }\n" ENTERED_LOBBY
+                  "view Join(mut Lobby lobby, Rules rules) { GUILayout.TextField(\"Code\", lobby.code, out rules.entered); }\n");
+    TIDE_CHECK(has(last_sent(), "'rules' is read-only") && has(last_sent(), "'GUILayout.TextField' makes its 'entered'"));
+    TIDE_CHECK(has(last_sent(), "a view can't change the match"));
+    // `mut` is the parameter's word, and no argument's
+    open_document(ENTERED_VIEW "    GUILayout.TextField(\"Code\", mut lobby.code);\n}\n");
+    TIDE_CHECK(has(last_sent(), "an argument takes no 'mut': a 'mut' parameter changes the variable it's given as it is"));
+    TIDE_CHECK(has(last_sent(), "remove 'mut'; only 'out' is written at a call"));
 }
 
 // Inlay hints and semantic tokens around `out`.

@@ -863,6 +863,13 @@ static bool program_corrects(const program *prog)
     return false;
 }
 
+// Whether `d` is an enum generated C has: every one but the built-in Depth in
+// a game no code of which names it, whose C is then what it was without it.
+static bool enum_generated(const program *prog, const decl *d)
+{
+    return d->kind == DECL_ENUM && (d != prog->depth || d->named);
+}
+
 // Local fields and correction errors stay with what was spawned, rather than
 // its handle alone: a rollback can give the same handle to another entity.
 // So does what a local handler heard of an event sent to an entity. Other
@@ -5532,7 +5539,7 @@ static void gen_header(gen *g)
     bool enums = false;
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
-        if (d->kind != DECL_ENUM) continue;
+        if (!enum_generated(prog, d)) continue;
         if (!enums) sb_put(o, "// Enums: an int (or a byte or a ushort), with a constant for each member\n\n");
         enums = true;
         const char *name = type_cname(d);
@@ -6976,7 +6983,7 @@ static void gen_prelude(gen *g)
     if (!g->prog->uses_text) return;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if (d->kind != DECL_ENUM) continue;
+        if (!enum_generated(g->prog, d)) continue;
         sb_printf(o, "TIDE_HELPER tide_str tide_text_%s(const tide_str so_far, const int32_t v)\n{\n    switch (v) {\n",
                   type_cname(d));
         for (int k = 0; k < d->members.count; k++) {
@@ -13606,7 +13613,7 @@ static layout_decls layout_enums(const program *prog)
 {
     layout_decls out = {0};
     for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_ENUM) vec_push(out, prog->decls.items[i]);
+        if (enum_generated(prog, prog->decls.items[i])) vec_push(out, prog->decls.items[i]);
     }
     return out;
 }

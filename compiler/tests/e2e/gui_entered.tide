@@ -1,0 +1,106 @@
+// The fields that say whether the player entered what they typed: TextField,
+// IntField and FloatField with `out entered`, laid out and at a rect, each way
+// an `out` argument is written, beside the ones that don't say.
+
+local singleton Lobby
+{
+    string code;
+    string joined;       // The code as it was joined with
+    int joins;
+    int entries;         // Frames the code's field said it was entered
+    int count = 4;
+    int countChanges;
+    bool countEntered;   // Local state the call makes
+    int counts;
+    float ratio = 0.5;
+    int ratios;
+    string note;
+    int noteChanges;
+    string name;
+    int players = 2;
+    float volume = 1;
+    int plain;           // Times a field that doesn't say changed
+    string room;
+    int rooms;
+    int seats = 2;
+    int seated;
+    float scale = 1;
+    int scaled;
+    string tag;
+    int tagged;
+    int order;
+    int after;           // What a statement read of an `out` variable after its call...
+    float turn;
+    int before = -1;     // ...and before it
+}
+
+local scene Main { }
+
+// A widget of our own, made of the field: its `out` parameter is the field's to make.
+bool CodeField(string label, mut string code, out bool entered)
+{
+    return GUILayout.TextField(label, code, out entered);
+}
+
+int Pack(bool first, bool second)
+{
+    return (first ? 1 : 0) + (second ? 2 : 0);
+}
+
+// Laid out: a room's code, joined with Enter or with the button.
+view Join(mut Lobby lobby)
+{
+    // `out var`: a local of the view's, there from the call on
+    GUILayout.TextField("Code", lobby.code, out var entered);
+    if ((GUILayout.Button("Join") || entered) && lobby.code != "")
+    {
+        lobby.joined = lobby.code;
+        lobby.joins += 1;
+    }
+    if (entered) lobby.entries += 1;
+
+    // A variable the code has: a field of local state
+    if (GUILayout.IntField("Count", lobby.count, out lobby.countEntered)) lobby.countChanges += 1;
+    if (lobby.countEntered) lobby.counts += 1;
+
+    // `out bool`: a local with its type written
+    GUILayout.FloatField("Ratio", lobby.ratio, out bool ratioEntered);
+    if (ratioEntered) lobby.ratios += 1;
+
+    // `out _`: not wanted
+    if (GUILayout.TextField("Note", lobby.note, out _)) lobby.noteChanges += 1;
+
+    // The ones that don't say, as ever
+    if (GUILayout.TextField("Name", lobby.name)) lobby.plain += 1;
+    if (GUILayout.IntField("Players", lobby.players)) lobby.plain += 1;
+    if (GUILayout.FloatField("Volume", lobby.volume)) lobby.plain += 1;
+}
+
+// At a rect: into a local the view declared, one it changes later, and by name.
+view Corner(mut Lobby lobby)
+{
+    mut var entered = true;
+    GUI.TextField(Rect(1000, 100, 400, 30), "Room", lobby.room, out entered);
+    if (entered) lobby.rooms += 1;
+    GUI.IntField(Rect(1000, 140, 400, 30), "Seats", lobby.seats, out mut var seated);
+    seated = seated && lobby.seats > 0;
+    if (seated) lobby.seated += 1;
+    if (GUI.FloatField(rect: Rect(1000, 180, 400, 30), label: "Scale", entered: out var scaled, value: lobby.scale) && scaled)
+    {
+        lobby.scaled += 1;
+    }
+    GUI.TextField(Rect(1000, 220, 400, 30), "Plain room", lobby.room);
+}
+
+// Through a function that draws, and in a statement that reads the variable
+// beside the call: after it, what the call made; before it, what it held.
+view Order(mut Lobby lobby)
+{
+    if (CodeField("Tag", lobby.tag, out var tagged)) lobby.tagged += 10;
+    if (tagged) lobby.tagged += 1;
+
+    var after = Pack(GUILayout.IntField("After", lobby.order, out var made), made);
+    if (after > lobby.after) lobby.after = after;
+    mut var held = true;
+    lobby.before = Pack(held, GUILayout.FloatField("Before", lobby.turn, out held));
+}
