@@ -326,7 +326,7 @@ view Mine(Bowler bowler, Hand hand, Lane lane, mut Fx fx, with ownership)
 [Stage(Layers.Lane)]
 view Decals(Fx fx, Models models)
 {
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
     }
