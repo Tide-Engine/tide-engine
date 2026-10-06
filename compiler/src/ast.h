@@ -513,6 +513,8 @@ typedef struct decl {
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
+    bool io_network;      // ...and what it first reaches is the network (Web.Fetch), for the message
+    bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
@@ -773,6 +775,7 @@ struct expr {
     bool io_operation;       // File/Directory operation: gets this machine's provider
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
+    bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
     int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
@@ -1042,6 +1045,8 @@ typedef struct program {
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
+    bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
+    type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time

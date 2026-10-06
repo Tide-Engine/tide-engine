@@ -1,6 +1,6 @@
 # Files and directories
 
-`File` and `Directory` read and change this machine's files. Use them from views, local handlers and local tasks, or functions those call. They cannot run in the match, in input sampling, on the GPU or inside a parallel loop. A service or file's contents reach the match through [input](./input.md).
+`File` and `Directory` read and change this machine's files, and `Web.Fetch` gets a URL's bytes. Use them from views, local handlers and local tasks, or functions those call. They cannot run in the match, in input sampling, on the GPU or inside a parallel loop. A service or file's contents reach the match through [input](./input.md) or a [command](./commands.md).
 
 ## Where to save
 
@@ -93,3 +93,32 @@ async void Save(string contents, mut SaveStatus status)
 ```
 
 Wait for a flush before showing that a save is finished. Do this during play: closing a browser page cannot reliably finish pending work. A failed commit retains its in-memory changes, so another flush can retry them. Browser storage belongs to the site's origin and browser profile, and may be cleared by the user or evicted by the browser. Unavailable persistent storage is reported as an error; the temporary directory remains usable.
+
+## Fetching a URL
+
+`await Web.Fetch(url)` gets what's at an `http://` or `https://` URL, as a `List<byte>`. It's local and asynchronous, like `Storage.Flush`: the task waits while this machine fetches, frames go on, and the bytes arrive in a frame to come. It fails with `IOError`:
+
+| Result | When |
+| --- | --- |
+| `IOError.NotFound` | The server answered 404. |
+| `IOError.InvalidPath` | The URL doesn't start with `http://` or `https://`. |
+| `IOError.Failed` | Anything else: no connection, a certificate the system doesn't trust, another status, a body over 64 MiB, or more than 5 redirects. |
+
+Redirects are followed. On the web it's the page's `fetch`, so the server's CORS rules apply, and a refusal is `Failed`. Natively it's an HTTP client of the engine's own over the system's TLS. Nothing times out: a server that never answers is a fetch that never ends, as a browser's is.
+
+What a machine fetches is its own, like a file it reads. A picture every player should see goes into the match through a command, and each machine decodes it there (see [Assets](./assets.md)):
+
+```csharp
+local singleton Download { bool busy; string message; }
+
+async void Load(string url, mut Download download)
+{
+    download.busy = true;
+    if (await Web.Fetch(url) is IOError error)
+    {
+        download.message = "Couldn't fetch: " + error;
+    }
+    else download.message = "Fetched";
+    download.busy = false;
+}
+```

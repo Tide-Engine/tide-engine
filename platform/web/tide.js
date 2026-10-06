@@ -1833,6 +1833,11 @@
     const fileTrees = new Map();
     const flushTickets = new Map();
     let filesDB = null, filesError = 0, files = null, nextFlush = 0;
+    // Web.Fetch: the page's fetch, a ticket each (tide_web.h). The body is
+    // capped at the engine's limit (TIDE_FETCH_LIMIT), read no further.
+    const fetchTickets = new Map();
+    const fetchLimit = 64 * 1024 * 1024;
+    let nextFetch = 0;
     function storageError(error) {
         return error && error.name === 'QuotaExceededError' ? ioError.space
             : error && error.name === 'SecurityError' ? ioError.denied : ioError.unavailable;
@@ -2104,6 +2109,68 @@
             return true;
         },
         io_flush_forget(ticket) { flushTickets.delete(ticket); },
+        io_fetch_begin(ptr) {
+            do { nextFetch = (nextFetch + 1) >>> 0; } while (!nextFetch || nextFetch === 0xFFFFFFFF || fetchTickets.has(nextFetch));
+            const ticket = nextFetch, control = new AbortController();
+            const entry = { done: false, error: 0, bytes: null, control };
+            fetchTickets.set(ticket, entry);
+            const url = string(ptr);
+            (async () => {
+                try {
+                    const response = await fetch(url, { signal: control.signal });
+                    if (response.status === 404) { entry.error = ioError.notFound; return; }
+                    if (!response.ok) { entry.error = ioError.failed; return; }
+                    if (Number(response.headers.get('content-length')) > fetchLimit) {
+                        control.abort();
+                        entry.error = ioError.failed;
+                        return;
+                    }
+                    const parts = [];
+                    let total = 0;
+                    if (response.body) {
+                        const reader = response.body.getReader();
+                        for (;;) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            total += value.length;
+                            if (total > fetchLimit) {
+                                control.abort();
+                                entry.error = ioError.failed;
+                                return;
+                            }
+                            parts.push(value);
+                        }
+                    }
+                    const bytes = new Uint8Array(total);
+                    let at = 0;
+                    for (const part of parts) { bytes.set(part, at); at += part.length; }
+                    entry.bytes = bytes;
+                } catch (error) {
+                    entry.error = ioError.failed; // No connection, CORS, or aborted
+                } finally {
+                    entry.done = true;
+                }
+            })();
+            return ticket;
+        },
+        io_fetch_poll(ticket, size) {
+            const entry = fetchTickets.get(ticket);
+            if (!entry) return ioError.failed;
+            if (!entry.done) return -1;
+            view().setUint32(size, entry.bytes ? entry.bytes.length : 0, true);
+            return entry.error;
+        },
+        io_fetch_read(ticket, out, capacity) {
+            const entry = fetchTickets.get(ticket);
+            if (!entry || !entry.done || !entry.bytes || capacity < entry.bytes.length) return ioError.failed;
+            u8().set(entry.bytes, out);
+            return 0;
+        },
+        io_fetch_forget(ticket) {
+            const entry = fetchTickets.get(ticket);
+            if (entry && !entry.done) entry.control.abort();
+            fetchTickets.delete(ticket);
+        },
     });
 
     const imports = {

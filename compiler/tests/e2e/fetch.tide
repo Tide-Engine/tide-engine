@@ -1,0 +1,63 @@
+settings { appId = "tests.tide.fetch"; }
+
+// await Web.Fetch(url), against a server on this machine (fetch.mjs, with
+// platform/tests/fetch_routes.mjs: a path for each case): what each gives,
+// read by the host (fetch_check.h), natively and in a page.
+
+local scene Main { }
+
+local singleton Fetches
+{
+    string origin; // http://127.0.0.1:<port>, which the host sets before the first frame
+    bool started;
+    bool done;
+    List<byte> hello; // /hello, as it is
+    bool missing;     // /missing is NotFound
+    bool failed;      // /error (500) is Failed
+    bool invalid;     // A URL that isn't http:// or https:// is InvalidPath
+    bool refused;     // A port nobody listens on is Failed
+    int chunked;      // /chunked's bytes, which come in chunks
+    long chunkedSum;
+    int moved;        // /moved's bytes: through three redirects to /hello
+    bool loop;        // /loop redirects to itself: Failed
+    bool big;         // /big says it's more than the limit: Failed
+    bool endless;     // /endless goes on past the limit: Failed
+    int empty;        // /empty (204): no bytes, and no error
+    int nothing;      // /nothing: a body of 0 bytes
+    int frames;       // Frames from the first fetch to the last
+}
+
+async void Run(mut Fetches f)
+{
+    f.hello = await Web.Fetch(f.origin + "/hello") ?? [];
+    f.missing = await Web.Fetch(f.origin + "/missing") is IOError.NotFound;
+    f.failed = await Web.Fetch(f.origin + "/error") is IOError.Failed;
+    f.invalid = await Web.Fetch("ftp://example.com/file") is IOError.InvalidPath;
+    f.refused = await Web.Fetch("http://127.0.0.1:1/nothing") is IOError.Failed;
+    var chunked = await Web.Fetch(f.origin + "/chunked") ?? [];
+    f.chunked = chunked.count;
+    foreach (var b in chunked) f.chunkedSum += b;
+    var moved = await Web.Fetch(f.origin + "/moved") ?? [];
+    f.moved = moved.count;
+    f.loop = await Web.Fetch(f.origin + "/loop") is IOError.Failed;
+    f.big = await Web.Fetch(f.origin + "/big") is IOError.Failed;
+    f.endless = await Web.Fetch(f.origin + "/endless") is IOError.Failed;
+    var empty = await Web.Fetch(f.origin + "/empty") ?? [1, 1];
+    f.empty = empty.count;
+    var nothing = await Web.Fetch(f.origin + "/nothing") ?? [1, 1];
+    f.nothing = nothing.count;
+    f.done = true;
+}
+
+// The host says where the server is, so the fetching starts once it has
+view Start(mut Fetches f)
+{
+    if (f.started || f.origin == "") return;
+    f.started = true;
+    Run(f);
+}
+
+view Count(mut Fetches f)
+{
+    if (f.started && !f.done) f.frames += 1;
+}

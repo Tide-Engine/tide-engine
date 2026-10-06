@@ -1,0 +1,106 @@
+// stops: tide: out of memory
+// ticks: 1
+
+// A PNG that decodes to more than a world's heap holds: 8192 by 8192 white
+// pixels, a bit each in the file (8 MB, stored as they are) and 16 bytes each
+// as cells, a gigabyte. Decoding it ends the program as running out of memory
+// does, and corrupts nothing: rows go into the grid as they're decoded, so
+// nothing the picture's size is made beside it.
+
+singleton Canvas
+{
+    Grid2<Color> pixels;
+    List<long> crcTable;
+    bool done;
+}
+
+scene Main { }
+
+long Crc(List<long> table, long crc, int value)
+{
+    return table[int((crc ^ value) & 255)] ^ (crc >> 8);
+}
+
+void Put32(mut List<byte> to, long v)
+{
+    to.Add(byte((v >> 24) & 255));
+    to.Add(byte((v >> 16) & 255));
+    to.Add(byte((v >> 8) & 255));
+    to.Add(byte(v & 255));
+}
+
+// A chunk: its data's size, its type and data, and their check
+void Chunk(mut List<byte> png, List<byte> type, List<byte> data, List<long> table)
+{
+    var ones = (long(1) << 32) - 1;
+    Put32(png, data.count);
+    mut var crc = ones;
+    foreach (var b in type)
+    {
+        png.Add(b);
+        crc = Crc(table, crc, b);
+    }
+    foreach (var b in data)
+    {
+        png.Add(b);
+        crc = Crc(table, crc, b);
+    }
+    Put32(png, crc ^ ones);
+}
+
+event(Spawned) Setup(with Main, mut Canvas canvas)
+{
+    if (canvas.done) return;
+    canvas.done = true;
+    for (var i = 0; i < 256; i++)
+    {
+        mut long c = i;
+        for (var k = 0; k < 8; k++) c = (c & 1) != 0 ? 3988292384 ^ (c >> 1) : c >> 1;
+        canvas.crcTable.Add(c);
+    }
+    var side = 8192;
+    var rowBytes = side / 8;
+    // zlib: deflate with a 32 KiB window, then stored blocks of whole rows (63
+    // of 1025 bytes is 64575, within a block's 65535), then the checksum
+    mut List<byte> data = [120, 1];
+    var rowsPerBlock = 63;
+    mut var a = 1;
+    mut var b = 0;
+    for (var y = 0; y < side; y += rowsPerBlock)
+    {
+        var rows = Math.Min(rowsPerBlock, side - y);
+        var n = rows * (rowBytes + 1);
+        data.Add(byte(y + rows >= side ? 1 : 0));
+        data.Add(byte(n & 255));
+        data.Add(byte((n >> 8) & 255));
+        data.Add(byte(~n & 255));
+        data.Add(byte((~n >> 8) & 255));
+        for (var r = 0; r < rows; r++)
+        {
+            data.Add(0); // No filter
+            b = (b + a) % 65521;
+            for (var x = 0; x < rowBytes; x++)
+            {
+                data.Add(255); // Eight white pixels
+                a = (a + 255) % 65521;
+                b = (b + a) % 65521;
+            }
+        }
+    }
+    Put32(data, (long(b) << 16) | a);
+    mut List<byte> png = [137, 80, 78, 71, 13, 10, 26, 10];
+    mut List<byte> header = [];
+    Put32(header, side);
+    Put32(header, side);
+    header.Add(1); // A bit a pixel
+    header.Add(0); // Gray
+    header.Add(0); // Deflate
+    header.Add(0); // PNG's filters
+    header.Add(0); // Not interlaced
+    Chunk(png, [73, 72, 68, 82], header, canvas.crcTable);
+    Chunk(png, [73, 68, 65, 84], data, canvas.crcTable);
+    Chunk(png, [73, 69, 78, 68], [], canvas.crcTable);
+    Debug.Log("decoding " + png.count + " bytes");
+    if (canvas.pixels.Decode(png) is IOError error) Debug.Log("refused: " + error);
+    else Debug.Log("decoded");
+}

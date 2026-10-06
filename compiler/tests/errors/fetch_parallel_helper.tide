@@ -1,0 +1,8 @@
+// expect: 'Load' reaches the network, so it can't run in a parallel loop
+local singleton Field { Grid2<int> cells = Grid2(8, 8); }
+async void Load() { var bytes = await Web.Fetch("http://example.com/file")!; }
+view Step(mut Field field)
+{
+    parallel (var at in field.cells) { Load(); field.cells[at] = 0; }
+}
+local scene Main { }
