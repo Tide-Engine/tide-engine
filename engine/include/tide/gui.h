@@ -268,6 +268,11 @@ typedef struct tide_gui {
     uint32_t edit_len;
     char edit[256];                   // What's typed so far
     bool edit_fresh;                  // Nothing typed yet: the first character replaces the value
+    uint8_t edit_kind;                // The kind of number that's typed, or that it's text
+    // A number field whose typing another field ended this frame, before it
+    // ran, and the number it had: the field's to keep as it runs
+    uint32_t edit_left;
+    double edit_left_value;
     bool over, over_next;             // The mouse was over the GUI as the frame drew it
     // Where the last frame drew its widgets and areas, and this frame so far.
     // The game and views read the devices before a frame's GUI does, so the

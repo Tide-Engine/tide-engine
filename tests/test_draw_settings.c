@@ -1,6 +1,7 @@
 // The draw list's settings: how what's drawn after them comes out (blend,
-// tint, depth) and where it lands (transforms, clip, cameras), in their two
-// forms: set for the commands to come, or pushed around some and popped.
+// tint) and what belongs to where it's drawn (transforms, clip, cameras, what
+// 3D meshes do with depth), in their two forms: set for the commands to come,
+// or pushed around some and popped.
 
 #include <string.h>
 
@@ -65,7 +66,7 @@ TIDE_TEST(draw_settings_start_over_each_frame)
 
     tide_draw_reset(&d);
     TIDE_CHECK(d.blend == TIDE_BLEND_ALPHA && !d.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
-    TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.depth == TIDE_DEPTH_READ_WRITE);
+    TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
     // Nothing but the rect, as it was given
     TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_RECT && d.commands[0].blend == TIDE_BLEND_ALPHA);
@@ -447,21 +448,22 @@ TIDE_TEST(draw_settings_stay_with_their_list)
     }
     // What the appended list drew with isn't left set, but its cameras and its clip
     TIDE_CHECK(world.blend == TIDE_BLEND_ALPHA && !world.tinted && !world.place.moved);
-    TIDE_CHECK(world.depth == TIDE_DEPTH_READ_WRITE);
+    TIDE_CHECK(world.place.depth == TIDE_DEPTH_READ_WRITE);
     TIDE_CHECK(world.place.clip && world.cameras[world.place.camera_2d - 1u].screen == 1);
     tide_draw_free(&over);
     tide_draw_free(&world);
 }
 
-// What a 3D mesh does with depth is a setting like how it blends: its command
-// carries it, a block puts back what it found, and it never comes between
-// draws that would go at once. Nothing else has depth, whatever is set.
+// What a 3D mesh does with depth is a setting: its command carries it, as it
+// carries how it blends, a block puts back what it found, and it never comes
+// between draws that would go at once. It's its destination's own, as a
+// camera is. Nothing else has depth, whatever is set.
 TIDE_TEST(draw_depth_is_the_3d_meshes_own)
 {
     tide_draw_list d = {0};
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(d.count == 1 && last(&d)->kind == TIDE_DRAW_MESH_3D);
-    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ_WRITE && d.depth == TIDE_DEPTH_READ_WRITE); // As it always was
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ_WRITE && d.place.depth == TIDE_DEPTH_READ_WRITE); // As it always was
 
     // A block puts back what it found, a Set inside it or not
     tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
@@ -472,7 +474,7 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 3 && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_pop(&d, read);
-    TIDE_CHECK(d.depth == TIDE_DEPTH_NONE && d.saved_count == 0);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.saved_count == 0);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 4 && last(&d)->depth == TIDE_DEPTH_NONE);
     // Left early from inside two: the outer mark puts back what the outer found, the blend with it
@@ -480,11 +482,11 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_depth(&d, TIDE_DEPTH_READ_WRITE);
     tide_draw_pop(&d, outer);
-    TIDE_CHECK(d.depth == TIDE_DEPTH_NONE && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_depth(&d);
-    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_set_depth(&d, (tide_depth)77); // None of them: as a frame starts
-    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
 
     // The same setting around each of a view's entities' meshes: still one run
     tide_draw_reset(&d);
@@ -536,13 +538,29 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_clear(&d, TIDE_COLOR_BLACK);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CLEAR && last(&d)->depth == 0);
 
-    // It's the same wherever a mesh is drawn: a target's meshes have what the window's do
+    // It's a destination's own: a target's meshes start as a frame does, whatever the window's do
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ);
     tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
-    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->depth == TIDE_DEPTH_READ);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
+    const uint32_t block = tide_draw_push_depth(&d, TIDE_DEPTH_NONE);
+    tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3(5.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_NONE);
+    // ...and the window's is as it was left, while the target's block is open
+    tide_draw_to(&d, 0, 0, 0);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ);
+    tide_draw_pop(&d, block); // The target's block ends while the window is selected: its own is put back
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ && d.saved_count == 0);
+    tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
+    tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
 
-    // The GUI's and a host's own start from the defaults
+    // The GUI's and a host's own start from the defaults, every destination's
     tide_draw_defaults(&d);
-    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE && d.target == 0);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE && d.target == 0);
+    tide_draw_to(&d, 17, 64, 64);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_free(&d);
 }

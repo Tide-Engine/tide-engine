@@ -71,3 +71,29 @@ void analysis_set_can_create_files(bool can);
 // (relatedInformation), so they can leave its message. Also from its
 // capabilities.
 void analysis_set_related_information(bool shows);
+
+// ---------------------------------------------------------------------------
+// Assets: the files `asset` declarations name (docs/spec.md, Assets).
+
+// Where the analysed game is, before analysis_run: its folder, whose .tide/
+// keeps the hashes of its named files (NULL for a game a manifest lists, which
+// has none), and the folders a moved file is looked for in: the game's and its
+// packages'. Copied; kept until set again.
+void analysis_set_game_folders(const char *game_folder, const char *const *roots, int root_count);
+
+// The game's asset sites: each one's file as an absolute path with forward
+// slashes (a glob where the declaration's is; NULL for a URL), and the folder
+// of the file that names it. For the server's registrations.
+int analysis_asset_count(void);
+const char *analysis_asset_path(int i);
+bool analysis_asset_is_glob(int i);
+const char *analysis_asset_folder(int i);
+
+// Files or folders about to be renamed (absolute paths, forward slashes, no
+// trailing slash): the edits that keep every asset path at its file, each
+// relative to its own declaring file. Globs aren't rewritten.
+typedef struct asset_rename {
+    const char *old_path;
+    const char *new_path;
+} asset_rename;
+void analysis_rename_files(const asset_rename *renames, int count, jbuf *out); // WorkspaceEdit
