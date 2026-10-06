@@ -1,0 +1,8 @@
+// expect: unknown name 'entered'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    if (lobby.count > 3) GUILayout.TextField("Code", lobby.code, out var entered);
+    if (entered) lobby.count += 1;
+}

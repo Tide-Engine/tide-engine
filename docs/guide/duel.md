@@ -56,7 +56,7 @@ A fighter's upgrades show as gems beside its name.
 
 ## Duel a friend
 
-On the menu, press **Invite a friend** to open a room. Its code shows in the button's place; **Copy** puts it on the clipboard. Your friend opens this page, types or pastes the code into the field beside **Join** (Ctrl+V, or Cmd+V), and presses **Join**. They take the orange fighter, and the match starts when they arrive. You can practice while you wait.
+On the menu, press **Invite a friend** to open a room. Its code shows in the button's place; **Copy** puts it on the clipboard. Your friend opens this page, types or pastes the code into the field beside **Join** (Ctrl+V, or Cmd+V), and presses Enter or **Join**. They take the orange fighter, and the match starts when they arrive. You can practice while you wait.
 
 A player who leaves ends the match: whoever stays is back at the menu, with the room still open.
 
