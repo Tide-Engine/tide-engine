@@ -187,6 +187,16 @@ typedef struct tide_gui_claim_rect {
     uint32_t view;
 } tide_gui_claim_rect;
 
+// A key or a gamepad's button that went down while the keyboard and the
+// gamepad were the GUI's: it's the GUI's until it's let go, whatever became of
+// the widget meanwhile. From views until a frame has seen it up, and from the
+// game's samples until one has.
+typedef struct tide_gui_kept {
+    bool views, samples;
+} tide_gui_kept;
+
+#define TIDE_GUI_KEPT(name) tide_gui_kept name;
+
 typedef struct tide_gui {
     // The screen this frame (Screen in Tide).
     float width;
@@ -243,6 +253,16 @@ typedef struct tide_gui {
     bool focus_reads;                 // ...this frame, as these have them
     tide_keyboard focus_keyboard;
     tide_gamepad focus_gamepad;
+    // The keys and buttons that are the GUI's until they're let go
+    struct {
+        TIDE_KEYBOARD_KEYS(TIDE_GUI_KEPT)
+    } kept_keys;
+    struct {
+        TIDE_GAMEPAD_BUTTONS(TIDE_GUI_KEPT)
+        struct {
+            TIDE_DPAD_BUTTONS(TIDE_GUI_KEPT)
+        } dpad;
+    } kept_pad;
     uint32_t editing;                 // The field being typed into
     bool editing_seen;
     uint32_t edit_len;

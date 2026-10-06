@@ -357,8 +357,6 @@ static void hide_navigation(tide_keyboard *k, tide_gamepad *p)
     p->leftStick = tide_f2(0.0f, 0.0f);
 }
 
-#undef RELEASE
-
 // Whether the pointer in `d` is a mouse whose cursor the window holds
 // (Cursor.Lock): it's hidden, so it points at nothing.
 static bool cursor_hidden(const tide_devices *d)
@@ -392,6 +390,82 @@ static bool on_gui(const tide_gui *g, const tide_devices *d)
     return g->rects_full && g->over; // More widgets than fit: as the frame saw it
 }
 
+// A key or a gamepad's button that goes down while the keyboard and the
+// gamepad are the GUI's (a widget has the focus, a field is typed into, a modal
+// is up) is the GUI's until it's let go: by when the press began, as a press
+// on the stats' drawer is by where. The widget may be gone the frame after,
+// as a menu is once its Play was clicked, with the key that clicked it still
+// down: read as the game's from then, Space on Play fired the cannon too.
+//
+// A frame notes the presses (keep_presses), as it sees each key go down. Views
+// have one hidden until a frame has seen it up, that frame too; samples until
+// one has, as a key's `pressed` and `up` stay in the platform's devices until
+// a sample consumes them, which may be frames later.
+#define KEPT_BUTTONS(X)                                                                  \
+    TIDE_KEYBOARD_KEYS(X##_KEY) TIDE_GAMEPAD_BUTTONS(X##_PAD) TIDE_DPAD_BUTTONS(X##_DPAD)
+
+static void keep_press(tide_gui_kept *kept, const tide_button now, const tide_button last, const bool ours)
+{
+    // A new press is the GUI's when it has the keyboard, and the game's when it
+    // hasn't: whatever was kept of the key's last press is over
+    if (now.held && !last.held) kept->views = kept->samples = ours;
+    // Up, with nothing left for a sample to read: a sample consumed it, or the host did
+    else if (!now.held && !now.pressed && !now.down && !now.up) kept->samples = false;
+}
+
+// Before a frame's devices are worked out: `now` are the platform's, and
+// g->last the ones the last frame had.
+static void keep_presses(tide_gui *g, const tide_devices *now)
+{
+    const bool ours = g->focus || g->editing || g->modal;
+#define KEEP_KEY(name) keep_press(&g->kept_keys.name, now->keyboard.name, g->last.keyboard.name, ours);
+#define KEEP_PAD(name) keep_press(&g->kept_pad.name, now->gamepad.name, g->last.gamepad.name, ours);
+#define KEEP_DPAD(name) keep_press(&g->kept_pad.dpad.name, now->gamepad.dpad.name, g->last.gamepad.dpad.name, ours);
+    KEPT_BUTTONS(KEEP)
+#undef KEEP_KEY
+#undef KEEP_PAD
+#undef KEEP_DPAD
+}
+
+// Hides the kept ones from the devices views read this frame (`held` as the
+// platform has it), and lets go of those that are up.
+static void hide_kept_from_views(tide_gui *g, tide_devices *d)
+{
+#define VIEWS(kept, button)        \
+    if ((kept).views) {            \
+        const bool held = (button).held; \
+        RELEASE(button)            \
+        (kept).views = held;       \
+    }
+#define VIEWS_KEY(name) VIEWS(g->kept_keys.name, d->keyboard.name)
+#define VIEWS_PAD(name) VIEWS(g->kept_pad.name, d->gamepad.name)
+#define VIEWS_DPAD(name) VIEWS(g->kept_pad.dpad.name, d->gamepad.dpad.name)
+    KEPT_BUTTONS(VIEWS)
+#undef VIEWS_KEY
+#undef VIEWS_PAD
+#undef VIEWS_DPAD
+#undef VIEWS
+}
+
+// ...and from the devices a sample is taken from.
+static void hide_kept_from_sample(tide_gui *g, tide_devices *d)
+{
+#define SAMPLE(kept, button)       \
+    if ((kept).samples) {          \
+        const bool held = (button).held; \
+        RELEASE(button)            \
+        (kept).samples = held;     \
+    }
+#define SAMPLE_KEY(name) SAMPLE(g->kept_keys.name, d->keyboard.name)
+#define SAMPLE_PAD(name) SAMPLE(g->kept_pad.name, d->gamepad.name)
+#define SAMPLE_DPAD(name) SAMPLE(g->kept_pad.dpad.name, d->gamepad.dpad.name)
+    KEPT_BUTTONS(SAMPLE)
+#undef SAMPLE_KEY
+#undef SAMPLE_PAD
+#undef SAMPLE_DPAD
+#undef SAMPLE
+}
+
 // Hides what the GUI uses from devices the game or views read. The GUI works
 // out the next frame's from the platform's, so nothing is lost.
 static void hide(const tide_gui *g, tide_devices *d)
@@ -406,6 +480,8 @@ static void hide(const tide_gui *g, tide_devices *d)
         d->pointer.delta = tide_f2(0.0f, 0.0f);
     }
 }
+
+#undef RELEASE
 
 // Hides what views claimed (`what`), as the GUI's own use is.
 static void hide_claimed(tide_devices *d, const uint32_t what)
@@ -505,6 +581,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->game_input = false;
     g->back = pressed(g, KEY_CANCEL | PAD_CANCEL) && !g->editing;
     // With what the GUI used last frame, before this frame's keys move the focus.
+    keep_presses(g, devices);
     frame_devices(g, devices);
     // The view whose control has the focus goes on reading the keyboard and
     // the gamepad, less what the GUI uses of them. Not under a modal, which
@@ -515,6 +592,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
         g->focus_gamepad = g->devices.gamepad;
         hide_navigation(&g->focus_keyboard, &g->focus_gamepad);
     }
+    hide_kept_from_views(g, &g->devices); // Before the rest is hidden: it goes by which are still down
     hide(g, &g->devices);
     // ...and what views claimed then, until a view runs (tide_gui_view).
     g->unclaimed = g->devices;
@@ -606,6 +684,7 @@ void tide_gui_hide(tide_gui *g, tide_devices *d)
 {
     g->game_input = true;
     const uint32_t claimed = claimed_from(g, d, 0);
+    hide_kept_from_sample(g, d);
     hide(g, d);
     hide_claimed(d, claimed);
     d->keyboard.text = (tide_typed){0}; // What's typed is a frame's: views read it

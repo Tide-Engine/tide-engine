@@ -1443,6 +1443,195 @@ static void use_keys(const bool held)
     if (held) type("w");
 }
 
+// A menu whose Play goes once it's clicked, as a lobby over a running match
+// does, in a host's order: the game's sample, then the frame.
+static bool menu_open;
+static tide_devices menu_sampled; // What the last sample had
+static tide_devices menu_viewed;  // ...and what views read in the last frame
+
+static void menu_sample(void)
+{
+    menu_sampled = devices;
+    tide_gui_hide(&gui, &menu_sampled);
+    tide_devices_consume(&devices);
+}
+
+// Whether Play was clicked.
+static bool menu_frame(void)
+{
+    begin();
+    menu_viewed = gui.devices;
+    const bool clicked = menu_open && tide_gui_layout_button(&gui, 10, "Play");
+    if (clicked) menu_open = false;
+    end();
+    return clicked;
+}
+
+static bool any_of(const tide_button b)
+{
+    return b.pressed || b.down || b.up || b.held;
+}
+
+// The menu up, with the focus on Play.
+static void menu_start(void)
+{
+    start();
+    menu_open = true;
+    menu_sample();
+    menu_frame();
+    key(&devices.keyboard.tab, true);
+    menu_sample();
+    menu_frame();
+    key(&devices.keyboard.tab, false);
+    menu_sample();
+    menu_frame();
+}
+
+// A key that clicks a widget is the GUI's until it's let go, though the widget
+// is gone the frame after: Space on a lobby's Play fired the game's cannon
+// too, from the frame nothing had the focus any more.
+TIDE_TEST(gui_a_key_that_clicked_a_widget_is_the_guis_until_its_let_go)
+{
+    menu_start();
+    TIDE_REQUIRE(gui.focus == 10);
+    key(&devices.keyboard.space, true);
+    menu_sample();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.space));
+    TIDE_CHECK(menu_frame()); // Clicked: the menu goes, with the key still down
+    TIDE_CHECK(!any_of(menu_viewed.keyboard.space));
+    for (int i = 0; i < 5; i++) {
+        menu_sample();
+        TIDE_CHECK(!any_of(menu_sampled.keyboard.space));
+        TIDE_CHECK(!menu_frame() && !any_of(menu_viewed.keyboard.space));
+    }
+    TIDE_CHECK(gui.focus == 0); // Nothing has the focus: it's the key that's kept
+
+    // Another key is the game's meanwhile
+    key(&devices.keyboard.w, true);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.w.pressed && menu_sampled.keyboard.w.down);
+    menu_frame();
+    TIDE_CHECK(menu_viewed.keyboard.w.down && !any_of(menu_viewed.keyboard.space));
+
+    // Let go: neither the game nor the views hear of it
+    key(&devices.keyboard.space, false);
+    menu_sample();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.space));
+    menu_frame();
+    TIDE_CHECK(!any_of(menu_viewed.keyboard.space));
+    menu_sample();
+    menu_frame();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.space) && !any_of(menu_viewed.keyboard.space));
+
+    // Pressed again, it's the game's
+    key(&devices.keyboard.space, true);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.space.pressed && menu_sampled.keyboard.space.down);
+    menu_frame();
+    TIDE_CHECK(menu_viewed.keyboard.space.down);
+
+    // A gamepad's button the same
+    menu_start();
+    devices.gamepad.connected = true;
+    key(&devices.gamepad.buttonSouth, true);
+    menu_sample();
+    TIDE_CHECK(menu_frame());
+    for (int i = 0; i < 3; i++) {
+        menu_sample();
+        menu_frame();
+        TIDE_CHECK(!any_of(menu_sampled.gamepad.buttonSouth) && !any_of(menu_viewed.gamepad.buttonSouth));
+    }
+    key(&devices.gamepad.buttonSouth, false);
+    menu_sample();
+    menu_frame();
+    TIDE_CHECK(!any_of(menu_sampled.gamepad.buttonSouth) && !any_of(menu_viewed.gamepad.buttonSouth));
+    key(&devices.gamepad.buttonSouth, true);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.gamepad.buttonSouth.down);
+}
+
+// A sample reads what happened since the last one, which may be frames ago: a
+// kept key that was let go meanwhile is still the GUI's in the sample that
+// reads its release, and one let go where nothing samples is kept no longer
+// than the host's clearing of the devices.
+TIDE_TEST(gui_a_kept_key_is_kept_until_a_sample_has_seen_it_let_go)
+{
+    menu_start();
+    key(&devices.keyboard.space, true);
+    menu_sample();
+    TIDE_CHECK(menu_frame());
+    menu_frame(); // Frames with no tick to sample for
+    menu_frame();
+    key(&devices.keyboard.space, false);
+    menu_frame();
+    TIDE_CHECK(!any_of(menu_viewed.keyboard.space));
+    menu_frame();
+    TIDE_CHECK(devices.keyboard.space.up && devices.keyboard.space.pressed); // Nothing consumed it yet
+    menu_sample();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.space));
+    menu_frame();
+    key(&devices.keyboard.space, true);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.space.pressed && menu_sampled.keyboard.space.down);
+    key(&devices.keyboard.space, false);
+    menu_sample();
+    menu_frame();
+
+    // Where nothing samples, as outside a match, the host clears the devices each frame
+    menu_start();
+    key(&devices.keyboard.space, true);
+    TIDE_CHECK(menu_frame());
+    tide_devices_consume(&devices);
+    menu_frame();
+    tide_devices_consume(&devices);
+    key(&devices.keyboard.space, false);
+    menu_frame();
+    tide_devices_consume(&devices);
+    menu_frame();
+    tide_devices_consume(&devices);
+    // ...and the match's first sample, whenever it comes, has the key if it's down then
+    key(&devices.keyboard.space, true);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.space.pressed && menu_sampled.keyboard.space.down);
+}
+
+// Only a key that went down while the keyboard was the GUI's is kept: one the
+// game had before is the game's again once the GUI lets the keyboard go.
+TIDE_TEST(gui_a_key_held_since_before_the_gui_had_the_keyboard_is_the_games_again)
+{
+    start();
+    menu_open = true;
+    menu_sample();
+    menu_frame();
+    key(&devices.keyboard.w, true); // Held, as the player walks
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.w.pressed);
+    menu_frame();
+    key(&devices.keyboard.tab, true);
+    menu_sample();
+    menu_frame();
+    key(&devices.keyboard.tab, false);
+    menu_sample();
+    menu_frame();
+    TIDE_REQUIRE(gui.focus == 10);
+    menu_sample();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.w)); // The GUI's while Play has the focus
+    menu_frame();
+    // Escape lets the focus go, and is the GUI's while it's down; W is the game's again
+    key(&devices.keyboard.escape, true);
+    menu_sample();
+    menu_frame();
+    TIDE_CHECK(gui.focus == 0);
+    menu_sample();
+    TIDE_CHECK(menu_sampled.keyboard.w.pressed && !any_of(menu_sampled.keyboard.escape));
+    menu_frame();
+    TIDE_CHECK(menu_viewed.keyboard.w.pressed && !any_of(menu_viewed.keyboard.escape));
+    key(&devices.keyboard.escape, false);
+    menu_sample();
+    menu_frame();
+    TIDE_CHECK(!any_of(menu_sampled.keyboard.escape) && !any_of(menu_viewed.keyboard.escape));
+}
+
 TIDE_TEST(gui_the_view_of_a_focused_control_keeps_the_keys_the_gui_doesnt_use)
 {
     start();

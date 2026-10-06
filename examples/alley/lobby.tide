@@ -34,7 +34,6 @@ local singleton Lobby
     float shown;       // How far the page has faded in, 0 to 1
     float turn;        // How far round the spinner is, in turns
     float copied = 10; // Seconds since the room's code was copied
-    int clear;         // Frames since a page was up, as far as 2
     // What the pages show of the match, left here each frame by a view that reads it
     int manned;        // The seats players have, a bit each
     int mine = -1;     // This machine's player's
@@ -126,14 +125,12 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
         lobby.joining = !session.server && session.state == SessionState.Connecting;
         lobby.page = lobby.joining ? Page.Join : session.server && session.open ? Page.None : Page.Title;
     }
-    // The player's hands are on the ball with no page up, and once what
-    // pressed the page's last button is let go. The GUI keeps the keys of a
-    // button that had the focus for the frame after it's gone, so that frame
-    // says nothing of what's held.
-    lobby.clear = lobby.page != Page.None ? 0 : Math.Min(lobby.clear + 1, 2);
+    // The player's hands are on the ball with no page up, and once the
+    // pointer that pressed the page's last button is let go. A key that
+    // clicked it is the GUI's until it's let go, so it's never read here.
     var held = devices.pointer.press.pressed || devices.keyboard.space.pressed;
     hand.playing = lobby.page == Page.None && session.state == SessionState.Connected
-        && (hand.playing || (lobby.clear == 2 && !held));
+        && (hand.playing || !held);
     lobby.copied += fx.dt;
     lobby.turn = Math.Frac(lobby.turn + fx.dt * 0.8);
     if (lobby.page == Page.None)

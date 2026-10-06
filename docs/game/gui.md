@@ -221,7 +221,7 @@ view Paused(Pause pause)
 }
 ```
 
-Once a widget has the focus, the keyboard and the gamepad are the GUI's, and the input's `Sample` reads neither.
+Once a widget has the focus, the keyboard and the gamepad are the GUI's, and the input's `Sample` reads neither. A key or a button that goes down then stays the GUI's until it's let go, even if the widget is gone by the next frame: Space that clicks a menu's Play, and closes the menu, isn't also the game's Space while it's still held.
 
 Typing into a field uses the characters the player types, which follow their keyboard layout, not keys by position. Clicking a number field, or pressing Enter on it, starts typing into it; Enter or leaving the field keeps a valid number, and Escape keeps the old one. On a phone, and in a phone's browser, the system's keyboard shows while the player types into a field, and goes when they stop.
 
