@@ -6,6 +6,7 @@
 # Nightly versions instead: ... | TIDE_CHANNEL=nightly sh
 # tide goes in ~/.tide, and its bin folder on PATH through the shell's profile.
 # No root needed. Once installed, `tide upgrade` keeps it up to date.
+# Private releases use GH_TOKEN, then GITHUB_TOKEN, then `gh auth login`.
 set -eu
 
 repo="BlenMiner/tide-engine"
@@ -19,34 +20,65 @@ channel="stable"
 root="$HOME/.tide"
 bin="$root/bin"
 
+# Credentials already used by GitHub's CLI also work for private releases.
+token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
+    token="$(gh auth token --hostname github.com 2>/dev/null || true)"
+fi
+case "$token" in
+    *[!\!-\~]*) echo 'The GitHub token must contain only printable non-space ASCII characters.' >&2; exit 1 ;;
+esac
+installed=no
 if [ -x "$bin/tide" ]; then
+    installed=yes
     echo "tide is already installed in $root; upgrading it."
     # It keeps its channel, unless TIDE_CHANNEL says which.
-    if [ -n "${TIDE_CHANNEL:-}" ]; then
-        "$bin/tide" upgrade "--$channel"
-    else
-        "$bin/tide" upgrade
+    if [ -z "$token" ]; then
+        if [ -n "${TIDE_CHANNEL:-}" ]; then
+            "$bin/tide" upgrade "--$channel"
+        else
+            "$bin/tide" upgrade
+        fi
+        # Tide in the editors installed since.
+        "$bin/tide" editors || true
+        exit 0
     fi
-    # Tide in the editors installed since.
-    "$bin/tide" editors || true
-    exit 0
+    if [ -z "${TIDE_CHANNEL:-}" ] && [ -f "$root/channel" ]; then
+        saved_channel="$(cat "$root/channel")"
+        case "$saved_channel" in stable|nightly) channel="$saved_channel" ;; esac
+    fi
 fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# curl reads credentials from a private file, never its command line. It
+# drops Authorization when an asset redirects to another host.
+authenticated=no
+if [ -n "$token" ]; then
+    authenticated=yes
+    (umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$work/auth")
+fi
+download() {
+    case "$authenticated:$1" in
+        yes:https://api.github.com/*)
+            curl -q -fsSL --proto-redir =https -H "@$work/auth" -H "Accept: $3" "$1" -o "$2" ;;
+        *) curl -q -fsSL "$1" -o "$2" ;;
+    esac
+}
 
 # The channel's highest version with this platform's package, not the last one
 # published (as tide upgrade picks, compiler/cli/release.c): some old
 # nightlies have none for macOS. Nightly takes stable releases
 # too, when they're newer. Stable also asks for GitHub's latest release, since
 # nightly ones can push it out of the list.
-curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=100" -o "$work/releases.json"
+download "https://api.github.com/repos/$repo/releases?per_page=100" "$work/releases.json" application/vnd.github+json
 echo '{}' > "$work/latest.json"
 if [ "$channel" = "stable" ]; then
-    curl -fsSL "https://api.github.com/repos/$repo/releases/latest" -o "$work/latest.json" ||
+    download "https://api.github.com/repos/$repo/releases/latest" "$work/latest.json" application/vnd.github+json ||
         echo '{}' > "$work/latest.json"
 fi
-tag="$(python3 - "$work/releases.json" "$work/latest.json" "$channel" "$package" <<'EOF'
+tag="$(python3 - "$work/releases.json" "$work/latest.json" "$channel" "$package" "$authenticated" "$work" <<'EOF'
 import json, re, sys
 releases = json.load(open(sys.argv[1])) + [json.load(open(sys.argv[2]))]
 
@@ -68,8 +100,17 @@ for r in releases:
     if sys.argv[4] not in [a.get("name") for a in r.get("assets") or []]:
         continue
     if best is None or key > best[0]:
-        best = (key, r["tag_name"])
-print(best[1] if best else "")
+        best = (key, r)
+if best:
+    release = best[1]
+    field = "url" if sys.argv[5] == "yes" else "browser_download_url"
+    assets = {a.get("name"): a for a in release.get("assets") or []}
+    for name, file in [(sys.argv[4], "package.url"), ("SHA256SUMS", "sums.url")]:
+        with open(sys.argv[6] + "/" + file, "w") as out:
+            out.write(assets.get(name, {}).get(field) or "")
+    with open(sys.argv[6] + "/selected.json", "w") as out:
+        json.dump(release, out)
+    print(release["tag_name"])
 EOF
 )"
 if [ -z "$tag" ]; then
@@ -78,9 +119,14 @@ if [ -z "$tag" ]; then
 fi
 
 echo "Downloading tide ${tag#v}..."
-base="https://github.com/$repo/releases/download/$tag"
-curl -fsSL "$base/$package" -o "$work/$package"
-curl -fsSL "$base/SHA256SUMS" -o "$work/SHA256SUMS"
+package_url="$(cat "$work/package.url")"
+sums_url="$(cat "$work/sums.url")"
+if [ -z "$package_url" ] || [ -z "$sums_url" ]; then
+    echo "Release $tag has no $package or checksums." >&2
+    exit 1
+fi
+download "$package_url" "$work/$package" application/octet-stream
+download "$sums_url" "$work/SHA256SUMS" application/octet-stream
 
 # The download must match the checksum published with it.
 expected="$(grep " $package\$" "$work/SHA256SUMS" | cut -d' ' -f1)"
@@ -92,6 +138,29 @@ fi
 if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
     echo "The download is damaged (its checksum doesn't match). Nothing was installed." >&2
     exit 1
+fi
+
+if [ "$installed" = yes ]; then
+    # The updater of an older tide needs no authentication for checked local
+    # files, and still replaces running programs and updates the editors.
+    releases_url="$(python3 - "$work" "$package" <<'EOF'
+import json, pathlib, sys
+work = pathlib.Path(sys.argv[1]).resolve()
+release = json.loads((work / "selected.json").read_text())
+release["assets"] = [{"name": name, "size": (work / name).stat().st_size,
+                      "browser_download_url": (work / name).as_uri()}
+                     for name in [sys.argv[2], "SHA256SUMS"]]
+(work / "local.json").write_text(json.dumps([release]))
+print((work / "local.json").as_uri())
+EOF
+)"
+    if [ -n "${TIDE_CHANNEL:-}" ]; then
+        TIDE_RELEASES_URL="$releases_url" "$bin/tide" upgrade "--$channel"
+    else
+        TIDE_RELEASES_URL="$releases_url" "$bin/tide" upgrade
+    fi
+    "$bin/tide" editors || true
+    exit 0
 fi
 
 mkdir -p "$root"
