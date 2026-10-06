@@ -165,7 +165,7 @@ local event(verified Dropped dropped) Tally(mut Fx fx)
     var color = SeatColor(dropped.seat);
     // Where it left: over the pit's floor, or as low as shows over the buttons
     var at = float2(Math.Clamp(dropped.at.x, fx.low.x + 1.4, fx.high.x - 1.4),
-                    Math.Max(fx.low.y + 62 / Math.Max(fx.meter, 1), FLOOR + 1.2));
+                    Math.Max(fx.low.y + 78 / Math.Max(fx.meter, 1), FLOOR + 1.2));
     fx.labels.Add(Label { position = at, color = color, amount = dropped.worth, mine = dropped.seat == fx.seat });
     Sparks(fx, at - float2(0, 1.2), float2(0, 1), 1.6, dropped.worth >= 5 ? 16 : 6, 9, Mix(color, Color.white, 0.4));
     Pop(fx, dropped.seat);
