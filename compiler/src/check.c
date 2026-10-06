@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asset_files.h"
 #include "ast.h"
 #include "builtins.h"
 #include "tide/devices.h"
@@ -200,6 +201,7 @@ typedef enum name_kind {
     NAME_FUNCTION,
     NAME_CONST,
     NAME_SHADER,   // Frags and verts, where Draw2D.Mesh names them
+    NAME_ASSET,    // Assets: values, like constants, read where their type's values are
 } name_kind;
 
 static bool is_kind(const decl *d, const name_kind kind)
@@ -208,7 +210,8 @@ static bool is_kind(const decl *d, const name_kind kind)
     if (kind == NAME_FUNCTION) return d->kind == DECL_FUNCTION;
     if (kind == NAME_CONST) return d->kind == DECL_CONST;
     if (kind == NAME_SHADER) return d->kind == DECL_SHADER;
-    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER;
+    if (kind == NAME_ASSET) return d->kind == DECL_ASSET;
+    return d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_SHADER && d->kind != DECL_ASSET;
 }
 
 static void c_name_of(const decl *d, sb *out);
@@ -1102,7 +1105,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1131,6 +1134,10 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     case TY_ERROR: return false;
     case TY_BYTE: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
         return true;
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s", set ? "set" : "map",
+                   t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
+        return false;
     default:
         diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
                    type_name(t));
@@ -1140,7 +1147,6 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     }
 }
 
-static bool list_element_ok(type t, loc at, const type *key);
 
 // Map<K, V> or Set<K> for those types: one declaration for each, so two maps
 // from ints to text are the same type. A map's `entry` is the struct a foreach
@@ -1163,10 +1169,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1182,53 +1188,6 @@ static type map_of(program *prog, const type key, const type value, const bool s
     d->index = prog->maps.count;
     vec_push(prog->maps, d);
     return (type){set ? TY_SET : TY_MAP, d};
-}
-
-// "Map<K, V>" or "Set<K>": the type, in `*out`; false for text that isn't one.
-static bool resolve_map_type(const checker *c, const str text, const loc at, type *out)
-{
-    const bool set = str_starts_with_c(text, "Set<");
-    if (!set && !str_starts_with_c(text, "Map<")) return false;
-    if (text.ptr[text.len - 1] != '>') return false;
-    str inner = {text.ptr + 4, text.len - 5};
-    str key_text = inner;
-    str value_text = {NULL, 0};
-    if (!set) {
-        int comma = -1;
-        for (int i = 0; i < inner.len && comma < 0; i++) {
-            if (inner.ptr[i] == ',') comma = i;
-        }
-        if (comma < 0) return false;
-        key_text = (str){inner.ptr, comma};
-        value_text = (str){inner.ptr + comma + 1, inner.len - comma - 1};
-        while (value_text.len > 0 && value_text.ptr[0] == ' ') {
-            value_text.ptr++;
-            value_text.len--;
-        }
-    }
-    type parts[2] = {T_ERR, T_ERR};
-    for (int i = 0; i < (set ? 1 : 2); i++) {
-        const str name = i ? value_text : key_text;
-        if (str_eq_c(name, "string")) {
-            parts[i] = (type){TY_STRING, NULL};
-        } else if (!builtin_type_named(name, &parts[i])) {
-            decl *d = find_type(c, name, at);
-            if (d) {
-                parts[i] = decl_type(d);
-            } else {
-                diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(name));
-                suggestion sg = suggest_start(name);
-                suggest_builtin_types(&sg);
-                suggest_structs(&sg, c->prog);
-                suggest_note(&sg);
-                parts[i] = T_ERR;
-            }
-        }
-    }
-    bool ok = map_key_ok(parts[0], at, set);
-    if (!set && !list_element_ok(parts[1], at, &parts[0])) ok = false;
-    *out = ok ? map_of(c->prog, parts[0], parts[1], set) : T_ERR;
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,14 +1232,6 @@ static type result_of(program *prog, const type value, const type error, const b
 static bool is_wrapped(const type t)
 {
     return t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE;
-}
-
-// "int?": a T?, whose T goes in `*inner`.
-static bool optional_name(const str name, str *inner)
-{
-    if (name.len < 2 || name.ptr[name.len - 1] != '?') return false;
-    *inner = (str){name.ptr, name.len - 1};
-    return true;
 }
 
 // Whether a T? or a failable call can give a value of type `t`: values a
@@ -1381,101 +1332,36 @@ static void unwrap_error(const expr *e, const type t)
               type_name(error));
 }
 
-// The first list, map or set a struct has in it, in a struct of its own or not:
-// its kind, with the field it's in written to `path`, like "items" or
-// "bag.items". TY_ERROR for a struct with none.
-static type_kind first_held(const type t, char *path, const size_t size)
-{
-    const size_t start = strlen(path);
-    for (int i = 0; i < t.decl->fields.count; i++) {
-        const field *f = &t.decl->fields.items[i];
-        const type_kind kind = f->type.kind;
-        snprintf(path + start, size - start, "%s" STR_FMT, start ? "." : "", STR_ARG(f->name));
-        if (kind == TY_LIST || kind == TY_MAP || kind == TY_SET) return kind;
-        if (kind == TY_STRUCT) {
-            const type_kind inner = first_held(f->type, path, size);
-            if (inner != TY_ERROR) return inner;
-        }
-        path[start] = '\0';
-    }
-    return TY_ERROR;
-}
-
-// A struct with a list, a map or a set in it, as a list's element or a map's
-// value: nothing holds one yet. Says which field is in the way, and what to
-// write instead. `key` is the map's key type, or NULL for a list.
-static void refuse_held(const type t, const loc at, const type *key)
-{
-    char path[256] = "";
-    const type_kind kind = first_held(t, path, sizeof path);
-    const char *one = kind == TY_LIST ? "list" : kind == TY_MAP ? "map" : "set";
-    char entities[160];
-    if (key) snprintf(entities, sizeof entities, "Map<%s, Entity>", type_name(*key));
-    else snprintf(entities, sizeof entities, "List<Entity>");
-    diag_error(at, "a %s can't hold '" STR_FMT "' yet: its '%s' is a %s", key ? "map" : "list", STR_ARG(t.decl->name), path, one);
-    if (kind == TY_LIST) {
-        diag_note("keep all of their '%s' in one list, and in each '" STR_FMT "' where its part starts and how many it "
-                  "has; or keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
-                  path, STR_ARG(t.decl->name), STR_ARG(t.decl->name), entities);
-    } else {
-        diag_note("keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
-                  STR_ARG(t.decl->name), entities);
-    }
-}
-
-// What a list can hold, and a map as its values: values, never ECS data,
-// Actions or other lists. `key` is the map's key type, or NULL for a list.
-static bool list_element_ok(const type t, const loc at, const type *key)
+// What a list can hold, and a map as its values (GENERIC_ELEMENT): values,
+// never ECS data or Actions. Lists, maps and sets among them, and structs
+// that hold them: a world keeps an element's own in its heap, as it keeps a
+// field's. Not a grid, which is never copied, but in an asset, which is never
+// written (`asset`). `key` is the map's key type, or NULL for a list.
+static bool element_ok(const type t, const loc at, const type *key, const bool asset)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
+    case TY_LIST: case TY_MAP: case TY_SET:
         return true;
     case TY_STRUCT:
         if (holds_render_resource(t)) {
             diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
             return false;
         }
-        if (!holds_list(t)) return true;
-        refuse_held(t, at, key);
-        return false;
-    case TY_LIST:
-    case TY_MAP:
-    case TY_SET:
-        // The parser refuses these where they're written, with what to write instead
-        diag_error(at, "a %s can't hold %s yet", key ? "map" : "list", t.kind == TY_LIST ? "lists" : t.kind == TY_MAP ? "maps" : "sets");
+        return true;
+    case TY_GRID:
+        if (asset) return true;
+        diag_error(at, "a %s can't hold grids", key ? "map" : "list");
+        diag_note("grids stay where they're made: in components, singletons and scenes");
         return false;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a list, keep their Entity");
         return false;
     }
-}
-
-// "List<X>": the list type, in `*out`; false for text that isn't one.
-static bool resolve_list_type(const checker *c, const str text, const loc at, type *out)
-{
-    if (text.len < 7 || memcmp(text.ptr, "List<", 5) != 0 || text.ptr[text.len - 1] != '>') return false;
-    const str inner = {text.ptr + 5, text.len - 6};
-    type element = T_ERR;
-    if (str_eq_c(inner, "string")) {
-        element = (type){TY_STRING, NULL};
-    } else if (!builtin_type_named(inner, &element)) {
-        decl *d = find_type(c, inner, at);
-        if (d) {
-            element = decl_type(d);
-        } else {
-            diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(inner));
-            suggestion sg = suggest_start(inner);
-            suggest_builtin_types(&sg);
-            suggest_structs(&sg, c->prog);
-            suggest_note(&sg);
-        }
-    }
-    *out = list_element_ok(element, at, NULL) ? list_of(c->prog, element) : T_ERR;
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1503,7 +1389,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -1537,9 +1423,13 @@ static bool grid_cell_ok(const type t, const loc at)
     case TY_LIST:
     case TY_MAP:
     case TY_SET:
-    case TY_GRID:
-        diag_error(at, "a grid's cells can't be %s", t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps");
+    case TY_GRID: {
+        const char *one = t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid";
+        diag_error(at, "a grid's cells can't be %ss", one);
+        if (t.kind == TY_GRID) diag_note("grids stay where they're made: in components, singletons and scenes");
+        else diag_note("cells are plain values, side by side in their chunk: keep the %s elsewhere, and a number for it in the cell", one);
         return false;
+    }
     default:
         diag_error(at, "a grid's cells are values, like numbers, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a grid, keep their Entity");
@@ -1547,31 +1437,148 @@ static bool grid_cell_ok(const type t, const loc at)
     }
 }
 
-// "Grid2<X>" or "Grid3<X>": the grid type, in `*out`; false for text that isn't one.
-static bool resolve_grid_type(const checker *c, const str text, const loc at, type *out)
+// ---------------------------------------------------------------------------
+// Types as written (type_ref, ast.h): one resolver for every place a type is
+// written. What a place can hold once the type is known (a field no
+// component, a local no grid) is each place's own check, after.
+
+// Where a type is written: what names mean there, and what an unknown one
+// suggests.
+typedef enum type_place {
+    PLACE_FIELD,    // A field's
+    PLACE_LOCAL,    // A local's declaration
+    PLACE_LOOP,     // A foreach's or a parallel loop's variable: an unknown name is left to the elements' check
+    PLACE_FUNCTION, // A function's or method's parameter, what it fails with, and the local an `out` argument declares
+    PLACE_RETURN,   // What a function or method returns
+    PLACE_CONST,    // A constant's
+    PLACE_IS,       // What's after `is`
+    PLACE_ASSET,    // An asset's: a List<T> or Map<string, T> there holds grids too, as nothing writes one
+    ARG_ELEMENT,    // In <>: a list's element, List<here>, or a map's value, Map<K, here>
+    ARG_KEY,        // A map's or set's key: Map<here, V>, Set<here>
+    ARG_CELL,       // A grid's cell: Grid2<here>, Grid3<here>
+} type_place;
+
+static bool routine_place(const type_place place)
 {
-    if (text.len < 8 || memcmp(text.ptr, "Grid", 4) != 0 || (text.ptr[4] != '2' && text.ptr[4] != '3') || text.ptr[5] != '<'
-        || text.ptr[text.len - 1] != '>') {
-        return false;
-    }
-    const str inner = {text.ptr + 6, text.len - 7};
-    type cell = T_ERR;
-    if (str_eq_c(inner, "string")) {
-        cell = (type){TY_STRING, NULL};
-    } else if (!builtin_type_named(inner, &cell)) {
-        decl *d = find_type(c, inner, at);
-        if (d) {
-            cell = decl_type(d);
-        } else {
-            diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(inner));
-            suggestion sg = suggest_start(inner);
-            suggest_builtin_types(&sg);
-            suggest_structs(&sg, c->prog);
-            suggest_note(&sg);
+    return place == PLACE_FUNCTION || place == PLACE_RETURN;
+}
+
+// A name no type has, at `at`: says so, with the names near it that a type
+// here can be, and where a struct could take it offers to make one.
+static type unknown_type(const checker *c, const type_ref *r, const loc at, const type_place place)
+{
+    if (place == PLACE_LOOP) return T_ERR;
+    const str name = r->text;
+    const loc name_at = place == PLACE_LOCAL || place == PLACE_IS ? r->name_at : at;
+    diag_error(name_at, "unknown type '" STR_FMT "'", STR_ARG(name));
+    suggestion s = suggest_start(name);
+    suggest_builtin_types(&s);
+    if (place == PLACE_CONST) suggest_consider_c(&s, "string");
+    if (place == PLACE_LOCAL) suggest_decls(&s, c->prog, true, true, true);
+    suggest_structs(&s, c->prog);
+    if (place == PLACE_RETURN) suggest_consider_c(&s, "void");
+    if (place == PLACE_IS) {
+        for (int i = 0; i < c->prog->decls.count; i++) {
+            if (c->prog->decls.items[i]->kind == DECL_ENUM) suggest_consider(&s, c->prog->decls.items[i]->name);
         }
     }
-    *out = grid_cell_ok(cell, at) ? grid_of(c->prog, cell, text.ptr[4] - '0') : T_ERR;
-    return true;
+    suggest_note(&s);
+    if (place == PLACE_FIELD || place == PLACE_LOCAL || routine_place(place)) {
+        const fix create = {.kind = FIX_CREATE_STRUCT, .at = at, .name = name};
+        vec_push(c->prog->fixes, create);
+    }
+    return T_ERR;
+}
+
+static type resolve_type(const checker *c, const type_ref *r, type_place place, loc at);
+
+// What's written in a generic type's <>, resolved and checked against what
+// the form takes there (generic_arg, types.h): a list's element or a map's
+// value, a key, or a grid's cell. `key` is the key type where it's a map's
+// value, and `asset` whether the type is an asset's, where a list or a map
+// holds grids (never written, so never copied).
+static type resolve_arg(const checker *c, const type_ref *arg, const generic_form *form, const int i, const loc at, const type *key, const bool asset)
+{
+    static const type_place places[] = {ARG_ELEMENT, ARG_KEY, ARG_CELL};
+    const generic_arg kind = form->args[i];
+    const type t = resolve_type(c, arg, places[kind], at);
+    switch (kind) {
+    case GENERIC_ELEMENT: return element_ok(t, at, key, asset) ? t : T_ERR;
+    case GENERIC_KEY: return map_key_ok(t, at, strcmp(form->name, "Set") == 0) ? t : T_ERR;
+    default: return grid_cell_ok(t, at) ? t : T_ERR;
+    }
+}
+
+// List<T>, Map<K, V>, Set<K>, Grid2<T> or Grid3<T>, from what's written in its <>.
+static type resolve_generic(const checker *c, const type_ref *r, const loc at, const bool asset)
+{
+    const generic_form *form = generic_form_named(r->name);
+    type args[2] = {T_ERR, T_ERR};
+    for (int i = 0; i < form->arity; i++) {
+        args[i] = resolve_arg(c, r->args.items[i], form, i, at, i == 1 ? &args[0] : NULL, asset);
+    }
+    for (int i = 0; i < form->arity; i++) {
+        if (args[i].kind == TY_ERROR) return T_ERR;
+    }
+    if (str_eq_c(r->name, "List")) return list_of(c->prog, args[0]);
+    if (str_eq_c(r->name, "Set")) return map_of(c->prog, args[0], T_ERR, true);
+    if (str_eq_c(r->name, "Map")) return map_of(c->prog, args[0], args[1], false);
+    return grid_of(c->prog, args[0], r->name.ptr[4] - '0');
+}
+
+// The type `r` names, written at `place`, with errors at `at` (where the
+// type starts, or for what's in <>, where the whole type starts). T_ERR for
+// one that isn't a type, which is said. What comes back is what the name
+// means: a place that can't hold it (a field no Action, a local no grid)
+// says so itself.
+static type resolve_type(const checker *c, const type_ref *r, const type_place place, const loc at)
+{
+    const str name = r->name;
+    type t;
+    // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
+    if (r->optional) return unknown_type(c, r, at, place);
+    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
+    if (builtin_type_named(name, &t)) return t;
+    if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
+    if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
+        if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
+        if (str_eq_c(name, "DrawList")) return (type){TY_DRAW_LIST, NULL};
+    }
+    if (routine_place(place)) {
+        if (place == PLACE_RETURN && str_eq_c(name, "void")) return T_VOID_;
+        for (int i = 0; i < c->prog->records.count; i++) { // Devices, Keyboard, ..., Button
+            if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
+        }
+    }
+    decl *const d = find_type(c, name, at);
+    if (d) return decl_type(d);
+    // The engine's World where a value's type goes: the place says where it belongs (world_misplaced)
+    if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
+    if (place == PLACE_FUNCTION && str_eq_c(name, "void")) {
+        diag_error(at, "'void' only goes before a method that returns nothing");
+        return T_ERR;
+    }
+    return unknown_type(c, r, at, place);
+}
+
+// `r` without its '?': what a T? holds, for the places that take one.
+static type_ref without_question(const type_ref *r)
+{
+    type_ref inner = *r;
+    inner.optional = false;
+    inner.text = (str){r->text.ptr, r->text.len - 1};
+    return inner;
+}
+
+// A type as written where the checker has only its text: a field or a
+// parameter the engine makes ("float", "PlayerID").
+static const type_ref *type_ref_or_text(const type_ref *r, const str text)
+{
+    if (r) return r;
+    type_ref *made = NEW(type_ref);
+    made->name = text;
+    made->text = text;
+    return made;
 }
 
 // Whether `e`, or what it's a member of, is a list's element or a grid's
@@ -1584,6 +1591,21 @@ static bool through_element(const expr *e)
             return true;
         }
     }
+    return false;
+}
+
+// A container that's an element of another, changed where it is:
+// `rows[i].Add(x)`, `rows[i][j] = v`, `buckets[key].Add(e)` (which adds the
+// key, as `buckets[key] = ...` does). Generated code finds the element's slot
+// (gen_slot in codegen.c) through any number of indexes, but not through a
+// struct element's field: the struct is a copy, so that's said, and false.
+static bool element_in_place(const expr *receiver)
+{
+    const expr *base = receiver;
+    while (base->kind == E_INDEX && (base->object->type.kind == TY_LIST || base->object->type.kind == TY_MAP)) base = base->object;
+    if (!through_element(base)) return true;
+    diag_error(receiver->at, "a list's element is a copy, so what it holds can't be changed where it is");
+    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.parts.Add(x); items[i] = e;'");
     return false;
 }
 
@@ -2499,7 +2521,7 @@ static str arg_name(const expr *e, const int i)
 // var health` and `out Health health` declare one where they're written, in
 // the enclosing block's scope, and `out _` leaves what the call makes out.
 
-static type method_type(const checker *c, str name, loc at, bool is_return);
+static type method_type(const checker *c, const type_ref *r, loc at, bool is_return);
 static bool holds_heap(type t);
 
 // Whether an `out` argument takes its type from the parameter it's for: `out
@@ -2561,7 +2583,7 @@ static void begin_out_arg(checker *c, expr *arg)
     }
     if (local) {
         local->errors_before = diag_error_count();
-        local->type = local->type_name.len ? method_type(c, local->type_name, local->type_qual_at, false) : T_ERR;
+        local->type = local->type_name.len ? method_type(c, type_ref_or_text(local->type_ref, local->type_name), local->type_qual_at, false) : T_ERR;
         if (!local->discard) {
             check_reserved(local->name, local->name_at);
             if (find_local(c, local->name) || find_param(c, local->name)) {
@@ -4832,9 +4854,8 @@ static type check_method(checker *c, expr *e)
                 return T_ERR;
             }
             if (io || fetch) {
-                type bytes, paths;
-                resolve_list_type(c, str_from("List<byte>"), e->at, &bytes);
-                resolve_list_type(c, str_from("List<string>"), e->at, &paths);
+                const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
+                const type paths = list_of(c->prog, (type){TY_STRING, NULL});
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
@@ -5533,6 +5554,7 @@ static bool parse_swizzle(expr *e, const int dim)
 }
 
 static type use_constant(checker *c, expr *e, decl *k);
+static type use_asset(checker *c, expr *e, decl *k);
 
 // Combat.Health or Game.Combat where a value belongs: says what the name is.
 static type check_namespace_member(checker *c, expr *e)
@@ -5542,6 +5564,8 @@ static type check_namespace_member(checker *c, expr *e)
     mark_namespaces(e->object);
     decl *k = find_named(c, text, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
+    k = find_named(c, text, e->at, NAME_ASSET);
+    if (k) return use_asset(c, e, k);
     decl *d = find_type(c, text, e->at);
     if (d) {
         e->bind = BIND_TYPE;
@@ -6104,6 +6128,8 @@ static type check_name(checker *c, expr *e)
     }
     decl *k = find_named(c, e->name, e->at, NAME_CONST);
     if (k) return use_constant(c, e, k);
+    k = find_named(c, e->name, e->at, NAME_ASSET);
+    if (k) return use_asset(c, e, k);
     decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {
         e->bind = BIND_SHADER;
@@ -6415,7 +6441,7 @@ static type check_map_method(checker *c, expr *e, const type map)
         sb name = {0};
         sb_printf(&name, "%s.%s", set ? "Set" : "Map", methods[m].name);
         changer->name = (str){name.data, (int)name.len};
-        check_writable(c, e->object, changer, NULL);
+        if (element_in_place(e->object)) check_writable(c, e->object, changer, NULL);
     }
     if (methods[m].result == TY_OPTIONAL) { // Get: the value, or nothing
         const type optional = optional_type(c, map_value(map), e->at);
@@ -6532,7 +6558,12 @@ static type check_sort(checker *c, expr *e, const type list)
     }
     decl *changer = NEW(decl);
     changer->name = str_from("List.Sort");
-    check_writable(c, e->object, changer, NULL);
+    if (through_element(e->object)) {
+        diag_error(e->at, "a list that's an element of another is sorted as a copy, taken out and put back");
+        diag_note("'var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
+    } else {
+        check_writable(c, e->object, changer, NULL);
+    }
     push_scope(c);
     for (int i = 0; i < 2; i++) {
         expr *arg = e->args.items[i];
@@ -6645,7 +6676,7 @@ static type check_list_method(checker *c, expr *e, const type list)
         sb name = {0};
         sb_printf(&name, "List.%s", methods[m].name);
         changer->name = (str){name.data, (int)name.len};
-        check_writable(c, e->object, changer, NULL);
+        if (element_in_place(e->object)) check_writable(c, e->object, changer, NULL);
     }
     if (str_eq_c(e->name, "Resize") && list.decl && builds(c->prog)) list.decl->resized = true; // Generated C has its helper
     return (type){methods[m].result, NULL};
@@ -6709,14 +6740,18 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     const expr *of = e->object;
     const bool direct = grid.kind == TY_TEXTURE && of->kind == E_NAME && of->bind == BIND_PARAM
                         && of->param->type.kind == TY_TEXTURE;
-    if (!direct && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
-                    || of->object->param->function_param)) {
+    const bool asset = grid.kind == TY_GRID && of->bind == BIND_ASSET; // A Grid2<Color> asset, by its name (docs/spec.md, Assets)
+    if (!direct && !asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                              || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a %s that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'%s",
                    shader_word(shader), grid.kind == TY_TEXTURE ? "Texture" : "grid",
-                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : "");
+                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : ", or a Grid2<Color> asset by its name");
+        if (grid.kind == TY_GRID && of->kind == E_INDEX && of->object->bind == BIND_ASSET) {
+            diag_note("the GPU can't index a list of assets: declare the one to sample as an asset of its own, 'asset Grid2<Color> name = \"...\";'");
+        }
         return T_ERR;
     }
-    if (!direct && of->object->param->type.kind == TY_STRUCT) {
+    if (!direct && !asset && of->object->param->type.kind == TY_STRUCT) {
         diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled %s in a component or singleton",
                    grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
@@ -6751,8 +6786,7 @@ static type check_grid_decode(checker *c, expr *e, const type grid)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    type bytes;
-    if (!resolve_list_type(c, str_from("List<byte>"), e->at, &bytes)) return T_ERR;
+    const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
     if (e->args.count != 1) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, "Decode takes the PNG's bytes, a List<byte>: 'cells.Decode(bytes)'");
@@ -6919,21 +6953,14 @@ static type check_coalesce(checker *c, expr *e)
 static type is_pattern_type(checker *c, const expr *e, const enum_member **member)
 {
     *member = NULL;
-    type t;
     const loc at = e->pattern_qual_at.line ? e->pattern_qual_at : e->pattern_at;
-    if (builtin_type_named(e->pattern, &t)) return t;
-    if (str_eq_c(e->pattern, "string")) return (type){TY_STRING, NULL};
-    if (resolve_list_type(c, e->pattern, at, &t)) return t;
-    if (resolve_map_type(c, e->pattern, at, &t)) return t;
-    if (resolve_grid_type(c, e->pattern, at, &t)) {
-        if (t.kind != TY_ERROR) diag_error(at, "'is' can't look for a grid");
-        return T_ERR;
-    }
-    decl *d = find_type(c, e->pattern, at);
-    if (d) return decl_type(d);
+    const type_ref *const r = type_ref_or_text(e->pattern_ref, e->pattern);
+    // An enum's member, ParseError.Empty: a qualified name no type has, whose first part is an enum
     str ns;
     str name;
-    if (split_qualified(e->pattern, &ns, &name)) {
+    decl *other;
+    if (r->args.count == 0 && !r->optional && !lookup(c->prog, c->unit, e->pattern, NAME_TYPE, &other)
+        && split_qualified(e->pattern, &ns, &name)) {
         decl *const enum_decl = find_type(c, ns, at);
         for (int i = 0; enum_decl && enum_decl->kind == DECL_ENUM && i < enum_decl->members.count; i++) {
             if (!str_eq(enum_decl->members.items[i].name, name)) continue;
@@ -6941,15 +6968,12 @@ static type is_pattern_type(checker *c, const expr *e, const enum_member **membe
             return decl_type(enum_decl);
         }
     }
-    diag_error(e->pattern_at, "unknown type '" STR_FMT "'", STR_ARG(e->pattern));
-    suggestion s = suggest_start(e->pattern);
-    suggest_builtin_types(&s);
-    suggest_structs(&s, c->prog);
-    for (int i = 0; i < c->prog->decls.count; i++) {
-        if (c->prog->decls.items[i]->kind == DECL_ENUM) suggest_consider(&s, c->prog->decls.items[i]->name);
+    const type t = resolve_type(c, r, PLACE_IS, at);
+    if (t.kind == TY_GRID) {
+        diag_error(at, "'is' can't look for a grid");
+        return T_ERR;
     }
-    suggest_note(&s);
-    return T_ERR;
+    return t;
 }
 
 // x is int score, x is ParseError why, x is ParseError.Empty: whether a failable
@@ -7338,6 +7362,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         if (part->bind == BIND_CONST) {
             diag_error(target->at, "'" STR_FMT "' is a constant, so it can't change", STR_ARG(part->constant->name));
             if (called) diag_note("copy it into a 'mut var' first");
+            return false;
+        }
+        if (part->bind == BIND_ASSET) {
+            diag_error(target->at, "'" STR_FMT "' is an asset, read-only: it's the file it names, as the game was built", STR_ARG(part->constant->name));
+            if (part->constant->return_type.kind == TY_GRID) diag_note("to draw into pixels, keep a Grid2<Color> field of your own, and copy its cells in");
+            else diag_note("copy it into a 'mut var' first, or into a field");
             return false;
         }
         if (part->kind != E_MEMBER && part->kind != E_INDEX) break;
@@ -7920,9 +7950,12 @@ static void check_parallel(checker *c, stmt *s)
     const type position = list ? (type){TY_INT, NULL} : dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
     for (int i = 0; i < 3; i++) s->block[i] = 1;
     if (grid.kind == TY_GRID || list) check_writable(c, s->value, NULL, NULL); // It changes the grid or list
-    if (list && holds_text(list_element(grid))) {
-        diag_error(s->value->at, "a parallel loop goes through a list of plain values, and this one's elements hold text");
-        diag_note("steps run on threads, where text can't be made: keep a number for it in the list, or use a 'for' loop");
+    if (list && holds_heap(list_element(grid))) {
+        const bool text = holds_text(list_element(grid));
+        diag_error(s->value->at, "a parallel loop goes through a list of plain values, and this one's elements hold %s",
+                   text ? "text" : "lists");
+        diag_note("steps run on threads, where %s can't be made: keep a number for it in the list, or use a 'for' loop",
+                  text ? "text" : "a list");
     }
     const expr *root = s->value;
     while (root->kind == E_MEMBER) root = root->object;
@@ -8029,6 +8062,7 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
+    if (s->target->kind == E_INDEX && !element_in_place(s->target->object)) return;
     if (s->target->kind != E_INDEX && through_element(s->target)) {
         const expr *at = s->target;
         while (at->kind != E_INDEX) at = at->object;
@@ -8520,42 +8554,23 @@ static void check_var(checker *c, stmt *s)
         }
         s->type = value;
     } else {
-        str inner_name;
-        const bool optional = optional_name(s->type_name, &inner_name);
-        const str type_name_ = optional ? inner_name : s->type_name;
-        decl *d = str_starts_with_c(type_name_, "List<") || str_starts_with_c(type_name_, "Grid2<")
-                       || str_starts_with_c(type_name_, "Grid3<")
-                    ? NULL
-                    : find_type(c, type_name_, s->type_at);
-        if (builtin_type_named(type_name_, &s->type)) {
-        } else if (resolve_list_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
-        } else if (resolve_map_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
-        } else if (resolve_grid_type(c, type_name_, s->type_qual_at.line ? s->type_qual_at : s->at, &s->type)) {
-        } else if (str_eq_c(type_name_, "string")) {
-            s->type = (type){TY_STRING, NULL};
-        } else if (str_eq_c(type_name_, "Action")) {
+        const type_ref *const written = type_ref_or_text(s->type_ref, s->type_name);
+        const bool optional = written->optional;
+        const type_ref inner = optional ? without_question(written) : *written;
+        const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
+        s->type = resolve_type(c, &inner, PLACE_LOCAL, at);
+        if (s->type.kind == TY_ACTION) {
             diag_error(s->type_at, "an Action is only ever a function's last parameter, run with 'content();'");
             s->type = T_ERR;
-        } else if (str_eq_c(type_name_, "DrawList")) {
+        } else if (s->type.kind == TY_DRAW_LIST) {
             diag_error(s->type_at, "the draw list is only passed on, to an extern function that takes a DrawList");
             diag_note("write 'Draw2D.list' where it goes, like 'DrawUI(Draw2D.list);'");
             s->type = T_ERR;
-        } else if (d) {
-            s->type = decl_type(d);
-        } else if (world_misplaced(type_name_, s->type_at.line ? s->type_at : s->at)) {
-            s->type = T_ERR;
-        } else {
-            diag_error(s->type_at.line ? s->type_at : s->at, "unknown type '" STR_FMT "'", STR_ARG(type_name_));
-            suggestion sg = suggest_start(type_name_);
-            suggest_builtin_types(&sg);
-            suggest_decls(&sg, c->prog, true, true, true);
-            suggest_structs(&sg, c->prog);
-            suggest_note(&sg);
-            const fix create = {.kind = FIX_CREATE_STRUCT, .at = s->type_qual_at.line ? s->type_qual_at : s->at, .name = type_name_};
-            vec_push(c->prog->fixes, create);
+        } else if (s->type.kind == TY_WORLD) {
+            world_misplaced(str_from("World"), s->type_at.line ? s->type_at : s->at);
             s->type = T_ERR;
         }
-        if (optional) s->type = optional_type(c, s->type, s->type_qual_at.line ? s->type_qual_at : s->at);
+        if (optional) s->type = optional_type(c, s->type, at);
         if (s->value->kind == E_DEFAULT || s->value->kind == E_NULL || (optional && s->value->kind == E_LIST)) {
             value = check_expr_want(c, s->value, s->type);
         } else if (s->value->kind == E_LIST) {
@@ -8625,17 +8640,15 @@ static type local_type(checker *c, stmt *s)
     if (builtin_type_named(s->type_name, &t)) return t;
     const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
     const int errors = diag_error_count();
-    if (resolve_list_type(c, s->type_name, at, &t) || resolve_map_type(c, s->type_name, at, &t)) {
-        if (diag_error_count() > errors) s->type_name = str_from(""); // Reported: it takes the element's type, like var
-        return t;
-    }
-    if (resolve_grid_type(c, s->type_name, at, &t)) {
-        if (t.kind != TY_ERROR) diag_error(at, "a local can't hold a grid");
+    const type_ref *const r = type_ref_or_text(s->type_ref, s->type_name);
+    t = resolve_type(c, r, PLACE_LOOP, at);
+    if (t.kind == TY_GRID) {
+        diag_error(at, "a local can't hold a grid");
         s->type_name = str_from("");
         return T_ERR;
     }
-    decl *d = find_type(c, s->type_name, s->type_at);
-    return d ? decl_type(d) : T_ERR;
+    if (r->args.count > 0 && diag_error_count() > errors) s->type_name = str_from(""); // Reported: it takes the element's type, like var
+    return t;
 }
 
 // Whether a checked expression can be a statement of its own: a call that's
@@ -8992,8 +9005,35 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
 static type constant_type(const checker *c, const decl *k)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
-    type t;
-    if (builtin_type_named(k->return_type_name, &t)) {
+    const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
+    if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>
+        const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
+        diag_error(at, "a constant can't be a %s yet", what);
+        return T_ERR;
+    }
+    const type t = resolve_type(c, r, PLACE_CONST, at);
+    switch (t.kind) {
+    case TY_ERROR:
+    case TY_STRING: return t;
+    case TY_STRUCT:
+    case TY_ENUM:
+        if (holds_render_resource(t)) {
+            diag_error(at, "a constant can't hold rendering resources, including inside a struct");
+            return T_ERR;
+        }
+        if (holds_list(t)) {
+            diag_error(at, "a constant can't hold a list yet, and '" STR_FMT "' has one", STR_ARG(t.decl->name));
+            return T_ERR;
+        }
+        return t;
+    case TY_COMPONENT:
+    case TY_SINGLETON:
+    case TY_EVENT:
+    case TY_INPUT:
+        diag_error(at, "a constant is a built-in type, text, a struct or an enum, not %s", decl_what(t.decl));
+        diag_note("for the values a component starts with, give its fields defaults: 'int lives = 3;'");
+        return T_ERR;
+    default:
         if (holds_render_resource(t)) {
             diag_error(at, "a constant can't hold rendering resources");
             return T_ERR;
@@ -9004,35 +9044,6 @@ static type constant_type(const checker *c, const decl *k)
         }
         return t;
     }
-    if (str_eq_c(k->return_type_name, "string")) return (type){TY_STRING, NULL};
-    if (str_starts_with_c(k->return_type_name, "List<")) {
-        diag_error(at, "a constant can't be a list yet");
-        return T_ERR;
-    }
-    decl *const d = find_type(c, k->return_type_name, at);
-    if (d && (d->kind == DECL_STRUCT || d->kind == DECL_ENUM)) {
-        if (holds_render_resource(decl_type(d))) {
-            diag_error(at, "a constant can't hold rendering resources, including inside a struct");
-            return T_ERR;
-        }
-        if (holds_list(decl_type(d))) {
-            diag_error(at, "a constant can't hold a list yet, and '" STR_FMT "' has one", STR_ARG(d->name));
-            return T_ERR;
-        }
-        return decl_type(d);
-    }
-    if (d) {
-        diag_error(at, "a constant is a built-in type, text, a struct or an enum, not %s", decl_what(d));
-        diag_note("for the values a component starts with, give its fields defaults: 'int lives = 3;'");
-        return T_ERR;
-    }
-    diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(k->return_type_name));
-    suggestion s = suggest_start(k->return_type_name);
-    suggest_builtin_types(&s);
-    suggest_consider_c(&s, "string");
-    suggest_structs(&s, c->prog);
-    suggest_note(&s);
-    return T_ERR;
 }
 
 // const int MAX_HEALTH = 100;: its type, and a value worked out from constants
@@ -9261,6 +9272,86 @@ static type use_constant(checker *c, expr *e, decl *k)
     return k->return_type;
 }
 
+// An asset read as a value: its type's, from the file it names. One whose
+// path couldn't be resolved is still that type, so the code around it checks.
+static type use_asset(checker *c, expr *e, decl *k)
+{
+    (void)c;
+    e->bind = BIND_ASSET;
+    e->constant = k;
+    return k->return_type;
+}
+
+// ---------------------------------------------------------------------------
+// Assets: asset Grid2<Color> hero = "art/hero.png"; (docs/spec.md, Assets)
+
+// What an asset resolves to: string, List<byte> or Grid2<Color>, alone, or a
+// List<T> or Map<string, T> of one for a glob. False for anything else, which
+// is said.
+static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *is_map)
+{
+    const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
+    const type_ref *const written = type_ref_or_text(k->return_type_ref, k->return_type_name);
+    *many = *is_map = false;
+    const type_ref *inner = written;
+    const bool generic = written->args.count > 0 && !written->optional;
+    if (generic && str_eq_c(written->name, "List") && !str_eq_c(written->text, "List<byte>")) { // A glob's files, not one file's bytes
+        *many = true;
+        inner = written->args.items[0];
+    } else if (generic && str_eq_c(written->name, "Map")) {
+        if (!str_eq_c(written->args.items[0]->text, "string")) {
+            diag_error(at, "a map of assets is keyed by their paths: 'Map<string, ...>'");
+            return false;
+        }
+        *many = *is_map = true;
+        inner = written->args.items[1];
+    }
+    if (str_eq_c(inner->text, "string")) *kind = ASSET_TEXT;
+    else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
+    else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
+    else {
+        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file) or a Grid2<Color> (a PNG), not '" STR_FMT "'", STR_ARG(inner->text));
+        diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
+        return false;
+    }
+    k->return_type = resolve_type(c, written, PLACE_ASSET, at);
+    return k->return_type.kind != TY_ERROR;
+}
+
+// Checks an asset declaration: its type, its path (a constant text) and the
+// files the path resolves to, read and decoded (asset_files.h), which codegen
+// packs. Errors at the path say what to write.
+static void check_asset_decl(checker *c, decl *k)
+{
+    const unit *const outer = c->unit;
+    c->unit = k->unit;
+    check_reserved(k->name, k->at);
+    if (k->is_local) diag_error(k->local_at, "an asset is every machine's, as the game is built with it: it can't be local");
+    asset_kind kind = ASSET_BYTES;
+    bool many = false, is_map = false;
+    const bool typed = asset_type(c, k, &kind, &many, &is_map);
+    if (!typed) k->return_type = T_ERR;
+    k->asset_kind = kind;
+    k->asset_many = many;
+    const expr *path = NULL;
+    const bool constant = is_constant(c, k->value);
+    if (constant) {
+        const type t = check_constant_expr(c, k->value, true, (type){TY_STRING, NULL});
+        if (t.kind == TY_STRING) path = text_literal(k->value);
+        else if (t.kind != TY_ERROR) diag_error(k->value->at, "an asset's path is text, not %s", type_name(t));
+    }
+    if (!constant) {
+        diag_error(k->value->at, "an asset's path is a constant: a string literal, or a 'const string'");
+        diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
+    }
+    if (typed && path) {
+        k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+    }
+    k->index = 2;
+    vec_push(c->prog->assets, k);
+    c->unit = outer;
+}
+
 static void check_default(checker *c, const field *f)
 {
     expr *value = f->default_value;
@@ -9442,45 +9533,33 @@ static void resolve_field_types(const checker *c, const decl *d)
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
         if (builtin_type_named(f->type_name, &f->type)) continue;
         f->type = T_ERR;
-        str inner;
-        if (optional_name(f->type_name, &inner)) {
+        const type_ref *const r = type_ref_or_text(f->type_ref, f->type_name);
+        if (r->optional) {
             diag_error(at, "fields can't be T? yet: they always hold a value");
             diag_note("keep a bool beside it that says whether it's set, like 'bool hasTarget;'");
             continue;
         }
-        if (resolve_list_type(c, f->type_name, at, &f->type)) continue;
-        if (resolve_map_type(c, f->type_name, at, &f->type)) continue;
-        if (resolve_grid_type(c, f->type_name, at, &f->type)) continue;
-        if (str_eq_c(f->type_name, "string")) {
-            f->type = (type){TY_STRING, NULL};
-            continue;
-        }
-        if (str_eq_c(f->type_name, "Action")) {
-            diag_error(at, "fields can't hold an Action; it's only ever a function's last parameter");
-            continue;
-        }
-        if (str_eq_c(f->type_name, "DrawList")) {
+        const type t = resolve_type(c, r, PLACE_FIELD, at);
+        switch (t.kind) {
+        case TY_ERROR: break;
+        case TY_ACTION: diag_error(at, "fields can't hold an Action; it's only ever a function's last parameter"); break;
+        case TY_DRAW_LIST:
             diag_error(at, "fields can't hold a DrawList; it's the frame's, which a view passes to C as 'Draw2D.list'");
-            continue;
-        }
-        decl *const t = find_type(c, f->type_name, at);
-        if (t && (t->kind == DECL_STRUCT || t->kind == DECL_ENUM)) {
-            f->type = decl_type(t);
-        } else if (t) {
-            const char *what = t->kind == DECL_COMPONENT   ? "components"
-                               : t->kind == DECL_SINGLETON ? "singletons"
-                               : t->kind == DECL_EVENT     ? "events"
-                                                           : "inputs";
+            break;
+        case TY_WORLD: world_misplaced(str_from("World"), at); break;
+        case TY_COMPONENT:
+        case TY_SINGLETON:
+        case TY_EVENT:
+        case TY_INPUT: {
+            const char *what = t.kind == TY_COMPONENT   ? "components"
+                               : t.kind == TY_SINGLETON ? "singletons"
+                               : t.kind == TY_EVENT     ? "events"
+                                                        : "inputs";
             diag_error(at, "fields can't hold %s", what);
             diag_note("to share fields between types, declare a struct, like 'struct Name { ... }', and use it in both");
-        } else if (!world_misplaced(f->type_name, at)) {
-            diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(f->type_name));
-            suggestion s = suggest_start(f->type_name);
-            suggest_builtin_types(&s);
-            suggest_structs(&s, c->prog);
-            suggest_note(&s);
-            const fix create = {.kind = FIX_CREATE_STRUCT, .at = at, .name = f->type_name};
-            vec_push(c->prog->fixes, create);
+            break;
+        }
+        default: f->type = t;
         }
     }
 }
@@ -9668,14 +9747,6 @@ static void check_fields(checker *c, const decl *d)
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
         }
-        // A struct declared after this field had no fields yet when the field's type was resolved
-        if (f->type.kind == TY_LIST && holds_list(list_element(f->type))) {
-            refuse_held(list_element(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, NULL);
-        }
-        if (f->type.kind == TY_MAP && holds_list(map_value(f->type))) {
-            const type key = f->type.decl->fields.items[0].type;
-            refuse_held(map_value(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, &key);
-        }
         check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {
             if (str_eq(d->fields.items[j].name, f->name)) {
@@ -9731,55 +9802,40 @@ static void check_local_part(const checker *c, const decl *part)
 
 // A method's or function's parameter or return type: a built-in type, struct,
 // enum or component; singletons only as parameters, and void only as a return.
-static type method_type(const checker *c, const str name, const loc at, const bool is_return)
+static type method_type(const checker *c, const type_ref *r, const loc at, const bool is_return)
 {
-    type t;
-    str inner;
-    if (optional_name(name, &inner)) return optional_type(c, method_type(c, inner, at, is_return), at); // int?
-    if (is_return && str_eq_c(name, "void")) return T_VOID_;
-    if (builtin_type_named(name, &t)) return t;
-    if (resolve_list_type(c, name, at, &t)) return t;
-    if (resolve_map_type(c, name, at, &t)) return t;
-    if (resolve_grid_type(c, name, at, &t)) {
-        if (t.kind == TY_ERROR) return t;
+    if (r->optional) { // int?
+        const type_ref inner = without_question(r);
+        return optional_type(c, method_type(c, &inner, at, is_return), at);
+    }
+    const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
+    switch (t.kind) {
+    case TY_GRID:
         diag_error(at, "functions can't %s grids yet", is_return ? "return" : "take");
         diag_note("change a grid's cells in the system that has its component or singleton");
         return T_ERR;
-    }
-    if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
-    if (str_eq_c(name, "Action")) {
-        if (!is_return) return (type){TY_ACTION, NULL};
+    case TY_ACTION:
+        if (!is_return) return t;
         diag_error(at, "a function can't return an Action; it takes one, as its last parameter");
         return T_ERR;
-    }
-    if (str_eq_c(name, "DrawList")) {
-        if (!is_return) return (type){TY_DRAW_LIST, NULL};
+    case TY_DRAW_LIST:
+        if (!is_return) return t;
         diag_error(at, "a function can't return a DrawList; an extern function takes one, passed 'Draw2D.list'");
         return T_ERR;
+    case TY_SINGLETON:
+        if (!is_return) return t;
+        diag_error(at, "functions and methods can't return singletons");
+        return T_ERR;
+    case TY_EVENT:
+    case TY_INPUT:
+        diag_error(at, "methods take and return built-in types, structs, enums and components, not %s",
+                   t.kind == TY_EVENT ? "events" : "inputs");
+        return T_ERR;
+    case TY_WORLD:
+        world_misplaced(str_from("World"), at);
+        return T_ERR;
+    default: return t;
     }
-    for (int i = 0; i < c->prog->records.count; i++) { // Devices, Keyboard, ..., Button
-        if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
-    }
-    decl *const d = find_type(c, name, at);
-    if (d && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_ENUM
-              || (!is_return && d->kind == DECL_SINGLETON))) return decl_type(d);
-    if (d) {
-        if (d->kind == DECL_SINGLETON) diag_error(at, "functions and methods can't return singletons");
-        else diag_error(at, "methods take and return built-in types, structs, enums and components, not %s",
-                        d->kind == DECL_EVENT ? "events" : "inputs");
-    } else if (str_eq_c(name, "void")) {
-        diag_error(at, "'void' only goes before a method that returns nothing");
-    } else if (!world_misplaced(name, at)) {
-        diag_error(at, "unknown type '" STR_FMT "'", STR_ARG(name));
-        suggestion s = suggest_start(name);
-        suggest_builtin_types(&s);
-        suggest_structs(&s, c->prog);
-        if (is_return) suggest_consider_c(&s, "void");
-        suggest_note(&s);
-        const fix create = {.kind = FIX_CREATE_STRUCT, .at = at, .name = name};
-        vec_push(c->prog->fixes, create);
-    }
-    return T_ERR;
 }
 
 // `fails ParseError` after a function's or method's parameters: the error it
@@ -9790,7 +9846,7 @@ static void check_fails(const checker *c, decl *m)
     m->result = m->return_type;
     if (m->fails_name.len == 0) return;
     const loc at = m->fails_type_qual_at.line ? m->fails_type_qual_at : m->fails_at;
-    const type error = method_type(c, m->fails_name, at, false);
+    const type error = method_type(c, type_ref_or_text(m->fails_ref, m->fails_name), at, false);
     if (error.kind == TY_ERROR || m->return_type.kind == TY_ERROR) return;
     if (m->is_operator) {
         diag_error(m->fails_at, "operators can't fail");
@@ -9903,7 +9959,7 @@ static void check_world_param(const decl *m, param *p, const int k)
 // The types in a method's or function's signature.
 static void check_signature(checker *c, decl *m)
 {
-    m->return_type = method_type(c, m->return_type_name, m->return_type_qual_at, true);
+    m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
     if (holds_render_resource(m->return_type)) {
         m->render_resources = true;
         m->render_resources_at = m->return_type_at;
@@ -9919,7 +9975,7 @@ static void check_signature(checker *c, decl *m)
         // `World world`: its caller's World, to read any entity's components through (a game's own type of
         // that name comes first, as for a system's)
         const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
-        p->type = world ? (type){TY_WORLD, NULL} : method_type(c, p->type_name, p->type_qual_at, false);
+        p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         if (world) check_world_param(m, p, k);
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
@@ -11254,8 +11310,7 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
 
-        str inner;
-        if (!d && optional_name(p->type_name, &inner)) {
+        if (!d && p->type_ref && p->type_ref->optional) {
             diag_error(p->type_at.line ? p->type_at : p->at, "a %s's parameters are there or it doesn't run, so they can't be T?",
                        system_what(sys));
             diag_note("to run for entities with or without a component, write two %ss, one 'with' it and one 'without'",
@@ -11631,12 +11686,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     // int seed: the match's seed, from 0 to 2147483647, which the machine that
@@ -11696,7 +11751,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -11784,7 +11839,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -11804,7 +11859,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -11822,7 +11877,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -11954,7 +12009,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -11963,7 +12018,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -12016,7 +12071,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
     vec_push(d->fields, f);
 }
 
@@ -12356,6 +12411,9 @@ static void collect_decls(program *prog)
             case DECL_CONST:
                 diag_error(d->local_at, "constants belong to neither side: every machine has the same ones");
                 break;
+            case DECL_ASSET:
+                diag_error(d->local_at, "an asset is every machine's, as the game is built with it: it can't be local");
+                break;
             case DECL_SHADER:
                 diag_error(d->local_at, "a %s runs on the GPU for the meshes a view draws, so it's local already; drop 'local'",
                            d->is_frag ? "frag" : "vert");
@@ -12427,6 +12485,7 @@ static void collect_decls(program *prog)
         case DECL_RESULT:
         case DECL_FUNCTION:
         case DECL_CONST:
+        case DECL_ASSET:
         case DECL_SHADER:
         case DECL_SETTINGS: // Not in prog->decls
             break;
@@ -14532,6 +14591,20 @@ bool check(program *prog)
     }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);
+    }
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind == DECL_ASSET) check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+    }
+    if (prog->game_folder && prog->assets.count > 0) {
+        // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes
+        asset_named *named = arena_alloc(sizeof(asset_named) * (size_t)prog->assets.count);
+        int count = 0;
+        for (int i = 0; i < prog->assets.count; i++) {
+            const decl *d = prog->assets.items[i];
+            const expr *path = d->value ? text_literal(d->value) : NULL;
+            if (path) named[count++] = (asset_named){d->unit->src->path, path->text, d->asset};
+        }
+        asset_files_save_hashes(prog->game_folder, named, count);
     }
     check_settings(&c);
     add_scene_player_words(prog);

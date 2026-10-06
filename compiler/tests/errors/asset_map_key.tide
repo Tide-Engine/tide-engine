@@ -1,0 +1,6 @@
+// expect: a map of assets is keyed by their paths: 'Map<string, ...>'
+asset Map<int, string> notes = "../e2e/assets/notes/*.txt";
+
+scene Main
+{
+}

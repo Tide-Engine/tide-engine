@@ -89,10 +89,15 @@ function(tide_android_app target)
     if(NOT TIDE_ANDROID)
         return()
     endif()
-    cmake_parse_arguments(ARG "" "LABEL" "" ${ARGN})
+    # PACK: the game's pack of assets (tide_add_game), which goes in the app when there is one
+    cmake_parse_arguments(ARG "" "LABEL;PACK" "" ${ARGN})
     set(label "${target}")
     if(ARG_LABEL)
         set(label "${ARG_LABEL}")
+    endif()
+    set(pack "")
+    if(ARG_PACK)
+        set(pack "--pack-if-any" "${ARG_PACK}")
     endif()
     # The activity's way in is in the platform layer, which nothing in the
     # program calls.
@@ -101,7 +106,7 @@ function(tide_android_app target)
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND "${TIDE_APK_PATH}" "$<TARGET_FILE_DIR:${target}>/${target}.apk" --package "dev.tide.${id}"
             --label "${label}" --lib "${target}" --key "${TIDE_ANDROID_KEY}" --min ${TIDE_ANDROID_API} --debuggable
-            --icon "${PROJECT_SOURCE_DIR}/tools/tide-vscode/icon.png"
+            --icon "${PROJECT_SOURCE_DIR}/tools/tide-vscode/icon.png" ${pack}
             "${TIDE_ANDROID_ABI}=$<TARGET_FILE:${target}>"
         COMMENT "Android app ${target}.apk"
         VERBATIM)

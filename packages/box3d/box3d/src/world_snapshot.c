@@ -2544,8 +2544,17 @@ void b3SnapNoteOp( b3World* world, int op )
 		case b3_recOpCreateSphereShape:
 		case b3_recOpCreateCapsuleShape:
 		case b3_recOpCreateHullShape:
+		case b3_recOpDestroyShape:
+		// A setting of a body's, which is in the body or in its set's copy of it: said where it's written
+		case b3_recOpBodySetLinearDamping:
+		case b3_recOpBodySetAngularDamping:
+		case b3_recOpBodySetGravityScale:
+		case b3_recOpBodySetBullet:
 		// A setting of the world's, which every image writes
 		case b3_recOpWorldSetGravity:
+		case b3_recOpWorldSetContactTuning:
+		case b3_recOpWorldSetRestitutionThreshold:
+		case b3_recOpWorldSetHitEventThreshold:
 		// What changes nothing
 		case b3_recOpDestroyWorld:
 		case b3_recOpQueryOverlapAABB:

@@ -1,0 +1,6 @@
+// expect: an asset's path is a constant: a string literal, or a 'const string'
+asset string rules = $"art/{1}.txt";
+
+scene Main
+{
+}

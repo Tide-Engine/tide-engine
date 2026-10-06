@@ -320,16 +320,20 @@ enum { RTC_ICE_CHECKING, RTC_ICE_CONNECTED, RTC_ICE_FAILED };
 #define RTC_MAX_PAIRS 32
 #define RTC_MAX_PERMISSIONS 16
 
+// A pair's check: not sent yet, sent, answered from where it went, or given up on
+enum { RTC_PAIR_WAITING, RTC_PAIR_IN_PROGRESS, RTC_PAIR_SUCCEEDED, RTC_PAIR_FAILED };
+
 typedef struct rtc_pair {
     bool relayed; // From our TURN allocation, rather than our socket
     rtc_addr remote;
     uint32_t remote_priority;
     uint64_t priority;
-    uint8_t state; // Waiting, in progress, succeeded or failed
+    uint8_t state; // RTC_PAIR_WAITING and the rest
     uint8_t id[12];
     double sent;
     int tries;
     bool nominated; // They picked it (USE-CANDIDATE)
+    bool owed;      // They checked it before we had their password: it's checked back once we do
 } rtc_pair;
 
 typedef struct rtc_ice {
@@ -385,7 +389,9 @@ typedef struct rtc_ice {
 
 bool rtc_ice_start(rtc_ice *ice, bool controlling, const rtc_ice_config *config);
 void rtc_ice_close(rtc_ice *ice);
-void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd);
+// Their description's ufrag and password. Checks of theirs that came before
+// it are checked back here, at `now`.
+void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd, double now);
 void rtc_ice_add_remote(rtc_ice *ice, const rtc_candidate *c);
 // Our next candidate to tell the other side about, if there's a new one.
 bool rtc_ice_next_local(rtc_ice *ice, rtc_candidate *c);
@@ -534,15 +540,19 @@ typedef struct rtc_sctp {
 
     // The channel
     bool channel;      // Open
+    bool connected;    // It opened, at some point: nothing is left to wait for
     bool opening;      // We sent DATA_CHANNEL_OPEN
     uint16_t stream;
     uint16_t ssn;      // Our next stream sequence number, for the ordered open/ack
+    uint32_t messages_in, messages_out; // Its messages so far, each way
 } rtc_sctp;
 
 void rtc_sctp_start(rtc_sctp *s, bool initiator, uint16_t their_port, rtc_send_fn send, rtc_message_fn message,
                     void *user, double now);
 // A packet from DTLS
 void rtc_sctp_receive(rtc_sctp *s, const uint8_t *packet, size_t size, double now);
+// What's due. It fails (RTC_SCTP_FAILED) when the association and the channel
+// on it aren't both up 20 seconds after it started.
 void rtc_sctp_update(rtc_sctp *s, double now);
 // Opens the channel: the side that creates it (the one who joins), with a
 // stream number of the parity its DTLS role gives it.
@@ -560,6 +570,7 @@ enum { RTC_PEER_CONNECTING, RTC_PEER_OPEN, RTC_PEER_FAILED };
 
 #define RTC_PEER_INBOX 64
 #define RTC_PEER_SIGNALS 16
+#define RTC_PEER_HELD 4
 
 typedef struct rtc_peer {
     int state;
@@ -579,6 +590,14 @@ typedef struct rtc_peer {
     char *signals[RTC_PEER_SIGNALS];
     int signal_count;
     bool description_told;
+    // Their DTLS datagrams that came before DTLS could answer them, in the
+    // order they came, each with when it arrived: DTLS gets them once it can
+    struct {
+        uint16_t size;
+        double arrived;
+        uint8_t data[2048];
+    } held[RTC_PEER_HELD];
+    int held_count;
     // Messages from the other side, each with when the datagram it came in arrived
     struct {
         uint16_t size;

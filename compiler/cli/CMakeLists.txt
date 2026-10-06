@@ -1,7 +1,7 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang (see AGENTS.md, Packaging and releases).
 add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c packages_cmd.c publish.c release.c
-    serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/folders.c"
+    serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
 target_include_directories(tide_cli PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/platform/src/rtc")
@@ -42,6 +42,10 @@ add_test(NAME tide_cli_packages
 
 # tide publish, against the build service (builds/) on this machine.
 if(TIDE_NODE)
+    # Assets: the pack tidec writes, and URLs fetched once and kept with their ETag, against a server on this machine
+    add_test(NAME tide_cli_assets
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets_test.mjs" --tidec "$<TARGET_FILE:tidec>"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/assets_test")
     add_test(NAME tide_cli_publish
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/publish_test.mjs" --tide "$<TARGET_FILE:tide_cli>"
                 --work "${CMAKE_CURRENT_BINARY_DIR}/publish_test")

@@ -3,15 +3,30 @@
 // Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
 // none yet.
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // readlink under strict C
+#endif
+
 #include "window.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #define GLFW_INCLUDE_NONE // Its OpenGL is ours (src/gl.h)
 #include <GLFW/glfw3.h>
 
 #include "tide/page.h"
 #include "cursor.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
 #include "gl.h"
 #include "touch_win32.h"
 
@@ -427,4 +442,43 @@ void tide_window_copy(const char *text)
 void tide_window_typing(const bool typing)
 {
     (void)typing; // Desktops have their keyboard out already
+}
+
+// The program's own path, with its extension replaced by .pack: what tide
+// build and tide_add_game put a game's assets in, beside it.
+uint8_t *tide_window_pack(size_t *size)
+{
+    *size = 0;
+    char path[4096];
+#ifdef _WIN32
+    const DWORD n = GetModuleFileNameA(NULL, path, sizeof path);
+    if (!n || n >= sizeof path) return NULL;
+#elif defined(__APPLE__)
+    uint32_t n = sizeof path;
+    if (_NSGetExecutablePath(path, &n) != 0) return NULL;
+#else
+    const ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
+    if (n <= 0) return NULL;
+    path[n] = '\0';
+#endif
+    char *dot = strrchr(path, '.');
+    const char *slash = strrchr(path, '/');
+    const char *backslash = strrchr(path, '\\');
+    if (dot && (!slash || dot > slash) && (!backslash || dot > backslash)) *dot = '\0';
+    if (strlen(path) + 6 >= sizeof path) return NULL;
+    strcat(path, ".pack");
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    const long length = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
+    const bool ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
+    fclose(f);
+    if (!ok) {
+        free(bytes);
+        return NULL;
+    }
+    *size = (size_t)length;
+    return bytes;
 }
