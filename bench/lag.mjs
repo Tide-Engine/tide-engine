@@ -340,6 +340,7 @@ for (const ping of options.pings.split(',').map(Number)) {
         }
     } catch (error) {
         console.log(`  the run ended early: ${error.message}`);
+        run.error = error.message;
         failed = true;
     }
     // What each said, a page that stopped answering too: what it had said until then
@@ -355,6 +356,7 @@ for (const ping of options.pings.split(',').map(Number)) {
         } else if (player.errors.length) {
             console.log(`    the page said: ${[...new Set(player.errors)].slice(0, 5).join(' | ')}`);
         }
+        if (player.errors.length) (run.page_errors ??= {})[player.who] = [...new Set(player.errors)];
     }
     run.browser_version = players[0]?.browserVersion ?? '';
     if (basename(page) === 'sumo.html') {
