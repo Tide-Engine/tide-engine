@@ -1,0 +1,6 @@
+// expect: an asset's path is text, not int
+asset string rules = 1 + 2;
+
+scene Main
+{
+}

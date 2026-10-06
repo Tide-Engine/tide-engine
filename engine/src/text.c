@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/pack.h"
+
 // See tide/text.h.
 
 // ---------------------------------------------------------------------------
@@ -108,10 +110,13 @@ static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const
 // last on, and the top of the stack moved to its start.
 static void add_piece(const uint64_t bytes, const char *what)
 {
-    const uint64_t limit = (uint64_t)TIDE_SCRATCH_SLOTS << TIDE_SCRATCH_SHIFT;
+    // The pack (tide/pack.h) has the offsets from TIDE_PACK_BASE on while one is loaded
+    const uint64_t limit = tide_pack_region_slots ? TIDE_PACK_BASE : (uint64_t)TIDE_SCRATCH_SLOTS << TIDE_SCRATCH_SHIFT;
     const uint64_t start = scratch_end; // A slot's start: pieces are whole slots
     const uint64_t slots = (bytes + TIDE_SCRATCH_BYTES - 1u) >> TIDE_SCRATCH_SHIFT;
-    if (start + (slots << TIDE_SCRATCH_SHIFT) > limit) scratch_full(what, bytes, "past the 1 GiB a thread's offsets reach");
+    if (start + (slots << TIDE_SCRATCH_SHIFT) > limit) {
+        scratch_full(what, bytes, tide_pack_region_slots ? "past the 512 MiB a thread's offsets reach beside the pack" : "past the 1 GiB a thread's offsets reach");
+    }
     scratch_piece p = {(uint32_t)start, (uint32_t)slots, (uint32_t)slots, NULL};
     if (spare.memory && spare.room >= slots) {
         p.room = spare.room;

@@ -194,7 +194,14 @@ void rtc_peer_update(rtc_peer *p, const double now)
     const bool dtls_down = p->dtls_started && (p->dtls.state == RTC_DTLS_FAILED || p->dtls.state == RTC_DTLS_CLOSED);
     const bool sctp_down = p->sctp_started && (p->sctp.state == RTC_SCTP_FAILED || p->sctp.state == RTC_SCTP_CLOSED);
     const bool closed = p->state == RTC_PEER_OPEN && !open;
-    if (p->ice.state == RTC_ICE_FAILED || dtls_down || sctp_down || closed) p->state = RTC_PEER_FAILED;
+    if (p->ice.state == RTC_ICE_FAILED || dtls_down || sctp_down || closed) {
+        const char *why = "its channel closed";
+        if (p->ice.state == RTC_ICE_FAILED) why = "no pair answers";
+        else if (dtls_down) why = "DTLS ended";
+        else if (sctp_down) why = "SCTP ended";
+        rtc_debug("peer: gone: %s", why);
+        p->state = RTC_PEER_FAILED;
+    }
 }
 
 void rtc_peer_send(rtc_peer *p, const void *data, const size_t size)

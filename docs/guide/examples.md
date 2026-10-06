@@ -29,13 +29,14 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Crates, balls and a floor](../physics/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
 - [A wall of crates, and balls to throw](../physics/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
 - [Towers](./towers.md): a whole game on Box2D, with a lobby and rooms for four: a race to stack bricks, which lean, slide and come down.
-- [Alley](./alley.md): a whole game on Box3D, with a lobby and rooms for eight: bowling with too many pins, spin, low gravity and a goal that counts.
+- [Sumo](./sumo.md): a whole game on Box3D, with a lobby and rooms for eight: heavy balls that ram each other out of a ring stacked with two thousand crates, while its floor falls away.
 
 ## What a machine shows
 
 - [A view draws the world](../game/views.md): cameras, and screen and world coordinates.
 - [Five ticks a second, drawn every frame](../game/views.md#smooth-at-any-tick-rate): what views see between ticks.
 - [Smooth shapes](../game/views.md#smooth-shapes): round rects, ellipses, arcs, outlines and soft edges.
+- [A sprite from a file](../game/assets.md#declaring-an-asset): a PNG packed with the game, drawn as a texture and read by the match.
 - [Anchors, sizes and weights](../game/views.md#measuring-text): text, where it's placed and how big it is.
 - [A grid, drawn as a texture](../game/views.md#textures): a `Grid2<Color>` to paint on.
 - [Primitives through a 3D camera](../game/views.md#primitives): cubes, a sphere, a cylinder and a plane.
@@ -58,4 +59,4 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [The same seed, the same numbers](../language/math.md#seeds): a `Random` and its seed.
 - [A list, changed and sorted](../language/text-and-lists.md#sorting): a list's members, a button each.
 
-[Falling sand](./sand.md), [Duel](./duel.md), [Towers](./towers.md) and [Alley](./alley.md) are whole games, to play here too.
+[Falling sand](./sand.md), [Duel](./duel.md), [Towers](./towers.md) and [Sumo](./sumo.md) are whole games, to play here too.

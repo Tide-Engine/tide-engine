@@ -6,7 +6,14 @@ list(REMOVE_ITEM TIDEC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    add_library(tidec_core STATIC ${TIDEC_SOURCES})
+    # Assets: tidec reads a game's PNGs with the engine's own reader and writes
+    # its pack with the engine's own builder (tide/png.h, tide/pack.h), so what
+    # it packs is what the game reads; those files bring the engine's pages and
+    # hashes. The same objects are in the engine's library, so a program that
+    # links both (tide_cli_tests) finds each symbol once.
+    set(TIDEC_ENGINE_SOURCES "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/pack.c"
+        "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/engine/src/page.c" "${PROJECT_SOURCE_DIR}/engine/src/net.c")
+    add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).
     set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS "TIDE_VERSION=\"${TIDE_VERSION}\"")
     target_link_libraries(tidec_core PUBLIC tide_flags)

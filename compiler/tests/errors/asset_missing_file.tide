@@ -1,0 +1,6 @@
+// expect: there's no file at 'art/nope.png'
+asset Grid2<Color> hero = "art/nope.png";
+
+scene Main
+{
+}
