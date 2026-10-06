@@ -1387,6 +1387,35 @@ bool builtin_takes_out(const str owner, const str name)
     return false;
 }
 
+bool builtin_out_versions(const str owner, const str name, sb *names, sb *example)
+{
+    build_signatures();
+    const signature *with[8]; // Each function once, in the order they were added
+    int count = 0;
+    bool known = false;
+    for (int i = 0; i < signature_count; i++) {
+        const signature *s = &signatures[i];
+        if (!str_eq_c(owner, s->owner)) continue;
+        if (str_eq_c(name, s->name)) known = true;
+        if (!s->out) continue;
+        bool listed = false;
+        for (int k = 0; k < count; k++) listed = listed || strcmp(with[k]->name, s->name) == 0;
+        if (!listed && count < 8) with[count++] = s;
+    }
+    if (!known || count == 0) return false;
+    for (int k = 0; k < count; k++) sb_printf(names, "%s%s", k == 0 ? "" : k == count - 1 ? " and " : ", ", with[k]->name);
+    sb_printf(example, "%s.%s(", with[0]->owner, with[0]->name);
+    const char *p = with[0]->param_names;
+    for (int a = 0; a < with[0]->argc && p; a++) {
+        const char *end = strchr(p, ',');
+        sb_printf(example, "%s%s", a ? ", " : "", with[0]->out & (1u << a) ? "out var " : "");
+        sb_putn(example, p, end ? (size_t)(end - p) : strlen(p));
+        p = end ? end + 2 : NULL;
+    }
+    sb_put(example, ")");
+    return true;
+}
+
 str builtin_param_name(const expr *e, const int index)
 {
     for (int i = 0; i < signature_count; i++) {
