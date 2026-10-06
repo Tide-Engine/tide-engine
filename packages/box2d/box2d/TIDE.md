@@ -69,7 +69,25 @@ And one is for what a match keeps of an image from tick to tick:
   to spare, so an image is an eighth bigger and what changes of it is what
   changed in the world.
 
-### An image as what changed of the last one
+And one is for threads on the web, where upstream only knows Emscripten:
+
+- **`solver.c`: a worker that has waited long for the next stage sleeps**
+  (`b2SolverTask`, `B2_TIDE_WAIT_ROUNDS`), on the web only. A step's workers
+  wait for each stage in a loop, with the CPU's pause in it and, every few
+  rounds, the system's yield. WebAssembly has no pause and a page no yield, so
+  there the loop holds a processor for as long as it waits, and with a worker
+  on every one a page has, the system takes a processor from a worker that has
+  a block to run whatever else the machine has: the stage then waits a time
+  slice for that block. After 4096 rounds of the wait, which is about what
+  waking a worker takes, so that the waits between stages go as they did, a
+  worker sleeps until the main thread gives the next stage (`b2t_stage_sleep`,
+  and `b2t_stage_wake` after each change of `atomicSyncBits`, both the
+  bridge's, which has them from `tide/jobs.h`). On a thread that can't sleep,
+  a page's own, it goes on with the loop. A world steps the same either way,
+  as it does with any number of workers.
+
+And the rest are for what a match writes of an image from tick to tick: an
+image as what changed of the last one.
 
 A match takes an image after every step, and most steps change little of a
 world: a few bodies are awake. Writing all of it, and comparing all of it with
@@ -224,23 +242,6 @@ compares the two after every step.
   parts that point at them: nothing is copied, and whoever reads the parts
   compares them. With 2,400 crates that's 250 KB compared for each image.
 
-And one is for threads on the web, where upstream only knows Emscripten:
-
-- **`solver.c`: a worker that has waited long for the next stage sleeps**
-  (`b2SolverTask`, `B2_TIDE_WAIT_ROUNDS`), on the web only. A step's workers
-  wait for each stage in a loop, with the CPU's pause in it and, every few
-  rounds, the system's yield. WebAssembly has no pause and a page no yield, so
-  there the loop holds a processor for as long as it waits, and with a worker
-  on every one a page has, the system takes a processor from a worker that has
-  a block to run whatever else the machine has: the stage then waits a time
-  slice for that block. After 4096 rounds of the wait, which is about what
-  waking a worker takes, so that the waits between stages go as they did, a
-  worker sleeps until the main thread gives the next stage (`b2t_stage_sleep`,
-  and `b2t_stage_wake` after each change of `atomicSyncBits`, both the
-  bridge's, which has them from `tide/jobs.h`). On a thread that can't sleep,
-  a page's own, it goes on with the loop. A world steps the same either way,
-  as it does with any number of workers.
-
 ## What the package asks of it
 
 Nothing here is changed for these, but the package rests on them, and a new
@@ -260,10 +261,15 @@ Box2D has to be read for them again:
   of. `tide_box2d_course` makes its world again before every tick to see that.
 - **`b2Body_SetTransform` doesn't wake a body, or what rests on it.** The
   package wakes both when code moves a body (`b2Body_SetAwake`,
-  `b2Body_WakeTouching`).
+  `b2Body_WakeTouching`). All three are calls an image in parts follows.
 - **There's no call to wake every body** but turning sleeping off, which the
   package does, and on again, when gravity changes (`b2World_EnableSleeping`).
   A world's gravity is in its image, which is how the package tells a change.
+  Everything is awake after it, so the next image is written whole.
+- **A body that goes wakes what it touched** (`b2DestroyContact`), and so does
+  a shape. Waking is followed by an image in parts, but a stack that wakes
+  can make the awake set's part of the image outgrow its place, and then the
+  parts after it move and that image is written whole.
 - **A body made with no shape weighs nothing**, so an impulse does nothing to
   it: the package gives a new body's impulses once its shapes are on it.
 
@@ -275,3 +281,28 @@ pinned hashes are of the simulation and of every image, so a field that isn't
 the same everywhere shows there, and bytes that are whatever was in memory
 show between a debug build and a release one. A new version steps differently,
 so the hashes change with it, and so do games' matches.
+
+Then `tide_box2d_parts`, for the image in parts. Whatever upstream added that
+writes a body, a shape or a contact of a body that isn't awake, or anything in
+a solver set but the awake one, or an island, has to say so (`b2SnapTouchBody`
+and the like), or be a call the next image is written whole after, which
+every recorded call is until `b2SnapNoteOp` names it. A call that changes what
+an image holds and isn't recorded at all would be missed: when this was
+written every one of them was recorded (the others set callbacks and user
+data, which an image doesn't hold). The test does what a game might to a world
+at random and compares the two images after every step, and it says where the
+first byte apart is.
+
+Taking each of the lines that say something changed out in turn and running
+that test says which of them it would notice the lack of: 56 of the 91 by
+themselves, when this was written. 14 more were noticed with another line
+taken out too, which says the same thing: the two times everything awake goes
+into the sets, waking with the second of them and falling asleep with the
+first, a new body's bit with the bits of what its last image had no room for,
+and the pairs of places an island or a set is said to be written from (a
+body's island made and the body put in it, a set's island taken out and its
+body). 9 say again what being awake says, of a contact that starts or stops
+touching or moves within the awake set or the graph, and weren't noticed all
+taken out together. The other 12 weren't tried together, or are under calls
+that write the next image whole anyway (joints, `b2MergeSolverSets`,
+`b2TransferBody`).

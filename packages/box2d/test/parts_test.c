@@ -517,6 +517,7 @@ static void act(lab *l)
         // shape's going says itself
         const b2ShapeId gone = shapes[roll(l, (uint32_t)count)];
         const bool weigh = roll(l, 2) == 0;
+        if (b2Shape_GetType(gone) == b2_chainSegmentShape) return; // A chain's shapes go with their chain
         b2DestroyShape(gone, weigh);
         did(l, weigh ? "a shape destroyed" : "a shape destroyed, its body not weighed", at);
     } else if (what < 74) {
