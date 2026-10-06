@@ -3,18 +3,28 @@
 // ring, as each way keeps it. Written as a list of lists, a list of CAP
 // cells for each bucket, which is what the concept is, and as one flat list
 // of every bucket's cells, which is what a game wrote before a list could
-// hold lists. So what's measured is reading and writing an element of an
-// inner list against one of a flat list, the same work apart from that.
+// hold lists, and as a list of structs each with an int[CAP] array, which
+// needs no second list at all. So what's measured is reading and writing an
+// element of an inner list, of a flat list and of an array, the same work
+// apart from that.
 
 scene Main { }
 
 const int CAP = 32;
 
 // The benchmark sets the count and the way before the first tick.
+struct Ring
+{
+    int[CAP] cells;
+    int head;
+    int count;
+}
+
 singleton Pool
 {
     int buckets = 64;
-    int mode = 0; // 0: rows, a list of lists; 1: flat, one list with a ring for each bucket
+    int mode = 0; // 0: rows, a list of lists; 1: flat, one list with a ring for each bucket; 2: arrays, a ring struct each
+    List<Ring> rings;
     List<List<int>> rows; // Rows: CAP cells for each bucket, a list each
     List<int> cells;      // Flat: CAP cells for each bucket, side by side
     List<int> heads;      // Where each bucket's oldest value is
@@ -46,6 +56,30 @@ system Push(mut Pool pool, Time time)
             pool.rows[b][head] = value;
             pool.heads[b] = (head + 1) % CAP;
         }
+    }
+}
+
+system PushArrays(mut Pool pool, Time time)
+{
+    if (pool.mode != 2) return;
+    if (pool.rings.count == 0) pool.rings.Resize(pool.buckets);
+    for (var b = 0; b < pool.buckets; b++)
+    {
+        var value = Math.Hash(int2(time.tick, b)) & 0xFFFF;
+        var head = pool.rings[b].head;
+        var count = pool.rings[b].count;
+        mut var ring = pool.rings[b];
+        if (count < CAP)
+        {
+            ring.cells[(head + count) % CAP] = value;
+            ring.count = count + 1;
+        }
+        else
+        {
+            ring.cells[head] = value;
+            ring.head = (head + 1) % CAP;
+        }
+        pool.rings[b] = ring;
     }
 }
 

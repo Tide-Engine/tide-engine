@@ -166,14 +166,47 @@ static int skip_type(const parser *p, int i)
         }
         if (depth < 0) return -1;
     }
+    while (peek_at(p, i)->kind == T_LBRACKET) { // int[32], int[CAP * 2]: a constant between the brackets
+        int depth = 0;
+        for (;; i++) {
+            const tok_kind k = peek_at(p, i)->kind;
+            if (k == T_LBRACKET) depth++;
+            else if (k == T_RBRACKET && --depth == 0) break;
+            else if (k == T_EOF || k == T_SEMI || k == T_LBRACE || k == T_RBRACE || k == T_ASSIGN) return -1;
+        }
+        i++;
+    }
     if (peek_at(p, i)->kind == T_QUESTION) i++;
     return i;
+}
+
+static expr *parse_expr(parser *p);
+
+// An array's length as its text says it: a number, a name, or the expression
+// written out ("CAP * 2"), as messages and editors write the type.
+static void put_size_text(sb *out, const expr *e)
+{
+    switch (e->kind) {
+    case E_INT: sb_printf(out, "%lld", (long long)e->int_value); break;
+    case E_NAME: sb_printf(out, STR_FMT, STR_ARG(e->name)); break;
+    case E_MEMBER:
+        put_size_text(out, e->object);
+        sb_printf(out, "." STR_FMT, STR_ARG(e->member));
+        break;
+    case E_BINARY:
+        put_size_text(out, e->lhs);
+        sb_printf(out, " %s ", e->op == T_PLUS ? "+" : e->op == T_MINUS ? "-" : e->op == T_STAR ? "*" : e->op == T_SLASH ? "/"
+                                : e->op == T_PERCENT ? "%" : e->op == T_SHL ? "<<" : e->op == T_SHR ? ">>" : "...");
+        put_size_text(out, e->rhs);
+        break;
+    default: sb_put(out, "..."); break;
+    }
 }
 
 // `r`'s text from its parts: "Map<K, V>", with that comma and space, and '?' after.
 static void set_type_text(type_ref *r)
 {
-    if (r->args.count == 0 && !r->optional) {
+    if (r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
         r->text = r->name;
         return;
     }
@@ -183,6 +216,11 @@ static void set_type_text(type_ref *r)
         sb_printf(&text, "%s" STR_FMT, i == 0 ? "<" : ", ", STR_ARG(r->args.items[i]->text));
     }
     if (r->args.count > 0) sb_put(&text, ">");
+    for (int i = 0; i < r->sizes.count; i++) {
+        sb_put(&text, "[");
+        put_size_text(&text, r->sizes.items[i]);
+        sb_put(&text, "]");
+    }
     if (r->optional) sb_put(&text, "?");
     r->text = (str){text.data, (int)text.len};
 }
@@ -216,6 +254,17 @@ static type_ref *parse_type(parser *p, const char *what)
         }
         const loc close = close_angle(p, form->close);
         r->end = (loc){close.line, close.col + 1, close.file};
+    }
+    while (at(p, T_LBRACKET)) { // int[32]: an array of that many, N a constant expression
+        advance(p);
+        if (at(p, T_RBRACKET)) {
+            diag_error(peek(p)->at, "an array's length goes between the brackets, a constant: 'int[32] cells'");
+            diag_note("a list grows as it needs: 'List<int> cells'");
+            longjmp(p->fail, 1);
+        }
+        vec_push(r->sizes, parse_expr(p));
+        const token *close = expect(p, T_RBRACKET, "']' after the array's length");
+        r->end = (loc){close->at.line, close->at.col + 1, close->at.file};
     }
     set_type_text(r);
     return r;
@@ -989,6 +1038,10 @@ static bool at_local_decl(const parser *p)
     int next = 1;
     while (peek_at(p, next)->kind == T_DOT && peek_at(p, next + 1)->kind == T_IDENT) next += 2;
     if (peek_at(p, next)->kind == T_IDENT) return true;
+    if (peek_at(p, next)->kind == T_LBRACKET) { // int[32] cells = ..., rather than cells[i] = ...
+        const int end = skip_type(p, 0);
+        return end > 0 && peek_at(p, end)->kind == T_IDENT && peek_at(p, end - 1)->kind != T_QUESTION;
+    }
     const tok_kind after = peek_at(p, next + 2)->kind;
     return peek_at(p, next)->kind == T_QUESTION && peek_at(p, next + 1)->kind == T_IDENT
         && (after == T_ASSIGN || after == T_SEMI);
