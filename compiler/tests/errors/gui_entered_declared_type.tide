@@ -1,0 +1,9 @@
+// expect: 'GUILayout.TextField' makes its 'entered' bool, not int
+// expect: 'out var entered' takes the parameter's type
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    GUILayout.TextField("Code", lobby.code, out int entered);
+    lobby.count = entered;
+}

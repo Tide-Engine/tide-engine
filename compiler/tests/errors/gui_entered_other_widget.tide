@@ -1,0 +1,9 @@
+// expect: 'out' goes before an argument for an 'out' parameter, and nothing here takes one
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+local singleton Place { float2 at; }
+view Join(mut Lobby lobby, mut Place place)
+{
+    GUILayout.Float2Field("Place", place.at, out var entered);
+    if (entered) lobby.count += 1;
+}

@@ -1,0 +1,5 @@
+// expect: 'GUILayout.TextField' changes its 'value', a 'mut' parameter: it takes the variable as it is, without 'out'
+// expect: remove 'out'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUILayout.TextField("Code", out lobby.code); }
