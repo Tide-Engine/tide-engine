@@ -299,7 +299,7 @@ Both add the lines of the packages the game's packages need that it doesn't list
 ## publish
 
 ::: warning
-This is the first part of [mods](mods.md), and it will change. Builds are for the web only, and a game's key comes from us.
+[Mods](mods.md) are on hold, and the service this sends to isn't running for now.
 :::
 
 `tide publish` sends a version of the game's source to the service that builds the game with [mods](mods.md):
