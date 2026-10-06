@@ -332,6 +332,7 @@ static void check_pack(void)
     }
     if (newest == reload.pack) return;
     reload.pack = newest;
+    pack_path(newest, path, sizeof path);
     FILE *f = fopen(path, "rb");
     if (!f) return;
     fseek(f, 0, SEEK_END);

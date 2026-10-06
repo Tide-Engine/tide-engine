@@ -267,3 +267,19 @@ bool folder_make(const char *path)
     free(copy);
     return made;
 }
+
+bool folder_current(char *out, const size_t size)
+{
+#ifdef _WIN32
+    const DWORD n = GetCurrentDirectoryA((DWORD)size, out);
+    if (!n || n >= size) return false;
+#else
+    if (!getcwd(out, size)) return false;
+#endif
+    for (char *c = out; *c; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    const size_t len = strlen(out);
+    if (len > 1 && out[len - 1] == '/') out[len - 1] = '\0';
+    return true;
+}

@@ -1,0 +1,6 @@
+// expect: an asset's type is written out
+asset rules = "../e2e/assets/rules.txt";
+
+scene Main
+{
+}

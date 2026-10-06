@@ -42,6 +42,10 @@ add_test(NAME tide_cli_packages
 
 # tide publish, against the build service (builds/) on this machine.
 if(TIDE_NODE)
+    # Assets: the pack tidec writes, and URLs fetched once and kept with their ETag, against a server on this machine
+    add_test(NAME tide_cli_assets
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets_test.mjs" --tidec "$<TARGET_FILE:tidec>"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/assets_test")
     add_test(NAME tide_cli_publish
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/publish_test.mjs" --tide "$<TARGET_FILE:tide_cli>"
                 --work "${CMAKE_CURRENT_BINARY_DIR}/publish_test")

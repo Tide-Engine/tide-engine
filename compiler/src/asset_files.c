@@ -238,14 +238,34 @@ static bool safe_for_shell(const char *s)
     return true;
 }
 
+// Whether an ETag can go in a header on the command line: its quotes are
+// escaped there, and nothing else of it is for the shell.
+static bool safe_etag(const char *s)
+{
+    for (; *s; s++) {
+        if (*s == '\n' || *s == '\r' || *s == '%' || *s == '`' || *s == '$' || *s == '\\') return false;
+    }
+    return true;
+}
+
 // Runs curl for `url`, into `out`, with the response's headers in `headers`:
-// what curl said (its exit code), -1 when it couldn't run.
+// what curl said (its exit code), -1 when it couldn't run. `etag` goes as
+// If-None-Match, its quotes escaped for the shell.
 static int run_curl(const char *url, const char *out, const char *headers, const char *etag)
 {
+    char header[1024] = "";
+    if (etag) {
+        size_t n = 0;
+        for (const char *c = etag; *c && n + 3 < sizeof header; c++) {
+            if (*c == '"') header[n++] = '\\';
+            header[n++] = *c;
+        }
+        header[n] = '\0';
+    }
     char command[4096];
     const int n = snprintf(command, sizeof command,
                            "curl -fsSL --retry 1 -m 60 -D \"%s\" -o \"%s\"%s%s%s \"%s\" 2>&1", headers, out,
-                           etag ? " -H \"If-None-Match: " : "", etag ? etag : "", etag ? "\"" : "", url);
+                           etag ? " -H \"If-None-Match: " : "", etag ? header : "", etag ? "\"" : "", url);
     if (n <= 0 || (size_t)n >= sizeof command) return -1;
     FILE *p = popen(command, "r");
     if (!p) return -1;
@@ -286,6 +306,9 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
     char dir[2048];
     if (game_folder) snprintf(dir, sizeof dir, "%s/.tide/assets/urls", game_folder);
     else snprintf(dir, sizeof dir, "%s/tide-assets", getenv("TMPDIR") ? getenv("TMPDIR") : getenv("TEMP") ? getenv("TEMP") : "/tmp");
+    for (char *c = dir; *c; c++) { // Forward slashes, which every system and curl take, and the shell leaves alone
+        if (*c == '\\') *c = '/';
+    }
     if (!safe_for_shell(dir)) {
         snprintf(f->failed, sizeof f->failed, "the folder it would be cached in has a character tide can't pass on");
         return f;
@@ -302,7 +325,7 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
         free(etag);
         etag = NULL;
     }
-    if (etag && !safe_for_shell(etag)) etag[0] = '\0';
+    if (etag && !safe_etag(etag)) etag[0] = '\0';
     remove(headers_file);
     remove(fresh);
     const int code = run_curl(url, fresh, headers_file, etag && *etag ? etag : NULL);
@@ -543,15 +566,32 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     return true;
 }
 
-asset_value *asset_resolve(const char *declaring, const str path, const asset_kind kind, const bool many, const bool is_map,
+// The declaring file's path, absolute: tidec is given paths as they were
+// typed, which can be from where it runs.
+static char *declaring_abs(const char *declaring)
+{
+    const bool absolute = declaring[0] == '/' || declaring[0] == '\\' || (declaring[0] && declaring[1] == ':');
+    if (absolute) return copy_cstr(declaring);
+    char cwd[4096];
+    if (!folder_current(cwd, sizeof cwd)) return copy_cstr(declaring);
+    char *abs = malloc(strlen(cwd) + strlen(declaring) + 2);
+    if (!abs) abort();
+    sprintf(abs, "%s/%s", cwd, declaring);
+    return abs;
+}
+
+asset_value *asset_resolve(const char *declaring_as_given, const str path, const asset_kind kind, const bool many, const bool is_map,
                            const loc at, const char *game_folder)
 {
+    char *declaring = declaring_abs(declaring_as_given);
     const char *written = written_path(path);
     if (!*written) {
         diag_error(at, "an asset's path can't be empty: write where the file is from this one, like \"art/hero.png\"");
+        free(declaring);
         return NULL;
     }
     char *folder = asset_path_folder(declaring);
+    free(declaring);
     asset_value *v = NEW(asset_value);
     v->kind = kind;
     v->many = many;
@@ -635,11 +675,13 @@ asset_value *asset_resolve(const char *declaring, const str path, const asset_ki
     return ok ? v : NULL;
 }
 
-void asset_watched(const char *declaring, const str path, asset_path_fn found, void *user)
+void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)
 {
     const char *written = written_path(path);
     if (!*written || asset_path_is_url(written, strlen(written))) return;
+    char *declaring = declaring_abs(declaring_as_given);
     char *folder = asset_path_folder(declaring);
+    free(declaring);
     if (asset_path_is_glob(written, strlen(written))) {
         const size_t prefix_len = fixed_prefix(written);
         char *base = asset_path_join(folder, written, prefix_len);
