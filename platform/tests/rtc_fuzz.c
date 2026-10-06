@@ -358,7 +358,7 @@ static void fuzz_ice(const int rounds)
     snprintf(config.credential, sizeof config.credential, "pass");
     static rtc_ice ice;
     if (!rtc_ice_start(&ice, false, &config)) return;
-    rtc_ice_set_remote(&ice, "them", "their-password-1234567");
+    rtc_ice_set_remote(&ice, "them", "their-password-1234567", rtc_now());
     const rtc_candidate them = {from, 1000, RTC_HOST, "1"};
     rtc_ice_add_remote(&ice, &them);
     const rtc_addr to = {0x7f000001u, rtc_socket_port(ice.socket)};

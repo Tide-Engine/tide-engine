@@ -113,51 +113,43 @@ system Upgrade(mut Fighter fighter, Draft draft)
 }
 ```
 
-What isn't supported yet is a list inside a list's elements:
+## Lists inside lists
 
-- A list can't hold lists, maps or sets: `List<List<int>>`.
-- A list can't hold a struct that has a list, a map or a set in it: `List<Build>`, with the `Build` above. A list of structs that hold text is fine.
+A list's elements can be lists, maps or sets, and structs that hold them, as deep as you like: `List<List<int>>`, `List<Build>` with the `Build` above, `Map<int, List<Entity>>`. A map's values can too. What can't go inside another container is a grid, which is never copied, and a key or a grid's cell is still a plain value.
 
-tidec says which field is in the way, and what to write instead. Either keep everything in one list, with where each part starts and how many it has:
+An element that's a container is changed where it is, through any number of indexes:
 
 ```csharp
-struct Row
-{
-    int first; // Where its cells start in Table.cells
-    int count;
-}
-
 singleton Table
 {
-    List<int> cells;
-    List<Row> rows;
+    List<List<int>> rows;
+    Map<int, List<Entity>> buckets;
 }
 
-int Cell(Table table, int row, int column)
+system Fill(mut Table table)
 {
-    return table.cells[table.rows[row].first + column];
+    table.rows.Add([1, 2]);   // A new row
+    table.rows[0].Add(3);     // Into the row where it is
+    table.rows[0][1] = 20;
+    table.rows[0][2] += 1;
+    table.buckets[7].Add(this); // Adds the key 7 if it isn't there, like `buckets[7] = ...`
 }
 ```
 
-Or give each inner list an entity of its own, in a component, and hold the entities. Each list then grows on its own:
+Past the end of the list it's in, such a write does nothing, as any write past the end does. A struct element is still a copy, so a list inside one is changed by taking the struct out and putting it back (`var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
+
+Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
 
 ```csharp
-component Bag
+int Cells(Table table)
 {
-    List<int> items;
-}
-
-component Backpack
-{
-    List<Entity> bags;
-}
-
-system Count(Backpack pack, World world, mut Load load)
-{
-    load.items = 0;
-    foreach (var bag in pack.bags) load.items += world.Get<Bag>(bag).items.count;
+    mut int total = 0;
+    for (var i = 0; i < table.rows.count; i++) total += table.rows[i].count;
+    return total;
 }
 ```
+
+Text shows them inside out, `[[1, 20, 4], [3]]`. They don't go to C, nor into a `parallel` loop, an input or a command, which take plain lists.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 
