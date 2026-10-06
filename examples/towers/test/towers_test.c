@@ -25,17 +25,20 @@ void b2t_forget(void);
 #define SEATS 4
 #define PITCH 11.0f
 #define DEPTH 80.0f
-#define FINISH 30.0f
+#define FINISH 40.0f
 #define HOLD 180
 #define DROP 9.0f
-#define FALL 3.0f
-#define FAST 16.0f
+#define FALL 3.2f
+#define FAST 18.0f
 #define REACH 8
 #define PAUSE 14
 #define STUN 40
+#define STANDS 170
 #define RUBBLE 360
 #define GUST 8
-#define QUAKE 96
+#define QUAKE 80
+#define EASE 1.2f
+#define SET_DEPTH 10.0f
 #define OVER 420
 
 // The server's world in the match below, on every platform and in every
@@ -116,6 +119,18 @@ static int bricks_set(const tide_world *w)
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&w->entities, i);
         if (tide_has_Brick(w, e) && tide_get_Brick(w, e).set) found++;
+    }
+    return found;
+}
+
+// ...and of them, the ones over a seat's plinth.
+static int set_over(const tide_world *w, const int seat)
+{
+    int found = 0;
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_has_Brick(w, e) || !tide_get_Brick(w, e).set) continue;
+        if (tide_abs_f(tide_get_Box2D_Body(w, e).position.x - home(seat)) < PITCH * 0.5f) found++;
     }
     return found;
 }
@@ -274,9 +289,28 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
     tick(2);
     TIDE_CHECK(tide_abs_f(tide_get_Box2D_Body(&world, brick).velocity.y + FAST) < 0.001f);
     const int shapes = world.Box2D_Physics.shapes;
-    // It lands on the plinth: the falling one is gone, and a brick is there, a dynamic body, where it came down
+    // What it touches first stops it short: it's put back where it was a tick before, and comes down from there slowly
+    bool eased = false;
+    float slowest = FAST;
+    for (int i = 0; i < 120 && tide_has_Falling(&world, brick); i++) {
+        steer(&world, 0, 0, from + 5, 1, true);
+        tide_world_tick(&world);
+        if (!tide_has_Falling(&world, brick)) break;
+        if (tide_get_Falling(&world, brick).eased > 0) {
+            eased = true;
+            const float speed = -tide_get_Box2D_Body(&world, brick).velocity.y;
+            if (speed < slowest) slowest = speed;
+        }
+    }
+    TIDE_CHECK(eased && tide_abs_f(slowest - EASE) < 0.001f);
+    // It lands on the plinth: the falling one is gone, and a brick is there, a dynamic body, where it came down, softly
     TIDE_REQUIRE(until_falling(0, false, 120));
+    tick(1);
     TIDE_CHECK(count(&world, tide_has_Brick) == 1);
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (tide_has_Brick(&world, e)) TIDE_CHECK(tide_get_Box2D_Body(&world, e).velocity.y > -2.0f);
+    }
     tick(2);
     tide_entity landed = (tide_entity){0};
     for (uint32_t i = 0; i < world.entities.next_unused; i++) {
@@ -462,6 +496,7 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
         if (seat_of(&world, seat).top > seat_of(&world, tallest).top) tallest = seat;
     }
     for (int seat = 0; seat < SEATS; seat++) TIDE_REQUIRE(standing(&world, seat) >= 5 && seat_of(&world, seat).top > 3.0f);
+    TIDE_CHECK(bricks_set(&world) == 0);
     tide_world rest = {0};
     tide_world_copy(&rest, &world);
     // Nothing at rest moves by itself
@@ -477,11 +512,11 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
     const int winds[SEATS] = {world.Towers.winds.x, world.Towers.winds.y, world.Towers.winds.z, world.Towers.winds.w};
     for (int seat = 0; seat < SEATS; seat++) TIDE_CHECK(gusts[seat] == (seat == tallest ? GUST - 1 : 0));
     TIDE_CHECK(winds[tallest] == 1);
-    tick(GUST + 60);
+    tick(GUST + 90);
     printf("    a gust moved a brick of the tower it was against by %.2f m, and of the tower that sent it by %.2f\n",
            (double)disturbed(&world, &rest, tallest), (double)disturbed(&world, &rest, 0));
     for (int seat = 0; seat < SEATS; seat++) {
-        if (seat == tallest) TIDE_CHECK(disturbed(&world, &rest, seat) > 0.05f);
+        if (seat == tallest) TIDE_CHECK(disturbed(&world, &rest, seat) > 0.1f);
         else TIDE_CHECK(disturbed(&world, &rest, seat) < 0.005f);
     }
     TIDE_CHECK(world.Towers.gusts.x + world.Towers.gusts.y + world.Towers.gusts.z + world.Towers.gusts.w == 0);
@@ -490,66 +525,94 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
     tick(3);
     TIDE_CHECK(world.Towers.gusts.x + world.Towers.gusts.y + world.Towers.gusts.z + world.Towers.gusts.w == 0);
 
-    // A quake: every plinth but the one that sent it shakes, and is back where it was
-    tick(300);
-    tide_world_copy(&rest, &world);
-    earn(1, Power_Quake);
-    TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Use, 1));
-    tick(2);
-    TIDE_CHECK(world.Towers.quakes.x == QUAKE - 1 && world.Towers.quakes.y == 0 && world.Towers.quakes.z == QUAKE - 1);
-    float swung = 0;
-    for (int i = 0; i < QUAKE + 4; i++) {
-        tide_world_tick(&world);
-        const float off = tide_abs_f(tide_get_Box2D_Body(&world, plinth(&world, 0)).position.x - home(0));
-        if (off > swung) swung = off;
-        TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).position.x == home(1));
-    }
-    tick(120);
-    printf("    a quake swung a plinth %.2f m, and moved a brick on it by %.2f m\n", (double)swung, (double)disturbed(&world, &rest, 0));
-    TIDE_CHECK(swung > 0.1f && disturbed(&world, &rest, 0) > 0.01f && disturbed(&world, &rest, 1) < 0.005f);
-    TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 0)).position.x == home(0));
-    TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 0)).velocity.x == 0.0f);
-
-    // Cement: the bricks of the tower that used it are set solid, but its top ones: static bodies
+    // Cement: every brick at rest in the tower that used it is set solid, a kinematic body, and no other tower's
     tick(300);
     const int there = standing(&world, 1);
     TIDE_REQUIRE(there >= 4);
     earn(1, Power_Cement);
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Use, 1));
     tick(3);
-    const int solid = bricks_set(&world);
-    printf("    cement set %d of a tower's %d bricks solid\n", solid, there);
-    TIDE_CHECK(solid >= 2 && solid < there && standing(&world, 1) == there);
+    printf("    cement set %d of a tower's %d bricks solid\n", bricks_set(&world), there);
+    TIDE_CHECK(bricks_set(&world) == there && standing(&world, 1) == there);
     for (uint32_t i = 0; i < world.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
-        if (!tide_has_Brick(&world, e)) continue;
+        if (!tide_has_Brick(&world, e) || tide_get_Brick(&world, e).down) continue;
         const bool set = tide_get_Brick(&world, e).set;
-        TIDE_CHECK(tide_get_Box2D_Body(&world, e).type == (set ? Box2D_BodyType_Static : Box2D_BodyType_Dynamic));
-        if (set) TIDE_CHECK(tide_abs_f(tide_get_Box2D_Body(&world, e).position.x - home(1)) < PITCH * 0.5f);
+        TIDE_CHECK(tide_get_Box2D_Body(&world, e).type == (set ? Box2D_BodyType_Kinematic : Box2D_BodyType_Dynamic));
+        TIDE_CHECK(set == (tide_abs_f(tide_get_Box2D_Body(&world, e).position.x - home(1)) < PITCH * 0.5f));
     }
-    // A quake under it now moves what's loose, and nothing that's set
+
+    // A quake: every plinth but the one that sent it shakes, and is back where it was. What's loose on
+    // one is shaken about; what's set solid goes there and back with its plinth, and no further
     tick(60);
     tide_world_copy(&rest, &world);
     earn(0, Power_Quake);
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Use, 0));
-    tick(QUAKE + 60);
-    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
-        const tide_entity e = tide_entity_in_slot(&world.entities, i);
-        if (!tide_has_Brick(&world, e) || !tide_get_Brick(&world, e).set) continue;
-        TIDE_CHECK(tide_get_Box2D_Body(&world, e).position.x == tide_get_Box2D_Body(&rest, e).position.x);
-        TIDE_CHECK(tide_get_Box2D_Body(&world, e).position.y == tide_get_Box2D_Body(&rest, e).position.y);
+    tick(2);
+    TIDE_CHECK(world.Towers.quakes.x == 0 && world.Towers.quakes.y == QUAKE - 1 && world.Towers.quakes.z == QUAKE - 1);
+    float swung = 0;
+    float carried = 0;
+    for (int i = 0; i < QUAKE + 4; i++) {
+        tide_world_tick(&world);
+        const float off = tide_abs_f(tide_get_Box2D_Body(&world, plinth(&world, 1)).position.x - home(1));
+        if (off > swung) swung = off;
+        if (disturbed(&world, &rest, 1) > carried) carried = disturbed(&world, &rest, 1);
+        TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 0)).position.x == home(0));
     }
-    // When the round is over they're let go with the rest, and come down
+    tick(120);
+    printf("    a quake swung a plinth %.2f m, what was set on it %.2f m, and moved a loose brick of another by %.2f m\n", (double)swung,
+           (double)carried, (double)disturbed(&world, &rest, 2));
+    TIDE_CHECK(swung > 0.1f && carried > swung - 0.03f && carried < swung + 0.03f);
+    TIDE_CHECK(disturbed(&world, &rest, 2) > 0.01f && disturbed(&world, &rest, 0) < 0.005f && disturbed(&world, &rest, 1) < 0.005f);
+    TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).position.x == home(1));
+    TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).velocity.x == 0.0f);
+
+    // When the round is over, what was set is let go with the rest, from the bottom up, and comes down
     Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, 0));
     body.position.y = FINISH + 1 - DEPTH / 2;
     tide_set_Box2D_Body(&world, plinth(&world, 0), body);
     for (int i = 0; i < 400 && world.Towers.phase == Phase_Play; i++) tide_world_tick(&world);
-    TIDE_CHECK(world.Towers.phase == Phase_Over && world.Towers.winner == 0);
-    tick(3);
-    TIDE_CHECK(bricks_set(&world) == 0);
+    TIDE_CHECK(world.Towers.phase == Phase_Over && world.Towers.winner == 0 && set_over(&world, 1) == there);
+    tick(40);
+    TIDE_CHECK(set_over(&world, 1) == 0);
     tick(200);
     TIDE_CHECK(seat_of(&world, 1).top < -5.0f);
     tide_world_free(&rest);
+    tide_world_free(&world);
+}
+
+// The part of a tower that's well under its top is set solid, and stays so
+TIDE_TEST(towers_a_towers_lower_bricks_set_solid)
+{
+    start(true, 0);
+    int ticks = 0;
+    while (seat_of(&world, 0).top < SET_DEPTH + 8 && ticks < 6000) {
+        tide_world_tick(&world);
+        ticks++;
+    }
+    TIDE_REQUIRE(seat_of(&world, 0).top >= SET_DEPTH + 8);
+    world.Towers.bots = false;
+    tick(600);
+    const float top = seat_of(&world, 0).top;
+    int set = 0;
+    int loose = 0;
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (!tide_has_Brick(&world, e) || tide_get_Brick(&world, e).down) continue;
+        const Box2D_Body body = tide_get_Box2D_Body(&world, e);
+        if (tide_abs_f(body.position.x - home(0)) > PITCH * 0.5f) continue;
+        // Set under ten meters from the top, give or take what the top has moved by since, and loose over that
+        if (tide_get_Brick(&world, e).set) {
+            set++;
+            TIDE_CHECK(body.type == Box2D_BodyType_Kinematic && body.position.y < top - SET_DEPTH + 4.0f);
+            TIDE_CHECK(body.velocity.x == 0.0f && body.velocity.y == 0.0f);
+        } else {
+            loose++;
+            TIDE_CHECK(body.type == Box2D_BodyType_Dynamic && body.position.y > top - SET_DEPTH - 0.1f);
+        }
+    }
+    printf("    of a tower %.1f m high, %d bricks are set solid and %d loose, after %.0f seconds\n", (double)top, set, loose, ticks / 60.0);
+    TIDE_CHECK(set >= 6 && loose >= 6);
     tide_world_free(&world);
 }
 

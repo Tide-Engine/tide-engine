@@ -131,7 +131,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
         && (hand.playing || !devices.pointer.press.pressed);
     lobby.copied += fx.dt;
     lobby.turn = Math.Frac(lobby.turn + fx.dt * 0.8);
-    if (lobby.page == Page.None || WATCH)
+    if (lobby.page == Page.None || WATCH != 0)
     {
         lobby.shown = 0;
         return;
@@ -242,15 +242,17 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
                 var frame = Rect(left, y, wide - 108, row);
                 Draw2D.Shape(Shape { center = Middle(frame), size = float2(frame.width, frame.height), radius = 12,
                                      color = Color(0.06, 0.06, 0.066), outline = 1.5, outlineColor = LINE });
+                // ...and says when Enter ended the typing, which joins as the button does
+                mut var entered = false;
                 GUI.Theme(GUITheme { text = INK, field = Color(0.06, 0.06, 0.066), fieldHot = Color(0.08, 0.08, 0.09), accent = AMBER,
                                      radius = 9 })
                 {
-                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code);
+                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code, out entered);
                 }
                 // A room's code is capitals, however it's typed
                 lobby.code = lobby.code.ToUpper();
                 var code = lobby.code.Trim();
-                var go = Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "");
+                var go = Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || (entered && code != "");
                 y += row;
                 if (lobby.message != "") Draw2D.Text(lobby.message, float2(middle.x, y + 17), 13, ROSE, Anchor.MiddleCenter);
                 else Draw2D.Text("Six letters and digits, like K7QF2M.", float2(middle.x, y + 17), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
