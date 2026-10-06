@@ -937,15 +937,26 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 
 ### Decided
 
-- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, and structs of those. Lists, grids, components and device records are not command payloads.
+- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, `List<byte>` (a file's bytes, for user content: see Assets), and structs of those. Other lists, grids, components and device records are not command payloads.
 - Local views and handlers send commands with `entity.Send(value)` or `Send(value)`, while connected to a match. The compiler distinguishes commands from events by their declaration. An entity target is required when the command handler takes components.
 - Each command has one void handler: `command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)`. The first parentheses contain the read-only payload and connection-derived sender. The second take the same match state as event handlers. Components and `this` come from the target.
 - Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction. The handler checks permissions and game rules, and can send events after acting.
 - Sending copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order.
 - Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The handler remains responsible for authorization and game-specific rules.
+- A command's ordering is its type's, per player (agreed 2026-10-06). Without an attribute a command is in the default channel: handled in the order sent, after every earlier command of that channel. `[Channel(Channels.Uploads)]`, with an enum of the game's, puts it in a channel of its own, ordered among that channel's commands and against nothing else, so a chat line never waits behind an upload. `[Unordered]` gives it no order at all: the server handles it in whichever tick it arrives, before or after commands sent earlier, still exactly once. Whatever the ordering, the server picks the tick and every handler runs in the tick's end queue in the server's order, so ordering only decides what the server holds back waiting for an earlier command.
+- A command holds `List<byte>` too, so a player's file goes to the match as it is. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, paced under the input traffic so a transfer never delays a tick. It lands in a later tick, as any command may; a command was never tied to the tick it was sent in. What goes through the match goes player to server to everyone, so a host sends it once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine (see Assets).
 
 ```csharp
+enum Channels { Uploads }
+
 command Rename { string name; }
+
+[Channel(Channels.Uploads)]
+command SetBackground { List<byte> png; }
+
+[Unordered]
+command Ping { int at; }
+
 
 command(Rename rename, PlayerID sender) RenamePlayer(
     Owner owner, mut Name name)
@@ -955,6 +966,10 @@ command(Rename rename, PlayerID sender) RenamePlayer(
     name.value = rename.name;
 }
 ```
+
+### Provisional
+
+- Sequence state is per player per channel, in the world as today's is; an unordered command has an id of its own, and the world keeps a window of the last 64 ids applied per player to drop resends. The 32 pending per player is per channel. The chunked transfer's size limit and pacing are the session's picks.
 
 ## Enums and switch
 
@@ -1260,6 +1275,62 @@ system Score(mut Board board)
 - `Application.persistentDataPath` and `Application.temporaryCachePath` are read-only runtime strings. The standard host selects save locations using the stable `appId` setting, or its game name as the development fallback. Relative paths resolve under the persistent root. Native absolute paths follow OS permissions; web paths stay in this game's virtual persistent and temporary roots.
 - File/directory calls and application paths are local only, including helpers that reach them. They cannot run in match code, input sampling, GPU code, sort comparisons or parallel steps. Pure `Path.Combine(a, b)`, `Path.GetFileName(path)`, `Path.GetDirectoryName(path)` and `Path.GetExtension(path)` work on text, recognize both path separators and can run in match code.
 - `await Storage.Flush()` is a local async operation returning void and failing with `IOError`. It confirms that changes preceding the call have committed, without blocking the frame loop. Browser files are preloaded from IndexedDB before the game starts, and mutations commit in the background. Files and pending commits belong to the page across hot reloads; failures retain dirty changes for a later flush to retry. Unavailable persistence is an error, while temporary files remain usable. Browser saves are scoped to the origin/profile and may be cleared or evicted. Flush during play, never rely on page shutdown. Native flushes affected OS files and directories.
+
+## Assets
+
+### Decided
+
+Agreed 2026-10-06. An asset is a file a game is built with: an image, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else.
+
+- `asset` declares a file's contents under a name, at the top level like a constant, resolving to an ordinary type: `asset Grid2<Color> hero = "art/hero.png";`, `asset string rules = "rules.txt";`, `asset List<byte> table = "data/table.bin";`. Code reads `hero` wherever it reads a value of that type. It's read-only, and never assigned.
+- The path is relative to the `.tide` file that names it. There's no assets folder and no root: files are wherever the game keeps them, a package's beside its own code, and the path says where from here.
+- A path can be a URL. tidec fetches it and packs what it was at build time, so it's a file kept elsewhere and nothing else: match code reads it, nothing is fetched when the game runs, and the game plays offline.
+- A path can be a glob, which resolves to every file it matches, in order of their paths: `asset List<Grid2<Color>> run = "art/run/*.png";` gives the contents, and `asset Map<string, Grid2<Color>> run = "art/run/*.png";` the path of each with its contents, for a game that needs the names. A single file resolves to its contents alone: its path is on the line that declares it, and a `const string` can be that path where a game wants it twice.
+- Anything wrong that can be known at compile time is an error at the declaration: a file that isn't there, a glob that matches nothing, a URL that can't be fetched, bytes that aren't what the type says (a PNG that doesn't decode, text that isn't UTF-8). The editor says the same as the game is written, with no build.
+- A game ships the closure of its declarations: `tide build` packs the files `asset` names, and nothing else in the folder. A file in the pack is there once however many declarations name it or files have its bytes, and all of them are the same value.
+- Match code reads packed assets, since every machine has them. What a machine loads as the game runs (a file of the player's, a URL) is local: it reaches the match as match data, through a command, as a game's own state, which the netcode sends like any other, to those in the match and to whoever joins.
+- A user's content enters the match as the file's bytes, in the format it came in: a `Grid2<Color>` field decodes a PNG with `grid.Decode(bytes)`, with the engine's own decoder, so it's the same pixels on every machine.
+- No GUIDs and no meta files: the engine owns none of a game's files and writes into none. References are in text, in the source, and all of them are constant, so moving a file is a refactor: the language server rewrites the references when a file is moved in the editor, and a file moved outside it is found again by its bytes, which the error names with a quick fix.
+
+```csharp
+asset Grid2<Color> hero = "art/hero.png";
+asset Map<string, Grid2<Color>> tiles = "art/tiles/*.png";
+asset string credits = "https://example.com/credits.txt";
+
+view Hero(Body body)
+{
+    Draw2D.Mesh(Quad(body.position), QuadIndices, hero);
+}
+
+command SetBackground { List<byte> png; }
+
+command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    arena.background.Decode(value.png)!;
+}
+```
+
+### Provisional
+
+Picks made to build it, awaiting the owner.
+
+- **The types** an asset resolves to: `string` (UTF-8), `List<byte>` (any file) and `Grid2<Color>` (a PNG, decoded at build time into pixels), each alone, as a `List<T>` of a glob's matches, or as a `Map<string, T>` of their paths. The grid is sized as the image is, and read-only: a system takes it as it takes any read-only value, and a frag or vert samples it by name, as it samples a singleton's grid. Other formats (JPEG, audio, meshes, fonts) join as their types do.
+- **Globs:** `*` matches within a name, `**` across folders, and `?` a character; matches are sorted by the UTF-8 bytes of their paths, relative to the declaring file; a map's keys are those paths. Matching nothing is an error.
+- **URLs** are `http://` and `https://`. tidec keeps what it fetched in `.tide/` by URL with the server's ETag, asks whether it changed at each build and at each `tide run`'s start, and builds from the cache when the server can't be reached, so offline builds and reloads work; a run picks up a changed URL when it's started again. Pinning a URL to a hash is open, below.
+- **Where the pack is:** in a file beside the program on desktop (`<game>.pack`), inside the self-contained page on the web, and in the APK's assets on Android. Under `tide run` there's no pack: the game reads the source files, and tide watches them, so a saved image is in the running game at once, with no rebuild, as it's data. A web build can keep the pack beside the page rather than inside it, so the page stays small and the pack is fetched from wherever it's hosted; the option's name is open.
+- **Sharing** is by SHA-256 of the bytes. A `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every heap, so no world copies, hashes or sends it, and it's the same memory to every reference.
+- **Decoding:** `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is, and fails with `IOError.InvalidData`. It's pure, so it runs in match code, and it runs where it's called, which in a tick is on every machine. **Fetching:** `await Web.Fetch(url)` is a local async operation giving `List<byte>` and failing with `IOError`, like `File.ReadAllBytes`, which is the other way bytes come in at runtime; so loading a player's image is `grid.Decode(File.ReadAllBytes(path))`, and there's no asset handle type beside the plain ones. On the web it's `fetch`, so the server's CORS applies; on desktop it's the HTTPS the relay's connection uses; on Android, Java's.
+- **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
+- **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
+
+### Open
+
+- Audio, meshes, fonts and JPEG as assets, each with its type; a pixel of a byte a channel in the pack, a quarter of a `Color`'s memory.
+- Load order, streaming and lazy loading within the pack, and what a web page fetches first.
+- Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
+- Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
+- Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
 ## Tasks
 
@@ -1863,7 +1934,7 @@ view DrawHud(Arena arena)
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
-- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
+- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI
 
