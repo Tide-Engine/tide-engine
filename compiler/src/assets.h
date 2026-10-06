@@ -22,8 +22,8 @@ char *asset_path_join(const char *folder, const char *relative, size_t len);
 // The folder `file` is in. malloc'd.
 char *asset_path_folder(const char *file);
 
-// `to` written from `from`, a folder: "img/hero.png", "../a/img/hero.png".
-// `to` itself when they share no root (another drive). malloc'd.
+// `to` written from `from`, a folder (with or without its '/'): "img/hero.png",
+// "../a/img/hero.png". `to` itself when they share no root (another drive). malloc'd.
 char *asset_path_relative(const char *from, const char *to);
 
 // Whether `path` is in `folder` or its subfolders (`folder` itself isn't).

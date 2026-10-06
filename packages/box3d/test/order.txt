@@ -10,6 +10,9 @@ Box3D.AttachBoxes
 BeforeAttachSpheres
 Box3D.AttachSpheres
 Box3D.AttachCapsules
+Box3D.AttachBoxParts
+Box3D.AttachSphereParts
+Box3D.AttachCapsuleParts
 BeforeSimulate
 Box3D.Simulate
 BeforeLeave

@@ -40,7 +40,8 @@
 	#define B3_CPU_X86_X64
 #elif defined( __aarch64__ ) || defined( _M_ARM64 ) || defined( __arm__ ) || defined( _M_ARM )
 	#define B3_CPU_ARM
-#elif defined( __EMSCRIPTEN__ )
+// Tide: any WebAssembly, where upstream asks for Emscripten's (see ../TIDE.md)
+#elif defined( __wasm__ )
 	#define B3_CPU_WASM
 #else
 	#define B3_CPU_UNKNOWN
@@ -68,8 +69,14 @@
 		#endif
 		//#pragma message("B3_SIMD_NEON")
 	#elif defined( B3_CPU_WASM )
-		#define B3_SIMD_SSE2
-		//#pragma message("B3_SIMD_SSE2")
+		// Tide: WebAssembly's own SIMD (simd_wasm.h), which gives what SSE2 gives, where upstream takes SSE2's
+		// headers as Emscripten emulates them, which no other compiler for WebAssembly has. Built without
+		// -msimd128, it's the scalar path.
+		#if defined( __wasm_simd128__ )
+			#define B3_SIMD_WASM
+		#else
+			#define B3_SIMD_NONE
+		#endif
 	#else
 		#define B3_SIMD_NONE
 		//#pragma message("B3_SIMD_NONE")

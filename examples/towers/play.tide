@@ -380,13 +380,18 @@ view Bricks(Body body, Piece piece, mut Brick brick, Towers towers, Time time, m
     }
 }
 
+// How far under a falling brick its view looks for where it will land.
+const float SIGHT = 60;
+
 // The bricks that are falling: lighter than the ones that landed. A step
 // across is half a cell at once in the match, and a turn a quarter, so the
 // view slides and swings the brick there: where it's drawn is its local
-// fields. This machine's player's has a white edge, and lanes under it, down
-// to where it will land.
+// fields. This machine's player's has a white edge, lanes under it, and its
+// outline where it will land: the view asks the world how far down the brick
+// is free to go, as the match does each tick for the next one (Free, in
+// game.tide). It asks of the world it draws, and changes nothing of it.
 [Stage(Layers.Falling)]
-view Fallings(Body body, Piece piece, mut Falling falling, Fx fx)
+view Fallings(Body body, Piece piece, mut Falling falling, Physics physics, Fx fx)
 {
     var swing = Math.Exp(-fx.dt * 28);
     if (!falling.drawn)
@@ -403,10 +408,21 @@ view Fallings(Body body, Piece piece, mut Falling falling, Fx fx)
     var at = float2(falling.across, body.position.y);
     if (mine)
     {
+        var from = float2(falling.home + falling.column * 0.5, body.position.y);
+        var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -SIGHT), float2(SLACK, 0));
         for (var i = 0; i < 4; i++)
         {
             var cell = Turned(Cell(piece.kind, i), falling.quarter);
-            Draw2D.Rect(float2(at.x + cell.x, at.y + cell.y - 30.5), float2(1, 60), Color(1, 1, 1, 0.035));
+            Draw2D.Rect(float2(from.x + cell.x, from.y + cell.y - fall * 0.5), float2(1, fall), Color(1, 1, 1, 0.035));
+        }
+        if (fall < SIGHT)
+        {
+            Draw2D.Transform(from - float2(0, fall), Angle(falling.quarter))
+            {
+                for (var i = 0; i < 4; i++)
+                    Draw2D.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Fade(color, 0.12),
+                                         outline = 0.06, outlineColor = Fade(Color.white, 0.45) });
+            }
         }
     }
     Draw2D.Transform(at, falling.turned)

@@ -140,7 +140,6 @@ char *asset_path_relative(const char *from, const char *to)
     for (size_t i = shared; from[i]; i++) {
         if (is_sep(from[i])) ups++;
     }
-    if (from[strlen(from) - 1] != '/' && from[strlen(from) - 1] != '\\') ups++;
     const char *rest = to + shared;
     while (is_sep(*rest)) rest++;
     char *out = malloc((size_t)ups * 3 + strlen(rest) + 2);

@@ -13,7 +13,13 @@
 // since, hashed: Box2D's next state is its last and what's done to it, and
 // nothing else. So it costs what was done, and the image is never read to
 // name it.
+//
+// The image goes into the match's list as what changed of the list's last
+// one, where Box2D can say (b2t_image): the match's list keeps the rest, and
+// what the package adds to a tick goes by what's awake, where an image
+// written whole goes by how big the world is.
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -45,12 +51,14 @@ typedef struct body {
     float gravity_scale;
     float linear_damping;
     float angular_damping;
+    float sleep_speed;
     tide_float2 step_position;
     float step_angle;
     tide_float2 step_velocity;
     float step_spin;
     bool fixed_rotation;
     bool bullet;
+    uint8_t unused[6];
 } body;
 
 typedef struct box {
@@ -71,32 +79,70 @@ typedef struct circle {
     bool sensor;
 } circle;
 
+// Two shapes that started touching or stopped: each one's body, and the shape
+// itself. A shape that's gone is 0, and so is its body when that's gone too.
 typedef struct touch {
     int64_t a;
     int64_t b;
+    int64_t shape_a;
+    int64_t shape_b;
     bool began;
 } touch;
 
-// Physics, with the padding it writes out. Its lists and its map are the
+// Two shapes that met faster than the world's hit speed: where, which way
+// (from a's towards b's) and how fast.
+typedef struct blow {
+    int64_t a;
+    int64_t b;
+    int64_t shape_a;
+    int64_t shape_b;
+    tide_float2 point;
+    tide_float2 normal;
+    float speed;
+} blow;
+
+// What a ray or a shape that's cast met first, if anything.
+typedef struct met {
+    int64_t body;
+    int64_t shape;
+    tide_float2 point;
+    tide_float2 normal;
+    float fraction;
+    bool any;
+} met;
+
+// Physics, with the padding it writes out. Its lists and its maps are the
 // match's to read and write: C leaves them as they are.
 typedef struct physics {
     tide_float2 gravity;
     int32_t substeps;
+    float contact_stiffness;
+    float contact_damping;
+    float contact_speed;
+    float bounce_speed;
+    float hit_speed;
+    bool sleeping;
+    uint8_t unused0[3];
     int32_t bodies;
     int32_t shapes;
-    uint8_t unused0[4];
+    uint8_t unused1[4];
     int64_t stamp;
     int32_t size;
     bool moved;
-    uint8_t unused1[3];
+    uint8_t unused2[3];
+    int32_t dropped;
     tide_list image;
     tide_list gone;
+    tide_list shed;
     tide_map owners;
-    uint8_t unused2[4];
+    tide_map parts;
+    tide_map sensors;
+    uint8_t unused3[4];
 } physics;
 
-_Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 && sizeof(touch) == 24
-                   && sizeof(physics) == 64 && offsetof(physics, moved) == 36,
+_Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
+                   && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
+                   && sizeof(physics) == 120 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
@@ -105,8 +151,9 @@ _Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 &
 // threads too (tide/jobs.h), and what that costs the rest of the tick is only
 // made up for from about here: measured, a tick with 1,800 crates awake was
 // slower shared and one with 2,400 quicker. A page's threads cost more to
-// reach, and its step has no SIMD to share out: there, 2,400 was slower
-// shared and 4,800 quicker.
+// reach: there, 2,400 was slower shared and 4,800 quicker while its step was
+// scalar code, and on WebAssembly's SIMD, which left less of a step to share
+// out, 4,800 is about even and 9,600 quicker.
 #ifdef __wasm__
 #define SHARED_BODIES 4096
 #else
@@ -124,15 +171,92 @@ typedef struct world {
     uint64_t used;  // When a tick last had it
     int bases[B2_SNAPSHOT_SECTIONS]; // Where each section of its image goes: part of its state, as the image says them
     int image_size;                  // Its last image's, which is about the next one's: how much room to ask for
-    uint8_t *before; // Measuring: the last image, to count what changed of it
+    // Measuring and checking only: a copy of the last image, to count what changed of it and to see that
+    // what Box2D said changed is all that did. A match keeps none: its image is in its list.
+    uint8_t *before;
     int before_size;
+    bool before_good; // It's the world's last image
+    uint8_t *whole;   // Checking: the image written whole, to compare
+    int whole_size;
+    // What each body is, by its index, as Box2D was last asked or told: one more than its b2BodyType, or 0 for
+    // one not asked about yet. It's Box2D's own answer remembered, so that looking at every body every tick
+    // for a `type` that code wrote is a comparison and not a call (see retyped)
+    uint8_t *kinds;
+    uint32_t kinds_room;
 } world;
 
 static world worlds[WORLDS];
 static uint64_t uses;
 static world *active; // The running tick's
+// The one the queries that follow are of (b2t_seek, b2t_recall). Systems that ask run on several threads at
+// once, each with its own question, so what a question keeps from one call to the next is each thread's own
+static TIDE_THREAD_LOCAL world *asked;
 static bool shared;   // The running step's tasks go to other threads
 static int32_t share_from = SHARED_BODIES; // A step with this many bodies awake is shared out
+
+// A list of handles that grows as it needs, and is kept from call to call:
+// what a query found, and what it's told to pass over.
+typedef struct handles {
+    int64_t *items;
+    int32_t count;
+    int32_t room;
+} handles;
+
+static void handles_add(handles *h, const int64_t item)
+{
+    if (h->count == h->room) {
+        const int32_t room = h->room ? h->room * 2 : 64;
+        h->items = tide_realloc(h->items, (size_t)h->room * sizeof *h->items, (size_t)room * sizeof *h->items);
+        h->room = room;
+    }
+    h->items[h->count++] = item;
+}
+
+static bool handles_have(const handles *h, const int64_t item)
+{
+    for (int32_t i = 0; i < h->count; i++) {
+        if (h->items[i] == item) return true;
+    }
+    return false;
+}
+
+// The parts' shapes the running tick took off their bodies (b2t_shed), each
+// with the body it was on: what it was touching parts from it after the step,
+// when the shape itself is no more to ask whose it was.
+typedef struct shed_shape {
+    int64_t shape;
+    int64_t body;
+} shed_shape;
+
+static shed_shape *sheds;
+static int32_t shed_count;
+static int32_t shed_room;
+
+// The bodies and shapes a query passes over: the ones whose entities were
+// destroyed since the last step, which are in C's world until the next one.
+static TIDE_THREAD_LOCAL handles hidden_bodies;
+static TIDE_THREAD_LOCAL handles hidden_shapes;
+static TIDE_THREAD_LOCAL handles found; // What the last query that gives a list found
+
+// Which of C's worlds is at a stamp is looked up, and one is made from an
+// image, by one thread at a time: systems that ask on several threads all ask
+// of the same match's world, and where there's none, the first makes it for
+// all. Asking itself needs no turn: it changes nothing of a world, and the
+// tick doesn't change one while a system that asks runs, as that system reads
+// the Physics the systems that change the world write.
+static atomic_flag finding = ATOMIC_FLAG_INIT;
+static atomic_int asking_threads;
+
+static void find_begin(void)
+{
+    while (atomic_flag_test_and_set_explicit(&finding, memory_order_acquire)) {
+    }
+}
+
+static void find_end(void)
+{
+    atomic_flag_clear_explicit(&finding, memory_order_release);
+}
 
 // The bodies the running tick's Enter made, in the order it made them, each
 // with its entity, for the system after it to take (b2t_made): the match keeps
@@ -173,6 +297,10 @@ static uint32_t stepped; // Steps taken, by any world: the last one's number
 static int32_t shared_steps;
 static int32_t restores;
 static bool measuring; // No clock is read otherwise
+static bool checking;  // Every image written in parts is compared with the image written whole
+static bool always;    // ...and images are written in parts whatever is awake
+static int32_t images_whole;
+static int32_t images_in_parts;
 static uint64_t step_ns;
 static uint64_t image_ns;
 static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
@@ -254,12 +382,15 @@ static void make(world *w, const int workers)
     def.enqueueTask = enqueue;
     def.finishTask = finish;
     w->id = b2CreateWorld(&def);
+    if (always) b2World_SetSnapshotAwakeShare(w->id, 1);
     w->made = true;
     w->workers = workers;
     w->stamp = 0;
     w->chain = 0;
     memset(w->bases, 0, sizeof w->bases);
     w->image_size = 0;
+    w->before_good = false;
+    if (w->kinds) memset(w->kinds, 0, w->kinds_room);
 }
 
 static void unmake(world *w)
@@ -273,11 +404,41 @@ static b2BodyId body_of(const world *w, const int64_t id)
     return (b2BodyId){(int32_t)(uint32_t)id, (uint16_t)(w->id.index1 - 1), (uint16_t)((uint64_t)id >> 32)};
 }
 
+static b2ShapeId shape_of(const world *w, const int64_t id)
+{
+    return (b2ShapeId){(int32_t)(uint32_t)id, (uint16_t)(w->id.index1 - 1), (uint16_t)((uint64_t)id >> 32)};
+}
+
 // A body's or a shape's handle without its world, which is whichever of C's
 // worlds the match's state is in.
 static int64_t handle(const int32_t index1, const uint16_t generation)
 {
     return (int64_t)((uint64_t)(uint32_t)index1 | (uint64_t)generation << 32);
+}
+
+static int64_t body_handle(const b2BodyId id)
+{
+    return handle(id.index1, id.generation);
+}
+
+static int64_t shape_handle(const b2ShapeId id)
+{
+    return handle(id.index1, id.generation);
+}
+
+// What a body is, remembered (world.kinds): `kind` is one more than its type, or 0 to forget it.
+static void know(world *w, const int32_t index, const uint8_t kind)
+{
+    const uint32_t at = (uint32_t)index;
+    if (at >= w->kinds_room) {
+        if (kind == 0) return;
+        uint32_t room = w->kinds_room ? w->kinds_room : 1024u;
+        while (room <= at) room *= 2u;
+        w->kinds = tide_realloc(w->kinds, w->kinds_room, room);
+        memset(w->kinds + w->kinds_room, 0, room - w->kinds_room);
+        w->kinds_room = room;
+    }
+    w->kinds[at] = kind;
 }
 
 // Something done to the tick's world, into its stamp: what, and with what.
@@ -299,6 +460,7 @@ bool b2t_open(const int64_t stamp)
         abort();
     }
     made_count = made_taken = 0;
+    shed_count = 0;
     const int workers = workers_now();
     for (int i = 0; i < WORLDS; i++) {
         world *w = &worlds[i];
@@ -311,7 +473,8 @@ bool b2t_open(const int64_t stamp)
     return false;
 }
 
-void b2t_restore(const uint8_t *image, const int32_t size, const int64_t stamp)
+// One of C's worlds, made from a match's image and at its stamp.
+static world *restore(const uint8_t *image, const int32_t size, const int64_t stamp)
 {
     const int workers = workers_now();
     world *w = NULL;
@@ -335,11 +498,18 @@ void b2t_restore(const uint8_t *image, const int32_t size, const int64_t stamp)
     }
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b2GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
+    if (w->kinds) memset(w->kinds, 0, w->kinds_room); // Its bodies are the image's now: none is known
     w->image_size = size;
+    w->before_good = false; // Its next image is written whole
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
-    active = w;
+    return w;
+}
+
+void b2t_restore(const uint8_t *image, const int32_t size, const int64_t stamp)
+{
+    active = restore(image, size, stamp);
 }
 
 void b2t_gone(const int64_t *bodies, const int32_t count)
@@ -348,7 +518,26 @@ void b2t_gone(const int64_t *bodies, const int32_t count)
         const b2BodyId id = body_of(active, bodies[i]);
         if (!b2Body_IsValid(id)) continue;
         b2DestroyBody(id);
+        know(active, id.index1, 0);
         note('g', &bodies[i], sizeof bodies[i]);
+    }
+}
+
+// The shapes of parts whose entities were destroyed come off their bodies,
+// which weigh what's left. One whose body went with it is gone already.
+void b2t_shed(const int64_t *shapes, const int32_t count)
+{
+    for (int32_t i = 0; i < count; i++) {
+        const b2ShapeId id = shape_of(active, shapes[i]);
+        if (!b2Shape_IsValid(id)) continue;
+        if (shed_count == shed_room) {
+            const int32_t room = shed_room ? shed_room * 2 : 16;
+            sheds = tide_realloc(sheds, (size_t)shed_room * sizeof *sheds, (size_t)room * sizeof *sheds);
+            shed_room = room;
+        }
+        sheds[shed_count++] = (shed_shape){shapes[i], body_handle(b2Shape_GetBody(id))};
+        b2DestroyShape(id, true);
+        note('h', &shapes[i], sizeof shapes[i]);
     }
 }
 
@@ -359,10 +548,14 @@ void b2t_forget(void)
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
         free(worlds[i].before);
+        free(worlds[i].whole);
+        free(worlds[i].kinds);
         worlds[i] = (world){0};
     }
     active = NULL;
+    asked = NULL;
     made_count = made_taken = 0;
+    shed_count = 0;
 }
 
 // For tests: a step is shared out over the tick's threads from this many
@@ -370,6 +563,26 @@ void b2t_forget(void)
 void b2t_share_from(const int32_t bodies)
 {
     share_from = bodies > 0 ? bodies : SHARED_BODIES;
+}
+
+// For tests: every image that's written as what changed of the last one is
+// also taken whole, and the two compared. One byte apart ends the program,
+// saying where: the image is in the match's hash, and a player who joins makes
+// their world from it. With `whenever`, the worlds made from here on write
+// their images in parts whenever they can, where they'd write them whole
+// while most of their bodies are awake: more for the check to see.
+void b2t_check(const bool on, const bool whenever)
+{
+    checking = on;
+    always = on && whenever;
+}
+
+// How many images were written whole, and how many as what changed of the
+// last one, since the program started: tests read it to see they test both.
+void b2t_images(int32_t *whole, int32_t *in_parts)
+{
+    *whole = images_whole;
+    *in_parts = images_in_parts;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -415,17 +628,24 @@ void b2t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
+// What a body is, as its component says: a number that's none of the three is
+// a body that moves, as one that says nothing is.
+static b2BodyType type_of(const int32_t type)
+{
+    return type == b2_staticBody || type == b2_kinematicBody ? (b2BodyType)type : b2_dynamicBody;
+}
+
 // A body's component into Box2D: made, if it's new, or else what code wrote
 // into it since the last step. Whether it was made.
 static bool sync_body(body *b)
 {
-    const world *w = active;
+    world *w = active;
     const body was = *b;
     uint8_t did = 0; // What was done, a bit each
     b2BodyId id;
     if (b->id == 0) {
         b2BodyDef def = b2DefaultBodyDef();
-        def.type = (b2BodyType)b->type;
+        def.type = type_of(b->type);
         def.position = b2ToPos((b2Vec2){b->position.x, b->position.y});
         def.rotation = b2MakeRot(b->angle);
         def.linearVelocity = (b2Vec2){b->velocity.x, b->velocity.y};
@@ -433,16 +653,28 @@ static bool sync_body(body *b)
         def.linearDamping = b->linear_damping;
         def.angularDamping = b->angular_damping;
         def.gravityScale = b->gravity_scale;
+        def.sleepThreshold = b->sleep_speed >= 0 ? b->sleep_speed : 0; // And 0 for what's no number
         def.motionLocks.angularZ = b->fixed_rotation;
         def.isBullet = b->bullet;
         id = b2CreateBody(w->id, &def);
         b->id = handle(id.index1, id.generation);
+        if (b->id != 0) know(w, id.index1, (uint8_t)(def.type + 1));
         did |= 1u;
     } else {
         // What code wrote since the last step, and only that: a body nothing
         // touched stays as Box2D has it, asleep if it was
         id = body_of(w, b->id);
         if (!b2Body_IsValid(id)) return 0;
+        if (b2Body_GetType(id) != type_of(b->type)) {
+            // What it is, before where it is and how fast, which are then the new kind's to take. Box2D lets go
+            // of everything the body touched and finds it again at the step, and wakes the body with what it's
+            // joined to by touching. What rested on a body that's now one that never moves, or leaned on one
+            // that's now pushed around, is woken here, while Box2D still knows what that is
+            b2Body_WakeTouching(id);
+            b2Body_SetType(id, type_of(b->type));
+            know(w, id.index1, (uint8_t)(type_of(b->type) + 1));
+            did |= 64u;
+        }
         const b2Pos at = b2Body_GetPosition(id);
         if ((float)at.x != b->position.x || (float)at.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(id)) != b->angle) {
             b2Body_SetTransform(id, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
@@ -491,6 +723,7 @@ static bool sync_body(body *b)
 typedef struct body_fields {
     const int32_t *id; // A long is two fields: its low half, then its high
     const int32_t *id_high;
+    const int32_t *type;
     const float *x;
     const float *y;
     const float *angle;
@@ -513,6 +746,7 @@ static body_fields fields_of(const tide_rows *rows)
     return (body_fields){
         .id = tide_rows_ints(rows, 0, offsetof(body, id)),
         .id_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4),
+        .type = tide_rows_ints(rows, 0, offsetof(body, type)),
         .x = tide_rows_floats(rows, 0, offsetof(body, position.x)),
         .y = tide_rows_floats(rows, 0, offsetof(body, position.y)),
         .angle = tide_rows_floats(rows, 0, offsetof(body, angle)),
@@ -531,6 +765,34 @@ static body_fields fields_of(const tide_rows *rows)
     };
 }
 
+// Whether a body's component says it's another kind than Box2D has it as:
+// code wrote its `type`. There's no field for what it was: Box2D is asked. It's
+// asked once for each body, and its answer kept (world.kinds) until the body
+// goes or the world is made from an image, as every body is looked at every
+// tick and a call into Box2D for each took twice as long as all the rest of
+// what Enter looks at. What's kept is only ever Box2D's own answer, or what it
+// was just told.
+static bool retyped(world *w, const int32_t id, const int32_t id_high, const int32_t type)
+{
+    const uint32_t at = (uint32_t)id;
+    uint8_t kind = at < w->kinds_room ? w->kinds[at] : 0;
+    if (kind == 0) {
+        const b2BodyId asked_of = {id, (uint16_t)(w->id.index1 - 1), (uint16_t)(uint32_t)id_high};
+        if (!b2Body_IsValid(asked_of)) return false;
+        kind = (uint8_t)(b2Body_GetType(asked_of) + 1);
+        know(w, id, kind);
+    }
+#ifndef NDEBUG
+    // A build that checks itself asks every time, and holds what's kept to the answer
+    const b2BodyId checked = {id, (uint16_t)(w->id.index1 - 1), (uint16_t)(uint32_t)id_high};
+    if (b2Body_IsValid(checked) && kind != (uint8_t)(b2Body_GetType(checked) + 1)) {
+        fprintf(stderr, "Box2D: body %d is kept as kind %d, and is %d\n", (int)id, (int)kind - 1, (int)b2Body_GetType(checked));
+        abort();
+    }
+#endif
+    return kind != (uint8_t)(type_of(type) + 1);
+}
+
 // The system Enter: new bodies are made, and what code wrote into a body since
 // the last step goes to Box2D. A body nothing wrote to costs these
 // comparisons, and nothing else. It runs on one thread, its rows in order
@@ -538,6 +800,7 @@ static body_fields fields_of(const tide_rows *rows)
 void b2t_enter(tide_rows *rows, physics *p)
 {
     (void)p;
+    world *w = active;
     const uint32_t count = tide_rows_count(rows);
     const tide_entity *entities = tide_rows_entities(rows);
     body_fields f = fields_of(rows);
@@ -546,7 +809,7 @@ void b2t_enter(tide_rows *rows, physics *p)
         const bool pushed = f.vx[i] != f.step_vx[i] || f.vy[i] != f.step_vy[i] || f.spin[i] != f.step_spin[i];
         const bool nudged = f.impulse_x[i] != 0 || f.impulse_y[i] != 0 || f.turn[i] != 0;
         const bool is_new = f.id[i] == 0 && f.id_high[i] == 0;
-        if (!is_new && !moved && !pushed && !nudged) continue;
+        if (!is_new && !moved && !pushed && !nudged && !retyped(w, f.id[i], f.id_high[i], f.type[i])) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
         const tide_float2 impulse = b.impulse;
@@ -585,13 +848,24 @@ static b2ShapeDef shape_def(const float density, const float friction, const flo
     // ...which a sensor sends too, for the shapes in it. Box2D only reports a shape to a sensor when both
     // say so, and neither does unless it's told to: every shape does, as any may come into a sensor
     def.enableSensorEvents = true;
+    // Hit, for two shapes that meet faster than the world's hit speed. Box2D only looks at how fast a contact's
+    // points close for the contacts of shapes that ask, and keeps what it found in the contact: one shape of a
+    // pair asking is enough, and every shape does
+    def.enableHitEvents = true;
     // A sensor doesn't report another: each would report the other, and their entities hear of it twice.
     // Shapes of one group below zero are never set against each other
     if (sensor) def.filter.groupIndex = -1;
     return def;
 }
 
-int32_t b2t_box(const int64_t on, const box *s)
+// A box as its component says it, around its body's place.
+static b2Polygon box_shape(const box *s)
+{
+    return b2MakeOffsetBox(0.5f * s->size.x, 0.5f * s->size.y, (b2Vec2){s->offset.x, s->offset.y}, b2Rot_identity);
+}
+
+// A box onto a body, and the shape it is in Box2D, or 0 for a body that isn't there.
+int64_t b2t_box(const int64_t on, const box *s)
 {
     if (on == 0) return 0;
     const b2BodyId owner = body_of(active, on);
@@ -599,12 +873,11 @@ int32_t b2t_box(const int64_t on, const box *s)
     note('x', &on, sizeof on);
     note('x', s, sizeof *s);
     const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
-    const b2Polygon polygon = b2MakeOffsetBox(0.5f * s->size.x, 0.5f * s->size.y, (b2Vec2){s->offset.x, s->offset.y}, b2Rot_identity);
-    b2CreatePolygonShape(owner, &def, &polygon);
-    return 1;
+    const b2Polygon polygon = box_shape(s);
+    return shape_handle(b2CreatePolygonShape(owner, &def, &polygon));
 }
 
-int32_t b2t_circle(const int64_t on, const circle *s)
+int64_t b2t_circle(const int64_t on, const circle *s)
 {
     if (on == 0) return 0;
     const b2BodyId owner = body_of(active, on);
@@ -613,8 +886,7 @@ int32_t b2t_circle(const int64_t on, const circle *s)
     note('c', s, sizeof *s);
     const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
     const b2Circle round = {{s->offset.x, s->offset.y}, s->radius};
-    b2CreateCircleShape(owner, &def, &round);
-    return 1;
+    return shape_handle(b2CreateCircleShape(owner, &def, &round));
 }
 
 // ---------------------------------------------------------------------------
@@ -673,9 +945,48 @@ static void push_new(const world *w)
     }
 }
 
-int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
+// A number the world is tuned by, as Box2D takes it: none under 0, and none that isn't one.
+static float tuned(const float value)
+{
+    return !(value >= 0) ? 0 : value > 1e9f ? 1e9f : value;
+}
+
+// How the world is tuned, as the match says, where that's not how the world is: its own tuning is in its
+// image, so it's the last step's wherever the world came from, as its gravity is. Each change is noted, so
+// the step that follows isn't one the world can do without, though nothing in it be awake: its image is
+// what says how it's tuned.
+static void tune(const world *w, const float stiffness, const float damping, const float push_speed, const float bounce_speed,
+                 const float hit_speed, const bool sleeping)
+{
+    const float contacts[3] = {tuned(stiffness), tuned(damping), tuned(push_speed)};
+    float has[3];
+    b2World_GetContactTuning(w->id, &has[0], &has[1], &has[2]);
+    if (has[0] != contacts[0] || has[1] != contacts[1] || has[2] != contacts[2]) {
+        b2World_SetContactTuning(w->id, contacts[0], contacts[1], contacts[2]);
+        note('k', contacts, sizeof contacts);
+    }
+    const float bounce = tuned(bounce_speed);
+    if (b2World_GetRestitutionThreshold(w->id) != bounce) {
+        b2World_SetRestitutionThreshold(w->id, bounce);
+        note('r', &bounce, sizeof bounce);
+    }
+    const float hit = tuned(hit_speed);
+    if (b2World_GetHitEventThreshold(w->id) != hit) {
+        b2World_SetHitEventThreshold(w->id, hit);
+        note('i', &hit, sizeof hit);
+    }
+    if (b2World_IsSleepingEnabled(w->id) != sleeping) {
+        b2World_EnableSleeping(w->id, sleeping); // Off, it wakes every body
+        const uint8_t sleeps = sleeping;
+        note('z', &sleeps, sizeof sleeps);
+    }
+}
+
+int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity, const float stiffness, const float damping,
+                 const float push_speed, const float bounce_speed, const float hit_speed, const bool sleeping)
 {
     world *w = active;
+    tune(w, stiffness, damping, push_speed, bounce_speed, hit_speed, sleeping);
     // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
     // last step's wherever the world came from
     const b2Vec2 pulled = b2World_GetGravity(w->id);
@@ -688,10 +999,10 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     note('s', &gravity, sizeof gravity);
     push_new(w);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
-    if (turned) {
+    if (turned && sleeping) {
         // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box2D
         // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
-        // gravity, which every step notes.
+        // gravity, which every step notes. A world whose bodies never sleep has none to wake.
         b2World_EnableSleeping(w->id, false);
         b2World_EnableSleeping(w->id, true);
     }
@@ -730,44 +1041,158 @@ static int place(world *w, const int *sizes, bool *moved)
     return end;
 }
 
-// The world's state into the match's list, which is then exactly it, and how
-// many bytes that is. Box2D writes it once, into room for a little more than
-// the last one took; a second time when it's more than that, or when a section
-// has to move.
+enum { BLOCK = 16384 }; // What a measured run counts the image's changes by
+
+// Which part of an image a byte is in, for what a failed check says: Box2D's
+// sections, in its order (snapshot.c).
+static const char *const sections[B2_SNAPSHOT_SECTIONS] = {
+    "settings and ids", "static and disabled sets", "awake set", "sleeping sets", "bodies",      "shapes",
+    "fat bounds",       "contacts",                 "joints",    "chains",        "sensors",     "islands",
+    "static tree",      "kinematic tree",           "dynamic tree", "pairs",      "graph",
+};
+
+// A copy of the image a match's list is about to hold, which measuring and
+// checking go by.
+static void remember(world *w, const uint8_t *image, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    memcpy(w->before, image, (size_t)size);
+    w->before_size = size;
+    w->before_good = true;
+}
+
+// The parts Box2D says changed, over the copy of the last image: what the
+// match's list becomes. While measuring, the image's blocks that a part made
+// otherwise are counted.
+static void remember_parts(world *w, const b2SnapshotPart *parts, const int count, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    if (size > w->before_size) memset(w->before + w->before_size, 0, (size_t)(size - w->before_size)); // As a list grows
+    const int blocks = (size + BLOCK - 1) / BLOCK;
+    uint8_t *changed = measuring ? tide_alloc_zeroed((size_t)blocks, 1) : NULL;
+    if (changed) {
+        for (int at = w->before_size / BLOCK; at < blocks; at++) changed[at] = at * BLOCK + BLOCK > w->before_size;
+    }
+    for (int i = 0; i < count; i++) {
+        const b2SnapshotPart *part = &parts[i];
+        if (part->offset < 0 || part->offset + part->size > size) {
+            fprintf(stderr, "Box2D gave a part of its image that's outside it: %d bytes at %d of %d\n", part->size, part->offset, size);
+            abort();
+        }
+        for (int at = part->offset; changed && at < part->offset + part->size;) {
+            const int end = (at / BLOCK + 1) * BLOCK < part->offset + part->size ? (at / BLOCK + 1) * BLOCK : part->offset + part->size;
+            if (memcmp(w->before + at, part->bytes + (at - part->offset), (size_t)(end - at)) != 0) changed[at / BLOCK] = 1;
+            at = end;
+        }
+        memcpy(w->before + part->offset, part->bytes, (size_t)part->size);
+    }
+    for (int at = 0; changed && at < blocks; at++) blocks_changed += changed[at];
+    if (changed) blocks_in_all += (uint64_t)blocks;
+    free(changed);
+    w->before_size = size;
+}
+
+// The image written whole, against the one its parts made: the same bytes, or
+// the program ends, saying where the first one that isn't is.
+static void check(world *w, const int size)
+{
+    w->whole = tide_realloc(w->whole, (size_t)w->whole_size, (size_t)size);
+    w->whole_size = size;
+    int sizes[B2_SNAPSHOT_SECTIONS];
+    const int whole = b2World_CheckSnapshotAt(w->id, w->whole, size, w->bases, sizes);
+    if (whole == size && memcmp(w->whole, w->before, (size_t)size) == 0) return;
+    if (whole != size) {
+        fprintf(stderr, "Box2D's image in parts is %d bytes, and its image written whole %d\n", size, whole);
+        abort();
+    }
+    int first = 0;
+    int apart = 0;
+    for (int at = size - 1; at >= 0; at--) {
+        if (w->whole[at] == w->before[at]) continue;
+        first = at;
+        apart++;
+    }
+    int section = -1;
+    for (int i = 0; i < B2_SNAPSHOT_SECTIONS; i++) {
+        if (w->bases[i] <= first) section = i;
+    }
+    const int in = section < 0 ? first : first - w->bases[section];
+    fprintf(stderr, "Box2D's image in parts isn't its image written whole: %d bytes apart, the first at %d, which is byte %d of %s", apart,
+            first, in, section < 0 ? "its header" : sections[section]);
+    // The sections of things that each take the same room start with how many there are
+    int32_t count = 0;
+    if (section >= 0) memcpy(&count, w->whole + w->bases[section], sizeof count);
+    const int record = section < 0 ? 0 : b2GetSnapshotRecordSize(section);
+    if (record && in >= 4 && in < 4 + count * record) fprintf(stderr, ": byte %d of number %d", (in - 4) % record, (in - 4) / record);
+    fprintf(stderr, " (%d of them). Written whole it's %02x, and in parts %02x\n", (int)count, w->whole[first], w->before[first]);
+    abort();
+}
+
+// The world's state into the match's list, and how many bytes that is.
+//
+// Where Box2D can say what changed of its last image, which the list holds,
+// the list keeps the rest: only what changed is written, and nothing is
+// compared but that (b2World_GetSnapshotParts, tide_list_out_keep). The image
+// is, byte for byte, the one written whole.
+//
+// Otherwise Box2D writes all of it into room for a little more than the last
+// one took, and the list is then exactly it; a second time when it's more
+// than that, or when a section has to move.
 int32_t b2t_image(tide_list_out *out)
 {
-    world *placed = active;
+    world *w = active;
     int sizes[B2_SNAPSHOT_SECTIONS] = {0};
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
-    int room = placed->image_size ? placed->image_size + placed->image_size / 16 + 4096 : 0;
+    const bool remembers = measuring || checking;
+    // The copy a measured or checked run goes by has to be the last image
+    if (w->image_size > 0 && (!remembers || w->before_good)) {
+        const b2SnapshotPart *parts;
+        int count;
+        const int size = b2World_GetSnapshotParts(w->id, w->bases, sizes, &parts, &count);
+        bool moved = false;
+        if (size != 0) place(w, sizes, &moved); // A section outgrew its place, or left too much of it: all of it again
+        if (size > 0 && !moved) {
+            tide_list_out_keep(out, (uint32_t)size);
+            for (int i = 0; i < count; i++) tide_list_out_part(out, (uint32_t)parts[i].offset, parts[i].bytes, (uint32_t)parts[i].size);
+            w->image_size = size;
+            images_in_parts++;
+            const uint64_t counting = measuring ? tide_time_now_ns() : 0;
+            if (measuring) image_ns += counting - began;
+            if (remembers) remember_parts(w, parts, count, size);
+            if (checking) check(w, size);
+            if (measuring) counting_ns += tide_time_now_ns() - counting;
+            return size;
+        }
+    }
+
+    int room = w->image_size ? w->image_size + w->image_size / 16 + 4096 : 0;
     uint8_t *image = room ? tide_list_out_room(out, (uint32_t)room) : NULL;
-    int size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+    int size = b2World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     bool moved;
-    const int after = place(placed, sizes, &moved);
+    const int after = place(w, sizes, &moved);
     if (moved || size > room) { // A section outgrew its place or left too much of it, or the image its room
         if (moved) size = after;
         if (size > room) {
             room = size;
             image = tide_list_out_room(out, (uint32_t)room);
         }
-        size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+        size = b2World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     }
     tide_list_out_count(out, (uint32_t)size);
-    placed->image_size = size;
+    w->image_size = size;
+    images_whole++;
     if (measuring) {
         const uint64_t counting = tide_time_now_ns();
         image_ns += counting - began;
-        world *w = active;
-        enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {
             const int n = size - at < BLOCK ? size - at : BLOCK;
             blocks_changed += at + n > w->before_size || memcmp(w->before + at, image + at, (size_t)n) != 0;
             blocks_in_all++;
         }
-        w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
-        memcpy(w->before, image, (size_t)size);
-        w->before_size = size;
+        remember(w, image, size);
         counting_ns += tide_time_now_ns() - counting;
+    } else if (checking) {
+        remember(w, image, size);
     }
     return size;
 }
@@ -891,44 +1316,346 @@ int32_t b2t_touches(const int64_t stamp)
     return contacts.beginCount + contacts.endCount + sensors.beginCount + sensors.endCount;
 }
 
-// Whose body a shape is on, or 0 for a shape that's gone, with its body: its
-// entity was destroyed, and what it touched parts from no entity.
-static int64_t owner_of(const b2ShapeId shape)
+// A shape, and whose body it's on. One that's gone is 0, and its body with
+// it, when its entity was destroyed: what it touched parts from no entity. A
+// part's shape that was taken off its body this tick (b2t_shed) is gone too,
+// but its body is the one it was on, which is there to hear of the parting.
+static void whose(const b2ShapeId shape, int64_t *body, int64_t *id)
 {
-    if (!b2Shape_IsValid(shape)) return 0;
-    const b2BodyId id = b2Shape_GetBody(shape);
-    return handle(id.index1, id.generation);
+    *body = 0;
+    *id = 0;
+    if (b2Shape_IsValid(shape)) {
+        *id = shape_handle(shape);
+        *body = body_handle(b2Shape_GetBody(shape));
+        return;
+    }
+    const int64_t was = shape_handle(shape);
+    for (int32_t i = 0; i < shed_count; i++) {
+        if (sheds[i].shape != was) continue;
+        if (b2Body_IsValid(body_of(active, sheds[i].body))) *body = sheds[i].body;
+        return;
+    }
+}
+
+static touch touching(const b2ShapeId a, const b2ShapeId b, const bool began)
+{
+    touch out = {0};
+    whose(a, &out.a, &out.shape_a);
+    whose(b, &out.b, &out.shape_b);
+    out.began = began;
+    return out;
 }
 
 touch b2t_touch(const int32_t index)
 {
     const b2ContactEvents contacts = b2World_GetContactEvents(active->id);
     const b2SensorEvents sensors = b2World_GetSensorEvents(active->id);
-    touch out = {0};
     int32_t at = index;
-    if (at < contacts.beginCount) {
-        out.a = owner_of(contacts.beginEvents[at].shapeIdA);
-        out.b = owner_of(contacts.beginEvents[at].shapeIdB);
-        out.began = true;
-        return out;
-    }
+    if (at < contacts.beginCount) return touching(contacts.beginEvents[at].shapeIdA, contacts.beginEvents[at].shapeIdB, true);
     at -= contacts.beginCount;
-    if (at < contacts.endCount) {
-        out.a = owner_of(contacts.endEvents[at].shapeIdA);
-        out.b = owner_of(contacts.endEvents[at].shapeIdB);
-        return out;
-    }
+    if (at < contacts.endCount) return touching(contacts.endEvents[at].shapeIdA, contacts.endEvents[at].shapeIdB, false);
     at -= contacts.endCount;
-    if (at < sensors.beginCount) {
-        out.a = owner_of(sensors.beginEvents[at].sensorShapeId);
-        out.b = owner_of(sensors.beginEvents[at].visitorShapeId);
-        out.began = true;
-        return out;
-    }
+    if (at < sensors.beginCount) return touching(sensors.beginEvents[at].sensorShapeId, sensors.beginEvents[at].visitorShapeId, true);
     at -= sensors.beginCount;
-    if (at < sensors.endCount) {
-        out.a = owner_of(sensors.endEvents[at].sensorShapeId);
-        out.b = owner_of(sensors.endEvents[at].visitorShapeId);
-    }
+    if (at < sensors.endCount) return touching(sensors.endEvents[at].sensorShapeId, sensors.endEvents[at].visitorShapeId, false);
+    return (touch){0};
+}
+
+// The shapes the tick's step says met faster than the world's hit speed, the
+// step's own as the touches are: how many, and each. Box2D finds them from
+// the contacts of the shapes that ask for it, which every shape does.
+int32_t b2t_hits(void)
+{
+    return b2World_GetContactEvents(active->id).hitCount;
+}
+
+blow b2t_hit(const int32_t index)
+{
+    const b2ContactEvents contacts = b2World_GetContactEvents(active->id);
+    blow out = {0};
+    if (index < 0 || index >= contacts.hitCount) return out;
+    const b2ContactHitEvent *event = &contacts.hitEvents[index];
+    whose(event->shapeIdA, &out.a, &out.shape_a);
+    whose(event->shapeIdB, &out.b, &out.shape_b);
+    out.point = (tide_float2){(float)event->point.x, (float)event->point.y};
+    out.normal = (tide_float2){event->normal.x, event->normal.y};
+    out.speed = event->approachSpeed;
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Queries: what's asked of a match's world, which changes nothing of it
+//
+// A query is of the world a match's Physics names, by its stamp: C's world at
+// that stamp, as the match's last step left it, or one made from the match's
+// image, which is the same world. So it's asked from anywhere: a system
+// wherever it is in a tick, a handler, a view, with the Physics it was handed,
+// and from several threads at once, by a system that runs on them. Nothing
+// here is noted, as nothing here changes a world.
+//
+// An answer is the same on every machine because the world is: every body,
+// shape and tree a query reads is in the image, which is the same bytes
+// everywhere. It also doesn't rest on the order Box2D's trees are gone
+// through: the nearest of what a ray or a shape meets is the one with the
+// least fraction, and of two as near, the one that's first among Box2D's
+// shapes; and what's found in a shape or a sensor is given in the order of
+// Box2D's bodies, each once.
+
+// C's world at a match's stamp, for the queries that follow: whether there is
+// one. What the last query was told to pass over is forgotten.
+static world *world_at(const int64_t stamp)
+{
+    for (int i = 0; i < WORLDS; i++) {
+        world *w = &worlds[i];
+        if (!w->made || w->stamp != stamp) continue;
+        w->used = ++uses;
+        return w;
+    }
+    return NULL;
+}
+
+bool b2t_seek(const int64_t stamp)
+{
+    static TIDE_THREAD_LOCAL bool counted;
+    if (!counted) {
+        counted = true;
+        atomic_fetch_add(&asking_threads, 1);
+    }
+    hidden_bodies.count = 0;
+    hidden_shapes.count = 0;
+    find_begin();
+    asked = world_at(stamp);
+    find_end();
+    return asked != NULL;
+}
+
+// For tests: how many threads have asked something, ever.
+int32_t b2t_asking_threads(void)
+{
+    return atomic_load(&asking_threads);
+}
+
+// ...and where there's none, one made from the match's image. It's one of
+// C's worlds like any other from here on: the tick that comes to this stamp
+// next finds it.
+void b2t_recall(const uint8_t *image, const int32_t size, const int64_t stamp)
+{
+    find_begin();
+    asked = world_at(stamp); // Another thread may have made it since this one looked
+    if (!asked) asked = restore(image, size, stamp);
+    find_end();
+}
+
+// The bodies and the parts' shapes whose entities were destroyed since the
+// match's last step: they're in C's world until its next one, and no query
+// meets them.
+void b2t_hide(const int64_t *bodies, const int32_t body_count, const int64_t *shapes, const int32_t shape_count)
+{
+    for (int32_t i = 0; i < body_count; i++) handles_add(&hidden_bodies, bodies[i]);
+    for (int32_t i = 0; i < shape_count; i++) handles_add(&hidden_shapes, shapes[i]);
+}
+
+// What a ray or a shape is looking for: the nearest thing in its way.
+typedef struct search {
+    int64_t ignore; // A body it doesn't meet: its own, usually
+    met best;
+} search;
+
+static bool hidden(const int64_t body, const int64_t shape)
+{
+    return (hidden_bodies.count != 0 && handles_have(&hidden_bodies, body)) || (hidden_shapes.count != 0 && handles_have(&hidden_shapes, shape));
+}
+
+// Where a body or a shape is among Box2D's: no two that are there share one.
+static uint32_t slot(const int64_t id)
+{
+    return (uint32_t)id;
+}
+
+// The least number over a fraction of the way, and no more than all of it.
+static float just_past(const float fraction)
+{
+    if (fraction >= 1.0f) return 1.0f;
+    if (!(fraction > 0.0f)) return 1e-30f;
+    uint32_t bits;
+    memcpy(&bits, &fraction, sizeof bits);
+    bits += 1u;
+    float next;
+    memcpy(&next, &bits, sizeof next);
+    return next;
+}
+
+// Box2D found a shape in the way. Sensors stop nothing, so they aren't met,
+// and neither is the body to ignore, nor what's on its way out of the world.
+// The nearest so far is kept, and of two as near, the one that's first among
+// Box2D's shapes. The way is then cut to just past the nearest, where Box2D
+// would cut it to the nearest: a shape exactly as near is still looked at, so
+// which of the two is kept isn't which the tree came to first.
+static float nearer(const b2ShapeId shape, const b2Pos point, const b2Vec2 normal, const float fraction, void *context)
+{
+    search *s = context;
+    if (b2Shape_IsSensor(shape)) return -1.0f;
+    const int64_t id = shape_handle(shape);
+    const int64_t body = body_handle(b2Shape_GetBody(shape));
+    if (body == s->ignore || hidden(body, id)) return -1.0f;
+    if (!s->best.any || fraction < s->best.fraction || (fraction == s->best.fraction && slot(id) < slot(s->best.shape))) {
+        s->best = (met){body, id, {(float)point.x, (float)point.y}, {normal.x, normal.y}, fraction, true};
+    }
+    return just_past(s->best.fraction);
+}
+
+static bool real(const float value)
+{
+    return value - value == 0.0f;
+}
+
+static bool real2(const tide_float2 value)
+{
+    return real(value.x) && real(value.y);
+}
+
+// The first thing a ray from one place to another meets. One that starts
+// inside a shape meets it there: at no fraction of its way, with no normal.
+met b2t_ray(const tide_float2 from, const tide_float2 to, const int64_t ignore)
+{
+    search s = {.ignore = ignore};
+    if (!asked || !real2(from) || !real2(to)) return s.best;
+    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), (b2Vec2){to.x - from.x, to.y - from.y}, b2DefaultQueryFilter(), nearer,
+                    &s);
+    return s.best;
+}
+
+// A shape moved from one place to another: where it first touches something.
+// The shape's points are around `from`, as a body's shapes are around its
+// place. One that touches something where it starts meets it there, as a ray
+// does.
+static met cast(const b2ShapeProxy *shape, const tide_float2 from, const tide_float2 to, const int64_t ignore)
+{
+    search s = {.ignore = ignore};
+    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, (b2Vec2){to.x - from.x, to.y - from.y}, b2DefaultQueryFilter(),
+                      nearer, &s);
+    return s.best;
+}
+
+// A box or a circle as it is on a body that's turned by `angle`, around the
+// body's place: what's cast, and what's looked into. False for a shape of no
+// size, which Box2D makes nothing of.
+static bool box_proxy(const box *shape, const float angle, b2ShapeProxy *proxy)
+{
+    if (!real2(shape->size) || !real2(shape->offset) || !real(angle) || !(shape->size.x > 0) || !(shape->size.y > 0)) return false;
+    const b2Polygon polygon = box_shape(shape);
+    *proxy = b2MakeOffsetProxy(polygon.vertices, polygon.count, polygon.radius, b2Vec2_zero, b2MakeRot(angle));
+    return true;
+}
+
+static bool circle_proxy(const circle *shape, const float angle, b2ShapeProxy *proxy)
+{
+    if (!real(shape->radius) || !real2(shape->offset) || !real(angle) || !(shape->radius > 0)) return false;
+    const b2Vec2 center = {shape->offset.x, shape->offset.y};
+    *proxy = b2MakeOffsetProxy(&center, 1, shape->radius, b2Vec2_zero, b2MakeRot(angle));
+    return true;
+}
+
+met b2t_cast_box(const box *shape, const tide_float2 from, const float angle, const tide_float2 to, const int64_t ignore)
+{
+    b2ShapeProxy proxy;
+    if (!asked || !real2(from) || !real2(to) || !box_proxy(shape, angle, &proxy)) return (met){0};
+    return cast(&proxy, from, to, ignore);
+}
+
+met b2t_cast_circle(const circle *shape, const tide_float2 from, const float angle, const tide_float2 to, const int64_t ignore)
+{
+    b2ShapeProxy proxy;
+    if (!asked || !real2(from) || !real2(to) || !circle_proxy(shape, angle, &proxy)) return (met){0};
+    return cast(&proxy, from, to, ignore);
+}
+
+static int before(const void *a, const void *b)
+{
+    const int64_t x = *(const int64_t *)a;
+    const int64_t y = *(const int64_t *)b;
+    if (slot(x) != slot(y)) return slot(x) < slot(y) ? -1 : 1;
+    return x < y ? -1 : x > y;
+}
+
+// The bodies a query found, each once, in the order they are among Box2D's,
+// which is the same on every machine and whichever order they were come to
+// in: into the caller's list, and how many.
+static int32_t give(tide_list_out *out)
+{
+    if (found.count == 0) return 0;
+    qsort(found.items, (size_t)found.count, sizeof *found.items, before);
+    int32_t count = 1;
+    for (int32_t i = 1; i < found.count; i++) {
+        if (found.items[i] != found.items[count - 1]) found.items[count++] = found.items[i];
+    }
+    memcpy(tide_list_out_room(out, (uint32_t)count), found.items, (size_t)count * sizeof *found.items);
+    tide_list_out_count(out, (uint32_t)count);
+    return count;
+}
+
+static bool within(const b2ShapeId shape, void *context)
+{
+    (void)context;
+    if (b2Shape_IsSensor(shape)) return true;
+    const int64_t body = body_handle(b2Shape_GetBody(shape));
+    if (!hidden(body, shape_handle(shape))) handles_add(&found, body);
+    return true;
+}
+
+// The bodies with a shape that's in a shape at a place, or touches it.
+static int32_t overlap(const b2ShapeProxy *shape, const tide_float2 at, tide_list_out *out)
+{
+    found.count = 0;
+    b2World_OverlapShape(asked->id, b2ToPos((b2Vec2){at.x, at.y}), shape, b2DefaultQueryFilter(), within, NULL);
+    return give(out);
+}
+
+int32_t b2t_overlap_box(const box *shape, const tide_float2 at, const float angle, tide_list_out *out)
+{
+    b2ShapeProxy proxy;
+    if (!asked || !real2(at) || !box_proxy(shape, angle, &proxy)) return 0;
+    return overlap(&proxy, at, out);
+}
+
+int32_t b2t_overlap_circle(const circle *shape, const tide_float2 at, const float angle, tide_list_out *out)
+{
+    b2ShapeProxy proxy;
+    if (!asked || !real2(at) || !circle_proxy(shape, angle, &proxy)) return 0;
+    return overlap(&proxy, at, out);
+}
+
+// What a sensor has in it, as the last step found: the bodies of its visitors.
+// A shape that's no sensor has none.
+static void visitors(const b2ShapeId sensor)
+{
+    static TIDE_THREAD_LOCAL b2ShapeId *shapes;
+    static TIDE_THREAD_LOCAL int room;
+    const int count = b2Shape_GetSensorCapacity(sensor);
+    if (count == 0) return;
+    if (count > room) {
+        shapes = tide_realloc(shapes, (size_t)room * sizeof *shapes, (size_t)count * sizeof *shapes);
+        room = count;
+    }
+    const int there = b2Shape_GetSensorData(sensor, shapes, count);
+    for (int i = 0; i < there; i++) {
+        if (!b2Shape_IsValid(shapes[i])) continue; // It went since
+        const int64_t body = body_handle(b2Shape_GetBody(shapes[i]));
+        if (!hidden(body, shape_handle(shapes[i]))) handles_add(&found, body);
+    }
+}
+
+// The bodies in an entity's sensors: in each of the two shapes given that's
+// there, its box and its circle.
+int32_t b2t_inside(const int64_t first, const int64_t second, tide_list_out *out)
+{
+    found.count = 0;
+    if (!asked) return 0;
+    const int64_t given[2] = {first, second};
+    for (int i = 0; i < 2; i++) {
+        if (given[i] == 0) continue;
+        const b2ShapeId shape = shape_of(asked, given[i]);
+        if (b2Shape_IsValid(shape)) visitors(shape);
+    }
+    return give(out);
 }
