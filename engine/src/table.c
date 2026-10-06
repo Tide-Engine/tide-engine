@@ -287,6 +287,14 @@ uint64_t tide_table_hash(uint64_t h, const tide_table *t, const tide_columns *c)
     return h;
 }
 
+void tide_table_stale(const tide_table *t, const tide_columns *c, tide_stale_pages *s)
+{
+    for (uint32_t chunk = 0; chunk < t->chunks; chunk++) {
+        const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+        for (uint32_t k = 0; k < c->count; k++) tide_page_stale(s, t->pages[chunk * c->count + k], rows * c->sizes[k]);
+    }
+}
+
 void tide_table_free(tide_table *t, const tide_columns *c)
 {
     for (uint32_t i = 0; i < t->chunks * c->count; i++) tide_page_release(t->pages[i], 1);

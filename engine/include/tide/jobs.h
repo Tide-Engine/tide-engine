@@ -51,6 +51,13 @@ typedef struct tide_jobs {
     // thread can run the work several times in one `run`. Without it, a thread
     // with nothing to do stays in the work, awake, until it's all done.
     void (*more)(void *self, uint32_t count);
+    // As `run`, calling in at most `others` of the threads beside the caller's,
+    // or NULL. For work that's known to be little, like hashing what a tick
+    // changed: every thread of a pool woken for a fraction of a millisecond's
+    // work slowed the caller's own code after it by more than the threads
+    // saved, when it was measured, where two or three that come take most of
+    // the work off it and cost the caller nothing after.
+    void (*run_some)(void *self, uint32_t others, void (*work)(void *context, uint32_t thread), void *context);
 } tide_jobs;
 
 // The entities a system's spawns got as it settled them: what a temporary

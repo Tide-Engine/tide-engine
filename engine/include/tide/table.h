@@ -150,6 +150,8 @@ uint32_t tide_table_move(tide_table *from, const tide_columns *from_columns, uin
 // rows in use, the same for the same rows however the table got there.
 void tide_table_copy(tide_table *to, const tide_table *from, const tide_columns *c);
 uint64_t tide_table_hash(uint64_t h, const tide_table *t, const tide_columns *c);
+// The pages that hash would have to read again (tide/page.h), for whoever hashes them on threads first.
+void tide_table_stale(const tide_table *t, const tide_columns *c, tide_stale_pages *s);
 
 // Lets go of its pages, leaving it empty.
 void tide_table_free(tide_table *t, const tide_columns *c);

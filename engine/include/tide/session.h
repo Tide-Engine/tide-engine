@@ -86,6 +86,11 @@ typedef struct tide_game {
     // it was last taken.
     void (*copy_world)(void *to, const void *from);
     uint64_t (*hash_world)(const void *world);
+    // The same hash, with the pages that changed since the last one hashed on
+    // `jobs`' threads first (tide/page.h), where that's megabytes: what a
+    // session with threads calls after a tick, never during one. NULL in a
+    // game built before there was one, and `hash_world` then.
+    uint64_t (*hash_world_on)(const void *world, const tide_jobs *jobs);
     // Lets go of what a world has, before its memory goes; NULL for worlds of
     // plain data.
     void (*free_world)(void *world);

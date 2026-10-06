@@ -15062,6 +15062,25 @@ static void gen_game_api(gen *g)
     }
     sb_put(o, "static void tide_game_copy(void *to, const void *from)\n{\n    tide_world_copy(to, from);\n}\n\n");
     sb_put(o, "static uint64_t tide_game_hash(const void *w)\n{\n    return tide_world_hash(w);\n}\n\n");
+    // The same hash, with the pages that changed hashed on threads first: every page tide_world_hash
+    // asks of, gathered in its order (tide/page.h). In the .c alone, as the header is the game's hash
+    sb_put(o, "static uint64_t tide_game_hash_on(const void *world, const tide_jobs *jobs)\n");
+    sb_put(o, "{\n");
+    sb_put(o, "    const tide_world *w = world;\n");
+    sb_put(o, "    tide_stale_pages stale = {0};\n");
+    sb_put(o, "    tide_entities_stale(&w->entities, &stale);\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!arch_local(g, a)) sb_printf(o, "    tide_table_stale(&w->%s, %s, &stale);\n", arch_name(g, a), arch_columns(g, a));
+    }
+    for (int i = 0; i < g->tasks.count; i++) {
+        if (!task_table_in(g->tasks.items[i].fn, false)) continue;
+        const char *id = task_id(g->tasks.items[i].fn);
+        sb_printf(o, "    tide_table_stale(&w->tide_tasks_%s, &tide_columns_tasks_%s, &stale);\n", id, id);
+    }
+    if (prog->uses_heap) sb_put(o, "    tide_heap_stale(&w->heap, &stale);\n");
+    sb_put(o, "    tide_pages_hash(&stale, jobs);\n");
+    sb_put(o, "    return tide_world_hash(w);\n");
+    sb_put(o, "}\n\n");
     sb_put(o, "static void tide_game_free(void *w)\n{\n    tide_world_free(w);\n}\n\n");
     sb_put(o, "static uint32_t tide_game_pack(const void *w, uint8_t *out, uint32_t capacity)\n{\n"
               "    return tide_world_pack(w, out, capacity);\n}\n\n");
@@ -15160,6 +15179,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .start = tide_game_start,\n    .tick = tide_game_tick,\n");
     if (program_hears(prog)) sb_put(o, "    .tick_events = tide_game_tick_events,\n");
     sb_put(o, "    .copy_world = tide_game_copy,\n    .hash_world = tide_game_hash,\n");
+    sb_put(o, "    .hash_world_on = tide_game_hash_on,\n");
     sb_put(o, "    .free_world = tide_game_free,\n    .pack_world = tide_game_pack,\n    .unpack_world = tide_game_unpack,\n");
     sb_put(o, "    .pack_delta = tide_game_pack_delta,\n    .unpack_delta = tide_game_unpack_delta,\n");
     sb_put(o, "    .hash_pages = tide_game_hash_pages,\n    .need_pages = tide_game_need_pages,\n");

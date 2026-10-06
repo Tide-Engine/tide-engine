@@ -143,3 +143,34 @@ tide_page *tide_page_copy(const tide_page *p, uint32_t refs, uint32_t keep);
 
 // The hash of its first `bytes` bytes, kept until it changes.
 uint64_t tide_page_hash(tide_page *p, uint32_t bytes);
+
+// The pages a hash is about to ask of whose own hash isn't of what they hold
+// now, gathered so that they're hashed on several threads before it asks
+// (tide/jobs.h): the hash then finds each one's kept, and comes out as it
+// would have. A page is a piece of work of its own, whichever thread takes
+// it, so a world that changed in megabytes is hashed by as many threads as
+// come. A zeroed one is ready to use.
+typedef struct tide_stale_page {
+    tide_page *page;
+    uint32_t bytes; // Of it that are in use: what its hash covers
+} tide_stale_page;
+
+typedef struct tide_stale_pages {
+    tide_stale_page *pages;
+    uint32_t count;
+    uint32_t room;
+    uint64_t bytes; // To hash, in all
+} tide_stale_pages;
+
+// `p` joins them, if its hash isn't of its first `bytes` bytes as they are.
+// Each page once: a world has no page twice among what it hashes.
+void tide_page_stale(tide_stale_pages *s, tide_page *p, uint32_t bytes);
+
+// Hashes them on `jobs`' threads, where there's enough for that to pay, and
+// lets the list go: it's zeroed. With less, or no threads (NULL), nothing is
+// hashed here, and the hash that follows does it as it asks. Never from
+// inside a tick, or anything else those threads are running. Returns how
+// many pages it hashed, for whoever measures or tests it: 0 when it left
+// them to the hash that follows.
+struct tide_jobs;
+uint32_t tide_pages_hash(tide_stale_pages *s, const struct tide_jobs *jobs);

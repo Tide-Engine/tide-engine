@@ -296,6 +296,14 @@ static void patch_u64(uint8_t *at, const uint64_t v)
     for (int i = 0; i < 8; i++) at[i] = (uint8_t)(v >> (8 * i));
 }
 
+// A world's hash, between ticks: what changed of it since its last one is
+// hashed on the session's threads where the game can share that out, which
+// frees this one of most of it. The same hash either way.
+static uint64_t hash_of(const tide_game *g, const void *world, const tide_jobs *jobs)
+{
+    return jobs && g->hash_world_on ? g->hash_world_on(world, jobs) : g->hash_world(world);
+}
+
 // The most a frame can take: its hash, the events, which inputs changed and
 // were late, and every slot's input, after its size.
 static uint32_t frame_capacity(const tide_game *g)
@@ -1689,7 +1697,7 @@ static void server_tick(tide_server *s)
     g->tick(s->world, s->desc.jobs);
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
-    patch_u64(s->frame, g->hash_world(s->world));
+    patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
 
     keep_needed(s, tick);
     stored_frame *f = &s->frames[tick % s->w.history];
@@ -3225,7 +3233,7 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
     }
     if (r.failed || r.at != r.size) return false;
     run_tick(c, world, f->tick);
-    return g->hash_world(world) == hash;
+    return hash_of(g, world, c->desc.jobs) == hash;
 }
 
 // Runs predicted tick `tick`: the snapshot after it is the one before it, run
@@ -3690,7 +3698,7 @@ static void play(tide_client *c)
         if (own_late(c, f) && own_input(c, tick, &own_size)) c->late++;
         bool ok;
         if (predicted) {
-            ok = c->game->hash_world(world_at(c, tick + 1u)) == frame_hash(f);
+            ok = hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs) == frame_hash(f);
         } else {
             if (tick < c->ahead) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
