@@ -210,13 +210,16 @@ jobs:
           key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
       # On macOS, LLVM's libraries are bitcode, which lld compiles as it links
       # tide (minutes); its cache keeps that work between runs. Only LLVM and
-      # the code that calls it decide what's in it.
+      # the code that calls it decide what's in it. lld's own keys for what it
+      # keeps there leave out most of how the code is made (whether a function's
+      # address is said to matter, which folding identical ones goes by), so a
+      # change to that takes another number here, or the old code is found.
       - uses: actions/cache@v4
         if: runner.os == 'macOS' && matrix.preset == 'package'
         with:
           path: build/package/lto-cache
-          key: lto-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
-          restore-keys: lto-
+          key: lto-2-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
+          restore-keys: lto-2-
 
       # CMake inherits these launchers in its native host builds too. ccache
       # hashes the compiler and preprocessed source, including optional headers.
