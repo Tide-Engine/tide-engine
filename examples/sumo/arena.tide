@@ -155,11 +155,14 @@ Stand Stands(int kind, int far, int side)
 }
 
 // A round's ring: what stands on each tile, by the round's arrangement, as
-// high as the round's own dice say, and the arrangement's middle.
-void Plan(mut List<Brick> plan, int round, int seed)
+// high as the round's own dice say, and the arrangement's middle. Only the
+// tiles within `stacked` of the middle have anything on them: all of them, in
+// a match that was started as the game starts one (see `Main`, in game.tide).
+void Plan(mut List<Brick> plan, int round, int seed, int stacked)
 {
     mut var dice = Random(Math.Hash(int2(seed, round)));
     var kind = round % 3;
+    if (stacked < 1) return;
     if (kind == 1) Pyramid(plan, float2(0), 7, 2);
     else if (kind == 2) Columns(plan, float2(0), 4, 13 + dice.NextInt(3));
     else Pyramid(plan, float2(0), 9, 1);
@@ -172,7 +175,7 @@ void Plan(mut List<Brick> plan, int round, int seed)
             var side = Math.Min(Math.Abs(i), Math.Abs(j));
             // Along the ring: along x where the tile is out along z
             var along = Math.Abs(j) > Math.Abs(i);
-            var stand = Stands(kind, far, side);
+            var stand = far > stacked ? Stand.Nothing : Stands(kind, far, side);
             var tall = dice.NextInt(4);
             if (stand == Stand.Stack) Columns(plan, at, 3, 9 + tall);
             else if (stand == Stand.Pile) Columns(plan, at, 2, 8 + tall * 2);
@@ -215,7 +218,7 @@ system Raise(Ring ring, Time time)
                   Tile { at = at, reach = reach, fuse = 1 + Math.Hash(int3(i, j, 7)) % 110 });
         }
     mut List<Brick> plan = [];
-    Plan(plan, ring.round + 1, time.seed);
+    Plan(plan, ring.round + 1, time.seed, ring.stacked);
     var quarter = quaternion.AxisAngle(float3(0, 1, 0), Math.PI / 2);
     foreach (var brick in plan)
     {
