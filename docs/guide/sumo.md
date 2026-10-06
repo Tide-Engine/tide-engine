@@ -62,7 +62,7 @@ Only the players' inputs go over the network: which way each holds the stick, an
 
 ## The code
 
-The game is `examples/sumo` in the [repo](https://github.com/BlenMiner/tide-engine/tree/dev/examples/sumo): seven files of Tide, and a `tide.packages` that says `box3d`.
+Sumo has seven files of Tide, and a `tide.packages` that says `box3d`.
 
 - `game.tide` is the match, which every machine runs the same way, and `arena.tide` what a round's ring is built of. Both are on this page, [whole](#the-match-whole).
 - `play.tide` is what one machine shows of it: the camera, and the ring and what's on it.

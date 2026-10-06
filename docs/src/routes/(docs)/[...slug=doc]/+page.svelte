@@ -38,11 +38,6 @@
 {/key}
 
 <footer>
-    <a class="edit" href={data.edit} target="_blank" rel="noreferrer">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-        Edit this page on GitHub
-    </a>
-
     {#if data.prev || data.next}
         <nav class="pager" aria-label="Pages">
             {#if data.prev}
@@ -64,30 +59,6 @@
 <style>
     footer {
         margin-top: 64px;
-    }
-
-    .edit {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--brand-1);
-        font-size: 14px;
-        font-weight: 500;
-        transition: color 0.2s;
-    }
-
-    .edit:hover {
-        color: var(--brand-2);
-    }
-
-    .edit svg {
-        width: 16px;
-        height: 16px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 2;
-        stroke-linecap: round;
-        stroke-linejoin: round;
     }
 
     .pager {

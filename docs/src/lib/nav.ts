@@ -2,8 +2,6 @@
 // the build fails on a Markdown file that isn't (see server/content.ts). A
 // page's path is its file's, without `.md`; `index.md` is its folder's.
 
-export const repo = 'https://github.com/BlenMiner/tide-engine';
-
 export interface Link {
     text: string;
     link: string;

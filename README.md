@@ -8,22 +8,30 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 
 ## Install
 
+Access is limited to whitelisted GitHub accounts. Sign in with `gh auth login`
+using an account with access, then run the installer through GitHub's authenticated API.
+
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.ps1 | iex
+gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | iex
 ```
 
 Linux and macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.sh | sh
+gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.sh?ref=dev' | sh
 ```
 
 This installs `tide` for your user (in `%LOCALAPPDATA%\Tide` or `~/.tide`) and
 puts it on your `PATH`; no admin rights needed. For nightly versions, which
 follow development day by day, set `TIDE_CHANNEL=nightly` before running the
 script.
+
+The installers and `tide upgrade` use `GH_TOKEN`, then `GITHUB_TOKEN`, or your
+existing GitHub CLI login. Tokens need read access to this repository's contents.
+Running the installer again also upgrades older copies of tide that predate
+authenticated downloads.
 
 `tide` has its C compiler built in (clang), for native and web games alike.
 Native games also need the system's own headers and libraries:
@@ -33,6 +41,20 @@ Native games also need the system's own headers and libraries:
   `sudo apt install build-essential` on Debian and Ubuntu, `sudo dnf install gcc`
   on Fedora.
 - **macOS** (Apple Silicon): Apple's command-line tools, `xcode-select --install`.
+
+## Access requests
+
+The website's `/request-access` form collects a GitHub username and an optional
+project description. Requests are stored privately on the site's Fly volume;
+the form sends no email and grants no access automatically. Read them with:
+
+```sh
+fly ssh console -a tide-website -C 'cat /data/access-requests.jsonl'
+```
+
+Review the requests and invite approved accounts manually. For a new deployment,
+create the volume once with `fly volumes create access_requests -a tide-website
+--region fra --size 1` before deploying the site.
 
 ## Make a game
 
