@@ -34,3 +34,7 @@ void folder_list(const char *folder, folder_entry_fn found, void *user);
 // Whether a file is at `path`, how big it is, and when it was last written
 // (a number that changes when it is; the system's units).
 bool folder_file_info(const char *path, unsigned long long *size, unsigned long long *modified);
+
+// Makes the folder at `path`, and every missing one on the way. True when
+// it's there afterwards.
+bool folder_make(const char *path);
