@@ -8,11 +8,6 @@
 
 #define LEAST_SLOTS 8u
 
-uint32_t tide_map_hash_bytes(const void *data, const uint32_t size)
-{
-    const uint64_t h = tide_hash(data, size);
-    return (uint32_t)(h ^ h >> 32);
-}
 
 static const void *key_of(const tide_map_kind *k, const void *entry)
 {

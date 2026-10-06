@@ -133,10 +133,12 @@ static inline uint64_t tide_grid_cells_about(const tide_grid g, const tide_grid_
     return d ? (uint64_t)d->records << (s->shift[0] + s->shift[1] + s->shift[2]) : 0u;
 }
 
-// A chunk's cells, to read: they start where its block does.
+// A chunk's cells, to read: they start where its block does. With no heap,
+// the grid is the pack's (tide/pack.h), whose chunks are in the scratch
+// area's slots.
 static inline const uint8_t *tide_grid_chunk_at(const tide_heap *heap, const uint32_t block)
 {
-    return (const uint8_t *)tide_heap_block(heap, block);
+    return heap ? (const uint8_t *)tide_heap_block(heap, block) : (const uint8_t *)tide_scratch_at(block);
 }
 
 // A cell, to read, or NULL where the grid has none (zero).
@@ -205,8 +207,10 @@ static inline const void *tide_grid_cached_peek(tide_grid_cache *c, const tide_g
     const int32_t cx = x >> s->shift[0], cy = y >> s->shift[1], cz = z >> s->shift[2];
     if (!tide_grid_cache_holds(c, g.at, cx, cy, cz)) {
         const tide_heap *heap = tide_heap_read(g.at >> 30);
-        if (!heap || !g.at) return tide_grid_peek(g, x, y, z, s); // The scratch area's, or empty
-        *c = (tide_grid_cache){.at = g.at, .moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED), .heap = heap,
+        // A grid of the pack (tide/pack.h) is cached too, against a heap that never moves
+        const tide_heap *still = !heap && tide_pack_holds(g.at) ? &tide_pack_still : heap;
+        if (!still || !g.at) return tide_grid_peek(g, x, y, z, s); // The scratch area's, or empty
+        *c = (tide_grid_cache){.at = g.at, .moves = __atomic_load_n(&still->moves, __ATOMIC_RELAXED), .heap = still,
                                .chunk = {cx, cy, cz}};
         const tide_grid_dir *d = tide_grid_dir_of(g);
         if (!d || !d->records) return NULL;

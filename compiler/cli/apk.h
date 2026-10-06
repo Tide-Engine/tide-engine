@@ -38,6 +38,7 @@ typedef struct apk_desc {
     const char *abis[APK_MAX_LIBS]; // "arm64-v8a", "x86_64"
     const char *libs[APK_MAX_LIBS]; // The library for each, on disk
     const char *icon;               // Its icon, a PNG on disk, or NULL for the system's
+    const char *pack;               // The game's pack of assets (tide/pack.h), on disk, or NULL: assets/game.pack in the app
     int needed_count;
     const apk_lib *needed; // The libraries those need, each for one of the CPUs
 } apk_desc;

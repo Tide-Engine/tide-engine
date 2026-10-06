@@ -1332,9 +1332,22 @@ Picks made to build it, awaiting the owner.
 - **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
 - **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
 
+Picks made as the first slice was built (2026-10-06), awaiting the owner too:
+
+- **`List<byte>` alone is one file's bytes**, never a glob of files; a glob of files as bytes is `List<List<byte>>` or `Map<string, List<byte>>`. These are the only places a list holds a list or a grid: an asset's type can, nothing else can, and a local can't hold one of them either (a grid is still never copied). `Map<K, ...>` with a key that isn't `string` is an error that says the keys are paths.
+- **A frag or vert samples an asset by its bare name** (`hero.Sample(uv)`), never an element of a list of assets (`run[1].Sample(uv)` is an error that says to declare the one it samples): the GPU has no list to index.
+- **A path's `\` is `/`**, and `>>` closes two generic types written inside each other (`List<Grid2<Color>>`), as it does in C#.
+- **Under `tide run` the pack still exists**, in the run's own folder, written by tide (whose front end resolves the files) with each build and again when a file an asset names changes, and loaded by the host between frames: so a saved image is in the running game within a moment, with no compile or link, which is what "no pack" meant; a hot reload hands the new library the pack the host has. On the web tide serves it beside the program and the page fetches it. A C host of its own (`tide_add_game` with `HOST`) gets the pack as C (`tide_game_pack`) and loads it itself (`tide_assets_load`).
+- **A pack from another build** of the game: a name it hasn't got, or has as another type, reads as empty, and the program says so once on stderr. A program whose pack is missing says so too and runs with every asset empty.
+- **URLs** are fetched by tidec once a process (so once a build, and once as `tide run` starts), with curl, into `<game>/.tide/assets/urls/`, each under the SHA-256 of its URL with its ETag beside it; a `tidec` run with no game folder keeps them in a temporary folder. A URL with a character tide can't pass to curl (a quote, a backslash, a dollar sign, a percent) is an error.
+- **What the pack holds of a grid** is the chunks that have a color in them: a clear black cell takes nothing, as in a world's grid a cell nothing wrote takes nothing. A texture drawn from an asset is told apart by the file's hash, so the draw list copies it once.
+- **Where the pack is at runtime:** the top 512 MiB of the scratch area's offsets, so an asset's handle is a scratch handle that every read path reads already, and a thread maps the region into its slots the first time it runs after a load; the scratch area has 512 MiB a thread while a pack is loaded, where it had 1 GiB.
+- **The editor and the build say the same things** about a path: the checker reports a missing file (naming a file of the same bytes, or files of that name), a glob with no match, bytes that aren't the type's, and tidels attaches its fixes to those diagnostics.
+
 ### Open
 
 - Audio, meshes, fonts and JPEG as assets, each with its type; a pixel of a byte a channel in the pack, a quarter of a `Color`'s memory.
+- A pack kept beside a web page rather than inside it, fetched from wherever it's hosted (the option's name, and whether a page waits for it).
 - Load order, streaming and lazy loading within the pack, and what a web page fetches first.
 - Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
 - Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
