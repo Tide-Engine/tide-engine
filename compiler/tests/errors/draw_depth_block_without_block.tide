@@ -1,8 +1,8 @@
-// expect: Draw.Depth sets it around a block: 'Draw.Depth(...) { ... }'
-// expect: to set it for the draws that follow, write 'Draw.SetDepth(...);'
+// expect: Draw3D.Depth sets it around a block: 'Draw3D.Depth(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw3D.SetDepth(...);'
 scene Main { }
 
 view Show()
 {
-    Draw.Depth(Depth.Read);
+    Draw3D.Depth(Depth.Read);
 }

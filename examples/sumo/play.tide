@@ -277,7 +277,7 @@ view Floor(Fx fx, Models models)
 [Stage(Layers.Shadows)]
 view Shadows(Fx fx, Models models)
 {
-    Draw.Depth(Depth.Read),
+    Draw3D.Depth(Depth.Read),
     Draw3D.Transform(Flatten())
     {
         Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, ShadowDrop, ShadowLook);
@@ -290,7 +290,7 @@ view Shadows(Fx fx, Models models)
 [Stage(Layers.Shadows, 1)]
 view Decals(Fx fx, Models models)
 {
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
     }

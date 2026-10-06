@@ -1,0 +1,8 @@
+// expect: Draw2D has no function 'SetDepth'
+// expect: it's Draw3D's: 'Draw3D.SetDepth(...);'. Only 3D meshes have depth
+scene Main { }
+
+view Show()
+{
+    Draw2D.SetDepth(Depth.None);
+}

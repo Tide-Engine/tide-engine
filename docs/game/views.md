@@ -268,11 +268,11 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
-| `Draw.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
 | `Draw2D.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
 | `Draw2D.Clip(rect) { ... }` | Only what's inside `rect` draws, in the block (see [Clipping](#clipping)) |
 | `Draw2D.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
 | `Draw3D.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
+| `Draw3D.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
 | `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
 | `Draw3D.Cube(center, size, color)` | A box with full widths `size.x`, `size.y` and `size.z` |
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
@@ -308,13 +308,13 @@ view Follow(Player player, with ownership)
 |---|---|---|
 | `Draw.Blend(mode)` | `Draw.SetBlend(mode)` | How colors go over what's there (see [Blending](#blending)) |
 | `Draw.Tint(color)` | `Draw.SetTint(color)` | A color everything is multiplied by (see [Tints](#tints)) |
-| `Draw.Depth(mode)` | `Draw.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
 | `Draw2D.Transform(...)`, `Draw3D.Transform(transform)` | `Draw2D.SetTransform(...)`, `Draw3D.SetTransform(transform)` | Where draws land: moved, turned, scaled (see [Transforms](#transforms)) |
 | `Draw2D.Clip(rect)` | `Draw2D.SetClip(rect)` | The rectangle draws are kept inside (see [Clipping](#clipping)) |
 | `Draw2D.Camera(center, size)`, `Draw3D.Camera(...)` | `Draw2D.SetCamera(center, size)`, `Draw3D.SetCamera(...)` | The camera |
 | `Draw2D.Screen()` | `Draw2D.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
+| `Draw3D.Depth(mode)` | `Draw3D.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
 
-Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetDepth()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`.
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`, `Draw3D.SetDepth()`.
 
 Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
 
@@ -328,10 +328,10 @@ Draw.Tint(Color(1, 1, 1, 0.5))
 }
 ```
 
-`Draw.Blend`, `Draw.Tint` and `Draw.Depth` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others say where it lands, and belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`).
+`Draw.Blend` and `Draw.Tint` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`). `Draw3D`'s are for 3D meshes alone, which is why depth is there: nothing in 2D has any.
 
 ::: info
-Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, and `Draw.Depth`'s name and its three modes' are provisional: they're how it works today, and may still change.
+Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, and `Draw3D.Depth`'s name and its three modes' are provisional: they're how it works today, and may still change.
 :::
 
 ### Several at once
@@ -394,7 +394,7 @@ A tint in a tint's block multiplies it: a faded menu's faded button is fainter t
 
 ### Depth
 
-[3D meshes](#_3d) hide each other by how far they are, whatever order they're drawn in: each one is hidden behind what's nearer, and hides what's drawn behind it later. That's `Depth.ReadWrite`, which every frame starts with, and it's right for everything solid. `Draw.Depth` says otherwise:
+[3D meshes](#_3d) hide each other by how far they are, whatever order they're drawn in: each one is hidden behind what's nearer, and hides what's drawn behind it later. That's `Depth.ReadWrite`, which every frame starts with, and it's right for everything solid. `Draw3D.Depth` says otherwise:
 
 | Mode | What a 3D mesh does | For |
 |---|---|---|
@@ -414,7 +414,7 @@ view Crates(Crate crate, Scenery scenery)
 // Then what's see-through: behind the crates in front of it, and hiding nothing
 view Windows(Pane pane, Scenery scenery)
 {
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Mesh(scenery.glass, scenery.faces, float4x4.TRS(pane.position, pane.rotation, float3(1)));
     }
@@ -424,8 +424,9 @@ view Windows(Pane pane, Scenery scenery)
 - **Draw what only reads depth after what's solid.** A mesh is hidden behind what was already drawn in front of it, so the panes come after the crates: views run in the order they're declared, or in the order of their [stages](./systems.md#named-phases).
 - **Among themselves, they go over each other in the order they're drawn,** like 2D shapes do. Where that shows, draw the farthest first. Shadows that only darken look the same in any order.
 - **Something flat on a surface is drawn a little off it.** A decal exactly where the floor is has the floor's own depth, and which of the two wins changes from pixel to pixel. A few millimeters above it is enough, and every decal on the floor can be at that one height, since they don't hide each other.
-- **It's for 3D meshes of every kind:** `Draw3D.Mesh`, the [primitives](#primitives), meshes [through a frag or a vert](./shaders.md), `Draw3D.Instanced`, and a render target's. Instances drawn in a row with the same setting are still one draw.
-- **Nothing else has depth.** The `Draw2D` calls draw over what's there, in order, whatever is set. `Draw3D.Clear` clears depth whatever is set, and [`Draw.Blit`](#targets-and-post-processing) leaves it as it is.
+- **It's for 3D meshes of every kind:** `Draw3D.Mesh`, the [primitives](#primitives), meshes [through a frag or a vert](./shaders.md) and `Draw3D.Instanced`. Instances drawn in a row with the same setting are still one draw.
+- **A render target has its own,** as it has its own camera: `target.Depth(Depth.Read) { target.Mesh(...); }`. `Draw3D.Depth` is the window's, and doesn't reach a target's meshes.
+- **Nothing else has depth,** which is why it's `Draw3D`'s: the `Draw2D` calls draw over what's there, in order, whatever is set. `Draw3D.Clear` clears depth whatever is set, and [`Draw.Blit`](#targets-and-post-processing) leaves it as it is.
 
 ### Transforms
 
@@ -777,7 +778,7 @@ view Crates(Crate crate, Scenery scenery)
 ```
 
 - 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw2D.Clear` clears what's in front too.
-- A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first.
+- A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw3D.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first.
 - Triangles draw whichever way round their corners go. Textures and filters work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.

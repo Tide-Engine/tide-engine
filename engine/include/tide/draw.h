@@ -20,9 +20,9 @@
 //
 // 3D meshes (TIDE_DRAW_MESH_3D, and TIDE_DRAW_SHADED through a 3D shader) go
 // through a camera of their own (TIDE_DRAW_CAMERA_3D), and are the only
-// commands that have depth: unless tide_draw_set_depth says otherwise, they
-// read and write it, so they hide each other by how far they are, whatever
-// their order. Everything else draws over what's there, in order. A clear
+// commands that have depth: unless their destination's tide_draw_set_depth
+// says otherwise, they read and write it, so they hide each other by how far
+// they are, whatever their order. Everything else draws over what's there, in order. A clear
 // clears depth too. Each frame starts with a 3D camera at the origin, looking
 // along +z with a field of view of 60 degrees.
 
@@ -372,14 +372,16 @@ static inline tide_draw_transform tide_draw_transform_matrix(const tide_float3x3
     return (tide_draw_transform){{m.c0.x, m.c0.y}, {m.c1.x, m.c1.y}, {m.c2.x, m.c2.y}};
 }
 
-// The settings that say where a destination's commands land, which each
-// destination has its own of (see Settings, below). A zeroed one is a frame's
-// first: the first cameras, no clip and no transform.
+// The settings that say where a destination's commands land, and what its 3D
+// meshes do with its depth, which each destination has its own of (see
+// Settings, below). A zeroed one is a frame's first: the first cameras, no
+// clip, no transform, and depth read and written.
 typedef struct tide_draw_place {
     // What the commands to come are drawn through: 1 + its place in tide_draw_list.cameras and
     // cameras_3d, or 0 for the camera each frame starts with...
     uint32_t camera_2d, camera_3d;
-    uint32_t clip; // ...and 1 + its place in tide_draw_list.clips, or 0 for none
+    uint32_t clip;  // ...and 1 + its place in tide_draw_list.clips, or 0 for none
+    uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
     // that say so are recorded before the next one that draws: a setting that's set and put back with
     // nothing drawn records nothing, and neither does one that's set to what it was.
@@ -432,7 +434,7 @@ typedef struct tide_draw_saved {
     uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
-        uint32_t value; // A blend or a depth, or what a place has for a camera or a clip
+        uint32_t value; // A blend, or what a place has for a camera, a clip or its depth
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -625,7 +627,6 @@ typedef struct tide_draw_list {
     tide_draw_place window; // ...and the window's, while a target is selected
     uint32_t unsettled;     // Whether `place` plays other than what it has (see tide_draw_place)
     uint32_t blend;         // tide_blend: how the commands to come go over what's there
-    uint32_t depth;         // tide_depth: what the 3D meshes to come do with depth
     uint32_t tinted;        // Whether `tint` is anything but white: it's unset otherwise
     tide_color tint;        // What the commands to come have their colors multiplied by
     uint32_t altered;       // Whether a 2D command is recorded other than as it's given: tinted, or moved
@@ -718,11 +719,11 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // starts from the defaults (tide_draw_reset).
 //
 // There are two kinds. How a command comes out is the same wherever it draws:
-// how it blends (tide_draw_set_blend), what tints it (tide_draw_set_tint) and
-// what a 3D mesh does with depth (tide_draw_set_depth).
+// how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
 // Where it lands belongs to its destination, the window or a target, each
-// with its own for the frame: its cameras, its clip and its transforms. Those
-// are set, and pushed, for the destination that's selected (tide_draw_to).
+// with its own for the frame: its cameras, its clip, its transforms, and what
+// its 3D meshes do with its depth. Those are set, and pushed, for the
+// destination that's selected (tide_draw_to).
 //
 // Each has two forms. tide_draw_set_* sets it for the commands to come, until
 // it's set again, and tide_draw_unset_* puts it back as each frame starts.
@@ -741,17 +742,6 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 void tide_draw_set_blend(tide_draw_list *d, tide_blend blend);
 void tide_draw_unset_blend(tide_draw_list *d);
 uint32_t tide_draw_push_blend(tide_draw_list *d, tide_blend blend);
-
-// What the 3D meshes after it do with depth (tide_depth), through a shader of
-// the game's or not: read and written, each frame's first, so they hide each
-// other by how far they are, whatever their order. A mesh that only reads it
-// is hidden behind what was drawn nearer before it, and hides nothing: what's
-// see-through is drawn so, after what's solid, and goes over what's there in
-// the order it's drawn. Nothing else has depth: 2D commands neither read nor
-// write it whatever this says, a clear sets it back, and a blit leaves it.
-void tide_draw_set_depth(tide_draw_list *d, tide_depth depth);
-void tide_draw_unset_depth(tide_draw_list *d);
-uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);
 
 // What the commands after it have their colors multiplied by, alpha too: a
 // shape's and text's colors, a mesh's corners', and what a shader of the
@@ -779,6 +769,18 @@ uint32_t tide_draw_push_transform(tide_draw_list *d, tide_draw_transform transfo
 void tide_draw_set_transform_3d(tide_draw_list *d, tide_float4x4 transform);
 void tide_draw_unset_transform_3d(tide_draw_list *d);
 uint32_t tide_draw_push_transform_3d(tide_draw_list *d, tide_float4x4 transform);
+
+// What the selected destination's 3D meshes after it do with its depth
+// (tide_depth), through a shader of the game's or not: read and written, each
+// frame's first, so they hide each other by how far they are, whatever their
+// order. A mesh that only reads it is hidden behind what was drawn nearer
+// before it, and hides nothing: what's see-through is drawn so, after what's
+// solid, and goes over what's there in the order it's drawn. Nothing else
+// has depth: 2D commands neither read nor write it whatever this says, a
+// clear sets it back, and a blit leaves it.
+void tide_draw_set_depth(tide_draw_list *d, tide_depth depth);
+void tide_draw_unset_depth(tide_draw_list *d);
+uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);
 
 // Both of the selected destination's transforms, and both of its cameras, as each frame starts.
 void tide_draw_unset_transforms(tide_draw_list *d);

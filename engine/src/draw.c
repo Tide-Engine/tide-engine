@@ -129,7 +129,6 @@ void tide_draw_reset(tide_draw_list *d)
     d->place = d->window = (tide_draw_place){0};
     d->unsettled = d->altered = d->tinted = 0;
     d->blend = TIDE_BLEND_ALPHA;
-    d->depth = TIDE_DEPTH_READ_WRITE;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->bold = NULL;
     // The textures the frame drew with stay, for the next to find its pixels
@@ -312,8 +311,6 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
         const tide_draw_saved *s = &d->saved[--d->saved_count];
         if (s->setting == TIDE_DRAW_SAVED_BLEND) {
             d->blend = s->value;
-        } else if (s->setting == TIDE_DRAW_SAVED_DEPTH) {
-            d->depth = s->value;
         } else if (s->setting == TIDE_DRAW_SAVED_TINT) {
             d->tint = s->tint;
             d->tinted = 1;
@@ -333,6 +330,7 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
                 break;
             case TIDE_DRAW_SAVED_NO_TRANSFORM_3D: p->moved &= ~(uint32_t)TIDE_DRAW_MOVED_3D; break;
             case TIDE_DRAW_SAVED_CLIP: p->clip = s->value; break;
+            case TIDE_DRAW_SAVED_DEPTH: p->depth = s->value; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
             default: p->camera_3d = s->value; break;
             }
@@ -359,20 +357,21 @@ uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
     return mark;
 }
 
+// What the selected destination's 3D meshes do with its depth: its own, as its cameras are.
 void tide_draw_set_depth(tide_draw_list *d, const tide_depth depth)
 {
-    d->depth = (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
+    d->place.depth = (uint32_t)depth <= TIDE_DEPTH_NONE ? (uint32_t)depth : TIDE_DEPTH_READ_WRITE;
 }
 
 void tide_draw_unset_depth(tide_draw_list *d)
 {
-    d->depth = TIDE_DEPTH_READ_WRITE;
+    d->place.depth = TIDE_DEPTH_READ_WRITE;
 }
 
 uint32_t tide_draw_push_depth(tide_draw_list *d, const tide_depth depth)
 {
     const uint32_t mark = d->saved_count;
-    save(d, TIDE_DRAW_SAVED_DEPTH)->value = d->depth;
+    save(d, TIDE_DRAW_SAVED_DEPTH)->value = d->place.depth;
     tide_draw_set_depth(d, depth);
     return mark;
 }
@@ -632,11 +631,11 @@ void tide_draw_defaults(tide_draw_list *d)
 {
     tide_draw_to(d, 0, 0, 0);
     d->blend = TIDE_BLEND_ALPHA;
-    d->depth = TIDE_DEPTH_READ_WRITE;
     d->tinted = 0;
     for (uint32_t i = 0; i <= d->target_count; i++) {
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
         p->camera_2d = p->camera_3d = p->clip = p->moved = 0;
+        p->depth = TIDE_DEPTH_READ_WRITE;
     }
     refresh(d);
 }
@@ -1455,7 +1454,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         with.transform = p->transform;
     }
     shaded_instances(d, shader, mesh, instances, count, uniforms, textures, blended, TIDE_DRAW_SHADED,
-                     (tide_blend)d->blend, (tide_depth)d->depth, &with,
+                     (tide_blend)d->blend, (tide_depth)p->depth, &with,
                      p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
 }
 
@@ -1533,7 +1532,7 @@ void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_floa
                          const uint32_t texture, const tide_filter filter)
 {
     const tide_draw_place *p = &d->place;
-    mesh_instances(d, mesh, transforms, count, texture, filter, (tide_blend)d->blend, (tide_depth)d->depth,
+    mesh_instances(d, mesh, transforms, count, texture, filter, (tide_blend)d->blend, (tide_depth)p->depth,
                    tide_draw_tint(d), p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL);
 }
 

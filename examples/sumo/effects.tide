@@ -324,7 +324,7 @@ view Glow(Fx fx, mut Air air, Models models)
         i++;
     }
     Draw.Blend(Blend.Add),
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
         Draw3D.Instanced(models.cube, models.cubeFaces, air.motes, MoteLook);
     }
