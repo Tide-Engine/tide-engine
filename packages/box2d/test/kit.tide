@@ -1,0 +1,475 @@
+// A match for the package's tests of what a body is made of and what code asks
+// of the world (kit_test.c): parts, bodies that change what they are, rays,
+// shapes that are cast and looked into, what's in a sensor, hits, and how the
+// world is tuned. Each is a few bodies of its own, and a host says which
+// before the first tick.
+
+using Box2D;
+
+scene Main { }
+
+enum Case
+{
+    Parts,
+    Kinds,
+    Asks,
+    Hits,
+    Tuning,
+    Tower,
+    Crowd
+}
+
+singleton Kit
+{
+    Case which;
+    bool made;
+    bool snip; // The tee's cap goes
+    bool fell; // The doomed body goes, with its parts
+    bool fade; // The ghost goes
+    int floors = 30; // How high the tower is
+    float drop = 6; // ...and from how far over it a crate is dropped
+    int crowd = 1200; // How many crates ask what's under them
+}
+
+// What an entity heard of the package's events
+component Heard
+{
+    int touched;
+    int parted;
+    int hits;
+    Entity last; // Who it heard of last
+    Entity part; // ...with which shape of its own
+    Entity otherPart; // ...and which of the other's
+    float2 point; // The last hit's
+    float2 normal;
+    float speed;
+}
+
+component Floor { }
+
+// Parts: a tee made of a bar and a cap, the cap a part; marbles that land on
+// each; a body with two parts that goes; a sensor that's a part of a post; and
+// parts that name no body
+component Tee { }
+component Cap { }
+component OnCap { }
+component OnBar { }
+component Doomed { }
+component Limb { }
+component Post { }
+component Eye { }
+component Through { }
+component Stray { }
+component Thrown { }
+
+// Kinds: a body that's each kind in turn, a crate on one that turns static,
+// and one hung in the air that turns dynamic
+component Shifter { }
+component Base { }
+component Rider { }
+component Hung { }
+component Load { }
+
+// Asks: things to find
+component Wall { }
+component Ball { }
+component First { }
+component Second { }
+component Third { }
+component Fourth { }
+component Veil { }
+component Prober { }
+component Trap { }
+component Caught { }
+component Ghost { }
+component Faller { }
+
+// Hits: a ball dropped from high, one let go just over the floor, and a crate
+// that runs into another
+component High { }
+component Low { }
+component Ram { }
+component Struck { }
+
+// Tuning
+component Bouncy { }
+component Left { }
+component Right { }
+component Slider { }
+component Drowsy { }
+component Bottom { }
+component Top { }
+
+// Tower: crates on each other, and one dropped on them
+component Storey
+{
+    int floor;
+}
+
+component Dropped { }
+
+// Crowd: crates in stacks, each of which asks what's under it, every tick
+component Asker
+{
+    float under; // How far under it the next thing is, or -1 for nothing
+    Entity on; // ...and what
+}
+
+system Build(mut Kit kit)
+{
+    if (kit.made) return;
+    kit.made = true;
+    Spawn(Body { type = BodyType.Static, position = float2(0, -0.5) }, Box { size = float2(400, 1) }, Floor, Heard);
+    if (kit.which == Case.Parts)
+    {
+        // A bar of 2 by 1 with a cap of 1 by 1 on its middle: one body of 3
+        var tee = Spawn(Body { position = float2(0, 0.5) }, Box { size = float2(2, 1) }, Tee, Heard);
+        Spawn(Box { offset = float2(0, 1) }, Part { of = tee }, Cap);
+        Spawn(Body { position = float2(0, 3) }, Circle { radius = 0.25 }, OnCap, Heard);
+        Spawn(Body { position = float2(0.8, 3) }, Circle { radius = 0.15 }, OnBar, Heard);
+        // The same again in the air, thrown where it's spawned: how fast it goes says what it weighs
+        var thrown = Spawn(Body { position = float2(-20, 10), impulse = float2(3, 0), gravityScale = 0 }, Box { size = float2(2, 1) },
+                           Thrown);
+        Spawn(Box { offset = float2(0, 1) }, Part { of = thrown });
+        // A body with a box and a circle for parts, which goes
+        var doomed = Spawn(Body { position = float2(10, 0.5) }, Box, Doomed);
+        Spawn(Box { offset = float2(1, 0) }, Part { of = doomed }, Limb);
+        Spawn(Circle { radius = 0.5, offset = float2(-1, 0) }, Part { of = doomed }, Limb);
+        // A post with a sensor for a part, which a ball falls through
+        var post = Spawn(Body { type = BodyType.Static, position = float2(20, 0.5) }, Box, Post, Heard);
+        Spawn(Box { size = float2(2, 1), offset = float2(2, 3), sensor = true }, Part { of = post }, Eye);
+        Spawn(Body { position = float2(22, 6) }, Circle { radius = 0.3 }, Through, Heard);
+        // Parts of nothing: one that names no entity, and one that names an entity with no body
+        Spawn(Box, Part, Stray);
+        var bare = Spawn(Stray);
+        Spawn(Circle, Part { of = bare }, Stray);
+    }
+    if (kit.which == Case.Kinds)
+    {
+        Spawn(Body { position = float2(0, 0.5) }, Box, Shifter);
+        Spawn(Body { position = float2(10, 0.5) }, Box { size = float2(2, 1) }, Base);
+        Spawn(Body { position = float2(10, 1.5) }, Box, Rider);
+        Spawn(Body { type = BodyType.Static, position = float2(20, 5) }, Box { size = float2(2, 0.5) }, Hung);
+        Spawn(Body { position = float2(20, 5.75) }, Box, Load);
+    }
+    if (kit.which == Case.Asks)
+    {
+        Spawn(Body { type = BodyType.Static, position = float2(5, 2) }, Box { size = float2(1, 4) }, Wall);
+        Spawn(Body { type = BodyType.Static, position = float2(-5, 1) }, Circle { radius = 1 }, Ball);
+        // Two boxes side by side, which a ray down between them meets at once, and two more made the other
+        // way around: the right one first
+        Spawn(Body { type = BodyType.Static, position = float2(20, 0.5) }, Box, First);
+        Spawn(Body { type = BodyType.Static, position = float2(21, 0.5) }, Box, Second);
+        Spawn(Body { type = BodyType.Static, position = float2(32, 0.5) }, Box, Third);
+        Spawn(Body { type = BodyType.Static, position = float2(31, 0.5) }, Box, Fourth);
+        // A sensor, which nothing that's asked meets
+        Spawn(Body { type = BodyType.Static, position = float2(0, 3) }, Box { size = float2(4, 1), sensor = true }, Veil);
+        var tee = Spawn(Body { position = float2(10, 0.5) }, Box { size = float2(2, 1) }, Tee);
+        Spawn(Box { offset = float2(0, 1) }, Part { of = tee }, Cap);
+        Spawn(Body { position = float2(-10, 0.5) }, Box, Prober);
+        // A sensor with two crates in it, and a part of it with one
+        var trap = Spawn(Body { type = BodyType.Static, position = float2(-20, 1) }, Box { size = float2(4, 2), sensor = true }, Trap);
+        Spawn(Box { size = float2(2, 2), offset = float2(6, 0), sensor = true }, Part { of = trap }, Eye);
+        Spawn(Body { position = float2(-21, 0.5) }, Box, Caught);
+        Spawn(Body { position = float2(-19, 0.5) }, Box, Caught);
+        Spawn(Body { position = float2(-14, 0.5) }, Box, Caught);
+        Spawn(Body { type = BodyType.Static, position = float2(40, 0.5) }, Box, Ghost);
+        Spawn(Body { position = float2(50, 12) }, Circle { radius = 0.5 }, Faller);
+    }
+    if (kit.which == Case.Hits)
+    {
+        Spawn(Body { position = float2(0, 2.3) }, Circle { radius = 0.3 }, High, Heard);
+        Spawn(Body { position = float2(5, 0.33) }, Circle { radius = 0.3 }, Low, Heard);
+        Spawn(Body { position = float2(10, 5), velocity = float2(3, 0), gravityScale = 0 }, Box, Ram, Heard);
+        Spawn(Body { position = float2(13, 5), gravityScale = 0 }, Box, Struck, Heard);
+    }
+    if (kit.which == Case.Tuning)
+    {
+        // A ball that would bounce, let go just over the floor
+        Spawn(Body { position = float2(0, 0.33) }, Circle { radius = 0.3, bounce = 0.8 }, Bouncy);
+        // Two crates that start half in each other
+        Spawn(Body { position = float2(10, 5), gravityScale = 0 }, Box, Left);
+        Spawn(Body { position = float2(10.5, 5), gravityScale = 0 }, Box, Right);
+        // Two crates that slide slowly on nothing, one of them quick to sleep
+        Spawn(Body { position = float2(20, 5), velocity = float2(0.2, 0), gravityScale = 0 }, Box, Slider);
+        Spawn(Body { position = float2(20, 8), velocity = float2(0.2, 0), gravityScale = 0, sleepSpeed = 1 }, Box, Drowsy);
+        // A heavy crate on a light one
+        Spawn(Body { position = float2(30, 0.5) }, Box, Bottom);
+        Spawn(Body { position = float2(30, 2) }, Box { size = float2(2, 2), density = 20 }, Top);
+    }
+    if (kit.which == Case.Tower)
+    {
+        for (var floor = 0; floor < kit.floors; floor++)
+        {
+            Spawn(Body { position = float2(0, 0.5 + floor) }, Box, Storey { floor = floor });
+        }
+        Spawn(Body { position = float2(0.3, kit.floors + kit.drop) }, Box { density = 4 }, Dropped);
+    }
+    if (kit.which == Case.Crowd)
+    {
+        for (var i = 0; i < kit.crowd; i++)
+        {
+            Spawn(Body { position = float2(2.5 * (i / 12) - 120 + 0.02 * (i % 12), 0.5 + 1.05 * (i % 12)) }, Box, Asker);
+        }
+    }
+}
+
+event(Touched touched) Hear(mut Heard heard)
+{
+    heard.touched += 1;
+    heard.last = touched.other;
+    heard.part = touched.part;
+    heard.otherPart = touched.otherPart;
+}
+
+event(Parted parted) Unhear(mut Heard heard)
+{
+    heard.parted += 1;
+    heard.last = parted.other;
+    heard.part = parted.part;
+    heard.otherPart = parted.otherPart;
+}
+
+event(Hit hit) Feel(mut Heard heard)
+{
+    heard.hits += 1;
+    heard.last = hit.other;
+    heard.part = hit.part;
+    heard.otherPart = hit.otherPart;
+    heard.point = hit.point;
+    heard.normal = hit.normal;
+    heard.speed = hit.speed;
+}
+
+// It takes nothing a tick has one of to write, so its crates are shared out over the tick's threads: each
+// thread asks of the same world, and where C has none at the match's stamp, the first to ask has it made
+[Before(PhysicsStages.Step)]
+system AskUnder(Body body, mut Asker asker, Physics physics)
+{
+    if (Raycast(physics, body.position, body.position + float2(0, -50), out var hit, ignore: body))
+    {
+        asker.under = hit.fraction * 50;
+        asker.on = hit.entity;
+    }
+    else
+    {
+        asker.under = -1;
+        asker.on = default;
+    }
+}
+
+system Snip(Kit kit, with Cap)
+{
+    if (kit.snip) this.Destroy();
+}
+
+system Fell(Kit kit, with Doomed)
+{
+    if (kit.fell) this.Destroy();
+}
+
+system Fade(Kit kit, with Ghost)
+{
+    if (kit.fade) this.Destroy();
+}
+
+// ---------------------------------------------------------------------------
+// What's asked of the world, and what it answered
+
+struct Answer
+{
+    bool any;
+    Entity entity;
+    Entity part;
+    float2 point;
+    float2 normal;
+    float fraction;
+}
+
+Answer Of(bool any, RayHit hit)
+{
+    return Answer { any = any, entity = hit.entity, part = hit.part, point = hit.point, normal = hit.normal, fraction = hit.fraction };
+}
+
+// Up to four entities of a list, and how many it had
+struct Some
+{
+    int count;
+    Entity a;
+    Entity b;
+    Entity c;
+    Entity d;
+}
+
+Some Few(List<Entity> found)
+{
+    return Some { count = found.count, a = found[0], b = found[1], c = found[2], d = found[3] };
+}
+
+// The questions that need nobody's body
+struct Answers
+{
+    Answer wall; // A ray along the floor, into the wall
+    Answer ball; // ...and the other way, into the ball
+    Answer through; // One down through the sensor, onto the floor
+    Answer miss; // One that meets nothing
+    Answer cap; // One down onto the tee's cap, and one onto its bar beside it
+    Answer bar;
+    Answer inside; // One that starts inside the wall
+    Answer twins; // One down between two boxes that touch, and between the two made the other way around
+    Answer others;
+    Answer wide; // A wide box let down onto two boxes at once
+    Answer turned; // A box turned an eighth, let down onto the floor
+    Answer round; // A circle rolled into the wall
+    Answer ghost; // A ray down onto where the ghost is, or was
+    Answer faller; // ...and up at the ball that falls
+    Some pair; // What's in a box around the first two boxes, and a circle on the tee
+    Some tee;
+    Some none; // ...and in a box in the air
+}
+
+Answers Probe(Physics physics)
+{
+    mut var answers = Answers { };
+    answers.wall = Of(Raycast(physics, float2(0, 0.5), float2(8, 0.5), out var wall), wall);
+    answers.ball = Of(Raycast(physics, float2(0, 0.5), float2(-8, 0.5), out var ball), ball);
+    answers.through = Of(Raycast(physics, float2(0, 6), float2(0, -1), out var through), through);
+    answers.miss = Of(Raycast(physics, float2(0, 20), float2(100, 20), out var miss), miss);
+    answers.cap = Of(Raycast(physics, float2(10, 6), float2(10, 0), out var cap), cap);
+    answers.bar = Of(Raycast(physics, float2(10.8, 6), float2(10.8, 0), out var bar), bar);
+    answers.inside = Of(Raycast(physics, float2(5, 2), float2(9, 2), out var inside), inside);
+    answers.twins = Of(Raycast(physics, float2(20.5, 5), float2(20.5, 0), out var twins), twins);
+    answers.others = Of(Raycast(physics, float2(31.5, 5), float2(31.5, 0), out var others), others);
+    answers.wide = Of(Cast(physics, Box { size = float2(4, 0.5) }, float2(20.5, 5), 0, float2(20.5, 0), out var wide), wide);
+    answers.turned = Of(Cast(physics, Box { size = float2(1, 1) }, float2(60, 5), Math.PI / 4, float2(60, -1), out var turned), turned);
+    answers.round = Of(Cast(physics, Circle { radius = 0.5, offset = float2(0, 0.5) }, float2(0, 1), 0, float2(8, 1), out var round), round);
+    answers.ghost = Of(Raycast(physics, float2(40, 6), float2(40, -0.5), out var ghost), ghost);
+    answers.faller = Of(Raycast(physics, float2(50, 0.5), float2(50, 20), out var faller), faller);
+    Overlap(physics, Box { size = float2(4, 0.5) }, float2(20.5, 0.5), 0, out var pair);
+    answers.pair = Few(pair);
+    Overlap(physics, Circle { radius = 0.4 }, float2(10, 1.5), 0, out var tee);
+    answers.tee = Few(tee);
+    Overlap(physics, Box { size = float2(2, 2) }, float2(70, 30), 0.3, out var none);
+    answers.none = Few(none);
+    return answers;
+}
+
+// ...and the ones a body asks for itself
+struct Mine
+{
+    Answer self; // A ray from its middle meets itself
+    Answer past; // ...and what's past it, with itself left out
+    Answer step; // Its own box moved to the left, where nothing is in its way
+    Answer reach; // ...and to the right, as far as it goes
+}
+
+Mine ProbeOwn(Physics physics, Body body, Box box)
+{
+    mut var own = Mine { };
+    own.self = Of(Raycast(physics, body.position, body.position + float2(8, 0), out var self), self);
+    own.past = Of(Raycast(physics, body.position, body.position + float2(8, 0), out var past, ignore: body), past);
+    // A shape that touches something where it starts meets it there, and a crate at rest touches the floor: it's
+    // a little smaller than the crate that's moved along it
+    var slim = Box { size = box.size - float2(0.1), offset = box.offset };
+    own.step = Of(Cast(physics, slim, body.position, body.angle, body.position + float2(-2, 0), out var step, body), step);
+    own.reach = Of(Cast(physics, slim, body.position, body.angle, body.position + float2(8, 0), out var reach, ignore: body), reach);
+    return own;
+}
+
+// Asked by the match before its step, by the match after it, and by a view
+singleton Asked
+{
+    Answers before;
+    Answers after;
+    Mine ownBefore;
+    Mine ownAfter;
+    Some trapBefore;
+    Some trapAfter;
+    Some eyeBefore;
+    Some eyeAfter;
+}
+
+local singleton Seen
+{
+    Answers answers;
+    Mine own;
+    Some trap;
+    Some eye;
+}
+
+[Before(PhysicsStages.Step)]
+system AskBefore(Physics physics, mut Asked asked, Kit kit)
+{
+    if (kit.which == Case.Asks) asked.before = Probe(physics);
+}
+
+[Before(PhysicsStages.Step)]
+system AskOwnBefore(Body body, Box box, Physics physics, mut Asked asked, with Prober)
+{
+    asked.ownBefore = ProbeOwn(physics, body, box);
+}
+
+[Before(PhysicsStages.Step)]
+system AskTrapBefore(Body body, Physics physics, mut Asked asked, with Trap)
+{
+    Inside(physics, body, out var found);
+    asked.trapBefore = Few(found);
+}
+
+[Before(PhysicsStages.Step)]
+system AskEyeBefore(Part part, Physics physics, mut Asked asked, Kit kit, with Eye)
+{
+    if (kit.which != Case.Asks) return;
+    Inside(physics, part, out var found);
+    asked.eyeBefore = Few(found);
+}
+
+[After(PhysicsStages.Step)]
+system AskAfter(Physics physics, mut Asked asked, Kit kit)
+{
+    if (kit.which == Case.Asks) asked.after = Probe(physics);
+}
+
+[After(PhysicsStages.Step)]
+system AskOwnAfter(Body body, Box box, Physics physics, mut Asked asked, with Prober)
+{
+    asked.ownAfter = ProbeOwn(physics, body, box);
+}
+
+[After(PhysicsStages.Step)]
+system AskTrapAfter(Body body, Physics physics, mut Asked asked, with Trap)
+{
+    Inside(physics, body, out var found);
+    asked.trapAfter = Few(found);
+}
+
+[After(PhysicsStages.Step)]
+system AskEyeAfter(Part part, Physics physics, mut Asked asked, Kit kit, with Eye)
+{
+    if (kit.which != Case.Asks) return;
+    Inside(physics, part, out var found);
+    asked.eyeAfter = Few(found);
+}
+
+view See(Physics physics, mut Seen seen, Kit kit)
+{
+    if (kit.which == Case.Asks) seen.answers = Probe(physics);
+}
+
+view SeeOwn(Body body, Box box, Physics physics, mut Seen seen, with Prober)
+{
+    seen.own = ProbeOwn(physics, body, box);
+}
+
+view SeeTrap(Body body, Physics physics, mut Seen seen, with Trap)
+{
+    Inside(physics, body, out var found);
+    seen.trap = Few(found);
+}
+
+view SeeEye(Part part, Physics physics, mut Seen seen, Kit kit, with Eye)
+{
+    if (kit.which != Case.Asks) return;
+    Inside(physics, part, out var found);
+    seen.eye = Few(found);
+}
