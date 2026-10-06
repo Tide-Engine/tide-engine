@@ -48,6 +48,7 @@
   "integration_validation": {
     "integrated_revision": "ef03e169cfd35f4ebed23a2cd8eb77a8328989c6",
     "incoming_dev_revision": "5bc9de616b83185b41527a3303e948b33a67b1b9",
+    "followup_incoming_revision": "017a851f238900e6aa3022c95ba94f115fec89ad",
     "full_debug_tests": 1475,
     "debug_note": "1473 passed initially; Sumo/Towers pins recomputed for combined physics/netcode and both passed after rebuild",
     "full_web_debug_tests": 1461,
@@ -83,6 +84,6 @@
       "raw_content_sha256": "45497927377b7a1b810d9e3a2ade939342527f8ee2ec65151c7e5a463a18bc71"
     },
     "smoke_note": "Bounded functionality checks only; neither smoke completes a full round or updates the full-round performance tables.",
-    "sanitizer_build_fix": "Upstream Build37506147514 failed to force-vectorize wide.c under ASan/UBSan. Guarding only the pragmas reproduces a clean local sanitized object compile while both optimized loops still vectorize."
+    "sanitizer_build_fix": "Upstream Build37506147514 failed to force-vectorize wide.c under ASan/UBSan. The equivalent upstream fix017a851 is retained, guarding only the pragmas. A local sanitized object compile passes, both optimized loops still vectorize, and native/web release wide checks pass."
   }
 }
