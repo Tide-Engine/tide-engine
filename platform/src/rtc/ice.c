@@ -4,7 +4,8 @@
 // Pairs are checked one at a time, the most promising first. The side that
 // made the offer is controlling: it puts USE-CANDIDATE on its checks, and the
 // first pair to answer is the one (aggressive nomination). The other side uses
-// the pair the controlling one picked, once its own check there answered.
+// the pair the controlling one picked, once its own check there answered. An
+// answer only counts from the address its check went to.
 // Once there's a pair, checks go on every few seconds, so both sides know the
 // other still wants the packets (consent, RFC 7675).
 
@@ -16,7 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { WAITING, IN_PROGRESS, SUCCEEDED, FAILED };
 enum { TURN_NONE, TURN_ALLOCATING, TURN_ALLOCATED, TURN_FAILED };
 
 #define CHECK_EVERY 0.02    // Seconds between new checks (Ta)
@@ -144,7 +144,7 @@ static int add_pair(rtc_ice *ice, const rtc_addr remote, const uint32_t remote_p
     p->remote = remote;
     p->remote_priority = remote_priority;
     p->priority = pair_priority(ice, candidate_priority(relayed ? RTC_RELAY : RTC_HOST), remote_priority);
-    p->state = WAITING;
+    p->state = RTC_PAIR_WAITING;
     return ice->pair_count++;
 }
 
@@ -323,14 +323,14 @@ void rtc_ice_update(rtc_ice *ice, const double now)
     for (int i = 0; i < ice->pair_count; i++) {
         rtc_pair *p = &ice->pairs[i];
         if (p->relayed && !permitted(ice, p->remote.ip)) continue;
-        if (p->state == IN_PROGRESS && now - p->sent >= 0.1 * (double)(1 << (p->tries < 5 ? p->tries : 5))) {
-            if (p->tries >= CHECK_TRIES) p->state = FAILED;
+        if (p->state == RTC_PAIR_IN_PROGRESS && now - p->sent >= 0.1 * (double)(1 << (p->tries < 5 ? p->tries : 5))) {
+            if (p->tries >= CHECK_TRIES) p->state = RTC_PAIR_FAILED;
             else send_check(ice, p, now);
         }
-        if (p->state == WAITING && (!next || p->priority > next->priority)) next = p;
+        if (p->state == RTC_PAIR_WAITING && (!next || p->priority > next->priority)) next = p;
     }
     if (next && now >= ice->next_check) {
-        next->state = IN_PROGRESS;
+        next->state = RTC_PAIR_IN_PROGRESS;
         next->tries = 0;
         send_check(ice, next, now);
         ice->next_check = now + CHECK_EVERY;
@@ -381,16 +381,17 @@ static void on_request(rtc_ice *ice, const rtc_stun *m, const rtc_addr from, con
     if (index == ice->selected) ice->last_heard = now;
     if (m->use_candidate && !ice->controlling) {
         p->nominated = true;
-        if (p->state == SUCCEEDED) select_pair(ice, index, now);
+        if (p->state == RTC_PAIR_SUCCEEDED) select_pair(ice, index, now);
     }
-    if (p->state == FAILED || (p->state == WAITING && ice->has_remote)) {
-        p->state = IN_PROGRESS; // Triggered: check back at once
+    if (p->state == RTC_PAIR_FAILED || (p->state == RTC_PAIR_WAITING && ice->has_remote)) {
+        p->state = RTC_PAIR_IN_PROGRESS; // Triggered: check back at once
         p->tries = 0;
         send_check(ice, p, now);
     }
 }
 
-static void on_response(rtc_ice *ice, const rtc_stun *m, const double now)
+// An answer to a check of ours, which came from `from` (through TURN, if `relayed`).
+static void on_response(rtc_ice *ice, const rtc_stun *m, const rtc_addr from, const bool relayed, const double now)
 {
     // Our public address, from the STUN server
     if (memcmp(m->id, ice->stun_id, 12) == 0) {
@@ -400,21 +401,32 @@ static void on_response(rtc_ice *ice, const rtc_stun *m, const double now)
     }
     for (int i = 0; i < ice->pair_count; i++) {
         rtc_pair *p = &ice->pairs[i];
-        if (p->state == WAITING || memcmp(m->id, p->id, 12) != 0) continue;
+        if (p->state == RTC_PAIR_WAITING || memcmp(m->id, p->id, 12) != 0) continue;
         if (!rtc_stun_check(m, ice->remote_pwd, strlen(ice->remote_pwd))) {
             rtc_debug("ice: an answer from %s didn't check out", addr_text(p->remote));
             return;
         }
+        // It counts from where the check went, the same way, and from nowhere
+        // else (RFC 8445, 7.2.5.2.1). They got the check at one address and
+        // answer from another, as a socket on every address does when the
+        // way back leaves by another of them: what they send comes from
+        // there too, which is another pair, found by their own check from it.
+        if (p->relayed != relayed || !rtc_addr_equal(p->remote, from)) {
+            rtc_debug("ice: the check to %s%s was answered from %s%s: no pair", addr_text(p->remote),
+                      p->relayed ? " through TURN" : "", addr_text(from), relayed ? " through TURN" : "");
+            if (p->state == RTC_PAIR_IN_PROGRESS) p->state = RTC_PAIR_FAILED;
+            return;
+        }
         rtc_debug("ice: %s answered: %s", addr_text(p->remote), m->type == RTC_STUN_BINDING_SUCCESS ? "yes" : "no");
         if (m->type != RTC_STUN_BINDING_SUCCESS) {
-            p->state = FAILED;
+            p->state = RTC_PAIR_FAILED;
             return;
         }
         if (i == ice->selected) {
             ice->last_heard = now; // Consent
             return;
         }
-        p->state = SUCCEEDED;
+        p->state = RTC_PAIR_SUCCEEDED;
         if (ice->controlling || p->nominated) select_pair(ice, i, now);
         return;
     }
@@ -487,7 +499,9 @@ static size_t on_datagram(rtc_ice *ice, const rtc_addr from, const bool relayed,
     if (rtc_stun_is(data, size)) {
         if (!rtc_stun_parse(data, size, &m)) return 0;
         if (m.type == RTC_STUN_BINDING_REQUEST) on_request(ice, &m, from, relayed, now);
-        else if (m.type == RTC_STUN_BINDING_SUCCESS || m.type == RTC_STUN_BINDING_ERROR) on_response(ice, &m, now);
+        else if (m.type == RTC_STUN_BINDING_SUCCESS || m.type == RTC_STUN_BINDING_ERROR) {
+            on_response(ice, &m, from, relayed, now);
+        }
         return 0;
     }
     const int pair = find_pair(ice, from, relayed);
@@ -512,7 +526,7 @@ size_t rtc_ice_receive(rtc_ice *ice, const double now, uint8_t *out, const size_
             if (m.type == RTC_STUN_DATA_INDICATION && m.has_peer && m.payload.data) {
                 got = on_datagram(ice, m.peer, true, m.payload.data, m.payload.size, now, out, capacity);
             } else if (memcmp(m.id, ice->stun_id, 12) == 0) {
-                on_response(ice, &m, now); // The STUN server can be the TURN server
+                on_response(ice, &m, from, false, now); // The STUN server can be the TURN server
             } else {
                 on_turn(ice, &m, now);
             }

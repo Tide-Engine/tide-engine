@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "tide_test.h"
+#include "arrivals.h"
 #include "rtc/rtc.h"
 
 static size_t unhex(const char *text, uint8_t *out)
@@ -386,6 +387,85 @@ TIDE_TEST(rtc_ice_on_this_machine)
     rtc_ice_close(&b);
 }
 
+// A UDP socket of the test's own, read as ICE reads its (arrivals.h).
+typedef struct plain_socket {
+    rtc_socket socket;
+    tide_arrivals *arrivals;
+} plain_socket;
+
+static bool plain_open(plain_socket *s)
+{
+    s->socket = rtc_udp_open();
+    s->arrivals = s->socket == RTC_NO_SOCKET ? NULL : tide_arrivals_start((uintptr_t)s->socket, 65536u);
+    return s->arrivals != NULL;
+}
+
+static void plain_close(plain_socket *s)
+{
+    tide_arrivals_stop(s->arrivals);
+    rtc_socket_close(s->socket);
+}
+
+// An answer to a check counts for its pair only from the address the check
+// went to (RFC 8445, 7.2.5.2.1). The other side has two sockets here. The
+// agent checks the first, and its check is answered, with its transaction and
+// the right password, from the second: what's sent to the first arrives, but
+// what comes back comes from elsewhere, so that's no pair to use. Answered by
+// the first itself, it is.
+TIDE_TEST(rtc_ice_an_answer_counts_from_where_the_check_went)
+{
+    const rtc_ice_config none = {0};
+    static const char pwd[] = "theirpasswordtheirpasswd";
+    rtc_ice agent;
+    plain_socket first, second;
+    TIDE_REQUIRE(rtc_ice_start(&agent, true, &none) && plain_open(&first) && plain_open(&second));
+    rtc_ice_set_remote(&agent, "them", pwd);
+    const rtc_candidate there = {{0x7f000001u, rtc_socket_port(first.socket)}, 2130706431u, RTC_HOST, "1"};
+    rtc_ice_add_remote(&agent, &there);
+
+    // The agent's check, as the first socket gets it
+    uint8_t datagram[512], got[64];
+    rtc_addr from = {0};
+    size_t n = 0;
+    double arrived = 0.0;
+    double start = rtc_now();
+    while (rtc_now() - start < 10.0 && !n) {
+        rtc_ice_update(&agent, rtc_now());
+        n = tide_arrivals_next(first.arrivals, &from.ip, &from.port, datagram, sizeof datagram, &arrived);
+    }
+    rtc_stun check;
+    TIDE_REQUIRE(n && rtc_stun_parse(datagram, n, &check) && check.type == RTC_STUN_BINDING_REQUEST);
+    TIDE_REQUIRE(agent.pair_count == 1 && agent.pairs[0].state == RTC_PAIR_IN_PROGRESS);
+
+    uint8_t answer[128];
+    rtc_stun_writer w;
+    rtc_stun_begin(&w, answer, sizeof answer, RTC_STUN_BINDING_SUCCESS, check.id);
+    rtc_stun_attr_addr(&w, RTC_STUN_XOR_MAPPED_ADDRESS, from);
+    rtc_stun_integrity(&w, pwd, strlen(pwd));
+    rtc_stun_fingerprint(&w);
+    TIDE_REQUIRE(!w.overflow);
+
+    // From the second socket: read, and the pair is no way to them
+    rtc_udp_send(second.socket, from, answer, w.size);
+    start = rtc_now();
+    while (rtc_now() - start < 10.0 && agent.selected < 0 && agent.pairs[0].state == RTC_PAIR_IN_PROGRESS) {
+        rtc_ice_receive(&agent, rtc_now(), got, sizeof got);
+    }
+    TIDE_CHECK(agent.selected < 0 && agent.state != RTC_ICE_CONNECTED);
+    TIDE_CHECK(agent.pairs[0].state == RTC_PAIR_FAILED);
+
+    // From the first: it's the pair in use
+    rtc_udp_send(first.socket, from, answer, w.size);
+    start = rtc_now();
+    while (rtc_now() - start < 10.0 && agent.selected < 0) rtc_ice_receive(&agent, rtc_now(), got, sizeof got);
+    TIDE_CHECK(agent.selected == 0 && agent.state == RTC_ICE_CONNECTED);
+    TIDE_CHECK(agent.pairs[0].state == RTC_PAIR_SUCCEEDED);
+
+    rtc_ice_close(&agent);
+    plain_close(&first);
+    plain_close(&second);
+}
+
 // DTLS between our client and our server, over a wire that loses datagrams.
 typedef struct wire {
     uint8_t datagrams[64][2048];
@@ -470,15 +550,40 @@ typedef struct sctp_end {
     int count;
     int sent;
     int lose_every;
+    bool (*never)(const uint8_t *packet, size_t size); // Packets of its own that never arrive
     int messages;
     size_t last_size;
 } sctp_end;
+
+// What an SCTP packet of ours is: each has one chunk, whose type is its 13th
+// byte. The channel's own messages (its open, 3, and the acknowledgement, 2)
+// are DATA with protocol 50, after the chunk's TSN, stream and sequence number.
+static bool sctp_cookie_ack(const uint8_t *packet, const size_t size)
+{
+    return size >= 16 && packet[12] == 11;
+}
+
+static bool sctp_channel_message(const uint8_t *packet, const size_t size, const uint8_t message)
+{
+    return size >= 29 && packet[12] == 0 && rtc_get32(packet + 24) == 50 && packet[28] == message;
+}
+
+static bool sctp_channel_open(const uint8_t *packet, const size_t size)
+{
+    return sctp_channel_message(packet, size, 3);
+}
+
+static bool sctp_channel_ack(const uint8_t *packet, const size_t size)
+{
+    return sctp_channel_message(packet, size, 2);
+}
 
 static void sctp_wire(void *user, const void *data, const size_t size)
 {
     sctp_end *e = user;
     e->sent++;
     if (e->lose_every && e->sent % e->lose_every == 0) return;
+    if (e->never && e->never(data, size)) return;
     if (e->other->count < 256) {
         memcpy(e->other->packets[e->other->count], data, size);
         e->other->sizes[e->other->count++] = size;
@@ -538,6 +643,59 @@ TIDE_TEST(rtc_sctp_channel)
     TIDE_CHECK(a.sctp.sent_count == 0);
 }
 
+// Connecting is the association and then the channel on it, and both have
+// the one time to come up in. `opener` opens the channel and `other` waits for
+// it; one of them starts the association. With what never arrives of each
+// one's packets, the channel can't open: nearly 20 seconds in, each still
+// waits, and after them, those of the two that `fails` says have given up.
+static void sctp_never_connects(const bool opener_starts, bool (*opener_never)(const uint8_t *, size_t),
+                                bool (*other_never)(const uint8_t *, size_t), const bool opener_fails,
+                                const bool other_fails)
+{
+    static sctp_end opener, other;
+    memset(&opener, 0, sizeof opener);
+    memset(&other, 0, sizeof other);
+    opener.other = &other;
+    other.other = &opener;
+    opener.never = opener_never;
+    other.never = other_never;
+    double now = 0.0;
+    rtc_sctp_start(&opener.sctp, opener_starts, 5000, sctp_wire, sctp_message, &opener, now);
+    rtc_sctp_start(&other.sctp, !opener_starts, 5000, sctp_wire, sctp_message, &other, now);
+    rtc_sctp_open_channel(&opener.sctp, 0, now);
+    sctp_run(&opener, &other, &now, 1950);
+    TIDE_CHECK(opener.sctp.state == RTC_SCTP_OPEN && !opener.sctp.channel); // Its association is up: it got that far
+    TIDE_CHECK(other.sctp.state != RTC_SCTP_FAILED);
+    sctp_run(&opener, &other, &now, 100);
+    TIDE_CHECK((opener.sctp.state == RTC_SCTP_FAILED) == opener_fails);
+    TIDE_CHECK((other.sctp.state == RTC_SCTP_FAILED) == other_fails);
+    TIDE_CHECK(!opener.sctp.channel);
+}
+
+// The acknowledgement of the channel's open never arrives: whoever opened it
+// can't go on waiting for it. The other end has its channel, and hears of it
+// from the layers under this one, when the peer that gave up goes.
+TIDE_TEST(rtc_sctp_gives_up_on_a_channel_never_acknowledged)
+{
+    sctp_never_connects(true, NULL, sctp_channel_ack, true, false);
+    sctp_never_connects(false, NULL, sctp_channel_ack, true, false);
+}
+
+// Our COOKIE ACKs never arrive: our association is up from their COOKIE ECHO
+// on, and theirs never is, so the open we send says nothing to them. A browser
+// goes on echoing its cookie for a long time.
+TIDE_TEST(rtc_sctp_gives_up_when_the_other_association_never_comes_up)
+{
+    sctp_never_connects(false, sctp_cookie_ack, NULL, true, true);
+}
+
+// The channel's open never arrives: the side waiting for it gives up too.
+TIDE_TEST(rtc_sctp_gives_up_on_a_channel_never_opened)
+{
+    sctp_never_connects(true, sctp_channel_open, NULL, true, true);
+    sctp_never_connects(false, sctp_channel_open, NULL, true, true);
+}
+
 // Signals from one peer to the other, as the relay would carry them.
 static void pass_signals(rtc_peer *from, rtc_peer *to)
 {
@@ -585,6 +743,243 @@ TIDE_TEST(rtc_peers_on_this_machine)
     TIDE_CHECK(joiner->dtls_client != host->dtls_client);
     rtc_peer_free(joiner);
     rtc_peer_free(host);
+}
+
+// ---------------------------------------------------------------------------
+// A peer against another side made by hand of the same pieces (ICE, DTLS and
+// SCTP, over real UDP), so a test says what that side sends and when, and what
+// of the peer's it never gets. The peer joins: it offers and opens the
+// channel, and the far side answers as the DTLS client, which starts the
+// association, as a browser that hosts a room does.
+
+typedef struct far_side {
+    rtc_identity identity;
+    uint8_t their_fingerprint[32];
+    rtc_ice ice;
+    rtc_dtls dtls;
+    rtc_sctp sctp;
+    bool dtls_started;
+    bool sctp_started;
+    double now;
+    // What its DTLS has to send, a datagram each, until far_send lets them go
+    uint8_t out[8][1600];
+    size_t out_sizes[8];
+    int out_count;
+    bool (*deaf_to)(const uint8_t *packet, size_t size); // The peer's SCTP packets it never gets
+} far_side;
+
+static void far_dtls_out(void *user, const void *data, const size_t size)
+{
+    far_side *f = user;
+    if (f->out_count == 8 || size > sizeof f->out[0]) return;
+    memcpy(f->out[f->out_count], data, size);
+    f->out_sizes[f->out_count++] = size;
+}
+
+static void far_dtls_in(void *user, const void *data, const size_t size)
+{
+    far_side *f = user;
+    if (f->deaf_to && f->deaf_to(data, size)) return;
+    if (f->sctp_started) rtc_sctp_receive(&f->sctp, data, size, f->now);
+}
+
+static void far_sctp_out(void *user, const void *data, const size_t size)
+{
+    far_side *f = user;
+    rtc_dtls_send(&f->dtls, data, size);
+}
+
+static void far_message(void *user, const void *data, const size_t size)
+{
+    (void)user;
+    (void)data;
+    (void)size;
+}
+
+// What its DTLS had to send goes: a datagram each, or `together`, as one.
+static void far_send(far_side *f, const bool together)
+{
+    uint8_t all[sizeof f->out];
+    size_t size = 0;
+    for (int i = 0; i < f->out_count; i++) {
+        if (together) {
+            memcpy(all + size, f->out[i], f->out_sizes[i]);
+            size += f->out_sizes[i];
+        } else {
+            rtc_ice_send(&f->ice, f->out[i], f->out_sizes[i]);
+        }
+    }
+    if (size) rtc_ice_send(&f->ice, all, size);
+    f->out_count = 0;
+}
+
+// A peer that joins and its far side, each told of the other as the relay
+// would tell them: the peer's offer and the far side's answer, and where each is.
+static rtc_peer *far_meet(far_side *f)
+{
+    static const rtc_ice_config none = {0};
+    memset(f, 0, sizeof *f);
+    rtc_peer *p = rtc_peer_new(true, &none);
+    if (!p || !rtc_identity_new(&f->identity) || !rtc_ice_start(&f->ice, false, &none)) return NULL;
+    rtc_peer_update(p, rtc_now()); // Its candidates follow its offer
+
+    static char json[8192], type[16], sdp[4096], line[256];
+    while (rtc_peer_next_signal(p, json, sizeof json)) {
+        const rtc_json m = rtc_json_of(json, strlen(json));
+        const rtc_json d = rtc_json_get(m, "description");
+        const rtc_json c = rtc_json_get(m, "candidate");
+        rtc_description offer;
+        rtc_candidate candidate;
+        if (d.text && rtc_json_string(rtc_json_get(d, "type"), type, sizeof type)
+            && rtc_json_string(rtc_json_get(d, "sdp"), sdp, sizeof sdp) && rtc_sdp_parse(sdp, &offer)) {
+            rtc_ice_set_remote(&f->ice, offer.ufrag, offer.pwd);
+            memcpy(f->their_fingerprint, offer.fingerprint, 32);
+        }
+        if (c.text && rtc_json_string(rtc_json_get(c, "candidate"), line, sizeof line)
+            && rtc_candidate_parse(line, &candidate)) {
+            rtc_ice_add_remote(&f->ice, &candidate);
+        }
+    }
+    if (!f->ice.has_remote) return NULL;
+
+    rtc_description answer;
+    memset(&answer, 0, sizeof answer);
+    snprintf(answer.ufrag, sizeof answer.ufrag, "%s", f->ice.ufrag);
+    snprintf(answer.pwd, sizeof answer.pwd, "%s", f->ice.pwd);
+    memcpy(answer.fingerprint, f->identity.fingerprint, 32);
+    answer.has_fingerprint = true;
+    answer.setup = RTC_SETUP_ACTIVE;
+    snprintf(answer.mid, sizeof answer.mid, "0");
+    answer.sctp_port = 5000;
+    rtc_text t = {sdp, 0, sizeof sdp, false};
+    rtc_sdp_write(&t, &answer, 7);
+    rtc_peer_description(p, "answer", sdp);
+    rtc_candidate mine;
+    while (rtc_ice_next_local(&f->ice, &mine)) {
+        rtc_text l = {line, 0, sizeof line, false};
+        rtc_candidate_write(&l, &mine);
+        rtc_peer_candidate(p, line);
+    }
+    // And each on loopback, for machines without a network
+    snprintf(line, sizeof line, "candidate:9 1 udp 2130706431 127.0.0.1 %u typ host", (unsigned)rtc_socket_port(f->ice.socket));
+    rtc_peer_candidate(p, line);
+    const rtc_candidate loop = {{0x7f000001u, rtc_socket_port(p->ice.socket)}, 2130706431u, RTC_HOST, "9"};
+    rtc_ice_add_remote(&f->ice, &loop);
+    return p->state == RTC_PEER_FAILED ? NULL : p;
+}
+
+// One turn of each at `now`: the peer's update, then the far side's ICE and
+// DTLS, which read what came. Its DTLS starts once ICE has a pair. What it
+// has to send waits for far_send.
+static void far_turn(far_side *f, rtc_peer *p, const double now)
+{
+    f->now = now;
+    rtc_peer_update(p, now);
+    rtc_ice_update(&f->ice, now);
+    if (!f->dtls_started && f->ice.state == RTC_ICE_CONNECTED) {
+        f->dtls_started = rtc_dtls_start(&f->dtls, true, &f->identity, f->their_fingerprint, far_dtls_out, far_dtls_in, f, now);
+    }
+    uint8_t datagram[2048];
+    size_t n;
+    while ((n = rtc_ice_receive(&f->ice, now, datagram, sizeof datagram)) != 0) {
+        if (f->dtls_started && datagram[0] >= 20 && datagram[0] <= 63) rtc_dtls_receive(&f->dtls, datagram, n, now);
+    }
+    if (f->dtls_started) rtc_dtls_update(&f->dtls, now);
+    if (f->sctp_started) rtc_sctp_update(&f->sctp, now);
+}
+
+static void far_start_sctp(far_side *f, const double now)
+{
+    rtc_sctp_start(&f->sctp, true, 5000, far_sctp_out, far_message, f, now);
+    f->sctp_started = true;
+    rtc_sctp_update(&f->sctp, now); // Its INIT
+}
+
+static void far_leave(far_side *f, rtc_peer *p)
+{
+    rtc_peer_free(p);
+    rtc_ice_close(&f->ice);
+}
+
+// The other side's first SCTP packet is heard however soon it comes after
+// DTLS opens. As the DTLS server, a peer's DTLS opens as it reads their last
+// flight and answers it, and their INIT can be the next thing it reads: here
+// it's in the same datagram, so the two can't be read apart. (A client only
+// sends it having read our answer. The far side sends it before, as a client
+// quick enough to answer while the peer still reads would have it arrive.)
+// Time stands still from there, so nothing is sent again, by either side, and
+// the peer starts no association of its own: the channel only opens if that
+// one INIT was answered.
+TIDE_TEST(rtc_peer_hears_sctp_as_soon_as_dtls_opens)
+{
+    static far_side far;
+    rtc_peer *peer = far_meet(&far);
+    TIDE_REQUIRE(peer);
+    // ICE, then DTLS up to the far side's last flight, which waits
+    double now = rtc_now();
+    const double start = now;
+    while (rtc_now() - start < 10.0 && !far.dtls.keys) {
+        now = rtc_now();
+        far_turn(&far, peer, now);
+        if (!far.dtls.keys) far_send(&far, false);
+    }
+    TIDE_REQUIRE(far.dtls.keys && far.out_count >= 1 && far.dtls.state == RTC_DTLS_HANDSHAKE);
+    TIDE_REQUIRE(peer->dtls_started && !peer->dtls_client && peer->dtls.state == RTC_DTLS_HANDSHAKE && !peer->sctp_started);
+
+    far.dtls.state = RTC_DTLS_OPEN; // As it will be: its keys are the ones it has
+    far_start_sctp(&far, now);
+    far.dtls.state = RTC_DTLS_HANDSHAKE;
+    far_send(&far, true);
+
+    const double sent = rtc_now();
+    while (rtc_now() - sent < 10.0 && peer->state == RTC_PEER_CONNECTING) {
+        far_turn(&far, peer, now);
+        far_send(&far, false);
+    }
+    TIDE_CHECK(peer->state == RTC_PEER_OPEN);
+    TIDE_CHECK(far.dtls.state == RTC_DTLS_OPEN && far.sctp.state == RTC_SCTP_OPEN && far.sctp.channel);
+    TIDE_CHECK(far.sctp.init_tries == 1); // Its INIT went once
+    far_leave(&far, peer);
+}
+
+// A peer whose channel never opens says it failed, as one whose association
+// never comes up does: the far side never gets the channel's open, so it never
+// acknowledges it, while ICE, DTLS and the association all hold. Once the
+// association is up, the test makes the peer's clock up: nearly as long as
+// connecting may take, the peer still waits; past it, it has failed, with
+// nothing else gone.
+TIDE_TEST(rtc_peer_fails_when_its_channel_never_opens)
+{
+    static far_side far;
+    rtc_peer *peer = far_meet(&far);
+    TIDE_REQUIRE(peer);
+    far.deaf_to = sctp_channel_open;
+    double now = rtc_now();
+    const double start = now;
+    while (rtc_now() - start < 10.0 && !(peer->sctp_started && peer->sctp.state == RTC_SCTP_OPEN)) {
+        now = rtc_now();
+        far_turn(&far, peer, now);
+        if (far.dtls_started && far.dtls.state == RTC_DTLS_OPEN && !far.sctp_started) far_start_sctp(&far, now);
+        far_send(&far, false);
+    }
+    TIDE_REQUIRE(peer->sctp_started && peer->sctp.state == RTC_SCTP_OPEN);
+
+    // Nearly out of time, and its pair answered at that very time, so ICE has no reason to give up
+    now = peer->sctp.started + 19.9;
+    const double waited = rtc_now();
+    while (rtc_now() - waited < 10.0 && peer->ice.last_heard != now) {
+        far_turn(&far, peer, now);
+        far_send(&far, false);
+    }
+    TIDE_REQUIRE(peer->ice.last_heard == now);
+    TIDE_CHECK(peer->state == RTC_PEER_CONNECTING);
+    TIDE_CHECK(peer->sctp.state == RTC_SCTP_OPEN && !peer->sctp.channel);
+
+    rtc_peer_update(peer, peer->sctp.started + 20.1);
+    TIDE_CHECK(peer->state == RTC_PEER_FAILED);
+    TIDE_CHECK(peer->sctp.state == RTC_SCTP_FAILED);
+    TIDE_CHECK(peer->ice.state == RTC_ICE_CONNECTED && peer->dtls.state == RTC_DTLS_OPEN);
+    far_leave(&far, peer);
 }
 
 TIDE_TEST(rtc_dtls_refuses_the_wrong_certificate)
