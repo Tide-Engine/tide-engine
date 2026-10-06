@@ -1,0 +1,72 @@
+// How a tower nobody steers gets built. A seat with no player, or whose
+// player has the lobby or the menu up, plans each brick as it's dealt: where
+// to put it, and how turned. The brick then goes there as a player's would,
+// half a cell at a time, and falls fast once it's over its place.
+//
+// The plan is made from how high the tower stands in each of the plinth's six
+// columns, which the match works out from the bricks as they lie (game.tide,
+// Deal). It tries every turn and every place across, lets the brick down on
+// the columns, and keeps the one that leaves the tower lowest, flattest and
+// with the least room under the brick, give or take what its seat's dice
+// say: a tower built that way is slow to rise, and hard to bring down.
+
+struct Plan
+{
+    int column;   // In half cells from the plinth's middle
+    int quarter;
+}
+
+Plan Think(Kind kind, List<float> heights, mut Random dice)
+{
+    mut var best = Plan { column = Start(kind) };
+    mut var least = 1000000.0;
+    for (var quarter = 0; quarter < 4; quarter++)
+    {
+        for (var column = -REACH; column <= REACH; column++)
+        {
+            // Each cell has to be over one of the plinth's columns, whole. The
+            // brick comes to rest where its first cell meets what's under it.
+            mut var fits = true;
+            mut var rest = -1000.0;
+            for (var i = 0; i < 4; i++)
+            {
+                var cell = Turned(Cell(kind, i), quarter);
+                var across = column * 0.5 + cell.x + PLINTH / 2 - 0.5;
+                var lane = int(Math.Round(across));
+                if (Math.Abs(across - lane) > 0.01 || lane < 0 || lane >= 6) fits = false;
+                else rest = Math.Max(rest, heights[lane] - cell.y + 0.5);
+            }
+            if (!fits) continue;
+            // The columns with the brick on them, and the room left under it
+            mut List<float> after = heights;
+            mut var room = 0.0;
+            for (var i = 0; i < 4; i++)
+            {
+                var cell = Turned(Cell(kind, i), quarter);
+                var lane = int(Math.Round(column * 0.5 + cell.x + PLINTH / 2 - 0.5));
+                var under = rest + cell.y - 0.5;
+                mut var lowest = true;
+                for (var j = 0; j < 4; j++)
+                {
+                    var other = Turned(Cell(kind, j), quarter);
+                    if (Math.Abs(other.x - cell.x) < 0.01 && other.y < cell.y - 0.01) lowest = false;
+                }
+                if (lowest) room += under - heights[lane];
+                after[lane] = Math.Max(after[lane], under + 1);
+            }
+            mut var peak = 0.0;
+            mut var bumps = 0.0;
+            for (var lane = 0; lane < 6; lane++)
+            {
+                peak = Math.Max(peak, after[lane]);
+                if (lane > 0) bumps += Math.Abs(after[lane] - after[lane - 1]);
+            }
+            // ...give or take: no two towers are built alike
+            var cost = peak + room * 3 + bumps * 0.4 + Math.Abs(column) * 0.02 + dice.NextFloat() * 0.7;
+            if (cost >= least) continue;
+            least = cost;
+            best = Plan { column = column, quarter = quarter };
+        }
+    }
+    return best;
+}
