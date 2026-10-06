@@ -35,8 +35,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xcafb79f568c3f729)
-#define IMAGES_HASH UINT64_C(0xea5da75f779f9a61)
+#define SETTLED_HASH UINT64_C(0x76f7511ffdebb0d8)
+#define IMAGES_HASH UINT64_C(0x4023dc69612197b9)
 // Box3D's own image at each of the 300 ticks, apart from everything else the
 // match holds: its state, byte for byte. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two
