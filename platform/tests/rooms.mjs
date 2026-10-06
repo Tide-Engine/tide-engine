@@ -35,13 +35,28 @@ const relayOnly = process.env.TIDE_ICE_POLICY === 'relay';
 // Windows, which offers no loopback candidates: there they take a port the
 // system picks, as any game joining a match does.
 const local = !process.env.TIDE_RELAY;
-const env = { ...process.env, TIDE_RELAY: relayUrl, ...(relayOnly ? { TIDE_RTC_RELAY_ONLY: '1' } : {}) };
+// TIDE_RTC_DEBUG: every desktop player says what its connection does, for a
+// case that fails (see account, below)
+const env = { ...process.env, TIDE_RELAY: relayUrl, TIDE_RTC_DEBUG: '1', ...(relayOnly ? { TIDE_RTC_RELAY_ONLY: '1' } : {}) };
 const loopback = { ...env, ...(local ? { TIDE_RTC_LOCAL: '1' } : {}) };
+
+// What a case's players and its browser said, each line with when, in seconds
+// since the case began. A case that fails ends with all of it: the lines that
+// showed as they came, and what the desktop players said of their connections
+// meanwhile (the lines TIDE_RTC_DEBUG adds, "rtc ..."), which a case that
+// passes keeps to itself. Without it, a case that failed said only that
+// nothing came back, and nothing of how far each side got.
+let began = performance.now();
+const account = [];
+function noted(who, line) {
+    account.push(`${((performance.now() - began) / 1000).toFixed(3).padStart(8)} ${who}: ${line}`);
+    if (!line.startsWith('rtc ')) console.log(`${who}: ${line}`);
+}
 
 // A desktop player: its lines, as they come, and what it's told to do once
 // what it waits for happened (see rooms_native.c)
-function player(args, name, anywhere = false, more = {}) {
-    const child = spawn(program, args, { env: { ...(anywhere ? env : loopback), ...more }, stdio: ['pipe', 'pipe', 'pipe'] });
+function player(args, name, anywhere = false) {
+    const child = spawn(program, args, { env: anywhere ? env : loopback, stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdin.on('error', () => {}); // Gone already
     const lines = [];
     const waiting = [];
@@ -52,7 +67,7 @@ function player(args, name, anywhere = false, more = {}) {
         while ((at = buffer.indexOf('\n')) >= 0) {
             const line = buffer.slice(0, at).trim();
             buffer = buffer.slice(at + 1);
-            console.log(`${name}: ${line}`);
+            noted(name, line);
             lines.push(line);
             for (const w of [...waiting]) {
                 if (w.test(line)) {
@@ -91,11 +106,38 @@ ws.onclose = e => say('relay closed ' + e.code + ' ' + e.reason);
 const send = m => ws.send(JSON.stringify(m));
 let ice = [];
 const peers = new Map();
+// What its channels did, and when: the test asks how the page stands (below)
+const born = performance.now();
+const channels = [];
+const happened = [];
+const note = what => happened.push(Math.round(performance.now() - born) + ' ms: ' + what);
 function channel(ch) {
   ch.binaryType = 'arraybuffer';
-  ch.onopen = () => { say('open'); if (!hosting) ch.send(new Uint8Array([104, 105])); };
-  ch.onmessage = e => ch.send(e.data);
+  const c = { ch, got: 0, sent: 0, refused: '' };
+  channels.push(c);
+  ch.onopen = () => { say('open'); note('open'); if (!hosting) ch.send(new Uint8Array([104, 105])); };
+  ch.onclose = () => note('closed');
+  ch.onerror = e => note('error: ' + (e.error && e.error.message));
+  ch.onmessage = e => {
+    c.got++;
+    try {
+      ch.send(e.data);
+      c.sent++;
+    } catch (error) {
+      c.refused = error.message;
+    }
+  };
 }
+// How the page stands, once a second: that it still runs, what its connections
+// say of themselves, and how many messages each channel got and echoed
+setInterval(() => fetch('/stands?browser=' + q.get('browser'), { method: 'POST', body: JSON.stringify({
+  ms: Math.round(performance.now() - born),
+  peers: [...peers.values()].map(p => ({ state: p.pc.connectionState, ice: p.pc.iceConnectionState,
+    sctp: p.pc.sctp && p.pc.sctp.state, dtls: p.pc.sctp && p.pc.sctp.transport.state })),
+  channels: channels.map(c => ({ state: c.ch.readyState, stream: c.ch.id, got: c.got, sent: c.sent,
+    refused: c.refused, waiting: c.ch.bufferedAmount })),
+  happened,
+}) }), 1000);
 function peer(id, signal) {
   const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy: q.get('policy') || 'all' });
   const p = { pc, chain: Promise.resolve() };
@@ -156,10 +198,19 @@ ws.onmessage = async e => {
 
 const said = [];
 const waiting = [];
+let stands = null; // How the case's page last said it stands, and when
 const server = createServer((request, response) => {
     if (request.url.startsWith('/page')) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(page);
+    } else if (request.url.startsWith('/stands?') && request.method === 'POST') {
+        const from = Number(new URL(request.url, 'http://127.0.0.1').searchParams.get('browser'));
+        let body = '';
+        request.on('data', chunk => { body += chunk; });
+        request.on('end', () => {
+            response.end();
+            if (running && from === running.number) stands = { how: body, at: performance.now() };
+        });
     } else if (request.url.startsWith('/say?') && request.method === 'POST') {
         const from = Number(new URL(request.url, 'http://127.0.0.1').searchParams.get('browser'));
         let body = '';
@@ -167,7 +218,7 @@ const server = createServer((request, response) => {
         request.on('end', () => {
             response.end();
             if (!running || from !== running.number) return; // A browser stopping, after its case
-            console.log(`browser: ${body}`);
+            noted('browser', body);
             said.push(body);
             for (const w of [...waiting]) {
                 if (w.test.test(body)) {
@@ -279,12 +330,20 @@ const players = [];
 async function test(name, run) {
     console.log(`--- ${name}`);
     said.length = 0;
+    account.length = 0;
+    stands = null;
+    began = performance.now();
     try {
         await run();
         console.log(`--- ${name}: ok`);
     } catch (error) {
         console.log(`--- ${name}: FAILED: ${error.message}`);
         failed = true;
+        const now = performance.now();
+        console.log(`--- what each side said, and when: seconds into the case, ${((now - began) / 1000).toFixed(3)} now`);
+        for (const line of account) console.log(line);
+        if (stands) console.log(`--- the page, ${((now - stands.at) / 1000).toFixed(3)} seconds before: ${stands.how}`);
+        else if (running) console.log('--- the page never said how it stands');
     }
     for (const p of players.splice(0)) p.child.kill();
     try {
@@ -333,7 +392,7 @@ await test('a desktop match changes hands when its host leaves', async () => {
 // answered it, and what it told the relay.
 for (const early of [false, true]) {
     await test(`a match its host ended${early ? ' before the relay knew its room' : ''} isn't taken over`, async () => {
-        const host = player([early ? 'end-host-early' : 'end-host'], 'host', false, { TIDE_RTC_DEBUG: '1' });
+        const host = player([early ? 'end-host-early' : 'end-host'], 'host');
         players.push(host);
         const [, code, , key] = (await within(host.line(/^room /), 15, 'hosting')).split(' ');
         if (early) {
