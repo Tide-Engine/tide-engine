@@ -1,0 +1,1167 @@
+{
+  "baseline_revision": "6b52015c4207b56a8461c342f5468c9043f849bc",
+  "final_revision": "abaa39e717810b0d8d5578e122e7b5de051cfc89",
+  "baseline_git_session_sha256": "9345c2e6440799c4e12f24a1674fe2fb29311b1d47aac0513df54af2c9546431",
+  "final_git_session_sha256": "386fd7c8e4bfa95c8e2fab34a9d36afce2eecf7466aece7bb1de481b2ade8807",
+  "baseline_counter_source": {
+    "path": "build/lag-before/session.c",
+    "sha256": "cfcd89e70635abba5a12353c63079981db79cd01568c2f241a868228445496ab"
+  },
+  "shared_engine_object_set_sha256": "ad5e919452d9c5c4089deb178b047dc3db78f4b7ecbf8efc11b2b5e3427b4666",
+  "instrumentation": "Ignored build/lag-trace session copies add only buffered CSV writes after packing sampled inputs and immediately after server canonical_input; record tick-specific availability/arrival time and effective input bytes after held-input fallback. No clock reads, no changes to inputs or scheduling. Fixtures use made-up time and no now_ns adaptive-delay clock.",
+  "compile_flags": "Release -O2 -DNDEBUG -std=c17 -fno-fast-math -ffp-contract=off; same shared release engine and generated fixture objects for both versions.",
+  "note": "Expected baseline fixture failures are solely old world/traffic values compared with updated pins. All final fixtures pass. Local-events summary uses its first of two identical network workloads. Baseline-only sample ranges mean no matching sample in the completed final run; a range beyond its final sampled tick can reflect the fixture end, rather than a deliberately skipped input.",
+  "trace_schema": "CSV: kind,now,tick,zero_based_player_slot,size,packed_hex. kind=sample uses client now; available uses actual input arrival time or -1 when absent; applied uses server now and includes held last input when absent. Empty packed bytes decode as default zero input.",
+  "fixtures": [
+    {
+      "fixture": "sumo_tests",
+      "invocation": "sumo_tests sumo_three_players_stay_in_one_match_over_a_bad_network",
+      "before_rows": 6633,
+      "final_rows": 6483,
+      "first_availability_difference": {
+        "key": "57:1",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 57,
+          "player": 1,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.95828,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        },
+        "before_applied": {
+          "move": [
+            0,
+            0
+          ],
+          "charge": false,
+          "away": false
+        },
+        "final_applied": {
+          "move": [
+            0,
+            1
+          ],
+          "charge": false,
+          "away": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.95,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.916667,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        }
+      },
+      "first_applied_difference": {
+        "key": "57:1",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 57,
+          "player": 1,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.95828,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        },
+        "before_applied": {
+          "move": [
+            0,
+            0
+          ],
+          "charge": false,
+          "away": false
+        },
+        "final_applied": {
+          "move": [
+            0,
+            1
+          ],
+          "charge": false,
+          "away": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.95,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.916667,
+          "tick": 57,
+          "player": 1,
+          "size": 9,
+          "hex": "000000000000803f00"
+        }
+      },
+      "baseline_only_sample_ranges": [
+        {
+          "player": 0,
+          "first": 11,
+          "last": 62,
+          "count": 52
+        },
+        {
+          "player": 1,
+          "first": 9,
+          "last": 54,
+          "count": 46
+        },
+        {
+          "player": 2,
+          "first": 430,
+          "last": 480,
+          "count": 51
+        },
+        {
+          "player": 2,
+          "first": 886,
+          "last": 886,
+          "count": 1
+        }
+      ],
+      "world_pins": {
+        "before": [
+          {
+            "tick": 640,
+            "hash": "0x4bcd7d0a73795303"
+          },
+          {
+            "tick": 880,
+            "hash": "0x89fa42fff12ae338"
+          }
+        ],
+        "final": [
+          {
+            "tick": 640,
+            "hash": "0xa10f68ac25605d09"
+          },
+          {
+            "tick": 880,
+            "hash": "0x6c4f7a3d5c8fde75"
+          }
+        ]
+      },
+      "shared_fixture_objects": [
+        {
+          "path": "build/release/examples/sumo/CMakeFiles/sumo_tests.dir/__/__/tests/test_main.c.obj",
+          "sha256": "5aecd944c461ae4091a845685d857784b4482e2d30526da1b9bb8fb0dc0408bf"
+        },
+        {
+          "path": "build/release/examples/sumo/CMakeFiles/sumo_tests.dir/test/sumo_test.c.obj",
+          "sha256": "c97bf6a012f1ec7b6a138d3313564ec03d6fc47164af848aa4089e52d2f13908"
+        },
+        {
+          "path": "build/release/examples/sumo/CMakeFiles/sumo_tests.dir/tide/sumo_tests/game.c.obj",
+          "sha256": "885da9421a19245be75e79584fd3c9717b59a56212409934f2f7977c79147ee2"
+        },
+        {
+          "path": "build/release/examples/sumo/CMakeFiles/sumo_tests.dir/tide/sumo_tests/game_pack.c.obj",
+          "sha256": "e06594140099c980e386f4f133698949f74f83205d3a289753086b2983dbca52"
+        },
+        {
+          "path": "build/release/examples/sumo/CMakeFiles/sumo_tests.dir/__/__/packages/box3d/bridge.c.obj",
+          "sha256": "e98684e5152688640058fddb5e8833c19bb8d5086e8c3759e6c475f05d12a9d6"
+        }
+      ],
+      "artifacts": {
+        "before": [
+          {
+            "path": "build/lag-trace/before/session.c",
+            "sha256": "ac7b6aab40b532bf33245301a7ba199e41802cb80c1cfc60378a14374a616ed8"
+          },
+          {
+            "path": "build/lag-trace/before/sumo_tests.exe",
+            "sha256": "794aa8525cc15473dc0ca43f215e8d4cc58e61275dc523863d16b3c3a7de322d"
+          },
+          {
+            "path": "build/lag-trace/before/sumo_tests.csv",
+            "sha256": "74eac7b0704c464cedecfd3cebce6e4edc9b24578cebfe7553f9a0e05e12f541"
+          },
+          {
+            "path": "build/lag-trace/before/sumo_tests-run.log",
+            "sha256": "40ab5c3599f7e5335e6b745746d9864611deb616eba42b4c0a40d8065e4935f3"
+          }
+        ],
+        "final": [
+          {
+            "path": "build/lag-trace/final/session.c",
+            "sha256": "2a878d53d4dd72d80af3438d4fa73d533d4b1a029f6cef9c71f7fb0b693087f7"
+          },
+          {
+            "path": "build/lag-trace/final/sumo_tests.exe",
+            "sha256": "ec418d5e54f1052f9e48c683bcf1f203ee04660afb9d03ebc4eff07dd4f6aec3"
+          },
+          {
+            "path": "build/lag-trace/final/sumo_tests.csv",
+            "sha256": "99e3b97b5b755fb4c00e6a080c02473b079a82eaaaeb92b4370b002ea406f461"
+          },
+          {
+            "path": "build/lag-trace/final/sumo_tests-run.log",
+            "sha256": "21ac37c71e84b3d797efc04260b868a0ac2cc63c960640efd559bce9712cbf14"
+          }
+        ]
+      },
+      "raw_traces": {
+        "before": {
+          "path": "bench/results/lag-inputs/before-sumo_tests.csv.gz",
+          "sha256": "355361971731debc8497e03e71632ba4e1f07ab55a3621cd3e660a45fa73475d",
+          "content_sha256": "74eac7b0704c464cedecfd3cebce6e4edc9b24578cebfe7553f9a0e05e12f541"
+        },
+        "final": {
+          "path": "bench/results/lag-inputs/final-sumo_tests.csv.gz",
+          "sha256": "9fe799c090bbad974e3e986ca33d0e4c6fc675ea95f8630c6445d20cfbce5ceb",
+          "content_sha256": "99e3b97b5b755fb4c00e6a080c02473b079a82eaaaeb92b4370b002ea406f461"
+        }
+      }
+    },
+    {
+      "fixture": "towers_tests",
+      "invocation": "towers_tests towers_three_players_stay_in_one_match_over_a_bad_network",
+      "before_rows": 13294,
+      "final_rows": 13216,
+      "first_availability_difference": {
+        "key": "27:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 27,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.462728,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        },
+        "before_applied": {
+          "hands": false,
+          "serial": 0,
+          "column": 0,
+          "quarter": 0,
+          "drop": false
+        },
+        "final_applied": {
+          "hands": true,
+          "serial": 0,
+          "column": 0,
+          "quarter": 0,
+          "drop": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.433333,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.416667,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        }
+      },
+      "first_applied_difference": {
+        "key": "27:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 27,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.462728,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        },
+        "before_applied": {
+          "hands": false,
+          "serial": 0,
+          "column": 0,
+          "quarter": 0,
+          "drop": false
+        },
+        "final_applied": {
+          "hands": true,
+          "serial": 0,
+          "column": 0,
+          "quarter": 0,
+          "drop": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.433333,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.416667,
+          "tick": 27,
+          "player": 0,
+          "size": 4,
+          "hex": "01000000"
+        }
+      },
+      "baseline_only_sample_ranges": [
+        {
+          "player": 0,
+          "first": 10,
+          "last": 26,
+          "count": 17
+        },
+        {
+          "player": 1,
+          "first": 69,
+          "last": 103,
+          "count": 35
+        },
+        {
+          "player": 2,
+          "first": 909,
+          "last": 934,
+          "count": 26
+        }
+      ],
+      "world_pins": {
+        "before": [
+          {
+            "tick": 1500,
+            "hash": "0x989919e1794dff8c"
+          },
+          {
+            "tick": 1800,
+            "hash": "0x357865c5c0b85e46"
+          }
+        ],
+        "final": [
+          {
+            "tick": 1500,
+            "hash": "0x9bc3cc72d55b7c98"
+          },
+          {
+            "tick": 1800,
+            "hash": "0x61c0a29ce6e236c7"
+          }
+        ]
+      },
+      "shared_fixture_objects": [
+        {
+          "path": "build/release/examples/towers/CMakeFiles/towers_tests.dir/__/__/tests/test_main.c.obj",
+          "sha256": "46f29704060ac1cc82ac9e9b6966b87c5c4b5beeb43b8079f4d690e49eabc7da"
+        },
+        {
+          "path": "build/release/examples/towers/CMakeFiles/towers_tests.dir/test/towers_test.c.obj",
+          "sha256": "f6af2b2a0bd73621cfdb81d137f8d9963f78900361cbcc86392adabe64789af9"
+        },
+        {
+          "path": "build/release/examples/towers/CMakeFiles/towers_tests.dir/tide/towers_tests/game.c.obj",
+          "sha256": "562dbcd1d84e7bd31458a84e053dece0c811d45f7e5fd448e889078a00948e72"
+        },
+        {
+          "path": "build/release/examples/towers/CMakeFiles/towers_tests.dir/tide/towers_tests/game_pack.c.obj",
+          "sha256": "ba51772c2d5f009cff61135175edef192c03eefcf9691623476162ef0b612cda"
+        },
+        {
+          "path": "build/release/examples/towers/CMakeFiles/towers_tests.dir/__/__/packages/box2d/bridge.c.obj",
+          "sha256": "76d483f0b707ce9cae539d3ddf75a0b733968f8b60a0f0cc03886c28677b0226"
+        }
+      ],
+      "artifacts": {
+        "before": [
+          {
+            "path": "build/lag-trace/before/session.c",
+            "sha256": "ac7b6aab40b532bf33245301a7ba199e41802cb80c1cfc60378a14374a616ed8"
+          },
+          {
+            "path": "build/lag-trace/before/towers_tests.exe",
+            "sha256": "1ff23ebe9026fb6bd9d7c8c6886b6fdf0273976a2d51c85d699078cd1e86df32"
+          },
+          {
+            "path": "build/lag-trace/before/towers_tests.csv",
+            "sha256": "e71e8083cfda3ea50047b55afefc8e3c5203c1b01b694a7c90a1db50fcd28370"
+          },
+          {
+            "path": "build/lag-trace/before/towers_tests-run.log",
+            "sha256": "de2be5baf0877939ee20edbebbf22cb15ed64741c748b797ecdbe8919a5ee9ce"
+          }
+        ],
+        "final": [
+          {
+            "path": "build/lag-trace/final/session.c",
+            "sha256": "2a878d53d4dd72d80af3438d4fa73d533d4b1a029f6cef9c71f7fb0b693087f7"
+          },
+          {
+            "path": "build/lag-trace/final/towers_tests.exe",
+            "sha256": "44a80675fad456f7664f323cf5f8bb5cf3a11e53d0d33606a6d36fb4a7f8ffb1"
+          },
+          {
+            "path": "build/lag-trace/final/towers_tests.csv",
+            "sha256": "4ae1ba8df98c8bd671491398c6c45a6a2dbede58a626cc3dbcd0e776532341f1"
+          },
+          {
+            "path": "build/lag-trace/final/towers_tests-run.log",
+            "sha256": "4a5d831b5e3032f442c7b05cf2cfdeffc208e26ef5060adad71cab706f4a2a57"
+          }
+        ]
+      },
+      "raw_traces": {
+        "before": {
+          "path": "bench/results/lag-inputs/before-towers_tests.csv.gz",
+          "sha256": "c87c99c33bf36cfcfb57a82f4f79a0cf67d8959531f47a48a5c0920598badbc8",
+          "content_sha256": "e71e8083cfda3ea50047b55afefc8e3c5203c1b01b694a7c90a1db50fcd28370"
+        },
+        "final": {
+          "path": "bench/results/lag-inputs/final-towers_tests.csv.gz",
+          "sha256": "efd3a3e1444e1657cd5d02273f4702348c1b8fdcec78657e69083224b86a22b8",
+          "content_sha256": "4ae1ba8df98c8bd671491398c6c45a6a2dbede58a626cc3dbcd0e776532341f1"
+        }
+      }
+    },
+    {
+      "fixture": "bench_sand",
+      "invocation": "bench_sand --quick",
+      "before_rows": 1340,
+      "final_rows": 1303,
+      "first_availability_difference": {
+        "key": "32:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 32,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.55,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        },
+        "before_applied": {
+          "x": 0,
+          "y": 0,
+          "material": 0,
+          "down": false
+        },
+        "final_applied": {
+          "x": 15,
+          "y": 11,
+          "material": 1,
+          "down": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.5,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.483333,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        }
+      },
+      "first_applied_difference": {
+        "key": "32:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 32,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.55,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        },
+        "before_applied": {
+          "x": 0,
+          "y": 0,
+          "material": 0,
+          "down": false
+        },
+        "final_applied": {
+          "x": 15,
+          "y": 11,
+          "material": 1,
+          "down": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.5,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.483333,
+          "tick": 32,
+          "player": 0,
+          "size": 4,
+          "hex": "1e160100"
+        }
+      },
+      "baseline_only_sample_ranges": [
+        {
+          "player": 0,
+          "first": 12,
+          "last": 30,
+          "count": 19
+        },
+        {
+          "player": 1,
+          "first": 28,
+          "last": 36,
+          "count": 9
+        },
+        {
+          "player": 2,
+          "first": 43,
+          "last": 51,
+          "count": 9
+        }
+      ],
+      "world_pins": {
+        "before": [
+          {
+            "tick": 169,
+            "hash": "0x85b0be53c983fca1"
+          }
+        ],
+        "final": [
+          {
+            "tick": 169,
+            "hash": "0xfa2f2bb6b040ab70"
+          }
+        ]
+      },
+      "shared_fixture_objects": [
+        {
+          "path": "build/release/bench/CMakeFiles/bench_sand.dir/sand/main.c.obj",
+          "sha256": "fbcdee7ff4a5cc152fe803a9fbb1f0722bd56f96c65d67894e34cdf091230674"
+        },
+        {
+          "path": "build/release/bench/CMakeFiles/bench_sand.dir/tide/bench_sand/sand.c.obj",
+          "sha256": "5e7588c1418d657ce9f861657dee7cba26ee6b6f4d215be7a74b9162d451866e"
+        },
+        {
+          "path": "build/release/bench/CMakeFiles/bench_sand.dir/tide/bench_sand/sand_pack.c.obj",
+          "sha256": "be0c3eba5edad9c60d1093271ae4eae4c3ea03ba57fb8caf90d5e09ead25dd85"
+        }
+      ],
+      "artifacts": {
+        "before": [
+          {
+            "path": "build/lag-trace/before/session.c",
+            "sha256": "ac7b6aab40b532bf33245301a7ba199e41802cb80c1cfc60378a14374a616ed8"
+          },
+          {
+            "path": "build/lag-trace/before/bench_sand.exe",
+            "sha256": "722ecf6a4171d03f0497d7e047d4b99715a30bbce0bd517ba924b6ba979a09c6"
+          },
+          {
+            "path": "build/lag-trace/before/bench_sand.csv",
+            "sha256": "dc2260d43e49de19a50335e537c11a27d470d4547f4c8b67444589c08dfb57c7"
+          },
+          {
+            "path": "build/lag-trace/before/bench_sand-run.log",
+            "sha256": "ab30d03927421fef446f84b8d454e13db3b01f4a42df22c325551fcb6fd6b27e"
+          }
+        ],
+        "final": [
+          {
+            "path": "build/lag-trace/final/session.c",
+            "sha256": "2a878d53d4dd72d80af3438d4fa73d533d4b1a029f6cef9c71f7fb0b693087f7"
+          },
+          {
+            "path": "build/lag-trace/final/bench_sand.exe",
+            "sha256": "1060ede96f6a285e538c83a63e1db12f4be1d6f652874a6914ee22b5d295d3e0"
+          },
+          {
+            "path": "build/lag-trace/final/bench_sand.csv",
+            "sha256": "21ec89f166a85ea65dadaad6e7e7628737cebd5fcdc3cd875868a99a133baf71"
+          },
+          {
+            "path": "build/lag-trace/final/bench_sand-run.log",
+            "sha256": "6c7760742987066be5848a1813704167f161a0f510356371518cb2462aa05c52"
+          }
+        ]
+      },
+      "raw_traces": {
+        "before": {
+          "path": "bench/results/lag-inputs/before-bench_sand.csv.gz",
+          "sha256": "a516a5affc7f3c964b02f048295f91e4232322d6b5e4d70dce7516ec900787ea",
+          "content_sha256": "dc2260d43e49de19a50335e537c11a27d470d4547f4c8b67444589c08dfb57c7"
+        },
+        "final": {
+          "path": "bench/results/lag-inputs/final-bench_sand.csv.gz",
+          "sha256": "d729f9a3096aaf096108d64c255c31105adc193c3f7a5c1378479fd985d1aa2e",
+          "content_sha256": "21ec89f166a85ea65dadaad6e7e7628737cebd5fcdc3cd875868a99a133baf71"
+        }
+      }
+    },
+    {
+      "fixture": "bench_gallery",
+      "invocation": "bench_gallery --quick",
+      "before_rows": 1864,
+      "final_rows": 1802,
+      "first_availability_difference": {
+        "key": "33:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 33,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.566667,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        },
+        "before_applied": {
+          "x": 0,
+          "y": 0,
+          "color": 0,
+          "down": false
+        },
+        "final_applied": {
+          "x": 27,
+          "y": 22,
+          "color": -1640531457,
+          "down": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.516667,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.5,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        }
+      },
+      "first_applied_difference": {
+        "key": "33:0",
+        "before_available": {
+          "kind": "available",
+          "now": -1,
+          "tick": 33,
+          "player": 0,
+          "size": 0,
+          "hex": ""
+        },
+        "final_available": {
+          "kind": "available",
+          "now": 0.566667,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        },
+        "before_applied": {
+          "x": 0,
+          "y": 0,
+          "color": 0,
+          "down": false
+        },
+        "final_applied": {
+          "x": 27,
+          "y": 22,
+          "color": -1640531457,
+          "down": false
+        },
+        "before_sample": {
+          "kind": "sample",
+          "now": 0.516667,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        },
+        "final_sample": {
+          "kind": "sample",
+          "now": 0.5,
+          "tick": 33,
+          "player": 0,
+          "size": 8,
+          "hex": "362c8198c49c0c00"
+        }
+      },
+      "baseline_only_sample_ranges": [
+        {
+          "player": 0,
+          "first": 12,
+          "last": 32,
+          "count": 21
+        },
+        {
+          "player": 1,
+          "first": 72,
+          "last": 91,
+          "count": 20
+        },
+        {
+          "player": 2,
+          "first": 133,
+          "last": 153,
+          "count": 21
+        }
+      ],
+      "world_pins": {
+        "before": [
+          {
+            "tick": 272,
+            "hash": "0x241cefae27192475"
+          }
+        ],
+        "final": [
+          {
+            "tick": 272,
+            "hash": "0x45b1d0ae84959084"
+          }
+        ]
+      },
+      "shared_fixture_objects": [
+        {
+          "path": "build/release/bench/CMakeFiles/bench_gallery.dir/gallery/main.c.obj",
+          "sha256": "a90cd1e4715e332b9d02b650ba52b6d34da50a8a5999a9daeefcf067de119bd6"
+        },
+        {
+          "path": "build/release/bench/CMakeFiles/bench_gallery.dir/tide/bench_gallery/gallery.c.obj",
+          "sha256": "26eab8dd882d1189519a6373f5c91300c75d702b080aa8bce2094a700b9673c3"
+        },
+        {
+          "path": "build/release/bench/CMakeFiles/bench_gallery.dir/tide/bench_gallery/gallery_pack.c.obj",
+          "sha256": "b3263888394277f53efb022a092f85fdb931534b546fc7d0b5521ee11f787568"
+        }
+      ],
+      "artifacts": {
+        "before": [
+          {
+            "path": "build/lag-trace/before/session.c",
+            "sha256": "ac7b6aab40b532bf33245301a7ba199e41802cb80c1cfc60378a14374a616ed8"
+          },
+          {
+            "path": "build/lag-trace/before/bench_gallery.exe",
+            "sha256": "f5f3f8130cc01d065e6b11a31076db8c566882a1c5f505efdc149760a06a95fe"
+          },
+          {
+            "path": "build/lag-trace/before/bench_gallery.csv",
+            "sha256": "1df2fbe4edde6583dbc7c1cd1353f443223969da3058838471aeb86f8e345910"
+          },
+          {
+            "path": "build/lag-trace/before/bench_gallery-run.log",
+            "sha256": "0f3f3243090b6c0fc046b591f242a93d01dec1aa51e94bca567dd548de1590d7"
+          }
+        ],
+        "final": [
+          {
+            "path": "build/lag-trace/final/session.c",
+            "sha256": "2a878d53d4dd72d80af3438d4fa73d533d4b1a029f6cef9c71f7fb0b693087f7"
+          },
+          {
+            "path": "build/lag-trace/final/bench_gallery.exe",
+            "sha256": "0666d14fea894dc60b0e821f302930c2128523b6dd3f0ea4ee3ff2b57fc88e03"
+          },
+          {
+            "path": "build/lag-trace/final/bench_gallery.csv",
+            "sha256": "426f583006012857dddb18df817ce03dde85daa274ed141356d7339b81c50f58"
+          },
+          {
+            "path": "build/lag-trace/final/bench_gallery-run.log",
+            "sha256": "594932905dc89a8008b333fc352e589739dfa55b025d5d74cc85b8acf2fd3f60"
+          }
+        ]
+      },
+      "raw_traces": {
+        "before": {
+          "path": "bench/results/lag-inputs/before-bench_gallery.csv.gz",
+          "sha256": "9e3146d06596c3c22b7d853333820ea3d5f94a1acead2fbb1099ef2666bfbad0",
+          "content_sha256": "1df2fbe4edde6583dbc7c1cd1353f443223969da3058838471aeb86f8e345910"
+        },
+        "final": {
+          "path": "bench/results/lag-inputs/final-bench_gallery.csv.gz",
+          "sha256": "f1d68601a3537df99a9e488fded3a4cfc3577ec310f45bf36336a659eefff7e3",
+          "content_sha256": "426f583006012857dddb18df817ce03dde85daa274ed141356d7339b81c50f58"
+        }
+      }
+    },
+    {
+      "fixture": "tidec_e2e_local_events_same",
+      "invocation": "tidec_e2e_local_events_same local_events_cost_the_network_nothing",
+      "before_rows": 1068,
+      "final_rows": 1056,
+      "first_availability_difference": null,
+      "first_applied_difference": null,
+      "baseline_only_sample_ranges": [
+        {
+          "player": 0,
+          "first": 8,
+          "last": 13,
+          "count": 6
+        },
+        {
+          "player": 1,
+          "first": 8,
+          "last": 13,
+          "count": 6
+        }
+      ],
+      "omitted_samples": [
+        {
+          "tick": 8,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 8,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 9,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 9,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 10,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 10,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 11,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 11,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 12,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 12,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 13,
+          "player": 0,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 13,
+            "player": 0,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 8,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 8,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 9,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 9,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 10,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 10,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 11,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 11,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 12,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 12,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        },
+        {
+          "tick": 13,
+          "player": 1,
+          "sampled_at": 0.209,
+          "hex": "00000000",
+          "decoded": {
+            "push": 0
+          },
+          "server_available": {
+            "kind": "available",
+            "now": -1,
+            "tick": 13,
+            "player": 1,
+            "size": 0,
+            "hex": ""
+          }
+        }
+      ],
+      "world_pins": {
+        "before": [],
+        "final": []
+      },
+      "shared_fixture_objects": [
+        {
+          "path": "build/release/compiler/tests/CMakeFiles/tidec_e2e_local_events_same.dir/__/__/tests/test_main.c.obj",
+          "sha256": "9a371c1c8152e9bb46086e4373ed82bc9de544cc463bff29c13fa3ebf62a91e4"
+        },
+        {
+          "path": "build/release/compiler/tests/CMakeFiles/tidec_e2e_local_events_same.dir/e2e/local_events_same_test.c.obj",
+          "sha256": "515f3e82687d778d73b0fc9ce4ca4a59adf48afba921542dd7d35b28d91298dc"
+        },
+        {
+          "path": "build/release/compiler/tests/CMakeFiles/tidec_e2e_local_events_same.dir/tide/tidec_e2e_local_events_same/game.c.obj",
+          "sha256": "2bb74973db5f07542d93534f7c777140bb4ab1717c0b3af9adad1ae981d8ed10"
+        },
+        {
+          "path": "build/release/compiler/tests/CMakeFiles/tidec_e2e_local_events_same.dir/tide/tidec_e2e_local_events_same/game_pack.c.obj",
+          "sha256": "b71e3fa76933f48ea695536c515200e0e6b0f280664c5a4620b800148c84ec59"
+        }
+      ],
+      "artifacts": {
+        "before": [
+          {
+            "path": "build/lag-trace/before/session.c",
+            "sha256": "ac7b6aab40b532bf33245301a7ba199e41802cb80c1cfc60378a14374a616ed8"
+          },
+          {
+            "path": "build/lag-trace/before/tidec_e2e_local_events_same.exe",
+            "sha256": "d053dc1b12ee30dee19897b78ede823c9d71958c3023e8b649aef742bb2c0f28"
+          },
+          {
+            "path": "build/lag-trace/before/tidec_e2e_local_events_same.csv",
+            "sha256": "1fe36988c8bd882c4ab3e61db17e8ae3a7d26f926ffc62438525ad06871ba846"
+          },
+          {
+            "path": "build/lag-trace/before/tidec_e2e_local_events_same-run.log",
+            "sha256": "8710437e43ad18780f7524e18408f9d3b4e52f49eb77ed80e3e64493ec419e5e"
+          }
+        ],
+        "final": [
+          {
+            "path": "build/lag-trace/final/session.c",
+            "sha256": "2a878d53d4dd72d80af3438d4fa73d533d4b1a029f6cef9c71f7fb0b693087f7"
+          },
+          {
+            "path": "build/lag-trace/final/tidec_e2e_local_events_same.exe",
+            "sha256": "67ca72b90981caab72491721de4fbc5f866128e101f97ea7228d8caafc74742f"
+          },
+          {
+            "path": "build/lag-trace/final/tidec_e2e_local_events_same.csv",
+            "sha256": "1f96e5f2fe51f9d858756962214d26b8d8f117b167f6f23204f6b22c616f36c6"
+          },
+          {
+            "path": "build/lag-trace/final/tidec_e2e_local_events_same-run.log",
+            "sha256": "70a7f072b7da6bee4c5fc45a3298aa85ed3936c7ecff79539fbf8d1ef79d88c7"
+          }
+        ]
+      },
+      "traffic_pin": {
+        "before_clients_sent": 10740,
+        "final_clients_sent": 10596,
+        "server_sent_both": 29132,
+        "final_numbers": "verified by passing fixture assertions; numbers only print on mismatch",
+        "available_and_applied_inputs_identical": true
+      },
+      "raw_traces": {
+        "before": {
+          "path": "bench/results/lag-inputs/before-tidec_e2e_local_events_same.csv.gz",
+          "sha256": "0583b1a5a547595b10434892f5329f182a79492b49211a4619d363350edb2cb8",
+          "content_sha256": "1fe36988c8bd882c4ab3e61db17e8ae3a7d26f926ffc62438525ad06871ba846"
+        },
+        "final": {
+          "path": "bench/results/lag-inputs/final-tidec_e2e_local_events_same.csv.gz",
+          "sha256": "73479a0e067489eef1baab79a0bb891d6b52cc1a6ad97b4838fdd70c439e78c7",
+          "content_sha256": "1f96e5f2fe51f9d858756962214d26b8d8f117b167f6f23204f6b22c616f36c6"
+        }
+      }
+    }
+  ],
+  "analysis_sha256": "6648171c245646f2b405772b434a05fab0b07ab0be2ffd772d4eb6250734daca"
+}
