@@ -1,0 +1,6 @@
+// expect: an asset is every machine's, as the game is built with it: it can't be local
+local asset string rules = "../e2e/assets/rules.txt";
+
+scene Main
+{
+}

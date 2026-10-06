@@ -8,6 +8,10 @@ typedef struct game_info {
     char app_id[256]; // appId, likewise
     char version[64]; // version, likewise
     bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
+    // The files and folders its assets name (asset_files.h), for whoever
+    // watches them: malloc'd, each path malloc'd, for the caller to free.
+    char **asset_paths;
+    int asset_count;
 } game_info;
 
 typedef struct codegen_options {
@@ -18,6 +22,9 @@ typedef struct codegen_options {
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
     game_info *info;         // If set, gets what tide needs of the game's settings.
     bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).
+    const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
+    const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL
+    const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

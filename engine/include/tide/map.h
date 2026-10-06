@@ -75,8 +75,13 @@ static inline bool tide_map_live(const void *entry)
     return entry && *(const uint32_t *)entry != 0u;
 }
 
-// A well-mixed hash of a key's bytes, the same on every machine.
-uint32_t tide_map_hash_bytes(const void *data, uint32_t size);
+// A well-mixed hash of a key's bytes, the same on every machine. Here, so the
+// pack's builder (tide/pack.h) hashes a map's keys as the game's lookups do.
+static inline uint32_t tide_map_hash_bytes(const void *data, const uint32_t size)
+{
+    const uint64_t h = tide_hash(data, size);
+    return (uint32_t)(h ^ h >> 32);
+}
 
 // The entry whose key is `probe`, or -1.
 int32_t tide_map_find(tide_map m, const tide_map_kind *k, const void *probe);

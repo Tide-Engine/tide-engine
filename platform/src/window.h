@@ -136,3 +136,8 @@ void tide_window_copy(const char *text);
 
 // Shows the system's keyboard, where there is one, or hides it.
 void tide_window_typing(bool typing);
+
+// The game's pack of assets (tide/pack.h), as its build left it with the
+// program: beside it as <program>.pack on desktop, in its page on the web, in
+// its APK on Android. malloc'd bytes, the caller's to free, or NULL for none.
+uint8_t *tide_window_pack(size_t *size);

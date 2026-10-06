@@ -1,0 +1,47 @@
+settings { title = "A sprite from a file"; maxPlayers = 1; }
+
+// The file is read as the game is built and packed with it: every machine has
+// the same pixels, so match code can read them too.
+asset Grid2<Color> sprite = "art/sprite.png";
+
+component Bouncer
+{
+    float2 position;
+    float2 velocity;
+}
+singleton Arena { float2 half = float2(5, 4); }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Bouncer { position = float2(-2, 1), velocity = float2(3, 2) });
+    Spawn(Bouncer { position = float2(2, -1), velocity = float2(-2, 3) });
+}
+
+// The match reads the sprite like any grid: here its size, to bounce by its edges.
+system Move(mut Bouncer bouncer, Arena arena, Time time)
+{
+    var extent = float2(sprite.size.x, sprite.size.y) / 24 * 0.5;
+    bouncer.position += bouncer.velocity * time.dt;
+    if (bouncer.position.x < -arena.half.x + extent.x || bouncer.position.x > arena.half.x - extent.x) bouncer.velocity.x = -bouncer.velocity.x;
+    if (bouncer.position.y < -arena.half.y + extent.y || bouncer.position.y > arena.half.y - extent.y) bouncer.velocity.y = -bouncer.velocity.y;
+}
+
+view Background(Arena arena)
+{
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0), arena.half.y * 2);
+    Draw2D.WireRect(float2(0), arena.half * 2, Color(0.24, 0.25, 0.27));
+}
+
+// A view draws it as a texture, point-sampled so its pixels stay crisp.
+view Sprites(Bouncer bouncer)
+{
+    var p = bouncer.position;
+    var h = 0.5;
+    Draw2D.Mesh([Vertex { position = p + float2(-h, h), uv = float2(0, 0), color = Color.white },
+                 Vertex { position = p + float2(h, h), uv = float2(1, 0), color = Color.white },
+                 Vertex { position = p + float2(h, -h), uv = float2(1, 1), color = Color.white },
+                 Vertex { position = p + float2(-h, -h), uv = float2(0, 1), color = Color.white }],
+                [0, 1, 2, 0, 2, 3], sprite, Filter.Point);
+}

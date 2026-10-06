@@ -21,6 +21,8 @@ static void usage(void)
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
+            "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
+            "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
@@ -107,8 +109,10 @@ static bool add_listed(const char *path, input_list *inputs)
 int main(const int argc, char **argv)
 {
     input_list inputs = {0};
-    codegen_options opts = {NULL, NULL, true, false, NULL, NULL, false};
+    codegen_options opts = {0};
+    opts.line_directives = true;
     bool schedule = false;
+    bool pack_c = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
@@ -117,6 +121,10 @@ int main(const int argc, char **argv)
             opts.name = argv[++i];
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
+        } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
+            opts.game_folder = argv[++i];
+        } else if (strcmp(argv[i], "--pack-c") == 0) {
+            pack_c = true;
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
         } else if (strcmp(argv[i], "--schedule") == 0) {
@@ -151,6 +159,15 @@ int main(const int argc, char **argv)
         for (int i = 0; i < inputs.count && !opts.name; i++) {
             if (!inputs.items[i].package) opts.name = path_stem(inputs.items[i].path);
         }
+    }
+
+    // The game's assets go beside the generated files as <name>.pack, and as C for a host that embeds them
+    sb pack = {0}, pack_c_path = {0};
+    if (opts.out_dir) {
+        sb_printf(&pack, "%s/%s.pack", opts.out_dir, opts.name);
+        sb_printf(&pack_c_path, "%s/%s_pack.c", opts.out_dir, opts.name);
+        opts.pack = pack.data;
+        if (pack_c) opts.pack_c = pack_c_path.data;
     }
 
     if (!schedule) return compile_inputs(inputs.items, inputs.count, &opts, NULL) ? 0 : 1;

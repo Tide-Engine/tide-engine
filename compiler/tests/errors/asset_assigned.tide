@@ -1,0 +1,17 @@
+// expect: 'hero' is an asset, read-only
+asset Grid2<Color> hero = "../e2e/assets/hero.png";
+
+singleton Paint
+{
+    int strokes;
+}
+
+system Draw(mut Paint paint)
+{
+    hero[0, 0] = Color.red;
+    paint.strokes++;
+}
+
+scene Main
+{
+}
