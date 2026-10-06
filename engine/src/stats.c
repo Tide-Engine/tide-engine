@@ -1,9 +1,12 @@
 #include "tide/stats.h"
 
+#include <float.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tide/math.h"
+#include "tide/page.h"
 
 // See tide/stats.h.
 
@@ -13,6 +16,14 @@ static const float PAD_X = 8.0f;  // Inside the panel: beside its lines
 static const float PAD_Y = 6.0f;  // ...and above and under them
 static const float MARGIN = 8.0f; // From the screen's edges
 static const float MARK = 16.0f;  // What the arrow takes before the line that's always there
+
+static void reset_times(tide_stats *s)
+{
+    s->slow_count = 0;
+    s->span = 0.0;
+    s->profile = NULL;
+    s->system_count = 0;
+}
 
 static bool contains(const tide_rect r, const tide_float2 p)
 {
@@ -94,7 +105,10 @@ bool tide_stats_input(tide_stats *s, const tide_devices *d, const tide_float2 sc
         }
     }
 
-    if (flipped) s->open = !s->open;
+    if (flipped) {
+        s->open = !s->open;
+        reset_times(s);
+    }
     return flipped;
 }
 
@@ -137,6 +151,114 @@ void tide_stats_off(tide_stats *s)
     s->line_count = 0;
     s->buttons = 0;
     memset(s->fingers, 0, sizeof s->fingers);
+    reset_times(s);
+}
+
+void tide_stats_free(tide_stats *s)
+{
+    free(s->systems);
+    *s = (tide_stats){0};
+}
+
+// ---------------------------------------------------------------------------
+// Its systems' averages
+
+static void count_systems(tide_stats *s, const uint32_t count)
+{
+    if (count > s->system_room) {
+        s->systems = tide_realloc(s->systems, s->system_room * sizeof *s->systems, count * sizeof *s->systems);
+        s->system_room = count;
+    }
+    if (count) memset(s->systems, 0, count * sizeof *s->systems);
+    s->system_count = count;
+}
+
+void tide_stats_collect(tide_stats *s, const tide_profile *profile, const double seconds)
+{
+    if (!s->open || !profile) {
+        reset_times(s);
+        return;
+    }
+    const tide_profile_times *times = &profile->systems;
+    if (s->profile != profile) {
+        // Establish a baseline before this frame's ticks. A profile may have
+        // kept measuring for the F7 profiler while the drawer was closed.
+        reset_times(s);
+        s->profile = profile;
+        count_systems(s, times->count);
+        for (uint32_t i = 0; i < times->count; i++) {
+            tide_stats_system *to = &s->systems[i];
+            const tide_profile_time *from = &times->items[i];
+            memcpy(to->name, from->name, sizeof to->name);
+            to->from_ms = from->measured_ms;
+            to->from_count = from->measurements;
+        }
+        return;
+    }
+
+    bool changed = times->count != s->system_count;
+    if (changed) count_systems(s, times->count); // Profile counts reset every system's counters
+    for (uint32_t i = 0; i < times->count; i++) {
+        const tide_stats_system *to = &s->systems[i];
+        const tide_profile_time *from = &times->items[i];
+        changed |= memcmp(to->name, from->name, sizeof to->name) != 0 || from->measurements < to->from_count
+                   || from->measured_ms < to->from_ms;
+    }
+    if (changed) {
+        // A replaced build or match never inherits the old one's ranking or
+        // half-finished interval. Unchanged systems keep their counter baseline.
+        s->slow_count = 0;
+        s->span = 0.0;
+        for (uint32_t i = 0; i < times->count; i++) {
+            s->systems[i].total_ms = 0.0;
+            s->systems[i].count = 0;
+        }
+    }
+    for (uint32_t i = 0; i < times->count; i++) {
+        tide_stats_system *to = &s->systems[i];
+        const tide_profile_time *from = &times->items[i];
+        if (memcmp(to->name, from->name, sizeof to->name) != 0 || from->measurements < to->from_count
+            || from->measured_ms < to->from_ms) {
+            *to = (tide_stats_system){0};
+            memcpy(to->name, from->name, sizeof to->name);
+        }
+        to->total_ms += from->measured_ms - to->from_ms;
+        to->count += from->measurements - to->from_count;
+        to->from_ms = from->measured_ms;
+        to->from_count = from->measurements;
+    }
+    if (seconds > 0.0 && seconds <= DBL_MAX) s->span += seconds;
+    if (s->span < 0.5) return;
+
+    uint32_t slow[3], count = 0;
+    for (; count < 3; count++) {
+        uint32_t best = UINT32_MAX;
+        for (uint32_t i = 0; i < s->system_count; i++) {
+            const tide_stats_system *t = &s->systems[i];
+            bool taken = false;
+            for (uint32_t k = 0; k < count; k++) taken |= slow[k] == i;
+            if (taken || !t->name[0] || !t->count) continue;
+            if (best == UINT32_MAX || t->total_ms / (double)t->count
+                                          > s->systems[best].total_ms / (double)s->systems[best].count) best = i;
+        }
+        if (best == UINT32_MAX) break;
+        slow[count] = best;
+    }
+    // With no ticks, keep the last measured averages, rather than manufacture
+    // zero measurements of systems that never ran in these frames.
+    if (count) {
+        s->slow_count = count;
+        for (uint32_t i = 0; i < count; i++) {
+            const tide_stats_system *from = &s->systems[slow[i]];
+            memcpy(s->slow[i].name, from->name, sizeof s->slow[i].name);
+            s->slow[i].ms = from->total_ms / (double)from->count;
+        }
+    }
+    s->span = 0.0;
+    for (uint32_t i = 0; i < s->system_count; i++) {
+        s->systems[i].total_ms = 0.0;
+        s->systems[i].count = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,26 +275,14 @@ static tide_stats_line *add_line(tide_stats *s)
 
 #define LINE(s, ...) snprintf(add_line(s)->text, sizeof(((tide_stats_line *)0)->text), __VA_ARGS__)
 
-// The three systems that took longest in the last tick, slowest first. Ones
-// that took no time have a line too: a short system can fall under the clock's
-// resolution, and a line that came and went would move the ones above it.
-static void add_systems(tide_stats *s, const tide_profile *profile)
+// The three systems that took longest on average, slowest first. Ones measured
+// below the clock's resolution have a line too, so rows don't come and go.
+static void add_systems(tide_stats *s)
 {
-    const tide_profile_time *times = profile->systems.items;
-    const uint32_t count = profile->systems.count;
-    uint32_t slow[3];
-    for (uint32_t k = 0; k < 3; k++) {
-        uint32_t best = UINT32_MAX;
-        for (uint32_t i = 0; i < count; i++) {
-            bool taken = false;
-            for (uint32_t j = 0; j < k; j++) taken |= slow[j] == i;
-            if (!taken && times[i].name[0] && (best == UINT32_MAX || times[i].ms > times[best].ms)) best = i;
-        }
-        if (best == UINT32_MAX) return;
-        slow[k] = best;
+    for (uint32_t k = 0; k < s->slow_count; k++) {
         tide_stats_line *l = add_line(s);
-        snprintf(l->text, sizeof l->text, "%s %.2f ms", times[best].name, times[best].ms);
-        l->name = (uint32_t)strlen(times[best].name);
+        snprintf(l->text, sizeof l->text, "%s %.2f ms", s->slow[k].name, s->slow[k].ms);
+        l->name = (uint32_t)strlen(s->slow[k].name);
     }
 }
 
@@ -184,8 +294,13 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     // A match another machine runs has a ping to keep an eye on
     if (v->match && v->remote) LINE(s, "%.0f fps   ping %u ms", v->fps, (unsigned)v->ping_ms);
     else LINE(s, "%.0f fps", v->fps);
-    if (!s->open) return;
+    if (!s->open) {
+        reset_times(s);
+        return;
+    }
     if (v->work_ms >= 0.0) LINE(s, "cpu %.1f ms", v->work_ms);
+    if (v->render_known) LINE(s, "render cpu %.2f ms", v->render_ms);
+    if (v->gpu_known) LINE(s, "gpu %.2f ms", v->gpu_ms);
     if (v->match) {
         if (!v->remote) LINE(s, "ping %u ms", (unsigned)v->ping_ms);
         if (v->delay_ticks) LINE(s, "delay %u ticks", (unsigned)v->delay_ticks);
@@ -198,7 +313,7 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     if (v->memory) LINE(s, "memory %.0f MB", (double)v->memory / (1024.0 * 1024.0));
     if (v->renderer && v->renderer[0]) LINE(s, "%s", v->renderer);
     LINE(s, "%u draw calls", (unsigned)v->draw_calls);
-    if (v->match && v->profile) add_systems(s, v->profile);
+    if (v->match && v->profile == s->profile) add_systems(s);
 }
 
 static float width_of(const tide_measure_fn measure, const char *text)

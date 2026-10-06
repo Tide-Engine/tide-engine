@@ -1,7 +1,8 @@
 #pragma once
 
 // OpenGL as the platform layer uses it: the part OpenGL 3.3, OpenGL ES 3 and
-// WebGL 2 share, and only what the renderer calls (platform.c). No system
+// WebGL 2 share, plus core desktop timer queries, and only what the renderer
+// calls (gpu_gl.c). No system
 // header: Windows' stops at OpenGL 1.1, and each platform keeps its own
 // elsewhere.
 //
@@ -182,6 +183,26 @@ TIDE_GL_FUNCTIONS(TIDE_GL_DECLARE_V, TIDE_GL_DECLARE_R)
 
 #else
 
+typedef uint64_t GLuint64;
+
+enum {
+    GL_QUERY_COUNTER_BITS = 0x8864,
+    GL_QUERY_RESULT = 0x8866,
+    GL_QUERY_RESULT_AVAILABLE = 0x8867,
+    GL_TIME_ELAPSED = 0x88BF,
+};
+
+// Timer queries are core in OpenGL 3.3, but aren't in OpenGL ES 3 or WebGL 2.
+// Keep their functions separate from the imports those two share.
+#define TIDE_GL_TIMER_FUNCTIONS(V, R)                                                                                  \
+    V(BeginQuery, (GLenum target, GLuint query), (target, query))                                                      \
+    V(DeleteQueries, (GLsizei count, const GLuint *queries), (count, queries))                                        \
+    V(EndQuery, (GLenum target), (target))                                                                             \
+    V(GenQueries, (GLsizei count, GLuint *queries), (count, queries))                                                  \
+    V(GetQueryiv, (GLenum target, GLenum name, GLint *out), (target, name, out))                                        \
+    V(GetQueryObjectiv, (GLuint query, GLenum name, GLint *out), (query, name, out))                                   \
+    V(GetQueryObjectui64v, (GLuint query, GLenum name, GLuint64 *out), (query, name, out))
+
 // Windows' OpenGL functions are stdcall, which only 32-bit x86 tells from
 // the default.
 #ifdef _WIN32
@@ -194,6 +215,7 @@ TIDE_GL_FUNCTIONS(TIDE_GL_DECLARE_V, TIDE_GL_DECLARE_R)
 #define TIDE_GL_MEMBER_R(type, name, parameters, arguments) type(TIDE_GL_CALL *name) parameters;
 typedef struct tide_gl_functions {
     TIDE_GL_FUNCTIONS(TIDE_GL_MEMBER_V, TIDE_GL_MEMBER_R)
+    TIDE_GL_TIMER_FUNCTIONS(TIDE_GL_MEMBER_V, TIDE_GL_MEMBER_R)
 } tide_gl_functions;
 #undef TIDE_GL_MEMBER_V
 #undef TIDE_GL_MEMBER_R
@@ -216,6 +238,7 @@ bool tide_gl_load(tide_gl_proc (*find)(const char *name));
         return tide_gl.name arguments;                                                                                 \
     }
 TIDE_GL_FUNCTIONS(TIDE_GL_CALL_V, TIDE_GL_CALL_R)
+TIDE_GL_TIMER_FUNCTIONS(TIDE_GL_CALL_V, TIDE_GL_CALL_R)
 #undef TIDE_GL_CALL_V
 #undef TIDE_GL_CALL_R
 

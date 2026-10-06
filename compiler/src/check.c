@@ -15,6 +15,7 @@
 
 typedef struct checker {
     program *prog;
+    bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
     decl *method;             // The method or function being checked: a method's type's fields are in scope.
@@ -1052,7 +1053,7 @@ static bool holds_render_resource_in(const type t, const resource_outer *outer)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
-        && t.kind != TY_GRID && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+        && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
         if (p->type == t.decl) return false;
     }
@@ -1134,9 +1135,10 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     case TY_ERROR: return false;
     case TY_BYTE: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
         return true;
-    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
-        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s", set ? "set" : "map",
-                   t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: case TY_ARRAY:
+        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a%s %s", set ? "set" : "map",
+                   t.kind == TY_ARRAY ? "n" : "",
+                   t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : t.kind == TY_ARRAY ? "array" : "grid");
         return false;
     default:
         diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
@@ -1344,7 +1346,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
-    case TY_LIST: case TY_MAP: case TY_SET:
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
     case TY_STRUCT:
         if (holds_render_resource(t)) {
@@ -1405,7 +1407,7 @@ static bool grid_cell_ok(const type t, const loc at)
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
-    case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM:
+    case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
         if (holds_render_resource(t)) {
@@ -1531,12 +1533,25 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
 // one that isn't a type, which is said. What comes back is what the name
 // means: a place that can't hold it (a field no Action, a local no grid)
 // says so itself.
+static type resolve_named(const checker *c, const type_ref *r, type_place place, loc at);
+static type array_type(checker *c, type element, expr *size, loc at);
+
 static type resolve_type(const checker *c, const type_ref *r, const type_place place, const loc at)
+{
+    // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
+    if (r->optional) return unknown_type(c, r, at, place);
+    type t = resolve_named(c, r, place, at);
+    // int[4][8]: 4 arrays of 8, so the last length wraps first
+    for (int i = r->sizes.count - 1; i >= 0; i--) t = array_type((checker *)c, t, r->sizes.items[i], at);
+    return t;
+}
+
+// The type `r`'s name means, with what's in its <>: everything of it but the
+// lengths after it.
+static type resolve_named(const checker *c, const type_ref *r, const type_place place, const loc at)
 {
     const str name = r->name;
     type t;
-    // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
-    if (r->optional) return unknown_type(c, r, at, place);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) return t;
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
@@ -1581,13 +1596,120 @@ static const type_ref *type_ref_or_text(const type_ref *r, const str text)
     return made;
 }
 
-// Whether `e`, or what it's a member of, is a list's element or a grid's
-// cell: a copy, which can't be changed where it is.
+// ---------------------------------------------------------------------------
+// Arrays: T[N], N values side by side in the bytes of whatever holds them (docs/spec.md, Arrays)
+
+static bool fold_int(const expr *e, int64_t *out);
+static bool is_constant(const checker *c, const expr *e);
+static type check_constant_expr(checker *c, expr *value, bool typed, type want);
+
+// T[N]'s element type, and how many it holds.
+static type array_element(const type t)
+{
+    return t.decl->fields.items[0].type;
+}
+
+#define TIDE_ARRAY_MOST 4096 // Elements an array holds at most, and all of one's lengths together
+
+// T[N] for element type `element` and length `n`: one declaration for each,
+// so two int[32]s are the same type.
+static type array_of(program *prog, const type element, const int n, const loc at)
+{
+    for (int i = 0; i < prog->arrays.count; i++) {
+        const decl *a = prog->arrays.items[i];
+        const type t = a->fields.items[0].type;
+        if (a->array_length == n && t.kind == element.kind && t.decl == element.decl) return (type){TY_ARRAY, prog->arrays.items[i]};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_ARRAY;
+    d->builtin = true;
+    d->at = at;
+    d->array_length = n;
+    sb name = {0};
+    sb_printf(&name, "%s[%d]", type_name(element), n);
+    d->name = (str){name.data, (int)name.len};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
+    vec_push(d->fields, item);
+    d->index = prog->arrays.count;
+    vec_push(prog->arrays, d);
+    return (type){TY_ARRAY, d};
+}
+
+// How many elements an array of `t` holds, all of its lengths together: 1 for
+// anything that isn't an array.
+static int array_elements(const type t)
+{
+    int n = 1;
+    for (type a = t; a.kind == TY_ARRAY; a = array_element(a)) n *= a.decl->array_length;
+    return n;
+}
+
+// What an array's elements can be: plain values, which an array keeps side by
+// side in the bytes of whatever holds it, so nothing that needs the heap.
+static bool array_element_ok(const type t, const loc at)
+{
+    switch (t.kind) {
+    case TY_ERROR: return false;
+    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
+        return true;
+    case TY_STRUCT:
+        if (holds_heap(t) || holds_grid(t)) {
+            diag_error(at, "an array's elements can't be '" STR_FMT "': it holds %s", STR_ARG(t.decl->name),
+                       holds_grid(t) ? "a grid" : "text or a list");
+            diag_note("an array is its holder's own bytes, with nothing in the heap: a List<%s> holds them", type_name(t));
+            return false;
+        }
+        if (holds_render_resource(t)) {
+            diag_error(at, "an array can't hold rendering resources, including inside a struct");
+            return false;
+        }
+        return true;
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        diag_error(at, "an array's elements are plain values, not %s", t.kind == TY_STRING ? "text" : t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps or sets");
+        diag_note("an array is its holder's own bytes, with nothing in the heap: a list holds those, 'List<%s>'", type_name(t));
+        return false;
+    default:
+        diag_error(at, "an array's elements are plain values, like numbers, enums, vectors and structs of them, not %s", type_name(t));
+        if (t.kind == TY_COMPONENT) diag_note("to keep entities in an array, keep their Entity");
+        return false;
+    }
+}
+
+// `t[N]`, from what's written between the brackets: a constant from 1 to
+// TIDE_ARRAY_MOST, with every length of a nested array counted together.
+static type array_type(checker *c, const type element, expr *size, const loc at)
+{
+    if (element.kind == TY_ERROR) return T_ERR;
+    const type st = check_constant_expr(c, size, false, T_ERR);
+    int64_t n = 0;
+    if (st.kind == TY_ERROR) return T_ERR;
+    if (!type_is_integer(st) || !fold_int(size, &n)) {
+        diag_error(size->at, "an array's length is a constant int, like 'int[32] cells' or 'int[CAP] cells'");
+        if (!is_constant(c, size)) diag_note("it's part of the type, so it can't change: a list grows as it needs, 'List<int>'");
+        return T_ERR;
+    }
+    if (n < 1 || n > TIDE_ARRAY_MOST || (int64_t)array_elements(element) * n > TIDE_ARRAY_MOST) {
+        diag_error(size->at, "an array holds from 1 to %d elements, all of its lengths together, and this one would hold %lld",
+                   TIDE_ARRAY_MOST, (long long)((int64_t)array_elements(element) * n));
+        diag_note("an array is its holder's own bytes: for more, a list, 'List<%s>'", type_name(element));
+        return T_ERR;
+    }
+    // A forward struct's fields may not be known yet, or still contain a
+    // cycle. Check it once all structs are ordered, before walking its fields.
+    if ((element.kind != TY_STRUCT || c->fields_ordered) && !array_element_ok(element, at)) return T_ERR;
+    return array_of(c->prog, element, (int)n, at);
+}
+
+// Whether `e`, or what it's a member of, is a list's element, an array's or
+// a grid's cell: a copy, which can't be changed where it is.
 static bool through_element(const expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_INDEX
-            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_GRID)) {
+            && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_GRID
+                || e->object->type.kind == TY_ARRAY)) {
             return true;
         }
     }
@@ -1602,10 +1724,43 @@ static bool through_element(const expr *e)
 static bool element_in_place(const expr *receiver)
 {
     const expr *base = receiver;
-    while (base->kind == E_INDEX && (base->object->type.kind == TY_LIST || base->object->type.kind == TY_MAP)) base = base->object;
+    while (base->kind == E_INDEX
+           && (base->object->type.kind == TY_LIST || base->object->type.kind == TY_MAP || base->object->type.kind == TY_ARRAY)) {
+        base = base->object;
+    }
     if (!through_element(base)) return true;
     diag_error(receiver->at, "a list's element is a copy, so what it holds can't be changed where it is");
     diag_note("take it out, change it, and put it back: 'var e = items[i]; e.parts.Add(x); items[i] = e;'");
+    return false;
+}
+
+// A field of a struct that's a list's element, a map's value or an array's
+// element, written where it is: `rows[i].x = 1`, `rings[b].cells[j] = v`,
+// `rows[i].count++`. Generated code finds the element's slot and writes into
+// it (gen_element_assign in codegen.c), through fields and arrays' indexes
+// after the first container's, so a list or a map inside an element is still
+// a copy, and so is a grid's cell; and what's written holds nothing of the
+// heap, which a slot's bytes can't take. Says what's refused, and why.
+static bool element_path_in_place(const expr *target)
+{
+    const char *why = NULL;
+    const expr *cell = NULL;
+    if (holds_heap(target->type) || holds_grid(target->type)) why = "it holds text or a list, which an element's bytes can't take as they are";
+    for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
+        if (e->kind == E_MEMBER && (!e->field || e->swizzle_len > 0)) why = "it's a part of a value, not a field";
+        if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
+        if (e->kind == E_INDEX && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP) && through_element(e->object)) {
+            why = "it's in a list or a map inside the element";
+        }
+    }
+    if (cell) {
+        diag_error(target->at, "a grid's cell is a copy, so it can't be changed where it is");
+        diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
+        return false;
+    }
+    if (!why) return true;
+    diag_error(target->at, "a list's element is a copy, so it can't be changed where it is: %s", why);
+    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
     return false;
 }
 
@@ -1673,7 +1828,7 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
-    if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ERROR)) {
+    if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR)) {
         return check_list_literal(c, e, inner);
     }
     if (is_new_grid(e)) {
@@ -2998,7 +3153,7 @@ static bool arg_fits(const expr *arg, const param *p)
     const type inner = p->type.kind == TY_OPTIONAL ? wrapped_value(p->type) : p->type;
     if (arg->kind == E_DEFAULT) return p->mode != PARAM_MUT;
     if (arg->kind == E_NULL) return p->mode != PARAM_MUT && p->type.kind == TY_OPTIONAL;
-    if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP);
+    if (arg->kind == E_LIST) return p->mode != PARAM_MUT && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY);
     if (is_new_grid(arg)) return false; // Functions take no grids
     const type t = arg->type;
     if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
@@ -5301,7 +5456,7 @@ static bool text_shows_value(const type t)
 static bool text_shows_inside(const type t)
 {
     return t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_STRUCT
-        || t.kind == TY_EVENT || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET;
+        || t.kind == TY_EVENT || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_ARRAY;
 }
 
 #define TEXT_DEPTH 32
@@ -5881,6 +6036,19 @@ static type check_member(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_ARRAY) { // cells.count: how many it holds, a constant
+        if (str_eq_c(e->member, "count")) {
+            sb count = {0};
+            sb_printf(&count, "%d", obj.decl->array_length);
+            e->c_constant = count.data;
+            return T_INT_;
+        }
+        diag_error(e->at, "%s has 'count', and its elements by index, not '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
+        suggestion sg = suggest_start(e->member);
+        suggest_consider_c(&sg, "count");
+        suggest_note(&sg);
+        return T_ERR;
+    }
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) return T_INT_;
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
@@ -6310,8 +6478,11 @@ static type check_index(checker *c, expr *e)
     }
     const type index = check_expr(c, e->lhs);
     if (obj.kind == TY_ERROR) return T_ERR;
-    if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) diag_error(e->lhs->at, "a list's index is an int, not %s", type_name(index));
+    if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
+        diag_error(e->lhs->at, "%s index is an int, not %s", obj.kind == TY_ARRAY ? "an array's" : "a list's", type_name(index));
+    }
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
+    if (obj.kind == TY_ARRAY) return array_element(obj); // cells[i], or the element's zero past the end
     if (obj.kind != TY_LIST) {
         diag_error(e->at, "only lists and maps have elements to index, and this is %s", type_name(obj));
         if (obj.kind == TY_STRING) diag_note("a piece of text is 'text.Substring(start, length)'");
@@ -6328,6 +6499,21 @@ static type check_list_literal(checker *c, expr *e, const type want)
         diag_note("add entries one by one: 'scores[key] = value;'");
         for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
         return T_ERR;
+    }
+    if (want.kind == TY_ARRAY) { // [1, 2, 3] where an int[3] goes: exactly that many
+        const type element = array_element(want);
+        for (int i = 0; i < e->args.count; i++) {
+            expr *item = e->args.items[i];
+            const type t = check_expr_want(c, item, element);
+            if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the array");
+            else if (!type_assignable(element, t)) diag_error(item->at, "this array holds %s, not %s", type_name(element), type_name(t));
+        }
+        if (e->args.count != want.decl->array_length) {
+            diag_error(e->at, "%s holds exactly %d values, and this has %d", type_name(want), want.decl->array_length, e->args.count);
+            diag_note("write every element, or 'default' for all zeros");
+        }
+        e->type = want;
+        return want;
     }
     if (want.kind != TY_LIST && want.kind != TY_SET) {
         for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
@@ -7133,7 +7319,15 @@ static type check_expr_any(checker *c, expr *e)
     case E_STRING: t = (type){TY_STRING, NULL}; break;
     case E_NAME: t = check_name(c, e); break;
     case E_THIS: t = check_this(c, e); break;
-    case E_MEMBER: t = check_member(c, e); break;
+    case E_MEMBER:
+        t = check_member(c, e);
+        // rows[i].x: a field of a list's element or a map's value, read or written where it is (element paths),
+        // so generated C has the helpers that point at one
+        if (e->object->kind == E_INDEX && e->object->object->type.decl
+            && (e->object->object->type.kind == TY_LIST || e->object->object->type.kind == TY_MAP) && builds(c->prog)) {
+            e->object->object->type.decl->paths = true;
+        }
+        break;
     case E_CALL: t = check_call(c, e); refuse_arg_names(e, t); break;
     case E_METHOD: t = check_method(c, e); refuse_arg_names(e, t); break;
     case E_LITERAL: t = check_literal(c, e); break;
@@ -7203,7 +7397,14 @@ static type check_expr_any(checker *c, expr *e)
             vec_push(e->format_codes, text_format(value, e->formats.items[i]));
         }
         break;
-    case E_INDEX: t = check_index(c, e); break;
+    case E_INDEX:
+        t = check_index(c, e);
+        // rows[i][j] where rows[i] is an array: read through a pointer at the element (element paths), as a field is
+        if (t.kind != TY_ERROR && e->object->type.kind == TY_ARRAY && e->object->kind == E_INDEX && e->object->object->type.decl
+            && (e->object->object->type.kind == TY_LIST || e->object->object->type.kind == TY_MAP) && builds(c->prog)) {
+            e->object->object->type.decl->paths = true;
+        }
+        break;
     case E_LIST:
         diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
         for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
@@ -8062,17 +8263,11 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
-    if (s->target->kind == E_INDEX && !element_in_place(s->target->object)) return;
-    if (s->target->kind != E_INDEX && through_element(s->target)) {
-        const expr *at = s->target;
-        while (at->kind != E_INDEX) at = at->object;
-        if (at->object->type.kind == TY_GRID) {
-            diag_error(s->target->at, "a grid's cell is a copy, so it can't be changed where it is");
-            diag_note("take it out, change it, and put it back: 'var c = cells[p]; c.x = 5; cells[p] = c;'");
-        } else {
-            diag_error(s->target->at, "a list's element is a copy, so it can't be changed where it is");
-            diag_note("take it out, change it, and put it back: 'var e = items[i]; e.x = 5; items[i] = e;'");
-        }
+    // rows[i][j] = v: a container that's an element, changed where it is; rings[b].cells[j] = v and rows[i].x = v: an
+    // element's fields and arrays, through the element's slot
+    if (s->target->kind == E_INDEX && s->target->object->type.kind != TY_ARRAY) {
+        if (!element_in_place(s->target->object)) return;
+    } else if (through_element(s->target) && !element_path_in_place(s->target)) {
         return;
     }
     if (target.kind == TY_GRID && value.kind != TY_ERROR && !is_new_grid(s->value)) {
@@ -8574,7 +8769,7 @@ static void check_var(checker *c, stmt *s)
         if (s->value->kind == E_DEFAULT || s->value->kind == E_NULL || (optional && s->value->kind == E_LIST)) {
             value = check_expr_want(c, s->value, s->type);
         } else if (s->value->kind == E_LIST) {
-            if (s->type.kind != TY_LIST && s->type.kind != TY_SET && s->type.kind != TY_MAP && s->type.kind != TY_ERROR) {
+            if (s->type.kind != TY_LIST && s->type.kind != TY_SET && s->type.kind != TY_MAP && s->type.kind != TY_ARRAY && s->type.kind != TY_ERROR) {
                 diag_error(s->value->at, "can't initialize %s with a list", type_name(s->type));
                 const type_kind k = s->type.kind;
                 const bool holdable = k != TY_COMPONENT && k != TY_SINGLETON && k != TY_INPUT && k != TY_RECORD
@@ -8754,8 +8949,10 @@ static void check_stmt(checker *c, stmt *s)
             element = list.decl->dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
         } else if (list.kind == TY_RECORD && list.decl->array_of) { // touches: every one, in use or not
             element = (type){TY_RECORD, list.decl->array_of};
+        } else if (list.kind == TY_ARRAY) { // Its elements, each a copy
+            element = array_element(list);
         } else if (list.kind != TY_ERROR) {
-            diag_error(s->value->at, "foreach goes through a list, a map, a set, a grid or an entity query, and this is %s", type_name(list));
+            diag_error(s->value->at, "foreach goes through a list, an array, a map, a set, a grid or an entity query, and this is %s", type_name(list));
         }
         if (s->type_name.len > 0) {
             if (s->query) {
@@ -9006,6 +9203,10 @@ static type constant_type(const checker *c, const decl *k)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     const type_ref *const r = type_ref_or_text(k->return_type_ref, k->return_type_name);
+    if (r->sizes.count > 0) {
+        diag_error(at, "a constant can't be an array yet");
+        return T_ERR;
+    }
     if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>
         const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
         diag_error(at, "a constant can't be a %s yet", what);
@@ -9384,11 +9585,13 @@ static void check_bound(checker *c, const field *f, expr *value)
         suggest_constant(c, value);
         return;
     }
-    const type t = check_constant_expr(c, value, f->type.kind == TY_BYTE, f->type.kind == TY_BYTE ? f->type : T_ERR);
-    if (t.kind == TY_ERROR || f->type.kind == TY_ERROR) return;
-    const bool splat = type_dim(t) == 1 && type_is_numeric(t) && type_dim(f->type) > 1
-                    && (type_is_float_based(f->type) || type_is_int_based(t));
-    if (!type_assignable(f->type, t) && !splat) {
+    type ft = f->type; // An array's bound is each element's
+    while (ft.kind == TY_ARRAY) ft = array_element(ft);
+    const type t = check_constant_expr(c, value, ft.kind == TY_BYTE, ft.kind == TY_BYTE ? ft : T_ERR);
+    if (t.kind == TY_ERROR || ft.kind == TY_ERROR) return;
+    const bool splat = type_dim(t) == 1 && type_is_numeric(t) && type_dim(ft) > 1
+                    && (type_is_float_based(ft) || type_is_int_based(t));
+    if (!type_assignable(ft, t) && !splat) {
         diag_error(value->at, "the bound is %s, but field '" STR_FMT "' is %s", type_name(t), STR_ARG(f->name),
                    type_name(f->type));
     }
@@ -9517,7 +9720,9 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         has_clamp |= clamp;
         has_min |= min;
         has_max |= max;
-        if (f->type.kind != TY_ERROR && !type_is_numeric(f->type) && f->type.kind != TY_LONG) {
+        type bounded = f->type; // An array's bound is each element's
+        while (bounded.kind == TY_ARRAY) bounded = array_element(bounded);
+        if (bounded.kind != TY_ERROR && !type_is_numeric(bounded) && bounded.kind != TY_LONG) {
             diag_error(a->at, "[" STR_FMT "] works on numbers and vectors, not %s", STR_ARG(a->name), type_name(f->type));
             continue;
         }
@@ -9640,8 +9845,10 @@ static void order_struct(program *prog, decl *d)
     d->index = 1;
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
-        if (f->type.kind != TY_STRUCT) continue;
-        decl *const inner = f->type.decl;
+        type contained = f->type;
+        while (contained.kind == TY_ARRAY) contained = array_element(contained);
+        if (contained.kind != TY_STRUCT) continue;
+        decl *const inner = contained.decl;
         if (inner->index == 1) {
             if (inner == d) {
                 diag_error(f->type_at, "struct '" STR_FMT "' can't contain itself", STR_ARG(d->name));
@@ -12482,6 +12689,7 @@ static void collect_decls(program *prog)
         case DECL_LIST:
         case DECL_MAP:
         case DECL_GRID:
+        case DECL_ARRAY:
         case DECL_RESULT:
         case DECL_FUNCTION:
         case DECL_CONST:
@@ -14616,6 +14824,13 @@ bool check(program *prog)
             c.unit = prog->decls.items[i]->unit;
             check_enum(&c, prog->decls.items[i]);
         }
+    }
+    c.fields_ordered = true;
+    // Arrays made while resolving fields, including those in a container's
+    // arguments, now see every forward struct's fields and no containment cycle.
+    for (int i = 0; i < prog->arrays.count; i++) {
+        decl *const a = prog->arrays.items[i];
+        if (!array_element_ok(a->fields.items[0].type, a->at)) a->fields.items[0].type = T_ERR;
     }
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];

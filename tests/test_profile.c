@@ -21,15 +21,18 @@ TIDE_TEST(profile_times_add_up_until_cleared)
     tide_profile_add(&p.systems, 0, "Move", 20 * MS, 23 * MS);
     TIDE_CHECK(strcmp(p.systems.items[0].name, "Move") == 0 && strcmp(p.systems.items[1].name, "Combat.Hit") == 0);
     TIDE_CHECK(p.systems.items[0].ms == 3.0 && p.systems.items[0].total == 5.0); // The last time, and all of them
+    TIDE_CHECK(p.systems.items[0].measured_ms == 5.0 && p.systems.items[0].measurements == 2);
     TIDE_CHECK(p.systems.items[1].ms == 1.0 && p.systems.items[1].total == 1.0);
 
     tide_profile_add(&p.systems, 1, "Combat.Hit", 5 * MS, 4 * MS); // A clock that went back is no time
     TIDE_CHECK(p.systems.items[1].ms == 0.0 && p.systems.items[1].total == 1.0);
+    TIDE_CHECK(p.systems.items[1].measured_ms == 1.0 && p.systems.items[1].measurements == 2);
     tide_profile_add(&p.systems, 7, "Nowhere", 0, MS); // Past the last: nothing
     TIDE_CHECK(p.systems.count == 2);
 
     tide_profile_clear(&p);
     TIDE_CHECK(p.systems.items[0].total == 0.0 && p.systems.items[0].ms == 3.0); // Totals go; the last time stays
+    TIDE_CHECK(p.systems.items[0].measured_ms == 5.0 && p.systems.items[0].measurements == 2);
     TIDE_CHECK(strcmp(p.systems.items[0].name, "Move") == 0);
     tide_profile_free(&p);
     TIDE_CHECK(!p.systems.items && p.systems.count == 0);
@@ -44,9 +47,11 @@ TIDE_TEST(profile_starts_over_for_another_build)
     tide_profile_add(&p.systems, 1, "Hit", 0, 2 * MS);
     tide_profile_add(&p.systems, 0, "Fall", 0, MS); // The same place, another system
     TIDE_CHECK(strcmp(p.systems.items[0].name, "Fall") == 0 && p.systems.items[0].total == 1.0);
+    TIDE_CHECK(p.systems.items[0].measured_ms == 1.0 && p.systems.items[0].measurements == 1);
     TIDE_CHECK(p.systems.items[1].total == 2.0);
     tide_profile_count(&p.systems, 3); // Another count: all of them start over
     TIDE_CHECK(p.systems.count == 3 && p.systems.items[1].total == 0.0 && p.systems.items[1].name[0] == '\0');
+    TIDE_CHECK(p.systems.items[1].measured_ms == 0.0 && p.systems.items[1].measurements == 0);
 
     // A name too long to keep is cut, and still the same name the next time
     const char *name = "A.Name.That.Goes.On.For.Longer.Than.A.Profile.Keeps.Names";

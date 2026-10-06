@@ -65,6 +65,73 @@ static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
 static bool pass_texture; // Its rows go from the top, as uploaded textures' do
 
+#if !defined(__wasm__) && !defined(__ANDROID__)
+enum { GL_TIME_SAMPLES = 4 };
+static struct {
+    GLuint queries[GL_TIME_SAMPLES];
+    unsigned first, count;
+    bool checked, supported, active;
+} timing;
+#endif
+
+static void gl_time_begin(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!timing.checked) {
+        timing.checked = true;
+        if (!tide_gl.BeginQuery || !tide_gl.EndQuery || !tide_gl.GenQueries || !tide_gl.DeleteQueries ||
+            !tide_gl.GetQueryiv || !tide_gl.GetQueryObjectiv || !tide_gl.GetQueryObjectui64v) return;
+        GLint bits = 0;
+        glGetQueryiv(GL_TIME_ELAPSED, GL_QUERY_COUNTER_BITS, &bits);
+        if (!bits) return; // A core query can have no useful timer counter.
+        glGenQueries(GL_TIME_SAMPLES, timing.queries);
+        timing.supported = true;
+    }
+    // Never reuse a query whose result hasn't been read: a busy GPU simply
+    // skips this frame's sample instead of holding up the CPU.
+    if (!timing.supported || timing.active || timing.count == GL_TIME_SAMPLES) return;
+    glBeginQuery(GL_TIME_ELAPSED, timing.queries[(timing.first + timing.count) % GL_TIME_SAMPLES]);
+    timing.active = true;
+#endif
+}
+
+static void gl_time_end(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!timing.active) return;
+    glEndQuery(GL_TIME_ELAPSED);
+    timing.active = false;
+    timing.count++;
+#endif
+}
+
+static double gl_time_read(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (!timing.count) return -1.0;
+    const GLuint query = timing.queries[timing.first];
+    GLint available = GL_FALSE;
+    glGetQueryObjectiv(query, GL_QUERY_RESULT_AVAILABLE, &available);
+    if (!available) return -1.0;
+    GLuint64 nanoseconds = 0;
+    glGetQueryObjectui64v(query, GL_QUERY_RESULT, &nanoseconds);
+    timing.first = (timing.first + 1u) % GL_TIME_SAMPLES;
+    timing.count--;
+    return (double)nanoseconds / 1000000.0;
+#else
+    return -1.0;
+#endif
+}
+
+static void gl_time_reset(void)
+{
+#if !defined(__wasm__) && !defined(__ANDROID__)
+    if (timing.active) glEndQuery(GL_TIME_ELAPSED);
+    if (timing.supported) glDeleteQueries(GL_TIME_SAMPLES, timing.queries);
+    memset(&timing, 0, sizeof timing);
+#endif
+}
+
 // Room for names up to `name` in an array of `size`-byte elements, zeroed.
 static void *room(void *array, uint32_t *count, const uint32_t name, const size_t size)
 {
@@ -470,6 +537,10 @@ static uint32_t gl_epoch(void)
 const tide_gpu tide_gpu_gl = {
     .name = GL_NAME,
     .epoch = gl_epoch,
+    .time_begin = gl_time_begin,
+    .time_end = gl_time_end,
+    .time_read = gl_time_read,
+    .time_reset = gl_time_reset,
     .buffer = gl_buffer_make,
     .buffer_write = gl_buffer_write,
     .buffer_free = gl_buffer_free,

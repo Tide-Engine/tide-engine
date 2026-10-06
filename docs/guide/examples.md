@@ -14,6 +14,10 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Whose input a system reads](../game/input.md#who-gets-which-input): `Owner`, traded between two players, and a body nobody owns.
 - [A command, and a handler that says no](../game/commands.md#handling): an action sent into the match, and the handler that checks who sent it.
 
+## Samples
+
+- [Samples](./samples.md): a gallery of complete games to open in your browser and play with friends.
+
 ## The match
 
 - [Spawn, Add, Remove and Destroy](../game/entities.md#changing-entities): entities and their components, changed by taps.

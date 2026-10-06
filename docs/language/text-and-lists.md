@@ -113,6 +113,40 @@ system Upgrade(mut Fighter fighter, Draft draft)
 }
 ```
 
+## Arrays
+
+`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`. An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
+
+```csharp
+const int CAP = 32;
+
+struct Ring
+{
+    int[CAP] cells;
+    int head;
+}
+
+component Trail
+{
+    float3[16] points;
+    int next;
+}
+
+system Record(mut Trail trail, Body body)
+{
+    trail.points[trail.next] = body.position;
+    trail.next = (trail.next + 1) % trail.points.count;
+}
+```
+
+Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+
+`a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
+
+## Changing an element where it is
+
+A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A field that holds text or a list, and anything in a list or a map inside the element, is still taken out, changed and put back (`var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
+
 ## Lists inside lists
 
 A list's elements can be lists, maps or sets, and structs that hold them, as deep as you like: `List<List<int>>`, `List<Build>` with the `Build` above, `Map<int, List<Entity>>`. A map's values can too. What can't go inside another container is a grid, which is never copied, and a key or a grid's cell is still a plain value.

@@ -1,0 +1,3 @@
+// expect: an array's elements are plain values, not lists
+scene Main { }
+component Rows { List<int>[4] rows; }

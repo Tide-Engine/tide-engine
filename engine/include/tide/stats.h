@@ -35,6 +35,7 @@
 //     tide_gui_begin(&gui, &seen, screen, tide_platform_measure_text);
 //     ...
 //     tide_platform_draw(&draw);
+//     tide_stats_collect(&stats, values.profile, seconds);
 //     tide_draw_reset(&over);
 //     tide_stats_draw(&stats, &values, &over, screen, tide_platform_measure_text);
 //     tide_platform_draw_over(&over);
@@ -48,6 +49,10 @@
 typedef struct tide_stats_values {
     double fps;           // Frames a second
     double work_ms;       // What a frame's work takes on its thread; under 0 while it isn't known
+    double render_ms;     // The CPU's rendering work per frame
+    double gpu_ms;        // The GPU's rendering work per frame, when its backend can measure it
+    bool render_known;
+    bool gpu_known;
     uint32_t threads;     // What ticks run on
     uint64_t memory;      // Bytes the program has; 0 where the system doesn't say
     const char *renderer; // What draws, like "WebGPU"; NULL for no line
@@ -60,13 +65,12 @@ typedef struct tide_stats_values {
     double up, down;      // Bytes a second over the network
     int32_t tick;
     uint32_t entities;
-    // What its ticks said their systems took, for the three that took longest
-    // in the last one; NULL for none
+    // The profile collected by tide_stats_collect; NULL for no system lines
     const tide_profile *profile;
 } tide_stats_values;
 
 // The line that's always there, and every line of the list above it.
-#define TIDE_STATS_LINES 16
+#define TIDE_STATS_LINES 17
 
 typedef struct tide_stats_line {
     char text[TIDE_PROFILE_NAME + 24];
@@ -78,6 +82,19 @@ typedef struct tide_stats_finger {
     int32_t id; // Its touch's; 0 for none
     bool held;  // It hasn't lifted yet
 } tide_stats_finger;
+
+// A system's measurements since the drawer last took stock, and the counters
+// they came from. Names are copied: the game's library may have been replaced.
+typedef struct tide_stats_system {
+    char name[TIDE_PROFILE_NAME];
+    double from_ms, total_ms;
+    uint64_t from_count, count;
+} tide_stats_system;
+
+typedef struct tide_stats_time {
+    char name[TIDE_PROFILE_NAME];
+    double ms;
+} tide_stats_time;
 
 // A zeroed one is ready to use, closed.
 typedef struct tide_stats {
@@ -96,6 +113,14 @@ typedef struct tide_stats {
     uint8_t buttons_held; // The mouse's buttons at the last frame, a bit each, the left one's first
     uint8_t buttons;      // ...and the ones that went down on the drawer, until a sample is done with each
     tide_stats_finger fingers[TIDE_TOUCHES]; // The fingers that touched it, while each has its slot
+    // The three slowest systems' average per measurement. Their names, order
+    // and values stay until another half-second of measurements is collected.
+    tide_stats_time slow[3];
+    uint32_t slow_count;
+    double span;
+    const tide_profile *profile;
+    tide_stats_system *systems;
+    uint32_t system_count, system_room;
 } tide_stats;
 
 // Once a frame, after the devices were polled (the pointer too:
@@ -114,6 +139,17 @@ bool tide_stats_pressed(const tide_stats *s);
 // are about to read: the mouse's buttons that went down on it, the fingers
 // that touched it, and the pointer's press when it's one of those.
 void tide_stats_hide(const tide_stats *s, tide_devices *devices);
+
+// Once a frame while shown, after its ticks: collect the profile's new system
+// measurements, and take stock every half-second of `seconds`. Frames with no
+// tick add no samples. Call once with 0 seconds before ticking when the drawer
+// opens, to exclude what the profile measured while it was closed. NULL means
+// there's no match: any old system lines go. Closing or switching the drawer
+// off also drops its measurements. The profiler may clear its own totals.
+void tide_stats_collect(tide_stats *s, const tide_profile *profile, double seconds);
+
+// Lets its memory go: it's zeroed, and ready to use again.
+void tide_stats_free(tide_stats *s);
 
 // Adds the drawer to `list`, over what's there, in the bottom right corner of
 // a screen of `screen` pixels, and remembers where: its one line, and above
