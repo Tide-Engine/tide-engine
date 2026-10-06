@@ -135,6 +135,8 @@ void b2AddContactToGraph( b2World* world, b2ContactSim* contactSim, b2Contact* c
 #endif
 
 	b2GraphColor* color = graph->colors + colorIndex;
+	// Tide: a contact that's told where it is in the graph (see b2SnapTrack)
+	b2SnapTouchContact( world, contact->contactId );
 	contact->colorIndex = colorIndex;
 	contact->localIndex = color->contactSims.count;
 
@@ -209,6 +211,8 @@ void b2RemoveContactFromGraph( b2World* world, int bodyIdA, int bodyIdB, int col
 		B2_ASSERT( movedContact->colorIndex == colorIndex );
 		B2_ASSERT( movedContact->localIndex == movedIndex );
 		movedContact->localIndex = localIndex;
+		// Tide: another contact of the color, which is told where it is now (see b2SnapTrack)
+		b2SnapTouchContact( world, movedId );
 	}
 }
 

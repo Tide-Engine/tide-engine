@@ -31,7 +31,7 @@ enum { FLAG_END = 1, FLAG_BEGIN = 2, FLAG_UNORDERED = 4 };
 
 #define A_RWND (1u << 20)
 #define STREAMS 1024u
-#define CONNECT_TIMEOUT 20.0
+#define CONNECT_TIMEOUT 20.0 // Seconds the association and the channel on it have to come up
 #define GIVE_UP_AFTER 0.2 // Seconds before a message not acknowledged is given up on
 #define RESEND_AFTER 0.5  // The channel's open and ack
 
@@ -157,20 +157,26 @@ static void deliver(rtc_sctp *s, const uint16_t stream, const uint32_t ppid, con
                     const double now)
 {
     if (ppid == PPID_DCEP && size >= 1) {
+        rtc_debug("sctp: their channel message %u on stream %u", (unsigned)data[0], (unsigned)stream);
         if (data[0] == DCEP_OPEN) {
             // Their channel: ours now, acknowledged on its stream
             s->stream = stream;
             s->channel = true;
+            s->connected = true;
             s->ssn = 0;
             static const uint8_t ack = DCEP_ACK;
             send_dcep(s, &ack, 1, now);
         } else if (data[0] == DCEP_ACK && s->opening && stream == s->stream) {
             s->channel = true;
+            s->connected = true;
         }
         return;
     }
     if (!s->channel || stream != s->stream) return;
-    if (ppid == PPID_BINARY || ppid == PPID_STRING) s->message(s->user, data, size);
+    if (ppid == PPID_BINARY || ppid == PPID_STRING) {
+        if (!s->messages_in++) rtc_debug("sctp: their first message (%u bytes)", (unsigned)size);
+        s->message(s->user, data, size);
+    }
 }
 
 // A piece of a message: kept until the pieces from BEGIN to END are all here.
@@ -231,7 +237,13 @@ static void on_data(rtc_sctp *s, const uint8_t flags, const uint8_t *v, const si
     const uint32_t ppid = rtc_get32(v + 8);
     if (!s->unacknowledged) s->first_unacknowledged = now;
     s->unacknowledged++;
-    if (!after(tsn, s->cumulative) || tsn - s->cumulative > RTC_SCTP_WINDOW || has(s, tsn)) return; // Seen, or too far
+    if (!after(tsn, s->cumulative) || tsn - s->cumulative > RTC_SCTP_WINDOW || has(s, tsn)) { // Seen, or too far
+        if (ppid == PPID_DCEP) {
+            rtc_debug("sctp: a channel message of theirs passed by, as %u: we're at %u", (unsigned)tsn,
+                      (unsigned)s->cumulative);
+        }
+        return;
+    }
     mark(s, tsn, true);
     if ((flags & (FLAG_BEGIN | FLAG_END)) == (FLAG_BEGIN | FLAG_END)) {
         deliver(s, stream, ppid, v + 12, size - 12, now);
@@ -469,6 +481,7 @@ static void send_dcep(rtc_sctp *s, const uint8_t *message, const size_t size, co
 void rtc_sctp_send(rtc_sctp *s, const void *data, const size_t size, const double now)
 {
     if (s->state != RTC_SCTP_OPEN || !s->channel || size == 0 || size > 1200) return;
+    if (!s->messages_out++) rtc_debug("sctp: our first message (%u bytes)", (unsigned)size);
     uint8_t v[12 + 1200];
     const uint32_t tsn = s->next_tsn;
     const size_t n = data_value(s, v, 0, PPID_BINARY, data, size);
@@ -511,11 +524,21 @@ void rtc_sctp_start(rtc_sctp *s, const bool initiator, const uint16_t their_port
 void rtc_sctp_update(rtc_sctp *s, const double now)
 {
     if (s->state == RTC_SCTP_FAILED || s->state == RTC_SCTP_CLOSED) return;
+    // Connecting is the association and then the channel on it, in the one
+    // time. An association that's up says nothing of theirs (ours is, from
+    // their COOKIE ECHO on, whether our COOKIE ACK reaches them or not), and
+    // leaves the side that opened the channel waiting for the acknowledgement
+    // and the other for the open: a wait with no end, were it not counted,
+    // and with nothing to tell whoever is joining that it failed.
+    if (!s->connected && now - s->started > CONNECT_TIMEOUT) {
+        rtc_debug("sctp: gave up connecting: %s",
+                  s->state == RTC_SCTP_CONNECTING ? "no association"
+                  : s->opening                    ? "the channel's open was never acknowledged"
+                                                  : "they never opened the channel");
+        s->state = RTC_SCTP_FAILED;
+        return;
+    }
     if (s->state == RTC_SCTP_CONNECTING) {
-        if (now - s->started > CONNECT_TIMEOUT) {
-            s->state = RTC_SCTP_FAILED;
-            return;
-        }
         // INIT (or our COOKIE ECHO) again. A side that waits for the other's
         // INIT sends its own after a second without one.
         const bool due = s->initiator || now - s->started > 1.0;

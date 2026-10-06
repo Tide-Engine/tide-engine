@@ -1,0 +1,7 @@
+// expect: a list that's an element of another is sorted as a copy, taken out and put back
+component Table { List<List<int>> rows; }
+scene Main { }
+system Order(mut Table table)
+{
+    table.rows[0].Sort(a, b) { return a < b; }
+}

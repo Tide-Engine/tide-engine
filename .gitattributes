@@ -3,6 +3,11 @@
 compiler/tests/errors/*_crlf.tide -text
 compiler/tests/e2e/crlf.tide -text
 
+# The files the asset tests' games are built with: a game reads an asset's
+# bytes as they are, so a checkout that made their line endings Windows' would
+# give the tests other text than they expect.
+compiler/tests/e2e/assets/** -text
+
 # The platform's font, and code vendored as it came.
 *.ttf binary
 platform/third_party/* -text

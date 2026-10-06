@@ -1,0 +1,4 @@
+// expect: a grid's cells can't be maps
+// expect: cells are plain values, side by side in their chunk: keep the map elsewhere, and a number for it in the cell
+scene Main { }
+singleton Field { Grid2<Map<int, int>> cells; }

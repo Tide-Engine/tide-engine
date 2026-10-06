@@ -30,6 +30,10 @@ b2Island* b2CreateIsland( b2World* world, int setIndex )
 
 	b2SolverSet* set = b2Array_Get( world->solverSets, setIndex );
 
+	// Tide: the set an island is put in, and the islands (see b2SnapTrack)
+	b2SnapTouchSet( world, setIndex );
+	b2SnapTouchIslands( world );
+
 	b2Island* island = b2Array_Get( world->islands, islandId );
 	island->setIndex = setIndex;
 	island->localIndex = set->islandSims.count;
@@ -55,6 +59,9 @@ void b2DestroyIsland( b2World* world, int islandId )
 	// assume island is empty
 	b2Island* island = b2Array_Get( world->islands, islandId );
 	b2SolverSet* set = b2Array_Get( world->solverSets, island->setIndex );
+	// Tide: the set an island is taken out of, and the islands (see b2SnapTrack)
+	b2SnapTouchSet( world, island->setIndex );
+	b2SnapTouchIslands( world );
 	{
 		int localIndex = island->localIndex;
 		int lastIndex = set->islandSims.count - 1;
@@ -117,6 +124,9 @@ static int b2MergeIslands( b2World* world, int islandIdA, int islandIdB )
 		}
 	}
 
+	// Tide: an island takes another's bodies, contacts and joints (see b2SnapTrack)
+	b2SnapTouchIslands( world );
+
 	int bigIslandId = bigIsland->islandId;
 	b2Array_Reserve( bigIsland->bodies, bigIsland->bodies.count + smallIsland->bodies.count );
 
@@ -129,6 +139,8 @@ static int b2MergeIslands( b2World* world, int islandIdA, int islandIdB )
 		body->islandId = bigIslandId;
 		body->islandIndex = bigIsland->bodies.count;
 		b2Array_Push( bigIsland->bodies, bodyId );
+		// Tide: a body that's told its island (see b2SnapTrack)
+		b2SnapTouchBody( world, bodyId );
 	}
 
 	// Migrate contacts from smaller island to larger island
@@ -143,6 +155,8 @@ static int b2MergeIslands( b2World* world, int islandIdA, int islandIdB )
 			contact->islandId = bigIslandId;
 			contact->islandIndex = bigIsland->contacts.count;
 			b2Array_Push( bigIsland->contacts, *link );
+			// Tide: and a contact
+			b2SnapTouchContact( world, link->contactId );
 		}
 	}
 
@@ -177,6 +191,10 @@ static void b2AddContactToIsland( b2World* world, int islandId, b2Contact* conta
 	B2_ASSERT( contact->islandIndex == B2_NULL_INDEX );
 
 	b2Island* island = b2Array_Get( world->islands, islandId );
+
+	// Tide: a contact that's told its island, which has it from here on (see b2SnapTrack)
+	b2SnapTouchContact( world, contact->contactId );
+	b2SnapTouchIslands( world );
 
 	contact->islandId = islandId;
 	contact->islandIndex = island->contacts.count;
@@ -252,7 +270,13 @@ void b2UnlinkContact( b2World* world, b2Contact* contact )
 		b2Contact* movedContact = b2Array_Get( world->contacts, movedLink->contactId );
 		B2_ASSERT( movedContact->islandIndex == movedIndex );
 		movedContact->islandIndex = removeIndex;
+		// Tide: another contact of the island, which is told where it is in it now (see b2SnapTrack)
+		b2SnapTouchContact( world, movedLink->contactId );
 	}
+
+	// Tide: and the contact that leaves it, and the island, which counts what was taken out of it
+	b2SnapTouchContact( world, contact->contactId );
+	b2SnapTouchIslands( world );
 
 	contact->islandId = B2_NULL_INDEX;
 	contact->islandIndex = B2_NULL_INDEX;
@@ -267,6 +291,9 @@ static void b2AddJointToIsland( b2World* world, int islandId, b2Joint* joint )
 	B2_ASSERT( joint->islandIndex == B2_NULL_INDEX );
 
 	b2Island* island = b2Array_Get( world->islands, islandId );
+
+	// Tide: an island that takes a joint (see b2SnapTrack)
+	b2SnapTouchIslands( world );
 
 	joint->islandId = islandId;
 	joint->islandIndex = island->joints.count;
@@ -318,6 +345,9 @@ void b2UnlinkJoint( b2World* world, b2Joint* joint )
 	// remove from island
 	int islandId = joint->islandId;
 	b2Island* island = b2Array_Get( world->islands, islandId );
+
+	// Tide: an island that a joint leaves (see b2SnapTrack)
+	b2SnapTouchIslands( world );
 
 	int removeIndex = joint->islandIndex;
 	B2_ASSERT( 0 <= removeIndex && removeIndex < island->joints.count );
@@ -391,6 +421,12 @@ void b2SplitIsland( b2World* world, int baseId )
 	b2Island* baseIsland = b2Array_Get( world->islands, baseId );
 	B2_ASSERT( baseIsland->constraintRemoveCount > 0 );
 	B2_ASSERT( baseIsland->setIndex == b2_awakeSet );
+
+	// Tide: an island that becomes several (see b2SnapTrack). This may be a task of the step's, one at a time,
+	// while nothing else says anything: the step waits for it before it goes on. Nothing is said here of the
+	// bodies and the contacts that are told their new island: they're an awake island's, and what's awake is
+	// taken to have changed.
+	b2SnapTouchIslands( world );
 
 	b2ValidateIsland( world, baseId );
 
