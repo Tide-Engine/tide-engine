@@ -938,7 +938,10 @@ void b2t_leave(tide_rows *rows, const physics *p)
         if (id == 0) continue;
         const uint32_t index = (uint32_t)f.id[i];
         const left *l = index < left_room && lefts[index].step == stepped && lefts[index].id == id ? &lefts[index] : NULL;
-        const int32_t flags = f.flags[i];
+        // Whether it's asleep, where that can be other than its component says: a body the step says
+        // something of, and any body in a tick whose step put bodies to sleep for code
+        const bool looked = l || slept;
+        const int32_t flags = looked ? f.flags[i] : 0;
         bool asleep = l ? !l->awake : flags_step_asleep(flags);
         bool placed = true; // Its place and speeds are to be written
         float x = 0;
@@ -974,7 +977,7 @@ void b2t_leave(tide_rows *rows, const physics *p)
             }
         }
         const int32_t left_as = flags_left(flags, asleep);
-        if (left_as != flags) {
+        if (looked && left_as != flags) {
             if (!flags_to) { // What's written is what's read from here on
                 flags_to = tide_rows_ints_mut(rows, 0, FLAGS);
                 f = fields_of(rows);
