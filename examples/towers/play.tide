@@ -1,0 +1,361 @@
+// Towers, as one machine shows it: the hand on the falling brick, the camera
+// and the pieces. Views read the match and never change it: what they write
+// is this machine's own (Hand, Fx, and the local fields of a brick). The dust
+// and the numbers are in effects.tide, the race and the words in hud.tide, and
+// the lobby in lobby.tide.
+using Box2D;
+
+// The docs site's colors.
+const Color BACK = Color(0.086, 0.086, 0.094);
+const Color PANEL = Color(0.125, 0.127, 0.14);
+const Color RAISED = Color(0.17, 0.175, 0.19);
+const Color LINE = Color(0.24, 0.25, 0.27);
+const Color QUIET = Color(0.64, 0.64, 0.68);
+const Color INK = Color(0.93, 0.93, 0.95);
+const Color AMBER = Color(0.98, 0.75, 0.14);
+const Color TEAL = Color(0.18, 0.83, 0.75);
+const Color ROSE = Color(0.98, 0.44, 0.52);
+const Color BLUE = Color(0.47, 0.72, 1);
+const Color STONE = Color(0.56, 0.57, 0.62); // A brick that's set solid
+const Color GOLD = Color(1, 0.86, 0.36);     // The finish line, and a crown
+
+const bool WATCH = false; // DEV: the title's page isn't drawn, to watch the towers build
+
+// What draws over what, whichever file a view is in.
+enum Layers { Camera, Scenery, Bricks, Falling, Effects, Hud, Menu }
+
+// What this machine's player wants of their falling brick, which its input
+// sends: views work it out, a frame at a time, from the keys, the mouse and
+// fingers.
+local singleton Hand
+{
+    bool playing;     // No lobby or menu is up: the player's hands are on the brick
+    int serial;       // The brick it's about
+    int column;       // Where they want it, in half cells from the plinth's middle
+    int quarter;      // And how turned
+    bool drop;        // Faster
+    bool stale;       // What asks for faster was held before this brick came: it doesn't count until it's let go
+    int way;          // The arrow that's held, -1 or 1, and the seconds until it steps again
+    float again;
+    bool held;        // A press that began on the game, and where
+    float2 from;
+    int fromColumn;   // Where the brick was wanted then
+    float time;       // How long it has lasted, in seconds
+    float moved;      // How far it got from where it began, in pixels
+    bool swiped;      // It went down far enough to ask for faster
+}
+
+// What this machine's drawing keeps from frame to frame. None of it is the
+// match's.
+local singleton Fx
+{
+    float dt;          // Seconds this frame's effects move on by: a stall isn't a leap
+    float beat;        // Radians, for what pulses: always under a full turn
+    float2 center;     // Where the camera looks, and how much it shows above and below that
+    float half;
+    float meter;       // How many pixels a meter of the world is, in this window
+    float2 low;        // The corners of what the camera shows, in meters
+    float2 high;
+    int seat = -1;     // This machine's player's, once it has one
+    float home;        // Its plinth's middle, its top, and its tower's
+    float base;
+    float top;
+    int serial;        // The brick of theirs that's falling: 0 for none
+    int column;        // Where it is
+    float2 brick;
+    bool steered;      // The player has moved or turned a brick
+    float trauma;      // How hard the camera shakes, 0 to 1
+    float2 shake;      // Where that puts it this frame, in meters
+    float flash;       // The whole screen lit, fading
+    Color flashColor = Color.white;
+    Random random;     // What rolls the effects: this machine's own
+    float4 pops;       // Each seat's chip, just bumped: 1, fading
+    List<Bit> bits;
+    List<Bit> paper;   // In the screen's pixels, over everything
+    List<Label> labels;
+}
+
+Color SeatColor(int seat)
+{
+    return seat == 0 ? AMBER : seat == 1 ? TEAL : seat == 2 ? ROSE : seat == 3 ? BLUE : STONE;
+}
+
+string SeatName(int seat)
+{
+    return seat == 0 ? "AMBER" : seat == 1 ? "TEAL" : seat == 2 ? "ROSE" : "BLUE";
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(Math.Saturate(color.r * light), Math.Saturate(color.g * light), Math.Saturate(color.b * light), color.a);
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * Math.Saturate(alpha));
+}
+
+Color Mix(Color from, Color to, float t)
+{
+    return from + (to - from) * Math.Saturate(t);
+}
+
+float EaseOut(float t)
+{
+    var left = 1 - Math.Saturate(t);
+    return 1 - left * left * left;
+}
+
+// Past its end and back, like something that lands.
+float EaseBack(float t)
+{
+    var left = Math.Saturate(t) - 1;
+    return 1 + left * left * (2.70158 * left + 1.70158);
+}
+
+// The frame's clock, and what the views after this one find out again.
+[Stage(Layers.Camera)]
+view Clock(mut Fx fx)
+{
+    fx.dt = Math.Min(Frame.dt, 0.05);
+    fx.beat += fx.dt * 3;
+    if (fx.beat > Math.TAU) fx.beat -= Math.TAU;
+    fx.trauma = Math.Max(0, fx.trauma - fx.dt * 1.8);
+    fx.flash = Math.Max(0, fx.flash - fx.dt * 2.4);
+    fx.pops = Math.Max(fx.pops - float4(fx.dt * 2.2), float4(0));
+    var wobble = fx.beat * 23;
+    fx.shake = float2(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6,
+                      Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6) * (fx.trauma * fx.trauma * 0.4);
+    fx.seat = -1;
+    fx.serial = 0;
+}
+
+// This machine's player's seat, and their falling brick. `with ownership`
+// picks the entities this machine's player owns.
+[Stage(Layers.Camera, 1)]
+view Mine(Seat seat, mut Fx fx, with ownership)
+{
+    fx.seat = seat.index;
+    fx.home = seat.home;
+    fx.base = seat.base;
+    fx.top = seat.top;
+}
+
+[Stage(Layers.Camera, 2)]
+view MyBrick(Falling falling, Body body, mut Fx fx, with ownership)
+{
+    fx.serial = falling.serial;
+    fx.column = falling.column;
+    fx.brick = body.position;
+}
+
+// The camera follows this machine's player's tower. Between the row along
+// the screen's top and the buttons along its bottom it shows where the next
+// brick appears, the tower's top, and some of the tower under that: more, the
+// taller it stands, so the camera pulls back as the tower grows. A window
+// wide enough for all four towers shows them all. With the lobby up, with no
+// seat, and while a round is over and everything comes down, it shows the
+// whole race, from the ground up.
+[Stage(Layers.Camera, 3)]
+view Look(Towers towers, Lobby lobby, mut Fx fx)
+{
+    Draw2D.Clear(BACK);
+    var width = Screen.width;
+    var height = Screen.height;
+    var aspect = width / height;
+    var all = SEATS * PITCH * 0.5 + 3;
+    mut var tallest = 0.0;
+    for (var seat = 0; seat < SEATS; seat++) tallest = Math.Max(tallest, Of(towers.tops, seat));
+    mut var half = Math.Max(all / aspect, (tallest + DROP + 6 - GROUND) * 0.5);
+    mut var center = float2(0, GROUND - 2 + half);
+    if (fx.seat >= 0 && lobby.page == Page.None && towers.phase == Phase.Play)
+    {
+        var under = Math.Min(3 + Math.Max(fx.top, 0) * 0.3, 12);
+        var meter = Math.Min(Math.Max(height - HEADROOM - FOOT, 100) / (DROP + 2 + under), width / 13);
+        half = height / (2 * meter);
+        var across = half * aspect;
+        center = float2(across >= all ? 0 : Math.Clamp(fx.home, across - all, all - across), fx.top + DROP + 2 + HEADROOM / meter - half);
+    }
+    if (fx.half <= 0)
+    {
+        fx.center = center;
+        fx.half = half;
+    }
+    var ease = 1 - Math.Exp(-fx.dt * 3.5);
+    fx.center += (center - fx.center) * ease;
+    fx.half += (half - fx.half) * ease;
+    fx.meter = height / (2 * fx.half);
+    fx.low = fx.center - float2(fx.half * aspect, fx.half);
+    fx.high = fx.center + float2(fx.half * aspect, fx.half);
+    Draw2D.SetCamera(fx.center + fx.shake, fx.half);
+
+    // The room behind: a dot every two meters, and the ground
+    var step = fx.half > 20 ? 4.0 : 2.0;
+    for (var x = Math.Ceil(fx.low.x / step) * step; x < fx.high.x; x += step)
+    {
+        for (var y = Math.Ceil(Math.Max(fx.low.y, GROUND) / step) * step; y < fx.high.y; y += step)
+            Draw2D.Circle(float2(x, y), Math.Max(0.05, 0.8 / fx.meter), Color(1, 1, 1, 0.05));
+    }
+    Draw2D.Rect(float2(fx.center.x, GROUND - 20), float2(fx.high.x - fx.low.x + 4, 40), Color(0.125, 0.127, 0.14));
+    Draw2D.Rect(float2(fx.center.x, GROUND - 0.06), float2(fx.high.x - fx.low.x + 4, 0.12), LINE);
+
+    // The line to build over
+    var dash = 1.0;
+    for (var x = Math.Floor(fx.low.x / (dash * 2)) * dash * 2; x < fx.high.x; x += dash * 2)
+        Draw2D.Rect(float2(x + dash * 0.5, FINISH), float2(dash, Math.Max(0.1, 2 / fx.meter)), Fade(GOLD, 0.8));
+}
+
+// This machine's player's hand: where they want their brick, how turned, and
+// whether faster. The arrows or A and D step it across, up or W turns it, and
+// down, S or space drops it. A drag steps it across by how far it goes, a tap
+// turns it, and a swipe down or a press that stays put drops it.
+[Stage(Layers.Camera, 4)]
+view Hands(Devices devices, mut Fx fx, mut Hand hand)
+{
+    var keys = devices.keyboard;
+    var pointer = devices.pointer;
+    var at = Screen.Flip(pointer.position);
+    var down = keys.downArrow.pressed || keys.s.pressed || keys.space.pressed;
+    if (!hand.playing || fx.serial == 0)
+    {
+        hand.held = false;
+        hand.drop = false;
+        hand.way = 0;
+        return;
+    }
+    if (fx.serial != hand.serial)
+    {
+        // A new brick starts where it was dealt, and what's still held from
+        // the last one goes on as a drag, but asks for nothing faster
+        hand.serial = fx.serial;
+        hand.column = fx.column;
+        hand.quarter = 0;
+        hand.stale = down || pointer.press.pressed;
+        hand.held = pointer.press.pressed;
+        hand.from = at;
+        hand.fromColumn = hand.column;
+        hand.time = 1;
+        hand.moved = 0;
+        hand.swiped = false;
+    }
+    var column = hand.column;
+    var quarter = hand.quarter;
+
+    var way = (keys.rightArrow.pressed || keys.d.pressed ? 1 : 0) - (keys.leftArrow.pressed || keys.a.pressed ? 1 : 0);
+    mut var step = (keys.rightArrow.down || keys.d.down ? 1 : 0) - (keys.leftArrow.down || keys.a.down ? 1 : 0);
+    if (way != hand.way || step != 0)
+    {
+        hand.way = way;
+        hand.again = 0.2;
+    }
+    else if (way != 0)
+    {
+        // A held arrow steps again and again
+        hand.again -= fx.dt;
+        if (hand.again <= 0)
+        {
+            step = way;
+            hand.again += 0.05;
+        }
+    }
+    hand.column = Math.Clamp(hand.column + step, -REACH, REACH);
+    if (keys.upArrow.down || keys.w.down) hand.quarter = (hand.quarter + 1) % 4;
+
+    if (pointer.press.down)
+    {
+        hand.held = true;
+        hand.from = at;
+        hand.fromColumn = hand.column;
+        hand.time = 0;
+        hand.moved = 0;
+        hand.swiped = false;
+    }
+    if (hand.held && pointer.press.pressed)
+    {
+        hand.time += fx.dt;
+        var across = at.x - hand.from.x;
+        var lower = at.y - hand.from.y;
+        hand.moved = Math.Max(hand.moved, Math.Max(Math.Abs(across), Math.Abs(lower)));
+        // Half a cell for as many pixels as half a cell is drawn, or a few more where that's tiny
+        if (hand.moved > 8 && !hand.swiped)
+            hand.column = Math.Clamp(hand.fromColumn + int(Math.Round(across / Math.Max(11, fx.meter * 0.5))), -REACH, REACH);
+        if (lower > 40 && lower > Math.Abs(across) * 1.5) hand.swiped = true;
+    }
+    else if (hand.held)
+    {
+        if (hand.time < 0.3 && hand.moved <= 8) hand.quarter = (hand.quarter + 1) % 4;
+        hand.held = false;
+    }
+    var asks = down || (hand.held && (hand.swiped || (hand.time > 0.35 && hand.moved <= 8)));
+    if (!asks) hand.stale = false;
+    hand.drop = asks && !hand.stale;
+    if (hand.column != column || hand.quarter != quarter || hand.drop) fx.steered = true;
+}
+
+// A plinth: a column, with its seat's color along its top.
+[Stage(Layers.Scenery)]
+view Plinths(Body body, Box box, Seat seat, Towers towers)
+{
+    var color = SeatColor(seat.index);
+    var top = body.position.y + box.size.y / 2;
+    Draw2D.Shape(Shape { center = float2(body.position.x, top - 20), size = float2(box.size.x, 40), color = Color(0.25, 0.26, 0.285),
+                         color2 = Color(0.13, 0.135, 0.15) });
+    Draw2D.Rect(float2(body.position.x, top - 0.14), float2(box.size.x, 0.28), Sitter(towers, seat.index) != default || towers.bots ? color : Shade(color, 0.45));
+}
+
+// A brick's four cells, around its body's place.
+void Cells(Kind kind, Color color, float lit, float shown)
+{
+    var face = Mix(color, Color.white, 0.1 + lit * 0.7);
+    for (var i = 0; i < 4; i++)
+    {
+        Draw2D.Shape(Shape { center = Cell(kind, i), size = float2(0.96), radius = 0.14, color = Fade(face, shown),
+                             color2 = Fade(Shade(face, 0.72), shown), outline = 0.08, outlineColor = Fade(Shade(color, 0.45), shown) });
+    }
+}
+
+// A view sees a body where the last step left it, blended between ticks, and
+// gliding to where the server says it is when this machine guessed otherwise.
+// A brick is the color of whoever put it there, gray once it's set solid, and
+// fading while it lies on the ground. `lit` is a local field: this view lets
+// it fade.
+[Stage(Layers.Bricks)]
+view Bricks(Body body, Piece piece, mut Brick brick, Fx fx)
+{
+    brick.lit = Math.Max(0, brick.lit - fx.dt * 3.5);
+    if (body.position.x < fx.low.x - 3 || body.position.x > fx.high.x + 3 || body.position.y < fx.low.y - 3 || body.position.y > fx.high.y + 3) return;
+    var color = brick.set ? Mix(STONE, SeatColor(brick.seat), 0.25) : SeatColor(brick.seat);
+    var shown = brick.down ? Math.Saturate(brick.rubble / 50.0) * 0.6 : 1.0;
+    Draw2D.Transform(body.position, body.angle)
+    {
+        Cells(piece.kind, brick.down ? Shade(color, 0.6) : color, brick.lit, shown);
+    }
+}
+
+// The bricks that are falling: lighter than the ones that landed, and this
+// machine's player's has a white edge, and lanes under it down to where it
+// will land.
+[Stage(Layers.Falling)]
+view Fallings(Body body, Piece piece, Falling falling, Fx fx)
+{
+    var color = SeatColor(falling.seat);
+    var mine = falling.serial == fx.serial;
+    if (mine)
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            var cell = Turned(Cell(piece.kind, i), falling.quarter);
+            Draw2D.Rect(float2(body.position.x + cell.x, body.position.y + cell.y - 20.5), float2(1, 40), Color(1, 1, 1, 0.03));
+        }
+    }
+    Draw2D.Transform(body.position, body.angle)
+    {
+        Cells(piece.kind, Mix(color, Color.white, 0.25), 0, 1);
+        if (mine)
+        {
+            for (var i = 0; i < 4; i++)
+                Draw2D.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Color(1, 1, 1, 0),
+                                     outline = 0.1, outlineColor = Color.white });
+        }
+    }
+}
