@@ -21,7 +21,7 @@
 // image it wrote, which was of the state its stamp names. The match that has
 // the world for a tick is at that stamp, so its list holds that image, byte
 // for byte, whichever match's list it was written into. A world made from an
-// image writes its next one whole.
+// image goes on from that image, which is the one its match's list holds.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -299,6 +299,7 @@ static int last_workers = 1;  // What the last tick's world had: a world made fo
 static bool measuring; // No clock is read otherwise
 static bool checking;  // Every image written in parts is compared with the image written whole
 static bool always;    // ...and images are written in parts whatever is awake
+static bool wholly;    // Every image is written whole, though it could be written in parts
 static int32_t images_whole;
 static int32_t images_in_parts;
 static uint64_t step_ns;
@@ -515,6 +516,16 @@ static world *spare(const world *kept)
     return w;
 }
 
+// A copy of the image a match's list holds, or is about to, which measuring
+// and checking go by.
+static void remember(world *w, const uint8_t *image, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    memcpy(w->before, image, (size_t)size);
+    w->before_size = size;
+    w->before_good = true;
+}
+
 // `w` made from an image: the state at `stamp`.
 static void restore_into(world *w, const int workers, const uint8_t *image, const int32_t size, const uint8_t *geometry,
                          const int32_t geometry_size, const int64_t stamp)
@@ -533,7 +544,14 @@ static void restore_into(world *w, const int workers, const uint8_t *image, cons
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b3GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
     w->image_size = size;
-    w->before_good = false; // Its next image is written whole
+    // Its next image goes on from the one it was made from, which the match's list holds (b3World_Restore).
+    // A measured or checked run's copy of the last image is that one
+    w->before_good = false;
+    if (size > 0 && (measuring || checking)) {
+        const uint64_t counting = measuring ? tide_time_now_ns() : 0;
+        remember(w, image, size);
+        if (measuring) counting_ns += tide_time_now_ns() - counting;
+    }
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
     w->stamp = stamp; // Last: it's what a question finds the world by (at)
@@ -629,6 +647,14 @@ void b3t_check(const bool on, const bool whenever)
 {
     checking = on;
     always = on && whenever;
+}
+
+// For tests: the images from here on are written whole, where they'd be
+// written in parts: what a match's list holds has to be the same bytes either
+// way, which a match played both ways says.
+void b3t_whole(const bool on)
+{
+    wholly = on;
 }
 
 // For tests: a step is shared out over the tick's threads from this many
@@ -1222,16 +1248,6 @@ static const char *const sections[B3_SNAPSHOT_SECTIONS] = {
     "kinematic tree",   "dynamic tree",             "pairs",       "graph",         "names",
 };
 
-// A copy of the image a match's list is about to hold, which measuring and
-// checking go by.
-static void remember(world *w, const uint8_t *image, const int size)
-{
-    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
-    memcpy(w->before, image, (size_t)size);
-    w->before_size = size;
-    w->before_good = true;
-}
-
 // The parts Box3D says changed, over the copy of the last image: what the
 // match's list becomes. While measuring, the image's blocks that a part made
 // otherwise are counted.
@@ -1320,7 +1336,7 @@ int32_t b3t_image(tide_list_out *out)
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
     const bool remembers = measuring || checking;
     // The copy a measured or checked run goes by has to be the last image
-    if (w->image_size > 0 && (!remembers || w->before_good)) {
+    if (!wholly && w->image_size > 0 && (!remembers || w->before_good)) {
         const b3SnapshotPart *parts;
         int count;
         const int size = b3World_GetSnapshotParts(w->id, w->bases, sizes, &parts, &count);
