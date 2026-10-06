@@ -1076,6 +1076,57 @@ system Advance(mut Match match)
 - Text with a caret that moves, and selection, in text fields.
 - Case for letters past ASCII.
 
+## Generics
+
+### Decided
+
+- Generics are a proper part of Tide, in three steps (the owner, 2026-10-06: "we clearly need generics and I don't like making them just an engine thing that you can't touch"): a type is read as a tree, containers nest by one rule (both built: see Lists, and `AGENTS.md`, Language), and games declare generic structs and functions of their own, below.
+
+### Open
+
+A proposal for the third step (Claude, 2026-10-06), for the owner to approve before it's built. Each point is a pick unless it says otherwise.
+
+- **Declaring.** A struct, a function or a method takes type parameters in `<>` after its name, as C#'s do:
+
+```csharp
+struct Pair<T>
+{
+    T a;
+    T b;
+}
+
+T Max<T>(T a, T b)
+{
+    return a > b ? a : b;
+}
+
+struct Stack<T>
+{
+    List<T> items;
+
+    mut void Push(T item) { items.Add(item); }
+
+    T? Pop()
+    {
+        if (items.count == 0) return null;
+        var top = items[items.count - 1];
+        items.RemoveAt(items.count - 1);
+        return top;
+    }
+}
+```
+
+  A method of a generic struct uses its struct's parameters, and can have parameters of its own, `U Map<U>(...)`. Not components, singletons, events, commands, inputs, scenes, systems, views or handlers: what the engine stores by name and schedules is concrete (a `component Slot<T>` would be an archetype for each instantiation, and a system over it a system for each: left for when a game asks). Not enums. A type parameter is a name; it shadows nothing, so a `T` that's also a type of the game's is an error at the declaration.
+- **Using.** `Pair<int> p;`, `Stack<Entity> enemies;`, `Max<float>(a, b)`, or `Max(a, b)` with the type arguments inferred (below). A type argument is what a list's element can be, the same rule in the same table (`GENERIC_ELEMENT`): built-in types, text, enums, structs (generic ones instantiated, `Pair<Pair<int>>`), lists, maps and sets. Not grids, ECS data, `Action`, `Devices`, `World`, nor a `T?`. A generic struct holds what a struct holds, so no grid.
+- **Monomorphization.** Each instantiation is a declaration of its own, as `List<int>` is one today: `Pair<int>` and `Pair<float>` are two structs in generated C, each checked once with its arguments bound, and two instantiations with the same arguments are one declaration, found by them. Its C name is the generic's with the arguments' C names after it, `Pair_int`, `Pair_List_Entity`, `tide_function_Max_float` (a name that reads in a debugger, over a number like `tide_list3`), and tools show it as written, `Pair<int>`, `Max<float>`: the schedule, the profiler, hovers. The game's layout has an instantiation as a struct of its name, so hot reloading carries a world over field by field as for any struct, and renaming a type parameter changes nothing.
+- **No constraints in v1.** A generic body uses a `T` for anything, and what the `T` doesn't support is found at the instantiation: `Max<Pair<int>>` is an error at `a > b` in `Max`, with a note at the instantiation that led there ("instantiated as `Max<Pair<int>>` here", through a chain of them where one generic instantiates another), as Tide's errors say what and where. What doesn't depend on `T` (names, syntax, the shape of calls, what a `T` is passed to as a plain value) is checked once with the parameters unbound, so an error that's the generic's own is found with no instantiation at all. Constraints (`where T : ...`) can come later, as a check at the declaration; Tide has nothing to constrain with yet but the built-in rules (`==`, `<`, hashable), which would be the first.
+- **Inference**, as C#'s: a call with no `<>` takes each type argument from the arguments whose parameters mention it, `T` against the argument's type and `List<T>` or `Pair<T, U>` against its parts; two arguments that give the same `T` have to give it exactly (`Max(1, 2.5)` is an error that says to write `Max<float>(1, 2.5)`: no widening picks between `int` and `float`); a `T` no argument gives is an error that says to write the `<>`; the return type takes no part. Defaults and named arguments go as for any call. A generic and a non-generic function can share a name: the non-generic wins where it fits, as in C#, and two generics that differ in how many type parameters they take are two overloads. A generic can't be `virtual` or overridden in v1, which keeps `override` matching by name and parameters alone.
+- **The GPU.** A generic function a frag or a vert reaches is instantiated like any function and written per instantiation, with its C name; a generic struct as a vertex or an instance struct is instantiated the same way. What the GPU refuses of a type (text, lists, entities) it refuses of a type argument, where it's used.
+- **Text** shows an instantiation's value with its written name: `Pair<int> { a = 1, b = 2 }`.
+- **Editors** (tidels): hover on a generic shows its declaration with `T`, on an instantiation the arguments bound; go to definition goes to the generic from any instantiation; rename renames the generic and every instantiation; completion offers `<` after a generic's name with its parameters as placeholders, as `Map<$1, $2>` is offered; the formatter keeps `Pair<int>` tight as it keeps `List<int>`; the grammar colors a type parameter as a type.
+- **Recursion.** `Pair<Pair<int>>` is fine, and `struct Node<T> { List<Node<T>> kids; }` too, as lists nest. `struct Node<T> { Node<T> next; }` isn't, as no struct holds itself. An instantiation that instantiates forever (`Grow<T>` calling `Grow<Pair<T>>`) stops at 8 levels, with an error that shows the chain.
+- **Tests and docs** that come with it: `compiler/tests/e2e/generics` (structs, functions, methods, inference, nested instantiations, instantiations that are one declaration, hot reloading's layout, the GPU), `compiler/tests/errors/generic_*.tide` one per diagnostic, `compiler/tests/shaders/generics`, `lsp_generics`, the grammar's probe, and `docs/language/generics.md` with a live example.
+
 ## Lists
 
 ### Decided
