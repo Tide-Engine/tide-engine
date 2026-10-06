@@ -120,6 +120,12 @@ static b2Shape* b2CreateShapeInternal( b2World* world, b2Body* body, b2WorldTran
 
 	B2_ASSERT( world->fatAABBs.count == world->shapes.count );
 
+	// Tide: the shape, with its fat bounds, the body it's put on, which may be asleep or static, and the shape
+	// that headed the body's list (see b2SnapTrack)
+	b2SnapTouchShape( world, shapeId );
+	b2SnapTouchBody( world, body->id );
+	b2SnapTouchShape( world, body->headShapeId );
+
 	b2Shape* shape = b2Array_Get( world->shapes, shapeId );
 
 	switch ( shapeType )
@@ -287,6 +293,8 @@ static b2ShapeId b2CreateShape( b2BodyId bodyId, const b2ShapeDef* def, const vo
 	else if ( ( body->flags & b2_dirtyMass ) == 0 )
 	{
 		body->flags |= b2_dirtyMass;
+		// Tide: the body's flags (see b2SnapTrack)
+		b2SnapTouchBody( world, body->id );
 		b2SyncBodyFlags( world, body );
 	}
 
@@ -385,6 +393,13 @@ static void b2DestroyShapeInternal( b2World* world, b2Shape* shape, b2Body* body
 {
 	int shapeId = shape->id;
 
+	// Tide: the shape, its neighbors in its body's list, whose links change, and the body, which has the
+	// list's head and its count (see b2SnapTrack). The contacts that go with it say so themselves.
+	b2SnapTouchShape( world, shapeId );
+	b2SnapTouchShape( world, shape->prevShapeId );
+	b2SnapTouchShape( world, shape->nextShapeId );
+	b2SnapTouchBody( world, body->id );
+
 	// Remove the shape from the body's doubly linked list.
 	if ( shape->prevShapeId != B2_NULL_INDEX )
 	{
@@ -460,6 +475,8 @@ static void b2DestroyShapeInternal( b2World* world, b2Shape* shape, b2Body* body
 			b2Sensor* movedSensor = b2Array_Get( world->sensors, shape->sensorIndex );
 			b2Shape* otherSensorShape = b2Array_Get( world->shapes, movedSensor->shapeId );
 			otherSensorShape->sensorIndex = shape->sensorIndex;
+			// Tide: another sensor's shape, which is told where its sensor is now (see b2SnapTrack)
+			b2SnapTouchShape( world, movedSensor->shapeId );
 		}
 	}
 

@@ -555,7 +555,7 @@ Removing `Body` from an entity that stays doesn't take its body out of the world
 
 ## Multiplayer
 
-There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package writes Box2D's whole state into the match, as bytes in `Physics`. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
+There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package has Box2D's whole state in the match, as bytes in `Physics`: it writes what changed of them. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
 
 That state is in the match's hash, and it's the same bytes on every machine: the same match gives the same result on desktop and on the web, so their players share one. See [Networking](../multiplayer/networking.md) and [Determinism](../multiplayer/determinism.md).
 
@@ -567,13 +567,15 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
-| The tick | 0.61 | 0.21 | 0.02 |
-| of it, Box2D's step | 0.31 | 0.01 | 0 |
+| The tick | 0.51 | 0.06 | 0.02 |
+| of it, Box2D's step | 0.30 | 0.01 | 0 |
 | Keeping and hashing the world, after it | 0.26 | 0.04 | 0.00 |
 
 - **A world at rest costs next to nothing.** It isn't stepped, and nothing of the match is written. What's left is looking at each body for what code wrote.
 - **The step goes by what's moving.** With one crate pushed among 2,400 it takes a hundredth of a millisecond.
-- **Keeping Box2D's state in the match goes by how big the world is**, while anything moves: it's about a kilobyte a body, 2.5 MB here, written and compared with the last one every tick, which is most of the 0.21 ms with one crate pushed. Only what changed of it is copied and hashed. A player who joins downloads it with the rest of the world.
+- **Keeping Box2D's state in the match goes by what's moving too**, while no more than half of the world is awake. It's about a kilobyte a body, 2.5 MB here, and Box2D says which bodies, shapes and contacts may have changed since the last tick: only those are written, which with one crate pushed takes 0.01 ms of a tick's 0.06.
+- **With more than half of the world awake, all of that state is written** and compared with the last tick's, which goes by how big the world is: 0.06 ms of the 0.51 here, before what changed of it is put into the match. A stack that wakes or falls asleep can have one tick's written whole too.
+- **Only what changed of it is copied and hashed**, either way, and a player who joins downloads it with the rest of the world.
 - **A rollback** makes Box2D's world again from that state, once: about half a millisecond for this world, before the ticks it runs again. So does the first [question](#asking-the-world) a view or a system asks when this machine has no Box2D world at the match's state, which is the tick after a rollback, or a view of a world other than the last one that ticked. In a world of a few hundred bodies that's a few hundredths of a millisecond.
 - **The step runs on the tick's threads** once 2,048 bodies are awake, 4,096 on the web, and gives the same world on any number of them.
 - **On the web** the step takes about 0.46 ms for this world with everything moving. Box2D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.

@@ -365,10 +365,46 @@ B2_API b2WorldId b2CreateWorldFromSnapshot( const uint8_t* image, int size, int 
 B2_API int b2GetSnapshotHead( void );
 
 /// Write a snapshot with each section at its base, and each section's size into @p sizes.
+/// An image with bases that's written whole, all of it within @p capacity, is the world's last image: what
+/// b2World_GetSnapshotParts says changed next is what changed of it.
 /// @return The image's size, with nothing past @p capacity written, as b2World_GetSnapshot. Or -1 when a
 ///         section ran past the next one's base: the sizes are right, the image isn't one, and the caller
 ///         places the sections again.
 B2_API int b2World_GetSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// As b2World_GetSnapshotAt, for a check of b2World_GetSnapshotParts: the image written whole, which the
+/// world doesn't take for its last one, so that what it says changed next is what it would have said.
+B2_API int b2World_CheckSnapshotAt( b2WorldId worldId, uint8_t* image, int capacity, const int* bases, int* sizes );
+
+/// Bytes of an image: `size` of them, which go at `offset` in it.
+typedef struct b2SnapshotPart
+{
+	int offset;
+	int size;
+	const uint8_t* bytes;
+} b2SnapshotPart;
+
+/// What changed of a world's image since its last one, as parts to write over that one: the image is then,
+/// byte for byte, what b2World_GetSnapshotAt writes. The last image is the one this or b2World_GetSnapshotAt
+/// last returned the size of, at the same bases, and the caller has it: the world keeps no copy. What's
+/// between its end and the new size is zeros before the parts are written.
+/// The parts and their bytes are the world's, some of them the world's own arrays: they're good until the
+/// world is next stepped, changed or asked for an image.
+/// @return The image's size. Or 0 when there's no saying what changed, and the caller takes the image whole
+///         (b2World_GetSnapshotAt): a world that had no image yet, was restored, has most of its bodies awake,
+///         or had something done to it that isn't followed one body at a time. Or -1 when a section ran past
+///         the next one's base, as b2World_GetSnapshotAt returns it, with the sizes right.
+B2_API int b2World_GetSnapshotParts( b2WorldId worldId, const int* bases, int* sizes, const b2SnapshotPart** parts,
+									 int* partCount );
+
+/// How much of a world can be awake for b2World_GetSnapshotParts to say what changed: one body in @p share,
+/// or the usual share for 0. With more awake it returns 0, as an image written whole costs less then. 1 is
+/// every body, which is for tests of the parts.
+B2_API void b2World_SetSnapshotAwakeShare( b2WorldId worldId, int share );
+
+/// How much room each thing takes in a section of things that each take the same, after the section's count
+/// of them: a body, a shape, a shape's fat bounds, a contact, a joint. 0 for the other sections.
+B2_API int b2GetSnapshotRecordSize( int section );
 
 /// Where an image's sections start. False for an image that has none.
 B2_API bool b2GetSnapshotBases( const uint8_t* image, int size, int* bases );

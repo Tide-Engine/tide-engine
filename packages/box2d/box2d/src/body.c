@@ -45,6 +45,10 @@ void b2RefreshBodyContactIndices( b2World* world, b2Body* body )
 		b2Contact* contact = b2Array_Get( world->contacts, contactId );
 		b2ContactSim* contactSim = b2GetContactSim( world, contact );
 
+		// Tide: the set the contact is in, which is a sleeping one or the disabled one when the body that
+		// moved is static or asleep (see b2SnapTrack)
+		b2SnapTouchSet( world, contact->setIndex );
+
 		if ( edgeIndex == 0 )
 		{
 			contactSim->encodedBodySimA = encodedIndex;
@@ -93,6 +97,9 @@ void b2SyncBodyFlags( b2World* world, b2Body* body )
 {
 	b2BodySim* bodySim = b2GetBodySim( world, body );
 
+	// Tide: what the body's set has of it (see b2SnapTrack)
+	b2SnapTouchSet( world, body->setIndex );
+
 	// Preserve the sim only flags: fast for contact recycling, time of impact for debug draw.
 	bodySim->flags = ( bodySim->flags & ( b2_isFast | b2_hadTimeOfImpact ) ) | ( body->flags & ~b2_bodyTransientFlags );
 
@@ -112,6 +119,9 @@ static void b2CreateIslandForBody( b2World* world, int setIndex, b2Body* body )
 	b2Array_Push( island->bodies, body->id );
 	body->islandId = island->islandId;
 	body->islandIndex = 0;
+	// Tide: a body that's told its island, which has it from here on (see b2SnapTrack)
+	b2SnapTouchBody( world, body->id );
+	b2SnapTouchIslands( world );
 
 	b2ValidateIsland( world, island->islandId );
 }
@@ -133,6 +143,11 @@ static void b2RemoveBodyFromIsland( b2World* world, b2Body* body )
 		B2_VALIDATE( world->bodies.data[movedBodyId].islandIndex == island->bodies.count - 1 );
 		world->bodies.data[movedBodyId].islandIndex = localIndex;
 		island->bodies.count -= 1;
+		// Tide: the body that leaves its island, another body of the island, which is told where it is in
+		// it now, and the island (see b2SnapTrack)
+		b2SnapTouchBody( world, body->id );
+		b2SnapTouchBody( world, movedBodyId );
+		b2SnapTouchIslands( world );
 	}
 
 	if ( island->bodies.count == 0 )
@@ -233,6 +248,10 @@ b2BodyId b2CreateBody( b2WorldId worldId, const b2BodyDef* def )
 	lockFlags |= def->motionLocks.linearX ? b2_lockLinearX : 0;
 	lockFlags |= def->motionLocks.linearY ? b2_lockLinearY : 0;
 	lockFlags |= def->motionLocks.angularZ ? b2_lockAngularZ : 0;
+
+	// Tide: the body, and the set it's put in (see b2SnapTrack)
+	b2SnapTouchBody( world, bodyId );
+	b2SnapTouchSet( world, setId );
 
 	b2SolverSet* set = b2Array_Get( world->solverSets, setId );
 	b2BodySim* bodySim = b2Array_Emplace( set->bodySims );
@@ -372,11 +391,16 @@ void b2DestroyBody( b2BodyId bodyId )
 	// Destroy all contacts attached to this body.
 	b2DestroyBodyContacts( world, body );
 
+	// Tide: the body, and each of its shapes: any of them may be asleep or static (see b2SnapTrack). The
+	// contacts that go with it say so themselves, and so does the set it's taken out of.
+	b2SnapTouchBody( world, body->id );
+
 	// Destroy the attached shapes and their broad-phase proxies.
 	int shapeId = body->headShapeId;
 	while ( shapeId != B2_NULL_INDEX )
 	{
 		b2Shape* shape = b2Array_Get( world->shapes, shapeId );
+		b2SnapTouchShape( world, shapeId );
 
 		if ( shape->sensorIndex != B2_NULL_INDEX )
 		{
@@ -528,6 +552,10 @@ void b2UpdateBodyMassData( b2World* world, b2Body* body )
 {
 	b2BodySim* bodySim = b2GetBodySim( world, body );
 
+	// Tide: the body's mass, and what its set has of it (see b2SnapTrack)
+	b2SnapTouchBody( world, body->id );
+	b2SnapTouchSet( world, body->setIndex );
+
 	// Mass is no longer dirty
 	body->flags &= ~b2_dirtyMass;
 
@@ -667,6 +695,8 @@ void b2UpdateBodyMassData( b2World* world, b2Body* body )
 		b2Contact* contact = b2Array_Get( world->contacts, contactId );
 		b2ContactSim* contactSim = b2GetContactSim( world, contact );
 		contactSim->simFlags &= ~b2_simRelativeTransformValid;
+		// Tide: the set the contact is in (see b2SnapTrack)
+		b2SnapTouchSet( world, contact->setIndex );
 
 		edgeKey = contact->edges[edgeIndex].nextKey;
 	}
@@ -740,6 +770,10 @@ void b2Body_SetTransform( b2BodyId bodyId, b2Pos position, b2Rot rotation )
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	b2BodySim* bodySim = b2GetBodySim( world, body );
 
+	// Tide: what the body's set has of it, which matters for one that's asleep or static: this doesn't wake
+	// it (see b2SnapTrack)
+	b2SnapTouchSet( world, body->setIndex );
+
 	bodySim->transform.p = position;
 	bodySim->transform.q = rotation;
 	bodySim->center = b2TransformWorldPoint( bodySim->transform, bodySim->localCenter );
@@ -758,6 +792,8 @@ void b2Body_SetTransform( b2BodyId bodyId, b2Pos position, b2Rot rotation )
 		b2Shape* shape = b2Array_Get( world->shapes, shapeId );
 		b2AABB aabb = b2ComputeFatShapeAABB( shape, transform, speculativeDistance );
 		shape->aabb = aabb;
+		// Tide: each of its shapes, with its fat bounds (see b2SnapTrack)
+		b2SnapTouchShape( world, shapeId );
 
 		b2AABB* shapeFatAABB = world->fatAABBs.data + shapeId;
 		if ( b2AABB_Contains( *shapeFatAABB, aabb ) == false )
@@ -1538,6 +1574,8 @@ void b2Body_SetLinearDamping( b2BodyId bodyId, float linearDamping )
 
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	b2BodySim* bodySim = b2GetBodySim( world, body );
+	// Tide: what the body's set has of it (see b2SnapTrack)
+	b2SnapTouchSet( world, body->setIndex );
 	bodySim->linearDamping = linearDamping;
 }
 
@@ -1563,6 +1601,8 @@ void b2Body_SetAngularDamping( b2BodyId bodyId, float angularDamping )
 
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	b2BodySim* bodySim = b2GetBodySim( world, body );
+	// Tide: what the body's set has of it (see b2SnapTrack)
+	b2SnapTouchSet( world, body->setIndex );
 	bodySim->angularDamping = angularDamping;
 }
 
@@ -1589,6 +1629,8 @@ void b2Body_SetGravityScale( b2BodyId bodyId, float gravityScale )
 
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	b2BodySim* bodySim = b2GetBodySim( world, body );
+	// Tide: what the body's set has of it (see b2SnapTrack)
+	b2SnapTouchSet( world, body->setIndex );
 	bodySim->gravityScale = gravityScale;
 }
 
@@ -1940,6 +1982,8 @@ void b2Body_SetMotionLocks( b2BodyId bodyId, b2MotionLocks locks )
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	if ( ( body->flags & b2_allLocks ) != newFlags )
 	{
+		// Tide: the body's flags (see b2SnapTrack). What its set has of them, and its mass, say so themselves.
+		b2SnapTouchBody( world, body->id );
 		body->flags &= ~b2_allLocks;
 		body->flags |= newFlags;
 
@@ -2000,6 +2044,8 @@ void b2Body_SetBullet( b2BodyId bodyId, bool flag )
 		return;
 	}
 
+	// Tide: the body's flags (see b2SnapTrack). What its set has of them says so itself (b2SyncBodyFlags).
+	b2SnapTouchBody( world, body->id );
 	body->flags &= ~b2_isBullet;
 	body->flags |= newFlag;
 

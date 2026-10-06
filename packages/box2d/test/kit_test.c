@@ -24,6 +24,7 @@
 
 // bridge.c
 void b2t_forget(void);
+void b2t_check(bool on, bool whenever);
 int32_t b2t_restores(void);
 void b2t_share_from(int32_t bodies);
 int32_t b2t_asking_threads(void);
@@ -34,9 +35,13 @@ static tide_world a;
 static tide_world b;
 static tide_world kept;
 
+// Every image is written as what changed of the last one wherever it can be, and compared with the image
+// written whole (b2t_check), as in the package's other tests: parts, a body's type, what's asked and how the
+// world is tuned are each something an image in parts has to come out right after.
 static void start(tide_world *w, const Case which)
 {
     b2t_forget();
+    b2t_check(true, true);
     tide_world_init(w, DT);
     w->Kit.which = which;
 }
