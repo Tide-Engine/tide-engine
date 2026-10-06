@@ -39,6 +39,12 @@ typedef struct lsp_server {
     int kept_count;
     bool watch_files;           // The editor watches the files we ask it to (dynamic registration)
     bool relative_patterns;     // ...and takes patterns relative to a folder, for one outside the open ones
+    // The editor asks before it renames files (workspace/willRenameFiles), and takes the filters for which
+    // ones as a registration (dynamic) or in the initialize result (static, every file). Assets' paths
+    // are rewritten through it.
+    bool rename_dynamic;
+    char *rename_filters;       // The filters registered, as JSON, to register again only when they change
+    char *asset_watchers;       // The watchers registered for the assets' files, the same way
     bool shutdown;
     bool exited;
     int exit_code;
