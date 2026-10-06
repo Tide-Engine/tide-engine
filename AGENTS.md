@@ -55,6 +55,13 @@ A networking-first game engine:
   1. Vulkan natively (MoltenVK on Apple until a Metal backend is worth writing), under the same `gpu.h` as WebGPU: explicit pipelines, buffers and compute. tidec writes SPIR-V for it then, beside GLSL and WGSL.
   2. The rest of render state (which side draws, masks), as draw settings like the ones there are (below), frags with other outputs than one color (drawing into a texture is there already: render targets), and Tide code that computes on the GPU. On the OpenGL fallback, compute runs on CPU threads instead, so games work everywhere.
   - How a draw blends was part of that second step, and the owner brought it forward (2026-10-05), with tints, transforms and the settings rule: "these are things we need as part of the foundation of our drawing apis". What a 3D mesh does with depth followed (2026-10-06), from Alley's shadows, which hid each other: "this seems like our Draw3D or shaders or whatever might need some tweaking".
+  - More of that second step is agreed and not built (2026-10-07; `docs/spec.md`, Views and drawing, What the GPU side gains, which has each rule and which names are picks). It came of how the demos draw shadows: Sumo lays its casters flat on the floor and shades the floor again under them, as nothing could read a target's depth. The owner asked for no shadows feature but for a complete set of raw pieces a game builds any technique from, and decided each:
+    - A draw with no frag keeps the engine's default look, and never means "depth only": what a draw writes is said.
+    - A target says what it holds when it's made (a target of depth alone is the new one), and a frag reads a target's depth, plainly or compared with a number.
+    - Cull is a setting of `Draw3D`'s whose default is that the back of a triangle doesn't draw ("its what its expected in game engines"), so every 3D mesh in the repo has its winding checked with it: "we should NEVER be afraid to make changes based on our existing work (well until we release v1)".
+    - How `uv` wraps is chosen where a texture is sampled. Stencil comes as a GPU has it (a number a pixel, a test, an operation), last.
+    - A frag's outputs are `out`, its color too (the owner's idea), and it can have several. A vert hands its frag a struct through an `out` parameter. Verts and frags stay declarations of their own, paired at the draw (the owner, of grouping them in a `shader` block, which stays an open idea: "lets keep them separate").
+    - No setting for whether a draw writes color.
 - Rendering stays disconnected from the simulation, so it can be replaced later (for example for consoles):
   - The simulation never includes a platform header.
   - The view reads the world and draws it. It never writes simulation state.
