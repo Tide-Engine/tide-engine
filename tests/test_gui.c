@@ -363,6 +363,53 @@ TIDE_TEST(gui_a_finger_on_a_button_is_never_the_games)
     TIDE_CHECK(sampled_frame() == 4);
 }
 
+// A view reads a finger's lift in the frame it lifts, for that frame, with the
+// finger's id and where it lifted: whether a sample emptied its slot before
+// the frame's GUI began (a tick every frame) or none did (ticks rarer than
+// frames).
+TIDE_TEST(gui_views_see_a_finger_lift_whenever_the_game_samples)
+{
+    const tide_touch *primary = &gui.devices.touchscreen.primaryTouch;
+    const tide_touch *slot = &gui.devices.touchscreen.touches.at[0];
+    const tide_pointer *pointer = &gui.devices.pointer;
+
+    start();
+    finger_sample(TIDE_TOUCH_BEGAN, NONE, 900.0f, 600.0f); // Far from the buttons
+    sampled_frame();
+    TIDE_CHECK(primary->press.down && slot->press.down && primary->id == 1);
+    finger_sample(TIDE_TOUCH_MOVED, NONE, 910.0f, 600.0f);
+    sampled_frame();
+    TIDE_CHECK(primary->press.pressed && !primary->press.down && !primary->press.up);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 910.0f, 600.0f); // The sample sees it lift, and empties its slot
+    TIDE_CHECK(devices.touchscreen.primaryTouch.id == 0);
+    sampled_frame();
+    TIDE_CHECK(primary->press.up && !primary->press.pressed && !primary->press.down && primary->id == 1);
+    TIDE_CHECK(slot->press.up && !slot->press.pressed && slot->id == 1);
+    TIDE_CHECK(primary->position.x == 910.0f && slot->position.x == 910.0f); // Where it was
+    TIDE_CHECK(pointer->press.up && pointer->position.x == 910.0f && pointer->position.y == 480.0f);
+    finger_sample(NONE, NONE, 0.0f, 0.0f);
+    sampled_frame();
+    TIDE_CHECK(!primary->press.up && !slot->press.up && primary->id == 0 && slot->id == 0);
+    TIDE_CHECK(!pointer->press.up && pointer->position.x == 910.0f); // The pointer stays where the finger lifted
+
+    // A tap shorter than a frame: down in one frame, up in the next.
+    finger_sample(TIDE_TOUCH_BEGAN, TIDE_TOUCH_ENDED, 900.0f, 600.0f);
+    sampled_frame();
+    TIDE_CHECK(primary->press.down && !primary->press.up && slot->press.down);
+    finger_sample(NONE, NONE, 0.0f, 0.0f);
+    sampled_frame();
+    TIDE_CHECK(primary->press.up && !primary->press.down && slot->press.up && primary->id == 2);
+
+    // No sample between the lift and the frame.
+    start();
+    touch_frame(TIDE_TOUCH_BEGAN, NONE, 900.0f, 600.0f);
+    TIDE_CHECK(primary->press.down && slot->press.down);
+    touch_frame(TIDE_TOUCH_ENDED, NONE, 900.0f, 600.0f);
+    TIDE_CHECK(primary->press.up && slot->press.up && !primary->press.pressed && primary->id == 1);
+    touch_frame(NONE, NONE, 0.0f, 0.0f);
+    TIDE_CHECK(!primary->press.up && !slot->press.up);
+}
+
 TIDE_TEST(gui_where_the_mouse_is_now_says_whose_click_it_is)
 {
     start();

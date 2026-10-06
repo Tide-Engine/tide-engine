@@ -233,6 +233,34 @@ TIDE_TEST(devices_pointer_follows_what_was_used_last)
     TIDE_CHECK(!d.pointer.touch && d.pointer.position.x == 41.0f && !d.pointer.press.held && d.pointer.press.up);
 }
 
+// A finger that lifted leaves the pointer where it lifted. Its slot empties
+// once a sample saw it lift, and the pointer doesn't go to the corner with it.
+TIDE_TEST(devices_pointer_stays_where_a_finger_lifted)
+{
+    tide_devices d = {0};
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, 7, 10, 20}}, 1);
+    tide_devices_consume(&d);
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_ENDED, 7, 30, 40}}, 1);
+    TIDE_CHECK(d.pointer.press.up && d.pointer.position.x == 30.0f && d.pointer.position.y == 40.0f);
+
+    tide_devices_consume(&d); // The sample that saw it lift
+    TIDE_CHECK(d.touchscreen.primaryTouch.id == 0);
+    for (int i = 0; i < 3; i++) {
+        poll_touches(&d, NULL, 0);
+        TIDE_CHECK(d.pointer.touch && d.pointer.position.x == 30.0f && d.pointer.position.y == 40.0f);
+        TIDE_CHECK(d.pointer.poll_delta.x == 0.0f && d.pointer.delta.x == 0.0f && !d.pointer.press.held);
+        tide_devices_consume(&d);
+    }
+
+    // The next finger takes it from there, and the mouse when it's used.
+    poll_touches(&d, (touch_step[]){{TIDE_TOUCH_BEGAN, 8, 50, 60}}, 1);
+    TIDE_CHECK(d.pointer.position.x == 50.0f && d.pointer.press.down);
+    d.mouse.position = tide_f2(41, 50);
+    tide_touches_poll(&d.touchscreen);
+    tide_pointer_poll(&d, true);
+    TIDE_CHECK(!d.pointer.touch && d.pointer.position.x == 41.0f);
+}
+
 TIDE_TEST(player_ids)
 {
     const tide_player_id none = {0};

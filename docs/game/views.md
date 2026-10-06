@@ -278,7 +278,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
 | `Draw3D.Cylinder(center, radius, height, color)` | A capped cylinder along its local `y` axis, with full `height` |
 | `Draw3D.Plane(center, size, color)` | A rectangle in the local `xz` plane, with full widths `size.x` and `size.y` |
-| `Draw3D.Instanced(vertices, indices, instances)` / `Draw3D.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
+| `Draw2D.Instanced(vertices, indices, instances)` / `Draw3D.Instanced(vertices, indices, instances)` | One mesh for each instance in a list, with optional textures and shaders (see [Instances from a list](./shaders.md#instances-from-a-list)) |
 
 Each frame starts black, with the camera at the origin and one world unit per pixel.
 
@@ -850,6 +850,8 @@ A game's C draws 3D meshes too, with vertices of its own, like a model a library
 ## Screen and world coordinates
 
 The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw2D.Screen` and the GUI's are.
+
+`Screen.width` and `Screen.height` are the window's size in those pixels. Both are floats, so `Screen.width / Screen.height` is the screen's shape with nothing rounded away. Views, and the functions they call, read them.
 
 | Function | Result |
 |---|---|

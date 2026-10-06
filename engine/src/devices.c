@@ -154,7 +154,10 @@ void tide_pointer_poll(tide_devices *d, const bool mouse_used)
     const tide_touch *primary = &d->touchscreen.primaryTouch;
     if (d->touchscreen.used) p->touch = true;
     else if (mouse_used) p->touch = false;
-    const tide_float2 position = p->touch ? primary->position : d->mouse.position;
+    // A finger that lifted leaves the pointer where it lifted: the primary
+    // touch is empty once a sample saw the lift, and that's no place.
+    const bool lifted = p->touch && primary->id == 0;
+    const tide_float2 position = lifted ? p->position : p->touch ? primary->position : d->mouse.position;
     const tide_float2 moved = p->touch ? primary->poll_delta : d->mouse.poll_delta;
     p->position = position;
     p->poll_delta = moved;
