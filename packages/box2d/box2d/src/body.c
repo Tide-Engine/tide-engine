@@ -119,8 +119,9 @@ static void b2CreateIslandForBody( b2World* world, int setIndex, b2Body* body )
 	b2Array_Push( island->bodies, body->id );
 	body->islandId = island->islandId;
 	body->islandIndex = 0;
-	// Tide: a body that's told its island (see b2SnapTrack)
+	// Tide: a body that's told its island, which has it from here on (see b2SnapTrack)
 	b2SnapTouchBody( world, body->id );
+	b2SnapTouchIslands( world );
 
 	b2ValidateIsland( world, island->islandId );
 }
@@ -142,10 +143,11 @@ static void b2RemoveBodyFromIsland( b2World* world, b2Body* body )
 		B2_VALIDATE( world->bodies.data[movedBodyId].islandIndex == island->bodies.count - 1 );
 		world->bodies.data[movedBodyId].islandIndex = localIndex;
 		island->bodies.count -= 1;
-		// Tide: the body that leaves its island, and another body of the island, which is told where it is in
-		// it now (see b2SnapTrack)
+		// Tide: the body that leaves its island, another body of the island, which is told where it is in
+		// it now, and the island (see b2SnapTrack)
 		b2SnapTouchBody( world, body->id );
 		b2SnapTouchBody( world, movedBodyId );
+		b2SnapTouchIslands( world );
 	}
 
 	if ( island->bodies.count == 0 )

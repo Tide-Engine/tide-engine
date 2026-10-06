@@ -107,6 +107,11 @@ typedef struct b2SnapTrack
 	bool setsTouched;
 	bool pairsTouched;
 
+	// An island was written since the last image: made or destroyed, a body, a contact or a joint put in or
+	// taken out, moved to another set. The step's workers write none, and an island that only steps isn't
+	// written, so an image in parts leaves the islands out when nothing says so (b2SnapTouchIslands).
+	bool islandsTouched;
+
 	// What b2World_GetSnapshotParts hands out, kept from one image to the next (b2SnapParts)
 	void* parts;
 } b2SnapTrack;
@@ -351,6 +356,12 @@ static inline void b2SnapTouchSet( b2World* world, int setIndex )
 static inline void b2SnapTouchPairs( b2World* world )
 {
 	world->snapTrack.pairsTouched = true;
+}
+
+// Tide: an island was written
+static inline void b2SnapTouchIslands( b2World* world )
+{
+	world->snapTrack.islandsTouched = true;
 }
 
 // Tide: a body, its shapes and every contact it's in
