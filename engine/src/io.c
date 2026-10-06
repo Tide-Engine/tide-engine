@@ -293,3 +293,45 @@ void tide_storage_flush_forget(const tide_io *io, const uint32_t ticket)
 {
     if (io && io->flush_forget && ticket) io->flush_forget(io->user, ticket);
 }
+
+// A URL Web.Fetch takes: text, with http:// or https:// in front.
+static bool fetch_url_ok(const tide_str url)
+{
+    if (!url.ptr || url.bytes <= 0 || memchr(url.ptr, 0, (size_t)url.bytes)
+        || !utf8((const uint8_t *)url.ptr, (uint32_t)url.bytes)) return false;
+    return (url.bytes > 7 && memcmp(url.ptr, "http://", 7) == 0) || (url.bytes > 8 && memcmp(url.ptr, "https://", 8) == 0);
+}
+
+uint32_t tide_web_fetch_begin(const tide_io *io, const tide_str url)
+{
+    if (!fetch_url_ok(url)) return TIDE_FETCH_INVALID_URL;
+    if (!io || !io->fetch_begin) return 0;
+    const uint32_t ticket = io->fetch_begin(io->user, tide_str_c(url));
+    return ticket == TIDE_FETCH_INVALID_URL ? 0 : ticket;
+}
+
+bool tide_web_fetch_poll(const tide_io *io, const uint32_t ticket, tide_io_list_result *result)
+{
+    *result = (tide_io_list_result){0};
+    if (ticket == TIDE_FETCH_INVALID_URL) { result->error = TIDE_IO_INVALID_PATH; return true; }
+    if (!io || !io->fetch_poll || !ticket) { result->error = TIDE_IO_FAILED; return true; }
+    tide_io_error error = TIDE_IO_NONE;
+    uint8_t *data = NULL;
+    uint32_t size = 0;
+    if (!io->fetch_poll(io->user, ticket, &error, &data, &size)) return false;
+    if (!error && (size > TIDE_FETCH_LIMIT || (size && !data))) error = TIDE_IO_FAILED;
+    if (!error && size) {
+        tide_block *block = tide_scratch_block(size, "fetched bytes", &result->value.at);
+        block->a = block->b = size;
+        memcpy(block + 1, data, size);
+    }
+    free(data);
+    result->error = error;
+    result->ok = error == TIDE_IO_NONE;
+    return true;
+}
+
+void tide_web_fetch_forget(const tide_io *io, const uint32_t ticket)
+{
+    if (io && io->fetch_forget && ticket && ticket != TIDE_FETCH_INVALID_URL) io->fetch_forget(io->user, ticket);
+}

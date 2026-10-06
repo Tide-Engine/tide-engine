@@ -12,6 +12,9 @@
 #include "tide/platform.h"
 
 #include <errno.h>
+#ifndef __wasm__
+#include "fetch.h" // Web.Fetch, on a thread of its own
+#endif
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,6 +138,30 @@ static bool backend_flush_poll(void *user, const uint32_t ticket, tide_io_error 
     return tide_web_io_flush_poll(ticket, error);
 }
 static void backend_flush_forget(void *user, const uint32_t ticket) { (void)user; tide_web_io_flush_forget(ticket); }
+
+// Web.Fetch: the page's fetch (tide.js), its body read out once it's done
+static uint32_t backend_fetch_begin(void *user, const char *url) { (void)user; return tide_web_io_fetch_begin(url); }
+static bool backend_fetch_poll(void *user, const uint32_t ticket, tide_io_error *error, uint8_t **data, uint32_t *size)
+{
+    (void)user;
+    uint32_t n = 0;
+    const int32_t state = tide_web_io_fetch_poll(ticket, &n);
+    if (state < 0) return false;
+    *error = (tide_io_error)state;
+    *data = NULL;
+    *size = 0;
+    if (!state && n) {
+        *data = tide_alloc(n);
+        if (tide_web_io_fetch_read(ticket, *data, n) != 0) {
+            free(*data);
+            *data = NULL;
+            *error = TIDE_IO_FAILED;
+        } else *size = n;
+    }
+    tide_web_io_fetch_forget(ticket);
+    return true;
+}
+static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user; tide_web_io_fetch_forget(ticket); }
 
 static char *web_path(const int kind)
 {
@@ -1078,6 +1105,16 @@ static void native_paths(io_state *io)
 
 #endif
 
+#ifndef __wasm__
+static uint32_t backend_fetch_begin(void *user, const char *url) { (void)user; return tide_fetch_begin(url); }
+static bool backend_fetch_poll(void *user, const uint32_t ticket, tide_io_error *error, uint8_t **data, uint32_t *size)
+{
+    (void)user;
+    return tide_fetch_poll(ticket, error, data, size);
+}
+static void backend_fetch_forget(void *user, const uint32_t ticket) { (void)user; tide_fetch_forget(ticket); }
+#endif
+
 const tide_io *tide_platform_io_init(const char *app_id)
 {
     if (!app_id || !*app_id) app_id = "dev.tide.game";
@@ -1113,6 +1150,9 @@ const tide_io *tide_platform_io_init(const char *app_id)
         .flush_begin = backend_flush_begin,
         .flush_poll = backend_flush_poll,
         .flush_forget = backend_flush_forget,
+        .fetch_begin = backend_fetch_begin,
+        .fetch_poll = backend_fetch_poll,
+        .fetch_forget = backend_fetch_forget,
     };
     return &state.provider;
 }
