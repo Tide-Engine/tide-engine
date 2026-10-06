@@ -49,6 +49,7 @@ add_library(tide_box2d STATIC ${box2d_sources})
 # otherwise there
 target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
+target_compile_options(tide_box2d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     # As it came, it hands memset no array where it has none to clear (0
     # bytes of it), which the sanitizer would stop on: that check is off for
@@ -85,6 +86,7 @@ file(GLOB box3d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box
 add_library(tide_box3d STATIC ${box3d_sources})
 target_link_libraries(tide_box3d PRIVATE tide_flags)
 target_compile_options(tide_box3d PRIVATE -w)
+target_compile_options(tide_box3d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     target_compile_options(tide_box3d PRIVATE -fno-sanitize=nonnull-attribute)
 endif()
