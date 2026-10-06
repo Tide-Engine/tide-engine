@@ -2,6 +2,10 @@
 // the declaring file, read once each, hashed and decoded, with what's wrong
 // said at the declaration in words that say what to write.
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // popen and pclose under strict C
+#endif
+
 #include "asset_files.h"
 
 #include <ctype.h>
@@ -372,32 +376,61 @@ static char fold(const char c)
 #endif
 }
 
-bool asset_glob_match(const char *p, const char *s)
+// Whether the pattern from `p` up to `p_end` matches the path from `s` up to
+// `s_end`.
+static bool glob_match(const char *p, const char *p_end, const char *s, const char *s_end)
 {
-    while (*p) {
-        if (p[0] == '*' && p[1] == '*') {
+    while (p < p_end) {
+        if (p_end - p >= 2 && p[0] == '*' && p[1] == '*') {
             const char *rest = p + 2;
-            while (*rest == '/') rest++;
+            while (rest < p_end && *rest == '/') rest++;
             for (const char *t = s;; t++) {
-                if (asset_glob_match(rest, t)) return true;
-                if (!*t) return false;
+                if (glob_match(rest, p_end, t, s_end)) return true;
+                if (t == s_end) return false;
             }
         }
         if (*p == '*') {
             for (const char *t = s;; t++) {
-                if (asset_glob_match(p + 1, t)) return true;
-                if (!*t || *t == '/') return false;
+                if (glob_match(p + 1, p_end, t, s_end)) return true;
+                if (t == s_end || *t == '/') return false;
             }
         }
         if (*p == '?') {
-            if (!*s || *s == '/') return false;
-        } else if (!*s || fold(*p) != fold(*s)) {
+            if (s == s_end || *s == '/') return false;
+        } else if (s == s_end || fold(*p) != fold(*s)) {
             return false;
         }
         p++;
         s++;
     }
-    return *s == '\0';
+    return s == s_end;
+}
+
+bool asset_glob_match(const char *p, const char *s)
+{
+    return glob_match(p, p + strlen(p), s, s + strlen(s));
+}
+
+// Whether the glob `p` could match a file in `folder` or under it, a path
+// from where the glob starts that ends in '/': each of its folders' names has
+// to match the pattern's part in its place, up to a part with a `**`, which
+// matches at any depth. The pattern's last part is a file's name, so a
+// pattern with no `**` reaches as many folders deep as it has slashes.
+static bool glob_reaches(const char *p, const char *folder)
+{
+    while (*folder) {
+        const char *part = p;
+        for (; *p && *p != '/'; p++) {
+            if (p[0] == '*' && p[1] == '*') return true;
+        }
+        if (!*p) return false;
+        const char *name = folder;
+        while (*folder != '/') folder++;
+        if (!glob_match(part, p, name, folder)) return false;
+        p++;
+        folder++;
+    }
+    return true;
 }
 
 // The written path's fixed start, up to the folder the first wildcard is in:
@@ -432,6 +465,15 @@ static void glob_found(void *user, const char *path, const unsigned long long si
     sb_printf(&key, "%s%s", w->prefix, relative);
     vec_push(w->keys, key.data);
     vec_push(w->paths, str_to_cstr(str_from(path)));
+}
+
+// A glob's walk only goes where it could match: "*.png" in a game's own
+// folder reads that folder's entries, and none of the folders under it.
+static bool glob_enters(void *user, const char *folder)
+{
+    const glob_walk *w = user;
+    const size_t base_len = strlen(w->base);
+    return strncmp(folder, w->base, base_len) == 0 && glob_reaches(w->rest, folder + base_len);
 }
 
 static int key_order(const void *a, const void *b)
@@ -488,6 +530,11 @@ static void candidate_found(void *user, const char *path, const unsigned long lo
     if (asset_path_same(asset_path_name(path), c->name)) vec_push(c->same_name, str_to_cstr(str_from(path)));
 }
 
+static int candidate_order(const void *a, const void *b)
+{
+    return path_compare(*(char *const *)a, *(char *const *)b);
+}
+
 static void say_missing(const char *written, const char *abs, const char *folder, const char *game_folder, const loc at)
 {
     diag_error(at, "there's no file at '%s' (%s)", written, abs);
@@ -511,6 +558,9 @@ static void say_missing(const char *written, const char *abs, const char *folder
     }
     folder_find_files(root ? root : folder, candidate_found, &c);
     free(root);
+    // By their paths, as the language server has them: a system lists a folder in whatever order it keeps it in
+    if (c.same_bytes.count > 1) qsort(c.same_bytes.items, (size_t)c.same_bytes.count, sizeof(char *), candidate_order);
+    if (c.same_name.count > 1) qsort(c.same_name.items, (size_t)c.same_name.count, sizeof(char *), candidate_order);
     if (c.same_bytes.count) {
         char *relative = asset_path_relative(folder, c.same_bytes.items[0]);
         diag_note("a file with the same bytes is at '%s'", relative);
@@ -638,7 +688,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         if (!base_slash) abort();
         sprintf(base_slash, "%s%s", base, base_len && base[base_len - 1] == '/' ? "" : "/");
         glob_walk w = {base_slash, written + prefix_len, prefix, {0}, {0}};
-        folder_find_files(base_slash, glob_found, &w);
+        folder_find_files_in(base_slash, glob_enters, glob_found, &w);
         if (w.keys.count == 0) {
             diag_error(at, "'%s' matches no file", written);
             diag_note("it's looked for from the folder this file is in, %s", folder);
