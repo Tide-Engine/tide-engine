@@ -51,6 +51,8 @@ typedef struct body {
     float step_spin;
     bool fixed_rotation;
     bool bullet;
+    bool asleep;
+    bool step_asleep; // What the last step left `asleep` as
 } body;
 
 typedef struct box {
@@ -98,6 +100,34 @@ typedef struct physics {
 _Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 && sizeof(touch) == 24
                    && sizeof(physics) == 64 && offsetof(physics, moved) == 36,
                "box2d.tide's types changed: these are theirs");
+
+// A body's four bools are side by side, the last four bytes of its component:
+// one field of four bytes to the systems written in C (tide/rows.h), which
+// read whether it's asleep, and what the last step left that as, out of it.
+#define FLAGS offsetof(body, fixed_rotation)
+
+_Static_assert(FLAGS % 4 == 0 && offsetof(body, asleep) == FLAGS + 2 && offsetof(body, step_asleep) == FLAGS + 3
+                   && sizeof(body) == FLAGS + 4,
+               "a Body's flags aren't where the systems written in C look for them any more");
+
+// Whether a body is asleep, as the four bytes its flags are in read, and what
+// the last step left that as. The first byte of the four is the number's low
+// one on every platform Tide builds for.
+static inline bool flags_asleep(const int32_t flags)
+{
+    return ((uint32_t)flags >> 16 & 0xffu) != 0;
+}
+
+static inline bool flags_step_asleep(const int32_t flags)
+{
+    return ((uint32_t)flags >> 24 & 0xffu) != 0;
+}
+
+// The same four bytes with both of those saying `asleep`.
+static inline int32_t flags_left(const int32_t flags, const bool asleep)
+{
+    return (int32_t)(((uint32_t)flags & 0xffffu) | (asleep ? 0x01010000u : 0u));
+}
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
 // out would cost more than it saves. The step itself is quicker shared from a
@@ -150,6 +180,18 @@ static new_body *made;
 static int32_t made_count;
 static int32_t made_room;
 static int32_t made_taken;
+
+// The bodies code put to sleep this tick (sync_body), in the order Enter came
+// to them. The step puts each to sleep right before it steps (put_to_sleep),
+// after everything else the tick wrote has gone to Box2D: a body's own move
+// or push, and those of the bodies it touches, would wake it again.
+static int64_t *sleeps;
+static int32_t sleep_count;
+static int32_t sleep_room;
+// The running tick's step put bodies to sleep that way. Box2D takes the bodies
+// that touch one with it, and says nothing of which those were: b2t_leave then
+// asks, of each body that was awake and that the step says nothing of.
+static bool slept;
 
 // Where the running tick's step left a body it moved: what b2t_leave writes
 // into the body's component, found by the body's index. The step says which
@@ -299,6 +341,7 @@ bool b2t_open(const int64_t stamp)
         abort();
     }
     made_count = made_taken = 0;
+    sleep_count = 0;
     const int workers = workers_now();
     for (int i = 0; i < WORLDS; i++) {
         world *w = &worlds[i];
@@ -363,6 +406,8 @@ void b2t_forget(void)
     }
     active = NULL;
     made_count = made_taken = 0;
+    sleep_count = 0;
+    slept = false;
 }
 
 // For tests: a step is shared out over the tick's threads from this many
@@ -435,6 +480,10 @@ static bool sync_body(body *b)
         def.gravityScale = b->gravity_scale;
         def.motionLocks.angularZ = b->fixed_rotation;
         def.isBullet = b->bullet;
+        // Spawned asleep: it's made so, by itself, and is there for the others to rest on or run into. A
+        // static body is neither asleep nor awake
+        if (b->type == b2_staticBody) b->asleep = false;
+        def.isAwake = !b->asleep;
         id = b2CreateBody(w->id, &def);
         b->id = handle(id.index1, id.generation);
         did |= 1u;
@@ -463,7 +512,27 @@ static bool sync_body(body *b)
             b2Body_SetAngularVelocity(id, b->spin);
             did |= 8u;
         }
+        // Asleep or awake, where code wrote another than the last step left. Waking is done here, and
+        // Box2D wakes all of what the body fell asleep with. Sleeping waits for the step (put_to_sleep)
+        if (b->asleep != b->step_asleep) {
+            if (b2Body_GetType(id) == b2_staticBody) {
+                b->asleep = false; // It's neither, and reads so again
+            } else {
+                if (b->asleep) {
+                    if (sleep_count == sleep_room) {
+                        const int32_t room = sleep_room ? sleep_room * 2 : 64;
+                        sleeps = tide_realloc(sleeps, (size_t)sleep_room * sizeof *sleeps, (size_t)room * sizeof *sleeps);
+                        sleep_room = room;
+                    }
+                    sleeps[sleep_count++] = b->id;
+                } else {
+                    b2Body_SetAwake(id, true);
+                }
+                did |= 64u;
+            }
+        }
     }
+    b->step_asleep = b->asleep; // What Leave makes of both, once the step has had its say
     // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
     // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
     // Either way they're given once, and noted here
@@ -506,6 +575,8 @@ typedef struct body_fields {
     const float *step_vx;
     const float *step_vy;
     const float *step_spin;
+    const int32_t *type;
+    const int32_t *flags; // Its four bools, of which two say whether it's asleep (flags_asleep)
 } body_fields;
 
 static body_fields fields_of(const tide_rows *rows)
@@ -528,6 +599,8 @@ static body_fields fields_of(const tide_rows *rows)
         .step_vx = tide_rows_floats(rows, 0, offsetof(body, step_velocity.x)),
         .step_vy = tide_rows_floats(rows, 0, offsetof(body, step_velocity.y)),
         .step_spin = tide_rows_floats(rows, 0, offsetof(body, step_spin)),
+        .type = tide_rows_ints(rows, 0, offsetof(body, type)),
+        .flags = tide_rows_ints(rows, 0, FLAGS),
     };
 }
 
@@ -546,7 +619,8 @@ void b2t_enter(tide_rows *rows, physics *p)
         const bool pushed = f.vx[i] != f.step_vx[i] || f.vy[i] != f.step_vy[i] || f.spin[i] != f.step_spin[i];
         const bool nudged = f.impulse_x[i] != 0 || f.impulse_y[i] != 0 || f.turn[i] != 0;
         const bool is_new = f.id[i] == 0 && f.id_high[i] == 0;
-        if (!is_new && !moved && !pushed && !nudged) continue;
+        const bool lulled = flags_asleep(f.flags[i]) != flags_step_asleep(f.flags[i]); // Put to sleep, or woken
+        if (!is_new && !moved && !pushed && !nudged && !lulled) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
         const tide_float2 impulse = b.impulse;
@@ -557,7 +631,8 @@ void b2t_enter(tide_rows *rows, physics *p)
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i], impulse, turn};
+            // One that's made asleep stays so: the impulses it was spawned with would wake it
+            made[made_count++] = b.asleep ? (new_body){b.id, entities[i], {0, 0}, 0} : (new_body){b.id, entities[i], impulse, turn};
         }
         tide_rows_set(rows, 0, i, &b); // Its id, and the impulses it was given, which are gone
         f = fields_of(rows);
@@ -673,6 +748,25 @@ static void push_new(const world *w)
     }
 }
 
+// The bodies code put to sleep this tick go to sleep, now that everything else
+// the tick wrote is Box2D's: last, so that each is asleep as the step starts.
+// Box2D puts a body's island to sleep with it, the bodies that touch it and
+// the ones those touch, wherever they are and however fast: what they have of
+// speed is gone, and each stays where it is until something wakes it. In the
+// order Enter came to them, and noted with them (sync_body), so nothing is
+// noted here. Whether any was.
+static bool put_to_sleep(const world *w)
+{
+    const bool any = sleep_count > 0;
+    for (int32_t i = 0; i < sleep_count; i++) {
+        const b2BodyId id = body_of(w, sleeps[i]);
+        // One that's asleep already went with a body before it in the list
+        if (b2Body_IsValid(id) && b2Body_GetType(id) != b2_staticBody && b2Body_IsAwake(id)) b2Body_SetAwake(id, false);
+    }
+    sleep_count = 0;
+    return any;
+}
+
 int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravity)
 {
     world *w = active;
@@ -695,6 +789,7 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
         b2World_EnableSleeping(w->id, false);
         b2World_EnableSleeping(w->id, true);
     }
+    slept = put_to_sleep(w);
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -818,6 +913,14 @@ static body_places places_of(tide_rows *rows)
 // it and the step left it there, or it just came to rest: its component gets
 // what Box2D has, so that the next tick's Enter finds nothing written.
 //
+// Whether it's asleep is written the same way, where its component doesn't say
+// so already: awake for a body the step moved, asleep for one that fell asleep
+// in it. Any other is as its component says, as nothing else puts a body to
+// sleep or wakes one without the step moving it, but in a tick whose step put
+// bodies to sleep for code (`slept`): Box2D took the bodies that touched them
+// along, so each body that was awake and that the step says nothing of is
+// asked whether it still is.
+//
 // The fields are only asked for to write once a body has something to write,
 // so a run of bodies at rest leaves every one of them shared with the match's
 // snapshots. Runs go to several threads at once: each reads what the step
@@ -828,19 +931,23 @@ void b2t_leave(tide_rows *rows, const physics *p)
     const uint32_t count = tide_rows_count(rows);
     body_fields f = fields_of(rows);
     body_places to = {0};
+    int32_t *flags_to = NULL;
     bool writing = false;
     for (uint32_t i = 0; i < count; i++) {
         const int64_t id = (int64_t)((uint64_t)(uint32_t)f.id[i] | (uint64_t)(uint32_t)f.id_high[i] << 32);
         if (id == 0) continue;
         const uint32_t index = (uint32_t)f.id[i];
-        const left *l = index < left_room ? &lefts[index] : NULL;
-        float x;
-        float y;
-        float angle;
-        float vx;
-        float vy;
-        float spin;
-        if (l && l->step == stepped && l->id == id && l->awake) {
+        const left *l = index < left_room && lefts[index].step == stepped && lefts[index].id == id ? &lefts[index] : NULL;
+        const int32_t flags = f.flags[i];
+        bool asleep = l ? !l->awake : flags_step_asleep(flags);
+        bool placed = true; // Its place and speeds are to be written
+        float x = 0;
+        float y = 0;
+        float angle = 0;
+        float vx = 0;
+        float vy = 0;
+        float spin = 0;
+        if (l && l->awake) {
             x = l->x;
             y = l->y;
             angle = l->angle;
@@ -848,22 +955,34 @@ void b2t_leave(tide_rows *rows, const physics *p)
             vy = l->vy;
             spin = l->spin;
         } else {
+            const b2BodyId asked = body_of(active, id);
+            // Put to sleep by code this tick, with a body it touched
+            if (!l && slept && !asleep && f.type[i] != b2_staticBody && b2Body_IsValid(asked)) asleep = !b2Body_IsAwake(asked);
             const bool still = f.vx[i] == 0 && f.vy[i] == 0 && f.spin[i] == 0 && f.step_vx[i] == 0 && f.step_vy[i] == 0
                                && f.step_spin[i] == 0;
             const bool there = f.x[i] == f.step_x[i] && f.y[i] == f.step_y[i] && f.angle[i] == f.step_angle[i];
-            if (still && there) continue;
-            const b2BodyId asked = body_of(active, id);
-            if (!b2Body_IsValid(asked)) continue;
-            const b2Pos at = b2Body_GetPosition(asked);
-            const b2Vec2 velocity = b2Body_GetLinearVelocity(asked);
-            x = (float)at.x;
-            y = (float)at.y;
-            angle = b2Rot_GetAngle(b2Body_GetRotation(asked));
-            vx = velocity.x;
-            vy = velocity.y;
-            spin = b2Body_GetAngularVelocity(asked);
+            placed = !(still && there) && b2Body_IsValid(asked);
+            if (placed) {
+                const b2Pos at = b2Body_GetPosition(asked);
+                const b2Vec2 velocity = b2Body_GetLinearVelocity(asked);
+                x = (float)at.x;
+                y = (float)at.y;
+                angle = b2Rot_GetAngle(b2Body_GetRotation(asked));
+                vx = velocity.x;
+                vy = velocity.y;
+                spin = b2Body_GetAngularVelocity(asked);
+            }
         }
-        if (!writing) { // What's written is what's read from here on
+        const int32_t left_as = flags_left(flags, asleep);
+        if (left_as != flags) {
+            if (!flags_to) { // What's written is what's read from here on
+                flags_to = tide_rows_ints_mut(rows, 0, FLAGS);
+                f = fields_of(rows);
+            }
+            flags_to[i] = left_as;
+        }
+        if (!placed) continue;
+        if (!writing) {
             to = places_of(rows);
             f = fields_of(rows);
             writing = true;
