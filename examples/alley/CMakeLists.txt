@@ -1,13 +1,14 @@
 # Alley: bowling with far too many pins, on Box3D. A game to play in a window
-# or in the docs site (docs/guide/alley.md), alone or up to eight in a match.
+# or in the docs site (docs/guide/alley.md), alone or up to eight in a room.
 #
-# Its folder is what `tide run` builds: game.tide is the match, play.tide what
-# a machine shows of it, and tide.packages lists box3d. tide_add_game reads no
-# tide.packages, so the package is named here, and built with the game as
-# tide builds a game that lists it: its Tide file before the game's, its C
-# with the game's, and Box3D's own sources, which packages/ builds as
-# tide_box3d.
-set(ALLEY_SOURCES game.tide play.tide)
+# Its folder is what `tide run` builds: game.tide is the match, the other
+# files what a machine shows of it and which match it's in, and tide.packages
+# lists box3d. tide_add_game reads no tide.packages, so the package is named
+# here, and built with the game as tide builds a game that lists it: its Tide
+# file before the game's, its C with the game's, and Box3D's own sources,
+# which packages/ builds as tide_box3d. The files are in the order of their
+# names, as tide compiles a folder's.
+set(ALLEY_SOURCES effects.tide game.tide hud.tide light.tide lobby.tide play.tide)
 set(ALLEY_PACKAGE "${PROJECT_SOURCE_DIR}/packages/box3d")
 
 if(TARGET tide_platform)

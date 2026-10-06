@@ -1,4 +1,5 @@
-// Alley with no window: what the game promises, on one world, and four
+// Alley with no window: what the game promises, on one world; what a machine
+// shows of it and where its lobby leaves it, a frame at a time; and four
 // players in a match on the loopback network, two of whom join after balls
 // were thrown, whose server's world is pinned.
 
@@ -8,6 +9,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "tide/list.h"
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/session.h"
@@ -25,8 +27,8 @@ void b3t_forget(void);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its image and the netcode, byte for byte.
 // Once with the lane in the air, and once after a Reset set it up again.
-#define THROWN_HASH UINT64_C(0x98857db6c9cfa94f)
-#define MATCH_HASH UINT64_C(0x7b99b18763a5a1d9)
+#define THROWN_HASH UINT64_C(0x5f7a5a39c7044cb4)
+#define MATCH_HASH UINT64_C(0x71c8dc55c8a3746c)
 
 static tide_world world;
 
@@ -372,6 +374,208 @@ TIDE_TEST(alley_reset_sets_the_lane_up_again)
     }
     TIDE_CHECK(apart < 0.01f);
     tide_world_free(&built);
+    tide_world_free(&world);
+}
+
+// ---------------------------------------------------------------------------
+// What one machine shows of the match, and which match it's in: its views and
+// local handlers, as a host runs a frame, with no window
+
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+static tide_devices devices;
+
+static void frame(const tide_world *w)
+{
+    tide_local_frame_time(&local, 1.0f / 60.0f);
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
+    tide_frame(w, NULL, 1.0f, w, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+}
+
+// A machine as it starts: its local state, and where the host says it stands.
+static void machine(const uint32_t state, const int who, const bool server, const bool open, const char *room)
+{
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    memset(&devices, 0, sizeof devices);
+    tide_local_set_session(&local, state, who < 0 ? (tide_player_id){0} : player(who), 0, server, open, room);
+}
+
+// Whether this machine's player throws, holding the button down with the pointer on the lane.
+static bool throws(void)
+{
+    tide_devices held = devices;
+    held.pointer.press.pressed = true;
+    return tide_input_sample(&held, &local).fire;
+}
+
+static bool says_something(void)
+{
+    return tide_text_read(&local.heap, local.Lobby.message).bytes > 0;
+}
+
+// What local code asked of the session since it was last asked
+static uint32_t asked(void)
+{
+    tide_session_request request = {0};
+    tide_start from;
+    return tide_local_take_request(&local, &request, &from) ? request.kind : (uint32_t)TIDE_REQUEST_NONE;
+}
+
+TIDE_TEST(alley_opens_on_its_lobby_unless_it_was_told_which_match)
+{
+    start();
+    // Started with nothing said: a match of its own, closed, behind the title.
+    // The player's bowler does nothing while the lobby is up
+    machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_Title && !local.Hand.playing && !throws());
+    TIDE_CHECK(local.Lobby.players == 3 && local.Lobby.mine == 0 && local.Lobby.manned == 7);
+    TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+
+    // --host, or a page's ?host: the match is open by the first frame, and no lobby is in the way
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_None && local.Hand.playing && throws());
+    // The button is held as the menu closes: nothing is thrown until it's let go
+    local.Lobby.page = Page_Room;
+    frame(&world);
+    TIDE_CHECK(!throws());
+    local.Lobby.page = Page_None;
+    devices.pointer.press.pressed = devices.pointer.press.held = true;
+    frame(&world);
+    TIDE_CHECK(!throws());
+    devices.pointer.press.pressed = devices.pointer.press.held = false;
+    frame(&world);
+    TIDE_CHECK(throws());
+    tide_local_free(&local);
+
+    // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
+    machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && local.Lobby.joining && !throws());
+    tide_local_connected(&local);
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_None && !local.Lobby.joining && throws());
+    TIDE_CHECK(local.Lobby.mine == 1);
+    // That match ends: back on the title, with a line that says so, and a match of its own asked for
+    tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
+    tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Title && says_something() && !throws());
+    TIDE_CHECK(asked() == TIDE_REQUEST_START);
+    tide_local_free(&local);
+
+    // A code nobody has: the page it was typed on stays, to try again from
+    machine(TIDE_SESSION_CONNECTING, -1, false, false, "");
+    frame(NULL);
+    tide_local_disconnected(&local, TIDE_DISCONNECT_FAILED, "");
+    tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && !local.Lobby.joining && says_something());
+    TIDE_CHECK(asked() == TIDE_REQUEST_START);
+    // This machine leaving a match, as when it starts or joins another, says nothing
+    tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_world_free(&world);
+}
+
+// The sparks, the numbers and the words come from what the match sends: a
+// tick that tells this machine what it sent, and the frame that shows it.
+static tide_event_log heard;
+
+static void tick_and_show(void)
+{
+    tide_world_tick_events(&world, NULL, &heard);
+    tide_local_events(&local, &heard);
+    frame(&world);
+}
+
+static float popped(const int seat)
+{
+    return *(const float *)tide_list_read(&local.heap, local.Fx.pops, seat, sizeof(float));
+}
+
+TIDE_TEST(alley_effects_come_from_what_the_match_sends)
+{
+    start();
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.sparks) == 0 && local.Fx.seat == 0);
+    // Every target has a shadow on the lane, and the first seat's place has its marks
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.decals) > TARGETS);
+
+    // This machine's player's ball leaves their hand: the camera feels it
+    hold(0, 0, 9, 0, true);
+    tick_and_show();
+    hold(0, 0, 9, 0, false);
+    TIDE_CHECK(count(&world, tide_has_Ball) == 1 && local.Fx.trauma > 0.0f);
+    // It hits a pin, which flashes, and sparks fly
+    bool flashed = false;
+    for (int i = 0; i < 90 && !flashed; i++) {
+        tick_and_show();
+        for (uint32_t j = 0; j < world.entities.next_unused; j++) {
+            const tide_entity e = tide_entity_in_slot(&world.entities, j);
+            if (tide_has_Target(&world, e) && tide_get_Target_local(&local, e).hit > 0.0f) flashed = true;
+        }
+    }
+    TIDE_CHECK(flashed && tide_list_read_count(&local.heap, local.Fx.sparks) > 0);
+
+    // A kingpin the first seat painted goes through the goal: the goal lights up, what it was worth floats up
+    // and the seat's score jumps
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (!tide_has_Target(&world, e) || tide_get_Target(&world, e).worth != 5) continue;
+        Target king = tide_get_Target(&world, e);
+        king.last = 0;
+        tide_set_Target(&world, e, king);
+        Box3D_Body body = tide_get_Box3D_Body(&world, e);
+        body.position = tide_f3(0.0f, 1.0f, LANE_END + 4.0f);
+        tide_set_Box3D_Body(&world, e, body);
+        break;
+    }
+    bool labelled = false;
+    for (int i = 0; i < 120 && !labelled; i++) {
+        tick_and_show();
+        labelled = tide_list_read_count(&local.heap, local.Fx.labels) > 0;
+    }
+    TIDE_CHECK(labelled && popped(0) > 0.5f && local.Room.goal > 0.5f && score(&world, 0) == 5);
+    TIDE_CHECK(tide_get_Bowler(&world, bowler_at(&world, 0)).round == 5);
+
+    // Gravity lets go: the room's light follows
+    TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Float, 1));
+    tick_and_show();
+    TIDE_CHECK(local.Flow.lifted < 0.1f);
+    for (int i = 0; i < 30; i++) tick_and_show();
+    TIDE_CHECK(local.Room.low > 0.9f);
+
+    // A round ends, and the next is set up: the words over the lane know who took it
+    world.Lane.standing = 6;
+    tick_and_show();
+    TIDE_CHECK(world.Lane.phase == Phase_Over);
+    TIDE_CHECK(local.Flow.winner == 0 && local.Flow.best == 5 && local.Flow.round == 1 && local.Flow.since < 0.1f);
+    for (int i = 0; i < 200 && world.Lane.round == 1; i++) tick_and_show();
+    TIDE_CHECK(world.Lane.round == 2 && local.Flow.set == 2 && local.Flow.begun < 0.1f);
+    // What was scored stays, and the next round starts from nothing
+    TIDE_CHECK(score(&world, 0) == 5 && tide_get_Bowler(&world, bowler_at(&world, 0)).round == 0);
+    tide_event_log_free(&heard);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
     tide_world_free(&world);
 }
 
