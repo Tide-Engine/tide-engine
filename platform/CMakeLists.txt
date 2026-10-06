@@ -427,7 +427,8 @@ if(TIDE_WEB)
         COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_io>/tide_platform_web_io.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_io-browser" "backend=webgl")
-    set_tests_properties(tide_platform_web_io PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
+    set_tests_properties(tide_platform_web_io PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
 
     add_executable(tide_platform_web_keys tests/web_keys.c)
     target_link_libraries(tide_platform_web_keys PRIVATE tide_platform)
