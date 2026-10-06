@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "asset_files.h"
 #include "assets.h"
 #include "ast.h"
 #include "builtins.h"
@@ -713,6 +714,7 @@ static void walk_value(const expr *e)
             o.owner = e->name;
             break;
         case BIND_CONST:
+        case BIND_ASSET: // An asset read by name: its declaration, as a constant's
             o.kind = OCC_CONST;
             o.decl = e->constant;
             break;
@@ -753,7 +755,7 @@ static void walk_value(const expr *e)
         } else if (e->bind == BIND_NAMESPACE) { // Combat in Game.Combat.Health
             o.kind = OCC_NAMESPACE;
             o.name = namespace_path(e);
-        } else if (e->bind == BIND_CONST) { // MAX_HEALTH in Combat.MAX_HEALTH
+        } else if (e->bind == BIND_CONST || e->bind == BIND_ASSET) { // MAX_HEALTH in Combat.MAX_HEALTH, or an asset
             o.kind = OCC_CONST;
             o.decl = e->constant;
         } else if (e->c_constant) {
@@ -1143,7 +1145,7 @@ static void index_program(void)
             walk_fields_of = NULL;
             continue;
         }
-        if (d->kind == DECL_CONST) {
+        if (d->kind == DECL_CONST || d->kind == DECL_ASSET) {
             add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_CONST, .declaration = true, .decl = d,
                                  .name = d->name, .type = d->return_type});
             type_ref(d->return_type_qual_at, d->return_type_at, d->return_type_name, d->return_type);
@@ -2529,6 +2531,14 @@ static void describe(const occurrence *o, sb *out)
         break;
     }
     case OCC_CONST:
+        if (o->decl->kind == DECL_ASSET) {
+            sb_printf(&code, "asset " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
+            format_value_after(o->decl->at, &code);
+            code_block(out, code.data);
+            sb_put(out, "\n\nAsset: the file's contents, read as the game is built and packed with it, the same on every machine. "
+                        "Any code can read it, and nothing can change it.");
+            break;
+        }
         sb_printf(&code, "const " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
         format_value_after(o->decl->at, &code);
         code_block(out, code.data);
@@ -3949,7 +3959,7 @@ static int symbol_kind(const decl *d)
          : d->kind == DECL_INPUT                                ? SYMBOL_INTERFACE
          : d->kind == DECL_EVENT                                ? SYMBOL_EVENT
          : d->kind == DECL_ENUM                                 ? SYMBOL_ENUM
-         : d->kind == DECL_CONST                                ? SYMBOL_CONSTANT
+         : d->kind == DECL_CONST || d->kind == DECL_ASSET       ? SYMBOL_CONSTANT
                                                                 : SYMBOL_FUNCTION;
 }
 
@@ -6445,7 +6455,8 @@ static bool game_type_named(const char *name)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        const bool type = d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && !is_shader(d);
+        const bool type = d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_CONST && d->kind != DECL_ASSET
+                       && !is_shader(d);
         if (type && !d->builtin && str_eq_c(d->name, name)) return true;
     }
     return false;
@@ -9333,43 +9344,12 @@ static bool file_hash(const char *path, const unsigned long long size, const uns
     return true;
 }
 
-static char fold_path_char(const char c)
-{
-#ifdef _WIN32
-    return (char)tolower((unsigned char)(c == '\\' ? '/' : c));
-#else
-    return c == '\\' ? '/' : c;
-#endif
-}
-
 // Whether `path` (forward slashes) is what the glob `p` says: `*` within a
 // name, `**` across folders, `?` a character.
+// The checker's matcher (asset_files.h), so the editor and the build agree.
 static bool glob_match(const char *p, const char *s)
 {
-    while (*p) {
-        if (p[0] == '*' && p[1] == '*') {
-            const char *rest = p + 2;
-            while (*rest == '/') rest++;
-            for (const char *t = s;; t++) {
-                if (glob_match(rest, t)) return true;
-                if (!*t) return false;
-            }
-        }
-        if (*p == '*') {
-            for (const char *t = s;; t++) {
-                if (glob_match(p + 1, t)) return true;
-                if (!*t || *t == '/') return false;
-            }
-        }
-        if (*p == '?') {
-            if (!*s || *s == '/') return false;
-        } else if (!*s || fold_path_char(*p) != fold_path_char(*s)) {
-            return false;
-        }
-        p++;
-        s++;
-    }
-    return *s == '\0';
+    return asset_glob_match(p, s);
 }
 
 // The type an asset resolves to says which files it takes.
@@ -9499,9 +9479,17 @@ static void glob_matches(const asset_site *site, asset_paths *out)
 }
 
 // A diagnostic at a site's path.
+// The checker reports what's wrong with a site's path (asset_files.c), at
+// the path's token: the editor's fixes attach to that diagnostic. Where the
+// checker said nothing (its own check didn't get that far), one is made.
 static int asset_diagnostic(const asset_site *site, const char *message)
 {
-    diagnostic d = {DIAG_ERROR, A.files[site->file].toks[site->string].at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}};
+    const loc at = A.files[site->file].toks[site->string].at;
+    for (int i = 0; i < A.diags.count; i++) {
+        const diagnostic *d = &A.diags.items[i];
+        if (d->at.line == at.line && d->at.col == at.col && d->at.file == at.file && d->severity == DIAG_ERROR) return i;
+    }
+    diagnostic d = {DIAG_ERROR, at, {0}, {0}, {0, 0, 0}, 0, {NULL, 0}};
     sb_put(&d.message, message);
     vec_push(A.diags, d);
     return A.diags.count - 1;
@@ -9539,11 +9527,11 @@ static void asset_missing(const asset_site *site, const asset_hashes *known, ass
     }
     if (found.count == 0) return;
     diagnostic *d = &A.diags.items[diag];
-    sb_put(&d->message, by_bytes ? "\nnote: a file with the same bytes is at " : "\nnote: files of that name: ");
+    const bool said = strstr(d->message.data, "note:") != NULL; // The checker's note names the files already
+    if (!said) sb_put(&d->message, by_bytes ? "\nnote: a file with the same bytes is at " : "\nnote: files of that name: ");
     for (int i = 0; i < found.count; i++) {
         char *relative = asset_path_relative(site->folder, found.items[i]);
-        if (i > 0) sb_put(&d->message, ", ");
-        sb_printf(&d->message, "'%s'", relative);
+        if (!said) sb_printf(&d->message, "%s'%s'", i > 0 ? ", " : "", relative);
         const asset_fix fix = {(int)(site - A.assets.items), diag, arena_copy(relative), by_bytes && i == 0};
         vec_push(A.asset_fixes, fix);
         free(relative);

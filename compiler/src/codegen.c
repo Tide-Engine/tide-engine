@@ -12338,7 +12338,7 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
 }
 
 // One item of an asset into the pack: its block's offset.
-static uint32_t pack_item(tide_pack_builder *b, const asset_item *item, const asset_kind kind, const decl *grid, uint32_t *extra)
+static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, uint32_t *extra)
 {
     *extra = 0;
     if (kind == ASSET_GRID) {

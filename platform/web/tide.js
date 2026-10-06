@@ -2191,6 +2191,13 @@
         return bytes;
     }
 
+    // The game's pack of assets (tide/pack.h): the page's own, which a page
+    // that ships holds as base64 beside the program, or under tide run the one
+    // tide serves, which the program asks for as it starts and when it changes.
+    let packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+    platform.pack_size = () => packBytes ? packBytes.length : 0;
+    platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
+
     // The program loads while the page waits to hear about its GPU, and starts
     // once it knows; instantiate loads its saved files too when the program
     // uses them.
@@ -2258,11 +2265,20 @@
     // Asks tide for the newest build, and whether to start over, 4 times a
     // second. When tide has stopped, the page stays as it is.
     if (config.reload) {
-        let build = 0, restarts = 0, bytes = null;
+        let build = 0, restarts = 0, bytes = null, pack = 0;
         const poll = async () => {
             try {
-                const [newest, restart] = (await (await fetch('build', { cache: 'no-store' })).text())
+                const [newest, restart, packs] = (await (await fetch('build', { cache: 'no-store' })).text())
                     .trim().split(' ').map(Number);
+                // A new pack first (a named file changed, or a build has one), so a new build starts with it
+                if (packs && packs !== pack) {
+                    const response = await fetch(`pack-${packs}`, { cache: 'no-store' });
+                    if (response.ok) {
+                        packBytes = new Uint8Array(await response.arrayBuffer());
+                        pack = packs;
+                        if (bytes && exports && exports.tide_pack_changed && !stopped) exports.tide_pack_changed();
+                    }
+                }
                 if (newest && newest !== build) {
                     const response = await fetch(`game-${newest}.wasm`, { cache: 'no-store' });
                     if (response.ok) {

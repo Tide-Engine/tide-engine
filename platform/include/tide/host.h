@@ -85,6 +85,10 @@ typedef struct tide_host_game {
     // Frees what the game's code keeps for itself (scratch and target bookkeeping), before
     // its library is unloaded.
     void (*unload)(void);
+    // Loads the game's assets from its pack (tide_assets_load, tide/pack.h): before the first
+    // frame, and again with the pack tide writes under tide run as a named file changes. NULL
+    // for a game with no assets.
+    bool (*assets)(const uint8_t *pack, size_t size);
     // Its data layout, when tidec described it (tide run's builds), to carry
     // the game over to a build whose layout changed; NULL otherwise.
     const tide_layout *layout;
@@ -123,6 +127,34 @@ _Noreturn void tide_host_run_web(const tide_run_desc *desc, const tide_host_game
 // The loop, for tide/run.h and platform/src/reload.c
 
 static const tide_host_game *tide_run_game;
+// The game's pack of assets as the host read it (tide_platform_pack, or under
+// tide run the newest pack-<n>): kept, so a reloaded library gets it too.
+static uint8_t *tide_run_pack;
+static size_t tide_run_pack_size;
+
+// The pack from `bytes` (malloc'd, the host's from here on): the game loads it.
+static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
+{
+    free(tide_run_pack);
+    tide_run_pack = bytes;
+    tide_run_pack_size = size;
+    if (tide_run_game->assets && bytes && !tide_run_game->assets(bytes, size)) {
+        fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
+    }
+}
+
+// The pack the build left with the program, for a game that has assets.
+static inline void tide_run_load_assets(void)
+{
+    if (!tide_run_game->assets) return;
+    size_t size = 0;
+    uint8_t *bytes = tide_platform_pack(&size);
+    if (!bytes) {
+        fprintf(stderr, "tide: the game's pack of assets isn't with the program (<program>.pack beside it): they read as empty\n");
+        return;
+    }
+    tide_run_assets_from(bytes, size);
+}
 static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
 static tide_devices tide_run_devices;
@@ -751,6 +783,7 @@ _Noreturn static inline void tide_host_run(const tide_run_desc *desc, const tide
 {
     tide_run_game = game;
     tide_run_open(desc);
+    tide_run_load_assets();
     tide_run_begin();
     tide_platform_run(tide_run_frame, NULL);
 }
