@@ -1,4 +1,5 @@
-// expect: 'out' goes before an argument for an 'out' parameter, and nothing here takes one
+// expect: 'GUILayout.Float2Field' has no version that says when it was entered, so it takes no 'out' argument
+// expect: remove the argument: the widgets with such a version are TextField, IntField and FloatField, like 'GUILayout.TextField(label, value, out var entered)'
 scene Main { }
 local singleton Lobby { string code; int count; float ratio; bool entered; }
 local singleton Place { float2 at; }

@@ -629,6 +629,7 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
     // What wasn't drawn this frame lets go.
     if (!g->focus_seen) g->focus = 0;
     if (!g->editing_seen) g->editing = 0;
+    g->edit_left = 0; // A number whose field didn't run to keep it
     if (!g->active_seen || !g->mouse_held) g->active = 0;
     g->hot = g->hot_next;
     g->hot_rect = g->hot_rect_next;
@@ -812,10 +813,11 @@ static bool held_down(tide_gui *g, const uint32_t id, const bool hover)
 static bool focusable(tide_gui *g, const uint32_t id, const bool steps)
 {
     if (!live(g)) return false;
-    if (g->grab && g->grab == g->in_modal) { // The first widget of a modal that just came on top
+    // The first widget of a modal that just came on top. A field under it that
+    // was typed into ends its typing itself as it runs, without the focus
+    if (g->grab && g->grab == g->in_modal) {
         g->grab = 0;
         g->focus = id;
-        g->editing = 0;
     }
     if (g->nav_count < TIDE_GUI_MAX_NAV) {
         g->nav_steps[g->nav_count] = steps;
@@ -1323,23 +1325,13 @@ typedef enum number_kind {
     NUMBER_INT,
     NUMBER_FLOAT,
     NUMBER_UNIT, // A float from 0 to 1, like a color's
+    NUMBER_NONE, // Not one: what a text field's typing is (tide_gui.edit_kind)
 } number_kind;
 
 static void format_number(char *out, const size_t size, const double v, const number_kind kind)
 {
     if (kind == NUMBER_INT) snprintf(out, size, "%d", (int)v);
     else snprintf(out, size, "%g", v);
-}
-
-// Starts typing into a field. Until something is typed, the whole value is
-// selected: typing replaces it.
-static void start_typing(tide_gui *g, const uint32_t id, const double value, const number_kind kind)
-{
-    g->editing = id;
-    g->editing_seen = true;
-    format_number(g->edit, sizeof g->edit, value, kind);
-    g->edit_len = (uint32_t)strlen(g->edit);
-    g->edit_fresh = true;
 }
 
 static bool number_char(const uint32_t c, const number_kind kind)
@@ -1393,6 +1385,35 @@ static bool parse_number(tide_gui *g, const number_kind kind, double *out)
     return true;
 }
 
+// Before a field takes the one buffer there is for what's typed. Text is its
+// field's as it's typed. A number isn't until its field keeps it, and that
+// field has yet to run this frame (having run, it would have ended its typing
+// itself, without the focus), so a valid number is left for it, to keep as it
+// runs (number_box); a field that isn't called any more keeps nothing. The
+// first one left in a frame stands: a field that took the buffer from it and
+// is left in turn has run, and has only been typed into this frame.
+static void leave_typing(tide_gui *g)
+{
+    double v;
+    if (!g->editing || g->edit_left || g->edit_kind == NUMBER_NONE) return;
+    if (!parse_number(g, (number_kind)g->edit_kind, &v)) return;
+    g->edit_left = g->editing;
+    g->edit_left_value = v;
+}
+
+// Starts typing into a field. Until something is typed, the whole value is
+// selected: typing replaces it.
+static void start_typing(tide_gui *g, const uint32_t id, const double value, const number_kind kind)
+{
+    leave_typing(g);
+    g->editing = id;
+    g->editing_seen = true;
+    g->edit_kind = (uint8_t)kind;
+    format_number(g->edit, sizeof g->edit, value, kind);
+    g->edit_len = (uint32_t)strlen(g->edit);
+    g->edit_fresh = true;
+}
+
 // One box of a number field. Returns whether the player changed `value`, and
 // says in `entered`, where there's one, whether Enter or the south button
 // ended its typing now.
@@ -1425,6 +1446,12 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
             g->editing = 0;
         } else {
             type_into(g, kind);
+        }
+    } else if (g->edit_left == id) { // Another field took the buffer before this one ran (leave_typing)
+        g->edit_left = 0;
+        if (!grayed(g) && g->edit_left_value != *value) { // Disabled meanwhile: the old value, as above
+            *value = g->edit_left_value;
+            changed = true;
         }
     } else if (focused) {
         if (pressed(g, KEY_ENTER)) {
@@ -1548,8 +1575,10 @@ bool tide_gui_color_field(tide_gui *g, const uint32_t id, const tide_rect rect, 
 
 static void start_text(tide_gui *g, const uint32_t id, const tide_str value)
 {
+    leave_typing(g);
     g->editing = id;
     g->editing_seen = true;
+    g->edit_kind = NUMBER_NONE;
     int32_t n = value.bytes < (int32_t)sizeof g->edit - 1 ? value.bytes : (int32_t)sizeof g->edit - 1;
     while (n > 0 && n < value.bytes && ((unsigned char)value.ptr[n] & 0xC0u) == 0x80u) n--; // Whole characters
     memcpy(g->edit, value.ptr, (size_t)n);
