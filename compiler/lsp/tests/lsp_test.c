@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 
+#include "assets.h"
 #include "json.h"
 #include "packages.h"
 #include "tide_test.h"
@@ -6915,4 +6916,449 @@ TIDE_TEST(lsp_game_manifest_with_a_package)
     remove(manifest);
     clear_sent();
     lsp_free(&server);
+}
+
+// ---------------------------------------------------------------------------
+// Assets: the files `asset` declarations name (docs/spec.md, Assets). The
+// declaration isn't in the parser yet: the server reads a site off the tokens,
+// so these games have the parser's own error at each `asset` line beside what's
+// checked here.
+
+// An editor like VS Code: it asks before renaming files, takes the filters as
+// registrations, and watches files with patterns relative to a folder.
+#define ASSET_EDITOR_CAPABILITIES                                                                                  \
+    "{\"workspace\":{\"workspaceEdit\":{\"documentChanges\":true},"                                                 \
+    "\"fileOperations\":{\"dynamicRegistration\":true,\"willRename\":true,\"didRename\":true},"                    \
+    "\"didChangeWatchedFiles\":{\"dynamicRegistration\":true,\"relativePatternSupport\":true}}}"
+
+static void start_in_with(const char *folder, const char *capabilities)
+{
+    clear_sent();
+    lsp_free(&server);
+    lsp_init(&server, capture, NULL);
+    char message[2048];
+    snprintf(message, sizeof message,
+             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+             "{\"rootUri\":\"%s\",\"workspaceFolders\":[{\"uri\":\"%s\",\"name\":\"game\"}],\"capabilities\":%s}}",
+             folder, folder, capabilities);
+    handle(message);
+}
+
+static void write_bytes(const char *name, const char *bytes, const size_t len)
+{
+    char path[640];
+    game_path(path, sizeof path, name);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fwrite(bytes, 1, len, f);
+    fclose(f);
+}
+
+static void move_game_file(const char *from, const char *to)
+{
+    char a[640], b[640];
+    game_path(a, sizeof a, from);
+    game_path(b, sizeof b, to);
+    rename(a, b);
+}
+
+static bool game_file_exists(const char *name)
+{
+    char path[640];
+    game_path(path, sizeof path, name);
+    FILE *f = fopen(path, "rb");
+    if (f) fclose(f);
+    return f != NULL;
+}
+
+// The first message sent with `needle` in it, or NULL.
+static const char *sent_with(const char *needle)
+{
+    const int i = sent_for(needle);
+    return i >= 0 ? sent[i] : NULL;
+}
+
+// Asks the server what to rewrite before `old` is renamed to `now` (paths from
+// game_dir), and returns the reply.
+static const char *will_rename(const char *old, const char *now)
+{
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char message[2048];
+    snprintf(message, sizeof message,
+             "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/willRenameFiles\",\"params\":{\"files\":[{\"oldUri\":"
+             "\"file:///%s/%s\",\"newUri\":\"file:///%s/%s\"}]}}",
+             dir, old, dir, now);
+    clear_sent();
+    handle(message);
+    return last_sent();
+}
+
+// A rename of a file or a folder rewrites every asset path to it, in every
+// file of the game and its packages, each relative to its own file; a glob
+// isn't rewritten. The editor asks only about the files assets name and the
+// folders above them, by the filters the server registers.
+TIDE_TEST(lsp_asset_rename_rewrites_paths)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_as");
+    make_folder("lsp_as/game");
+    make_folder("lsp_as/game/a");
+    make_folder("lsp_as/game/a/art");
+    make_folder("lsp_as/game/a/img");
+    make_folder("lsp_as/game/b");
+    make_folder("lsp_as/pk");
+    make_folder("lsp_as/pk/docs");
+    static const char x_file[] = "asset Grid2<Color> hero = \"art/hero.png\";\n"
+                                 "asset List<Grid2<Color>> run = \"art/*.png\";\n"
+                                 "scene Main { }\n";
+    static const char y_file[] = "asset List<byte> bytes = \"../a/art/hero.png\";\n";
+    static const char p_file[] = "namespace Pk;\nasset string notes = \"notes.txt\";\n";
+    write_file("lsp_as/game/tide.packages", "../pk\n");
+    write_file("lsp_as/game/a/x.tide", x_file);
+    write_file("lsp_as/game/b/y.tide", y_file);
+    write_file("lsp_as/pk/tide.packages", "package Pk\n");
+    write_file("lsp_as/pk/p.tide", p_file);
+    write_bytes("lsp_as/game/a/art/hero.png", "PNG one", 7);
+    write_file("lsp_as/pk/notes.txt", "hello\n");
+    char root[700], uri_x[700], uri_y[700], uri_p[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_as/game", dir);
+    snprintf(uri_x, sizeof uri_x, "file:///%s/lsp_as/game/a/x.tide", dir);
+    snprintf(uri_y, sizeof uri_y, "file:///%s/lsp_as/game/b/y.tide", dir);
+    snprintf(uri_p, sizeof uri_p, "file:///%s/lsp_as/pk/p.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    TIDE_CHECK(!has(last_sent(), "fileOperations")); // Registered once the game is known, not in the result
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    TIDE_CHECK(sent_count == 1 && has(sent[0], "{\"globPattern\":\"**/*.tide\"}"));
+
+    open_uri(uri_x, x_file);
+    // The renames to ask about: each named file, and the folders above it in its game or package
+    const char *registered = sent_with("\"method\":\"workspace/willRenameFiles\"");
+    TIDE_REQUIRE(registered != NULL);
+    TIDE_CHECK(has(registered, "\"id\":\"tide-rename\"") && has(registered, "\"id\":\"tide-renamed\""));
+    TIDE_CHECK(has(registered, "\"method\":\"workspace/didRenameFiles\""));
+    TIDE_CHECK(has(registered, "lsp_as/game/a/art/hero.png\",\"matches\":\"file\",\"options\":{\"ignoreCase\":true}"));
+    TIDE_CHECK(has(registered, "lsp_as/game/a/art\",\"matches\":\"folder\""));
+    TIDE_CHECK(has(registered, "lsp_as/game/a\",\"matches\":\"folder\""));
+    TIDE_CHECK(has(registered, "lsp_as/game\",\"matches\":\"folder\""));
+    TIDE_CHECK(has(registered, "lsp_as/pk/notes.txt\",\"matches\":\"file\""));
+    TIDE_CHECK(has(registered, "lsp_as/pk\",\"matches\":\"folder\""));
+    TIDE_CHECK(!has(registered, "lsp_as\",\"matches\":\"folder\"")); // Above both: nothing to rewrite
+    TIDE_CHECK(!has(registered, "*.png")); // A glob isn't rewritten, so its matches aren't asked about
+    TIDE_CHECK(count(registered, "lsp_as/game/a/art/hero.png\",\"matches\":\"file\"") == 2); // Named twice: one filter
+    // The assets' files are watched, relative to where their path leads
+    const char *watched = sent_with("\"id\":\"tide-assets\"");
+    TIDE_REQUIRE(watched != NULL);
+    TIDE_CHECK(has(watched, "lsp_as/game/a/art\",\"pattern\":\"hero.png\"}"));
+    TIDE_CHECK(has(watched, "lsp_as/game/a/art\",\"pattern\":\"*.png\"}"));
+    TIDE_CHECK(has(watched, "lsp_as/pk\",\"pattern\":\"notes.txt\"}"));
+    TIDE_CHECK(!has(sent_with(uri_x), "there's no file")); // Every file is there
+    TIDE_CHECK(!has(sent_with(uri_y), "there's no file"));
+    TIDE_CHECK(!has(sent_with(uri_p), "there's no file"));
+
+    // Nothing changed: no registration again
+    open_uri(uri_y, y_file);
+    TIDE_CHECK(sent_with("client/registerCapability") == NULL);
+
+    // The file moved: both references follow it, each from its own file
+    const char *reply = will_rename("lsp_as/game/a/art/hero.png", "lsp_as/game/a/img/hero.png");
+    TIDE_CHECK(has(reply, uri_x) && has(reply, uri_y) && !has(reply, uri_p));
+    TIDE_CHECK(has(reply, "\"newText\":\"img/hero.png\"") && has(reply, "\"newText\":\"../a/img/hero.png\""));
+    TIDE_CHECK(count(reply, "\"newText\"") == 2); // Not the glob
+    TIDE_CHECK(has(reply, "\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":39}}"));
+
+    // Its folder moved: the same
+    reply = will_rename("lsp_as/game/a/art", "lsp_as/game/a/img");
+    TIDE_CHECK(has(reply, "\"newText\":\"img/hero.png\"") && has(reply, "\"newText\":\"../a/img/hero.png\""));
+    TIDE_CHECK(count(reply, "\"newText\"") == 2);
+
+    // The folder of the file that names it moved, with it: that path stays, the other follows
+    reply = will_rename("lsp_as/game/a", "lsp_as/game/c");
+    TIDE_CHECK(!has(reply, uri_x) && has(reply, uri_y));
+    TIDE_CHECK(has(reply, "\"newText\":\"../c/art/hero.png\"") && count(reply, "\"newText\"") == 1);
+
+    // A package's file, from the game's folder
+    reply = will_rename("lsp_as/pk/notes.txt", "lsp_as/pk/docs/notes.txt");
+    TIDE_CHECK(has(reply, uri_p) && has(reply, "\"newText\":\"docs/notes.txt\"") && count(reply, "\"newText\"") == 1);
+
+    // A file nothing names: nothing to do
+    reply = will_rename("lsp_as/game/b/other.txt", "lsp_as/game/b/else.txt");
+    TIDE_CHECK(has(reply, "\"result\":{\"changes\":{}}"));
+
+    // Once it's renamed, the game is looked at again
+    clear_sent();
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didRenameFiles\",\"params\":{\"files\":[]}}");
+    TIDE_CHECK(sent_with(uri_x) != NULL && sent_with(uri_y) != NULL);
+
+    remove_game_file("lsp_as/game/tide.packages");
+    remove_game_file("lsp_as/game/a/x.tide");
+    remove_game_file("lsp_as/game/b/y.tide");
+    remove_game_file("lsp_as/pk/tide.packages");
+    remove_game_file("lsp_as/pk/p.tide");
+    remove_game_file("lsp_as/game/a/art/hero.png");
+    remove_game_file("lsp_as/pk/notes.txt");
+    remove_game_file("lsp_as/game/.tide/assets.sha256");
+    remove_game_file("lsp_as/game/.tide/.gitignore");
+    remove_folder("lsp_as/game/.tide");
+    remove_folder("lsp_as/game/a/art");
+    remove_folder("lsp_as/game/a/img");
+    remove_folder("lsp_as/game/a");
+    remove_folder("lsp_as/game/b");
+    remove_folder("lsp_as/game");
+    remove_folder("lsp_as/pk/docs");
+    remove_folder("lsp_as/pk");
+    remove_folder("lsp_as");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// The hashes of the named files go in the game's .tide/ when it's checked. A
+// file that's gone from its path is found again by its bytes, with a fix that
+// writes where it is; one nothing has the bytes of lists the files of its
+// name, a fix each. A glob that matches nothing says so.
+TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_mv");
+    make_folder("lsp_mv/data");
+    make_folder("lsp_mv/blobs");
+    make_folder("lsp_mv/old");
+    make_folder("lsp_mv/older");
+    static const char main_file[] = "asset List<byte> table = \"data/table.bin\";\nscene Main { }\n";
+    static const char bytes[] = {1, 2, 3, 4, 5, 6, 7, 0, 9};
+    write_file("lsp_mv/main.tide", main_file);
+    write_bytes("lsp_mv/data/table.bin", bytes, sizeof bytes);
+    char root[700], uri_main[700], store[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_mv", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_mv/main.tide", dir);
+    game_path(store, sizeof store, "lsp_mv/.tide/assets.sha256");
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(!has(sent_with(uri_main), "there's no file"));
+    // The store: the file's hash, size and path from the game's folder
+    char hex[65];
+    asset_hash_of(bytes, sizeof bytes, hex);
+    size_t len = 0;
+    char *text = NULL;
+    {
+        FILE *f = fopen(store, "rb");
+        TIDE_REQUIRE(f != NULL);
+        char buffer[1024];
+        len = fread(buffer, 1, sizeof buffer - 1, f);
+        fclose(f);
+        buffer[len] = '\0';
+        text = buffer;
+        char line[160];
+        snprintf(line, sizeof line, "%s 9 data/table.bin\n", hex);
+        TIDE_CHECK(has(text, line));
+        TIDE_CHECK(has(text, "# The SHA-256 of each file an asset names"));
+    }
+    TIDE_CHECK(game_file_exists("lsp_mv/.tide/.gitignore"));
+
+    // Moved under another name: found by its bytes
+    move_game_file("lsp_mv/data/table.bin", "lsp_mv/blobs/numbers.bin");
+    open_uri(uri_main, main_file);
+    const char *diagnostics = sent_with(uri_main);
+    TIDE_REQUIRE(diagnostics != NULL);
+    TIDE_CHECK(has(diagnostics, "there's no file at 'data/table.bin' ("));
+    TIDE_CHECK(has(diagnostics, "note: a file with the same bytes is at 'blobs/numbers.bin'"));
+    TIDE_CHECK(has(diagnostics, "\"range\":{\"start\":{\"line\":0,\"character\":25}")); // At the path
+    const char *actions = request_at(uri_main, "textDocument/codeAction", 0, 0,
+                                     "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[]}");
+    TIDE_CHECK(has(actions, "\"title\":\"Change to 'blobs/numbers.bin'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    TIDE_CHECK(has(actions, "\"range\":{\"start\":{\"line\":0,\"character\":26},\"end\":{\"line\":0,\"character\":40}},\"newText\":\"blobs/numbers.bin\""));
+    TIDE_CHECK(has(actions, "there's no file at")); // Fixes that diagnostic
+    // The store still knows the missing file's bytes, for the next look
+    {
+        FILE *f = fopen(store, "rb");
+        TIDE_REQUIRE(f != NULL);
+        char buffer[1024];
+        const size_t n = fread(buffer, 1, sizeof buffer - 1, f);
+        fclose(f);
+        buffer[n] = '\0';
+        TIDE_CHECK(has(buffer, " 9 data/table.bin\n"));
+    }
+
+    // Gone for good, and two files of its name elsewhere: a fix for each, neither preferred
+    remove_game_file("lsp_mv/blobs/numbers.bin");
+    write_file("lsp_mv/old/table.bin", "other");
+    write_file("lsp_mv/older/table.bin", "another");
+    open_uri(uri_main, main_file);
+    diagnostics = sent_with(uri_main);
+    TIDE_REQUIRE(diagnostics != NULL);
+    TIDE_CHECK(has(diagnostics, "note: files of that name: 'old/table.bin', 'older/table.bin'"));
+    actions = request_at(uri_main, "textDocument/codeAction", 0, 0,
+                         "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[]}");
+    TIDE_CHECK(has(actions, "\"title\":\"Change to 'old/table.bin'\",\"kind\":\"quickfix\",\"isPreferred\":false"));
+    TIDE_CHECK(has(actions, "\"title\":\"Change to 'older/table.bin'\",\"kind\":\"quickfix\",\"isPreferred\":false"));
+
+    // A glob with nothing to match
+    static const char glob_file[] = "asset List<Grid2<Color>> frames = \"data/*.png\";\nscene Main { }\n";
+    open_uri(uri_main, glob_file);
+    TIDE_CHECK(has(sent_with(uri_main), "'data/*.png' matches no file"));
+    write_bytes("lsp_mv/data/a.png", "png", 3);
+    open_uri(uri_main, glob_file);
+    TIDE_CHECK(!has(sent_with(uri_main), "matches no file"));
+
+    remove_game_file("lsp_mv/data/a.png");
+    remove_game_file("lsp_mv/old/table.bin");
+    remove_game_file("lsp_mv/older/table.bin");
+    remove_game_file("lsp_mv/main.tide");
+    remove_game_file("lsp_mv/.tide/assets.sha256");
+    remove_game_file("lsp_mv/.tide/.gitignore");
+    remove_folder("lsp_mv/.tide");
+    remove_folder("lsp_mv/data");
+    remove_folder("lsp_mv/blobs");
+    remove_folder("lsp_mv/old");
+    remove_folder("lsp_mv/older");
+    remove_folder("lsp_mv");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// Inside an asset's path, completion offers the folders and files where the
+// path so far leads, from the declaring file: the type's files (a PNG for a
+// Grid2<Color>), and globs for a list or a map.
+TIDE_TEST(lsp_asset_path_completion)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_cp");
+    make_folder("lsp_cp/art");
+    make_folder("lsp_cp/art/sub");
+    static const char main_file[] = "asset Grid2<Color> hero = \"\";\n"
+                                    "asset List<Grid2<Color>> run = \"art/\";\n"
+                                    "asset string notes = \"art/\";\n"
+                                    "scene Main { }\n";
+    write_file("lsp_cp/main.tide", main_file);
+    write_bytes("lsp_cp/art/hero.png", "png", 3);
+    write_file("lsp_cp/art/other.txt", "text");
+    write_file("lsp_cp/readme.txt", "text");
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_cp", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_cp/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+
+    // In the empty path: the game's folders, and its PNGs, which there are none of
+    const char *completion = request_at(uri_main, "textDocument/completion", 0, 27, "");
+    TIDE_CHECK(offers(completion, "art/") && offers(completion, "../"));
+    TIDE_CHECK(!offers(completion, "readme.txt") && !offers(completion, "main.tide"));
+    TIDE_CHECK(!offers(completion, "*.png")); // One file
+    TIDE_CHECK(has(completion, "\"kind\":19")); // A folder
+    TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":27}},\"newText\":\"art/\"}"));
+
+    // After "art/": what's in it, and the globs a list takes
+    completion = request_at(uri_main, "textDocument/completion", 1, 36, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "sub/"));
+    TIDE_CHECK(!offers(completion, "other.txt"));
+    TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
+    TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
+
+    // Text takes any file
+    completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "other.txt"));
+    TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
+
+    // Part of a name typed: the item replaces it
+    open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
+    completion = request_at(uri_main, "textDocument/completion", 0, 33, "");
+    TIDE_CHECK(offers(completion, "hero.png"));
+    TIDE_CHECK(has(completion, "\"range\":{\"start\":{\"line\":0,\"character\":31},\"end\":{\"line\":0,\"character\":33}},\"newText\":\"hero.png\""));
+
+    remove_game_file("lsp_cp/main.tide");
+    remove_game_file("lsp_cp/art/hero.png");
+    remove_game_file("lsp_cp/art/other.txt");
+    remove_game_file("lsp_cp/readme.txt");
+    remove_game_file("lsp_cp/.tide/assets.sha256");
+    remove_game_file("lsp_cp/.tide/.gitignore");
+    remove_folder("lsp_cp/.tide");
+    remove_folder("lsp_cp/art/sub");
+    remove_folder("lsp_cp/art");
+    remove_folder("lsp_cp");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// A game with no asset: nothing is registered and no .tide/ is made. An
+// editor that takes no registration is asked about every rename.
+TIDE_TEST(lsp_game_without_assets_changes_nothing)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_na");
+    static const char main_file[] = "scene Main { }\n";
+    write_file("lsp_na/main.tide", main_file);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_na", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_na/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(sent_count == 1 && has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(!game_file_exists("lsp_na/.tide/assets.sha256"));
+    TIDE_CHECK(has(will_rename("lsp_na/x.png", "lsp_na/y.png"), "\"result\":{\"changes\":{}}"));
+
+    // An editor that takes no registration (LSP4IJ): every file, in the result, whether it says it asks or not
+    start_in_with(root, "{\"workspace\":{\"fileOperations\":{\"willRename\":true,\"didRename\":true}}}");
+    TIDE_CHECK(has(last_sent(), "\"fileOperations\":{\"willRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}"));
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(sent_count == 1); // Nothing registered
+    start_in(root);
+    TIDE_CHECK(has(last_sent(), "\"didRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}"));
+
+    remove_game_file("lsp_na/main.tide");
+    remove_folder("lsp_na");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// The path arithmetic the rewriting rests on (assets.h).
+TIDE_TEST(lsp_asset_paths)
+{
+    char *joined = asset_path_join("D:/g/a/", "art/hero.png", 12);
+    TIDE_CHECK(strcmp(joined, "D:/g/a/art/hero.png") == 0);
+    free(joined);
+    joined = asset_path_join("D:/g/a/", "../b\\x.png", 10);
+    TIDE_CHECK(strcmp(joined, "D:/g/b/x.png") == 0);
+    free(joined);
+    joined = asset_path_join("D:/g/", "../../../x.png", 14); // Not above the root
+    TIDE_CHECK(strcmp(joined, "D:/x.png") == 0);
+    free(joined);
+    joined = asset_path_join("/g/a/", "./art/", 6); // A folder stays one
+    TIDE_CHECK(strcmp(joined, "/g/a/art/") == 0);
+    free(joined);
+    joined = asset_path_join("/g/a", "", 0);
+    TIDE_CHECK(strcmp(joined, "/g/a/") == 0);
+    free(joined);
+
+    char *relative = asset_path_relative("D:/g/a/", "D:/g/a/img/hero.png");
+    TIDE_CHECK(strcmp(relative, "img/hero.png") == 0);
+    free(relative);
+    relative = asset_path_relative("D:/g/b/", "D:/g/a/img/hero.png");
+    TIDE_CHECK(strcmp(relative, "../a/img/hero.png") == 0);
+    free(relative);
+    relative = asset_path_relative("D:/g/a/b/", "D:/x.png");
+    TIDE_CHECK(strcmp(relative, "../../../x.png") == 0);
+    free(relative);
+    relative = asset_path_relative("D:/g/", "E:/x.png"); // Another drive: as it is
+    TIDE_CHECK(strcmp(relative, "E:/x.png") == 0);
+    free(relative);
+
+    char *folder = asset_path_folder("D:/g/a/x.tide");
+    TIDE_CHECK(strcmp(folder, "D:/g/a/") == 0);
+    free(folder);
+    TIDE_CHECK(asset_path_under("D:/g/a/art/hero.png", "D:/g/a/art"));
+    TIDE_CHECK(asset_path_under("D:/g/a/art/hero.png", "D:/g/a/art/"));
+    TIDE_CHECK(!asset_path_under("D:/g/a/artful/hero.png", "D:/g/a/art"));
+    TIDE_CHECK(!asset_path_under("D:/g/a/art", "D:/g/a/art"));
+    TIDE_CHECK(strcmp(asset_path_name("D:/g/a/art/hero.png"), "hero.png") == 0);
+    TIDE_CHECK(asset_path_is_glob("art/*.png", 9) && asset_path_is_glob("a?.png", 6) && !asset_path_is_glob("art/hero.png", 12));
+    TIDE_CHECK(asset_path_is_url("https://example.com/x", 21) && !asset_path_is_url("http/x", 6));
 }
