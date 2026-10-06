@@ -55,6 +55,7 @@ typedef enum tide_gpu_blend {
 typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_NONE,  // Neither tested nor written
     TIDE_GPU_DEPTH_TEST,  // The nearest shows, and is written
+    TIDE_GPU_DEPTH_READ,  // The nearest shows, and nothing is written: what's see-through
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
 } tide_gpu_depth;
 

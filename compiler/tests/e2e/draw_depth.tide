@@ -1,0 +1,186 @@
+// What 3D meshes do with depth, as a draw setting: around a block and set for
+// the views that follow, listed with other settings, around each entity's
+// mesh, left early, in a function, kept in a value, on a target's meshes,
+// through a frag and for a list's instances. And what has no depth: the 2D
+// calls, a clear and a blit.
+
+enum Trouble
+{
+    Hidden,
+}
+
+struct Corner
+{
+    float3 position;
+    Color color = Color.white;
+}
+
+struct Spot
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+}
+
+component Pane
+{
+    float3 position;
+}
+
+local singleton Look
+{
+    RenderTarget target;
+    bool leave;              // The blocks are left early
+    Depth kept = Depth.Read; // A value like any other enum's
+    List<Corner> corners;
+    List<int> faces;
+    List<Spot> spots;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pane { position = float3(0, 0, 5) });
+    Spawn(Pane { position = float3(1, 0, 5) });
+    Spawn(Pane { position = float3(2, 0, 5) });
+}
+
+void Hide(bool yes) fails Trouble
+{
+    if (yes) fail Trouble.Hidden;
+}
+
+// As a frame starts: read and written. Around a block, and back after it.
+view Blocks(mut Look look)
+{
+    if (look.corners.count == 0)
+    {
+        look.corners = [Corner { }, Corner { position = float3(1, 0, 0) }, Corner { position = float3(0, 1, 0) }];
+        look.faces = [0, 1, 2];
+        look.spots = [Spot { }, Spot { transform = float4x4.Translate(float3(3, 0, 0)) }];
+    }
+    Draw3D.Cube(float3(0, 0, 9), float3(1, 1, 1), Color.white);
+    Draw.Depth(Depth.Read)
+    {
+        Draw3D.Cube(float3(0, 0, 8), float3(1, 1, 1), Color.white);
+        Draw.Depth(Depth.None)
+        {
+            Draw3D.Cube(float3(0, 0, 7), float3(1, 1, 1), Color.white);
+        }
+        Draw3D.Cube(float3(0, 0, 6), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+
+    // Listed with commas, beside the other settings
+    Draw.Blend(Blend.Add),
+    Draw.Depth(Depth.Read),
+    Draw.Tint(Color(1, 0.5, 0.25, 1))
+    {
+        Draw3D.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(0, 0, 3), float3(1, 1, 1), Color.white);
+}
+
+// The same setting around each entity's mesh: still one run of instances.
+view Panes(Pane pane)
+{
+    Draw.Depth(Depth.Read)
+    {
+        Draw3D.Sphere(pane.position, 1, Color.white);
+    }
+}
+
+void Guarded(bool leave) fails Trouble
+{
+    Draw.Depth(Depth.None),
+    Draw.Blend(Blend.Add)
+    {
+        try Hide(leave); // Its error leaves through both
+        Draw3D.Cube(float3(1, 0, 9), float3(1, 1, 1), Color.white);
+    }
+}
+
+int Counted(bool leave)
+{
+    Draw.Depth(Depth.Read)
+    {
+        if (leave) return 1;
+    }
+    return 2;
+}
+
+// Left early, a block still puts back what it found.
+view Early(Look look)
+{
+    Guarded(look.leave)!;
+    var counted = Counted(look.leave);
+    for (var i = 0; i < 3; i++)
+    {
+        Draw.Depth(Depth.None)
+        {
+            if (i == 0) continue;
+            if (i == 2) break;
+        }
+    }
+    Draw3D.Cube(float3(counted, 0, 8), float3(1, 1, 1), Color.white);
+}
+
+frag Flat(Corner vertex, mut Color color)
+{
+    color = vertex.color;
+}
+
+frag Dot(Corner vertex, mut Color color, Spot spot)
+{
+    color = spot.tint;
+}
+
+frag Plain(Vertex vertex, mut Color color)
+{
+    color = vertex.color;
+}
+
+// A mesh through a frag, and a list's instances, do with depth what the draw says.
+view Shaded(Look look)
+{
+    Draw.Depth(look.kept)
+    {
+        Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+        Draw3D.Instanced(look.corners, look.faces, look.spots, Dot);
+    }
+    Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+}
+
+// Nothing else has depth: what's set changes none of these.
+view Flats()
+{
+    Draw.Depth(Depth.None)
+    {
+        Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+        Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
+        Draw2D.Clear(Color.black);
+    }
+}
+
+// Set, it holds for the views that follow, wherever they draw.
+view Sets()
+{
+    Draw.SetDepth(Depth.Read);
+}
+
+view Follows(Look look)
+{
+    Draw3D.Cube(float3(2, 0, 9), float3(1, 1, 1), Color.white);
+    look.target.Cube(float3(2, 0, 8), float3(1, 1, 1), Color.white);
+    // Set inside a block, it's for the rest of the block
+    Draw.Depth(Depth.ReadWrite)
+    {
+        Draw.SetDepth(Depth.None);
+        Draw3D.Cube(float3(2, 0, 7), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(2, 0, 6), float3(1, 1, 1), Color.white);
+    // With no arguments, a Set puts back what each frame starts with
+    Draw.SetDepth();
+    Draw3D.Cube(float3(2, 0, 5), float3(1, 1, 1), Color.white);
+    Draw.SetDepth(Depth.None); // Left set by the last view: the next frame starts over
+}
