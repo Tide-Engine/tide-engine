@@ -6809,6 +6809,43 @@ typedef struct out_argument {
 
 enum { OUT_NONE = -1, OUT_START, OUT_WORD, OUT_MUT }; // Nothing yet, or its name and ':'; `out`; `out mut`
 
+// One of the engine's own functions, like GUILayout.TextField(label, value,
+// out entered): what each of its versions has where an argument is, read from
+// its signature as editors show it.
+typedef struct builtin_out {
+    int place;           // The argument's place among those written
+    str named;           // ...or the name it's passed by
+    int candidates;      // The versions with a parameter there
+    int makes;           // ...and those whose parameter there is `out`
+    out_argument *found; // The first of those: its name and type
+} builtin_out;
+
+static void visit_builtin_out(void *user, const char *label, const char *doc)
+{
+    (void)doc;
+    builtin_out *v = user;
+    int starts[16];
+    int ends[16];
+    const int params = label_split(label, starts, ends);
+    for (int p = 0; p < params; p++) {
+        const char *text = label + starts[p];
+        const char *end = label + ends[p];
+        const char *word = end; // Its name: the last word
+        while (word > text && word[-1] != ' ') word--;
+        const str param_name = {word, (int)(end - word)};
+        if (v->named.len > 0 ? !str_eq(param_name, v->named) : p != v->place) continue;
+        v->candidates++;
+        if (end - text < 4 || strncmp(text, "out ", 4) != 0 || word < text + 5) continue;
+        if (v->makes++ > 0) continue;
+        char *type_text = arena_alloc((size_t)(word - text) - 4);
+        memcpy(type_text, text + 4, (size_t)(word - text) - 5);
+        type_text[word - text - 5] = '\0';
+        v->found->name = param_name;
+        v->found->type_text = type_text;
+        if (!builtin_type_named(str_from(type_text), &v->found->type)) v->found->type = (type){TY_ERROR, NULL};
+    }
+}
+
 // What the argument the cursor is in is for, when that's an `out` parameter,
 // in the call whose '(' is token `open`: `last` is the token before the cursor.
 // The parameter is the one in the argument's place, or the one it's named for
@@ -6917,6 +6954,14 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             if (t.kind == TY_MAP && t.decl) found.type = t.decl->fields.items[1].type; // TryGet's: the map's value
             if (t.kind == TY_WORLD && component) found.type = type_of_decl(component); // ...or the World's: the component
         }
+    }
+    // GUILayout.TextField("Code", lobby.code, out entered): the versions of one of the engine's own functions
+    if (candidates == 0 && method && callee >= 2 && toks[callee - 2].kind == T_IDENT && builtin_owner(toks[callee - 2].text)
+        && (callee < 3 || toks[callee - 3].kind != T_DOT)) {
+        builtin_out v = {place, named, 0, 0, &found};
+        builtin_signatures(toks[callee - 2].text, name, visit_builtin_out, &v);
+        candidates = v.candidates;
+        makes = v.makes;
     }
     if (makes == 0) return none;
     found.only = makes == candidates;
@@ -7803,7 +7848,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "Blend", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "Blend", "Depth", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];

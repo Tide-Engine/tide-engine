@@ -1,0 +1,6 @@
+// expect: 'lobby' is read-only
+// expect: 'GUILayout.IntField' makes its 'entered'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+local singleton Typed { int count; }
+view Join(Lobby lobby, mut Typed typed) { GUILayout.IntField("Count", typed.count, out lobby.entered); }

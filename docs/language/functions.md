@@ -212,7 +212,7 @@ system Halve(mut Pile pile, mut Tally tally)
 
 Functions, methods and [C functions](../c/functions.md#values-across) have `out` parameters. Systems, views, handlers, frags and verts don't, as the engine calls them and nothing would take what they make. Async functions don't either: their call returns before the task has made anything, so they return a struct instead. An `out` parameter has no default, and `out` doesn't tell functions that share a name apart.
 
-Maps have one built in, [`TryGet(key, out value)`](./text-and-lists.md#members-2), and so does the [World](../game/systems.md#other-entities-the-world): `world.TryGet<Health>(target, out var health)`.
+Maps have one built in, [`TryGet(key, out value)`](./text-and-lists.md#members-2), and so does the [World](../game/systems.md#other-entities-the-world): `world.TryGet<Health>(target, out var health)`. The GUI's fields that are typed into have one too, for [whether the player pressed Enter in them](../game/gui.md#when-a-field-is-entered): `GUILayout.TextField("Room", lobby.code, out var entered)`.
 
 ## Order
 
