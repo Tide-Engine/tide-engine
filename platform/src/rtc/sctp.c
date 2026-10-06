@@ -31,7 +31,7 @@ enum { FLAG_END = 1, FLAG_BEGIN = 2, FLAG_UNORDERED = 4 };
 
 #define A_RWND (1u << 20)
 #define STREAMS 1024u
-#define CONNECT_TIMEOUT 20.0
+#define CONNECT_TIMEOUT 20.0 // Seconds the association and the channel on it have to come up
 #define GIVE_UP_AFTER 0.2 // Seconds before a message not acknowledged is given up on
 #define RESEND_AFTER 0.5  // The channel's open and ack
 
@@ -162,11 +162,13 @@ static void deliver(rtc_sctp *s, const uint16_t stream, const uint32_t ppid, con
             // Their channel: ours now, acknowledged on its stream
             s->stream = stream;
             s->channel = true;
+            s->connected = true;
             s->ssn = 0;
             static const uint8_t ack = DCEP_ACK;
             send_dcep(s, &ack, 1, now);
         } else if (data[0] == DCEP_ACK && s->opening && stream == s->stream) {
             s->channel = true;
+            s->connected = true;
         }
         return;
     }
@@ -522,11 +524,21 @@ void rtc_sctp_start(rtc_sctp *s, const bool initiator, const uint16_t their_port
 void rtc_sctp_update(rtc_sctp *s, const double now)
 {
     if (s->state == RTC_SCTP_FAILED || s->state == RTC_SCTP_CLOSED) return;
+    // Connecting is the association and then the channel on it, in the one
+    // time. An association that's up says nothing of theirs (ours is, from
+    // their COOKIE ECHO on, whether our COOKIE ACK reaches them or not), and
+    // leaves the side that opened the channel waiting for the acknowledgement
+    // and the other for the open: a wait with no end, were it not counted,
+    // and with nothing to tell whoever is joining that it failed.
+    if (!s->connected && now - s->started > CONNECT_TIMEOUT) {
+        rtc_debug("sctp: gave up connecting: %s",
+                  s->state == RTC_SCTP_CONNECTING ? "no association"
+                  : s->opening                    ? "the channel's open was never acknowledged"
+                                                  : "they never opened the channel");
+        s->state = RTC_SCTP_FAILED;
+        return;
+    }
     if (s->state == RTC_SCTP_CONNECTING) {
-        if (now - s->started > CONNECT_TIMEOUT) {
-            s->state = RTC_SCTP_FAILED;
-            return;
-        }
         // INIT (or our COOKIE ECHO) again. A side that waits for the other's
         // INIT sends its own after a second without one.
         const bool due = s->initiator || now - s->started > 1.0;

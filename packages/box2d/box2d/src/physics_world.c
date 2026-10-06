@@ -1954,6 +1954,15 @@ void b2World_SetContactTuning( b2WorldId worldId, float hertz, float dampingRati
 	world->contactSpeed = b2ClampFloat( pushSpeed, 0.0f, FLT_MAX );
 }
 
+// Tide: what the setter above left, which upstream has no call to read (see ../TIDE.md)
+void b2World_GetContactTuning( b2WorldId worldId, float* hertz, float* dampingRatio, float* pushSpeed )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	*hertz = world->contactHertz;
+	*dampingRatio = world->contactDampingRatio;
+	*pushSpeed = world->contactSpeed;
+}
+
 void b2World_SetContactRecycleDistance( b2WorldId worldId, float recycleDistance )
 {
 	B2_CHECK_INPUT( b2IsValidFloat( recycleDistance ) );
