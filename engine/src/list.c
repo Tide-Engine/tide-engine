@@ -52,7 +52,28 @@ const void *tide_list_cache_fill(tide_list_cache *c, const tide_list l, const in
     const tide_page *p = __atomic_load_n(&pages[OFFSET(l.at) >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
     const tide_block *b =
         (const tide_block *)(const void *)((const uint8_t *)tide_page_data(p) + (OFFSET(l.at) - (p->first << TIDE_HEAP_PAGE_SHIFT)));
-    *c = (tide_list_cache){l.at, moves, heap, b, 0, b->a, (const uint8_t *)(b + 1)};
+    *c = (tide_list_cache){l.at, moves, heap, b, 0, b->a, (const uint8_t *)(b + 1), false};
+    if (b->b & TIDE_LIST_CHUNKED) { // Its chunk's elements
+        const uint32_t per = TIDE_LIST_CHUNK / size;
+        c->first = (uint32_t)i / per * per;
+        c->count = per;
+        c->elements = (const uint8_t *)found - (size_t)((uint32_t)i - c->first) * size;
+    }
+    return found;
+}
+
+void *tide_list_cache_fill_mut(tide_list_cache *c, const tide_list l, const int32_t i, const uint32_t size)
+{
+    *c = (tide_list_cache){0};
+    tide_heap *heap = l.at ? tide_heap_of(l.at >> 30) : NULL;
+    if (!heap) return tide_list_at_mut(l, i, size); // A list in the scratch area moves as it grows: never cached
+    void *found = tide_list_at_mut(l, i, size);    // The page the run is in is the heap's own from here on
+    if (!found) return NULL;
+    const uint32_t moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED); // After: a page just copied counts
+    const tide_page *p = heap->page[OFFSET(l.at) >> TIDE_HEAP_PAGE_SHIFT];
+    const tide_block *b =
+        (const tide_block *)(const void *)((const uint8_t *)tide_page_data(p) + (OFFSET(l.at) - (p->first << TIDE_HEAP_PAGE_SHIFT)));
+    *c = (tide_list_cache){l.at, moves, heap, b, 0, b->a, (const uint8_t *)(b + 1), true};
     if (b->b & TIDE_LIST_CHUNKED) { // Its chunk's elements
         const uint32_t per = TIDE_LIST_CHUNK / size;
         c->first = (uint32_t)i / per * per;

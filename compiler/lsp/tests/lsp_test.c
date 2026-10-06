@@ -1439,7 +1439,7 @@ TIDE_TEST(lsp_shaders_diagnostics)
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
                                "    color = models.wood[0, 0];\n}\n");
-    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps or grids to index or make"));
+    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps, arrays or grids to index or make"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.
@@ -2140,6 +2140,43 @@ TIDE_TEST(lsp_default_value)
     static const char tidy[] = "singleton S { int n; bool on; }\nscene Main { }\n"
                                "system Pick(mut S s)\n{\n    s.n = s.on ? default : 2;\n    s.n = s.on ? 1 : default;\n}\n";
     TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
+}
+
+// A type inside another's <> is placed where it's written, from the type's
+// tree: through the '>>' that closes two at once, and however the <> are
+// spaced.
+TIDE_TEST(lsp_nested_types_are_placed_from_the_tree)
+{
+    start();
+    open_document("asset List<Grid2<Color>> frames = \"*.png\";\n"
+                  "asset Map< string , List<byte> > files = \"*.bin\";\n"
+                  "scene Main { }\n");
+    TIDE_CHECK(has(hover_at(0, 17), "A color: r, g, b and a from 0 to 1"));
+    TIDE_CHECK(has(hover_at(0, 12), "Cells at positions")); // Grid2, inside the list's <>
+    TIDE_CHECK(has(hover_at(0, 7), "A list of values"));
+    TIDE_CHECK(has(hover_at(1, 27), "An unsigned 8-bit integer"));
+    TIDE_CHECK(has(hover_at(1, 21), "A list of values"));
+    TIDE_CHECK(has(hover_at(1, 7), "Values by key"));
+}
+
+// An array's type names its element before the [N]: the name is placed as
+// the element's, and the array's own members complete.
+TIDE_TEST(lsp_arrays_hover_and_count)
+{
+    start();
+    open_document("const int CAP = 4;\n"
+                  "component Ring { int[CAP] cells; float[2][3] grid; }\n"
+                  "scene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Ring); }\n"
+                  "system Spin(mut Ring ring) { ring.cells[0] = ring.cells.cou$nt; ring.grid[1][2] = 1; }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "How many elements the array holds: its length, a constant."));
+    TIDE_CHECK(has(hover_at(1, 17), "A 32-bit integer"));
+    TIDE_CHECK(has(hover_at(1, 36), "32-bit float"));
+    const char *members = complete("const int CAP = 4;\ncomponent Ring { int[CAP] cells; }\nscene Main { }\n"
+                                   "system S(Ring r) { var n = r.cells.$; }\n");
+    TIDE_CHECK(offers(members, "count"));
+    TIDE_CHECK(has(members, "How many elements the array holds: its length, a constant."));
 }
 
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)

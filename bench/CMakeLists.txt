@@ -37,3 +37,11 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     target_compile_definitions(bench_lag_native PRIVATE MOST_THREADS=4)
     target_link_libraries(bench_lag_native PRIVATE tide_platform tide_box3d)
 endif()
+
+if(TIDE_NODE)
+    add_test(NAME bench_compile_validation COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/compile.test.mjs")
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        add_test(NAME bench_harness COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness.mjs"
+            $<TARGET_FILE:bench_sand> $<TARGET_FILE:versus_events>)
+    endif()
+endif()

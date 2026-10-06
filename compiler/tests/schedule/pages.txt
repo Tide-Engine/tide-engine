@@ -1,0 +1,39 @@
+pages: 7 systems each tick, 6 stages deep; 5 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Shiver  (per entity)
+         writes Body
+         alongside Prowl
+stage 2  March  (per entity)
+         writes Body
+         after Shiver: both write Body
+         alongside Prowl
+stage 1  Prowl  (per entity)
+         writes Body
+         alongside Shiver, March, Count, Pass
+stage 3  Count  (per entity)
+         reads Body
+         writes Timer
+         after March: it writes Body, which this reads
+         alongside Prowl
+stage 4  Pass  (per entity)
+         reads Timer
+         writes Owner
+         after Count: it writes Timer, which this reads
+         alongside Prowl
+stage 5  Drive  (per entity)
+         writes Body
+         after Shiver: both write Body (and through March)
+         after March: both write Body (and through Count)
+         after Prowl: both write Body
+         after Count: it reads Body, which this writes (and through Pass)
+         after Pass: it writes Owner, which this reads
+         alongside nothing
+stage 6  Wander  (per entity)
+         writes Body
+         after Prowl: both write Body (and through Drive)
+         after Drive: both write Body
+         alongside nothing
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

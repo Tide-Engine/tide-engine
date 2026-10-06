@@ -95,6 +95,30 @@ void tide_table_lanes_begin(tide_table *t, const tide_columns *c, uint32_t chunk
 void tide_table_lanes_end(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
                           uint8_t *const *out);
 
+// The same for a chunk whose rows are written in pieces, by several threads at
+// once (tide/jobs.h), which can't each take pages for it.
+//
+// Before any piece runs, on one thread, tide_table_lanes_begin_pieces makes
+// each lane's page the table's to write: where it is, or with `apart`, a page
+// of its own that remembers the one it takes the place of, which is where the
+// lane is still read. A chunk's lanes are all begun the same way: apart when a
+// snapshot shares any of them.
+//
+// Each piece then asks where its lanes are (tide_table_lanes_piece, which
+// changes nothing, and says whether they're apart) and writes its own rows.
+// Apart, it writes every one of them, the ones it leaves as they were too: the
+// page is whatever it was.
+//
+// Once every piece is done, on one thread, tide_table_lanes_end_pieces does
+// what tide_table_lanes_end does: a page whose rows came out as they were
+// goes, and the one it took the place of is the table's again, shared and
+// hashed as it was.
+void tide_table_lanes_begin_pieces(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
+                                   bool apart);
+bool tide_table_lanes_piece(const tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
+                            const uint8_t **in, uint8_t **out);
+void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes);
+
 // The same to change: the page is made this table's own.
 static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t column)
 {

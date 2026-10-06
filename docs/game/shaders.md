@@ -111,7 +111,7 @@ view DrawBoxes(with Box, Models models)
 
 What a frag sees of the match is what a view sees: [blended between ticks](./views.md#smooth-at-any-tick-rate), so it's smooth at any tick rate.
 
-There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
+There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw2D.Instanced` or `Draw3D.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
 
 ```csharp
 local singleton Look
@@ -249,7 +249,7 @@ vert Place(mut Sprite vertex, Body body)
 
 ### Instances from a list
 
-`Draw3D.Instanced(vertices, indices, instances)` and `Draw3D.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
+`Draw2D.Instanced(vertices, indices, instances)` and `Draw3D.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
 
 For a 3D mesh, a `List<float4x4>` supplies its transforms:
 
@@ -306,7 +306,7 @@ Every mote below is an item of a list, and none is an entity. A vert places the 
 
 :::
 
-An ordinary instance parameter is supplied only by `Draw2D.Instanced`/`Draw3D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
+An ordinary instance parameter is supplied only by `Draw2D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
 
 ## Looking at what's generated
 

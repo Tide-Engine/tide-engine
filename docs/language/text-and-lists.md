@@ -113,51 +113,77 @@ system Upgrade(mut Fighter fighter, Draft draft)
 }
 ```
 
-What isn't supported yet is a list inside a list's elements:
+## Arrays
 
-- A list can't hold lists, maps or sets: `List<List<int>>`.
-- A list can't hold a struct that has a list, a map or a set in it: `List<Build>`, with the `Build` above. A list of structs that hold text is fine.
-
-tidec says which field is in the way, and what to write instead. Either keep everything in one list, with where each part starts and how many it has:
+`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`. An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
 
 ```csharp
-struct Row
+const int CAP = 32;
+
+struct Ring
 {
-    int first; // Where its cells start in Table.cells
-    int count;
+    int[CAP] cells;
+    int head;
 }
 
+component Trail
+{
+    float3[16] points;
+    int next;
+}
+
+system Record(mut Trail trail, Body body)
+{
+    trail.points[trail.next] = body.position;
+    trail.next = (trail.next + 1) % trail.points.count;
+}
+```
+
+Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+
+`a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
+
+## Changing an element where it is
+
+A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A field that holds text or a list, and anything in a list or a map inside the element, is still taken out, changed and put back (`var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
+
+## Lists inside lists
+
+A list's elements can be lists, maps or sets, and structs that hold them, as deep as you like: `List<List<int>>`, `List<Build>` with the `Build` above, `Map<int, List<Entity>>`. A map's values can too. What can't go inside another container is a grid, which is never copied, and a key or a grid's cell is still a plain value.
+
+An element that's a container is changed where it is, through any number of indexes:
+
+```csharp
 singleton Table
 {
-    List<int> cells;
-    List<Row> rows;
+    List<List<int>> rows;
+    Map<int, List<Entity>> buckets;
 }
 
-int Cell(Table table, int row, int column)
+system Fill(mut Table table)
 {
-    return table.cells[table.rows[row].first + column];
+    table.rows.Add([1, 2]);   // A new row
+    table.rows[0].Add(3);     // Into the row where it is
+    table.rows[0][1] = 20;
+    table.rows[0][2] += 1;
+    table.buckets[7].Add(this); // Adds the key 7 if it isn't there, like `buckets[7] = ...`
 }
 ```
 
-Or give each inner list an entity of its own, in a component, and hold the entities. Each list then grows on its own:
+Past the end of the list it's in, such a write does nothing, as any write past the end does. A struct element is still a copy, so a list inside one is changed by taking the struct out and putting it back (`var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
+
+Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
 
 ```csharp
-component Bag
+int Cells(Table table)
 {
-    List<int> items;
-}
-
-component Backpack
-{
-    List<Entity> bags;
-}
-
-system Count(Backpack pack, World world, mut Load load)
-{
-    load.items = 0;
-    foreach (var bag in pack.bags) load.items += world.Get<Bag>(bag).items.count;
+    mut int total = 0;
+    for (var i = 0; i < table.rows.count; i++) total += table.rows[i].count;
+    return total;
 }
 ```
+
+Text shows them inside out, `[[1, 20, 4], [3]]`. They don't go to C, nor into a `parallel` loop, an input or a command, which take plain lists.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 

@@ -56,11 +56,11 @@ jobs:
           key: ccache-docs-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: ccache-docs-${{ runner.os }}-${{ runner.arch }}-
 
-      # The guide pages show the games and the smaller, interactive examples.
+      # The Samples gallery opens full games; guide pages show smaller examples.
       - name: Build the examples
         run: |
           cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
-          cmake --build --preset web-release --target sand duel towers sumo docs_examples
+          cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games
           mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html
@@ -72,6 +72,7 @@ jobs:
           npm run check
           npm run build
           npm run test:examples
+          npm run test:samples
 
       # The image takes what the build made (docs/Dockerfile). The token is
       # a deploy token for the app: fly tokens create deploy -a tide-website

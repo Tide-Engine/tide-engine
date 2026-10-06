@@ -9,19 +9,28 @@
 extern const versus_way life_c;
 
 static versus_flag flags[] = {
-    {"size", "the grid's width and height, in cells", 1024, 128, 0},
+    {"size", "the grid's width and height, in cells", 1024, 128, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
+
+// With --kept 1, each tick's world is kept first, as a client keeps every tick
+// it predicts: the snapshot shares the world's pages, so the tick writes none
+// of them in place.
+static tide_world kept;
+static bool keeps;
 
 static void *make(const versus_flag *f)
 {
     tide_world *w = tide_alloc_zeroed(1, sizeof *w);
     tide_world_init(w, VERSUS_DT);
     w->Board.size = (int32_t)f[0].value;
+    keeps = f[1].value != 0;
     return w;
 }
 
 static void tick(void *world, const tide_jobs *jobs)
 {
+    if (keeps) tide_world_copy(&kept, world);
     tide_world_tick_on(world, jobs);
 }
 
@@ -43,6 +52,7 @@ static uint64_t digest(const void *world)
 static void destroy(void *world)
 {
     tide_world_free(world);
+    tide_world_free(&kept);
     free(world);
 }
 

@@ -20,11 +20,23 @@ function(versus_add concept)
 endfunction()
 
 versus_add(particles particles/particles.tide)
+versus_add(wide wide/wide.tide) # A dozen arrays of one component at once
+add_test(NAME versus_wide_kept COMMAND versus_wide --quick --kept 1 --tagged 1 --frozen 50)
 versus_add(sand ../sand/sand.tide) # The game itself
 versus_add(life life/life.tide)
 versus_add(churn churn/churn.tide)
 versus_add(events events/events.tide)
 versus_add(nbody nbody/nbody.tide)
+versus_add(buckets buckets/buckets.tide) # A list of lists against one flat list, and C
+versus_add(lookup lookup/lookup.tide) # Map and set lookup, replacement and insertion order
+
+# Keep the old world alive while the next tick changes it, as prediction
+# does. Both languages keep and validate the same previous state.
+add_test(NAME versus_particles_kept COMMAND versus_particles --quick --kept 1)
+add_test(NAME versus_buckets_kept COMMAND versus_buckets --quick --kept 1)
+add_test(NAME versus_lookup_empty COMMAND versus_lookup --quick --count 0)
+add_test(NAME versus_lookup_single COMMAND versus_lookup --quick --count 1 --changes 3)
+add_test(NAME versus_lookup_steady COMMAND versus_lookup --quick --changes 0)
 
 # Opt-in diagnostics instrument a copy of generated C, leaving shipped code,
 # runtime libraries and normal versus executables untouched. A control uses

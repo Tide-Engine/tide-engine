@@ -34,6 +34,27 @@ static const struct {
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
 
+static const generic_form generic_forms[] = {
+    {"List", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'List<int>'"}, NULL, "'>' after the list's element type"},
+    {"Map", 2, {GENERIC_KEY, GENERIC_ELEMENT},
+     {"the map's key type, like 'Map<int, string>'", "the map's value type, like 'Map<int, string>'"},
+     "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
+    {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
+    {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+};
+
+const generic_form generic_optional = {"?", 1, {GENERIC_VALUE}, {"the type a T? holds"}, NULL, NULL};
+const generic_form generic_fails = {"fails", 1, {GENERIC_ERROR}, {"the error it fails with, like 'fails ParseError'"}, NULL, NULL};
+
+const generic_form *generic_form_named(const str name)
+{
+    for (size_t i = 0; i < sizeof generic_forms / sizeof generic_forms[0]; i++) {
+        if (str_eq_c(name, generic_forms[i].name)) return &generic_forms[i];
+    }
+    return NULL;
+}
+
 bool builtin_type_named(const str name, type *out)
 {
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
@@ -171,6 +192,7 @@ const char *type_name(const type t)
     case TY_MAP:
     case TY_SET:
     case TY_GRID:
+    case TY_ARRAY:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
         char *b = buf[next++ % 4];

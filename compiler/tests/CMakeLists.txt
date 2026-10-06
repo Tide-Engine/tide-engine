@@ -19,6 +19,11 @@ tide_e2e_test(move_clamp)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
+tide_e2e_test(rows) # A system's loop over a chunk's rows: pages shared with a snapshot or not, rows left out, chunks in pieces
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_rows PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_rows PRIVATE TIDE_ROWS_THREADS=1)
+endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
@@ -28,12 +33,19 @@ if(TIDE_PLATFORM)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)
 endif()
 set_tests_properties(tidec_e2e_queries PROPERTIES TIMEOUT 120)
+tide_e2e_test(query_blocks) # ...beside a comparison block and a parallel loop, which capture the code's other parameters
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
 tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
+tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=13944507110118551999ull)
+tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=1956267260095108023ull)
+tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
+tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
 tide_e2e_test(edge_cases WARNINGS "'settings' is never used" "system 'NeverRuns' never runs")
 tide_e2e_test(empty_world WARNINGS "system 'PlayerMovement' never runs")
@@ -187,7 +199,8 @@ if(TIDE_PLATFORM)
                 "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
                 "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
                 --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
-        set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+        # The guard around the runner's own 100 seconds and what it asks the page after them (cmake/WebTest.cmake)
+        set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 150)
     elseif(NOT TIDE_ANDROID AND TIDE_NODE)
         tide_add_game(tidec_e2e_fetch SOURCES e2e/fetch.tide NAME game
             HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_test.c")
@@ -299,6 +312,18 @@ add_test(NAME tidec_scale
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scale"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/scale/scale.cmake")
 set_tests_properties(tidec_scale PROPERTIES TIMEOUT 600)
+
+# Restrict lane parameters and sparse presence/fallback columns together must
+# fit WebAssembly's declaration limit, even for a game at the component limit.
+if(TIDE_NODE)
+    set(TIDE_ROWS_PARAMETER_ARGS "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/rows-parameters" "${PROJECT_SOURCE_DIR}")
+    if(TIDE_WEB)
+        list(APPEND TIDE_ROWS_PARAMETER_ARGS "${TIDE_CLANG}" "${CMAKE_C_COMPILER_TARGET}" "${CMAKE_SYSROOT}")
+    endif()
+    add_test(NAME tidec_rows_parameters
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/rows/parameters.mjs" ${TIDE_ROWS_PARAMETER_ARGS})
+    set_tests_properties(tidec_rows_parameters PROPERTIES TIMEOUT 120)
+endif()
 
 # Schedule tests: `tidec --schedule` on schedule/<name>.tide must print
 # schedule/<name>.txt exactly.
