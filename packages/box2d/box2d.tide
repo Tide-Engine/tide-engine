@@ -165,9 +165,9 @@ singleton Physics
     float2 gravity = float2(0, -10);
     int substeps = 4;
     // How the world is tuned. Each is Box2D's own default, and a change is the next step's.
-    float stiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
-    float damping = 10; // ...and how little they spring back: under 1 they bounce
-    float pushSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
+    float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
+    float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
+    float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
     float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
     float hitSpeed = 1; // Bodies that meet faster than this send Hit
     bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
@@ -182,6 +182,14 @@ singleton Physics
     List<long> shed; // ...and the shapes of parts whose entities were
     Map<long, Entity> owners; // Each body's entity
     Map<long, Entity> parts; // ...and each part's shape's
+    Map<Entity, Sensors> sensors; // The sensors of each entity that has any
+}
+
+// An entity's sensors: Box2D's handle to each of its shapes that is one
+struct Sensors
+{
+    long box;
+    long circle;
 }
 
 struct Contact
@@ -237,7 +245,7 @@ extern long AttachBox(long body, in Box box);
 extern long AttachCircle(long body, in Circle circle);
 
 [NativeName("b2t_step")]
-extern long StepWorld(float dt, int substeps, float2 gravity, float stiffness, float damping, float pushSpeed, float bounceSpeed,
+extern long StepWorld(float dt, int substeps, float2 gravity, float contactStiffness, float contactDamping, float contactSpeed, float bounceSpeed,
                       float hitSpeed, bool sleeping);
 
 [NativeName("b2t_image")]
@@ -280,7 +288,7 @@ extern int OverlapBox(in Box shape, float2 at, float angle, out List<long> bodie
 extern int OverlapCircle(in Circle shape, float2 at, float angle, out List<long> bodies);
 
 [NativeName("b2t_inside")]
-extern int VisitorsOf(long body, long box, long circle, out List<long> bodies);
+extern int VisitorsOf(long box, long circle, out List<long> bodies);
 
 // C's world for this match, at the state the match is in: the one it has, or
 // one made from the image. The bodies whose entities were destroyed since the
@@ -334,14 +342,34 @@ system Own(mut Physics physics, with Body)
 [Stage(PhysicsStages.Step, 3)]
 system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
 {
-    if (AttachBox(body.id, box) != 0) physics.shapes += 1;
+    long shape = AttachBox(body.id, box);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (box.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.box = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(BoxMade);
 }
 
 [Stage(PhysicsStages.Step, 4)]
 system AttachCircles(Body body, Circle circle, mut Physics physics, without CircleMade)
 {
-    if (AttachCircle(body.id, circle) != 0) physics.shapes += 1;
+    long shape = AttachCircle(body.id, circle);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (circle.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.circle = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(CircleMade);
 }
 
@@ -362,6 +390,12 @@ system AttachPartBoxes(mut Part part, Box box, mut Physics physics, World world,
     {
         physics.shapes += 1;
         physics.parts[part.box] = this;
+        if (box.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.box = part.box;
+            physics.sensors[this] = sensors;
+        }
     }
     this.Add(BoxMade);
 }
@@ -379,6 +413,12 @@ system AttachPartCircles(mut Part part, Circle circle, mut Physics physics, Worl
     {
         physics.shapes += 1;
         physics.parts[part.circle] = this;
+        if (circle.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.circle = part.circle;
+            physics.sensors[this] = sensors;
+        }
     }
     this.Add(CircleMade);
 }
@@ -398,8 +438,8 @@ system DropParts(Part part, Physics physics, World world)
 [Stage(PhysicsStages.Step, 8)]
 system Simulate(Time time, mut Physics physics)
 {
-    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.stiffness, physics.damping, physics.pushSpeed,
-                           physics.bounceSpeed, physics.hitSpeed, physics.sleeping);
+    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
+                           physics.contactSpeed, physics.bounceSpeed, physics.hitSpeed, physics.sleeping);
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
@@ -464,6 +504,7 @@ event(Destroyed) Remove(Body body, mut Physics physics)
         physics.gone.Add(body.id);
         physics.owners.Remove(body.id);
     }
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
 }
 
 // ...and a part that goes takes its shape off its body.
@@ -479,6 +520,7 @@ event(Destroyed) Shed(Part part, mut Physics physics)
         physics.shed.Add(part.circle);
         physics.parts.Remove(part.circle);
     }
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
 }
 
 // ---------------------------------------------------------------------------
@@ -631,28 +673,17 @@ bool Overlap(Physics physics, Circle shape, float2 at, float angle, out List<Ent
     return Owners(physics, bodies, out found);
 }
 
-// The entities whose bodies are in a body's sensors now: in any shape of it
-// that's a sensor, its parts' too. Touched and Parted say who comes and goes;
-// this says who's there.
-bool Inside(Physics physics, Body sensor, out List<Entity> found)
+// The entities whose bodies have a shape in an entity's sensors, as the last
+// step found them, each once. `sensor` is the entity the sensor shape is a
+// component of: a body's, or a part's. Nobody, for an entity with no sensor.
+// Touched and Parted say who comes and goes; this says who's there.
+bool Inside(Physics physics, Entity sensor, out List<Entity> found)
 {
-    if (sensor.id == 0 || !Ask(physics))
+    if (physics.sensors.count == 0 || !physics.sensors.TryGet(sensor, out var sensors) || !Ask(physics))
     {
         found = [];
         return false;
     }
-    VisitorsOf(sensor.id, 0, 0, out List<long> bodies);
-    return Owners(physics, bodies, out found);
-}
-
-// ...and in one part's.
-bool Inside(Physics physics, Part sensor, out List<Entity> found)
-{
-    if ((sensor.box == 0 && sensor.circle == 0) || !Ask(physics))
-    {
-        found = [];
-        return false;
-    }
-    VisitorsOf(0, sensor.box, sensor.circle, out List<long> bodies);
+    VisitorsOf(sensors.box, sensors.circle, out List<long> bodies);
     return Owners(physics, bodies, out found);
 }

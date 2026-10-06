@@ -9,8 +9,8 @@
 extern const versus_way events_c;
 
 static versus_flag flags[] = {
-    {"targets", "entities that turrets hit", 50000, 500, 0},
-    {"turrets", "entities that each hit a target every tick", 200000, 2000, 0},
+    {"targets", "entities that turrets hit", 50000, 500, 0, 1},
+    {"turrets", "entities that each hit a target every tick", 200000, 2000, 0, 1},
 };
 
 static void *make(const versus_flag *f)

@@ -791,6 +791,10 @@ void b2DestroyJointInternal( b2World* world, b2Joint* joint )
 {
 	int jointId = joint->jointId;
 
+	// Tide: a joint that goes changes both its bodies, its island and its set, and may come here with its body
+	// (b2DestroyBody): not followed one at a time, so the next image is written whole (see b2SnapTrack)
+	b2SnapTouchAll( world );
+
 	b2JointEdge* edgeA = joint->edges + 0;
 	b2JointEdge* edgeB = joint->edges + 1;
 

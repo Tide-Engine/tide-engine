@@ -184,7 +184,7 @@ A match that ends, or a room that can't be joined, comes back as the built-in `D
 
 ### What it costs
 
-Measured on a release build, on one thread, with the world kept and hashed after every tick as a client's is, and in a browser's WebAssembly under Node, where Box3D has no SIMD:
+Measured on a release build, on one thread, with the world kept and hashed after every tick as a client's is, and in a browser's WebAssembly under Node, where Box3D solves four contacts at a time and a desktop eight:
 
 | A tick, in milliseconds | Desktop | Browser |
 |---|---|---|

@@ -23,6 +23,11 @@
 #include "simd_avx2.h"
 #endif
 
+// Tide: WebAssembly's own SIMD
+#if defined( B3_SIMD_WASM )
+#include "simd_wasm.h"
+#endif
+
 #else
 
 #include "simd_scalar.h"

@@ -10,7 +10,7 @@
 extern const versus_way sand_c, sand_c_table;
 
 static versus_flag flags[] = {
-    {"size", "the grid's width and height, in cells", 1024, 128, 0},
+    {"size", "the grid's width and height, in cells", 1024, 128, 0, 1},
 };
 
 static void *make(const versus_flag *f)
