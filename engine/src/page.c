@@ -323,7 +323,7 @@ tide_page *tide_page_own_copy_around(tide_page *p, const uint32_t mine, const ui
 uint64_t tide_page_hash(tide_page *p, const uint32_t bytes)
 {
     if (p->hashed != bytes) {
-        p->hash = tide_hash(tide_page_data(p), bytes);
+        p->hash = tide_hash_wide(tide_page_data(p), bytes);
         p->hashed = bytes;
     }
     return p->hash;

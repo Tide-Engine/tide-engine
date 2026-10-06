@@ -237,3 +237,11 @@ uint64_t tide_hash(const void *data, size_t size);
 #define TIDE_HASH_START 0x9E3779B97F4A7C15ull
 uint64_t tide_hash_more(uint64_t h, const void *data, size_t size);
 uint64_t tide_hash_end(uint64_t h);
+
+// A hash for a run that's long, like a page of a world: another number than
+// tide_hash's of the same bytes, and the same on every platform too. It's
+// four of that hash's chains side by side, each taking every fourth word, so
+// a CPU works on four words at once, where one chain has it wait for a word's
+// multiplies before it can start on the next: two to three times as many
+// bytes in the same time. What a world's pages keep is this one's (tide_page_hash).
+uint64_t tide_hash_wide(const void *data, size_t size);
