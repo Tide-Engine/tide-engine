@@ -54,5 +54,19 @@ void asset_watched(const char *declaring, str path, asset_path_fn found, void *u
 // name, `**` across folders, `?` a character; Windows paths ignore case.
 bool asset_glob_match(const char *pattern, const char *path);
 
+// An asset as checked: its declaring file, its path as written, and what it
+// resolved to (NULL where it couldn't).
+typedef struct asset_named {
+    const char *declaring;
+    str path;
+    const asset_value *value;
+} asset_named;
+
+// Keeps the hashes of the named files in the game's .tide/ (assets.h), once a
+// game is checked: each file resolved, by its path from the game's folder, and
+// what was known of a file that's missing now, so it's found by its bytes
+// later. Written only where it changed; nothing without a `game_folder`.
+void asset_files_save_hashes(const char *game_folder, const asset_named *named, int count);
+
 // Lets go of every file read so far: tests, or a process that goes on without them.
 void asset_files_forget(void);

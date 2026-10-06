@@ -11,11 +11,13 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
-Each change is marked `Tide:` where it is. All but one are for one thing: a
+Each change is marked `Tide:` where it is. All but two are for one thing: a
 world's image is kept in the match, where it's hashed and sent between players,
 so it has to be the same bytes on every machine for the same state, and one
-machine's has to load on another. The one that isn't is for how long a step
-takes on a page's threads (the last under Threads where upstream knows none).
+machine's has to load on another. The two that aren't are for how long a step
+takes in a browser: WebAssembly's SIMD (the last under The same bytes whatever
+the CPU, as it had to leave them the same) and workers that sleep (the last
+under Threads where upstream knows none).
 
 ### Calls to take an image and to restore one
 
@@ -118,6 +120,50 @@ match has no recording, and a player who joins has only the match's bytes.
   (`vminq_f32`, `vmaxq_f32`) take -0 for less than 0, which is a third
   answer. x64's is the one kept, as its code is the one that can't change.
   The Neon path gives the test's pins too: CI's ARM Macs run it.
+- **`core.h`, `simd.h`, `simd_wasm.h`: wide floats on WebAssembly's own SIMD**
+  (`B3_SIMD_WASM`), for any WebAssembly built with `-msimd128`, as Tide's web
+  builds are. Upstream's one path for WebAssembly is SSE2's headers as
+  Emscripten emulates them, which clang's own target has none of, so there
+  Box3D took its scalar path. `simd_wasm.h` is ours, beside `simd_sse2.h` and
+  `simd_neon.h`: the 4-wide floats that the contact solver and the hulls'
+  separating axis test are written with (`wide4.c`), and the trees' bounds
+  (`b3AABBV`). `core.h` has one branch for WebAssembly, Emscripten's too,
+  where this stands in for the emulation; built without `-msimd128` it's the
+  scalar path, as before.
+
+  Each function gives, bit for bit, what `simd_sse2.h`'s gives for the same
+  numbers, so a browser steps the world x64 does:
+  - The least and the greatest are `f32x4.pmin` and `f32x4.pmax` with their
+    operands the other way around, which are `minps` and `maxps` exactly: the
+    first where it's less, or greater, and else the second, whichever zero
+    that is and whatever is NaN. WebAssembly's `f32x4.min` and `f32x4.max`
+    take -0 for less than 0, as Neon's do, and would bring back the zeros of
+    the change above.
+  - Comparisons are the ordered ones, false for a NaN. A blend takes each bit
+    by its mask's bit. `b3NegW4` and `b3AbsW4` change the sign's bit and
+    nothing else. `b3AnyTrueW4` and `b3AllZeroW4` go by each lane's top bit,
+    as `movmskps` does.
+  - Sums, products, quotients and square roots are IEEE 754's on both, each
+    rounded by itself: nothing here is relaxed SIMD, whose fused multiply-add
+    differs between machines, and Tide's flags fuse nothing.
+  - Loads, stores, transposes and the bounds' shuffles only move lanes.
+
+  A single 3D vector (`b3V32`, which SSE2 keeps in a register: ray casts, and
+  the triangles of meshes and height fields) is still plain code there, as it
+  is with Neon, and `simd.c` is as it was.
+
+  The package's pins are what they were, in debug and release web builds.
+  Beside them, a check outside the tests ran every function of the header on
+  awkward numbers (every three of 24 values with both zeros, denormals,
+  infinities and NaNs among them, 40,000 of any bits at all, and 40,000 small
+  ones of which many are equal), built for x64 and for the web: the same bits
+  from both for all 27 kinds of result, where the scalar path differs in 11.
+  Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
+  NaN is ever in a world.
+
+  It took a quarter off a step in a browser. The package's `README.md` has the
+  numbers, and why it's no more: clang had already made SIMD of most of the
+  scalar path by itself.
 
 ### Threads where upstream knows none
 
@@ -257,25 +303,53 @@ compares the two after every step.
       doesn't wake) and `b3UpdateBodyMassData`. `shape.c`,
       `b3CreateShapeInternal`: the shape, its body, and the shape that headed
       the body's list.
+    - `shape.c`, `b3DestroyShape`: the shape, its neighbors in its body's
+      list, whose links change, and the body, which has the list's head and
+      its count. The contacts that go with it say so themselves
+      (`b3DestroyContact`), and so does the body's mass. A sensor that goes
+      moves the last one into its place, whose shape is told where it is now
+      (`b3DestroyShapeInternal`, as `b3DestroySensor` already said for a
+      sensor that goes with its body).
+    - `body.c`, `b3Body_SetLinearDamping`, `b3Body_SetAngularDamping` and
+      `b3Body_SetGravityScale`: what the body's set has of it, which matters
+      for a sleeping one (the static set and the awake one are written every
+      time). `b3Body_SetBullet`: the body's own flags; its set's copy of them
+      is said in `b3SyncBodyFlags`. None of the four wakes a body.
   - **Any other call writes the next image whole.** `recording.h`: `B3_REC`
     and `B3_REC_CREATE`, which every call that changes a world goes through,
     say which call it is (`b3SnapNoteOp`), and only the ones looked at for the
     list above are followed: the step, making and destroying a body, its
-    transform, its speeds, forces and impulses, and making a sphere, a capsule
-    or a hull. A body's type, enabling and disabling, sleep, mass, shapes'
-    settings and destruction, joints, and whatever upstream adds: all of it is
+    transform, its speeds, forces and impulses, its dampings, its gravity
+    scale and whether it's a bullet, making a sphere, a capsule or a hull, and
+    destroying a shape. So are the world's settings that are numbers of its
+    own, which every image writes: its gravity, its contact tuning, and its
+    restitution and hit event thresholds. A body's type, enabling and
+    disabling, sleep (a body's, and the world's `b3World_EnableSleeping`),
+    mass, shapes' settings, joints, and whatever upstream adds: all of it is
     right, at the cost of one whole image. The calls recorded by hand say so
     themselves (`b3Shape_SetHull`, `b3Shape_SetMesh`), as do
     `b3MergeSolverSets`, `b3TransferBody`, the joints' making and destroying,
-    a shape with a mesh, a height field or a material array, and a restore.
+    a shape with a mesh, a height field or a material array (made, or
+    destroyed), and a restore.
+
+    `b3Body_SetType` is left at a whole image on purpose. It moves the body
+    to another solver set (`b3TransferBody`, which moves another body into its
+    place there), lets go of every contact it has, takes it out of its island
+    or makes one, and makes each of its shapes' proxies again in another
+    tree: following it would be following all of those, for a call a game
+    makes now and then. What it costs is that tick's image: with 2,400 bodies,
+    0.3 ms written whole against 0.04 in parts.
 
 ## What isn't changed
 
-- On the web Box3D takes its scalar path, as it only knows Emscripten's
-  WebAssembly: a step there takes about three times a desktop's.
 - The scalar and SSE2 code differ in a zero's sign in two more places
   (`b3AbsW4` of -0, and `b3NegV`), whose results only feed comparisons. A new
-  use that keeps one would show in the test.
+  use that keeps one would show in the test. The first is the scalar wide
+  floats', which nothing Tide builds for takes now that the web has its own;
+  the second is a single vector's, which is plain code on ARM64 and on the web.
+- On the web a step still takes longer than a desktop's: WebAssembly's SIMD is
+  4 wide where x64 solves 8 contacts at a time with AVX2, and a browser's
+  compiler isn't clang.
 - Joints, sensors, meshes and height fields go into an image as upstream
   writes them, with the changes above. Of those the package makes sensors, and
   `tide_box3d_course` pins its match of them, in debug, in release and on the
@@ -292,8 +366,8 @@ compares the two after every step.
   write to an event that isn't one. The package never puts a body to sleep,
   and `tide_box3d_parts` doesn't right after a restore.
 - `b3Body_SetType` returns with the world still locked for a body with a
-  height field or a compound that's made other than static: upstream's, and
-  the package never sets a body's type.
+  height field or a compound that's made other than static: upstream's. The
+  package sets a body's type, and makes neither of those shapes.
 
 ## What the package asks of it
 
@@ -327,6 +401,71 @@ Box3D has to be read for them again:
 - **A body made with no shape weighs nothing**, so an impulse does nothing to
   it: the package gives a new body's impulses once its shapes are on it, with
   the calls it gives any impulse with, which are followed.
+- **Two shapes that meet hard are only reported when one of them has
+  `enableHitEvents`**, which is off unless a shape is made with it. The
+  package makes every shape with it, for `Hit`. That's in the image three
+  times over: a bit of each shape's `flags` (`b3_enableHitEvents`), a bit of
+  each contact's (`b3_simEnableHitEvent`), and, in each point of a contact
+  that touches, how fast the two closed on each other as the step began
+  (`b3ManifoldPoint.normalVelocity`, which is 0 for a contact nobody asked
+  about). In the test's last image that's 24 shapes, 28 of 31 contacts and 58
+  points: 280 bytes of 40,812. The speed is worked out where the solver
+  prepares a contact, a lane of 4 or 8 at a time or by itself, and written
+  for each contact that asks and for no other (`contact_solver_wide.inl`), so
+  it's the same bytes whatever the CPU solves at a time: the test's two runs
+  and a web build agree. Nothing reads it but the events, so the bodies step
+  as they did: `tide_box3d_stack`'s pin of them didn't move.
+- **Hit events are a step's own**, as its touches are: found after the solve,
+  in the order of the contacts' ids, one for each contact whose fastest point
+  was over the world's threshold, and gone at the next step.
+- **`b3Body_SetType` lets go of everything the body touches**, with an end
+  event for each, and finds what still touches it in the next step, with a
+  begin event. The package says neither for a pair that has both in a tick
+  that changed a type (`b3t_touches`).
+- **A shape that's destroyed takes its contacts with it and wakes what it
+  touched** (`b3DestroyShape`), with an end event for each that touched, and
+  for each shape in it when it's a sensor. Those events name a shape that's
+  no more: the package keeps whose each one was for the tick
+  (`b3t_gone_shapes`).
+- **The world's contact tuning has no call to read it back.** The package
+  sets it, with the world's thresholds, before every step: they're numbers of
+  the world's own, and the calls are followed.
+- **`b3World_EnableSleeping( false )` wakes every body**, and turning it on
+  again only says so: the package turns it off for a gravity that changed (to
+  wake everything) and for a match whose bodies aren't to sleep.
+- **Queries write nothing**, and the image in parts says so by name
+  (`b3SnapNoteOp`): a world asked a thousand things has the image it would
+  have had. They run on whichever thread asks, several at once: they only
+  read the world.
+- **Nothing in a query passes a sensor by.** `b3World_CastRay`,
+  `b3World_CastShape` and `b3World_OverlapShape` go by a shape's category and
+  mask alone, so the package's callbacks pass sensors by themselves
+  (`b3Shape_IsSensor`).
+- **What a shape says of a cast doesn't go by how far the search is cut
+  off**, which is what lets the package's nearest hit not depend on the order
+  Box3D comes to shapes in. `b3RayCastHull` only compares with the cut-off;
+  `b3RayCastSphere` and `b3RayCastCapsule` work their fraction out before
+  they compare it, and then hold it to the cut-off, which only changes a
+  fraction that's past it; `b3ShapeCast` advances from 0 and stops at it.
+  The package cuts the search off a ten-thousandth past the nearest hit so
+  far, never at it, so that a shape exactly as near is reported whichever
+  comes first and isn't held to anything. A new Box3D has to be read for this
+  again: a cast whose answer went by the cut-off would give another answer
+  on another tree.
+- **A shape's own answer is plain floats.** The casts and the overlap test
+  work in the shape's frame with `b3Vec3` and `b3Quat`, which are C, and a
+  hull's support point with the 4-wide type, which gives the same on every
+  path (above). The trees are only asked which shapes could be it, with
+  bounds that are fatter than the shapes by more than any rounding, so
+  whether a tree's own tests round one way or another on some CPU can't
+  leave out a shape that's hit.
+- **`b3ShapeCast` says a shape that starts in another is hit at 0, with no
+  normal**: within a few millimeters counts (`B3_LINEAR_SLOP`), so a shape
+  cast from where a body rests is in what it rests on. A ray says nothing of
+  what it starts inside (the package passes a fraction of 0 by, as
+  `b3World_CastRayClosest` does).
+- **What a sensor has in it is `b3Shape_GetSensorData`'s**: its visitors as
+  the last step found them, which are in the image.
 
 ## Updating it
 
@@ -334,7 +473,16 @@ Copy the two folders over, apply the changes again, and run `tide_box3d_stack`
 and `tide_box3d_course` natively, in debug and release, and for the web: their
 pinned hashes are of the simulation and of every image, so a field that isn't
 the same everywhere shows there. A new version steps differently, so the
-hashes change with it, and so do games' matches.
+hashes change with it, and so do games' matches. `tide_box3d_course` also pins
+what every question was answered (`ANSWERS_HASH`): a cast or an overlap test
+that rounds another way somewhere shows there. And the casts have to be read
+again for whether their answers go by how far the search is cut off (What the
+package asks of it).
+
+`simd_wasm.h` follows `simd_sse2.h`. A function upstream adds to that file's
+wide floats or bounds needs its twin, or the web build doesn't compile; one it
+changes has to change there too, which nothing says but the pins, so the two
+files are read side by side at each update.
 
 Then `tide_box3d_parts`, for the image in parts. Whatever upstream added that
 writes a body, a shape or a contact of a body that isn't awake has to say so
@@ -343,7 +491,11 @@ after, which every recorded call is until `b3SnapNoteOp` names it. The test
 does what a game might to a world at random and compares the two images after
 every step, and it says where the first byte apart is. Taking each of those
 lines out in turn and running it says which of them the test would notice the
-lack of: 36 of the 60 by themselves when this was written. The other 24 are
+lack of: 36 of the 60 by themselves when this was written, and 9 of the 10
+that came with a shape destroyed and a body's settings (the tenth has a
+destroyed shape with a material array of its own write the next image whole,
+which the writer finds by itself: it looks for such shapes while the world has
+had any). The other 24 are
 second sayings of what another line says, or of what being awake says: a body
 that wakes is also awake at the next image, an element moved within the awake
 set is an awake body's, a sleeping set that loses a contact is destroyed when

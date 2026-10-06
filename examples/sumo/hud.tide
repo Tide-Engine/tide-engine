@@ -1,0 +1,441 @@
+// Over the ring, in the screen's pixels: the scores, the clock, whose ball is
+// whose, the words when a round starts and ends, what to do first, and the
+// controls. None of it shows while the lobby or the menu is up (lobby.tide).
+using Box3D;
+
+const float SCORES = 48; // The height of the scores' row
+
+// How much of the screen's bottom right corner the game leaves to the engine's
+// stats (the `stats` setting): their one line, which is the frame rate, and in
+// a match another machine runs, the ping too.
+float StatsCorner(Session session)
+{
+    return session.server ? 100 : 196;
+}
+
+// A crown, for whoever leads: its middle at `at`.
+void Crown(float2 at, float size, Color color)
+{
+    Draw2D.RoundRect(at + float2(0, size * 0.25), float2(size * 1.5, size * 0.45), size * 0.12, color);
+    for (var i = -1; i <= 1; i++)
+        Draw2D.Circle(at + float2(i * size * 0.55, -size * 0.2), size * 0.28, color);
+}
+
+// The rim is danger, and the screen says so: its edges glow rose while this
+// machine's player's ball is near it. And whatever just lit the whole screen
+// fades here.
+[Stage(Layers.Hud)]
+view Glare(Fx fx)
+{
+    Draw2D.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    Draw.Blend(Blend.Add)
+    {
+        if (fx.peril > 0)
+            Draw2D.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.3 * fx.peril * (0.75 + 0.25 * Math.Sin(fx.beat * 3))),
+                                 soft = -Math.Min(screen.x, screen.y) * 0.28 });
+        if (fx.flash > 0) Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
+    }
+}
+
+// Whose ball is whose, over everything: a mark above each ball in its color,
+// which a tower in front of the ball doesn't hide, and at the screen's edge
+// for a ball that's out of view, on the side it's on. This machine's
+// player's says so.
+[Stage(Layers.Hud, 5)]
+view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
+{
+    Draw2D.SetScreen();
+    if (lobby.page != Page.None) return;
+    var screen = float2(Screen.width, Screen.height);
+    var place = Draw3D.WorldToScreen(body.position + float3(0, ball.radius + 0.9, 0));
+    var mine = ball.seat == fx.seat;
+    var color = SeatColor(ball.seat);
+    var at = float2(Math.Clamp(place.x, 14, screen.x - 14), Math.Clamp(place.y, SCORES + 12, screen.y - 14));
+    if (at.x != place.x || at.y != place.y)
+    {
+        // Out of view: a dot at the edge, on its way
+        Draw2D.Circle(at, 8, Fade(BACK, 0.8));
+        Draw2D.Circle(at, 5.5, color);
+        return;
+    }
+    if (mine)
+    {
+        // A ring around it too, which nothing in front of it hides
+        var middle = Draw3D.WorldToScreen(body.position);
+        var top = Draw3D.WorldToScreen(body.position + float3(0, ball.radius, 0));
+        Draw2D.WireCircle(float2(middle.x, middle.y), Math.Max(middle.y - top.y, 6) + 5, 2, Fade(Color.white, 0.55));
+        var bob = Math.Sin(fx.beat * 2) * 1.5;
+        Draw2D.Text("YOU", at + float2(1, -12 + bob + 1.5), 12, Fade(BACK, 0.85), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("YOU", at + float2(0, -12 + bob), 12, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Rect(at + float2(0, bob), float2(7), 0.785, Color.white);
+        return;
+    }
+    Draw2D.Rect(at, float2(8), 0.785, Fade(BACK, 0.8));
+    Draw2D.Rect(at, float2(5.5), 0.785, color);
+}
+
+// The scores are read `verified`: what the server has confirmed, never a
+// fall this machine only predicted. Each seat has its own, and the query
+// goes through them all: side by side in the order of their seats, this
+// machine's player's marked, and a crown for whoever leads. A seat nobody
+// has says it's a bot's.
+[Stage(Layers.Hud, 10)]
+view Scores(verified Ring sure, Fx fx, Lobby lobby, query (verified Seat seat) seats)
+{
+    Draw2D.SetScreen();
+    if (lobby.page != Page.None) return;
+    mut var live = 0;
+    mut var count = 0;
+    mut var best = 0;
+    mut var leader = -1;
+    foreach (var entry in seats)
+    {
+        if (!Live(sure.manned, sure.bots, entry.seat.seat)) continue;
+        live |= 1 << entry.seat.seat;
+        count += 1;
+        if (entry.seat.score == best) leader = -1; // Nobody leads a tie
+        if (entry.seat.score <= best) continue;
+        best = entry.seat.score;
+        leader = entry.seat.seat;
+    }
+    if (count == 0) return;
+    var slot = Math.Min(Screen.width / count, 108);
+    var first = (Screen.width - slot * count) * 0.5;
+    var narrow = slot < 64;
+    foreach (var entry in seats)
+    {
+        var seat = entry.seat.seat;
+        if ((live >> seat & 1) == 0) continue;
+        // Its place in the row: how many seats before it are in the match
+        mut var place = 0;
+        for (var before = 0; before < seat; before++)
+            place += live >> before & 1;
+        var mine = seat == fx.seat;
+        var manned = (sure.manned >> seat & 1) == 1;
+        var color = SeatColor(seat);
+        var middle = float2(first + (place + 0.5) * slot, SCORES * 0.5);
+        var pop = fx.pops[seat];
+        Draw2D.Shape(Shape { center = middle, size = float2(Math.Min(slot - 6, 96), SCORES - 8), radius = 10,
+                             color = mine ? Color(0.21, 0.215, 0.235, 0.96) : Color(0.115, 0.118, 0.13, 0.9),
+                             outline = mine ? 1.5 : 0.0, outlineColor = Fade(Color.white, 0.75) });
+        var number = $"{entry.seat.score}";
+        var size = Math.Round((narrow ? 18 : 22) * (1 + 0.35 * pop));
+        var across = Draw2D.MeasureText(number, size, Font.Bold).x;
+        var dot = narrow ? 4.0 : 5.0;
+        var left = middle.x - (across + dot * 2 + 6) * 0.5;
+        var row = middle.y - 6;
+        if (seat == leader) Crown(float2(left + dot, row), dot * 1.4, GOLD);
+        else Draw2D.Circle(float2(left + dot, row), dot, color);
+        Draw2D.Text(number, float2(left + dot * 2 + 6, row), size, pop > 0 ? Mix(color, Color.white, pop) : color,
+                    Anchor.MiddleLeft, Font.Bold);
+        Draw2D.Text(mine ? "YOU" : manned ? (narrow ? "" : SeatName(seat)) : "BOT", middle + float2(0, 12), mine ? 10 : 9,
+                    mine ? Color.white : Fade(QUIET, 0.8), Anchor.MiddleCenter, mine ? Font.Bold : Font.Regular);
+    }
+}
+
+// A band across the screen, in a color, with a line of words and a smaller
+// one under it: open for `open`, from 0 to 1.
+void Band(float2 middle, float open, bool big, Color tint, string words, string under)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var tall = (big ? 84 : 60) * open;
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Fade(tint, 0.25 * open), soft = 40 });
+    }
+    Draw2D.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Shade(tint, 0.95), color2 = Shade(tint, 0.7) });
+    Draw2D.Rect(middle - float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw2D.Rect(middle + float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw.Tint(Fade(Color.white, Math.Saturate(open * 1.5 - 0.5)))
+    {
+        var size = big ? 30 : 20;
+        // As big as fits
+        var fit = Math.Min(1, (screen.x - 24) / Math.Max(1, Draw2D.MeasureText(words, size, Font.Bold).x));
+        Draw2D.Text(words, middle - float2(0, under == "" ? 0 : (big ? 9 : 7)), Math.Floor(size * fit), BACK, Anchor.MiddleCenter, Font.Bold);
+        if (under != "") Draw2D.Text(under, middle + float2(0, big ? 21 : 15), big ? 14 : 12, Fade(BACK, 0.8), Anchor.MiddleCenter);
+    }
+}
+
+// Words in the middle of the screen, with a shadow under them: they land a
+// little too big and settle.
+void Shout(float2 at, string words, float size, Color color, float age, float shown)
+{
+    var landed = Math.Round(size * (1 + 0.35 * Math.Max(0, 1 - age * 7)) * 0.5) * 2;
+    Draw.Tint(Fade(Color.white, shown))
+    {
+        Draw2D.Text(words, at + float2(0, 3), landed, Fade(BACK, 0.75), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(words, at, landed, color, Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+// The clock, under the scores, and the words over the ring: the count before
+// a round, the rim that's about to go, who took a round, and what became of
+// this machine's player's ball. A round's winner is the server's to say, so
+// it comes from a `verified` event's handler (effects.tide).
+[Stage(Layers.Hud, 20)]
+view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mut Air air, query (Seat seat) seats)
+{
+    Draw2D.SetScreen();
+    if (lobby.page != Page.None) return;
+    var screen = float2(Screen.width, Screen.height);
+    var big = screen.x >= 640 && screen.y >= 420;
+    var middle = float2(screen.x * 0.5, SCORES + (screen.y - SCORES) * 0.3);
+
+    // The clock: what's left of the round, and of the rim that's marked
+    if (ring.phase == Phase.Play)
+    {
+        var left = (ring.timer + 59) / 60;
+        var rim = ring.next < ring.radius;
+        var until = (Falls(ring.gone + 1) - (ROUND - ring.timer) + 59) / 60;
+        var words = rim ? $"THE RIM FALLS IN {until}" : left % 60 < 10 ? $"{left / 60}:0{left % 60}" : $"{left / 60}:{left % 60}";
+        var wide = Draw2D.MeasureText(words, 13, Font.Bold).x + 22;
+        var at = float2(screen.x * 0.5, SCORES + 15);
+        var pulse = rim ? 0.5 + 0.5 * Math.Sin(fx.beat * 4) : 0.0;
+        Draw2D.Shape(Shape { center = at, size = float2(wide, 24), radius = 12, color = rim ? Mix(Color(0.2, 0.09, 0.11, 0.94), Color(0.3, 0.12, 0.15, 0.94), pulse) : Color(0.1, 0.1, 0.11, 0.9),
+                             outline = 1.5, outlineColor = rim ? ROSE : LINE });
+        Draw2D.Text(words, at, 13, rim ? Mix(ROSE, Color.white, pulse * 0.5) : INK, Anchor.MiddleCenter, Font.Bold);
+    }
+
+    if (flow.since < 3.4)
+    {
+        var open = EaseOut(flow.since / 0.2) * (1 - EaseOut((flow.since - 3.1) / 0.3));
+        var mine = flow.winner >= 0 && flow.winner == fx.seat;
+        var tint = flow.winner < 0 ? QUIET : SeatColor(flow.winner);
+        var words = flow.winner < 0 ? $"ROUND {flow.round} IS NOBODY'S" : mine ? $"YOU TAKE ROUND {flow.round}" : $"{SeatName(flow.winner)} TAKES ROUND {flow.round}";
+        var under = flow.winner < 0 ? "Nobody was thrown out" : flow.best == 1 ? "with 1 thrown out" : $"with {flow.best} thrown out";
+        Band(middle, open, big, tint, words, under);
+        if (!flow.papered && flow.winner >= 0)
+        {
+            flow.papered = true;
+            Paper(fx, air, float2(screen.x * 0.3, middle.y), mine ? 40 : 18, 420, tint);
+            Paper(fx, air, float2(screen.x * 0.7, middle.y), mine ? 40 : 18, 420, tint);
+        }
+    }
+    else if (ring.phase == Phase.Ready)
+    {
+        // The round's number, then the count
+        var count = (ring.timer + 59) / 60;
+        var age = 1 - (ring.timer % 60) / 60.0;
+        if (flow.begun < 0.9 && count >= 3) Shout(middle, $"ROUND {ring.round}", big ? 54 : 36, Color.white, flow.begun, Math.Saturate(flow.begun * 6));
+        else if (count >= 1) Shout(middle, $"{count}", big ? 84 : 60, count == 1 ? AMBER : Color.white, age, Math.Saturate((1 - age) * 3));
+    }
+    else if (flow.go < 0.8) Shout(middle, "GO!", big ? 84 : 60, AMBER, flow.go, Math.Saturate((0.8 - flow.go) * 4));
+
+    // This machine's player's ball is out: who did it, and when it's back
+    foreach (var entry in seats)
+    {
+        if (entry.seat.seat != fx.seat || entry.seat.up || ring.phase == Phase.Ready || flow.since < 3.4) continue;
+        var back = (entry.seat.wait + 59) / 60;
+        // Under the clock: the ring is the others' meanwhile, and worth watching
+        var at = float2(screen.x * 0.5, SCORES + 70);
+        Draw2D.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 24, 250), 62), radius = 16, color = Color(0.1, 0.1, 0.11, 0.92),
+                             outline = 1.5, outlineColor = ROSE });
+        Draw2D.Text(flow.by >= 0 && flow.fell < 4 ? $"{SeatName(flow.by)} THREW YOU OUT" : "YOU FELL", at - float2(0, 11), 16,
+                    flow.by >= 0 && flow.fell < 4 ? SeatColor(flow.by) : ROSE, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(back > 0 ? $"Back in {back}" : "Here you come", at + float2(0, 13), 13, QUIET, Anchor.MiddleCenter);
+    }
+    // ...or it threw someone out
+    if (flow.threw < 1.6 && flow.whom >= 0)
+    {
+        var shown = Math.Saturate(flow.threw * 8) * Math.Saturate((1.6 - flow.threw) * 3);
+        var at = float2(screen.x * 0.5, screen.y - 150 - EaseOut(flow.threw) * 8);
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw2D.Text($"YOU THREW {SeatName(flow.whom)} OUT", at + float2(0, 2), 16, Fade(BACK, 0.8), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text($"YOU THREW {SeatName(flow.whom)} OUT", at, 16, SeatColor(flow.whom), Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+
+    // The match's host left, and another machine is taking it over
+    if (session.state == SessionState.Connecting)
+    {
+        var at = float2(screen.x * 0.5, SCORES + 70);
+        Draw2D.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 16, 300), 34), radius = 17, color = Color(0.1, 0.1, 0.11, 0.94),
+                             outline = 1.5, outlineColor = LINE });
+        Draw2D.Text("The host left. Finding the match again...", at, 12, INK, Anchor.MiddleCenter);
+    }
+}
+
+// Words that float up from a place in the ring: a point, a pickup's name.
+// They're drawn on the screen, where the camera puts their place.
+[Stage(Layers.Hud, 25)]
+view Floats(Lobby lobby, Fx fx, mut Air air)
+{
+    Draw2D.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    mut var i = 0;
+    while (i < air.labels.count)
+    {
+        mut var label = air.labels[i];
+        label.age += fx.dt;
+        if (label.age >= label.life)
+        {
+            air.labels.RemoveAt(i);
+            continue;
+        }
+        air.labels[i] = label;
+        i++;
+        if (lobby.page != Page.None) continue;
+        var t = label.age / label.life;
+        var place = Draw3D.WorldToScreen(label.at + float3(0, EaseOut(t) * 2.2, 0));
+        // One from past the screen's edge is shown at the edge
+        var at = float2(Math.Clamp(place.x, 26, screen.x - 26), Math.Clamp(place.y, SCORES + 30, screen.y - 70));
+        var size = Math.Round((label.big ? 30 : 20) * (0.6 + 0.4 * EaseBack(t * 5)));
+        var shown = Math.Saturate((1 - t) * 3);
+        Draw2D.Text(label.words, at + float2(1.5, 2), size, Fade(BACK, shown * 0.85), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(label.words, at, size, Fade(Mix(label.color, Color.white, label.big ? 0.35 : 0.1), shown), Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+// What to do first, until the player has done it: roll, and then charge.
+[Stage(Layers.Hud, 30)]
+view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
+{
+    Draw2D.SetScreen();
+    if (lobby.page != Page.None || fx.seat < 0 || ring.phase != Phase.Play || !fx.here) return;
+    var screen = float2(Screen.width, Screen.height);
+    var touch = devices.touchscreen.connected;
+    mut var words = "";
+    if (!flow.rolled) words = touch ? "Drag anywhere to roll" : "Drag, or use W A S D, to roll";
+    else if (!flow.charged) words = touch ? "Hold CHARGE and let go to ram" : "Hold Space and let go to ram";
+    if (words == "") return;
+    var wide = Draw2D.MeasureText(words, 14).x + 28;
+    // Under the clock, out of the way of the ball it is about
+    var at = float2(screen.x * 0.5, SCORES + 50 + Math.Sin(fx.beat * 2) * 2);
+    Draw2D.Shape(Shape { center = at, size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
+                         outline = 1.5, outlineColor = LINE });
+    Draw2D.Text(words, at, 14, INK, Anchor.MiddleCenter);
+}
+
+// The controls. A drag anywhere is the stick: from where the pointer, or a
+// finger, went down to where it is now. The charge button is held and let
+// go, by another finger, the right mouse button or Space, and shows how far
+// the charge is wound and when the next one is ready. They're read here from
+// the devices as they are this frame, and the input sends them on
+// (game.tide). The Menu button is a control of the GUI's (lobby.tide). The
+// bottom right corner is the engine's stats', so the charge button is over
+// it.
+[Stage(Layers.Hud, 40)]
+view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx fx, mut Lobby lobby)
+{
+    Draw2D.SetScreen();
+    hand.stick = float2(0);
+    hand.charge = false;
+    if (lobby.page != Page.None)
+    {
+        hand.dragging = false;
+        return;
+    }
+    var screen = float2(Screen.width, Screen.height);
+    var button = float2(screen.x - 44, screen.y - 88);
+    var reach = 32.0;
+
+    // Fingers: one on the button charges, and the first one anywhere else is the stick
+    mut var finger = false;
+    mut var from = float2(0);
+    mut var to = float2(0);
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        if (Math.Distance(Screen.Flip(touch.startPosition), button) < reach + 8)
+        {
+            hand.charge = true;
+            continue;
+        }
+        if (finger) continue;
+        finger = true;
+        from = touch.startPosition;
+        to = touch.position;
+    }
+    // The mouse: its left button, from where it went down
+    var mouse = devices.mouse;
+    if (mouse.left.down)
+    {
+        hand.dragging = true;
+        hand.from = mouse.position;
+    }
+    if (!mouse.left.pressed) hand.dragging = false;
+    if (hand.dragging && !finger)
+    {
+        if (Math.Distance(Screen.Flip(hand.from), button) < reach + 8) hand.charge = true;
+        else
+        {
+            finger = true;
+            from = hand.from;
+            to = mouse.position;
+        }
+    }
+    if (mouse.right.pressed) hand.charge = true;
+    if (finger && hand.playing)
+    {
+        var pulled = (to - from) / 44;
+        var hard = Math.Length(pulled);
+        hand.stick = hard > 1 ? pulled / hard : pulled;
+        // The stick, where it was put down
+        var base = Screen.Flip(from);
+        Draw2D.WireCircle(base, 44, 2, Fade(Color.white, 0.25));
+        Draw2D.Circle(base + float2(hand.stick.x, -hand.stick.y) * 44, 16, Fade(Color.white, 0.4));
+    }
+    var keys = devices.keyboard;
+    if (hand.playing && (Math.Length(hand.stick) > 0.3 || keys.w.pressed || keys.a.pressed || keys.s.pressed || keys.d.pressed
+        || keys.upArrow.pressed || keys.downArrow.pressed || keys.leftArrow.pressed || keys.rightArrow.pressed)) flow.rolled = true;
+    if (hand.playing && fx.winding) flow.charged = true;
+
+    // The charge button: it fills as the charge winds up, and a ring goes round it until the next one is ready
+    var color = fx.seat >= 0 ? SeatColor(fx.seat) : AMBER;
+    var ready = fx.cooldown <= 0;
+    Draw2D.Circle(button + float2(0, 3), reach, Fade(BACK, 0.6));
+    Draw2D.Circle(button, reach, Color(0.13, 0.133, 0.147, 0.94));
+    if (fx.winding) Draw2D.Circle(button, reach * (0.35 + 0.65 * fx.charge), Fade(Mix(color, Color.white, fx.charge * 0.6), 0.9));
+    Draw2D.WireCircle(button, reach, 2, ready ? Fade(color, 0.9) : LINE);
+    if (!ready) Draw2D.Arc(button, reach - 1, -Math.PI / 2, Math.TAU * (1 - fx.cooldown / float(COOLDOWN)), 3, color);
+    Draw2D.Text("CHARGE", button, 10, fx.winding ? BACK : ready ? INK : Fade(QUIET, 0.7), Anchor.MiddleCenter, Font.Bold);
+
+    var narrow = Screen.width < 420 + StatsCorner(session);
+    var bottom = screen.y - 52;
+    if (session.room != "" && narrow)
+    {
+        // Beside the Menu button, and narrow enough to leave the stats their corner
+        Draw2D.Text("ROOM", float2(102, screen.y - 39), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
+        Draw2D.Text(session.room, float2(102, screen.y - 23), 14, INK, Anchor.MiddleLeft, Font.Bold);
+    }
+    else if (session.room != "")
+    {
+        Draw2D.Text($"ROOM {session.room}", float2(104, bottom + 22), 13, INK, Anchor.MiddleLeft, Font.Bold);
+    }
+    var menu = Pill(Rect(8, bottom, 84, 44), "MENU", INK, false, true);
+    if (menu || keys.escape.down)
+    {
+        lobby.page = Page.Room;
+        lobby.resume = true;
+    }
+}
+
+// Paper for a round's winner, over everything but the menu.
+[Stage(Layers.Hud, 50)]
+view Confetti(Fx fx, mut Air air)
+{
+    Draw2D.SetScreen();
+    mut var i = 0;
+    while (i < air.paper.count)
+    {
+        mut var bit = air.paper[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life)
+        {
+            air.paper.RemoveAt(i);
+            continue;
+        }
+        bit.velocity.y += 620 * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - 1.3 * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        bit.angle += bit.spin * fx.dt;
+        air.paper[i] = bit;
+        // It turns over as it falls
+        var flat = Math.Abs(Math.Sin(bit.angle * 1.7));
+        Draw2D.Rect(bit.position, float2(bit.size, bit.size * (0.25 + 0.75 * flat)), bit.angle,
+                    Fade(bit.color, (1 - bit.age / bit.life) * 3));
+        i++;
+    }
+}

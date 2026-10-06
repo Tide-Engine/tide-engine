@@ -2009,6 +2009,8 @@ void b3Body_SetLinearDamping( b3BodyId bodyId, float linearDamping )
 	B3_REC( world, BodySetLinearDamping, bodyId, linearDamping );
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
+	// Tide: what the body's set has of it, and it may be a sleeping one (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, body->setIndex );
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 	bodySim->linearDamping = linearDamping;
 }
@@ -2034,6 +2036,8 @@ void b3Body_SetAngularDamping( b3BodyId bodyId, float angularDamping )
 	B3_REC( world, BodySetAngularDamping, bodyId, angularDamping );
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
+	// Tide: what the body's set has of it, and it may be a sleeping one (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, body->setIndex );
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 	bodySim->angularDamping = angularDamping;
 }
@@ -2060,6 +2064,8 @@ void b3Body_SetGravityScale( b3BodyId bodyId, float gravityScale )
 	B3_REC( world, BodySetGravityScale, bodyId, gravityScale );
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
+	// Tide: what the body's set has of it, and it may be a sleeping one (see b3SnapTrack)
+	b3SnapTouchSleepingSet( world, body->setIndex );
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 	bodySim->gravityScale = gravityScale;
 }
@@ -2475,6 +2481,9 @@ void b3Body_SetBullet( b3BodyId bodyId, bool flag )
 		return;
 	}
 
+	// Tide: the body's own flags, and it may be static or asleep (see b3SnapTrack): its set's copy of them
+	// is said where it's written (b3SyncBodyFlags)
+	b3SnapTouchBody( world, body->id );
 	body->flags &= ~b3_isBullet;
 	body->flags |= newFlag;
 

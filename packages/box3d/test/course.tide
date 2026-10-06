@@ -1,8 +1,10 @@
 // A match for the package's tests of what a game does with it
 // (course_test.c): sensors, an impulse given where a body is spawned, systems
 // ordered against the step, bodies at rest that code moves, gravity that
-// changes, and what a view sees of a body that turns. Each is a few bodies of
-// its own, and a host says which before the first tick.
+// changes, what a view sees of a body that turns, shapes on entities of their
+// own, a body whose type and settings change, how the world is tuned, what
+// meets hard, and what code asks of the world. Each is a few bodies of its
+// own, and a host says which before the first tick.
 
 using Box3D;
 
@@ -14,7 +16,11 @@ enum Case
     Order,
     Impulse,
     Rest,
-    Turning
+    Turning,
+    Parts,
+    Changes,
+    Tuning,
+    Asking
 }
 
 singleton Course
@@ -23,6 +29,10 @@ singleton Course
     bool made;
     bool spring; // The bait goes, from inside its trap
     bool release; // The snare goes, from around its prey
+    bool saw; // Two legs go from under the table
+    bool clear; // The table goes, and what's on it with it
+    bool mute; // Nothing is asked of the world
+    bool doom; // The doomed wall goes
 }
 
 // What an entity heard of the package's events
@@ -32,6 +42,15 @@ component Heard
     int parted;
     int gone; // Of the partings, the ones whose other entity was no more
     Entity last; // Who it heard of last
+    Entity lastPart; // ...by which shape of its own, and which of the other's
+    Entity lastOtherPart;
+    int ownParts; // How many of them were by a part of its own, and how many by a part of the other's
+    int otherParts;
+    int hits; // What it heard of meeting something hard
+    Entity hitBy;
+    float hitSpeed;
+    float3 hitNormal;
+    float3 hitPoint;
 }
 
 component Floor { }
@@ -82,6 +101,97 @@ local singleton Seen
     float3 position;
 }
 
+// Parts: a table whose top is its body's own box and whose legs are parts,
+// parts with no body to be on, and a stand with a sensor that's a part
+component Table { }
+
+component Leg
+{
+    int which;
+}
+
+component Stray { }
+component Nobody { }
+component Stand { }
+component Cup { }
+component Pea { }
+
+// What was in the cup, each tick it was asked
+singleton Peeked
+{
+    int most; // The most there ever were in it
+    Entity who;
+    int now;
+    bool stand; // Whether the stand, which has no sensor of its own, said anything
+}
+
+// Changes: bodies whose type and settings a host writes
+component Shifter { }
+component Sitter { }
+component Perched { }
+component Floater { }
+
+// Tuning: a crate that's dropped, a ball that bounces, and a crate that
+// starts in the floor
+component Dropped { }
+component Bouncy { }
+component Sunk { }
+
+// Asking: things at known places, and what's asked of them
+component Wall { }
+component Twin { }
+component Ghost { }
+component Post { }
+component Knob { }
+component Zone { }
+component Resting { }
+component Turner { }
+component Faller { }
+component Doomed { }
+
+// What one question said
+struct Answer
+{
+    bool any;
+    RayHit hit;
+}
+
+// What they all said, at one time
+struct Answers
+{
+    Answer wall; // A ray through a sensor to a wall
+    Answer twin; // ...to two walls in one place
+    Answer knob; // ...down onto a part
+    Answer nothing; // ...through nothing
+    Answer within; // ...from inside a wall
+    Answer turner; // ...at a box that turns
+    Answer ball; // A sphere cast down onto a crate
+    Answer block; // A box cast at a wall
+    Answer pill; // A capsule cast at a box that turns
+    Answer doomed; // A ray at a wall that goes
+    int over; // How many bodies a big box overlaps,
+    Entity overFirst; // ...the first and the last of them,
+    Entity overLast;
+    int around; // How many a sphere around the post and its knob overlaps: the post, once
+    int capsule; // ...and a capsule across the twins
+}
+
+singleton Asked
+{
+    Answers late; // After the step
+    Answers early; // Before it, the tick after
+    int asked;
+    int zone; // How many are in the zone, and who
+    Entity zoneFirst;
+    int listed; // How many bodies the big box overlaps, asked once more,
+    bool sorted; // ...and whether they came in the order of their bodies' ids
+}
+
+local singleton Glimpse
+{
+    Answers seen;
+}
+
 system Arrange(mut Course course)
 {
     if (course.made) return;
@@ -123,19 +233,89 @@ system Arrange(mut Course course)
     {
         Spawn(Body { position = float3(0, 5, 0), angularVelocity = float3(0, 0, 2), gravityScale = 0 }, Box, Spinner);
     }
+    if (course.which == Case.Parts)
+    {
+        // A table: its top is its body's own shape, a meter over the body's place, and each leg a part
+        var table = Spawn(Body { position = float3(0, 0.3, 0) }, Box { size = float3(2, 0.2, 2), offset = float3(0, 1, 0) }, Table, Heard);
+        for (int i = 0; i < 4; i++)
+        {
+            Spawn(Box { size = float3(0.2, 1, 0.2), offset = float3(i % 2 == 0 ? -0.8 : 0.8, 0.4, i / 2 == 0 ? -0.8 : 0.8) },
+                  Part { of = table }, Leg { which = i });
+        }
+        // Parts with no body to be on: of no entity, and of one that has none
+        var nobody = Spawn(Nobody);
+        Spawn(Box, Part, Stray);
+        Spawn(Sphere, Capsule, Part { of = nobody }, Stray);
+        // A stand with a sensor over it, which is a part, and a pea that falls through that onto the stand
+        var stand = Spawn(Body { type = BodyType.Static, position = float3(10, 0.5, 0) }, Box, Stand, Heard);
+        Spawn(Sphere { radius = 1, offset = float3(0, 2, 0), sensor = true }, Part { of = stand }, Cup, Heard);
+        Spawn(Body { position = float3(10, 6, 0) }, Sphere { radius = 0.2 }, Pea, Heard);
+    }
+    if (course.which == Case.Changes)
+    {
+        Spawn(Body { position = float3(0, 20, 0) }, Box, Shifter, Heard);
+        Spawn(Body { position = float3(5, 0.5, 0) }, Box, Sitter, Heard);
+        Spawn(Body { position = float3(5, 1.5, 0) }, Box, Perched, Heard);
+        Spawn(Body { position = float3(10, 20, 0) }, Sphere, Floater);
+    }
+    if (course.which == Case.Tuning)
+    {
+        Spawn(Body { position = float3(0, 3, 0) }, Box, Dropped, Heard);
+        Spawn(Body { position = float3(5, 0.7, 0), velocity = float3(0, -0.6, 0), gravityScale = 0 }, Sphere { radius = 0.3, bounce = 0.8 }, Bouncy);
+        Spawn(Body { position = float3(10, 0.2, 0) }, Box, Sunk);
+    }
+    if (course.which == Case.Asking)
+    {
+        Spawn(Body { type = BodyType.Static, position = float3(5, 1, 0) }, Box { size = float3(1, 2, 4) }, Wall);
+        // Two in one place: bodies that never move don't push each other apart
+        Spawn(Body { type = BodyType.Static, position = float3(-5, 1, 0) }, Box { size = float3(1, 2, 4) }, Twin);
+        Spawn(Body { type = BodyType.Static, position = float3(-5, 1, 0) }, Box { size = float3(1, 2, 4) }, Twin);
+        // A sensor between the middle and the wall
+        Spawn(Body { type = BodyType.Static, position = float3(2, 1, 0) }, Box { size = float3(1, 2, 4), sensor = true }, Ghost);
+        // A post with a knob on it, which is a part
+        var post = Spawn(Body { type = BodyType.Static, position = float3(0, 1, -5) }, Box { size = float3(1, 2, 1) }, Post);
+        Spawn(Sphere { radius = 0.5, offset = float3(0, 1.5, 0) }, Part { of = post }, Knob);
+        // A crate at rest, in a sensor that's off the floor: one that reached it would have the floor in it too
+        Spawn(Body { position = float3(0, 0.5, 5) }, Box, Resting);
+        Spawn(Body { type = BodyType.Static, position = float3(0, 1.2, 5) }, Box { size = float3(3, 2, 3), sensor = true }, Zone);
+        // A box that turns where it is, and crates that fall past
+        Spawn(Body { type = BodyType.Kinematic, position = float3(0, 4, 12), angularVelocity = float3(0.7, 1.1, 0.4) }, Box { size = float3(2, 1, 3) }, Turner);
+        for (int i = 0; i < 3; i++)
+        {
+            Spawn(Body { position = float3(3.3 + 0.3 * i, 6 + 2.5 * i, 0.4 * i), angularVelocity = float3(1, 2, 3) }, Box { size = float3(0.6, 0.6, 0.6) }, Faller);
+        }
+        Spawn(Body { type = BodyType.Static, position = float3(0, 1, -12) }, Box { size = float3(4, 2, 1) }, Doomed);
+    }
 }
 
 event(Touched touched) Hear(mut Heard heard)
 {
     heard.touched += 1;
     heard.last = touched.other;
+    heard.lastPart = touched.part;
+    heard.lastOtherPart = touched.otherPart;
+    if (touched.part != this) heard.ownParts += 1;
+    if (touched.otherPart != touched.other) heard.otherParts += 1;
 }
 
 event(Parted parted) Unhear(mut Heard heard)
 {
     heard.parted += 1;
     heard.last = parted.other;
+    heard.lastPart = parted.part;
+    heard.lastOtherPart = parted.otherPart;
+    if (parted.part != this) heard.ownParts += 1;
+    if (parted.otherPart != parted.other) heard.otherParts += 1;
     if (parted.other == default) heard.gone += 1;
+}
+
+event(Hit hit) Feel(mut Heard heard)
+{
+    heard.hits += 1;
+    heard.hitBy = hit.other;
+    heard.hitSpeed = hit.speed;
+    heard.hitNormal = hit.normal;
+    heard.hitPoint = hit.point;
 }
 
 // The probe is a sensor, so nothing stops it: it goes once it's far under the floor
@@ -162,6 +342,17 @@ system Steer(mut Body body, mut Early early)
     body.velocity = float3(early.ticks, 0, 0);
 }
 
+// What's asked of the world before the step: of the world as the last tick's
+// step left it. Written here, above the systems that don't say where they are:
+// a system that's before the stage has the ones written above it before it too
+[Before(PhysicsStages.Step)]
+system AskEarly(Physics physics, mut Asked asked, Course course)
+{
+    if (course.which != Case.Asking || course.mute) return;
+    AskAll(physics, out var answers);
+    asked.early = answers;
+}
+
 // After it, as a game's systems are unless they say: it's the next tick's
 system Follow(mut Body body, mut Late late)
 {
@@ -182,4 +373,120 @@ view Watch(Body body, mut Seen seen, with Spinner)
 {
     seen.rotation = body.rotation;
     seen.position = body.position;
+}
+
+// Two legs go from under one side of the table, and then the table itself
+system Saw(Course course, Leg leg)
+{
+    if (course.saw && leg.which % 2 == 0) this.Destroy();
+}
+
+system Clear(Course course, with Table)
+{
+    if (course.clear) this.Destroy();
+}
+
+// What's in the cup, which is a part's sensor, and in the stand, which has none
+system Peek(Physics physics, mut Peeked peeked, with Cup)
+{
+    peeked.now = 0;
+    if (Inside(physics, this, out var found))
+    {
+        peeked.now = found.count;
+        peeked.who = found[0];
+        if (found.count > peeked.most) peeked.most = found.count;
+    }
+}
+
+system PeekStand(Physics physics, mut Peeked peeked, with Stand)
+{
+    if (Inside(physics, this, out _)) peeked.stand = true;
+}
+
+system Topple(Course course, with Doomed)
+{
+    if (course.doom) this.Destroy();
+}
+
+Answer Ray(Physics physics, float3 from, float3 to)
+{
+    bool any = Raycast(physics, from, to, out var hit);
+    return Answer { any = any, hit = hit };
+}
+
+// Every question the test asks, of the world as it is to whoever asks
+void AskAll(Physics physics, out Answers answers)
+{
+    answers = default;
+    answers.wall = Ray(physics, float3(0, 1, 0), float3(10, 1, 0));
+    answers.twin = Ray(physics, float3(0, 1, 0), float3(-10, 1, 0));
+    answers.knob = Ray(physics, float3(0, 5, -5), float3(0, 0, -5));
+    answers.nothing = Ray(physics, float3(0, 50, 0), float3(10, 50, 0));
+    answers.within = Ray(physics, float3(5, 1, 0), float3(5, 1, 40));
+    answers.turner = Ray(physics, float3(0.3, 9, 12.2), float3(0.3, 0.1, 12.2));
+    answers.doomed = Ray(physics, float3(1, 1, -8), float3(1, 1, -20));
+
+    answers.ball.any = Cast(physics, Sphere { radius = 0.5 }, float3(0, 3, 5), quaternion.identity, float3(0, -3, 5), out var ball);
+    answers.ball.hit = ball;
+    answers.block.any = Cast(physics, Box { size = float3(1, 1, 1) }, float3(0, 1.2, 0), quaternion.Euler(float3(0, 0.3, 0)), float3(10, 1.2, 0), out var block);
+    answers.block.hit = block;
+    answers.pill.any = Cast(physics, Capsule { radius = 0.3, height = 1.6 }, float3(-6, 4, 12), quaternion.Euler(float3(0, 0, 1.2)),
+                            float3(6, 4, 12), out var pill);
+    answers.pill.hit = pill;
+
+    if (Overlap(physics, Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over))
+    {
+        answers.over = over.count;
+        answers.overFirst = over[0];
+        answers.overLast = over[over.count - 1];
+    }
+    Overlap(physics, Sphere { radius = 1.5 }, float3(0, 2.5, -5), quaternion.identity, out var around);
+    answers.around = around.count;
+    Overlap(physics, Capsule { radius = 0.4, height = 6 }, float3(-5, 1, 0), quaternion.Euler(float3(0, 0, 1.57)), out var across);
+    answers.capsule = across.count;
+}
+
+// After the step, as a game's systems are unless they say
+system Ask(Physics physics, mut Asked asked, Course course)
+{
+    if (course.which != Case.Asking || course.mute) return;
+    AskAll(physics, out var answers);
+    asked.late = answers;
+    asked.asked += 1;
+}
+
+// What's in the zone, asked of the entity the sensor is on
+system AskZone(Physics physics, mut Asked asked, Course course, with Zone)
+{
+    if (course.mute) return;
+    asked.zone = 0;
+    asked.zoneFirst = default;
+    if (Inside(physics, this, out var found))
+    {
+        asked.zone = found.count;
+        asked.zoneFirst = found[0];
+    }
+}
+
+// The bodies a shape overlaps come in the order of their ids, which the World has
+system AskOrder(Physics physics, World world, mut Asked asked, Course course)
+{
+    if (course.which != Case.Asking || course.mute) return;
+    Overlap(physics, Box { size = float3(14, 3, 3) }, float3(0, 1.6, 0), quaternion.identity, out var over);
+    asked.listed = over.count;
+    asked.sorted = true;
+    mut long last = 0;
+    for (int i = 0; i < over.count; i++)
+    {
+        if (!world.TryGet<Body>(over[i], out var body) || body.id <= last) asked.sorted = false;
+        last = body.id;
+    }
+}
+
+// A view asks the same, of the world it draws
+view Look(Physics physics, mut Glimpse glimpse, Course course)
+{
+    if (course.which != Case.Asking || course.mute) return;
+    AskAll(physics, out var answers);
+    glimpse.seen = answers;
 }
