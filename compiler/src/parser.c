@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "types.h"
 
 // Recursive descent. For the compiler, stops at the first syntax error: later
 // errors after a bad parse are usually noise. For editors (`recover`), skips the
@@ -22,19 +23,26 @@ typedef struct parser {
     // Parsing a declaration written after `override`: its name is the one it
     // replaces, which can be qualified, `Combat.Move` or `Combat.Stats.Hurt`
     bool overriding;
-    bool asset_type; // Reading an asset's type, which holds a glob's matches: a List or Map of grids or lists is allowed there
+    // A '>>' (or '>>=') of which a type's '>' was read (close_angle): what's
+    // left of it is the next token, before the one at `pos`
+    token rest;
+    bool has_rest;
 } parser;
 
-static token *peek(const parser *p)
+static token *peek_at(const parser *p, int offset)
 {
-    return &p->toks[p->pos];
-}
-
-static token *peek_at(const parser *p, const int offset)
-{
+    if (p->has_rest) {
+        if (offset == 0) return (token *)&p->rest;
+        offset--;
+    }
     token *t = &p->toks[p->pos];
     for (int i = 0; i < offset && t->kind != T_EOF; i++) t++;
     return t;
+}
+
+static token *peek(const parser *p)
+{
+    return peek_at(p, 0);
 }
 
 static bool at(const parser *p, const tok_kind kind)
@@ -44,7 +52,11 @@ static bool at(const parser *p, const tok_kind kind)
 
 static token *advance(parser *p)
 {
-    token *t = peek(p);
+    if (p->has_rest) {
+        p->has_rest = false;
+        return &p->rest;
+    }
+    token *t = &p->toks[p->pos];
     if (t->kind != T_EOF) p->pos++;
     return t;
 }
@@ -72,19 +84,22 @@ static token *expect(parser *p, const tok_kind kind, const char *what)
     return advance(p);
 }
 
-// The '>' that closes a generic type's <>. Two that close one inside another
-// (List<Grid2<Color>>) lex as one '>>' token: the first is taken, and the
-// token becomes the second.
-static void expect_close_angle(parser *p, const char *what)
+// The '>' that closes a type's <>, and where it is. Two that close one inside
+// another, as in List<Grid2<Color>>, lex as one '>>' token (and with '=' after
+// them as '>>='): the first '>' is read here, and what's left of the token is
+// read next, as C#'s parser reads it.
+static loc close_angle(parser *p, const char *what)
 {
-    token *t = peek(p);
-    if (t->kind == T_SHR) {
-        t->kind = T_GT;
-        t->text = (str){t->text.ptr + 1, 1};
-        t->at.col++;
-        return;
-    }
-    expect(p, T_GT, what);
+    const token *t = peek(p);
+    const tok_kind left = t->kind == T_SHR ? T_GT : t->kind == T_SHR_ASSIGN ? T_GE : t->kind == T_GE ? T_ASSIGN : T_EOF;
+    if (left == T_EOF) return expect(p, T_GT, what)->at;
+    const token whole = *advance(p);
+    p->rest = whole;
+    p->rest.kind = left;
+    p->rest.text = (str){whole.text.ptr + 1, whole.text.len - 1};
+    p->rest.at.col++;
+    p->has_rest = true;
+    return whole.at;
 }
 
 static token *expect_ident(parser *p, const char *what)
@@ -122,119 +137,100 @@ static qname parse_qname(parser *p, const char *what)
 // ---------------------------------------------------------------------------
 // Expressions
 
-// Generic types, which take a type in <>: List<T>, Map<K, V>, Set<K>, Grid2<T> and Grid3<T>.
+// Generic types, which take a type in <>.
 static bool generic_name(const str name)
 {
-    return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
-        || str_eq_c(name, "Grid3");
+    return generic_form_named(name) != NULL;
 }
 
-// Where a type is written: on its own, or as what a generic type takes in <>.
-typedef enum type_place {
-    PLACE_OWN,
-    PLACE_LIST,      // List<here>
-    PLACE_MAP_KEY,   // Map<here, V>
-    PLACE_MAP_VALUE, // Map<K, here>
-    PLACE_SET,       // Set<here>
-    PLACE_GRID,      // Grid2<here>, Grid3<here>
-} type_place;
-
-// A generic type inside another's <>, like List<List<int>>: nothing takes one
-// yet, so it's refused where it starts, with what to write instead. `key` is
-// the key type of the map it's a value of.
-static _Noreturn void refuse_nested(parser *p, const qname inner, const type_place place, const str key)
+// Where a type that starts at the token `i` ahead ends: the token after it,
+// or -1 for no type there. A name, maybe qualified, what it takes in <> (whose
+// '>>' is one token), and '?': List<Item>, Map<int, List<int>>, int?. For the
+// lookaheads that tell a declaration from an expression; the type's own
+// parser decides what it means.
+static int skip_type(const parser *p, int i)
 {
-    const bool grid = str_eq_c(inner.text, "Grid2") || str_eq_c(inner.text, "Grid3");
-    const char *one = grid ? "grid" : str_eq_c(inner.text, "List") ? "list" : str_eq_c(inner.text, "Map") ? "map" : "set";
-    if (place == PLACE_MAP_KEY || place == PLACE_SET) {
-        diag_error(inner.at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s",
-                   place == PLACE_SET ? "set" : "map", one);
-    } else if (place == PLACE_GRID) {
-        diag_error(inner.at, "a grid's cells can't be %ss", one);
-        if (grid) diag_note("grids stay where they're made: in components, singletons and scenes");
-        else diag_note("cells are plain values, side by side in their chunk: keep the %s elsewhere, and a number for it in the cell", one);
-    } else if (grid) {
-        diag_error(inner.at, "a %s can't hold grids", place == PLACE_LIST ? "list" : "map");
-        diag_note("grids stay where they're made: in components, singletons and scenes");
-    } else {
-        // What holds an entity for each instead: List<Entity>, or Map<K, Entity>
-        char entities[160];
-        if (place == PLACE_LIST) snprintf(entities, sizeof entities, "List<Entity>");
-        else snprintf(entities, sizeof entities, "Map<" STR_FMT ", Entity>", STR_ARG(key));
-        diag_error(inner.at, "a %s can't hold %ss yet", place == PLACE_LIST ? "list" : "map", one);
-        if (place == PLACE_LIST && strcmp(one, "list") == 0) {
-            diag_note("keep every element in one list, with a 'List<int>' of where each inner list starts; or keep each "
-                      "inner list in a component, on an entity of its own, and hold the entities: '%s'", entities);
-        } else {
-            diag_note("keep each %s in a component, on an entity of its own, and hold the entities: '%s'", one, entities);
+    if (peek_at(p, i)->kind != T_IDENT) return -1;
+    i++;
+    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+    if (peek_at(p, i)->kind == T_LT) {
+        int depth = 1;
+        i++;
+        while (depth > 0) {
+            const tok_kind k = peek_at(p, i)->kind;
+            if (k == T_LT) depth++;
+            else if (k == T_GT) depth--;
+            else if (k == T_SHR) depth -= 2;
+            else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_QUESTION) return -1;
+            i++;
         }
+        if (depth < 0) return -1;
     }
-    longjmp(p->fail, 1);
+    if (peek_at(p, i)->kind == T_QUESTION) i++;
+    return i;
 }
 
-// A type: a name, maybe qualified, or a generic one like List<T>, whose text
-// is "List<T>" ("Map<K, V>" for a map, with that comma and space). `place` is
-// where it's written, and `key` its map's key type when it's a map's value.
-static qname parse_type_in(parser *p, const char *what, const type_place place, const str key)
+// `r`'s text from its parts: "Map<K, V>", with that comma and space, and '?' after.
+static void set_type_text(type_ref *r)
 {
-    qname q = parse_qname(p, what);
-    if (!at(p, T_LT) || !generic_name(q.text)) return q;
-    // An asset's List<T> or Map<string, T> holds what a glob's files are read as, grids and lists among them
-    const bool asset_holds = p->asset_type && (place == PLACE_LIST || place == PLACE_MAP_VALUE);
-    if (place != PLACE_OWN && !asset_holds) refuse_nested(p, q, place, key);
-    const str none = {NULL, 0};
-    if (str_eq_c(q.text, "Map") || str_eq_c(q.text, "Set")) {
-        const bool map = str_eq_c(q.text, "Map");
+    if (r->args.count == 0 && !r->optional) {
+        r->text = r->name;
+        return;
+    }
+    sb text = {0};
+    sb_printf(&text, STR_FMT, STR_ARG(r->name));
+    for (int i = 0; i < r->args.count; i++) {
+        sb_printf(&text, "%s" STR_FMT, i == 0 ? "<" : ", ", STR_ARG(r->args.items[i]->text));
+    }
+    if (r->args.count > 0) sb_put(&text, ">");
+    if (r->optional) sb_put(&text, "?");
+    r->text = (str){text.data, (int)text.len};
+}
+
+// How long the last part of a name is: 6 for Combat.Health.
+static int last_name_len(const str name)
+{
+    int dot = name.len - 1;
+    while (dot >= 0 && name.ptr[dot] != '.') dot--;
+    return name.len - dot - 1;
+}
+
+// A type: a name, maybe qualified, and for a generic one what it takes in <>,
+// as a tree (type_ref): List<T>, Map<K, V>, List<Grid2<Color>>. What may go
+// in the <> is the checker's to say (resolve_type), so the tree holds whatever
+// is written there.
+static type_ref *parse_type(parser *p, const char *what)
+{
+    const qname q = parse_qname(p, what);
+    type_ref *r = NEW(type_ref);
+    r->name = q.text;
+    r->at = q.at;
+    r->name_at = q.name_at;
+    r->end = (loc){q.name_at.line, q.name_at.col + last_name_len(q.text), q.name_at.file};
+    const generic_form *form = at(p, T_LT) ? generic_form_named(q.text) : NULL;
+    if (form) {
         advance(p);
-        const qname key_type = parse_type_in(p, map ? "the map's key type, like 'Map<int, string>'" : "the set's key type, like 'Set<int>'",
-                                             map ? PLACE_MAP_KEY : PLACE_SET, none);
-        qname value = {0};
-        if (map) {
-            expect(p, T_COMMA, "',' between the map's key and value types, like 'Map<int, string>'");
-            value = parse_type_in(p, "the map's value type, like 'Map<int, string>'", PLACE_MAP_VALUE, key_type.text);
+        for (int i = 0; i < form->arity; i++) {
+            if (i) expect(p, T_COMMA, form->comma);
+            vec_push(r->args, parse_type(p, form->hints[i]));
         }
-        expect_close_angle(p, map ? "'>' after the map's value type" : "'>' after the set's key type");
-        const int len = q.text.len + key_type.text.len + (map ? value.text.len + 4 : 2);
-        char *text = arena_alloc((size_t)len + 1);
-        if (map) snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ", " STR_FMT ">", STR_ARG(q.text), STR_ARG(key_type.text), STR_ARG(value.text));
-        else snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(key_type.text));
-        q.text = (str){text, len};
-        return q;
+        const loc close = close_angle(p, form->close);
+        r->end = (loc){close.line, close.col + 1, close.file};
     }
-    if (!str_eq_c(q.text, "List")) { // Grid2<T> and Grid3<T>
-        advance(p);
-        const qname cell = parse_type_in(p, "the grid's cell type, like 'Grid2<int>'", PLACE_GRID, none);
-        expect_close_angle(p, "'>' after the grid's cell type");
-        const int len = cell.text.len + 7;
-        char *text = arena_alloc((size_t)len + 1);
-        snprintf(text, (size_t)len + 1, STR_FMT "<" STR_FMT ">", STR_ARG(q.text), STR_ARG(cell.text));
-        q.text = (str){text, len};
-        return q;
-    }
-    advance(p);
-    const qname element = parse_type_in(p, "the list's element type, like 'List<int>'", PLACE_LIST, none);
-    expect_close_angle(p, "'>' after the list's element type");
-    char *text = arena_alloc((size_t)element.text.len + 7);
-    snprintf(text, (size_t)element.text.len + 7, "List<" STR_FMT ">", STR_ARG(element.text));
-    q.text = (str){text, element.text.len + 6};
-    return q;
-}
-
-static qname parse_type(parser *p, const char *what)
-{
-    return parse_type_in(p, what, PLACE_OWN, (str){NULL, 0});
+    set_type_text(r);
+    return r;
 }
 
 // A declared type, which can be T?: a value or nothing. Its text ends with '?'.
-static qname parse_decl_type(parser *p, const char *what)
+static type_ref *parse_decl_type(parser *p, const char *what)
 {
-    qname q = parse_type(p, what);
-    if (!accept(p, T_QUESTION)) return q;
-    char *text = arena_alloc((size_t)q.text.len + 2);
-    memcpy(text, q.text.ptr, (size_t)q.text.len);
-    text[q.text.len] = '?';
-    q.text = (str){text, q.text.len + 1};
-    return q;
+    type_ref *r = parse_type(p, what);
+    if (!at(p, T_QUESTION)) return r;
+    r->question_at = advance(p)->at;
+    r->optional = true;
+    r->end = (loc){r->question_at.line, r->question_at.col + 1, r->question_at.file};
+    set_type_text(r);
+    return r;
 }
 
 static expr *new_expr(const expr_kind kind, const loc at)
@@ -482,11 +478,12 @@ static expr *parse_postfix(parser *p)
             m->object = e;
             m->name = name->text;
             if (accept(p, T_LT)) { // world.Get<Health>(e)
-                const qname arg = parse_qname(p, "a type in '<>'");
-                m->type_arg = arg.text;
-                m->type_arg_at = arg.name_at;
-                m->type_arg_qual_at = arg.at;
-                expect(p, T_GT, "'>' after the type");
+                const type_ref *arg = parse_type(p, "a type in '<>'");
+                m->type_arg = arg->text;
+                m->type_arg_at = arg->name_at;
+                m->type_arg_qual_at = arg->at;
+                m->type_arg_ref = arg;
+                close_angle(p, "'>' after the type");
             }
             parse_args(p, m);
             e = m;
@@ -595,20 +592,22 @@ static expr *parse_is(parser *p, expr *lhs)
     const token *keyword = advance(p);
     expr *e = new_expr(E_IS, keyword->at);
     e->lhs = lhs;
-    const qname type = parse_type(p, "a type after 'is', like 'is int score'");
-    e->pattern = type.text;
-    e->pattern_at = type.name_at;
-    e->pattern_qual_at = type.at;
+    const type_ref *type = parse_type(p, "a type after 'is', like 'is int score'");
+    e->pattern = type->text;
+    e->pattern_at = type->name_at;
+    e->pattern_qual_at = type->at;
+    e->pattern_ref = type;
     if (at(p, T_IDENT)) {
         const token *name = advance(p);
         stmt *binding = NEW(stmt);
         binding->kind = S_VAR;
-        binding->at = type.at;
+        binding->at = type->at;
         binding->name = name->text;
         binding->name_at = name->at;
-        binding->type_name = type.text;
-        binding->type_at = type.name_at;
-        binding->type_qual_at = type.at;
+        binding->type_name = type->text;
+        binding->type_at = type->name_at;
+        binding->type_qual_at = type->at;
+        binding->type_ref = type;
         e->binding = binding;
     }
     return e;
@@ -685,17 +684,9 @@ static stmt *parse_stmt(parser *p);
 // than a variable the code has. What follows the name ends the argument.
 static bool at_out_decl(const parser *p)
 {
-    if (!at(p, T_IDENT)) return false;
-    int i = 1;
-    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
-    if (peek_at(p, i)->kind == T_LT && generic_name(peek(p)->text)) { // List<Item>, Map<int, Item>
-        i++;
-        while (peek_at(p, i)->kind == T_IDENT || peek_at(p, i)->kind == T_DOT || peek_at(p, i)->kind == T_COMMA) i++;
-        if (peek_at(p, i)->kind != T_GT) return false;
-        i++;
-    }
-    if (peek_at(p, i)->kind == T_QUESTION) i++;
-    if (peek_at(p, i)->kind != T_IDENT) return false;
+    if (!at(p, T_IDENT) || (peek_at(p, 1)->kind == T_LT && !generic_name(peek(p)->text))) return false;
+    int i = skip_type(p, 0);
+    if (i < 0 || peek_at(p, i)->kind != T_IDENT) return false;
     const tok_kind after = peek_at(p, i + 1)->kind;
     return after == T_COMMA || after == T_RPAREN;
 }
@@ -719,10 +710,11 @@ static expr *parse_out_arg(parser *p)
     local->is_mut = accept(p, T_MUT);
     local->out_decl = true;
     if (!accept(p, T_VAR)) {
-        const qname type = parse_decl_type(p, "'var' or the type of the variable 'out' declares, like 'out var health'");
-        local->type_name = type.text;
-        local->type_at = type.name_at;
-        local->type_qual_at = type.at;
+        const type_ref *type = parse_decl_type(p, "'var' or the type of the variable 'out' declares, like 'out var health'");
+        local->type_name = type->text;
+        local->type_at = type->name_at;
+        local->type_qual_at = type->at;
+        local->type_ref = type;
     }
     const token *name = expect_ident(p, "the name of the variable 'out' declares, like 'out var health'");
     local->name = name->text;
@@ -776,16 +768,8 @@ static bool at_method_from(const parser *p, const int from, const bool qualified
 {
     int i = from + (peek_at(p, from)->kind == T_MUT ? 1 : 0);
     if (peek_at(p, i)->kind != T_IDENT || is_decl_word(peek_at(p, i)->text)) return false; // view Name(...)
-    i++;
-    while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
-    if (peek_at(p, i)->kind == T_LT) { // List<Item> Name(...), Map<int, Item> Name(...)
-        i++;
-        while (peek_at(p, i)->kind == T_IDENT || peek_at(p, i)->kind == T_DOT || peek_at(p, i)->kind == T_COMMA) i++;
-        if (peek_at(p, i)->kind != T_GT) return false;
-        i++;
-    }
-    if (peek_at(p, i)->kind == T_QUESTION) i++; // int? Find(...)
-    if (peek_at(p, i)->kind != T_IDENT) return false;
+    i = skip_type(p, i); // List<Item> Name(...), Map<int, Item> Name(...), int? Find(...)
+    if (i < 0 || peek_at(p, i)->kind != T_IDENT) return false;
     i++;
     while (qualified && peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
     return peek_at(p, i)->kind == T_LPAREN;
@@ -898,6 +882,7 @@ static void skip_statement(parser *p)
         if (setjmp((p)->fail) == 0) {                                          \
             action;                                                            \
         } else {                                                               \
+            (p)->has_rest = false;                                             \
             skip_statement(p);                                                 \
         }                                                                      \
         memcpy((p)->fail, outer_, sizeof outer_);                              \
@@ -937,10 +922,11 @@ static stmt *parse_var(parser *p)
     stmt *s = new_stmt(S_VAR, first->at);
     s->is_mut = accept(p, T_MUT);
     if (!accept(p, T_VAR)) {
-        const qname type = parse_decl_type(p, "'var' or a type");
-        s->type_name = type.text;
-        s->type_at = type.name_at;
-        s->type_qual_at = type.at;
+        const type_ref *type = parse_decl_type(p, "'var' or a type");
+        s->type_name = type->text;
+        s->type_at = type->name_at;
+        s->type_qual_at = type->at;
+        s->type_ref = type;
     }
     const token *name = expect_ident(p, "variable name");
     s->name = name->text;
@@ -1137,10 +1123,11 @@ static stmt *parse_stmt(parser *p)
         stmt *s = new_stmt(S_FOREACH, t->at);
         expect(p, T_LPAREN, "'(' after 'foreach'");
         if (!accept(p, T_VAR)) {
-            const qname type = parse_type(p, "'var' or the elements' type");
-            s->type_name = type.text;
-            s->type_at = type.name_at;
-            s->type_qual_at = type.at;
+            const type_ref *type = parse_type(p, "'var' or the elements' type");
+            s->type_name = type->text;
+            s->type_at = type->name_at;
+            s->type_qual_at = type->at;
+            s->type_ref = type;
         }
         const token *name = expect_ident(p, "the variable for each element");
         s->name = name->text;
@@ -1159,10 +1146,11 @@ static stmt *parse_stmt(parser *p)
         stmt *s = new_stmt(S_PARALLEL, t->at);
         expect(p, T_LPAREN, "'(' after 'parallel'");
         if (!accept(p, T_VAR)) {
-            const qname type = parse_type(p, "'var' or the position's type");
-            s->type_name = type.text;
-            s->type_at = type.name_at;
-            s->type_qual_at = type.at;
+            const type_ref *type = parse_type(p, "'var' or the position's type");
+            s->type_name = type->text;
+            s->type_at = type->name_at;
+            s->type_qual_at = type->at;
+            s->type_ref = type;
         }
         const token *name = expect_ident(p, "the variable for each step's place");
         s->name = name->text;
@@ -1354,7 +1342,7 @@ static void parse_field(parser *p, decl *d)
 {
     // `local List<Vertex3> verts;`: this machine's, outside the match
     const token *local = at_local_field(p) ? advance(p) : NULL;
-    const qname type = parse_decl_type(p, "field type or '}'");
+    const type_ref *type = parse_decl_type(p, "field type or '}'");
     const token *field_name = expect_ident(p, "field name");
     field f = {0};
     if (local) {
@@ -1363,9 +1351,10 @@ static void parse_field(parser *p, decl *d)
     }
     f.name = field_name->text;
     f.at = field_name->at;
-    f.type_name = type.text;
-    f.type_at = type.name_at;
-    f.type_qual_at = type.at;
+    f.type_name = type->text;
+    f.type_at = type->name_at;
+    f.type_qual_at = type->at;
+    f.type_ref = type;
     f.attributes.items = p->field_pending.items;
     f.attributes.count = p->field_pending.count;
     f.attributes.cap = p->field_pending.cap;
@@ -1419,10 +1408,11 @@ static void parse_routine_params(parser *p, decl *m)
                 longjmp(p->fail, 1);
             }
             prm.function_param = true;
-            const qname type = parse_decl_type(p, "parameter type");
-            prm.type_name = type.text;
-            prm.type_qual_at = type.at;
-            prm.type_at = type.name_at;
+            const type_ref *type = parse_decl_type(p, "parameter type");
+            prm.type_name = type->text;
+            prm.type_qual_at = type->at;
+            prm.type_ref = type;
+            prm.type_at = type->name_at;
             prm.name_at = peek(p)->at;
             prm.name = expect_ident(p, "parameter name")->text;
             if (accept(p, T_ASSIGN)) { // float multiplier = 1
@@ -1441,10 +1431,11 @@ static void parse_routine_params(parser *p, decl *m)
     // `fails ParseError`: the error it can end with. Only a keyword here.
     if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "fails")) {
         m->fails_at = advance(p)->at;
-        const qname error = parse_type(p, "the error it fails with, like 'fails ParseError'");
-        m->fails_name = error.text;
-        m->fails_type_at = error.name_at;
-        m->fails_type_qual_at = error.at;
+        const type_ref *error = parse_type(p, "the error it fails with, like 'fails ParseError'");
+        m->fails_name = error->text;
+        m->fails_type_at = error->name_at;
+        m->fails_type_qual_at = error->at;
+        m->fails_ref = error;
     }
 }
 
@@ -1470,14 +1461,15 @@ static decl *parse_extern(parser *p)
         diag_note("write it in Tide, and call C from it: 'extern' functions take what it reads");
         longjmp(p->fail, 1);
     }
-    const qname ret = parse_decl_type(p, "return type");
+    const type_ref *ret = parse_decl_type(p, "return type");
     const token *name = expect_ident(p, "function name");
     decl *m = new_decl(DECL_FUNCTION, name);
     m->unit = p->unit;
     m->is_extern = true;
-    m->return_type_name = ret.text;
-    m->return_type_at = ret.name_at;
-    m->return_type_qual_at = ret.at;
+    m->return_type_name = ret->text;
+    m->return_type_at = ret->name_at;
+    m->return_type_qual_at = ret->at;
+    m->return_type_ref = ret;
     parse_routine_params(p, m);
     m->body_at = name->at;
     if (at(p, T_LBRACE)) {
@@ -1496,15 +1488,16 @@ static decl *parse_const(parser *p)
         diag_error(peek(p)->at, "a constant's type is written out: 'const int " STR_FMT " = ...;'", STR_ARG(peek(p)->text));
         longjmp(p->fail, 1);
     }
-    const qname type = parse_type(p, "the constant's type");
+    const type_ref *type = parse_type(p, "the constant's type");
     const token *name = expect_ident(p, "constant name");
     decl *d = new_decl(DECL_CONST, name);
     d->unit = p->unit;
-    d->return_type_name = type.text;
-    d->return_type_at = type.name_at;
-    d->return_type_qual_at = type.at;
+    d->return_type_name = type->text;
+    d->return_type_at = type->name_at;
+    d->return_type_qual_at = type->at;
+    d->return_type_ref = type;
     if (!at(p, T_ASSIGN)) {
-        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;'", STR_ARG(type.text),
+        diag_error(peek(p)->at, "a constant needs a value: 'const " STR_FMT " " STR_FMT " = ...;'", STR_ARG(type->text),
                    STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
@@ -1525,18 +1518,17 @@ static decl *parse_asset(parser *p)
         diag_note("it's what the file's contents are read as: string, List<byte> or Grid2<Color>, or a List or Map<string, ...> of one for a glob");
         longjmp(p->fail, 1);
     }
-    p->asset_type = true;
-    const qname type = parse_type(p, "the asset's type");
-    p->asset_type = false;
+    const type_ref *type = parse_type(p, "the asset's type");
     const token *name = expect_ident(p, "asset name");
     decl *d = new_decl(DECL_ASSET, name);
     d->unit = p->unit;
-    d->return_type_name = type.text;
-    d->return_type_at = type.name_at;
-    d->return_type_qual_at = type.at;
+    d->return_type_name = type->text;
+    d->return_type_at = type->name_at;
+    d->return_type_qual_at = type->at;
+    d->return_type_ref = type;
     if (!at(p, T_ASSIGN)) {
         diag_error(peek(p)->at, "an asset needs its file's path: 'asset " STR_FMT " " STR_FMT " = \"...\";', from the folder this file is in",
-                   STR_ARG(type.text), STR_ARG(name->text));
+                   STR_ARG(type->text), STR_ARG(name->text));
         longjmp(p->fail, 1);
     }
     advance(p);
@@ -1592,14 +1584,15 @@ static decl *parse_settings(parser *p, const token *keyword)
 static decl *parse_method(parser *p, decl *owner)
 {
     const bool is_mut = accept(p, T_MUT);
-    const qname ret = parse_decl_type(p, "return type");
+    const type_ref *ret = parse_decl_type(p, "return type");
     decl *m = new_named_decl(p, owner ? DECL_METHOD : DECL_FUNCTION, owner ? "method name" : "function name");
     m->unit = p->unit;
     m->owner = owner;
     m->is_mut_method = is_mut;
-    m->return_type_name = ret.text;
-    m->return_type_at = ret.name_at;
-    m->return_type_qual_at = ret.at;
+    m->return_type_name = ret->text;
+    m->return_type_at = ret->name_at;
+    m->return_type_qual_at = ret->at;
+    m->return_type_ref = ret;
     parse_routine_params(p, m);
     m->body_at = m->at;
     m->body = parse_block(p);
@@ -1631,7 +1624,7 @@ static bool is_overloadable(const tok_kind kind)
 // ReturnType operator +(Type a, Type b) { ... } in a struct.
 static decl *parse_operator(parser *p, decl *owner)
 {
-    const qname ret = parse_decl_type(p, "return type");
+    const type_ref *ret = parse_decl_type(p, "return type");
     const token *keyword = advance(p);
     const token *op = advance(p);
     if (!is_overloadable(op->kind)) {
@@ -1647,9 +1640,10 @@ static decl *parse_operator(parser *p, decl *owner)
     m->owner = owner;
     m->is_operator = true;
     m->op = op->kind;
-    m->return_type_name = ret.text;
-    m->return_type_at = ret.name_at;
-    m->return_type_qual_at = ret.at;
+    m->return_type_name = ret->text;
+    m->return_type_at = ret->name_at;
+    m->return_type_qual_at = ret->at;
+    m->return_type_ref = ret;
     parse_routine_rest(p, m, keyword);
     return m;
 }
@@ -1856,10 +1850,11 @@ static void parse_query_params(parser *p, decl *d)
                 vec_push(d->params, prm);
                 continue;
             }
-            const qname type = parse_decl_type(p, what);
-            prm.type_name = type.text;
-            prm.type_qual_at = type.at;
-            prm.type_at = type.name_at;
+            const type_ref *type = parse_decl_type(p, what);
+            prm.type_name = type->text;
+            prm.type_qual_at = type->at;
+            prm.type_ref = type;
+            prm.type_at = type->name_at;
             if (!filter) {
                 prm.name_at = peek(p)->at;
                 prm.name = expect_ident(p, "parameter name")->text;
@@ -2031,13 +2026,14 @@ static void parse_signature(parser *p, sig_items *out)
                 advance(p);
                 item.verified = true;
             }
-            const qname type = parse_decl_type(p, "a parameter's type, like 'Move(Position, with Player)'");
-            item.type_name = type.text;
-            item.type_at = type.name_at;
-            item.type_qual_at = type.at;
+            const type_ref *type = parse_decl_type(p, "a parameter's type, like 'Move(Position, with Player)'");
+            item.type_name = type->text;
+            item.type_at = type->name_at;
+            item.type_qual_at = type->at;
+            item.type_ref = type;
             if (at(p, T_IDENT)) {
                 diag_error(peek(p)->at, "a declaration is named by its parameters' types: leave out their names");
-                diag_note("write '" STR_FMT "' alone", STR_ARG(type.text));
+                diag_note("write '" STR_FMT "' alone", STR_ARG(type->text));
                 longjmp(p->fail, 1);
             }
             vec_push(*out, item);
@@ -2190,7 +2186,7 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
-    parser p = {toks, 0, {0}, recover, NULL, {0}, {0}, false, false, false};
+    parser p = {.toks = toks, .recover = recover};
     p.unit = NEW(unit);
     p.unit->src = src;
     vec_push(prog->units, p.unit);
@@ -2200,6 +2196,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
     while (!at(&p, T_EOF)) {
         if (recover && setjmp(p.fail)) {
             p.pending.count = 0;
+            p.has_rest = false;
             skip_declaration(&p);
             continue;
         }

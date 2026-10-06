@@ -3,6 +3,10 @@
 // Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
 // none yet.
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // readlink under strict C
+#endif
+
 #include "window.h"
 
 #include <stdio.h>

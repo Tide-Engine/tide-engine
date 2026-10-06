@@ -232,6 +232,122 @@ B2_FORCE_INLINE int b2OverlapNodePairMask( b2AABBV av, const b2TreeNode* pair )
 	return mask & ( mask >> 2 ) & 3;
 }
 
+#elif defined( B2_SIMD_WASM )
+
+// Tide: WebAssembly's own SIMD, for a compiler with no SSE2 headers to emulate with (see ../TIDE.md). Each
+// function gives, bit for bit, what the SSE2 one above gives for the same numbers, both zeros among them: the
+// least and the greatest are f32x4.pmin and f32x4.pmax with their operands the other way around, which are
+// minps and maxps exactly, where f32x4.min and f32x4.max take -0 for less than 0.
+
+#include <wasm_simd128.h>
+
+typedef v128_t b2AABBV;
+
+B2_FORCE_INLINE b2AABBV b2LoadAABBV( const b2AABB* aabb )
+{
+	return wasm_v128_load( &aabb->lowerBound.x );
+}
+
+B2_FORCE_INLINE bool b2OverlapNode( b2AABBV av, const b2TreeNode* node )
+{
+	// [lower.x lower.y upper.x upper.y]
+	v128_t bv = wasm_v128_load( &node->aabb.lowerBound.x );
+
+	// [alx aly blx bly]
+	v128_t t1 = wasm_i32x4_shuffle( av, bv, 0, 1, 4, 5 );
+
+	// [bux buy aux auy]
+	v128_t t2 = wasm_i32x4_shuffle( av, bv, 6, 7, 2, 3 );
+
+	return wasm_i32x4_bitmask( wasm_f32x4_le( t1, t2 ) ) == 0xF;
+}
+
+B2_FORCE_INLINE bool b2OverlapV( const b2AABB* a, const b2AABB* b )
+{
+	// [lower.x lower.y upper.x upper.y]
+	v128_t av = wasm_v128_load( &a->lowerBound.x );
+	v128_t bv = wasm_v128_load( &b->lowerBound.x );
+
+	// [alx aly blx bly]
+	v128_t t1 = wasm_i32x4_shuffle( av, bv, 0, 1, 4, 5 );
+
+	// [bux buy aux auy]
+	v128_t t2 = wasm_i32x4_shuffle( av, bv, 6, 7, 2, 3 );
+
+	return wasm_i32x4_bitmask( wasm_f32x4_le( t1, t2 ) ) == 0xF;
+}
+
+B2_FORCE_INLINE b2AABB b2UnionV( b2AABB a, b2AABB b )
+{
+	// [lower.x lower.y upper.x upper.y]
+	v128_t b1 = wasm_v128_load( &a.lowerBound.x );
+	v128_t b2 = wasm_v128_load( &b.lowerBound.x );
+	v128_t lower = wasm_f32x4_pmin( b2, b1 );
+	v128_t upper = wasm_f32x4_pmax( b2, b1 );
+	v128_t c = wasm_i32x4_shuffle( lower, upper, 0, 1, 6, 7 );
+	b2AABB result = { 0 };
+	wasm_v128_store( &result.lowerBound.x, c );
+	return result;
+}
+
+B2_FORCE_INLINE b2AABBV b2UnionPairV( const b2TreeNode* pair )
+{
+	v128_t b1 = wasm_v128_load( &pair[0].aabb.lowerBound.x );
+	v128_t b2 = wasm_v128_load( &pair[1].aabb.lowerBound.x );
+	v128_t lower = wasm_f32x4_pmin( b2, b1 );
+	v128_t upper = wasm_f32x4_pmax( b2, b1 );
+	return wasm_i32x4_shuffle( lower, upper, 0, 1, 6, 7 );
+}
+
+// Conditionally store the value. This is optimized for tree refitting.
+B2_FORCE_INLINE void b2StoreAABBV( b2AABB* aabb, b2AABBV value, bool condition )
+{
+	v128_t mask = wasm_i32x4_splat( condition ? -1 : 0 );
+	v128_t old = wasm_v128_load( &aabb->lowerBound.x );
+
+	// blend
+	wasm_v128_store( &aabb->lowerBound.x, wasm_v128_bitselect( value, old, mask ) );
+}
+
+B2_FORCE_INLINE int b2OverlapPairMask( const b2TreeNode* pairA, const b2TreeNode* pairB )
+{
+	v128_t a0 = wasm_v128_load( &pairA[0].aabb.lowerBound.x );
+	v128_t a1 = wasm_v128_load( &pairA[1].aabb.lowerBound.x );
+	v128_t b0 = wasm_v128_load( &pairB[0].aabb.lowerBound.x );
+	v128_t b1 = wasm_v128_load( &pairB[1].aabb.lowerBound.x );
+
+	// [b0lx b1lx b0ly b1ly] and [b0ux b1ux b0uy b1uy]
+	v128_t bLower = wasm_i32x4_shuffle( b0, b1, 0, 4, 1, 5 );
+	v128_t bUpper = wasm_i32x4_shuffle( b0, b1, 2, 6, 3, 7 );
+	v128_t bLx = wasm_i32x4_shuffle( bLower, bLower, 0, 1, 0, 1 );
+	v128_t bLy = wasm_i32x4_shuffle( bLower, bLower, 2, 3, 2, 3 );
+	v128_t bUx = wasm_i32x4_shuffle( bUpper, bUpper, 0, 1, 0, 1 );
+	v128_t bUy = wasm_i32x4_shuffle( bUpper, bUpper, 2, 3, 2, 3 );
+
+	v128_t aLx = wasm_i32x4_shuffle( a0, a1, 0, 0, 4, 4 );
+	v128_t aLy = wasm_i32x4_shuffle( a0, a1, 1, 1, 5, 5 );
+	v128_t aUx = wasm_i32x4_shuffle( a0, a1, 2, 2, 6, 6 );
+	v128_t aUy = wasm_i32x4_shuffle( a0, a1, 3, 3, 7, 7 );
+
+	v128_t x = wasm_v128_and( wasm_f32x4_le( aLx, bUx ), wasm_f32x4_le( bLx, aUx ) );
+	v128_t y = wasm_v128_and( wasm_f32x4_le( aLy, bUy ), wasm_f32x4_le( bLy, aUy ) );
+	return wasm_i32x4_bitmask( wasm_v128_and( x, y ) );
+}
+
+B2_FORCE_INLINE int b2OverlapNodePairMask( b2AABBV av, const b2TreeNode* pair )
+{
+	v128_t b0 = wasm_v128_load( &pair[0].aabb.lowerBound.x );
+	v128_t b1 = wasm_v128_load( &pair[1].aabb.lowerBound.x );
+
+	v128_t bLower = wasm_i32x4_shuffle( b0, b1, 0, 4, 1, 5 );
+	v128_t bUpper = wasm_i32x4_shuffle( b0, b1, 2, 6, 3, 7 );
+	v128_t aLower = wasm_i32x4_shuffle( av, av, 0, 0, 1, 1 );
+	v128_t aUpper = wasm_i32x4_shuffle( av, av, 2, 2, 3, 3 );
+
+	int mask = wasm_i32x4_bitmask( wasm_v128_and( wasm_f32x4_le( aLower, bUpper ), wasm_f32x4_le( bLower, aUpper ) ) );
+	return mask & ( mask >> 2 ) & 3;
+}
+
 #else
 
 typedef b2AABB b2AABBV;

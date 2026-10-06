@@ -85,6 +85,10 @@ typedef struct b2RecBuffer
 	int section;
 	int sectionStart;
 	bool overran;
+	// Tide: an image as what changed of the one before it (b2SnapParts in snapshot.c). What's appended goes
+	// there, as parts that each say where in the image they are, and `size` is where in the image the next
+	// bytes go. `data` isn't written.
+	void* parts;
 } b2RecBuffer;
 
 // User-owned recording buffer. The world appends into it while recording; the user saves and
@@ -171,6 +175,11 @@ typedef b2ShapeProxy b2RecCType_SHAPEPROXY;
 
 // Low level buffer helpers
 void b2RecBufAppend( b2RecBuffer* buf, const void* data, int size );
+// Tide: where the next `size` bytes of the buffer go, for the caller to write, with the buffer past them: what
+// b2RecBufAppend does before it copies. NULL when they're only counted.
+uint8_t* b2RecBufReserve( b2RecBuffer* buf, int size );
+// Tide: the same for an image in parts, which keeps them itself (snapshot.c)
+uint8_t* b2SnapPartsReserve( b2RecBuffer* buf, int size );
 void b2RecBufFree( b2RecBuffer* buf );
 
 // Write primitives
@@ -255,10 +264,25 @@ void b2RecEndRecord( b2Recording* rec );
 #undef B2_REC_RETDECL_RET_CHAINID
 #undef B2_REC_RETDECL_RET_JOINTID
 
+// Tide: the ops by name, from the manifest, for what follows a world's images (b2SnapNoteOp)
+enum
+{
+#define ARG( TAG, field )
+#define B2_REC_OP( op, Name, RET, ... ) b2_recOp##Name = ( op ),
+#include "recording_ops.inl"
+#undef B2_REC_OP
+#undef ARG
+};
+
+void b2SnapNoteOp( b2World* world, int op );
+
 // Record a void op. One branch when recording is off, args built inside the branch
+// Tide: and say which call it is to what follows a world's images (b2SnapNoteOp in physics_world.h): every
+// call that changes what an image holds is recorded through this or B2_REC_CREATE, so every one is said here.
 #define B2_REC( world, Name, ... )                                                                                               \
 	do                                                                                                                           \
 	{                                                                                                                            \
+		b2SnapNoteOp( ( world ), b2_recOp##Name );                                                                               \
 		if ( ( world )->recording != NULL )                                                                                      \
 		{                                                                                                                        \
 			b2RecArgs_##Name _a = { __VA_ARGS__ };                                                                               \
@@ -272,6 +296,7 @@ void b2RecEndRecord( b2Recording* rec );
 #define B2_REC_CREATE( world, Name, id, ... )                                                                                    \
 	do                                                                                                                           \
 	{                                                                                                                            \
+		b2SnapNoteOp( ( world ), b2_recOp##Name );                                                                               \
 		if ( ( world )->recording != NULL )                                                                                      \
 		{                                                                                                                        \
 			b2RecArgs_##Name _ca = { __VA_ARGS__ };                                                                              \

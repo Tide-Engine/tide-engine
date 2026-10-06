@@ -25,6 +25,7 @@ versus_add(life life/life.tide)
 versus_add(churn churn/churn.tide)
 versus_add(events events/events.tide)
 versus_add(nbody nbody/nbody.tide)
+versus_add(buckets buckets/buckets.tide) # A list of lists against one flat list, and C
 
 # Opt-in diagnostics instrument a copy of generated C, leaving shipped code,
 # runtime libraries and normal versus executables untouched. A control uses
