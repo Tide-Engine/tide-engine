@@ -1,0 +1,25 @@
+// Integer-only arrays must still repair the bounds and padding of their
+// struct elements, even when no floating-point field enables input repair.
+
+struct Dial
+{
+    bool enabled;
+    [Clamp(0, 10)] int value;
+}
+
+input Controls
+{
+    Dial[2] dials;
+}
+
+singleton Seen
+{
+    int total;
+}
+
+scene Main { }
+
+system Read(Controls controls, mut Seen seen)
+{
+    seen.total = controls.dials[0].value + controls.dials[1].value;
+}
