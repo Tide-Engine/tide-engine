@@ -1,6 +1,6 @@
 # Installs tide for this user, on Windows:
 #
-#     gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | iex
+#     gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | Out-String | iex
 #
 # Nightly versions instead: set $env:TIDE_CHANNEL = 'nightly' first.
 # tide goes in %LOCALAPPDATA%\Tide, and its bin folder on the user's PATH. No

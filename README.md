@@ -14,7 +14,7 @@ using an account with access, then run the installer through GitHub's authentica
 Windows, in PowerShell:
 
 ```powershell
-gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | iex
+gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | Out-String | iex
 ```
 
 Linux and macOS:
