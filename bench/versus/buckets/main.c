@@ -34,6 +34,11 @@ static void *make_flat(const versus_flag *f)
     return make_mode(f, 1);
 }
 
+static void *make_arrays(const versus_flag *f)
+{
+    return make_mode(f, 2);
+}
+
 static void tick(void *world, const tide_jobs *jobs)
 {
     tide_world_tick_on(world, jobs);
@@ -52,13 +57,15 @@ static uint64_t digest(const void *world)
     const Pool *pool = &w->Pool;
     uint64_t sum = 0;
     for (int32_t b = 0; b < pool->buckets; b++) {
-        const int32_t count = *(const int32_t *)tide_list_read(&w->heap, pool->counts, b, sizeof(int32_t));
-        const int32_t head = *(const int32_t *)tide_list_read(&w->heap, pool->heads, b, sizeof(int32_t));
+        const Ring *ring = pool->mode == 2 ? tide_list_read(&w->heap, pool->rings, b, sizeof(Ring)) : NULL;
+        const int32_t count = ring ? ring->count : *(const int32_t *)tide_list_read(&w->heap, pool->counts, b, sizeof(int32_t));
+        const int32_t head = ring ? ring->head : *(const int32_t *)tide_list_read(&w->heap, pool->heads, b, sizeof(int32_t));
         const tide_list *row = pool->mode == 0 ? tide_list_read(&w->heap, pool->rows, b, sizeof(tide_list)) : NULL;
         for (int32_t k = 0; k < count; k++) {
             const int32_t cell = (head + k) % CAP;
-            const int32_t *value = row ? tide_list_read(&w->heap, *row, cell, sizeof(int32_t))
-                                       : tide_list_read(&w->heap, pool->cells, b * CAP + cell, sizeof(int32_t));
+            const int32_t *value = ring ? &ring->cells.at[cell]
+                                 : row  ? tide_list_read(&w->heap, *row, cell, sizeof(int32_t))
+                                        : tide_list_read(&w->heap, pool->cells, b * CAP + cell, sizeof(int32_t));
             const held h = {b, k, *value};
             sum += versus_item(&h, sizeof h);
         }
@@ -74,7 +81,10 @@ static void destroy(void *world)
 
 int main(int argc, char **argv)
 {
-    const versus_way ways[] = {{"Tide", make_rows, tick, digest, destroy}, {"Tide, flat", make_flat, tick, digest, destroy}, buckets_c};
+    const versus_way ways[] = {{"Tide", make_rows, tick, digest, destroy},
+                               {"Tide, flat", make_flat, tick, digest, destroy},
+                               {"Tide, arrays", make_arrays, tick, digest, destroy},
+                               buckets_c};
     const versus_desc desc = {
         .name = "versus_buckets",
         .about = "a value a tick goes into each of many buckets, which keep their last 32",

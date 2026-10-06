@@ -1439,7 +1439,7 @@ TIDE_TEST(lsp_shaders_diagnostics)
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
                                "    color = models.wood[0, 0];\n}\n");
-    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps or grids to index or make"));
+    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps, arrays or grids to index or make"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.

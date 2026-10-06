@@ -1,0 +1,170 @@
+// Arrays: T[N], a fixed number of values side by side in whatever holds
+// them, with nothing in the heap. In components, singletons, structs, lists
+// and maps of them, events, inputs and locals.
+
+const int CAP = 4;
+
+struct Stats
+{
+    int[3] scores;
+    float best;
+}
+
+struct Bucket
+{
+    int[CAP] cells;
+    int head;
+}
+
+component Board
+{
+    int[8] cells;
+    float[2][3] grid; // 2 rows of 3
+    Stats stats;
+    List<Bucket> buckets;
+    Map<int, int[2]> pairs;
+    List<int[4]> rows;
+    Color[2] palette = [Color(1, 0, 0), Color(0, 0, 1)];
+    int[3] preset = [7, 8, 9];
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    string shown;
+}
+
+event Dealt
+{
+    int[3] hand;
+}
+
+input Hand
+{
+    [Clamp(0, 10)] int[3] dials;
+    float[2] sticks;
+    [Absolute] int cursor;
+}
+
+local singleton Mirror
+{
+    int[8] copy;
+    int sum;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Board, Results);
+}
+
+void Expect(mut Results t, bool ok)
+{
+    t.checks++;
+    if (ok) t.passed++;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+int Total(int[8] cells)
+{
+    mut int total = 0;
+    foreach (var c in cells) total += c;
+    return total;
+}
+
+void Fill(mut int[8] cells, int value)
+{
+    for (var i = 0; i < cells.count; i++) cells[i] = value;
+}
+
+system Check(mut Board board, mut Results t, Time time)
+{
+    if (time.tick != 1) return;
+
+    // Zeros to start, a constant count, defaults from literals
+    Expect(t, board.cells.count == 8 && board.cells[0] == 0 && board.cells[7] == 0);
+    Expect(t, board.preset[0] == 7 && board.preset[2] == 9 && board.palette[1].b == 1);
+
+    // Reads and writes, in place; past the end nothing
+    board.cells[2] = 5;
+    board.cells[2] += 1;
+    board.cells[8] = 100;
+    board.cells[-1] = 100;
+    Expect(t, board.cells[2] == 6 && board.cells[8] == 0 && board.cells[-1] == 0 && Total(board.cells) == 6);
+
+    // Nested arrays: rows of 3
+    board.grid[1][2] = 1.5;
+    board.grid[0][0] = 0.25;
+    Expect(t, board.grid.count == 2 && board.grid[1].count == 3 && board.grid[1][2] == 1.5 && board.grid[2][0] == 0);
+    mut var row = board.grid[1];
+    row[0] = 9;
+    Expect(t, row[0] == 9 && board.grid[1][0] == 0); // The row was a copy
+
+    // In a struct field, in place
+    board.stats.scores[1] = 42;
+    Expect(t, board.stats.scores[1] == 42 && board.stats.scores[0] == 0);
+
+    // A whole array assigned, from a literal and from another
+    board.cells = [1, 2, 3, 4, 5, 6, 7, 8];
+    Expect(t, Total(board.cells) == 36);
+    mut int[8] local = board.cells;
+    local[0] = 100;
+    Expect(t, board.cells[0] == 1 && local[0] == 100);
+    board.cells = default;
+    Expect(t, Total(board.cells) == 0);
+    Fill(board.cells, 3);
+    Expect(t, Total(board.cells) == 24);
+
+    // In lists and maps: a struct with an array, and arrays as elements and values
+    board.buckets.Add(Bucket { head = 1 });
+    mut var b = board.buckets[0];
+    b.cells[b.head] = 11;
+    board.buckets[0] = b;
+    Expect(t, board.buckets[0].cells[1] == 11 && board.buckets[0].cells[0] == 0);
+    board.rows.Add(default);
+    board.rows.Add([1, 2, 3, 4]);
+    board.rows[0][3] = 7;
+    board.rows[1][0] += 10;
+    board.rows[5][0] = 1; // No such row: nothing
+    Expect(t, board.rows[0][3] == 7 && board.rows[1][0] == 11 && board.rows.count == 2);
+    board.pairs[3][1] = 30;
+    board.pairs[3][0] = 3;
+    Expect(t, board.pairs.count == 1 && board.pairs[3][1] == 30 && board.pairs[9][0] == 0 && board.pairs.count == 1);
+    foreach (var r in board.rows)
+    {
+        mut var copy = r;
+        copy[0] = -1;
+        Expect(t, copy[0] == -1);
+    }
+    Expect(t, board.rows[1][0] == 11);
+
+    // Text
+    t.shown = $"{board.preset} {board.grid} {board.rows[1]}";
+    Expect(t, t.shown == "[7, 8, 9] [[0.25, 0, 0], [0, 0, 1.5]] [11, 2, 3, 4]");
+
+    // An event carries one
+    this.Send(Dealt { hand = [4, 5, 6] });
+}
+
+event(Dealt d) Hear(mut Results t)
+{
+    Expect(t, d.hand[0] == 4 && d.hand[2] == 6 && d.hand.count == 3);
+}
+
+// What a player sends, read in the match
+system Read(mut Board board, Hand hand, Time time)
+{
+    if (time.tick < 2) return;
+    board.cells[0] = hand.dials[0] + hand.dials[1] + hand.dials[2];
+    board.cells[1] = int(hand.sticks[0] * 100);
+}
+
+view Watch(Board board, mut Mirror mirror)
+{
+    mirror.copy = board.cells;
+    mirror.copy[0] += 1;
+    mirror.sum = Total(board.cells);
+}
