@@ -113,10 +113,106 @@ cmake --build --preset release --target bench_lag_native --parallel 2
 node bench/lag_native.mjs build/release/bin/bench_lag_native.exe --pings 0,50,100,150 --seconds 150 --join 30 --fps 144 --save catch-up-native
 ```
 
-Each run has a host, a player who joins at the start, and another who joins after 30 seconds, with bots filling the remaining seats. The ping is the whole network round trip. Moving and charging inputs change throughout the run. Clients use their real tick costs to choose input delay with the existing 4 ms budget. The report gives delay over time, ticks run again, update and frame times, corrections, and the first second after each client's world arrived. The native executable also accepts `--frames n` to bound a short smoke run.
+Each run has a host, a player who joins at the start, and another who joins after 30 seconds, with bots filling the remaining seats. Both harnesses use match seed 0; the browser accepts `--seed n` to choose another. The ping is the whole network round trip. Moving and charging inputs change throughout the run. Clients use their real tick costs to choose input delay with the existing 4 ms budget. The report gives delay over time, ticks run again, update and frame times, corrections, and the first second after each client's world arrived. The native executable also accepts `--frames n` to bound a short smoke run.
 
-The browser uses three headless Chrome processes, isolated pages with threads, hardware GPU drawing by default, and a relay on this machine. `--browser` selects Chrome; `--gpu software` explicitly selects SwiftShader. Each page gets the requested processor count so three pools do not each take the entire machine. The native run uses three sessions in one process, updated in turn on a shared pool of at most four threads. It measures simulation, generated views and draw-list recording without opening a window or submitting GPU draws. Its frame intervals include all three machines' work. Compare session update costs between the platforms; their whole-frame measurements represent different workloads. A requested native frame rate is a pace limit; work and the scheduler can make frames longer.
+The browser uses three headless Chrome processes, isolated pages with threads, hardware GPU drawing by default, and a relay on this machine. `--browser` selects Chrome; `--gpu software` explicitly selects SwiftShader. Each page gets the requested processor count so three pools do not each take the entire machine. The native run uses three sessions in one process, updated in turn on a shared pool of at most four threads. It measures simulation, generated views and draw-list recording without opening a window or submitting GPU draws. Its frame intervals include all three machines' work. Compare session update costs between the platforms; their whole-frame measurements represent different workloads. A requested native frame rate is a pace limit; work and the scheduler can make frames longer. The browser's late join starts 30 seconds after the first client connects; the native join starts 30 seconds after the host starts. Delay timelines begin when each client receives its world.
 
 `--save` appends summaries to `bench/results/lag.jsonl` and keeps compressed per-frame samples in `bench/results/lag-frames/*.jsonl.gz`. Saved records include relative raw-data paths and SHA-256 digests. Raw rows are `[player_index, frame_values]`, with indices 0, 1 and 2 in the order above; `lag_summary.mjs` defines the values, in `tide_run_netcode`'s order. A final object contains measurement metadata. `checkout_revision` identifies the harness checkout, and a browser page's `page_sha256` identifies its actual built artifact, including historical pages measured from elsewhere. Native `full_round` means a second ring round started; browser Sumo uses the host's confirmed ticks to establish that the first round's maximum duration passed. Check this field rather than assuming 150 seconds of wall time advanced the match far enough.
 
 Run on an otherwise idle machine and repeat comparisons when sharing CPU or GPU resources. The continuation chats serialize these rounds with `Local\TideClaudeContinuationBenchmark`. The runners themselves do not acquire that coordination gate. Input delay is the extra ticks the engine chooses, rather than the full time between a button press and its display. The measurements propose changes to the budget; they do not change its default or the delay policy.
+
+### Full-round observations (2026-10-06)
+
+One run at each ping on Windows, Ryzen 9 7900X, a shared four-thread native pool and four threads per browser page, match seed 0 on both platforms. The native target paces frames at 144 Hz; the rendered browser runs use Chrome 154.0.8037.98 and hardware NVIDIA Lovelace WebGPU, verified on every page. All eight runs complete a round, without a replacement world or run/page errors. Native records no host-skipped time; the browser does not expose that counter. These are observations of the final pre-integration runtime `abaa39e`, rather than a repeated controller comparison.
+
+![Input delay at each ping over time](results/lag-delay.png)
+
+Delay is extra input delay in simulation ticks (16.67 ms per tick). Replay values list mean/p95/maximum ticks per frame, then ticks per second. Update and frame values list p95/maximum milliseconds. These frame distributions omit the first connected frame, which the join window includes separately. “First” and “late” identify the two remote clients. A replay p95 of zero means replay is sparse, rather than absent. Recorded view resets: browser 100 ms joined late: 1. [Summaries and raw-frame references](results/lag.jsonl) retain the host, distributions, individual join windows and earlier diagnostics.
+
+**Native, without GPU draws**
+
+| Ping/client | Delay mean/max ticks | Replay/frame; /second | Update p95/max ms | Frame p95/max ms | Corrections/second | Late/resync |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| 0/first | 0.05/1 | 0.023/0/1; 3.2 | 2.189/11.023 | 11.245/32.351 | 3.3 | 0/0 |
+| 0/late | 0.37/2 | 0.021/0/2; 2.9 | 1.955/11.515 | 13.544/28.827 | 3.6 | 0/0 |
+| 50/first | 2.17/5 | 0.049/0/4; 6.7 | 2.027/11.326 | 11.119/29.558 | 3.1 | 1/0 |
+| 50/late | 2.24/5 | 0.056/0/5; 7.6 | 2.089/9.262 | 11.253/24.774 | 3.4 | 0/0 |
+| 100/first | 4.59/7 | 0.06/0/5; 8.2 | 2.091/11.8 | 11.274/27.823 | 3.3 | 0/0 |
+| 100/late | 4.57/7 | 0.068/0/6; 9.1 | 1.93/14.74 | 13.22/32.393 | 3.6 | 4/0 |
+| 150/first | 8.09/11 | 0.071/0/10; 9.6 | 1.96/18.799 | 11.222/39.746 | 4 | 14/0 |
+| 150/late | 7.78/10 | 0.069/0/10; 9.3 | 1.967/14.876 | 11.527/39.457 | 3.8 | 13/0 |
+
+**Chrome, with GPU draws**
+
+| Ping/client | Delay mean/max ticks | Replay/frame; /second | Update p95/max ms | Frame p95/max ms | Corrections/second | Late/resync |
+| --- | ---: | --- | --- | --- | ---: | --- |
+| 0/first | 2.93/11 | 0.021/0/11; 2.8 | 4.01/30.425 | 11.73/159.64 | 2.6 | 3/0 |
+| 0/late | 1.32/4 | 0.025/0/2; 3.3 | 3.95/56.89 | 11.555/210.555 | 3.3 | 7/0 |
+| 50/first | 4.57/9 | 0.027/0/9; 3.6 | 3.675/21.455 | 11.315/139.78 | 3 | 3/0 |
+| 50/late | 16.13/27 | 0.052/0/26; 6.6 | 3.855/123.665 | 11.47/196.785 | 0.7 | 53/0 |
+| 100/first | 7.08/9 | 0.043/0/10; 5.6 | 3.48/26.985 | 11.04/141.19 | 3.3 | 4/0 |
+| 100/late | 26.32/37 | 0.18/0/60; 22.1 | 3.705/601.755 | 11.37/604.165 | 1.7 | 130/0 |
+| 150/first | 10.77/13 | 0.026/0/11; 3.4 | 3.935/24.555 | 11.6/123.465 | 2.2 | 1/0 |
+| 150/late | 12.46/19 | 0.071/0/20; 9.1 | 4.22/122.235 | 11.83/152.36 | 3 | 71/0 |
+
+The native mean delays rise from roughly zero at 0 ms to two, five and eight ticks at 50, 100 and 150 ms. Browser costs and delays are higher; the timelines also vary as the match changes. The startup late counts describe actual sampled inputs missing their server ticks, including thirteen per native client at 150 ms. They are not unsampled holes. The raw data is consistent with initial clock/feedback settling and update scheduling, but lacks per-packet timestamps to attribute each miss. The regressions separately check that known-stale ticks are not newly sampled.
+
+The seeded browser runs retain substantial startup sensitivity. At 50 ms, the late client has a 533–1920 ms replay burst after receiving its world, with 344 replay ticks in 21 updates, then another shorter burst. Its lead returns to roughly zero by ten seconds, but delay reaches 27 ticks and decays slowly. At 100 ms, a 1.45–3.284 second burst includes 783 replay ticks in 25 updates and a 601.755 ms update. Lead recovers to three ticks by ten seconds, while delay peaks at 37 and remains 18 at the end. The 150 ms late client is milder in this sweep but still peaks at 19 ticks of delay and a 122.235 ms update. Typical update costs conceal these tails. CPU/RTT feedback is a source-consistent inference; internal clock, budget and sampling transitions were not logged. These observations leave the separate ordinary-prediction/clock feedback and slow adaptive-delay recovery problem unresolved.
+
+### Earlier unseeded diagnostics
+
+The earlier browser observations used platform entropy, while native used seed 0. They remain under the `-unseeded` labels and in the [earlier chart](results/lag-delay-unseeded.png), but are excluded from the final matched-seed table and browser join comparison.
+
+The unseeded 100 ms browser late client has a transient startup replay burst: its first second executes 201 explicit replay ticks, and one sequence has ten replay-bearing updates above a 6.94 ms reference interval (144 Hz). Its predicted lead peaks at 25 ticks, falls to five by three seconds and zero by five seconds, while input delay rises to 16 ticks. A later group of actual late inputs around 114 seconds pushes delay as high as 19. Measured answer times rise well above the configured ping during these episodes. The burst ends, but the delay penalty takes much longer to shrink. Pure confirmed-work spikes also occur.
+
+The unseeded 150 ms browser late client is more severe: mean delay is 30.43 ticks (507 ms), with a maximum of 45 (750 ms), a 479.745 ms update, 337 actual late-input counts and one view reset. Its predicted lead reaches 56 ticks, and one sequence has 51 replay-bearing updates above the 6.94 ms reference interval (144 Hz). Update p95 remains only 3.585 ms, but p99 is 23.065 ms; the tail is therefore essential to interpreting this run. The first client in the same run is much milder, averaging 10.97 ticks and peaking at a 22.51 ms update. This change does not solve the separate re-simulation feedback problem; full-round completion does not imply smooth play.
+
+### Browser join comparison
+
+A fresh 50 ms run of the historical baseline page uses the same seed 0, Chrome, worker count, GPU mode and harness as the final page. The baseline is `6b52015` with counters/hooks added, as documented in the artifact metadata. Browser runs have real scheduling and timed inputs, so this is one observation per build rather than a repeated timing distribution. The join window includes the first recorded connected frame and the following second of completed-frame samples. There is no timestamp inside snapshot loading; a long initial callback can extend this window past one wall-clock second from the actual load. “Predicted” includes explicit replay, and first-prediction time is relative to the first connected sample.
+
+| Client/build | Confirmed | Predicted | Replay | Worst update ms | First prediction ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| First/before | 34 | 116 | 30 | 21.67 | 0 |
+| First/after | 31 | 79 | 18 | 15.39 | 157 |
+| Late/before | 48 | 137 | 56 | 113.24 | 0 |
+| Late/after | 63 | 143 | 94 | 123.66 | 351 |
+
+This browser pair is mixed. The first client executes less work and has a shorter worst join update. The late client executes more replay and total work, with its worst join update rising from 113.24 to 123.66 ms; its full-run mean delay rises from 5.38 to 16.13 ticks. The controlled native pairs below show the reduction in stale-world join work more clearly. Browser late counters also change accounting for unsampled holes, so their values are not packet-delivery ratios.
+
+### Changed traffic and world pins
+
+Controlled traces swap only the baseline/final session implementation while reusing identical release game and fixture objects. They identify the first effective server-input differences below; player slots are zero-based. The new client samples these inputs earlier, so the server receives the input for the tick where the old client used its previous/default input. This changes the authoritative world, rather than just its prediction. Later sampled controls and the seeded loss sequence can diverge from there.
+
+| Fixture | First different tick/slot | Old effective input | New effective input |
+| --- | --- | --- | --- |
+| Sumo | 57/1 | Move (0, 0) | Move (0, 1) |
+| Towers | 27/0 | No hands | Hands enabled |
+| Sand | 32/0 | Default brush | Brush at (15, 11), material 1 |
+| Gallery | 33/0 | Default pen | Pen at (27, 22), color `0x9e3779ff` |
+
+The lossless local-events fixture applies identical server inputs throughout. The old clients sample six obsolete all-zero inputs each, ticks 8–13 at 0.209 seconds; the final clients start at tick 14. Client traffic changes from 10,740 to 10,596 bytes, while server traffic stays 29,132 bytes and effective server inputs remain identical. [Arrival evidence](results/lag-input-arrivals.json) records invocations, decoded and packed input bytes, sample/arrival times, reproduced old/new world pins and artifact hashes, with compressed full traces beside it. These are the pre-integration fixtures described above.
+
+### Whole-ring join comparison
+
+Three alternating native pairs compare the client before this change (`6b52015`, with counters added) and the final runtime (`abaa39e`) against the same Sumo world and game code. The world is 2,394,422 bytes, received over 118 updates (2.0 seconds of made-up match time), at tick 498. The fixture uses 40 ms one-way latency, 15 ms jitter and 5% loss, without worker jobs, a GPU or a tick-cost clock; it isolates join work rather than adaptive input delay. Both clients reach nine ticks ahead one second later, finish with the same 2,321 crates, and receive no replacement world.
+
+| First second after receiving the world | Before | After |
+| --- | ---: | ---: |
+| Total ticks executed | 254 | 174 |
+| Confirmed ticks executed | 119 | 127 |
+| Predicted executions, including replay | 135 | 47 |
+| Explicit replay ticks | 13 | 0 |
+| Most ticks in one update | 120 | 15 |
+| Median of the three worst updates | 93.7 ms | 9.4 ms |
+| Range of worst updates | 91.6–95.8 ms | 8.8–11.1 ms |
+
+The recorded late count changes from 118 to one, but this includes the corrected treatment of inputs that were never sampled; it is not a comparison of packet delivery rates. [Individual join records](results/lag_join.jsonl) retain every pair, artifact hashes and earlier diagnostic runs. [Runtime and validation metadata](results/lag-metadata.json) identifies the final artifacts and the historical browser baseline. The live measurements use this pre-integration Sumo fixture; subsequent changes from other continuation chats can change the game workload.
+
+### Provisional budget proposal
+
+Keep the existing 4 ms budget in this scoped fix, pending a separate comparison of delay controllers; these runs do not establish it as adequate or optimal for heavy browser play. It estimates the cost of the current predicted lead from measured tick costs; it is not a hard limit on an update's confirmed work, new prediction or replay. A long update with few replayed ticks therefore does not by itself show that this budget is too large. The catch-up change leaves both this default and the delay policy unchanged. The remaining browser feedback bursts and slow delay recovery need their own investigation before selecting a replacement controller.
+
+A fixed share of the nominal display interval could scale the allowance with the intended frame rate, but needs an agreed share and a measured latency tradeoff. Four milliseconds is about 24% of a 60 Hz frame and 58% of a 144 Hz frame. Use the nominal interval for such an experiment: using the interval of an overloaded frame would increase the allowance precisely when the machine is falling behind.
+
+Time left after drawing would need a reliable frame deadline and a definition of drawing cost. The native measurement excludes GPU work, and a browser's CPU frame timing includes submission rather than GPU completion. These runs cannot establish how much GPU time remains. A moving allowance would also move input delay when rendering changes. None of the three alternatives was tested as a controller A/B here; the owner still decides any change.

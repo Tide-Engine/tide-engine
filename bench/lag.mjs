@@ -14,7 +14,7 @@
 // ahead and again, and its longest update.
 //
 //   node bench/lag.mjs <game.html> [--pings 0,50,100,150] [--seconds 150] [--join 30] [--threads <n>]
-//                      [--gpu hardware|software] [--browser <chrome>] [--save <label>]
+//                      [--gpu hardware|software] [--browser <chrome>] [--seed <n>] [--save <label>]
 //
 // The three browsers are on one machine, so each page is told the machine has
 // a third of its processors (`--threads`, or that): told all of them, each
@@ -46,8 +46,9 @@ import { saveRaw } from './lag_data.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: { ...process.env, TIDE_HIDDEN: '1' } }).stdout.trim();
+const harnessHash = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
 const args = process.argv.slice(2);
-const options = { pings: '0,50,100,150', seconds: '150', join: '30', gpu: 'hardware', browser: process.env.TIDE_BROWSER || '', save: '',
+const options = { pings: '0,50,100,150', seconds: '150', join: '30', gpu: 'hardware', browser: process.env.TIDE_BROWSER || '', seed: '0', save: '',
     threads: String(Math.max(1, Math.floor(cpus().length / 3))) };
 let page = '';
 for (let i = 0; i < args.length; i++) {
@@ -60,11 +61,16 @@ const found = [options.browser, 'C:/Program Files/Google/Chrome/Application/chro
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(path => path && existsSync(path));
 if (!page || !existsSync(page) || !found) {
     console.error('usage: node bench/lag.mjs <game.html> [--pings 0,50,100,150] [--seconds 150] [--join 30] [--threads <n>]'
-        + ' [--gpu hardware|software] [--browser <chrome>] [--save <label>]');
+        + ' [--gpu hardware|software] [--browser <chrome>] [--seed <n>] [--save <label>]');
     process.exit(2);
 }
 const seconds = Number(options.seconds);
 const joinAt = Number(options.join);
+const matchSeed = Number(options.seed);
+if (!Number.isInteger(matchSeed) || matchSeed < 0 || matchSeed > 2147483647) {
+    console.error('--seed takes a whole number from 0 to 2147483647');
+    process.exit(2);
+}
 const wait = ms => new Promise(done => setTimeout(done, ms));
 
 const relay = createRelay({ iceServers: [] }); // Players on one machine need no STUN
@@ -77,8 +83,13 @@ const relayUrl = process.env.TIDE_RELAY || `ws://127.0.0.1:${relay.address().por
 const pageSource = readFileSync(page, 'utf8');
 const pageHash = createHash('sha256').update(pageSource).digest('hex');
 const game = pageSource.replace('printErr: text => console.error(text),', `printErr: text => console.error(text),
+    arguments: ['--seed', ${JSON.stringify(String(matchSeed))}],
     relay: ${JSON.stringify(relayUrl)},
-    netcode: values => { window.__frames.push([performance.now(), ...values]); },`);
+    netcode: values => { window.__frames.push([performance.now(), ...values]); },`)
+    .replace('device = found;', `device = found;
+            window.__lagGpu = { backend: 'WebGPU', vendor: adapter.info?.vendor ?? '',
+                architecture: adapter.info?.architecture ?? '', device: adapter.info?.device ?? '',
+                description: adapter.info?.description ?? '', software: !!software };`);
 const hands = `
     Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get: () => ${Number(options.threads)} });
     window.__frames = [];
@@ -167,8 +178,8 @@ async function open(who, query) {
             fail(error);
         }
     });
-    const evaluate = async expression => {
-        const result = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    const evaluate = async (expression, within = 15000) => {
+        const result = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, within);
         if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
         return result.result.value;
     };
@@ -218,9 +229,13 @@ async function open(who, query) {
         }),
         wait(120000).then(() => { throw new Error(`${who}: Chrome didn't say where its debugger listens in two minutes`); }),
     ]);
-    const target = await (await fetch(`${endpoint}/json/new?about:blank`, { method: 'PUT' })).json();
+    const target = await (await fetch(`${endpoint}/json/new?about:blank`, { method: 'PUT', signal: AbortSignal.timeout(15000) })).json();
     socket = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((done, fail) => { socket.addEventListener('open', done); socket.addEventListener('error', fail); });
+    await new Promise((done, fail) => {
+        const timeout = setTimeout(() => fail(new Error(`${who}: its debugger socket didn't open in 15 s`)), 15000);
+        socket.addEventListener('open', () => { clearTimeout(timeout); done(); }, { once: true });
+        socket.addEventListener('error', error => { clearTimeout(timeout); fail(error); }, { once: true });
+    });
     socket.addEventListener('close', () => drop('its browser closed'));
     socket.addEventListener('message', ({ data }) => {
         const message = JSON.parse(data);
@@ -247,9 +262,10 @@ async function open(who, query) {
 
 // Until `expression` is so in the player's page, for a minute at the most.
 async function until(player, expression, what) {
-    for (let i = 0; i < 600; i++) {
-        if (await player.evaluate(expression)) return;
-        await wait(100);
+    const deadline = performance.now() + 60000;
+    while (performance.now() < deadline) {
+        if (await player.evaluate(expression, Math.min(15000, Math.max(1, deadline - performance.now())))) return;
+        await wait(Math.min(100, Math.max(0, deadline - performance.now())));
     }
     throw new Error(`${what} never came`);
 }
@@ -315,7 +331,8 @@ let failed = false;
 for (const ping of options.pings.split(',').map(Number)) {
     console.log(`\n${basename(page)}: three players, those who joined at a ping of ${ping} ms, for ${seconds} s (${options.gpu} GPU, ${options.threads} threads each)`);
     const players = [];
-    const run = { ping, players: {}, stopped: [], platform: 'web', checkout_revision: revision, page_sha256: pageHash };
+    const run = { ping, players: {}, stopped: [], platform: 'web', match_seed: matchSeed,
+        match_seed_source: `Tide.arguments --seed ${matchSeed}`, checkout_revision: revision, harness_sha256: harnessHash, page_sha256: pageHash };
     try {
         const host = await open('host', 'host');
         players.push(host);
@@ -357,6 +374,20 @@ for (const ping of options.pings.split(',').map(Number)) {
             console.log(`    the page said: ${[...new Set(player.errors)].slice(0, 5).join(' | ')}`);
         }
         if (player.errors.length) (run.page_errors ??= {})[player.who] = [...new Set(player.errors)];
+        if (!player.lost) {
+            try {
+                (run.time_origins ??= {})[player.who] = await player.evaluate('performance.timeOrigin');
+                (run.renderers ??= {})[player.who] = await player.evaluate(`(() => {
+                    if (window.__lagGpu) return window.__lagGpu;
+                    const canvas = Tide.canvas || document.getElementById('canvas');
+                    const gl = canvas.getContext('webgl2');
+                    if (!gl) return { backend: 'unknown' };
+                    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+                    return { backend: 'WebGL 2', vendor: gl.getParameter(debug ? debug.UNMASKED_VENDOR_WEBGL : gl.VENDOR),
+                        description: gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER) };
+                })()`);
+            } catch { /* Timing samples remain useful if renderer metadata is unavailable. */ }
+        }
     }
     run.browser_version = players[0]?.browserVersion ?? '';
     if (basename(page) === 'sumo.html') {
@@ -369,7 +400,8 @@ for (const ping of options.pings.split(',').map(Number)) {
         const label = options.save.replace(/[^A-Za-z0-9_.-]/g, '_');
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const rows = players.flatMap((player, i) => player.frames.map(frame => JSON.stringify([i, frame])));
-        rows.push(JSON.stringify({ meta: { platform: 'web', ping, seconds, join_at: joinAt, threads: Number(options.threads),
+        rows.push(JSON.stringify({ meta: { platform: 'web', ping, seconds, join_at: joinAt, threads: Number(options.threads), match_seed: matchSeed,
+            match_seed_source: run.match_seed_source,
             browser_version: run.browser_version, stopped: run.stopped } }));
         Object.assign(run, saveRaw(join(folder, `${stamp}-${label}-web-${ping}.jsonl.gz`), rows.join('\n') + '\n', root));
     }

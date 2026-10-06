@@ -55,7 +55,8 @@ for (const ping of options.pings.split(',').map(Number)) {
     console.log(`  ${meta.rounds_started ?? 0} rounds started; complete first round: ${meta.full_round ?? false}; raw frames: ${saved.raw_frames}`);
     const record = { benchmark: 'lag', label: options.save, date: new Date().toISOString(), game: 'sumo', checkout_revision: revision,
         cpu: cpus()[0]?.model ?? '', cores: cpus().length, ...meta, players, stopped: [], ...saved,
-        workload: 'three sequential sessions, shared four-thread pool; views and draw recording, no GPU drawing',
+        workload: 'three sequential sessions, shared four-thread pool; views and draw recording, no GPU drawing', match_seed: 0,
+        match_seed_source: 'no session entropy; default seed 0',
         process_exit: run.status, process_error: run.error?.message ?? null };
     if (options.save) appendFileSync(join(results, 'lag.jsonl'), JSON.stringify(record) + '\n');
 }

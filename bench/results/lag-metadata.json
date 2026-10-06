@@ -1,0 +1,48 @@
+{
+  "runtime_revision": "abaa39e717810b0d8d5578e122e7b5de051cfc89",
+  "platform": "Windows",
+  "node": "24.16.0",
+  "build_parallelism": 2,
+  "debug_tests": 1438,
+  "web_debug_tests": 1424,
+  "validation_note": "Full native/web-debug suites passed all except the old burst fixture; after restaging its 23/35-frame gaps, tide_tests passes on both without assertion changes.",
+  "release_affected_tests": 6,
+  "web_release_affected_tests": 6,
+  "artifacts": [
+    {
+      "path": "build/release/bin/bench_lag_native.exe",
+      "sha256": "967ee2f5d2b3dc58c02655f0ee0efba0210113e8c7779f7a573e9490c85e572b"
+    },
+    {
+      "path": "build/release/bin/sumo_tests.exe",
+      "sha256": "96e994ec61fbb79249f66aa5a4bfb8874c41a2bc9c653131e917788f06932816"
+    },
+    {
+      "path": "build/web-release/bin/sumo.html",
+      "sha256": "50a45242be2e2f5d25e415bbb8e494a804c5b559984ae1077f33349f61216064"
+    },
+    {
+      "path": "build/lag-before/sumo_tests.exe",
+      "sha256": "11e5212230ef52cfca612b9aebdd2f73fbe1b6503c643e30e6e86d3faa6437d9"
+    }
+  ],
+  "historical_browser_baseline": {
+    "code_revision": "6b52015c4207b56a8461c342f5468c9043f849bc",
+    "instrumentation": "ran/ran_ahead/heard_tick counters and netcode frame telemetry only",
+    "build_time_utc": "2026-10-06T13:00:00Z",
+    "source_edit_time_utc": "2026-10-06T13:02:53Z",
+    "transcript_evidence": "rows28,189,190,260,262,269,275,280 of original continuation transcript",
+    "page_sha256": "a58eda46fd951d808935dbc2b8266da9465108ef3ceaa669a35953c55a678fe2"
+  },
+  "measurement_seed": 0,
+  "final_labels": [
+    "catch-up-native-final",
+    "catch-up-web-final",
+    "catch-up-web-before"
+  ],
+  "browser_seed_source": "Tide.arguments --seed 0; repeat after discovering earlier browser entropy was uncontrolled",
+  "unseeded_labels": [
+    "catch-up-web-final-unseeded",
+    "catch-up-web-before-unseeded"
+  ]
+}
