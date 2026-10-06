@@ -969,7 +969,13 @@ command(Rename rename, PlayerID sender) RenamePlayer(
 
 ### Provisional
 
-- Sequence state is per player per channel, in the world as today's is; an unordered command has an id of its own, and the world keeps a window of the last 64 ids applied per player to drop resends. The 32 pending per player is per channel. The chunked transfer's size limit and pacing are the session's picks.
+Built 2026-10-06; the picks below await the owner.
+
+- Sequence state is per player per channel, in the world as today's is: a channel's sequence counts that channel's commands alone, from 1. An unordered command has an id of its own, from 1, in place of a sequence, and the world keeps a window of the last 64 ids applied per player (the highest, and a bit for each of the 63 below it) to drop resends: an id older than the window is taken as applied. The 32 pending per player is per channel, the unordered commands counting as a channel of their own; 16 scheduled per tick stays one limit for all.
+- A channel is an enum member of the game's, named by `[Channel(Enum.Member)]` on a `command` declaration; commands can share one, members of any enum can be channels, and a game has 63 channels of its own at most beside the default. `[Unordered]` takes nothing. Both on one command, either on anything but a command, and a name that isn't an enum member are errors. Whatever the ordering, each handler runs where it always did: in the tick's end queue, in the server's order.
+- A command holds `List<byte>` as a field, or in a struct it holds, and no other list: `List<int>` stays an error. One with no `List<byte>` is still 1024 packed bytes at most. One with a `List<byte>` is 4 MiB at most (`TIDE_COMMAND_LIMIT`), its bytes on the wire whole, after a count. Over 1024 bytes it goes in chunks of 1000, 16 chunks an update each way (about a megabyte a second at 60 updates a second), each sent again once a round trip and a half has passed without it being acknowledged, as a world's chunks are. A machine sends one big command at a time, in the order they were sent; the server takes one at a time from each player.
+- A big command lands in a tick only once every player in the match has its bytes: the server sends them down to each player first, paced the same way under the frames, and the tick's frame names the transfer rather than carrying the bytes, so no player's tick waits for one. A player being sent the world, or catching up with one, doesn't hold it up: that player gets the transfer with the ticks it lacks. A player who joins with a world from a later tick needs nothing of it.
+- The local state's outbox (what views sent and the session hasn't taken yet) is 32 a channel too, and a channel that's full at the session holds back only its own: the host hands each channel's commands over in turn.
 
 ## Enums and switch
 

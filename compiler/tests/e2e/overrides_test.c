@@ -81,10 +81,10 @@ TIDE_TEST(overrides_a_commands_handler)
     start();
     local.Combat_Hud.buy = true;
     frame();
-    uint8_t bytes[TIDE_COMMAND_BYTES];
-    const uint32_t size = tide_local_command(&local, bytes, TIDE_COMMAND_BYTES);
-    TIDE_REQUIRE(size > 0 && tide_game_api.check_command(bytes, size));
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    uint32_t size = 0;
+    const uint8_t *bytes = tide_local_command(&local, 0, &size);
+    TIDE_REQUIRE(bytes && size > 0 && tide_game_api.check_command(bytes, size, NULL));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(world.Combat_Log.bought == 103);
     TIDE_CHECK(world.Combat_Log.replaced == 0);
