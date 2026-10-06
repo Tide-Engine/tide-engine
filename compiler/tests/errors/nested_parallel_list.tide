@@ -1,0 +1,8 @@
+// expect: a parallel loop goes through a list of plain values, and this one's elements hold lists
+// expect: steps run on threads, where a list can't be made
+singleton Table { List<List<int>> rows; }
+scene Main { }
+system Step(mut Table table)
+{
+    parallel (var i in table.rows) { }
+}
