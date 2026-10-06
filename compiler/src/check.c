@@ -9382,6 +9382,8 @@ static void check_asset_decl(checker *c, decl *k)
     bool many = false, is_map = false;
     const bool typed = asset_type(c, k, &kind, &many, &is_map);
     if (!typed) k->return_type = T_ERR;
+    k->asset_kind = kind;
+    k->asset_many = many;
     const expr *path = NULL;
     const bool constant = is_constant(c, k->value);
     if (constant) {
@@ -14651,6 +14653,17 @@ bool check(program *prog)
     }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_ASSET) check_asset_decl(&c, prog->decls.items[i]); // After the constants: a path can be one
+    }
+    if (prog->game_folder && prog->assets.count > 0) {
+        // The hashes of the named files, in the game's .tide/, so one that moves is found by its bytes
+        asset_named *named = arena_alloc(sizeof(asset_named) * (size_t)prog->assets.count);
+        int count = 0;
+        for (int i = 0; i < prog->assets.count; i++) {
+            const decl *d = prog->assets.items[i];
+            const expr *path = d->value ? text_literal(d->value) : NULL;
+            if (path) named[count++] = (asset_named){d->unit->src->path, path->text, d->asset};
+        }
+        asset_files_save_hashes(prog->game_folder, named, count);
     }
     check_settings(&c);
     add_scene_player_words(prog);

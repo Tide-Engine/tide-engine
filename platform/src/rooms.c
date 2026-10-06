@@ -295,6 +295,8 @@ static void on_relay(native_room *r, const char *text)
 {
     const rtc_json m = rtc_json_of(text, strlen(text));
     if (!m.text) return;
+    // What it says, but for its hello, which has the TURN server's credentials
+    rtc_debug("room %s: the relay says %.48s", r->code, rtc_json_get(m, "relay").text ? "hello" : text);
     char code[16], json[128];
     double n = 0;
     if (rtc_json_get(m, "relay").text) {
