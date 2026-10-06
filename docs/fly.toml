@@ -15,6 +15,16 @@ primary_region = 'fra'
 
 [build]
 
+[env]
+  PROTOCOL_HEADER = 'X-Forwarded-Proto'
+  ADDRESS_HEADER = 'Fly-Client-IP'
+  BODY_SIZE_LIMIT = '16K'
+  TIDE_ACCESS_FILE = '/data/access-requests.jsonl'
+
+[[mounts]]
+  source = 'access_requests'
+  destination = '/data'
+
 [http_service]
   internal_port = 3000
   force_https = true
@@ -25,7 +35,7 @@ primary_region = 'fra'
   [http_service.concurrency]
     type = 'requests'
     soft_limit = 200
-    hard_limit = 250
+  hard_limit = 250
 
   [[http_service.checks]]
     grace_period = '10s'

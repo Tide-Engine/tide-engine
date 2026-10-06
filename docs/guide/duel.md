@@ -66,7 +66,7 @@ Both machines run the same arena from the players' inputs.
 
 ## The code
 
-The game is `examples/duel` in the [repo](https://github.com/BlenMiner/tide-engine/tree/dev/examples/duel).
+Duel separates the match's rules from what each machine shows.
 
 `game.tide` and `physics.tide` are the match: the rules, which every machine runs the same way. The match also says what happens in it, as [events](../game/events.md) nothing in the match handles: a hit that counted, a shot's bounce and where it ended, a jump, a landing, who took a round. They cost the match nothing. The rest is what one machine shows of it, and none of it is in the match:
 
