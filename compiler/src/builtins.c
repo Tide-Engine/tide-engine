@@ -38,7 +38,7 @@ static const decl *shape_decl;
 static decl blend_enum;
 static const type T_BLEND = {TY_ENUM, &blend_enum};
 static const decl *blend_decl;
-// ...and the Depth enum, which Draw.Depth does.
+// ...and the Depth enum, which Draw3D.Depth does.
 static decl depth_enum;
 static const type T_DEPTH = {TY_ENUM, &depth_enum};
 static const decl *depth_decl;
@@ -499,14 +499,6 @@ static void build_signatures(void)
                 "Wherever it's drawn. In a block, it multiplies the tint there is.",
                 1, &T_COLOR);
     add_unset("Draw", "SetTint", "tide_draw_unset_tint", "No tint, as each frame starts.");
-    add_setting("Draw", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
-                "What 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's nearer "
-                "and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's nearer, and "
-                "hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or `Depth.None` "
-                "(drawn over whatever is there). Wherever it's drawn: the window or a target. The Draw2D calls have no "
-                "depth, whatever it says.",
-                1, &T_DEPTH);
-    add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     static const char transform_doc[] =
         "Moves, turns and scales the Draw2D calls, in the units they're in, about (0, 0): scaled, then turned by "
         "`rotation` (radians, from +x towards +y), then moved by `offset`. Shapes stay shapes; text that's only moved "
@@ -531,6 +523,14 @@ static void build_signatures(void)
                 "inside the transform there is.",
                 1, &T_F4X4);
     add_unset("Draw3D", "SetTransform", "tide_draw_unset_transform_3d", "No transform, as each frame starts.");
+    add_setting("Draw3D", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
+                "What the 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's "
+                "nearer and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's "
+                "nearer, and hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or "
+                "`Depth.None` (drawn over whatever is there). Only 3D meshes have depth: the Draw2D calls draw over "
+                "what's there, in order.",
+                1, &T_DEPTH);
+    add_unset("Draw3D", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     add_setting("Draw2D", "Camera", "tide_draw_push_camera", "tide_draw_set_camera", NULL, "center, size",
                 "The camera the Draw2D calls go through: `center` is the world position at the middle of the screen and "
                 "`size` is half the visible height, like Unity's orthographic size.",
@@ -1291,20 +1291,30 @@ type resolve_builtin_call(const str owner, expr *e)
                 if (drawing && str_eq_c(e->name, signatures[i].name)) theirs = signatures[i].owner;
             }
             if (theirs) {
-                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit "
-                          "and window", theirs, theirs, STR_ARG(e->name));
+                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and "
+                          "window", theirs, theirs, STR_ARG(e->name));
             } else {
-                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and "
-                          "meshes are theirs");
+                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes "
+                          "are theirs");
             }
         } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
-            // A setting of Draw's own, asked of a destination: Draw3D.Depth, target.SetBlend
+            // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, target.Tint
+            const char *other = str_eq_c(owner, "Draw2D") ? "Draw3D" : "Draw2D";
+            const signature *shared = NULL, *theirs = NULL;
             for (int i = 0; i < signature_count; i++) {
                 const signature *s = &signatures[i];
-                if (strcmp(s->owner, "Draw") != 0 || !str_eq_c(e->name, s->name)) continue;
+                if (!str_eq_c(e->name, s->name)) continue;
+                if (!shared && strcmp(s->owner, "Draw") == 0) shared = s;
+                if (!theirs && strcmp(s->owner, other) == 0) theirs = s;
+            }
+            if (shared) {
                 diag_note("it's Draw's, the same wherever it's drawn, the window or a target: 'Draw." STR_FMT "(...)%s'",
-                          STR_ARG(e->name), s->gui & DRAW_BLOCK ? " { ... }" : ";");
-                break;
+                          STR_ARG(e->name), shared->gui & DRAW_BLOCK ? " { ... }" : ";");
+            } else if (theirs && (str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"))) {
+                diag_note("it's Draw3D's: 'Draw3D." STR_FMT "(...)%s'. Only 3D meshes have depth: the Draw2D calls draw "
+                          "over what's there, in order", STR_ARG(e->name), theirs->gui & DRAW_BLOCK ? " { ... }" : ";");
+            } else if (theirs) {
+                diag_note("it's %s's: '%s." STR_FMT "(...)'", other, other, STR_ARG(e->name));
             }
         }
         suggestion s = suggest_start(e->name);

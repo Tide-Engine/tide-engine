@@ -1,0 +1,13 @@
+// expect: target.Depth sets it around a block: 'target.Depth(...) { ... }'
+// expect: to set it for the draws that follow, write 'target.SetDepth(...);'
+scene Main { }
+
+local singleton Look
+{
+    RenderTarget target;
+}
+
+view Show(Look look)
+{
+    look.target.Depth(Depth.Read);
+}

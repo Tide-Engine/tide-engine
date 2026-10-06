@@ -4684,7 +4684,8 @@ static str target_draw_owner(const expr *e)
 {
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
-        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
+        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
+        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"); // Only 3D meshes have depth
     const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
     const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
     if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
@@ -5746,8 +5747,7 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
-            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and meshes "
-                      "are theirs");
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -11837,8 +11837,8 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
-    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth,
-    // with tide/draw.h's tide_depth's values. Generated C has it only in a
+    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
+    // (Draw3D.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named), so the others' is as it was.
     static const char *const depths[] = {"ReadWrite", "Read", "None"};
     decl *depth = NEW(decl);
