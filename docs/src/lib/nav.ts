@@ -30,11 +30,11 @@ export const sidebar: Group[] = [
             { text: 'Install', link: '/guide/install' },
             { text: 'Your first game', link: '/guide/first-game' },
             { text: 'Live examples', link: '/guide/examples' },
+            { text: 'Samples', link: '/guide/samples' },
             { text: 'Falling sand', link: '/guide/sand' },
             { text: 'Duel', link: '/guide/duel' },
             { text: 'Towers', link: '/guide/towers' },
             { text: 'Sumo', link: '/guide/sumo' },
-            { text: 'Games from one sentence', link: '/guide/from-a-sentence' },
         ],
     },
     {

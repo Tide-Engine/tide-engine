@@ -1,3 +1,5 @@
+const string SampleTitle = "Pong";
+
 // Pong for two, online. The first two players to arrive take the paddles, and a
 // paddle nobody has is played by the computer, so one player alone has a game.
 // Anyone else waits in line: the loser of each game hands their paddle on.
@@ -80,8 +82,9 @@ input Controls
     [Absolute, Clamp(-5, 5)] float target;     // Mouse and fingers: where on the track
     [Absolute] bool pointing;
 
-    Sample(Devices devices, Lens lens, Hand hand)
+    Sample(Devices devices, Lens lens, Hand hand, SampleLobby lobby)
     {
+        if (!lobby.playing) return;
         var keys = devices.keyboard;
         var stick = devices.gamepad.leftStick;
         if (lens.tall)
@@ -458,6 +461,7 @@ local event(Connected) Joined(mut Fx fx)
 }
 
 // Lays the court out on the screen. It needs no match, so it draws while joining too.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Lens lens, mut Fx fx)
 {
     Draw2D.Clear(BACKGROUND);
@@ -467,7 +471,7 @@ view Backdrop(mut Lens lens, mut Fx fx)
     var dt = Math.Min(Frame.dt, 0.05);
     lens.unit = Math.Clamp(Math.Min(w, h) / 400, 0.75, 1.6);
     lens.tall = h > w * 1.3;
-    var top = 62 * lens.unit;
+    var top = 62 * lens.unit + 52;
     var bottom = 54 * lens.unit;
     var room = float2(w - 16, h - top - bottom);
     if (lens.tall)
@@ -484,6 +488,7 @@ view Backdrop(mut Lens lens, mut Fx fx)
     lens.origin = float2(w * 0.5, top + room.y * 0.5) + fx.random.NextFloat2Direction() * (fx.shake * 16 * lens.unit);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Seat(Court court, Session session, mut Lens lens)
 {
     lens.mine = court.left == session.player ? 0 : (court.right == session.player ? 1 : -1);
@@ -491,8 +496,10 @@ view Seat(Court court, Session session, mut Lens lens)
 }
 
 // The mouse or a finger says where the paddle should be, until a key takes over.
-view Point(Devices devices, Lens lens, mut Hand hand)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Point(Devices devices, Lens lens, mut Hand hand, SampleLobby lobby)
 {
+    if (!lobby.playing) { hand.active = false; return; }
     var touch = devices.touchscreen.primaryTouch;
     var mouse = devices.mouse;
     var keys = devices.keyboard;
@@ -516,6 +523,7 @@ view Point(Devices devices, Lens lens, mut Hand hand)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawTable(Lens lens, Fx fx)
 {
     var size = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
@@ -532,6 +540,7 @@ view DrawTable(Lens lens, Fx fx)
     Draw2D.Rect(ToScreen(lens, float2(HALF_W - 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(TEAL, 0.55));
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawPaddles(mut Paddle paddle, Lens lens)
 {
     paddle.flash = Math.Max(0, paddle.flash - Frame.dt);
@@ -547,6 +556,7 @@ view DrawPaddles(mut Paddle paddle, Lens lens)
     Draw2D.RoundRect(center, size, radius, paddle.flash > 0 ? Color.white : color);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawSparks(mut Fx fx, Lens lens)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -573,6 +583,7 @@ view DrawSparks(mut Fx fx, Lens lens)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBall(Ball ball, Court court, Time time, Lens lens, mut Fx fx)
 {
     if (court.phase == Phase.Over) return;
@@ -612,13 +623,14 @@ view DrawBall(Ball ball, Court court, Time time, Lens lens, mut Fx fx)
 }
 
 // The board is the server's: a point shows once it's certain.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
 {
     float w = Screen.width;
     float h = Screen.height;
     var u = lens.unit;
     var watching = lens.mine < 0;
-    var row = 8 * u;
+    var row = 8 * u + 52;
     // The names stand over the court's corners, however wide the window is
     var half = Span(lens, float2(2 * HALF_W, 2 * HALF_H)).x * 0.5;
     var x0 = w * 0.5 - half + 4;
@@ -651,7 +663,7 @@ view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
     }
     else if (court.left == default || court.right == default)
     {
-        status = "Waiting for a friend: send them this link!";
+        status = "MENU: host a room, then share its code.";
     }
     else if (court.line.count > 0)
     {
@@ -683,12 +695,13 @@ view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
 }
 
 // Outside a match: joining, or out of it.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawStatus(Session session, Fx fx, Lens lens)
 {
     if (session.state == SessionState.Connected) return;
     mut var text = "Joining the game...";
     if (session.state == SessionState.Offline) text = fx.notice == "" ? "Not in a game" : fx.notice;
     var u = lens.unit;
-    Draw2D.Text("PONG", float2(Screen.width * 0.5, 14 * u), 30 * u, GOLD, Anchor.UpperCenter, Font.Bold);
+    Draw2D.Text("PONG", float2(Screen.width * 0.5, 14 * u + 52), 30 * u, GOLD, Anchor.UpperCenter, Font.Bold);
     Draw2D.Text(text, lens.origin, 16 * u, Color.white, Anchor.MiddleCenter, Font.Bold);
 }

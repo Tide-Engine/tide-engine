@@ -1,3 +1,5 @@
+const string SampleTitle = "Snake Pit";
+
 // Snake Pit: every player's snake on one board. The last one alive takes the round.
 
 settings
@@ -20,7 +22,7 @@ const int COUNTDOWN = 90;
 const int RESULT = 90;
 const int SOLO_RESULT = 40;
 const int JOIN_FREEZE = 45;   // Ticks a snake that joined mid-round stays put
-const float TOP = 58;         // Pixels the scores take above the board
+const float TOP = 110;         // Pixels the scores take above the board
 const float BOTTOM = 26;      // ...and the help line under it
 const Color FOOD_COLOR = Color(1, 0.93, 0.7);
 
@@ -61,8 +63,10 @@ void Press(mut Pad pad, int dir)
     pad.serial += 1;
 }
 
-view Steering(Devices devices, mut Pad pad)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Steering(Devices devices, mut Pad pad, SampleLobby lobby)
 {
+    if (!lobby.playing) { pad.swiped = true; pad.finger = false; return; }
     var keys = devices.keyboard;
     var cross = devices.gamepad.dpad;
     if (keys.rightArrow.down || keys.d.down || cross.right.down) Press(pad, 0);
@@ -578,6 +582,7 @@ float CellPixels()
     return Math.Max(Math.Min((width - 16) / COLS, (height - TOP - BOTTOM - 8) / ROWS), 1);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -605,8 +610,10 @@ view Backdrop(mut Fx fx)
 
 // A finger's tap turns this player's snake towards the side of its head that was tapped.
 // Not a mouse's click: that's how a page's game gets the keyboard.
-view Taps(Snake snake, Devices devices, mut Pad pad, with ownership)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Taps(Snake snake, Devices devices, mut Pad pad, SampleLobby lobby, with ownership)
 {
+    if (!lobby.playing) return;
     var pointer = devices.pointer;
     if (!pointer.press.up || !pad.finger || pad.swiped || snake.body.count == 0) return;
     var heading = snake.queued2 >= 0 ? snake.queued2 : (snake.queued1 >= 0 ? snake.queued1 : snake.dir);
@@ -616,6 +623,7 @@ view Taps(Snake snake, Devices devices, mut Pad pad, with ownership)
     else Press(pad, reach.x > 0 ? 0 : 2);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawFood(Board board, Fx fx)
 {
     foreach (var cell in board.food)
@@ -630,6 +638,7 @@ view DrawFood(Board board, Fx fx)
 // `snake` is the snake as this machine predicts it, and `sure` as the server last confirmed it. A crash
 // only shows once it's confirmed: this machine guesses that the other snakes go straight on, so one
 // that turned at the last moment is, for an instant, in the wall here.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawSnake(Snake snake, verified Snake sure, Owner owner, Session session, Round round, Time time, Fx fx)
 {
     var count = snake.body.count;
@@ -700,6 +709,7 @@ view DrawSnake(Snake snake, verified Snake sure, Owner owner, Session session, R
     Draw2D.Text("YOU", head + float2(0, 1.5), 1.1, Color.white, Anchor.LowerCenter, Font.Bold);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawSparks(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -743,6 +753,7 @@ void Banner(float2 middle, string title, Color color, string line)
     Draw2D.Text(line, middle + float2(0, size.y * 0.5 - 14), 14, Color(0.8, 0.82, 0.88), Anchor.LowerCenter);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, verified Round sure, Session session, mut Fx fx,
          query (Snake snake, Owner owner, verified Snake confirmed) snakes)
 {
@@ -754,7 +765,7 @@ view Hud(Round round, verified Round sure, Session session, mut Fx fx,
     // The scores sit right above the board and the help right under it, wherever the window puts the board
     var cell = CellPixels();
     var middle = float2(width * 0.5, TOP + (height - TOP - BOTTOM) * 0.5);
-    var top = middle.y - cell * ROWS * 0.5 - TOP;
+    var top = middle.y - cell * ROWS * 0.5 - TOP + 52;
     var under = middle.y + cell * ROWS * 0.5;
     var edge = Math.Max(10, (width - cell * COLS) * 0.5 - 4);
 
@@ -805,7 +816,7 @@ view Hud(Round round, verified Round sure, Session session, mut Fx fx,
     var count = chips.count;
     if (count < 2)
     {
-        var alone = "Waiting for players: send them this page's link";
+        var alone = "Waiting for players: invite them from the room menu";
         var fit = Math.Min(1, (width - 16) / Draw2D.MeasureText(alone, 13).x);
         Draw2D.Text(alone, float2(width * 0.5, top + 43), 13 * fit, Color(1, 0.85, 0.3), Anchor.MiddleCenter);
     }
@@ -870,6 +881,7 @@ view Hud(Round round, verified Round sure, Session session, mut Fx fx,
 }
 
 // Before the match's world has arrived, and after it's gone
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Joining(Session session, Fx fx)
 {
     if (session.state == SessionState.Connected) return;
