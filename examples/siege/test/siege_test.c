@@ -504,7 +504,8 @@ TIDE_TEST(siege_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(local.Lobby.page == Page_Join && local.Lobby.joining && !fires());
     tide_local_connected(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
-    frame(&world);
+    frame(&world); // The page closes as this frame ends...
+    frame(&world); // ...and the frame after it says nothing of what's held
     frame(&world);
     TIDE_CHECK(local.Lobby.page == Page_None && !local.Lobby.joining && fires());
     TIDE_CHECK(local.Lobby.mine == 1);
