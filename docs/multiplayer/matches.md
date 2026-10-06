@@ -89,7 +89,7 @@ Here are two machines, side by side. Each frame below is the game on its own, st
 
 1. In one, press **Start a match**: it plays alone, with its match closed. Move the pointer over the frame to steer its player.
 2. Press **Open**. Its room's code shows, and **Copy code** puts it on the clipboard.
-3. In the other frame, type the code into the field, or click the field and paste, and press **Join**. Both players are now in one match, each frame showing it from its own machine.
+3. In the other frame, type the code into the field, or click the field and paste, and press Enter or **Join**. Both players are now in one match, each frame showing it from its own machine.
 4. Try **Close** and then **Leave** and **Join** again: a closed match turns the player away, and its menu says why. **Kick all** sends a message along, and **End** ends the match for both.
 
 ::: tide-players rooms Open a room, and join it

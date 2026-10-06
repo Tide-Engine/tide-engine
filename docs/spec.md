@@ -299,7 +299,7 @@ system Aim(mut Turret turret, Position position) { ... }
 - **Overloads.** `out` doesn't tell functions that share a name apart, as `mut` doesn't: their parameters' types do. A call picks among them as ever, where an `out` argument only goes to an `out` parameter, and `out var` takes its type from the one picked.
 - **`extern` functions.** `out T` is a `T *` in C, as `mut T` is: the difference is Tide's, which passes nothing in and takes it that C writes. `out List<T>` stays the list C makes through its writer. C can't make text, so `out string` is an error there (see C functions).
 - **Code the GPU runs.** A function a frag or vert calls can have `out` parameters: `inout` in GLSL and a pointer in WGSL, as `mut` ones are. Provisional: a local an `out` argument declares can't be declared on a counting loop's own line there.
-- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets), and the `World` has `TryGet<T>(entity, out value)` (see The World).
+- **The engine's own.** `Map<K, V>` has `TryGet(key, out value)`, C#'s `TryGetValue` (see Maps and sets), the `World` has `TryGet<T>(entity, out value)` (see The World), and the GUI's `TextField`, `IntField` and `FloatField` each have a version with `out bool entered` (see GUI).
 - In generated C an `out` parameter is a pointer, as a `mut` one is, and code that has none generates the C it always did.
 
 ```csharp
@@ -937,15 +937,26 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 
 ### Decided
 
-- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, and structs of those. Lists, grids, components and device records are not command payloads.
+- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, `List<byte>` (a file's bytes, for user content: see Assets), and structs of those. Other lists, grids, components and device records are not command payloads.
 - Local views and handlers send commands with `entity.Send(value)` or `Send(value)`, while connected to a match. The compiler distinguishes commands from events by their declaration. An entity target is required when the command handler takes components.
 - Each command has one void handler: `command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)`. The first parentheses contain the read-only payload and connection-derived sender. The second take the same match state as event handlers. Components and `this` come from the target.
 - Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction. The handler checks permissions and game rules, and can send events after acting.
 - Sending copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order.
 - Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The handler remains responsible for authorization and game-specific rules.
+- A command's ordering is its type's, per player (agreed 2026-10-06). Without an attribute a command is in the default channel: handled in the order sent, after every earlier command of that channel. `[Channel(Channels.Uploads)]`, with an enum of the game's, puts it in a channel of its own, ordered among that channel's commands and against nothing else, so a chat line never waits behind an upload. `[Unordered]` gives it no order at all: the server handles it in whichever tick it arrives, before or after commands sent earlier, still exactly once. Whatever the ordering, the server picks the tick and every handler runs in the tick's end queue in the server's order, so ordering only decides what the server holds back waiting for an earlier command.
+- A command holds `List<byte>` too, so a player's file goes to the match as it is. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, paced under the input traffic so a transfer never delays a tick. It lands in a later tick, as any command may; a command was never tied to the tick it was sent in. What goes through the match goes player to server to everyone, so a host sends it once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine (see Assets).
 
 ```csharp
+enum Channels { Uploads }
+
 command Rename { string name; }
+
+[Channel(Channels.Uploads)]
+command SetBackground { List<byte> png; }
+
+[Unordered]
+command Ping { int at; }
+
 
 command(Rename rename, PlayerID sender) RenamePlayer(
     Owner owner, mut Name name)
@@ -955,6 +966,10 @@ command(Rename rename, PlayerID sender) RenamePlayer(
     name.value = rename.name;
 }
 ```
+
+### Provisional
+
+- Sequence state is per player per channel, in the world as today's is; an unordered command has an id of its own, and the world keeps a window of the last 64 ids applied per player to drop resends. The 32 pending per player is per channel. The chunked transfer's size limit and pacing are the session's picks.
 
 ## Enums and switch
 
@@ -1046,7 +1061,7 @@ system Advance(mut Match match)
 - Text that code makes, joining and formatting, lives in a scratch area that's cleared once the system, view or handler that made it is done, for each entity. It's only ever copied into a world's heap.
 - Heap text never changes once it's written: changing a field writes new text. What's released only goes back once the code running is done, so a copy of a field made before it changed still reads the old text, with no copying.
 - An input can't hold text: what players send each tick is numbers, bools and enums.
-- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character.
+- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
 - Systems that change the match's text or lists wait for each other, as their heap is one: `tidec --schedule` says "both change text or lists".
 
 ### Open
@@ -1260,6 +1275,62 @@ system Score(mut Board board)
 - `Application.persistentDataPath` and `Application.temporaryCachePath` are read-only runtime strings. The standard host selects save locations using the stable `appId` setting, or its game name as the development fallback. Relative paths resolve under the persistent root. Native absolute paths follow OS permissions; web paths stay in this game's virtual persistent and temporary roots.
 - File/directory calls and application paths are local only, including helpers that reach them. They cannot run in match code, input sampling, GPU code, sort comparisons or parallel steps. Pure `Path.Combine(a, b)`, `Path.GetFileName(path)`, `Path.GetDirectoryName(path)` and `Path.GetExtension(path)` work on text, recognize both path separators and can run in match code.
 - `await Storage.Flush()` is a local async operation returning void and failing with `IOError`. It confirms that changes preceding the call have committed, without blocking the frame loop. Browser files are preloaded from IndexedDB before the game starts, and mutations commit in the background. Files and pending commits belong to the page across hot reloads; failures retain dirty changes for a later flush to retry. Unavailable persistence is an error, while temporary files remain usable. Browser saves are scoped to the origin/profile and may be cleared or evicted. Flush during play, never rely on page shutdown. Native flushes affected OS files and directories.
+
+## Assets
+
+### Decided
+
+Agreed 2026-10-06. An asset is a file a game is built with: an image, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else.
+
+- `asset` declares a file's contents under a name, at the top level like a constant, resolving to an ordinary type: `asset Grid2<Color> hero = "art/hero.png";`, `asset string rules = "rules.txt";`, `asset List<byte> table = "data/table.bin";`. Code reads `hero` wherever it reads a value of that type. It's read-only, and never assigned.
+- The path is relative to the `.tide` file that names it. There's no assets folder and no root: files are wherever the game keeps them, a package's beside its own code, and the path says where from here.
+- A path can be a URL. tidec fetches it and packs what it was at build time, so it's a file kept elsewhere and nothing else: match code reads it, nothing is fetched when the game runs, and the game plays offline.
+- A path can be a glob, which resolves to every file it matches, in order of their paths: `asset List<Grid2<Color>> run = "art/run/*.png";` gives the contents, and `asset Map<string, Grid2<Color>> run = "art/run/*.png";` the path of each with its contents, for a game that needs the names. A single file resolves to its contents alone: its path is on the line that declares it, and a `const string` can be that path where a game wants it twice.
+- Anything wrong that can be known at compile time is an error at the declaration: a file that isn't there, a glob that matches nothing, a URL that can't be fetched, bytes that aren't what the type says (a PNG that doesn't decode, text that isn't UTF-8). The editor says the same as the game is written, with no build.
+- A game ships the closure of its declarations: `tide build` packs the files `asset` names, and nothing else in the folder. A file in the pack is there once however many declarations name it or files have its bytes, and all of them are the same value.
+- Match code reads packed assets, since every machine has them. What a machine loads as the game runs (a file of the player's, a URL) is local: it reaches the match as match data, through a command, as a game's own state, which the netcode sends like any other, to those in the match and to whoever joins.
+- A user's content enters the match as the file's bytes, in the format it came in: a `Grid2<Color>` field decodes a PNG with `grid.Decode(bytes)`, with the engine's own decoder, so it's the same pixels on every machine.
+- No GUIDs and no meta files: the engine owns none of a game's files and writes into none. References are in text, in the source, and all of them are constant, so moving a file is a refactor: the language server rewrites the references when a file is moved in the editor, and a file moved outside it is found again by its bytes, which the error names with a quick fix.
+
+```csharp
+asset Grid2<Color> hero = "art/hero.png";
+asset Map<string, Grid2<Color>> tiles = "art/tiles/*.png";
+asset string credits = "https://example.com/credits.txt";
+
+view Hero(Body body)
+{
+    Draw2D.Mesh(Quad(body.position), QuadIndices, hero);
+}
+
+command SetBackground { List<byte> png; }
+
+command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    arena.background.Decode(value.png)!;
+}
+```
+
+### Provisional
+
+Picks made to build it, awaiting the owner.
+
+- **The types** an asset resolves to: `string` (UTF-8), `List<byte>` (any file) and `Grid2<Color>` (a PNG, decoded at build time into pixels), each alone, as a `List<T>` of a glob's matches, or as a `Map<string, T>` of their paths. The grid is sized as the image is, and read-only: a system takes it as it takes any read-only value, and a frag or vert samples it by name, as it samples a singleton's grid. Other formats (JPEG, audio, meshes, fonts) join as their types do.
+- **Globs:** `*` matches within a name, `**` across folders, and `?` a character; matches are sorted by the UTF-8 bytes of their paths, relative to the declaring file; a map's keys are those paths. Matching nothing is an error.
+- **URLs** are `http://` and `https://`. tidec keeps what it fetched in `.tide/` by URL with the server's ETag, asks whether it changed at each build and at each `tide run`'s start, and builds from the cache when the server can't be reached, so offline builds and reloads work; a run picks up a changed URL when it's started again. Pinning a URL to a hash is open, below.
+- **Where the pack is:** in a file beside the program on desktop (`<game>.pack`), inside the self-contained page on the web, and in the APK's assets on Android. Under `tide run` there's no pack: the game reads the source files, and tide watches them, so a saved image is in the running game at once, with no rebuild, as it's data. A web build can keep the pack beside the page rather than inside it, so the page stays small and the pack is fetched from wherever it's hosted; the option's name is open.
+- **Sharing** is by SHA-256 of the bytes. A `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every heap, so no world copies, hashes or sends it, and it's the same memory to every reference.
+- **Decoding:** `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is, and fails with `IOError.InvalidData`. It's pure, so it runs in match code, and it runs where it's called, which in a tick is on every machine. **Fetching:** `await Web.Fetch(url)` is a local async operation giving `List<byte>` and failing with `IOError`, like `File.ReadAllBytes`, which is the other way bytes come in at runtime; so loading a player's image is `grid.Decode(File.ReadAllBytes(path))`, and there's no asset handle type beside the plain ones. On the web it's `fetch`, so the server's CORS applies; on desktop it's the HTTPS the relay's connection uses; on Android, Java's.
+- **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
+- **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
+
+### Open
+
+- Audio, meshes, fonts and JPEG as assets, each with its type; a pixel of a byte a channel in the pack, a quarter of a `Color`'s memory.
+- Load order, streaming and lazy loading within the pack, and what a web page fetches first.
+- Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
+- Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
+- Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
 ## Tasks
 
@@ -1878,7 +1949,7 @@ view DrawHud(Arena arena)
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
-- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
+- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI
 
@@ -1888,6 +1959,7 @@ view DrawHud(Arena arena)
 - `GUILayout` lays widgets out automatically: they stack top to bottom, and `GUILayout.Horizontal()` puts them side by side. `GUI` has the same widgets, each at an explicit `Rect`, which comes first, as in Unity: `GUI.Button(rect, "Quit")`.
 - Containers take a block, and they're ordinary functions with an `Action` parameter (see Functions): `GUILayout.Horizontal() { ... }`, `GUILayout.Vertical() { ... }` and `GUILayout.Area(...) { ... }`. Calls always have parentheses.
 - Widgets edit values through `mut` parameters, and return whether the value changed: `GUILayout.Toggle("Fullscreen", settings.fullscreen)`. A button returns whether it was pressed.
+- **Entered fields** (agreed 2026-10-06): a view can tell that the player pressed Enter in a field they typed into. `TextField`, `IntField` and `FloatField` each have a second version, in `GUILayout` and in `GUI`, with an `out bool entered` parameter (see Out parameters): `GUILayout.TextField("Code", lobby.code, out var entered)`. It's true in the frame Enter ends the typing in that field. What the field returns stays whether the value changed, and without the argument the field is the one there always was. The details are picks, under Provisional.
 - Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
 - The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and widgets are made of pieces games can use too.
 - Gamepad and keyboard navigation are built in: focus moves between widgets, the south button presses, the east button goes back.
@@ -1960,13 +2032,16 @@ view Cards(mut Hand hand)
     }
 }
 
-// The GUI's own widgets, with a look that names what it changes
+// The GUI's own widgets, with a look that names what it changes. Enter in the
+// field joins, as the button beside it does
 view Join(mut Lobby lobby)
 {
+    mut var entered = false;
     GUI.Theme(GUITheme { field = Color(0.1, 0.12, 0.2), accent = Color.cyan, radius = 10 })
     {
-        GUI.TextField(Rect(40, 500, 240, 36), "", lobby.code);
+        GUI.TextField(Rect(40, 500, 240, 36), "", lobby.code, out entered);
     }
+    if ((GUI.Button(Rect(290, 500, 90, 36), "Join") || entered) && lobby.code != "") Session.Join(lobby.code);
 }
 
 // A library's widget, which reads the devices itself, in the window's lower left corner
@@ -2009,6 +2084,17 @@ Implemented, awaiting approval:
 - Down and right go on to the next widget and up and left go back, in the order the widgets are called, whatever their places on the screen: three cards side by side are reached with left and right. A slider and a number field keep left and right, to step their value, and the press that brought the focus to one doesn't step it too. From a button, a toggle, a text field or a control, left and right move the focus.
 - `GUI.Navigate()` says a menu is up: the arrows, the d-pad and the left stick can start moving the focus though the match reads the devices, as in a menu over a match that goes on behind it. A view, or a function it calls, calls it every frame the menu is up, as with `GUI.ShowKeyboard()`. Without it, only Tab starts the focus there. Once a widget has the focus, the keyboard and the gamepad are hidden from the input's `Sample`, as ever.
 - Typing: clicking a number field, or pressing Enter on it, starts typing into it with its value selected, so the first character replaces it; typing a number into a focused field starts too. Enter or leaving the field keeps a valid number; Escape keeps the old value.
+- **Entered fields**, beyond what's agreed (see Decided). Picks, awaiting the owner:
+  - The versions: `TextField(string label, mut string value, out bool entered)`, `IntField(string label, mut int value, out bool entered)` and `FloatField(string label, mut float value, out bool entered)`, with `GUI`'s taking the `Rect` first. The parameter is named `entered` and comes last. `Float2Field`, `Float3Field`, `Float4Field`, `ColorField`, the sliders and `Toggle` have no such version.
+  - `entered` is false in every frame but the one Enter ends the typing in: while the player types; when Enter starts the typing in a field that has the focus; when Escape stops it; when the focus leaves by Tab or by a click elsewhere, which keeps a number field's valid number without entering it; and when the field is in a `GUI.Disabled` block, or under a modal that isn't its own. Every call assigns it, so it's never what the variable held.
+  - A number field is entered whether or not its number changed, or was a number at all: `entered` says the key, and what the field returns says the value.
+  - The numpad's Enter is Enter. A gamepad's south button enters a number field, since it ends its typing as Enter does (it always did); it doesn't end a text field's typing, so it enters none.
+  - What's typed in the frame Enter comes in is part of what's entered. Characters and Enter can arrive in one frame (a slow frame, a paste and a quick Enter, a script), and the characters used to be dropped there. It's so for every field that's typed into, with `out entered` or without.
+  - The argument is an `out` argument like any other (see Out parameters): the word is written; `out var entered` and `out bool entered` declare a local, the block's, read where the call ran; `out` before a `mut` local or a field of local state assigns it; `out _` leaves it out; it's a write, so a view can't make the match's; and the call keeps its turn among what its statement reads. A call that leaves the word out, or writes it before another argument, is told so as a function's call is, with the editors' quick fix, where the engine's other functions say that no version takes the arguments.
+  - Which version a call means goes by how many arguments it has. By name, `entered: out var done`.
+  - A phone's keyboard: its Enter, whatever the key is labelled, is the GUI's Enter on the web (a key that names itself and says no position, or a line break typed into the page's field) and on Android (the system's key event), so it enters a field there too. That's by the code and a web test with made-up events: no phone was tried.
+  - A widget still can't be on the right of `||`, so the button comes first: `if (GUILayout.Button("Join") || entered)`.
+- `mut` before an argument is an error that says to remove it, where it was "expected an expression": the word is the parameter's, and only `out` is written at a call.
 - Widgets follow the pointer: the mouse, or a finger. A finger that lifted is nowhere, so nothing stays hovered where it was.
 - Hidden from the input's `Sample` and from views' `Devices`: the keyboard and gamepad while a widget has the focus, and the mouse's buttons and scroll, the pointer's press and the primary touch while the pointer is over a widget or an area, or pressing a widget. While a modal is up, everything is, the movement of the mouse and the pointer too. A key or a gamepad's button that went down while the keyboard and the gamepad were the GUI's stays hidden until it's let go, its release too, whatever became of the widget: the key that clicked a button isn't the game's while it's still down, and one the player held before the GUI took the keyboard is the game's again as soon as the GUI lets go.
 - The pointer is over a widget or an area where it is now, against where the last frame drew them: the game samples, and views read, before the frame's GUI sees the devices. So a press is the GUI's from the frame it lands in, with nothing before it: a finger that touches a button, or a click the mouse made as it came. And a click made as the mouse left a widget is the game's. A widget takes the pointer a frame after it first appears, so a press on it in that frame reaches the game. A frame remembers the places of up to 1024 widgets and areas; past those, the pointer is the GUI's a frame after the GUI saw it there.

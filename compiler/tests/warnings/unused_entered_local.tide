@@ -1,0 +1,12 @@
+// warnings: 1
+// expect: local 'entered' is never used
+// expect: nothing reads what the call makes there: write 'out _' to leave it out
+// A field asked whether it was entered, by a view that never reads the answer: `out _`,
+// or the field that doesn't say.
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby)
+{
+    GUILayout.TextField("Code", lobby.code, out var entered);
+    GUILayout.IntField("Count", lobby.count, out _);
+}

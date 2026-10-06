@@ -1,0 +1,6 @@
+// expect: a list's element is a copy, so 'GUILayout.TextField' can't make it
+// expect: make a variable, and put it in: 'GUILayout.TextField(..., out var e); items[i] = e;'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+local singleton Flags { List<bool> entered; }
+view Join(mut Lobby lobby, mut Flags flags) { GUILayout.TextField("Code", lobby.code, out flags.entered[0]); }

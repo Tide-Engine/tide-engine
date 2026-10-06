@@ -90,6 +90,7 @@ tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
 tide_e2e_test(scenes_fallback)
 tide_e2e_test(gui)
+tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entered`: whether Enter ended the typing
 tide_e2e_test(actions)
 tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
