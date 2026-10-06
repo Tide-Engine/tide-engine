@@ -193,12 +193,13 @@ Measured on a release build, on one thread, with the world kept and hashed after
 | A fresh ring at rest | 0.02 | 0.03 |
 | Four bots at a full ring | 0.4 to 0.6 | 0.5 to 1.0 |
 | The worst: a shock beside the middle's pyramid | 0.9 to 1.1 | 1.2 to 1.5 |
-| Keeping and hashing the world, after each | 0.3 to 0.45 | 0.3 to 0.45 |
+| Keeping and hashing the world, after each | 0.1 to 0.16 | 0.12 to 0.18 |
+| ...where there's one thread to hash it on | 0.3 to 0.45 | 0.3 to 0.45 |
 | Raising a ring: the tick that makes its 2,460 bodies | 9 | 27 |
 | ...and each tick of the second it takes to come to rest | 1.2 | 2.0 |
 
 - **Box3D's state is 3.8 megabytes** as a round starts, a kilobyte and a half a body, and all of it is in the match. Most ticks write only the part of it that changed: two in three while four bots bring a full ring down, and nine in ten after.
-- **Keeping that state costs about as much as the physics.** With four bots at a full ring, Box3D's own step is 0.3 ms of a tick. Writing what changed of its state into the match is 0.2 more, and hashing the world after is 0.3: about half of the state's 16 kilobyte blocks have a byte that changed, since what's moving is scattered through it. The game's own systems, and the package's that read bodies in and out, are 0.03 together.
+- **Keeping that state costs about as much as the physics.** With four bots at a full ring, Box3D's own step is 0.3 ms of a tick. Writing what changed of its state into the match is 0.2 more, and hashing the world after is 0.3 for one thread: about half of the state's 16 kilobyte blocks have a byte that changed, since what's moving is scattered through it. So the engine calls a few more threads in to hash, where the machine has them and the page lets it use them, which takes it to 0.1. The game's own systems, and the package's that read bodies in and out, are 0.03 together.
 - **A player who joins downloads it:** 2.4 megabytes as the match packs it, with the rest of the world.
 - **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5 ms on a desktop and 7 in a browser, and ten take 7 and 8.5. Where the ticks a client is ahead by would take more than 4 ms to run again, by what its ticks took of late, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about seven ticks ahead on a desktop, which is where a client is at a ping of about 90 milliseconds, and past four in a browser, which is still at most pings. Later in a round, with less in the ring, there's room for more.
 - **A frame's views** take 0.2 ms with a full ring standing, for under thirty draw calls.
