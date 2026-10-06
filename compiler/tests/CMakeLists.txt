@@ -19,6 +19,11 @@ tide_e2e_test(move_clamp)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
+tide_e2e_test(rows) # A system's loop over a chunk's rows: pages shared with a snapshot or not, rows left out, chunks in pieces
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_rows PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_rows PRIVATE TIDE_ROWS_THREADS=1)
+endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
@@ -301,6 +306,18 @@ add_test(NAME tidec_scale
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scale"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/scale/scale.cmake")
 set_tests_properties(tidec_scale PROPERTIES TIMEOUT 600)
+
+# Restrict lane parameters and sparse presence/fallback columns together must
+# fit WebAssembly's declaration limit, even for a game at the component limit.
+if(TIDE_NODE)
+    set(TIDE_ROWS_PARAMETER_ARGS "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/rows-parameters" "${PROJECT_SOURCE_DIR}")
+    if(TIDE_WEB)
+        list(APPEND TIDE_ROWS_PARAMETER_ARGS "${TIDE_CLANG}" "${CMAKE_C_COMPILER_TARGET}" "${CMAKE_SYSROOT}")
+    endif()
+    add_test(NAME tidec_rows_parameters
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/rows/parameters.mjs" ${TIDE_ROWS_PARAMETER_ARGS})
+    set_tests_properties(tidec_rows_parameters PROPERTIES TIMEOUT 120)
+endif()
 
 # Schedule tests: `tidec --schedule` on schedule/<name>.tide must print
 # schedule/<name>.txt exactly.

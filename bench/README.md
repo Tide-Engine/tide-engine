@@ -61,6 +61,16 @@ Events' paired profile/control variation is around measurement noise. Phase medi
 
 A dense Life path can remove window/output/chunk staging after the compiler proves complete writes, keeping old inputs immutable, separate outputs, snapshot ownership and fallback paths for sparse or skipped writes. Events can process eligible adjacent queue runs without repeating generic dispatch scaffolding for every hit. These are implementation opportunities, not measured speedups; full-write and handler-side-effect proofs are prerequisites.
 
+## Rows and lanes measurements
+
+The [rows and lanes report](results/row-functions.md) compares the compiler/engine baseline at `6e4b60e` with the tested implementation recorded in its [measurement metadata](results/row-functions-measurement-metadata.json). `7a7ba9e` is the compiler/engine full-suite validation point; subsequent benchmark corrections have their own measured source and binary identities. These records describe the benchmark implementation used for the measurement, before later dev integration.
+
+`versus_wide` covers a component of twelve float lanes, six changed by each tick, both unfiltered and with a sparse tag. `--tagged 1 --frozen 0`, `50` or `100` selects all, half or none of the rows. The wide and particles `--kept 1` variants retain equivalent prior state in both Tide and handwritten C and validate its contents along with the live state. The same corrected benchmark sources are used in both builds. Historical kept-C records that omitted retained state remain in the ledger for context; their snapshot comparisons are not comparable to these corrected measurements, and their digests belong to separate benchmark groups.
+
+Five before/after rounds run in turn, offering one and twelve threads. The report takes the minimum saved per-round tick median, and the minimum saved per-round end-to-end build median. Session values instead use minimum per-round recorded milliseconds per second of play, averaged per client where applicable; direct compiler diagnostics use minimum recorded wall times. These estimators differ from the median-of-medians summaries elsewhere on this page. The handwritten comparator is the fastest applicable C way. The benchmark mutex serializes cooperating sibling batches, while other work can still contend; metadata retains the pre-run CPU checks and uncertainty. Each runtime batch completes one 13-case alternating before/after round; end-to-end compiler pairs each take the gate, while the remaining direct compiler pairs share one finishing acquisition, as recorded in the metadata. Earlier partial runtime pairs remain in the ledgers but are excluded from the final tables through metadata date/options identities.
+
+`bench/compile.mjs --loops 100 --archetypes 1` (or `4`) adds entity-system loops to its reachable-function fixture. The report covers native/web debug/release builds, cold and unchanged builds, and Tide/C/header edits. The [direct compiler records](results/row-functions-compile-phases.json) separate whole-command wall time, available LLVM IR/backend phase wall times and object size; unavailable phase logs do not imply a phase timing. Raw [runtime](results/versus.jsonl), [Sand](results/sand.jsonl), [Gallery](results/gallery.jsonl) and [compile](results/compile.jsonl) records retain the rounds. Mixed passing/skipped rows and unchanged lanes inside a `mut` component remain implementation gaps.
+
 ## Compile and iteration time
 
 Run the compile benchmark against a complete Tide installation, with Node:
@@ -71,6 +81,8 @@ node bench/compile.mjs --tide C:/path/to/tide/bin/tide.exe --targets native,web 
 ```
 
 The defaults measure native debug builds of 100 reachable functions across 11 Tide files, five times. `--files 1000 --sizes 1000` also measures a game spread across a thousand source files. Each function runs in a system, so the frontend and C optimizer must process reachable code. These are synthetic source-size measurements; declaration count alone does not describe the complexity of a real game.
+
+That game has one system, which runs once a tick, so it has none of the code tidec generates for a system's loop over its entities. `--loops 100` adds a hundred systems that each run for every entity of a component of a dozen floats and change it, one in four leaving out the entities with a sparse tag, and `--archetypes` (1 to 4, 4 unless it says) is how many archetypes those entities come in: each loop is for all of them.
 
 Each repetition uses a temporary game and measures a sequence:
 

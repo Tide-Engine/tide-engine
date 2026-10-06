@@ -43,15 +43,16 @@ static bool share_archetypes(const arch_set *a, const arch_set *b)
     return false;
 }
 
-// Whether two systems can run for the same entity: they share an archetype,
-// and neither needs a sparse component the other excludes (a sparse
-// component is the row's, not the archetype's, so that's told entity by entity).
-static bool can_meet(const program *prog, const decl *a, const decl *b, const arch_set *sa, const arch_set *sb)
+// Whether two systems can be at the same rows: they share an archetype. A
+// sparse component one needs and the other excludes keeps them off the same
+// entity, but not off the same pages, as it's the row's, not the archetype's:
+// both go through the archetype's chunks, and a page of a chunk that a
+// snapshot shares is replaced by whoever writes it (tide_table_lanes_begin),
+// which loses what the other wrote there meanwhile. So those wait for each
+// other like any two that write the same component.
+static bool can_meet(const arch_set *sa, const arch_set *sb)
 {
-    if (!share_archetypes(sa, sb)) return false;
-    const comp_mask a_sparse = mask_and(a->need_mask, prog->sparse_mask);
-    const comp_mask b_sparse = mask_and(b->need_mask, prog->sparse_mask);
-    return !mask_intersects(a_sparse, b->without_mask) && !mask_intersects(b_sparse, a->without_mask);
+    return share_archetypes(sa, sb);
 }
 
 static bool add_conflict(system_wait *w, const conflict_kind kind)
@@ -130,10 +131,13 @@ typedef struct access_list {
 } access_list;
 
 // In parameter order, global accesses at the first World or query parameter.
-static access_list accesses_of(const decl *sys)
+// A system that takes its entities' input, or their devices, reads whose each
+// is: its Owner, after its parameters, unless one of them is the Owner.
+static access_list accesses_of(const program *prog, const decl *sys)
 {
-    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 1)), 0};
+    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 2)), 0};
     bool any_entity = false;
+    bool by_owner = false, takes_owner = false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         for (int k = 0; !any_entity && (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) && k < sys->world_uses.count; k++) {
@@ -141,9 +145,12 @@ static access_list accesses_of(const decl *sys)
             list.items[list.count++] = (access){u->component, u->writes, true};
         }
         any_entity |= p->type.kind == TY_WORLD || p->type.kind == TY_QUERY;
+        by_owner |= p->type.kind == TY_INPUT || p->type.kind == TY_RECORD;
         const decl *data = accessed(p);
         if (data) list.items[list.count++] = (access){data, p->mode == PARAM_MUT, false};
+        takes_owner |= data && data == prog->owner;
     }
+    if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
     return list;
 }
 
@@ -221,7 +228,7 @@ void analyze_parallelism(program *prog)
     memset(before, 0, row_size * (size_t)n);
     memset(followers, 0, sizeof(int) * (size_t)n);
     for (int i = 0; i < n; i++) sets[i] = archetypes_of(prog, prog->systems.items[i]);
-    for (int i = 0; i < n; i++) uses[i] = accesses_of(prog->systems.items[i]);
+    for (int i = 0; i < n; i++) uses[i] = accesses_of(prog, prog->systems.items[i]);
 
     // The systems are in tick order, so everything a system waits for comes first.
     for (int j = 0; j < n; j++) {
@@ -235,7 +242,7 @@ void analyze_parallelism(program *prog)
         for (int i = 0; i < j; i++) {
             const decl *earlier = prog->systems.items[i];
             if (!contains((const decl *const *)sys->after.items, sys->after.count, earlier)
-                && !find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(prog, earlier, sys, &sets[i], &sets[j]), NULL)) {
+                && !find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(&sets[i], &sets[j]), NULL)) {
                 continue;
             }
             waits[i >> 6] |= (uint64_t)1 << (i & 63);
@@ -273,7 +280,7 @@ void analyze_parallelism(program *prog)
                 decl *earlier = prog->systems.items[i];
                 system_wait wait = {0};
                 wait.on = earlier;
-                find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(prog, earlier, sys, &sets[i], &sets[j]), &wait);
+                find_conflicts(earlier, sys, &uses[i], &uses[j], can_meet(&sets[i], &sets[j]), &wait);
                 wait.ordered = contains((const decl *const *)sys->after.items, sys->after.count, earlier);
                 wait.through = goes_through ? prog->systems.items[through[i]] : NULL;
                 vec_push(sys->waits, wait);

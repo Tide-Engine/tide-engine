@@ -95,9 +95,9 @@ Two systems **conflict** when one writes a component or singleton the other read
 Some things never make systems wait:
 
 - **Filters.** `with` and `without` read nothing.
-- **Entities that can't overlap.** Two systems that write the same component don't conflict if they can never touch the same entity, which the compiler proves from the archetypes: `with Player` against `with Enemy`, when nothing is both. A component a system reaches through its `World` or a read-only query is any entity's, so this doesn't hold for it: `world.Get<Health>(e)` and `query (Health health) targets` wait for every earlier system that writes `Health`.
+- **Entities that can't overlap.** Two systems that write the same component don't conflict if they can never touch the same entity, which the compiler proves from the archetypes: `with Player` against `with Enemy`, when nothing is both. A [sparse component](./entities.md#limits) doesn't count for this: entities with it and without it are one archetype, kept side by side, so `with Stunned` and `without Stunned` still wait for each other. A component a system reaches through its `World` or a read-only query is any entity's, so this doesn't hold for it: `world.Get<Health>(e)` and `query (Health health) targets` wait for every earlier system that writes `Health`.
 - **Structural changes and events.** `Add`, `Remove`, `Destroy` and `Send` are recorded and applied at the end of the tick, in order. Event handlers run then too, so they aren't part of the tick's schedule.
-- **Input and `Time`**, which systems only read.
+- **Input and `Time`**, which systems only read. An entity's input is its owner's, though, so a system that reads its entities' input reads their `Owner`: it waits for an earlier system that changes it.
 - **C.** Calls to C are trusted: they make no system wait, and a system that calls C splits across threads like any other. What C does when it's called from several threads at once is the game's to get right. A [system written in C](../c/functions.md#systems-written-in-c) is scheduled by what it declares, as its code can't be read, and shows as `(per entity, in C)`.
 
 Some things are the whole match's, so systems wait for each other over them whatever entities they run for:
