@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/jobs.h"
 #include "tide/net.h"
 
 #if defined(__wasm__) && defined(__wasm_atomics__)
@@ -326,4 +327,62 @@ uint64_t tide_page_hash(tide_page *p, const uint32_t bytes)
         p->hashed = bytes;
     }
     return p->hash;
+}
+
+void tide_page_stale(tide_stale_pages *s, tide_page *p, const uint32_t bytes)
+{
+    if (p->hashed == bytes) return;
+    if (s->count == s->room) {
+        const uint32_t more = s->room ? 2u * s->room : 64u;
+        s->pages = tide_realloc(s->pages, (size_t)s->room * sizeof *s->pages, (size_t)more * sizeof *s->pages);
+        s->room = more;
+    }
+    s->pages[s->count++] = (tide_stale_page){p, bytes};
+    s->bytes += bytes;
+}
+
+// What it takes for another thread to pay: waking one costs tens of
+// microseconds, which is what a thread hashes a few hundred kilobytes in. And
+// the most that are called in: past three the hash is no quicker, and with
+// every thread of a 12-core machine awake the ticks around it ran a fifth
+// slower (measured with Sumo, whose ticks change 2 MB).
+#define SHARED_HASH_BYTES (512u * 1024u)
+#define SHARED_HASH_MOST 3u
+
+typedef struct stale_work {
+    const tide_stale_pages *stale;
+    uint32_t next; // The first page no thread has taken
+} stale_work;
+
+// Each thread takes the next page nobody has, until there's none: a page is
+// hashed by one thread, which writes what it kept of it, and whoever asked
+// reads that once every thread is done.
+static void hash_stale(void *context, const uint32_t thread)
+{
+    (void)thread;
+    stale_work *work = context;
+    tide_memory_sync(); // The pages, and the list of them, are another thread's
+    for (;;) {
+        const uint32_t i = __atomic_fetch_add(&work->next, 1u, __ATOMIC_RELAXED);
+        if (i >= work->stale->count) return;
+        (void)tide_page_hash(work->stale->pages[i].page, work->stale->pages[i].bytes);
+    }
+}
+
+uint32_t tide_pages_hash(tide_stale_pages *s, const tide_jobs *jobs)
+{
+    uint32_t hashed = 0;
+    // A thread more for each half megabyte, and never many: only a pool that can call in a few
+    // (run_some) is asked, as one that wakes every thread costs the ticks after more than they save
+    uint64_t others = s->bytes / SHARED_HASH_BYTES;
+    if (others > SHARED_HASH_MOST) others = SHARED_HASH_MOST;
+    if (jobs && jobs->run_some && jobs->threads > 1u && s->count > 1u && others > 0) {
+        if (others > jobs->threads - 1u) others = jobs->threads - 1u;
+        stale_work work = {s, 0};
+        jobs->run_some(jobs->self, (uint32_t)others, hash_stale, &work);
+        hashed = s->count;
+    }
+    free(s->pages);
+    *s = (tide_stale_pages){0};
+    return hashed;
 }

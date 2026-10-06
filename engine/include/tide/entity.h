@@ -129,6 +129,8 @@ tide_entity tide_entity_in_slot(const tide_entities *t, uint32_t index);
 // of the slots, the same for the same entities however the table got there.
 void tide_entities_copy(tide_entities *to, const tide_entities *from);
 uint64_t tide_entities_hash(uint64_t h, const tide_entities *t);
+// The pages that hash would have to read again (tide/page.h), for whoever hashes them on threads first.
+void tide_entities_stale(const tide_entities *t, tide_stale_pages *s);
 
 // Lets go of its pages, leaving it empty.
 void tide_entities_free(tide_entities *t);

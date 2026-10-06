@@ -175,6 +175,11 @@ uint64_t tide_entities_hash(uint64_t h, const tide_entities *t)
     return h;
 }
 
+void tide_entities_stale(const tide_entities *t, tide_stale_pages *s)
+{
+    for (uint32_t p = 0; p < t->pages; p++) tide_page_stale(s, t->page[p], used_on(t, p) * (uint32_t)sizeof(tide_entity_slot));
+}
+
 void tide_entities_free(tide_entities *t)
 {
     for (uint32_t i = 0; i < t->pages; i++) {
