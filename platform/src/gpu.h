@@ -103,6 +103,15 @@ typedef struct tide_gpu {
     // nothing below is called while there's none.
     uint32_t (*epoch)(void);
 
+    // Optional timing of a game's drawing, outside passes. Read returns a
+    // newly completed sample in milliseconds, or -1 for none (including an
+    // unsupported device). It never waits for the GPU. Reset discards pending
+    // samples and releases the timing resources when the drawer closes.
+    void (*time_begin)(void);
+    void (*time_end)(void);
+    double (*time_read)(void);
+    void (*time_reset)(void);
+
     // A buffer of `size` bytes, holding `data` if it's given. Sizes, and what's
     // written, are multiples of 4 bytes.
     tide_gpu_id (*buffer)(tide_gpu_buffer_kind kind, size_t size, const void *data);
