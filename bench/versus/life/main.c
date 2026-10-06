@@ -9,7 +9,7 @@
 extern const versus_way life_c;
 
 static versus_flag flags[] = {
-    {"size", "the grid's width and height, in cells", 1024, 128, 0},
+    {"size", "the grid's width and height, in cells", 1024, 128, 0, 1},
 };
 
 static void *make(const versus_flag *f)

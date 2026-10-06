@@ -9,7 +9,7 @@
 extern const versus_way churn_c;
 
 static versus_flag flags[] = {
-    {"rate", "bullets fired a tick, each living 20 to 179 ticks", 2000, 100, 0},
+    {"rate", "bullets fired a tick, each living 20 to 179 ticks", 2000, 100, 0, 1},
 };
 
 static void *make(const versus_flag *f)

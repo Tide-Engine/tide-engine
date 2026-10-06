@@ -28,6 +28,7 @@ typedef struct versus_flag {
     uint32_t full;  // Its value in a full run...
     uint32_t quick; // ...and with --quick
     uint32_t value; // What the run uses
+    uint32_t minimum; // Smallest accepted command-line value (maximum: INT32_MAX)
 } versus_flag;
 
 // One way of writing the concept.
