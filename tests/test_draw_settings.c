@@ -1,6 +1,6 @@
 // The draw list's settings: how what's drawn after them comes out (blend,
-// tint) and where it lands (transforms, clip, cameras), in their two forms: set
-// for the commands to come, or pushed around some and popped.
+// tint, depth) and where it lands (transforms, clip, cameras), in their two
+// forms: set for the commands to come, or pushed around some and popped.
 
 #include <string.h>
 
@@ -52,6 +52,7 @@ TIDE_TEST(draw_settings_start_over_each_frame)
     TIDE_CHECK(d.commands[0].blend == TIDE_BLEND_ALPHA && color_is(d.commands[0].color, 1, 0, 0, 1));
 
     tide_draw_set_blend(&d, TIDE_BLEND_ADD);
+    tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
     tide_draw_set_tint(&d, (tide_color){0.5f, 0.5f, 0.5f, 0.5f});
     tide_draw_set_transform(&d, tide_draw_transform_trs(tide_f2(10.0f, 20.0f), 0.0f, tide_f2(2.0f, 2.0f)));
     tide_draw_set_transform_3d(&d, tide_translate_f4x4(tide_f3(1.0f, 2.0f, 3.0f)));
@@ -64,7 +65,7 @@ TIDE_TEST(draw_settings_start_over_each_frame)
 
     tide_draw_reset(&d);
     TIDE_CHECK(d.blend == TIDE_BLEND_ALPHA && !d.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
-    TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d);
+    TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
     // Nothing but the rect, as it was given
     TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_RECT && d.commands[0].blend == TIDE_BLEND_ALPHA);
@@ -403,6 +404,7 @@ TIDE_TEST(draw_settings_stay_with_their_list)
 {
     tide_draw_list world = {0}, over = {0};
     tide_draw_set_blend(&over, TIDE_BLEND_ADD);
+    tide_draw_set_depth(&over, TIDE_DEPTH_READ);
     tide_draw_set_tint(&over, (tide_color){1.0f, 1.0f, 0.0f, 1.0f});
     tide_draw_set_screen(&over);
     tide_draw_push_clip(&over, (tide_rect){0.0f, 0.0f, 10.0f, 10.0f});
@@ -413,6 +415,7 @@ TIDE_TEST(draw_settings_stay_with_their_list)
     tide_draw_mesh_3d(&over, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
 
     tide_draw_set_blend(&world, TIDE_BLEND_MULTIPLY);
+    tide_draw_set_depth(&world, TIDE_DEPTH_NONE);
     tide_draw_set_tint(&world, TIDE_COLOR_RED);
     tide_draw_set_transform(&world, tide_draw_transform_scaled(tide_f2(100.0f, 100.0f), 0.0f, 3.0f));
     tide_draw_set_transform_3d(&world, tide_translate_f4x4(tide_f3(50.0f, 0.0f, 0.0f)));
@@ -423,7 +426,7 @@ TIDE_TEST(draw_settings_stay_with_their_list)
     TIDE_REQUIRE(world.count == before + over.count);
     for (uint32_t i = 0; i < over.count; i++) {
         const tide_draw_command *theirs = &over.commands[i], *ours = &world.commands[before + i];
-        TIDE_CHECK(ours->kind == theirs->kind && ours->blend == theirs->blend);
+        TIDE_CHECK(ours->kind == theirs->kind && ours->blend == theirs->blend && ours->depth == theirs->depth);
         if (theirs->kind == TIDE_DRAW_SHAPE || theirs->kind == TIDE_DRAW_TEXT) {
             TIDE_CHECK(ours->a.x == theirs->a.x && ours->a.y == theirs->a.y && ours->b.x == theirs->b.x);
             TIDE_CHECK(color_is(ours->color, 1, 1, 0, 1));
@@ -434,6 +437,7 @@ TIDE_TEST(draw_settings_stay_with_their_list)
         }
         if (theirs->kind == TIDE_DRAW_MESH_3D) {
             TIDE_CHECK(color_is(ours->color, 1, 1, 0, 1) && world.matrices[ours->mesh3.first].c3.x == 0.0f);
+            TIDE_CHECK(ours->depth == TIDE_DEPTH_READ);
         }
         if (theirs->kind == TIDE_DRAW_CLIP) { // The clip it was made in comes with it
             const tide_draw_clip_data *clip = &world.clips[ours->clip - 1u];
@@ -443,7 +447,102 @@ TIDE_TEST(draw_settings_stay_with_their_list)
     }
     // What the appended list drew with isn't left set, but its cameras and its clip
     TIDE_CHECK(world.blend == TIDE_BLEND_ALPHA && !world.tinted && !world.place.moved);
+    TIDE_CHECK(world.depth == TIDE_DEPTH_READ_WRITE);
     TIDE_CHECK(world.place.clip && world.cameras[world.place.camera_2d - 1u].screen == 1);
     tide_draw_free(&over);
     tide_draw_free(&world);
+}
+
+// What a 3D mesh does with depth is a setting like how it blends: its command
+// carries it, a block puts back what it found, and it never comes between
+// draws that would go at once. Nothing else has depth, whatever is set.
+TIDE_TEST(draw_depth_is_the_3d_meshes_own)
+{
+    tide_draw_list d = {0};
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_REQUIRE(d.count == 1 && last(&d)->kind == TIDE_DRAW_MESH_3D);
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ_WRITE && d.depth == TIDE_DEPTH_READ_WRITE); // As it always was
+
+    // A block puts back what it found, a Set inside it or not
+    tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
+    const uint32_t read = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == 2 && last(&d)->depth == TIDE_DEPTH_READ);
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ_WRITE); // Set inside the block: for the rest of it
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == 3 && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
+    tide_draw_pop(&d, read);
+    TIDE_CHECK(d.depth == TIDE_DEPTH_NONE && d.saved_count == 0);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == 4 && last(&d)->depth == TIDE_DEPTH_NONE);
+    // Left early from inside two: the outer mark puts back what the outer found, the blend with it
+    const uint32_t outer = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
+    tide_draw_push_blend(&d, TIDE_BLEND_ADD);
+    tide_draw_push_depth(&d, TIDE_DEPTH_READ_WRITE);
+    tide_draw_pop(&d, outer);
+    TIDE_CHECK(d.depth == TIDE_DEPTH_NONE && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
+    tide_draw_unset_depth(&d);
+    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE);
+    tide_draw_set_depth(&d, (tide_depth)77); // None of them: as a frame starts
+    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE);
+
+    // The same setting around each of a view's entities' meshes: still one run
+    tide_draw_reset(&d);
+    for (int entity = 0; entity < 3; entity++) {
+        const uint32_t mark = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
+        tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3((float)entity, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
+        tide_draw_pop(&d, mark);
+    }
+    TIDE_REQUIRE(d.count == 1 && last(&d)->mesh3.count == 3 && last(&d)->depth == TIDE_DEPTH_READ);
+    // Set and put back around nothing: the run goes on
+    tide_draw_pop(&d, tide_draw_push_depth(&d, TIDE_DEPTH_NONE));
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == 1 && last(&d)->mesh3.count == 4);
+    // Another depth is another run
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ_WRITE);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.count == 2 && last(&d)->mesh3.count == 1 && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
+
+    // A mesh through a 3D shader of the game's has it too: the same again is more of its run, another is another
+    static const tide_shader solid = {.dims = 3, .vertex_size = 32, .instance_floats = 4};
+    static const tide_shader flat = {.dims = 2, .vertex_size = 32, .instance_floats = 1};
+    static const tide_shader pass = {.dims = 2, .vertex_size = sizeof(tide_vertex)};
+    const tide_float4x4 placed = tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f));
+    const float instance[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+    const uint32_t mesh = shader_mesh(&d, 32);
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ);
+    tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
+    tide_draw_pop(&d, tide_draw_push_depth(&d, TIDE_DEPTH_NONE));
+    tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
+    TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_SHADED && last(&d)->depth == TIDE_DEPTH_READ);
+    TIDE_CHECK(d.runs[last(&d)->shaded.run].count == 2);
+    tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
+    tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_NONE && d.runs[last(&d)->shaded.run].count == 1);
+
+    // Nothing else has depth: a 2D command says none whatever is set, so the setting never comes between two
+    const uint32_t count = d.count;
+    tide_draw_shaded(&d, &flat, mesh, instance, NULL, NULL, 0);
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ);
+    tide_draw_shaded(&d, &flat, mesh, instance, NULL, NULL, 0);
+    TIDE_CHECK(d.count == count + 1u && last(&d)->depth == 0 && d.runs[last(&d)->shaded.run].count == 2);
+    tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_RECT && last(&d)->depth == 0);
+    tide_draw_text(&d, "a", origin, 8.0f, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_TEXT && last(&d)->depth == 0);
+    tide_draw_blit(&d, &pass, TIDE_BLEND_REPLACE, NULL, NULL, NULL, 0);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_BLIT && last(&d)->depth == 0);
+    tide_draw_clear(&d, TIDE_COLOR_BLACK);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CLEAR && last(&d)->depth == 0);
+
+    // It's the same wherever a mesh is drawn: a target's meshes have what the window's do
+    tide_draw_to(&d, 17, 64, 64);
+    tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->depth == TIDE_DEPTH_READ);
+
+    // The GUI's and a host's own start from the defaults
+    tide_draw_defaults(&d);
+    TIDE_CHECK(d.depth == TIDE_DEPTH_READ_WRITE && d.target == 0);
+    tide_draw_free(&d);
 }

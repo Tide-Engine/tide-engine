@@ -38,6 +38,10 @@ static const decl *shape_decl;
 static decl blend_enum;
 static const type T_BLEND = {TY_ENUM, &blend_enum};
 static const decl *blend_decl;
+// ...and the Depth enum, which Draw.Depth does.
+static decl depth_enum;
+static const type T_DEPTH = {TY_ENUM, &depth_enum};
+static const decl *depth_decl;
 // And the Font enum, which Draw2D.Text and Draw2D.MeasureText take.
 static decl text_font;
 static const type T_FONT = {TY_ENUM, &text_font};
@@ -67,11 +71,12 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
+    depth_decl = depth;
     font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
@@ -119,6 +124,7 @@ static type real_type(const type t)
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &blend_enum && blend_decl) return (type){TY_ENUM, (decl *)blend_decl};
+    if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -144,6 +150,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_instances) return "List<T>";
     if (t.decl == &shape_struct) return "Shape";
     if (t.decl == &blend_enum) return "Blend";
+    if (t.decl == &depth_enum) return "Depth";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -492,6 +499,14 @@ static void build_signatures(void)
                 "Wherever it's drawn. In a block, it multiplies the tint there is.",
                 1, &T_COLOR);
     add_unset("Draw", "SetTint", "tide_draw_unset_tint", "No tint, as each frame starts.");
+    add_setting("Draw", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
+                "What 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's nearer "
+                "and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's nearer, and "
+                "hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or `Depth.None` "
+                "(drawn over whatever is there). Wherever it's drawn: the window or a target. The Draw2D calls have no "
+                "depth, whatever it says.",
+                1, &T_DEPTH);
+    add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     static const char transform_doc[] =
         "Moves, turns and scales the Draw2D calls, in the units they're in, about (0, 0): scaled, then turned by "
         "`rotation` (radians, from +x towards +y), then moved by `offset`. Shapes stay shapes; text that's only moved "
@@ -1276,11 +1291,20 @@ type resolve_builtin_call(const str owner, expr *e)
                 if (drawing && str_eq_c(e->name, signatures[i].name)) theirs = signatures[i].owner;
             }
             if (theirs) {
-                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and "
-                          "window", theirs, theirs, STR_ARG(e->name));
+                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit "
+                          "and window", theirs, theirs, STR_ARG(e->name));
             } else {
-                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes "
-                          "are theirs");
+                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and "
+                          "meshes are theirs");
+            }
+        } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
+            // A setting of Draw's own, asked of a destination: Draw3D.Depth, target.SetBlend
+            for (int i = 0; i < signature_count; i++) {
+                const signature *s = &signatures[i];
+                if (strcmp(s->owner, "Draw") != 0 || !str_eq_c(e->name, s->name)) continue;
+                diag_note("it's Draw's, the same wherever it's drawn, the window or a target: 'Draw." STR_FMT "(...)%s'",
+                          STR_ARG(e->name), s->gui & DRAW_BLOCK ? " { ... }" : ";");
+                break;
             }
         }
         suggestion s = suggest_start(e->name);

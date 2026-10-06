@@ -485,6 +485,7 @@ enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, S
 typedef struct draw_step {
     uint32_t kind;    // STEP_*
     uint32_t blend;   // How it goes over what's there: tide_blend
+    uint32_t depth;   // STEP_MESH_3D, and a STEP_SHADED through a 3D shader: what it does with depth, tide_depth
     uint32_t target;  // The destination: 0 for the window, 1 + its place in the list's targets
     uint32_t first;   // STEP_SHAPES: its shapes; STEP_TEXT and STEP_MESH: its vertices;
                       // STEP_MESH_3D: its instances' transforms in the list's matrices;
@@ -927,15 +928,21 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 }
 
 // The engine's own pipelines, each in a version for each way of blending
-// (tide_blend), made the first time a list draws with it.
+// (tide_blend) and, for the 3D meshes', each thing a mesh does with depth
+// (tide_depth), made the first time a list draws with it.
 enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
-enum { BLENDS = TIDE_BLEND_REPLACE + 1 };
+enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1 };
+
+// What a pipeline does with depth for each tide_depth.
+static const tide_gpu_depth gpu_depths[DEPTHS] = {
+    [TIDE_DEPTH_READ_WRITE] = TIDE_GPU_DEPTH_TEST, [TIDE_DEPTH_READ] = TIDE_GPU_DEPTH_READ,
+    [TIDE_DEPTH_NONE] = TIDE_GPU_DEPTH_NONE};
 
 // What the renderer keeps on the GPU (see gpu.h): its pipelines, whose
 // shaders are in shaders.h, and the buffers and textures a list's steps draw
 // from, made the first time they're needed.
 static struct {
-    tide_gpu_id pipelines[PIPELINE_KINDS][BLENDS];
+    tide_gpu_id pipelines[PIPELINE_KINDS][BLENDS][DEPTHS]; // Only the 3D meshes' have more than the first depth
     tide_gpu_id clear;   // The clears' pipeline
     tide_gpu_id corners; // The shapes' quad
     tide_gpu_id shape_instances;
@@ -1141,6 +1148,7 @@ typedef struct shader_pipeline {
     tide_gpu_id pipeline;
     uint32_t frame; // The frame that last drew through it
     uint8_t blend;  // How it goes over what's there: a pipeline for each way a shader is drawn (tide_blend)
+    uint8_t depth;  // ...and for each thing a 3D one does with depth (tide_depth): 0 for a 2D one, and a blit
     bool blit;      // The whole destination, leaving its depth alone, rather than an ordinary mesh
 } shader_pipeline;
 
@@ -1186,13 +1194,15 @@ static const char *joined(const char *first, const char *second)
     return whole;
 }
 
-// One of the engine's pipelines, for one way of blending: made if there's none.
-static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend)
+// One of the engine's pipelines, for one way of blending and, for the 3D
+// meshes', one thing done with depth: made if there's none.
+static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend, uint32_t depth)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
-    tide_gpu_id *made = &gpu_state.pipelines[kind][blend < BLENDS ? blend : TIDE_BLEND_ALPHA];
+    if (kind != PIPELINE_MESHES_3D || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
+    tide_gpu_id *made = &gpu_state.pipelines[kind][blend < BLENDS ? blend : TIDE_BLEND_ALPHA][depth];
     if (*made) return *made;
     tide_gpu_pipeline_desc desc;
     switch (kind) {
@@ -1268,7 +1278,7 @@ static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend)
             .attribute_count = 7,
             .uniform_size = sizeof(mesh_3d_uniforms),
             .texture_count = 1,
-            .depth = TIDE_GPU_DEPTH_TEST,
+            .depth = gpu_depths[depth],
         };
         break;
     }
@@ -1300,10 +1310,10 @@ static void find_pipelines(void)
     for (uint32_t i = 0; i < step_count; i++) {
         draw_step *s = &steps[i];
         switch (s->kind) {
-        case STEP_SHAPES: s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend); break;
-        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend); break;
-        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend); break;
-        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend); break;
+        case STEP_SHAPES: s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0); break;
+        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0); break;
+        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0); break;
+        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth); break;
         default: break;
         }
     }
@@ -1412,14 +1422,14 @@ static void forget_meshes_3d(void)
     }
 }
 
-// Where the pipeline of the shader `id`, blending as `blend`, is in the index, or would go.
-static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend)
+// Where the pipeline of the shader `id`, blending as `blend` and doing `depth` with depth, is in the index, or would go.
+static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend, const uint8_t depth)
 {
     const uint32_t mask = shader_index_capacity - 1u;
-    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu) & mask;
+    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu ^ depth * 0xc2b2ae35u) & mask;
     while (shader_index[i]) {
         const shader_pipeline *p = &shader_pipelines[shader_index[i] - 1u];
-        if (p->id == id && p->blit == blit && p->blend == blend) break;
+        if (p->id == id && p->blit == blit && p->blend == blend && p->depth == depth) break;
         i = (i + 1u) & mask;
     }
     return i;
@@ -1438,21 +1448,26 @@ static void index_shaders(void)
         memset(shader_index, 0, capacity * sizeof(uint32_t));
     }
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
-        shader_index[shader_slot(shader_pipelines[i].id, shader_pipelines[i].blit, shader_pipelines[i].blend)] = i + 1u;
+        const shader_pipeline *p = &shader_pipelines[i];
+        shader_index[shader_slot(p->id, p->blit, p->blend, p->depth)] = i + 1u;
     }
 }
 
-// The pipeline of a shader of the game's for one way of blending, made if
-// there's none: it reads a mesh's vertices as they are from the first slot,
-// and from the second an instance's bytes, a float4 or an int4 an attribute.
-static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend)
+// The pipeline of a shader of the game's for one way of blending and, for a
+// 3D one, one thing done with depth, made if there's none: it reads a mesh's
+// vertices as they are from the first slot, and from the second an instance's
+// bytes, a float4 or an int4 an attribute.
+static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend, uint32_t depth)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
     if (blend >= BLENDS) blend = blit ? TIDE_BLEND_REPLACE : TIDE_BLEND_ALPHA;
+    // Only a 3D mesh has depth: a 2D one draws over what's there, and a blit leaves its destination's alone
+    const bool deep = !blit && shader->dims == 3;
+    if (!deep || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
     if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
-    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend);
+    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
         p->frame = gpu_frame;
@@ -1475,7 +1490,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         .uniform_size = (uint32_t)sizeof(shaded_uniforms) + tide_shader_uniform_size(shader),
         .texture_count = shader->texture_count,
         .blend = blends[blend],
-        .depth = !blit && shader->dims == 3 ? TIDE_GPU_DEPTH_TEST : TIDE_GPU_DEPTH_NONE,
+        .depth = deep ? gpu_depths[depth] : TIDE_GPU_DEPTH_NONE,
     };
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
         desc.attributes[i].slot = 0;
@@ -1496,7 +1511,8 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         shader_pipeline_capacity = capacity;
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
-    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend, blit};
+    shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
+                                                                (uint8_t)depth, blit};
     shader_index[slot] = ++shader_pipeline_count;
     return pipeline;
 }
@@ -1554,7 +1570,7 @@ static bool upload_shaded(const tide_draw_list *list)
         const tide_draw_run *run = &list->runs[steps[i].first];
         any = true;
         mesh_for(list, run->mesh);
-        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend);
+        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth);
     }
     if (any && list->instance_used) {
         buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used, 1, 4096u);
@@ -2029,6 +2045,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (!c->mesh3.mesh || c->mesh3.mesh > list->mesh_count) break; // Forgotten (see tide_draw_forget)
             if (list->meshes[c->mesh3.mesh - 1u].space == TIDE_MESH_BYTES) break; // A shader's: not these vertices
             draw_step *s = add_step(STEP_MESH_3D);
+            s->depth = c->depth;
             s->first = c->mesh3.first;
             s->count = c->mesh3.count;
             s->texture = c->mesh3.texture;
@@ -2044,6 +2061,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (!run_draws(list, c->shaded.run)) break;
             if (c->kind == TIDE_DRAW_BLIT && list->runs[c->shaded.run].shader->dims != 2) break;
             draw_step *s = add_step(c->kind == TIDE_DRAW_BLIT ? STEP_BLIT : STEP_SHADED);
+            s->depth = c->depth;
             s->first = c->shaded.run;
             s->camera = f->camera_3d;
             s->fit = f->fit;

@@ -361,6 +361,7 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     current = NULL;
     if (clear) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glDepthMask(GL_TRUE); // A clear only reaches the depth that's written: the last pipeline may have read it alone
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 }
@@ -403,7 +404,8 @@ static void gl_use(const tide_gpu_id pipeline)
         glDisable(GL_DEPTH_TEST);
     } else {
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(current->desc.depth == TIDE_GPU_DEPTH_TEST ? GL_LEQUAL : GL_ALWAYS);
+        glDepthFunc(current->desc.depth == TIDE_GPU_DEPTH_RESET ? GL_ALWAYS : GL_LEQUAL);
+        glDepthMask(current->desc.depth == TIDE_GPU_DEPTH_READ ? GL_FALSE : GL_TRUE);
     }
 }
 

@@ -1,0 +1,8 @@
+// expect: enum 'Depth' has no member 'Test'
+// expect: only reads it, 'Depth.Read', hidden behind what's nearer and hiding nothing
+scene Main { }
+
+view Show()
+{
+    Draw.SetDepth(Depth.Test);
+}
