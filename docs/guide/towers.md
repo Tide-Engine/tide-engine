@@ -146,9 +146,9 @@ var fall = SIGHT * Free(physics, piece.kind, from, falling.quarter, float2(0, -S
 **A tower is loose bricks all the way down.** With the world as Box2D comes, forty meters of them is a spring: a contact gives a little, and every landing ran down the whole tower and back. So the game tunes the world, which is [three fields of `Physics`](../physics/box2d.md#the-world):
 
 ```csharp
-physics.substeps = SUBSTEPS;   // 8, where it comes with 4
-physics.stiffness = STIFFNESS; // 60, where it comes with 30
-physics.damping = DAMPING;     // 40, where it comes with 10
+physics.substeps = SUBSTEPS;          // 8, where it comes with 4
+physics.contactStiffness = STIFFNESS; // 60, where it comes with 30
+physics.contactDamping = DAMPING;     // 40, where it comes with 10
 ```
 
 Contacts are twice as stiff, which takes twice the substeps to count, and come back out four times as gently. A tower of loose bricks then stands at forty meters, and what's wrong with it low down still shows at the top.

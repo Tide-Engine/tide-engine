@@ -360,18 +360,18 @@ event(Touched touched) Score(mut Goal goal, World world)
 - It has a weight like any shape, by its `density`: give it 0 where it's beside the shapes its body touches with, and shouldn't add to them.
 - What's in a sensor is looked at once a step, where things are after it. A small body that's fast enough to cross a thin sensor between two steps may come and go unreported: make such a sensor thick.
 
-`Touched` and `Parted` say who comes and who goes. `Inside` says who's there: the entities whose bodies are in a body's sensors, as the last step found them.
+`Touched` and `Parted` say who comes and who goes. `Inside` says who's there: the entities whose bodies have a shape in an entity's sensors, as the last step found them.
 
 ```csharp
 // How many are standing on the plate
-system Weigh(Body body, mut Plate plate, Physics physics)
+system Weigh(mut Plate plate, Physics physics)
 {
-    Inside(physics, body, out var found);
+    Inside(physics, this, out var found);
     plate.load = found.count;
 }
 ```
 
-- `Inside(physics, body, out found)` takes the sensor's `Body` and looks in every shape of it that's a sensor, its parts' too. `Inside(physics, part, out found)` takes a `Part` and looks in that part alone.
+- `Inside(physics, sensor, out found)` takes the entity the sensor shape is a component of: a body's, or a [part's](#more-shapes-on-a-body). An entity with no sensor has nobody in it.
 - It returns whether anybody is there. `found` has each entity once, a static body's too, in an order that's the same on every machine.
 - It's one of the functions that ask the world something: see [Asking the world](#asking-the-world) for what they see and when.
 
@@ -475,22 +475,22 @@ A system that asks runs on the tick's threads like any other.
 singleton Physics
 {
     float2 gravity = float2(0, -10);
-    int substeps = 4;      // The smaller steps Box2D solves each step in
-    float stiffness = 30;  // How stiff contacts are, in cycles a second
-    float damping = 10;    // ...and how little they spring back
-    float pushSpeed = 3;   // The fastest bodies that overlap are pushed apart, in meters a second
-    float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
-    float hitSpeed = 1;    // Bodies that meet faster than this send Hit
-    bool sleeping = true;  // Bodies at rest fall asleep
+    int substeps = 4;            // The smaller steps Box2D solves each step in
+    float contactStiffness = 30; // How stiff contacts are, in cycles a second
+    float contactDamping = 10;   // ...and how little they spring back
+    float contactSpeed = 3;      // The fastest bodies that overlap are pushed apart, in meters a second
+    float bounceSpeed = 1;       // Shapes with `bounce` only bounce when they meet faster than this
+    float hitSpeed = 1;          // Bodies that meet faster than this send Hit
+    bool sleeping = true;        // Bodies at rest fall asleep
 }
 ```
 
 Each is what Box2D comes with, so a game that sets none gets the same world as before there were any.
 
 - **`substeps`**: more make stacks and fast bodies steadier, and a step slower.
-- **`stiffness`** is how hard two bodies that touch push back as they sink into each other. Stiffer contacts hold a tall stack: a tower of thirty crates that sheds half of them when a heavy crate lands on it stands whole at twice the stiffness. It's no more than an eighth of the substeps a second, which at four substeps and 60 ticks a second is 30, the default: **to go stiffer, raise `substeps` with it**, 8 for 60.
-- **`damping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
-- **`pushSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
+- **`contactStiffness`** is how hard two bodies that touch push back as they sink into each other. Stiffer contacts hold a tall stack: a tower of thirty crates that sheds half of them when a heavy crate lands on it stands whole at twice the stiffness. It's no more than an eighth of the substeps a second, which at four substeps and 60 ticks a second is 30, the default: **to go stiffer, raise `substeps` with it**, 8 for 60.
+- **`contactDamping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
+- **`contactSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
 - **`bounceSpeed`** and **`hitSpeed`** are the speeds two bodies have to meet at for a `bounce` to count and for [`Hit`](#hits) to be sent.
 - **`sleeping`**, off, keeps every body awake. Nothing is ever at rest then, so every tick steps.
 
@@ -505,7 +505,7 @@ event(Spawned) Setup(mut Physics physics, with Main)
 
 A new gravity wakes every body that's [asleep](#bodies-at-rest), so that what was at rest feels it. A game that changes it every tick has nothing at rest. A change to any of the others is the next step's too, and that tick steps even when everything is asleep.
 
-The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `gone`, `shed`, `dropped`, `owners` and `parts` are how the package keeps Box2D's state in the match.
+The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `gone`, `shed`, `dropped`, `owners`, `parts` and `sensors` are how the package keeps Box2D's state in the match.
 
 ## Destroying
 

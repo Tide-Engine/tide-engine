@@ -346,8 +346,8 @@ PlayerID Sitter(Towers towers, int seat)
 event(Spawned) Build(mut Towers towers, mut Physics physics, with Main)
 {
     physics.substeps = SUBSTEPS;
-    physics.stiffness = STIFFNESS;
-    physics.damping = DAMPING;
+    physics.contactStiffness = STIFFNESS;
+    physics.contactDamping = DAMPING;
     physics.hitSpeed = CRASH;
     Spawn(Body { type = BodyType.Static, position = float2(0, GROUND - 0.5) }, Box { size = float2(400, 1), friction = GRIP }, Ground);
     for (var seat = 0; seat < SEATS; seat++)

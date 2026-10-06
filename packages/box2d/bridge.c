@@ -116,9 +116,9 @@ typedef struct met {
 typedef struct physics {
     tide_float2 gravity;
     int32_t substeps;
-    float stiffness;
-    float damping;
-    float push_speed;
+    float contact_stiffness;
+    float contact_damping;
+    float contact_speed;
     float bounce_speed;
     float hit_speed;
     bool sleeping;
@@ -136,11 +136,13 @@ typedef struct physics {
     tide_list shed;
     tide_map owners;
     tide_map parts;
+    tide_map sensors;
+    uint8_t unused3[4];
 } physics;
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 104 && offsetof(physics, moved) == 60,
+                   && sizeof(physics) == 120 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
@@ -1643,26 +1645,12 @@ static void visitors(const b2ShapeId sensor)
     }
 }
 
-// The bodies in a body's sensors, every one of its shapes that is one, its
-// parts' too; or, for no body, in the two shapes given, a part's.
-int32_t b2t_inside(const int64_t body, const int64_t first, const int64_t second, tide_list_out *out)
+// The bodies in an entity's sensors: in each of the two shapes given that's
+// there, its box and its circle.
+int32_t b2t_inside(const int64_t first, const int64_t second, tide_list_out *out)
 {
-    static TIDE_THREAD_LOCAL b2ShapeId *shapes;
-    static TIDE_THREAD_LOCAL int room;
     found.count = 0;
     if (!asked) return 0;
-    if (body != 0) {
-        const b2BodyId on = body_of(asked, body);
-        if (!b2Body_IsValid(on)) return 0;
-        const int count = b2Body_GetShapeCount(on);
-        if (count > room) {
-            shapes = tide_realloc(shapes, (size_t)room * sizeof *shapes, (size_t)count * sizeof *shapes);
-            room = count;
-        }
-        const int there = b2Body_GetShapes(on, shapes, count);
-        for (int i = 0; i < there; i++) visitors(shapes[i]);
-        return give(out);
-    }
     const int64_t given[2] = {first, second};
     for (int i = 0; i < 2; i++) {
         if (given[i] == 0) continue;
