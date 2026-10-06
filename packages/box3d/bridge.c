@@ -64,8 +64,9 @@ typedef struct body {
     tide_float3 step_velocity;
     tide_float3 step_angular_velocity;
     bool bullet;
-    bool step_bullet; // What Box3D has of the settings above, from here on
-    uint8_t unused[2];
+    bool step_bullet; // What Box3D has of the settings above, from here on, but for the two bytes after it
+    bool asleep;
+    bool step_asleep; // What the last step left `asleep` as
     int32_t step_type;
     float step_gravity_scale;
     float step_linear_damping;
@@ -175,14 +176,17 @@ _Static_assert(offsetof(body, impulse) - NOW == PLACE * sizeof(float) && offseto
 
 // A body's settings are what code wrote of how it's to be, and what Box3D has
 // of each: its type, three floats side by side, and whether it's a bullet,
-// which is a byte beside the byte that says what Box3D has.
+// which is a byte beside the byte that says what Box3D has. Whether it's
+// asleep, and what the last step left that as, are the two bytes after those:
+// the four are one field of four bytes to the systems written in C.
 enum { SETTINGS = 3 };
 #define SET offsetof(body, gravity_scale)
 #define SET_STEP offsetof(body, step_gravity_scale)
 #define FLAGS offsetof(body, bullet)
 
 _Static_assert(offsetof(body, step_position) - SET == SETTINGS * sizeof(float) && sizeof(body) - SET_STEP == (SETTINGS + 1) * sizeof(float)
-                   && offsetof(body, step_bullet) == FLAGS + 1 && FLAGS % 4 == 0 && offsetof(body, step_type) % 4 == 0,
+                   && offsetof(body, step_bullet) == FLAGS + 1 && offsetof(body, asleep) == FLAGS + 2
+                   && offsetof(body, step_asleep) == FLAGS + 3 && FLAGS % 4 == 0 && offsetof(body, step_type) == FLAGS + 4,
                "a Body's settings, and what Box3D has of them, aren't where the systems written in C look for them any more");
 
 // A step with fewer bodies awake than this runs on its own thread: sharing it
@@ -233,6 +237,18 @@ static new_body *made;
 static int32_t made_count;
 static int32_t made_room;
 static int32_t made_taken;
+
+// The bodies code put to sleep this tick (sync_body), in the order Enter came
+// to them. The step puts each to sleep right before it steps (put_to_sleep),
+// after everything else the tick wrote has gone to Box3D: a body's own move
+// or push, and those of the bodies it touches, would wake it again.
+static int64_t *sleeps;
+static int32_t sleep_count;
+static int32_t sleep_room;
+// The running tick's step put bodies to sleep that way. Box3D takes the bodies
+// that touch one with it, and says nothing of which those were: b3t_leave then
+// asks, of each body that was awake and that the step says nothing of.
+static bool slept;
 
 // The bodies the running tick's Enter told Box3D something of: the step notes
 // the ones it then left alone (note_left).
@@ -485,6 +501,7 @@ bool b3t_open(const int64_t stamp)
         abort();
     }
     made_count = made_taken = 0;
+    sleep_count = 0;
     synced_count = 0;
     parted_count = 0;
     touch_count = 0;
@@ -624,6 +641,8 @@ void b3t_forget(void)
     }
     active = NULL;
     made_count = made_taken = 0;
+    sleep_count = 0;
+    slept = false;
     synced_count = 0;
     parted_count = 0;
     touch_count = 0;
@@ -743,9 +762,9 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // ---------------------------------------------------------------------------
 // Bodies and shapes
 
-// A body that's asleep is awake from here on. It isn't a call an image in
-// parts follows (box3d/TIDE.md), so the world's next image is written whole:
-// it's only made for a body that's asleep, which code seldom does anything to.
+// A body that's asleep is awake from here on, with all of what it fell asleep
+// with. It's a call an image in parts follows (box3d/TIDE.md): what wakes is
+// written, and the rest of the image is the last one's.
 static void wake(const b3BodyId id)
 {
     if (b3Body_GetType(id) != b3_staticBody && !b3Body_IsAwake(id)) b3Body_SetAwake(id, true);
@@ -794,6 +813,10 @@ static bool sync_body(body *b)
         def.angularDamping = b->angular_damping;
         def.gravityScale = b->gravity_scale;
         def.isBullet = b->bullet;
+        // Spawned asleep: it's made so, by itself, and is there for the others to rest on or run into. A
+        // static body is neither asleep nor awake
+        if (b->type == b3_staticBody) b->asleep = false;
+        def.isAwake = !b->asleep;
         id = b3CreateBody(w->id, &def);
         b->id = handle(id.index1, id.generation);
         did |= 1u;
@@ -843,7 +866,24 @@ static bool sync_body(body *b)
         }
         // A body at rest that's to be another way is awake to be it: one that weighs on things again falls
         if (did & (128u | 256u | 512u | 1024u)) wake(id);
+        // Asleep or awake, where code wrote another than the last step left. Waking is done here, and
+        // Box3D wakes all of what the body fell asleep with. Sleeping waits for the step (put_to_sleep).
+        // A body that's static, which it may just have been made, is neither, and reads so again
+        if (b->asleep != b->step_asleep) {
+            if (b3Body_GetType(id) == b3_staticBody) {
+                b->asleep = false;
+            } else {
+                if (b->asleep) {
+                    sleeps = grown(sleeps, sleep_count, &sleep_room, sizeof *sleeps);
+                    sleeps[sleep_count++] = b->id;
+                } else {
+                    wake(id);
+                }
+                did |= 2048u;
+            }
+        }
     }
+    b->step_asleep = b->asleep; // What Leave makes of both, once the step has had its say
     b->step_type = b->type;
     b->step_gravity_scale = b->gravity_scale;
     b->step_linear_damping = b->linear_damping;
@@ -905,12 +945,25 @@ static body_fields fields_of(const tide_rows *rows)
 
 // The byte that says whether a body is a bullet, and the one beside it that
 // says what Box3D has, as the four bytes they're in read: apart, when the two
-// aren't the same. The first byte of the four is the number's low one on every
-// platform Tide builds for.
+// aren't the same. And the same of the two bytes after them, which say whether
+// it's asleep and what the last step left that as. The first byte of the four
+// is the number's low one on every platform Tide builds for.
 static inline uint32_t flags_apart(const int32_t flags)
 {
     const uint32_t bits = (uint32_t)flags;
-    return (bits ^ bits >> 8) & 0xffu;
+    return (bits ^ bits >> 8) & 0x00ff00ffu;
+}
+
+// What the last step left a body as, asleep or not, out of the same four
+// bytes, and the four with both of the two that say so saying `asleep`.
+static inline bool flags_step_asleep(const int32_t flags)
+{
+    return ((uint32_t)flags >> 24 & 0xffu) != 0;
+}
+
+static inline int32_t flags_left(const int32_t flags, const bool asleep)
+{
+    return (int32_t)(((uint32_t)flags & 0xffffu) | (asleep ? 0x01010000u : 0u));
 }
 
 // The bodies of a run are looked at this many at a time, a field after
@@ -975,7 +1028,10 @@ void b3t_enter(tide_rows *rows, physics *p)
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i], impulse, angular_impulse};
+            // One that's made asleep stays so: the impulses it was spawned with would wake it
+            const tide_float3 no_push = {0, 0, 0};
+            made[made_count++] = b.asleep ? (new_body){b.id, entities[i], no_push, no_push}
+                                          : (new_body){b.id, entities[i], impulse, angular_impulse};
         }
         if (synced_count == synced_room) {
             const int32_t room = synced_room ? synced_room * 2 : 64;
@@ -1151,6 +1207,25 @@ static void push_new(const world *w)
     }
 }
 
+// The bodies code put to sleep this tick go to sleep, now that everything else
+// the tick wrote is Box3D's: last, so that each is asleep as the step starts.
+// Box3D puts a body's island to sleep with it, the bodies that touch it and
+// the ones those touch, wherever they are and however fast: what they have of
+// speed is gone, and each stays where it is until something wakes it. In the
+// order Enter came to them, and noted with them (sync_body), so nothing is
+// noted here. It's a call an image in parts follows. Whether any was.
+static bool put_to_sleep(const world *w)
+{
+    const bool any = sleep_count > 0;
+    for (int32_t i = 0; i < sleep_count; i++) {
+        const b3BodyId id = body_of(w, sleeps[i]);
+        // One that's asleep already went with a body before it in the list
+        if (b3Body_IsValid(id) && b3Body_GetType(id) != b3_staticBody && b3Body_IsAwake(id)) b3Body_SetAwake(id, false);
+    }
+    sleep_count = 0;
+    return any;
+}
+
 // How the world is to step: Physics' fields that say so, in their order.
 typedef struct tuning {
     float contact_stiffness;
@@ -1203,6 +1278,9 @@ int64_t b3t_step(const float dt, const int32_t substeps, const tide_float3 gravi
     // that leaves it as it is does nothing.
     if (turned || roused) b3World_EnableSleeping(w->id, false);
     b3World_EnableSleeping(w->id, sleeping);
+    // ...and then what code put to sleep this tick is: in a world whose bodies don't fall asleep by
+    // themselves too, as that only says what the step does
+    slept = put_to_sleep(w);
     shared = w->workers > 1 && b3World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -1436,6 +1514,15 @@ static body_places places_of(tide_rows *rows)
 // it, and still: its component gets what Box3D has, so that the next tick's
 // Enter finds nothing written.
 //
+// Whether it's asleep is written the same way, where its component doesn't say
+// so already: awake for a body the step moved, and what Box3D says for one
+// it's asked about. Any other is as its component says, as nothing else puts
+// a body to sleep or wakes one without the step moving it, but in a tick whose
+// step put bodies to sleep for code (`slept`): Box3D took the bodies that
+// touched them along, so each body that was awake and that the step says
+// nothing of is asked whether it still is. Only such a tick reads more of
+// those bodies than which they are.
+//
 // The fields are only asked for to write once a body has something to write,
 // so a run of bodies at rest leaves every one of them shared with the match's
 // snapshots. Runs go to several threads at once: each reads what the step
@@ -1447,32 +1534,55 @@ void b3t_leave(tide_rows *rows, const physics *p)
     // Which body each is: all that's read of most. Nothing here writes these, so they stay where they are
     const int32_t *ids = tide_rows_ints(rows, 0, offsetof(body, id));
     const int32_t *ids_high = tide_rows_ints(rows, 0, offsetof(body, id) + 4);
+    // Whether each is asleep, by its component, and what Box3D has it as: read of the bodies below
+    const int32_t *flags = tide_rows_ints(rows, 0, FLAGS);
+    const int32_t *types = tide_rows_ints(rows, 0, offsetof(body, step_type));
     const uint32_t *steps = left_steps;
     const uint32_t room = left_room;
     const uint32_t step = stepped;
+    const bool lulled = slept;
     body_places to = {0};
+    int32_t *flags_to = NULL;
     bool writing = false;
     for (uint32_t i = 0; i < count; i++) {
         const uint32_t index = (uint32_t)ids[i];
-        if (index >= room || steps[index] != step) continue; // The step says nothing of it
-        const left *l = &lefts[index];
+        const bool said = index < room && steps[index] == step;
+        // The step says nothing of it: it's as its component says, but where bodies were put to sleep for
+        // code, and this one was awake, and isn't one that never moves
+        if (!said && (!lulled || index == 0 || flags_step_asleep(flags[i]) || types[i] == b3_staticBody)) continue;
+        const left *l = said ? &lefts[index] : NULL;
         const int64_t id = (int64_t)((uint64_t)index | (uint64_t)(uint32_t)ids_high[i] << 32);
-        if (l->id != id) continue; // Another body's, which has the index now: this one is gone
+        if (l && l->id != id) continue; // Another body's, which has the index now: this one is gone
         float asked[PLACE];
-        const float *where = l->place;
-        if (!l->awake) {
+        const float *where = NULL;
+        bool asleep = false;
+        if (l && l->awake) {
+            where = l->place;
+        } else {
+            const b3BodyId body_id = body_of(active, id);
+            if (!b3Body_IsValid(body_id)) continue;
+            asleep = b3Body_GetType(body_id) != b3_staticBody && !b3Body_IsAwake(body_id);
+            if (!l && !asleep) continue; // Awake, and the step would have said so
             // Its fields as they are now, the ones this run wrote to among them: asked for here, as it's rare
             const body_fields f = fields_of(rows);
             bool rests = true; // Where the last step left it, and still, by what its component says
             for (int k = 0; k < PLACE; k++) rests &= f.now[k][i] == f.step[k][i];
             for (int k = STILL; k < PLACE; k++) rests &= f.now[k][i] == 0;
-            if (rests) continue;
-            const b3BodyId body_id = body_of(active, id);
-            if (!b3Body_IsValid(body_id)) continue;
-            place_of(asked, b3Body_GetPosition(body_id), b3Body_GetRotation(body_id), b3Body_GetLinearVelocity(body_id),
-                     b3Body_GetAngularVelocity(body_id));
-            where = asked;
+            if (!rests) {
+                place_of(asked, b3Body_GetPosition(body_id), b3Body_GetRotation(body_id), b3Body_GetLinearVelocity(body_id),
+                         b3Body_GetAngularVelocity(body_id));
+                where = asked;
+            }
         }
+        const int32_t left_as = flags_left(flags[i], asleep);
+        if (left_as != flags[i]) {
+            if (!flags_to) { // What's written is what's read from here on
+                flags_to = tide_rows_ints_mut(rows, 0, FLAGS);
+                flags = flags_to;
+            }
+            flags_to[i] = left_as;
+        }
+        if (!where) continue;
         if (!writing) {
             to = places_of(rows);
             writing = true;

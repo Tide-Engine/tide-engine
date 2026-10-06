@@ -70,6 +70,8 @@ system Roll(mut Body body, Script script, with Roller)
 {
     if (script.quiet) return;
     if (script.tick % 30 == 0) body.impulse = float3(900, 0, 0);
+    // Put to sleep while it rolls, in a tick that also pushes it: it stops where it is, until its next push
+    if (script.tick == 240) body.asleep = true;
     if (script.tick % 240 == 239)
     {
         body.position = float3(-12, 0.5, 1.06);
@@ -85,6 +87,15 @@ system Tease(mut Body body, Crate crate, Script script)
     if (script.quiet) return;
     // Asleep, and moved: onto another stack, which it wakes with it
     if (script.tick == 150 && crate.stack == 2 && crate.row == 2) body.position = float3(-9 + 2 * 7, 3.5, 0);
+    // Asleep, and woken from its bottom crate: the stack wakes. Then put to sleep again from its top one,
+    // before it would fall asleep, and the stack goes with it
+    if (script.tick == 215 && crate.stack == 3 && crate.row == 0) body.asleep = false;
+    if (script.tick == 222 && crate.stack == 3 && crate.row == 2) body.asleep = true;
+    // ...and another stack woken and put to sleep in ticks that follow each other
+    if (script.tick == 236 && crate.stack == 9 && crate.row == 1) body.asleep = false;
+    if (script.tick == 237 && crate.stack == 9 && crate.row == 0) body.asleep = true;
+    // One that was spawned asleep in the air, woken: it falls
+    if (script.tick == 288 && crate.stack == 25) body.asleep = false;
     // Asleep, and gone: from under the rest of its stack
     if (script.tick == 200 && crate.stack == 4 && crate.row == 0) this.Destroy();
     // Asleep, with another shape on it
@@ -172,6 +183,8 @@ system Stage(Script script)
     // A static body that comes late, over the fifth stack, and a crate onto it
     if (script.tick == 260) Spawn(Body { type = BodyType.Static, position = float3(1, 4.2, 0) }, Box { size = float3(3, 0.4, 3) }, Shelf);
     if (script.tick == 262) Spawn(Body { position = float3(1, 5, 0) }, Box, Crate { stack = 21, row = 0 });
+    // A crate that's spawned asleep in the air, by the stacks: it hangs there until it's woken
+    if (script.tick == 246) Spawn(Body { position = float3(3, 6, 3), asleep = true }, Box, Crate { stack = 25, row = 0 });
     // A crate thrown at the last stack: one island wakes another
     if (script.tick == 340) Spawn(Body { position = float3(4, 2.5, 0), velocity = float3(9, 1, 0) }, Box, Crate { stack = 20, row = 0 });
     // A capsule and a ball that come to rest by themselves, away from the rest

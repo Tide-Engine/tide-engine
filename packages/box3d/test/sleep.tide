@@ -1,0 +1,151 @@
+// A match for the package's tests of bodies that code puts to sleep and wakes
+// (sleep_test.c). Each case is a few bodies of its own, and a host says which
+// before the first tick. The host writes `asleep` into a body as a system of
+// a game's would after the step; the last case does it from a system, at its
+// ticks, so that all of it is the match's and can be run again.
+
+using Box3D;
+
+scene Main { }
+
+enum Case
+{
+    Rest,    // Two crates on the floor
+    Flight,  // A crate that flies and falls
+    Plank,   // A crate that slides along a plank, and one on a lift that stands
+    Stack,   // Five crates on each other, one on its way down to them, one aside
+    Spawned, // Bodies that are spawned asleep, and a lift that moves
+    Script   // The stack and a lift, with what's done to them at each tick
+}
+
+singleton Nap
+{
+    Case which;
+    bool made;
+    bool throws; // A ball is thrown this tick, from `from`, at `speed`
+    float3 from;
+    float3 speed;
+}
+
+// Which body an entity is, for the host and the script
+component Mark
+{
+    int index;
+}
+
+component Ball { }
+
+system Arrange(mut Nap nap)
+{
+    if (nap.made) return;
+    nap.made = true;
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(200, 1, 200) });
+    if (nap.which == Case.Rest)
+    {
+        Spawn(Body { position = float3(0, 0.5, 0) }, Box, Mark { index = 0 });
+        Spawn(Body { position = float3(5, 0.5, 0) }, Box, Mark { index = 1 });
+    }
+    if (nap.which == Case.Flight)
+    {
+        Spawn(Body { position = float3(0, 6, 0), velocity = float3(2, 0, 0) }, Box, Mark { index = 0 });
+    }
+    if (nap.which == Case.Plank)
+    {
+        Spawn(Body { position = float3(0, 0.5, 0) }, Box { size = float3(12, 1, 2) }, Mark { index = 0 });
+        Spawn(Body { position = float3(-3, 1.5, 0), velocity = float3(4, 0, 0) }, Box { friction = 0.2 }, Mark { index = 1 });
+        // A lift that doesn't move, and a crate on it: the lift's speed is 0 from the start
+        Spawn(Body { type = BodyType.Kinematic, position = float3(20, 1, 0) }, Box { size = float3(3, 0.4, 3) }, Mark { index = 2 });
+        Spawn(Body { position = float3(20, 1.7, 0) }, Box, Mark { index = 3 });
+    }
+    if (nap.which == Case.Stack || nap.which == Case.Script)
+    {
+        for (int i = 0; i < 5; i++) Spawn(Body { position = float3(0, 0.5 + i, 0) }, Box, Mark { index = i });
+        Spawn(Body { position = float3(0, 8, 0) }, Box, Mark { index = 5 });
+        Spawn(Body { position = float3(10, 0.5, 0) }, Box, Mark { index = 6 });
+    }
+    if (nap.which == Case.Script)
+    {
+        Spawn(Body { type = BodyType.Kinematic, position = float3(20, 1, 0), velocity = float3(0.5, 0, 0) },
+              Box { size = float3(3, 0.4, 3) }, Mark { index = 7 });
+        Spawn(Body { position = float3(20, 1.7, 0) }, Box, Mark { index = 8 });
+    }
+    if (nap.which == Case.Spawned)
+    {
+        Spawn(Body { position = float3(0, 5, 0), asleep = true }, Box, Mark { index = 0 });
+        // One that's also given a speed and a push: it's asleep all the same
+        Spawn(Body { position = float3(3, 5, 0), velocity = float3(1, 0, 0), impulse = float3(3000, 0, 0), asleep = true }, Box,
+              Mark { index = 1 });
+        // A static body is neither asleep nor awake
+        Spawn(Body { type = BodyType.Static, position = float3(-5, 2, 0), asleep = true }, Box, Mark { index = 2 });
+        Spawn(Body { type = BodyType.Kinematic, position = float3(8, 1, 0), velocity = float3(1, 0, 0) }, Box { size = float3(3, 0.4, 3) },
+              Mark { index = 3 });
+        // Three that are spawned asleep on each other
+        for (int i = 0; i < 3; i++) Spawn(Body { position = float3(-12, 0.5 + i, 0), asleep = true }, Box, Mark { index = 4 + i });
+    }
+}
+
+system Throw(mut Nap nap)
+{
+    if (!nap.throws) return;
+    nap.throws = false;
+    Spawn(Body { position = nap.from, velocity = nap.speed, gravityScale = 0, bullet = true }, Sphere { radius = 0.2, density = 4000 }, Ball);
+}
+
+// A ball that missed, or did what it was thrown for, goes once it's far away
+system Clear(Body body, with Ball)
+{
+    if (Math.Abs(body.position.x) > 60 || Math.Abs(body.position.y) > 60 || Math.Abs(body.position.z) > 60) this.Destroy();
+}
+
+// The script: what a game might do to bodies at rest and on their way, each at
+// its tick, written before the step so that the step of that tick has it.
+[Before(PhysicsStages.Step)]
+system Lull(mut Body body, Mark mark, Nap nap, Time time)
+{
+    if (nap.which != Case.Script) return;
+    var tick = time.tick;
+    var i = mark.index;
+    // The bottom of the stack while it's still settling: all five go with it
+    if (tick == 15 && i == 0) body.asleep = true;
+    // ...and again once the crate that was on its way has landed on them, and woken them
+    if (tick == 50 && i == 0) body.asleep = true;
+    // The middle one woken: all of them again
+    if (tick == 60 && i == 2) body.asleep = false;
+    // One put to sleep and another pushed, in one tick: asleep
+    if (tick == 75 && i == 1) body.asleep = true;
+    if (tick == 75 && i == 4) body.impulse = float3(2000, 3000, 0);
+    // The one aside, which fell asleep by itself long ago, is pushed, and then put somewhere else and to
+    // sleep at once: it hangs there
+    if (tick == 97 && i == 6) body.impulse = float3(0, 2000, 0);
+    if (tick == 100 && i == 6)
+    {
+        body.position = float3(12, 6, 0);
+        body.asleep = true;
+    }
+    // The lift, with the crate on it, and going again by its speed
+    if (tick == 120 && i == 7) body.asleep = true;
+    if (tick == 170 && i == 7) body.velocity = float3(-0.5, 0, 0);
+    // The one that hangs, let go
+    if (tick == 200 && i == 6) body.asleep = false;
+    // ...and put to sleep on its way down, in the tick gravity turns over, which wakes the others: it's
+    // asleep. One of the stack is said to be too, which it was already: that's nothing written, and it wakes
+    if (tick == 230 && (i == 6 || i == 3)) body.asleep = true;
+    if (tick == 280 && i == 6) body.asleep = false;
+}
+
+[Before(PhysicsStages.Step)]
+system Events(mut Nap nap, mut Physics physics, Time time)
+{
+    if (nap.which != Case.Script) return;
+    var tick = time.tick;
+    // A crate that's spawned asleep in the air, late, and a ball at it later
+    if (tick == 130) Spawn(Body { position = float3(-10, 4, 0), asleep = true }, Box, Mark { index = 9 });
+    if (tick == 250)
+    {
+        nap.throws = true;
+        nap.from = float3(-16, 4, 0);
+        nap.speed = float3(12, 0, 0);
+    }
+    if (tick == 230) physics.gravity = float3(0, 4, 0);
+    if (tick == 245) physics.gravity = float3(0, -10, 0);
+}

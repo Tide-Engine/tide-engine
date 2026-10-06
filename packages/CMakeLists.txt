@@ -169,6 +169,15 @@ target_link_libraries(tide_box3d_course PRIVATE tide_box3d)
 add_test(NAME tide_box3d_course COMMAND tide_box3d_course)
 set_tests_properties(tide_box3d_course PROPERTIES TIMEOUT 300)
 
+# Bodies that code puts to sleep and wakes, as tide_box2d_sleep is for Box2D,
+# with every image in parts compared with the image written whole.
+tide_add_game(tide_box3d_sleep SOURCES box3d/bridge.c box3d/test/sleep.tide NAME sleeping PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/sleep_test.c)
+target_include_directories(tide_box3d_sleep PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_sleep PRIVATE tide_box3d)
+add_test(NAME tide_box3d_sleep COMMAND tide_box3d_sleep)
+set_tests_properties(tide_box3d_sleep PROPERTIES TIMEOUT 300)
+
 # Its image written as what changed of the last one, against the image written
 # whole: a match of its own, so that the one above keeps its pinned hashes, and
 # Box3D by itself.
