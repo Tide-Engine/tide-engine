@@ -3,11 +3,13 @@
 // a match.
 //
 // The lobby is drawn over a live match. `Main` is the match's scene, so a
-// match of this machine's own starts with the program, closed, with the bots
-// at the towers: that's what's behind the title. Playing alone is closing
-// the lobby, hosting is opening that match to others (Session.Open), and
-// joining leaves it for someone else's (Session.Join). Nothing of the lobby is
-// in the match: it's a local singleton, and a view over the others.
+// match of this machine's own starts with the program, closed, with all four
+// towers building by themselves: that's what's behind the title. Playing
+// alone is closing the lobby, hosting is opening that match to others
+// (Session.Open), and joining leaves it for someone else's (Session.Join).
+// Nothing of the lobby is in the match: it's a local singleton, and a view
+// over the others. While it's up, this machine's player's tower builds by
+// itself too.
 //
 // A machine that was told which match to be in has no lobby in its way: with
 // `--host` or `--join <code>` on its command line, or `?host` or
@@ -82,18 +84,18 @@ bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
 // Who's in the match, for the room's page: the lobby's views run with no
 // match too, so they don't read it themselves.
 [Stage(Layers.Camera, 10)]
-view Roster(Siege siege, Session session, mut Lobby lobby)
+view Roster(Towers towers, Session session, mut Lobby lobby)
 {
     lobby.manned = 0;
     lobby.mine = -1;
     lobby.players = 0;
-    foreach (var entry in siege.seats)
+    foreach (var entry in towers.seats)
     {
         lobby.manned |= 1 << entry.value;
         lobby.players += 1;
         if (entry.key == session.player) lobby.mine = entry.value;
     }
-    lobby.bots = siege.bots;
+    lobby.bots = towers.bots;
 }
 
 // A seat's row on the room's page: its color, and who has it.
@@ -114,7 +116,7 @@ void SeatRow(Lobby lobby, int seat, float2 at, float wide)
 // The lobby's pages, over whatever the match's views drew. It runs with no
 // match too, as while one is being joined.
 [Stage(Layers.Menu)]
-view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer pointer)
+view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand hand)
 {
     if (!lobby.started)
     {
@@ -124,12 +126,11 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
         lobby.joining = !session.server && session.state == SessionState.Connecting;
         lobby.page = lobby.joining ? Page.Join : session.server && session.open ? Page.None : Page.Title;
     }
-    // The player's hands are on the cannon with no page up, and once the
+    // The player's hands are on their brick with no page up, and once the
     // pointer that pressed the page's last button is let go. A key that
     // clicked it is the GUI's until it's let go, so it's never read here.
-    var held = devices.pointer.press.pressed || devices.keyboard.space.pressed;
-    pointer.playing = lobby.page == Page.None && session.state == SessionState.Connected
-        && (pointer.playing || !held);
+    hand.playing = lobby.page == Page.None && session.state == SessionState.Connected
+        && (hand.playing || !devices.pointer.press.pressed);
     lobby.copied += fx.dt;
     lobby.turn = Math.Frac(lobby.turn + fx.dt * 0.8);
     if (lobby.page == Page.None)
@@ -141,8 +142,8 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
     Draw2D.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
-    // The whole screen is the page's: a click between two buttons isn't a
-    // shot. And it's a menu, though a match goes on behind it: the arrows and
+    // The whole screen is the page's: a click between two buttons doesn't
+    // turn a brick. And it's a menu, though a match goes on behind it: the arrows and
     // a gamepad move between its buttons.
     GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
     GUI.Navigate();
@@ -168,7 +169,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
             var total = 30 + title + (short ? 24 : 36) + main + gap + row + gap + row + 30;
             mut var y = Math.Max(8, (screen.y - total) * 0.45);
 
-            // Four crates, a color for each seat, and the name
+            // Four bricks, a color for each seat, and the name
             for (var seat = 0; seat < SEATS; seat++)
             {
                 var color = SeatColor(seat);
@@ -178,10 +179,10 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
                                      outlineColor = Shade(color, 0.45) });
             }
             y += 30;
-            Draw2D.Text("SIEGE", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text("SIEGE", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("TOWERS", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("TOWERS", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
             y += title;
-            Draw2D.Text("Paint the crates. Knock them off the map.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
+            Draw2D.Text("Stack the bricks. Be first over the line.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
             y += short ? 24 : 36;
 
             var play = Pill(Rect(left, y, wide, main), "PLAY", AMBER, true, connected);
@@ -195,7 +196,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
 
             if (play)
             {
-                // A game of its own, from its start: the bots had the towers meanwhile
+                // A game of its own, from its start: the bots had every tower meanwhile
                 if (lobby.players <= 1) Send(Rebuild { });
                 lobby.page = Page.None;
                 lobby.message = "";
@@ -243,15 +244,17 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Pointer
                 var frame = Rect(left, y, wide - 108, row);
                 Draw2D.Shape(Shape { center = Middle(frame), size = float2(frame.width, frame.height), radius = 12,
                                      color = Color(0.06, 0.06, 0.066), outline = 1.5, outlineColor = LINE });
+                // ...and says when Enter ended the typing, which joins as the button does
+                mut var entered = false;
                 GUI.Theme(GUITheme { text = INK, field = Color(0.06, 0.06, 0.066), fieldHot = Color(0.08, 0.08, 0.09), accent = AMBER,
                                      radius = 9 })
                 {
-                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code);
+                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code, out entered);
                 }
                 // A room's code is capitals, however it's typed
                 lobby.code = lobby.code.ToUpper();
                 var code = lobby.code.Trim();
-                var go = Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "");
+                var go = Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || (entered && code != "");
                 y += row;
                 if (lobby.message != "") Draw2D.Text(lobby.message, float2(middle.x, y + 17), 13, ROSE, Anchor.MiddleCenter);
                 else Draw2D.Text("Six letters and digits, like K7QF2M.", float2(middle.x, y + 17), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);

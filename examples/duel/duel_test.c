@@ -121,8 +121,8 @@ static bool choose(tide_entity target, int sender, int round, int slot)
     tide_bits_put_varint(&bits, tide_zigzag(round));
     tide_bits_put_varint(&bits, tide_zigzag(slot));
     const uint32_t size = tide_bits_end(&bits);
-    return tide_game_api.command(&world, player(sender),
-        tide_game_api.command_sequence(&world, player(sender)) + 1, bytes, size);
+    return tide_game_api.command(&world, player(sender), 0,
+        tide_game_api.command_sequence(&world, player(sender), 0) + 1, bytes, size);
 }
 
 // A command that names the match it was sent in, and no entity.
@@ -135,8 +135,8 @@ static bool match_command(uint32_t id, int sender, int match)
     tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(match));
     const uint32_t size = tide_bits_end(&bits);
-    return tide_game_api.command(&world, player(sender),
-        tide_game_api.command_sequence(&world, player(sender)) + 1, bytes, size);
+    return tide_game_api.command(&world, player(sender), 0,
+        tide_game_api.command_sequence(&world, player(sender), 0) + 1, bytes, size);
 }
 
 static float rendered_blue_x(tide_local *local, tide_draw_list *draw, tide_gui *gui)

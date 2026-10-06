@@ -70,33 +70,6 @@ if(TIDE_WEB)
     target_link_options(tide_platform INTERFACE -Wl,--allow-undefined)
 endif()
 
-# tide_web_page(<target> [SHELL <page.html>])
-#
-# Web builds: makes <target>.html next to <target>.wasm, one self-contained
-# page with the program and web/tide.js inside, which opens straight from disk.
-# SHELL is the page around the canvas (default web/shell.html). Does nothing in
-# native builds, so it can be called unconditionally.
-set(TIDE_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html" CACHE INTERNAL "")
-set(TIDE_WEB_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/web/tide.js" CACHE INTERNAL "")
-function(tide_web_page target)
-    if(NOT TIDE_WEB)
-        return()
-    endif()
-    cmake_parse_arguments(ARG "" "SHELL" "" ${ARGN})
-    if(ARG_SHELL)
-        get_filename_component(shell "${ARG_SHELL}" ABSOLUTE)
-    else()
-        set(shell "${TIDE_WEB_SHELL}")
-    endif()
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs"
-            "$<TARGET_FILE:${target}>" "${shell}" "${TIDE_WEB_SCRIPT}"
-            "$<TARGET_FILE_DIR:${target}>/${target}.html"
-        COMMENT "Web page for ${target}"
-        VERBATIM)
-    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}")
-endfunction()
-
 # tide_android_app(<target> [LABEL <name>])
 #
 # Android builds: makes the shared library <target> an app, <target>.apk next
@@ -228,6 +201,16 @@ if(TIDE_NODE)
     add_test(NAME tide_platform_png
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/png.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
             $<TARGET_FILE:tide_platform_png>)
+endif()
+
+# The engine's PNG reader (engine/src/png_read.c, grid.Decode) against pictures
+# Node's zlib writes: every kind of PNG, and files wrong in each way. No GPU.
+add_executable(tide_platform_png_decode tests/png_decode.c)
+target_link_libraries(tide_platform_png_decode PRIVATE tide)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_png_decode
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/png_decode.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
+            $<TARGET_FILE:tide_platform_png_decode>)
 endif()
 
 if(NOT TIDE_WEB)

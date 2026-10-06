@@ -1,0 +1,6 @@
+// expect: enum 'Channels' has no member 'Chatt'
+// expect: did you mean 'Chat'?
+enum Channels { Chat, Video }
+[Channel(Channels.Chatt)]
+command Say { string text; }
+scene Main { }
