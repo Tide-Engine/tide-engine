@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs tide for this user, on Linux or macOS (Apple Silicon):
 #
-#     curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.sh | sh
+#     gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.sh?ref=dev' | sh
 #
 # Nightly versions instead: ... | TIDE_CHANNEL=nightly sh
 # tide goes in ~/.tide, and its bin folder on PATH through the shell's profile.
@@ -25,9 +25,10 @@ token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
     token="$(gh auth token --hostname github.com 2>/dev/null || true)"
 fi
-case "$token" in
-    *[!\!-\~]*) echo 'The GitHub token must contain only printable non-space ASCII characters.' >&2; exit 1 ;;
-esac
+if [ "$(printf '%s' "$token" | LC_ALL=C tr -d '!-~' | wc -c)" -ne 0 ]; then
+    echo 'The GitHub token must contain only printable non-space ASCII characters.' >&2
+    exit 1
+fi
 installed=no
 if [ -x "$bin/tide" ]; then
     installed=yes
@@ -78,7 +79,7 @@ if [ "$channel" = "stable" ]; then
     download "https://api.github.com/repos/$repo/releases/latest" "$work/latest.json" application/vnd.github+json ||
         echo '{}' > "$work/latest.json"
 fi
-tag="$(python3 - "$work/releases.json" "$work/latest.json" "$channel" "$package" "$authenticated" "$work" <<'EOF'
+tag=$(python3 - "$work/releases.json" "$work/latest.json" "$channel" "$package" "$authenticated" "$work" <<'EOF'
 import json, re, sys
 releases = json.load(open(sys.argv[1])) + [json.load(open(sys.argv[2]))]
 
@@ -112,7 +113,7 @@ if best:
         json.dump(release, out)
     print(release["tag_name"])
 EOF
-)"
+)
 if [ -z "$tag" ]; then
     echo "There's no $channel release of tide for this platform yet." >&2
     exit 1
@@ -143,7 +144,7 @@ fi
 if [ "$installed" = yes ]; then
     # The updater of an older tide needs no authentication for checked local
     # files, and still replaces running programs and updates the editors.
-    releases_url="$(python3 - "$work" "$package" <<'EOF'
+    releases_url=$(python3 - "$work" "$package" <<'EOF'
 import json, pathlib, sys
 work = pathlib.Path(sys.argv[1]).resolve()
 release = json.loads((work / "selected.json").read_text())
@@ -153,7 +154,7 @@ release["assets"] = [{"name": name, "size": (work / name).stat().st_size,
 (work / "local.json").write_text(json.dumps([release]))
 print((work / "local.json").as_uri())
 EOF
-)"
+)
     if [ -n "${TIDE_CHANNEL:-}" ]; then
         TIDE_RELEASES_URL="$releases_url" "$bin/tide" upgrade "--$channel"
     else
