@@ -686,7 +686,7 @@ void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const uint32_t e
                 const int64_t last = ((x >> s->shift[0]) + 1) * ((int64_t)1 << s->shift[0]) - 1;
                 const int64_t end = last < to[0] ? last : to[0];
                 const size_t at = (row + (size_t)((uint32_t)x - (uint32_t)lo[0])) * cell, bytes = (size_t)(end - x + 1) * cell;
-                if (memcmp(now + at, before + at, bytes) != 0) {
+                if (!tide_same_bytes(now + at, before + at, bytes)) {
                     memcpy(tide_par_cell(l, &cache, (int32_t)x, (int32_t)y, (int32_t)z), now + at, bytes);
                 }
                 x = end + 1;
@@ -706,7 +706,7 @@ void tide_par_end(tide_par_loop *l)
         const uint32_t bytes = tide_grid_chunk_bytes(s);
         const int32_t *c = &l->chunk[3u * i];
         const uint8_t *now = chunk_now(l, c[0], c[1], c[2]);
-        bool same = now && memcmp(now, buffer, bytes) == 0;
+        bool same = now && tide_same_bytes(now, buffer, bytes);
         if (!now) { // Nothing there before: only a chunk if something isn't zero
             same = true;
             for (uint32_t k = 0; k < bytes && same; k++) same = buffer[k] == 0;

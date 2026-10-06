@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 // Storage of each thread's own, for state code on several threads keeps
 // apart (the scratch area, the heaps code runs with, the task running).
@@ -70,6 +71,20 @@ void tide_memory_sync(void);
 #else
 static inline void tide_memory_sync(void)
 {
+}
+#endif
+
+// Whether two runs of bytes are the same: what memcmp says of them, for the
+// runs a tick compares whole (a page against the one a snapshot shares, a
+// list's chunk against what C gave for it). The web's C library compares a
+// byte at a time, which a tick that compares megabytes can't afford, so there
+// it's 64 bytes at a time.
+#ifdef __wasm__
+bool tide_same_bytes(const void *a, const void *b, size_t size);
+#else
+static inline bool tide_same_bytes(const void *a, const void *b, const size_t size)
+{
+    return memcmp(a, b, size) == 0;
 }
 #endif
 

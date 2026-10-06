@@ -216,7 +216,7 @@ void tide_delta_region(tide_delta_writer *d, const void *now, const uint32_t siz
 {
     bool send;
     if (d->by_need) send = lacks_next(d);
-    else send = !(d->xor && base && base_size == size && (same || memcmp(now, base, size) == 0));
+    else send = !(d->xor && base && base_size == size && (same || tide_same_bytes(now, base, size)));
     if (!send) {
         d->same++;
         return;

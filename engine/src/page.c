@@ -18,6 +18,38 @@ _Noreturn void tide_out_of_memory(void)
     abort();
 }
 
+#ifdef __wasm__
+// 64 bytes a round, with no way out inside it, so the compiler makes SIMD
+// loads of them: a run that differs is found within its first 64 bytes that
+// do, and one that's the same is read once.
+bool tide_same_bytes(const void *a, const void *b, const size_t size)
+{
+    const uint8_t *x = a;
+    const uint8_t *y = b;
+    size_t i = 0;
+    for (; i + 64u <= size; i += 64u) {
+        uint64_t apart = 0;
+        for (size_t k = 0; k < 64u; k += 8u) {
+            uint64_t p, q;
+            memcpy(&p, x + i + k, 8);
+            memcpy(&q, y + i + k, 8);
+            apart |= p ^ q;
+        }
+        if (apart) return false;
+    }
+    for (; i + 8u <= size; i += 8u) {
+        uint64_t p, q;
+        memcpy(&p, x + i, 8);
+        memcpy(&q, y + i, 8);
+        if (p != q) return false;
+    }
+    for (; i < size; i++) {
+        if (x[i] != y[i]) return false;
+    }
+    return true;
+}
+#endif
+
 bool tide_hidden(void)
 {
     const char *value = getenv("TIDE_HIDDEN");
