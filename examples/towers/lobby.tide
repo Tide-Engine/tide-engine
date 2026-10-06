@@ -3,11 +3,13 @@
 // a match.
 //
 // The lobby is drawn over a live match. `Main` is the match's scene, so a
-// match of this machine's own starts with the program, closed, with the bots
-// building all four towers: that's what's behind the title. Playing alone is closing
-// the lobby, hosting is opening that match to others (Session.Open), and
-// joining leaves it for someone else's (Session.Join). Nothing of the lobby is
-// in the match: it's a local singleton, and a view over the others.
+// match of this machine's own starts with the program, closed, with all four
+// towers building by themselves: that's what's behind the title. Playing
+// alone is closing the lobby, hosting is opening that match to others
+// (Session.Open), and joining leaves it for someone else's (Session.Join).
+// Nothing of the lobby is in the match: it's a local singleton, and a view
+// over the others. While it's up, this machine's player's tower builds by
+// itself too.
 //
 // A machine that was told which match to be in has no lobby in its way: with
 // `--host` or `--join <code>` on its command line, or `?host` or
@@ -131,7 +133,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
         && (hand.playing || !devices.pointer.press.pressed);
     lobby.copied += fx.dt;
     lobby.turn = Math.Frac(lobby.turn + fx.dt * 0.8);
-    if (lobby.page == Page.None || WATCH != 0)
+    if (lobby.page == Page.None)
     {
         lobby.shown = 0;
         return;

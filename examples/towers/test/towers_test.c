@@ -27,6 +27,8 @@ void b2t_forget(void);
 #define DEPTH 80.0f
 #define FINISH 40.0f
 #define HOLD 180
+#define LIMIT 5400
+#define LOWEST 12.0f
 #define DROP 9.0f
 #define FALL 3.2f
 #define FAST 18.0f
@@ -44,8 +46,8 @@ void b2t_forget(void);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0)
-#define MATCH_HASH UINT64_C(0)
+#define RACING_HASH UINT64_C(0x5fe11995159f8808)
+#define MATCH_HASH UINT64_C(0x671a3f782ba09a4c)
 
 static tide_world world;
 
@@ -460,6 +462,37 @@ TIDE_TEST(towers_a_brick_off_its_tower_costs_and_is_cleared)
     TIDE_CHECK(tide_has_Brick(&world, fell) && tide_get_Box2D_Body(&world, fell).position.y < -5.0f);
     tick(RUBBLE);
     TIDE_CHECK(!tide_has_Brick(&world, fell) && count(&world, tide_has_Brick) == 1);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(towers_the_line_comes_down_on_a_round_that_goes_on_long)
+{
+    start(false, 2);
+    tick(60);
+    TIDE_CHECK(world.Towers.line == FINISH && world.Towers.clock > 50);
+    // A minute and a half in, it starts down, a meter every four seconds or so
+    world.Towers.clock = LIMIT - 10;
+    tick(10);
+    TIDE_CHECK(world.Towers.line == FINISH);
+    tick(250);
+    TIDE_CHECK(world.Towers.line < FINISH - 0.9f && world.Towers.line > FINISH - 1.1f);
+    // A tower that was under the line is over it once the line has come down past it, and takes the round
+    Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, 1));
+    body.position.y = FINISH - 6 - DEPTH / 2;
+    tide_set_Box2D_Body(&world, plinth(&world, 1), body);
+    tick(60);
+    TIDE_CHECK(seat_of(&world, 1).above == 0 && world.Towers.phase == Phase_Play);
+    world.Towers.clock = LIMIT + 1700;
+    for (int i = 0; i < 400 && world.Towers.phase == Phase_Play; i++) tide_world_tick(&world);
+    TIDE_CHECK(world.Towers.phase == Phase_Over && world.Towers.winner == 1 && world.Towers.line < FINISH - 6.0f);
+    // It never comes lower than this, and the next round's is back where it was
+    world.Towers.phase = Phase_Play;
+    world.Towers.clock = LIMIT + 100000;
+    tick(2);
+    TIDE_CHECK(world.Towers.line == LOWEST);
+    TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Rebuild, 0));
+    tick(4);
+    TIDE_CHECK(world.Towers.line == FINISH && world.Towers.clock < 10 && world.Towers.round == 1);
     tide_world_free(&world);
 }
 
