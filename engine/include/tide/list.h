@@ -124,10 +124,17 @@ typedef struct tide_list_cache {
     uint32_t first;           // The run: elements from `first`, `count` of them, side by side from `elements`
     uint32_t count;
     const uint8_t *elements;
+    // The run's page is the list's world's own (tide_list_cache_fill_mut made it so), so its elements are
+    // written where they are, as long as the cache holds: nothing takes a page back but a snapshot, between
+    // ticks, and a page copied to be another's own moves the heap
+    bool writable;
 } tide_list_cache;
 
 // tide_list_at, filling the cache with the run element `i` is in.
 const void *tide_list_cache_fill(tide_list_cache *c, tide_list l, int32_t i, uint32_t size);
+
+// tide_list_at_mut, filling the cache with the run element `i` is in, writable.
+void *tide_list_cache_fill_mut(tide_list_cache *c, tide_list l, int32_t i, uint32_t size);
 
 // tide_list_at, through a cache.
 static inline const void *tide_list_cached_at(tide_list_cache *c, const tide_list l, const int32_t i, const uint32_t size)
@@ -137,6 +144,17 @@ static inline const void *tide_list_cached_at(tide_list_cache *c, const tide_lis
         return c->elements + (size_t)((uint32_t)i - c->first) * size;
     }
     return tide_list_cache_fill(c, l, i, size);
+}
+
+// tide_list_at_mut, through a cache: what code writes element by element finds
+// its run's page once, and writes the rest where they are.
+static inline void *tide_list_cached_at_mut(tide_list_cache *c, const tide_list l, const int32_t i, const uint32_t size)
+{
+    if (c->writable && c->at == l.at && c->at && (uint32_t)i - c->first < c->count && (uint32_t)i < c->header->a
+        && __atomic_load_n(&c->heap->moves, __ATOMIC_RELAXED) == c->moves) {
+        return (uint8_t *)(uintptr_t)c->elements + (size_t)((uint32_t)i - c->first) * size;
+    }
+    return tide_list_cache_fill_mut(c, l, i, size);
 }
 
 // A world's list, read from outside, like a host reading a component: its

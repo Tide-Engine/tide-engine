@@ -14,7 +14,8 @@ them with no include path, which a game's C has none of.
 Each change is marked `Tide:` where it is. Most are for one thing: a world's
 image (`b2World_GetSnapshot`) is kept in the match, where it's hashed and sent
 between players, so it has to be the same bytes on every machine for the same
-state, and one machine's has to load on another.
+state, and one machine's has to load on another. The rest are for speed, and
+leave those bytes as they were.
 
 - **`body.h`, `shape.h`, `joint.h`: `userData` is 8 bytes on every platform**, a
   union with a `uint64_t`. These three structs go into an image as their bytes,
@@ -69,7 +70,53 @@ And one is for what a match keeps of an image from tick to tick:
   to spare, so an image is an eighth bigger and what changes of it is what
   changed in the world.
 
-And one is for threads on the web, where upstream only knows Emscripten:
+Two are for how long a step takes in a browser, where upstream only knows
+Emscripten. The first is WebAssembly's SIMD:
+
+- **`core.h`, `contact_solver_wide.inl`, `simd.h`, `manifold.c`: a path on
+  WebAssembly's own SIMD** (`B2_SIMD_WASM`), for any WebAssembly built with
+  `-msimd128`, as Tide's web builds are. Upstream's one path for WebAssembly is
+  SSE2's headers as Emscripten emulates them, which clang's own target has
+  none of, so there Box2D took its scalar path. Each place upstream has code
+  for SSE2 now has the same for WebAssembly after it: the contact solver's
+  wide floats and its gather and scatter of bodies, the trees' bounds
+  (`b2AABBV`), and the face search of two polygons (`b2FindMaxSeparation`).
+  `core.h` has one branch for WebAssembly, Emscripten's too, where this stands
+  in for the emulation; built without `-msimd128` it's the scalar path, as
+  before.
+
+  Each function gives, bit for bit, what the SSE2 one beside it gives for the
+  same numbers, so a browser steps the world x64 does: the least and the
+  greatest are `f32x4.pmin` and `f32x4.pmax` with their operands the other way
+  around, which are `minps` and `maxps` exactly (the first where it's less, or
+  greater, and else the second, whichever zero that is and whatever is NaN,
+  where `f32x4.min` and `f32x4.max` take -0 for less than 0); comparisons are
+  the ordered ones; a blend takes each bit by its mask's bit; the rest is
+  IEEE 754's arithmetic, each operation rounded by itself, and lanes moved.
+  Nothing is relaxed SIMD, whose fused multiply-add differs between machines.
+
+  It's nearer to x64 than the scalar path was: that one gives the first of two
+  equal numbers where SSE2 gives the second, so it could leave the other zero.
+  The package's pins never showed that, and they are what they were, in debug
+  and release web builds. Beside them, a check outside the tests ran every one
+  of these functions on awkward numbers (every three of 24 values with both
+  zeros, denormals, infinities and NaNs among them, 40,000 of any bits at all,
+  and 40,000 small ones of which many are equal), and about 5,000 pairs of
+  polygons through `b2CollidePolygons`, built for x64 and for the web: the
+  same bits from both for all 23 kinds of result, where the scalar path
+  differs in 9.
+  Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
+  NaN is ever in a world.
+
+  It took a quarter off a step in a browser. The package's `README.md` has the
+  numbers, and why it's no more: clang had already made SIMD of most of the
+  scalar path by itself.
+
+  At an update, the WebAssembly code is read beside the SSE2 code it follows:
+  a function upstream adds to the solver's wide floats needs its twin, or the
+  web build doesn't compile, and one it changes has to change there too.
+
+The second is for threads:
 
 - **`solver.c`: a worker that has waited long for the next stage sleeps**
   (`b2SolverTask`, `B2_TIDE_WAIT_ROUNDS`), on the web only. A step's workers

@@ -224,11 +224,6 @@ void rtc_peer_update(rtc_peer *p, const double now)
     rtc_ice_update(&p->ice, now);
     tell_candidates(p);
 
-    // The client starts DTLS once ICE has a pair to send ClientHello on
-    if (p->have_remote && p->dtls_client && !p->dtls_started && p->ice.state == RTC_ICE_CONNECTED) {
-        p->dtls_started = rtc_dtls_start(&p->dtls, true, &p->identity, p->remote.fingerprint, dtls_out, dtls_in, p, now);
-        if (!p->dtls_started) p->state = RTC_PEER_FAILED;
-    }
     uint8_t datagram[2048];
     size_t n;
     while ((n = rtc_ice_receive(&p->ice, now, datagram, sizeof datagram)) != 0) {
@@ -241,7 +236,14 @@ void rtc_peer_update(rtc_peer *p, const double now)
         p->reading = p->ice.arrived; // What comes out of it arrived when it did
         rtc_dtls_receive(&p->dtls, datagram, n, now);
     }
-    // ICE can have found its pair in what was just read, after what's held came
+    // ICE finds its pair in what's read, and nowhere else: the answer to our
+    // check, or their check that picks the pair. So it's here that a client
+    // starts DTLS, which sends its ClientHello on that pair: in this update,
+    // not the next one, a frame later. And a server has what it held to answer.
+    if (p->have_remote && p->dtls_client && !p->dtls_started && p->ice.state == RTC_ICE_CONNECTED) {
+        p->dtls_started = rtc_dtls_start(&p->dtls, true, &p->identity, p->remote.fingerprint, dtls_out, dtls_in, p, now);
+        if (!p->dtls_started) p->state = RTC_PEER_FAILED;
+    }
     if (dtls_answers(p)) give_held(p, now);
     if (p->dtls_started) rtc_dtls_update(&p->dtls, now);
 
