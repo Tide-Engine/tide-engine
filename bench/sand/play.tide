@@ -82,7 +82,7 @@ view Panel(Devices devices, mut Canvas canvas, mut Lobby lobby, Session session)
             GUILayout.Label("  Right button erases");
         }
         // Others join this machine's match by its room's code, or this
-        // machine joins theirs.
+        // machine joins theirs: with the button, or Enter in the field.
         GUILayout.Horizontal()
         {
             if (session.server && !session.open)
@@ -94,8 +94,8 @@ view Panel(Devices devices, mut Canvas canvas, mut Lobby lobby, Session session)
                 GUILayout.Label("Room " + session.room);
                 if (GUILayout.Button("Copy")) Clipboard.Copy(session.room);
             }
-            GUILayout.TextField("Code", lobby.code);
-            if (GUILayout.Button("Join") && lobby.code != "") Session.Join(lobby.code);
+            GUILayout.TextField("Code", lobby.code, out var entered);
+            if ((GUILayout.Button("Join") || entered) && lobby.code != "") Session.Join(lobby.code);
         }
     }
 }

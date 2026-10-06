@@ -126,9 +126,9 @@ view Show(Devices devices)
     {
         Draw.SetTint(Color.red);
     }
-    Draw.Depth(Depth.Read)
+    Draw3D.Depth(Depth.Read)
     {
-        Draw.SetDepth(Depth.None);
+        Draw3D.SetDepth(Depth.None);
     }
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     GUIControl card = GUI.Control(Rect(0, 0, 1, 1));

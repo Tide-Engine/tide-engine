@@ -29,11 +29,17 @@ static void frame(void)
     tide_gui_end(&gui, &draw);
 }
 
+// The oldest command waiting in the default channel, copied out
 static uint32_t pending(uint8_t bytes[TIDE_COMMAND_BYTES])
 {
-    const uint32_t size = tide_local_command(&local, bytes, TIDE_COMMAND_BYTES);
-    TIDE_CHECK(size > 0);
-    TIDE_CHECK(tide_game_api.check_command(bytes, size));
+    uint32_t size = 0;
+    const uint8_t *data = tide_local_command(&local, 0, &size);
+    TIDE_CHECK(data && size > 0 && size <= TIDE_COMMAND_BYTES);
+    if (!data || !size || size > TIDE_COMMAND_BYTES) return 0;
+    memcpy(bytes, data, size);
+    uint32_t channel = 7;
+    TIDE_CHECK(tide_game_api.check_command(bytes, size, &channel));
+    TIDE_CHECK(channel == 0);
     return size;
 }
 
@@ -48,12 +54,13 @@ TIDE_TEST(commands_view_submission_copies_text_and_waits_for_match_tick)
     tide_text_use(&world.heap, &local.heap);
     tide_text_set(&local.UI.text, tide_str_from_cstr("changed"), TIDE_IN_LOCAL);
     frame();
-    uint8_t again[TIDE_COMMAND_BYTES];
-    TIDE_REQUIRE(tide_local_command(&local, again, sizeof again) == size);
+    uint32_t again_size = 0;
+    const uint8_t *again = tide_local_command(&local, 0, &again_size);
+    TIDE_REQUIRE(again && again_size == size);
     TIDE_CHECK(memcmp(bytes, again, size) == 0);
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     TIDE_CHECK(world.Seen.calls == 0);
-    TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0)) == 1);
+    TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0), 0) == 1);
     tide_world_tick(&world);
     TIDE_CHECK(world.Seen.calls == 1);
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, tide_get_Name(&world, first).value)), "Alice") == 0);
@@ -61,8 +68,9 @@ TIDE_TEST(commands_view_submission_copies_text_and_waits_for_match_tick)
     TIDE_CHECK(world.Seen.claimed.id == 8);
     TIDE_CHECK(tide_entity_equal(world.Seen.other, first));
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, world.Seen.note)), "view") == 0);
-    tide_local_command_sent(&local);
-    TIDE_CHECK(tide_local_command(&local, bytes, sizeof bytes) == 0);
+    tide_local_command_sent(&local, 0);
+    uint32_t left = 1;
+    TIDE_CHECK(tide_local_command(&local, 0, &left) == NULL && left == 0);
 }
 
 TIDE_TEST(commands_sender_is_supplied_separately_and_guard_returns_reject)
@@ -73,14 +81,14 @@ TIDE_TEST(commands_sender_is_supplied_separately_and_guard_returns_reject)
     frame();
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = pending(bytes);
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(world.Seen.calls == 0);
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, tide_get_Name(&world, second).value)), "before") == 0);
     // Consumed IDs include application-level guard returns; resending can't run again.
-    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
-    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(-1), 1, bytes, size));
-    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(TIDE_GAME_PLAYERS), 1, bytes, size));
+    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
+    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(-1), 0, 1, bytes, size));
+    TIDE_CHECK(!tide_game_api.command(&world, tide_player_from_index(TIDE_GAME_PLAYERS), 0, 1, bytes, size));
 }
 
 TIDE_TEST(commands_world_submission_and_local_handler_submission)
@@ -90,14 +98,14 @@ TIDE_TEST(commands_world_submission_and_local_handler_submission)
     frame();
     uint8_t bytes[TIDE_COMMAND_BYTES];
     uint32_t size = pending(bytes);
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, world.Seen.announcement)), "Alice") == 0);
-    tide_local_command_sent(&local);
+    tide_local_command_sent(&local, 0);
     local.UI.handler = true;
     frame();
     size = pending(bytes);
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 2, bytes, size));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 2, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(world.Seen.calls == 1);
     TIDE_CHECK(world.Seen.count == 2);
@@ -111,18 +119,18 @@ TIDE_TEST(commands_wire_rejects_truncation_unknown_types_trailing_bytes_and_bad_
     frame();
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = pending(bytes);
-    for (uint32_t n = 0; n < size; n++) TIDE_CHECK(!tide_game_api.check_command(bytes, n));
+    for (uint32_t n = 0; n < size; n++) TIDE_CHECK(!tide_game_api.check_command(bytes, n, NULL));
     uint8_t altered[TIDE_COMMAND_BYTES];
     memcpy(altered, bytes, size);
     altered[0] = 255; altered[1] = 255;
-    TIDE_CHECK(!tide_game_api.check_command(altered, size));
+    TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
     memcpy(altered, bytes, size); altered[size] = 0;
-    TIDE_CHECK(!tide_game_api.check_command(altered, size + 1));
+    TIDE_CHECK(!tide_game_api.check_command(altered, size + 1, NULL));
     memcpy(altered, bytes, size); altered[12] = 0xC0;
-    TIDE_CHECK(!tide_game_api.check_command(altered, size));
+    TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
     memcpy(altered, bytes, size); altered[10] = 255; altered[11] = 255;
-    TIDE_CHECK(!tide_game_api.check_command(altered, size));
-    TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0)) == 0);
+    TIDE_CHECK(!tide_game_api.check_command(altered, size, NULL));
+    TIDE_CHECK(tide_game_api.command_sequence(&world, tide_player_from_index(0), 0) == 0);
 }
 
 TIDE_TEST(commands_delivery_ids_survive_copy_pack_delta_and_restore)
@@ -132,19 +140,19 @@ TIDE_TEST(commands_delivery_ids_survive_copy_pack_delta_and_restore)
     frame();
     uint8_t bytes[TIDE_COMMAND_BYTES];
     const uint32_t size = pending(bytes);
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     tide_world copy = {0};
     tide_world_copy(&copy, &world);
-    TIDE_CHECK(tide_game_api.command_sequence(&copy, tide_player_from_index(0)) == 1);
+    TIDE_CHECK(tide_game_api.command_sequence(&copy, tide_player_from_index(0), 0) == 1);
     TIDE_CHECK(tide_world_hash(&copy) == tide_world_hash(&world));
     uint32_t packed_size = tide_world_pack(&world, NULL, 0);
     uint8_t *packed = malloc(packed_size);
     TIDE_REQUIRE(tide_world_pack(&world, packed, packed_size) == packed_size);
     tide_world restored = {0};
     TIDE_REQUIRE(tide_world_unpack(&restored, packed, packed_size));
-    TIDE_CHECK(tide_game_api.command_sequence(&restored, tide_player_from_index(0)) == 1);
-    TIDE_CHECK(!tide_game_api.command(&restored, tide_player_from_index(0), 1, bytes, size));
+    TIDE_CHECK(tide_game_api.command_sequence(&restored, tide_player_from_index(0), 0) == 1);
+    TIDE_CHECK(!tide_game_api.command(&restored, tide_player_from_index(0), 0, 1, bytes, size));
     TIDE_CHECK(tide_world_hash(&restored) == tide_world_hash(&world));
     free(packed);
     tide_world_free(&copy);
@@ -156,15 +164,16 @@ TIDE_TEST(commands_disconnect_discards_local_outbox)
     start();
     local.UI.send = true;
     frame();
-    uint8_t bytes[TIDE_COMMAND_BYTES];
-    TIDE_REQUIRE(tide_local_command(&local, bytes, sizeof bytes) > 0);
-    TIDE_CHECK(tide_local_command(&local, NULL, 0) == 0);
-    TIDE_CHECK(tide_local_command(&local, bytes, 1) == 0);
+    uint32_t size = 0;
+    TIDE_REQUIRE(tide_local_command(&local, 0, &size) != NULL && size > 0);
+    TIDE_CHECK(tide_local_command(&local, 1, &size) == NULL); // No channel but the default in this game
+    TIDE_CHECK(tide_local_command(&local, TIDE_COMMAND_UNORDERED, &size) == NULL);
+    TIDE_CHECK(tide_local_command(&local, 0, NULL) != NULL); // The size can go unasked
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
-    TIDE_CHECK(tide_local_command(&local, bytes, sizeof bytes) == 0);
+    TIDE_CHECK(tide_local_command(&local, 0, &size) == NULL);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(1), 0, false, false, "");
     frame();
-    TIDE_CHECK(tide_local_command(&local, bytes, sizeof bytes) == 0);
+    TIDE_CHECK(tide_local_command(&local, 0, &size) == NULL);
 }
 
 TIDE_TEST(commands_floats_enums_and_nested_bounds_repaired_before_handler)
@@ -188,8 +197,8 @@ TIDE_TEST(commands_floats_enums_and_nested_bounds_repaired_before_handler)
     tide_bits_put_varint(&b, second.index);
     tide_bits_put_varint(&b, second.generation);
     const uint32_t size = tide_bits_end(&b);
-    TIDE_REQUIRE(tide_game_api.check_command(bytes, size));
-    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 1, bytes, size));
+    TIDE_REQUIRE(tide_game_api.check_command(bytes, size, NULL));
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(world.Seen.calls == 1);
     TIDE_CHECK(world.Seen.rating == 3);
@@ -198,6 +207,8 @@ TIDE_TEST(commands_floats_enums_and_nested_bounds_repaired_before_handler)
     TIDE_CHECK(world.Seen.count == 2);
 }
 
+// The outbox is packed after the local state's struct: its count, then each
+// command's channel, size and bytes, each checked as the session would
 TIDE_TEST(commands_local_pack_preserves_outbox_and_rejects_invalid_ring_metadata)
 {
     start();
@@ -208,25 +219,26 @@ TIDE_TEST(commands_local_pack_preserves_outbox_and_rejects_invalid_ring_metadata
     TIDE_REQUIRE(tide_local_pack(&local, packed, size) == size);
     tide_local restored = {0};
     TIDE_REQUIRE(tide_local_unpack(&restored, packed, size));
-    uint8_t a[TIDE_COMMAND_BYTES], b[TIDE_COMMAND_BYTES];
+    uint8_t a[TIDE_COMMAND_BYTES];
     const uint32_t payload = pending(a);
-    TIDE_CHECK(tide_local_command(&restored, b, sizeof b) == payload);
+    uint32_t b_size = 0;
+    const uint8_t *b = tide_local_command(&restored, 0, &b_size);
+    TIDE_REQUIRE(b && b_size == payload);
     TIDE_CHECK(memcmp(a, b, payload) == 0);
     tide_local_free(&restored);
-    uint32_t invalid = TIDE_COMMAND_PENDING;
-    memcpy(packed + offsetof(tide_local, tide_outgoing_from), &invalid, sizeof invalid);
+    const size_t outbox = sizeof(tide_local); // The count: one, so a byte
+    TIDE_REQUIRE(packed[outbox] == 1 && packed[outbox + 1] == 0 && packed[outbox + 2] == payload); // Channel 0, then the size
+    packed[outbox] = 200; // More than the outbox holds
     TIDE_CHECK(!tide_local_unpack(&restored, packed, size));
     TIDE_REQUIRE(tide_local_pack(&local, packed, size) == size);
-    invalid = TIDE_COMMAND_PENDING + 1u;
-    memcpy(packed + offsetof(tide_local, tide_outgoing_count), &invalid, sizeof invalid);
+    packed[outbox + 1] = 5; // A channel the game doesn't have, and not the command's own
     TIDE_CHECK(!tide_local_unpack(&restored, packed, size));
     TIDE_REQUIRE(tide_local_pack(&local, packed, size) == size);
-    invalid = TIDE_COMMAND_BYTES + 1u;
-    memcpy(packed + offsetof(tide_local, tide_outgoing_sizes), &invalid, sizeof invalid);
+    packed[outbox + 2] = (uint8_t)(payload - 1u); // Cut short
     TIDE_CHECK(!tide_local_unpack(&restored, packed, size));
     TIDE_REQUIRE(tide_local_pack(&local, packed, size) == size);
-    packed[offsetof(tide_local, tide_outgoing)] = 255;
-    packed[offsetof(tide_local, tide_outgoing) + 1] = 255;
+    packed[outbox + 3] = 255; // The command's type, which the game has none of
+    packed[outbox + 4] = 255;
     TIDE_CHECK(!tide_local_unpack(&restored, packed, size));
     free(packed);
     tide_local_free(&restored);
@@ -257,12 +269,12 @@ TIDE_TEST(commands_generated_game_without_input_survives_loss_over_network)
     uint8_t bytes[TIDE_COMMAND_BYTES];
     uint32_t size = pending(bytes);
     TIDE_REQUIRE(tide_client_send_command(client, bytes, size));
-    tide_local_command_sent(&local);
+    tide_local_command_sent(&local, 0);
     local.UI.announce = true;
     frame();
     size = pending(bytes);
     TIDE_REQUIRE(tide_client_send_command(client, bytes, size));
-    tide_local_command_sent(&local);
+    tide_local_command_sent(&local, 0);
     for (int i = 0; i < 240; i++) {
         now += 1.0 / 60;
         tide_loopback_set_time(net, now);
@@ -274,8 +286,8 @@ TIDE_TEST(commands_generated_game_without_input_survives_loss_over_network)
     TIDE_REQUIRE(authoritative && verified);
     TIDE_CHECK(authoritative->Seen.calls == 1);
     TIDE_CHECK(verified->Seen.calls == 1);
-    TIDE_CHECK(tide_game_api.command_sequence(authoritative, sender) == 2);
-    TIDE_CHECK(tide_game_api.command_sequence(verified, sender) == 2);
+    TIDE_CHECK(tide_game_api.command_sequence(authoritative, sender, 0) == 2);
+    TIDE_CHECK(tide_game_api.command_sequence(verified, sender, 0) == 2);
     TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&authoritative->heap, authoritative->Seen.announcement)), "Alice") == 0);
     TIDE_CHECK(tide_client_status_of(client).resyncs == 0);
     tide_client_destroy(client);

@@ -1,0 +1,5 @@
+// expect: 'Ping' already has its ordering: one of Channel and Unordered, once
+enum Channels { Chat }
+[Channel(Channels.Chat), Unordered]
+command Ping { int at; }
+scene Main { }

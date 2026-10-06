@@ -370,6 +370,12 @@ typedef struct enum_member {
     int64_t number;     // Its value, once checked
 } enum_member;
 
+// A channel commands are in: an enum's member, named by [Channel]
+typedef struct command_channel {
+    struct decl *enumeration;
+    const enum_member *member;
+} command_channel;
+
 typedef struct decl {
     decl_kind kind;
     str name;
@@ -566,6 +572,14 @@ typedef struct decl {
     const enum_member *order_member;
     int order_offset; // Position within the phase, not added to the enum's value
     loc order_at;
+    // A command's ordering: [Channel(Channels.Uploads)], a channel of the
+    // game's, numbered from 1 in program.channels (0 is the default
+    // channel), or [Unordered], no order at all (TIDE_COMMAND_UNORDERED)
+    struct decl *channel_enum;
+    const enum_member *channel_member;
+    uint32_t channel;
+    bool unordered;
+    loc channel_at;
 
     // Systems in the tick, from analyze_parallelism
     VEC(system_wait) waits;       // Earlier systems it must wait for: every one that's its own, and the first few through others
@@ -1022,6 +1036,7 @@ typedef struct program {
     VEC(decl *) handlers; // Every event handler, in the order they run
     VEC(decl *) events;   // Built-in ones first
     VEC(decl *) command_types; // Commands are event-shaped values, with a separate incoming wire API
+    VEC(command_channel) channels; // The channels [Channel] names, in order: channel i + 1
     decl *spawned;        // Built-in events
     decl *destroyed;
     decl *player_joined;
