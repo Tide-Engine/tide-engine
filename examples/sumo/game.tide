@@ -169,6 +169,7 @@ singleton Ring
     int manned;                // The seats players have, a bit each
     bool bots = true;          // Bots have the seats players leave, up to the crowd
     bool fresh;                // The round being set up is the first of a new game
+    int stacked = TILES;       // How many tiles out from the middle a ring is stacked: the scene's, below
     int drop = DROP;           // Ticks until the next pickup
     Random dice;
     Map<PlayerID, int> players;  // Each player's seat
@@ -177,7 +178,17 @@ singleton Ring
     List<Blast> blasts;          // The blasts that haven't gone off yet
 }
 
-scene Main { }
+// The match's scene. How much is stacked on its rings is the match's from
+// its start: every tile out to the rim, unless whoever started it said how
+// many tiles out from the middle, as in `Session.Start(Main { stacked = 2 })`.
+// With 1 it's the middle's own pile, and with 0 a bare floor. The game always
+// starts a match with all of it. Its test starts some with less: the match it
+// plays over a network is four machines, each with a ring to keep, and a test
+// of what a ball does needs nothing in the ball's way.
+scene Main
+{
+    int stacked = TILES;
+}
 
 input Controls
 {
@@ -294,9 +305,10 @@ float3 Start(int seat)
 // What stays for the whole match: the seats, and the pit, a sensor far under
 // the floor. Gravity is the world's: stronger than the Earth's here, so that
 // what falls looks its size.
-event(Spawned) Build(mut Ring ring, mut Physics physics, with Main)
+event(Spawned) Build(Main main, mut Ring ring, mut Physics physics)
 {
     physics.gravity = float3(0, -18, 0);
+    ring.stacked = main.stacked;
     for (var seat = 0; seat < SEATS; seat++)
         ring.chairs[seat] = Spawn(Seat { seat = seat });
     Spawn(Body { type = BodyType.Static, position = float3(0, PIT - 10, 0) },
