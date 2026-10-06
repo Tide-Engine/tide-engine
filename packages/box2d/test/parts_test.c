@@ -625,11 +625,17 @@ static void act(lab *l)
     } else if (what < 96) {
         // How a body is to be, which is in the body or in what its set has of it: asleep or static as it may be
         if (at < 1) return;
-        switch (roll(l, 5)) {
+        switch (roll(l, 6)) {
         case 0: b2Body_SetGravityScale(body, between(l, -0.5f, 1.5f)); break;
         case 1: b2Body_SetLinearDamping(body, between(l, 0.0f, 1.0f)); break;
         case 2: b2Body_SetAngularDamping(body, between(l, 0.0f, 1.0f)); break;
         case 3: b2Body_SetBullet(body, roll(l, 2) == 0); break;
+        case 4: {
+            b2MotionLocks locks = {0};
+            locks.angularZ = roll(l, 2) == 0;
+            b2Body_SetMotionLocks(body, locks);
+            break;
+        }
         default: b2Body_EnableSleep(body, roll(l, 4) != 0); break;
         }
         did(l, "a body's setting set", at);
@@ -879,6 +885,17 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2Body_SetGravityScale(l.bodies[SHELF + 6], 0.5f);
             did(&l, "a shelf's gravity scale set", 0);
         }
+        // ...and whether one is a bullet, and one may turn, which are each a bit of the body's own
+        if (l.step == 170) {
+            b2Body_SetBullet(l.bodies[LONER + 5], true);
+            did(&l, "a sleeping crate made a bullet", 0);
+        }
+        if (l.step == 175) {
+            b2MotionLocks locks = {0};
+            locks.angularZ = true;
+            b2Body_SetMotionLocks(l.bodies[LONER + 6], locks);
+            did(&l, "a sleeping crate kept from turning", 0);
+        }
         // A shape goes from the middle of a body's list, on a body that never moves and isn't weighed again:
         // the shape, the one before it and the one after it, whose links change, and the body, which counts
         // them. Then the one that heads the list, which the body names
@@ -925,7 +942,8 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
         const int parts = l.images_in_parts;
         right = take_image(&l);
         // Each of those steps had its image in parts: the world was asleep and followed
-        if (l.step == 120 || l.step == 135 || l.step == 150 || l.step == 160 || l.step == 165 || l.step == 180 || l.step == 190
+        if (l.step == 120 || l.step == 135 || l.step == 150 || l.step == 160 || l.step == 165 || l.step == 170 || l.step == 175
+            || l.step == 180 || l.step == 190
             || l.step == 200 || l.step == 210 || l.step == 250 || l.step == 255 || l.step == 270) {
             if (l.images_in_parts == parts) printf("    step %d's image was written whole\n", l.step);
             TIDE_CHECK(l.images_in_parts > parts);
