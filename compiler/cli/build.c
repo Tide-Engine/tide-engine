@@ -1330,7 +1330,7 @@ static void strip_reloading(char *script)
     }
 }
 
-static bool make_page(const char *root, const char *program, const char *page)
+static bool make_page(const char *root, const char *program, const char *page, const char *pack)
 {
     char *shell_path = path_join(root, "web/shell.html");
     char *script_path = path_join(root, "web/tide.js");
@@ -1338,6 +1338,8 @@ static bool make_page(const char *root, const char *program, const char *page)
     char *script = sys_read_file(script_path, NULL);
     size_t wasm_len = 0;
     char *wasm = sys_read_file(program, &wasm_len);
+    size_t pack_len = 0;
+    char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets, inside the page too (TIDE_PACK)
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
     if (!script || !wasm || !slot) {
         fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
@@ -1351,11 +1353,18 @@ static bool make_page(const char *root, const char *program, const char *page)
         return false;
     }
     fwrite(shell, 1, (size_t)(slot - shell), f);
-    fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n%s</script>", encoded, script);
+    fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n", encoded);
+    if (packed) {
+        char *pack_encoded = base64((const unsigned char *)packed, pack_len);
+        fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
+        free(pack_encoded);
+    }
+    fprintf(f, "%s</script>", script);
     fputs(slot + strlen("{{{ SCRIPT }}}"), f);
     const bool ok = fclose(f) == 0;
     free(encoded);
     free(wasm);
+    free(packed);
     return ok;
 }
 
@@ -1363,6 +1372,23 @@ static bool make_page(const char *root, const char *program, const char *page)
 
 // Finds the game's packages and generates its C. With `layout`, the generated
 // code describes the data layout too, for hot reloading.
+// The files and folders the game's assets name, as the last generate left
+// them in its info: freed before the next.
+static void free_asset_paths(game_info *info)
+{
+    for (int i = 0; i < info->asset_count; i++) free(info->asset_paths[i]);
+    free(info->asset_paths);
+    info->asset_paths = NULL;
+    info->asset_count = 0;
+}
+
+// Where the game's pack of assets lands with its generated C: game.pack in
+// `gen`, or nothing for a game with no assets (tide/pack.h).
+static char *pack_of(const char *gen)
+{
+    return path_join(gen, "game.pack");
+}
+
 static bool generate(build *b, const char *gen, const bool layout)
 {
     if (!find_packages(b->folder, &b->packages)) return false;
@@ -1372,10 +1398,31 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (!inputs) return false;
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
     b->externs = (sb){0};
-    const codegen_options codegen = {"game", gen, true, layout, &b->externs, &b->info, false};
+    free_asset_paths(&b->info);
+    char *pack = pack_of(gen);
+    // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
+    const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout, .externs = &b->externs,
+                                     .info = &b->info, .game_folder = b->folder, .pack = pack};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    free(pack);
     free(inputs);
     free_files(&paths);
+    return ok;
+}
+
+// Puts the pack `from` at `to` when there is one, and takes away what was at
+// `to` when there isn't: a game whose assets went has none left beside it.
+static bool place_pack(const char *from, const char *to)
+{
+    size_t size = 0;
+    char *bytes = sys_read_file(from, &size);
+    if (!bytes) {
+        sys_remove(to);
+        return true;
+    }
+    const bool ok = sys_write_file(to, bytes, size);
+    if (!ok) fprintf(stderr, "tide: can't write %s\n", to);
+    free(bytes);
     return ok;
 }
 
@@ -1424,7 +1471,17 @@ char *tide_build(const char *root, const build_options *opts)
         program = path_join(b.cache, file);
     }
     if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
-    if (opts->web && !make_page(root, program, output)) return NULL;
+    char *pack = pack_of(gen);
+    if (opts->web && !make_page(root, program, output, pack)) return NULL;
+    if (!opts->web) { // Beside the program, as <name>.pack, which tide/run.h loads
+        char file[512];
+        snprintf(file, sizeof file, "%s.pack", b.name);
+        char *beside = path_join(output_dir, file);
+        const bool placed = place_pack(pack, beside);
+        free(beside);
+        if (!placed) return NULL;
+    }
+    free(pack);
     copy_dynamic(&c, output_dir);
     free_game_c(&c);
     return output;
@@ -1443,7 +1500,58 @@ typedef struct run {
     char *dir;       // This run's folder
     char *gen;       // ...and its generated files
     uint32_t builds; // Made so far, game-1 to game-<builds>
+    uint32_t packs;  // Packs of the game's assets written so far, pack-1 to pack-<packs>: with each build, and as a named file changes
 } run;
+
+// The game's pack as the last generate left it, into the run's folder as the
+// next pack-<n>, which the host loads (platform/src/reload.c). Nothing for a
+// game with no assets.
+static bool write_pack(run *r)
+{
+    char *from = pack_of(r->gen);
+    size_t size = 0;
+    char *bytes = sys_read_file(from, &size);
+    free(from);
+    if (!bytes) return true;
+    char name[32];
+    snprintf(name, sizeof name, "pack-%u", (unsigned)(r->packs + 1u));
+    char *to = path_join(r->dir, name);
+    const bool ok = sys_write_file(to, bytes, size);
+    if (ok) r->packs++;
+    else fprintf(stderr, "tide: can't write %s\n", to);
+    free(to);
+    free(bytes);
+    return ok;
+}
+
+static void stamp_file(void *user, const char *path);
+
+static void stamp_asset_file(void *user, const char *path, const unsigned long long size)
+{
+    (void)size;
+    stamp_file(user, path);
+}
+
+// Changes whenever a file the game's assets name does, or one comes or goes
+// in a folder a glob names: the paths the last generate listed.
+static uint64_t asset_stamp(const build *b)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int i = 0; i < b->info.asset_count; i++) {
+        const char *path = b->info.asset_paths[i];
+        if (path[0] && path[strlen(path) - 1] == '/') folder_find_files(path, stamp_asset_file, &h);
+        else stamp_file(&h, path);
+    }
+    return h;
+}
+
+// A file an asset names changed: the game's C stands, and its pack is made
+// again, which the running game loads: a saved image is in it at once.
+static void repack(run *r)
+{
+    if (generate(&r->b, r->gen, true)) write_pack(r);
+    else fprintf(stderr, "tide: the game keeps its assets as they were\n");
+}
 
 static char *build_path(const run *r, const uint32_t n, const char *suffix)
 {
@@ -1480,6 +1588,7 @@ static bool build_library(run *r)
         fprintf(stderr, "tide: can't write %s\n", library);
         ok = false;
     }
+    if (ok) ok = write_pack(r);
     if (ok) {
         r->builds = n;
         // The one before the last is done with; if the host still has it, it
@@ -1666,7 +1775,8 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
     sys_read_lines();
 
     uint64_t stamp = game_stamp(&r.b);
-    int64_t changed_at = -1;
+    uint64_t assets = asset_stamp(&r.b);
+    int64_t changed_at = -1, assets_changed_at = -1;
     while (!sys_wait(game, 250, &code)) {
         if (typed_restart()) {
             char *restart = path_join(r.dir, "restart");
@@ -1679,9 +1789,20 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
             changed_at = sys_now_ms();
             continue;
         }
-        if (changed_at < 0 || sys_now_ms() - changed_at < SETTLE_MS) continue;
-        changed_at = -1;
-        if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+        const uint64_t assets_now = asset_stamp(&r.b);
+        if (assets_now != assets) {
+            assets = assets_now;
+            assets_changed_at = sys_now_ms();
+            continue;
+        }
+        if (changed_at >= 0 && sys_now_ms() - changed_at >= SETTLE_MS) {
+            changed_at = -1;
+            assets_changed_at = -1; // A build brings the pack as the files are now
+            if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+        } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
+            assets_changed_at = -1;
+            repack(&r); // Data, not code: no build
+        }
     }
     sys_remove_tree(r.dir);
     return code;
@@ -1696,10 +1817,13 @@ typedef struct web_run {
     run r;
     char *page;
     uint32_t restarts; // Times `r` was typed: the page starts the game over when it changes
-    char status[32];
+    char status[48];
     char *program; // The newest build, read when first asked for
     size_t program_size;
     uint32_t program_build;
+    char *pack;    // The newest pack of assets, likewise
+    size_t pack_size;
+    uint32_t pack_number;
 } web_run;
 
 // The game's program for the page: tide/host.h's loop, going on from where
@@ -1778,13 +1902,24 @@ static char *web_page(const char *root, const char *const *args)
 static void answer_web(void *user, const char *path, serve_reply *reply)
 {
     web_run *w = user;
-    char newest[64];
+    char newest[64], pack[64];
     snprintf(newest, sizeof newest, "/game-%u.wasm", (unsigned)w->r.builds);
+    snprintf(pack, sizeof pack, "/pack-%u", (unsigned)w->r.packs);
     if (strcmp(path, "/") == 0) {
         *reply = (serve_reply){200, "text/html; charset=utf-8", w->page, strlen(w->page)};
     } else if (strcmp(path, "/build") == 0) {
-        snprintf(w->status, sizeof w->status, "%u %u", (unsigned)w->r.builds, (unsigned)w->restarts);
+        // The newest build, how often to start over, and the newest pack of assets (0 for none)
+        snprintf(w->status, sizeof w->status, "%u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts, (unsigned)w->r.packs);
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->status, strlen(w->status)};
+    } else if (w->r.packs && strcmp(path, pack) == 0) {
+        if (w->pack_number != w->r.packs) {
+            char *file = path_join(w->r.dir, pack + 1);
+            free(w->pack);
+            w->pack = sys_read_file(file, &w->pack_size);
+            w->pack_number = w->pack ? w->r.packs : 0;
+            free(file);
+        }
+        if (w->pack) *reply = (serve_reply){200, "application/octet-stream", w->pack, w->pack_size};
     } else if (strcmp(path, newest) == 0) {
         if (w->program_build != w->r.builds) {
             char *file = build_path(&w->r, w->r.builds, ".wasm");
@@ -1822,7 +1957,8 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     sys_read_lines();
 
     uint64_t stamp = game_stamp(&r->b);
-    int64_t changed_at = -1;
+    uint64_t assets = asset_stamp(&r->b);
+    int64_t changed_at = -1, assets_changed_at = -1;
     for (;;) {
         serve_poll(server, 250, answer_web, &w);
         if (typed_restart()) w.restarts++;
@@ -1832,11 +1968,22 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
             changed_at = sys_now_ms();
             continue;
         }
-        if (changed_at < 0 || sys_now_ms() - changed_at < SETTLE_MS) continue;
-        changed_at = -1;
-        if (build_library(r)) printf("tide: built it again; the page reloads it\n");
-        else fprintf(stderr, "tide: the page keeps running its last build\n");
-        fflush(stdout);
+        const uint64_t assets_now = asset_stamp(&r->b);
+        if (assets_now != assets) {
+            assets = assets_now;
+            assets_changed_at = sys_now_ms();
+            continue;
+        }
+        if (changed_at >= 0 && sys_now_ms() - changed_at >= SETTLE_MS) {
+            changed_at = -1;
+            assets_changed_at = -1;
+            if (build_library(r)) printf("tide: built it again; the page reloads it\n");
+            else fprintf(stderr, "tide: the page keeps running its last build\n");
+            fflush(stdout);
+        } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
+            assets_changed_at = -1;
+            repack(r); // The page fetches the new pack, and the game loads it
+        }
     }
 }
 
@@ -2015,6 +2162,8 @@ static char *build_android(const char *root, const build_options *opts, char *pa
         icon = path_join(root, "lib/android/icon.png");
     }
     desc.icon = sys_exists(icon) ? icon : NULL;
+    char *pack = pack_of(gen);
+    desc.pack = sys_exists(pack) ? pack : NULL; // The game's assets, as assets/game.pack
     char error[512];
     apk_key key;
     bool made;
@@ -2185,7 +2334,7 @@ bool tide_schedule(const char *folder_arg, const bool shaders)
     int count = 0;
     compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count) : NULL;
     if (!inputs) return false;
-    const codegen_options codegen = {game_name(folder), NULL, true, false, NULL, NULL, shaders};
+    const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder};
     sb text = {0};
     if (!compile_inputs(inputs, count, &codegen, &text)) return false;
     fputs(text.data, stdout);

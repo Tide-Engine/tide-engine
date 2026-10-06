@@ -207,6 +207,12 @@ uint32_t tide_platform_draw_calls(void);
 // where the system doesn't say.
 uint64_t tide_platform_memory(void);
 
+// The game's pack of assets (tide/pack.h), as its build left it with the
+// program: beside it as <program>.pack on desktop, in its page on the web and
+// in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
+// none. The standard host loads it before the game runs (tide/host.h).
+uint8_t *tide_platform_pack(size_t *size);
+
 // 64 bits from the system's random number generator, which nobody could guess:
 // what a session makes the seeds of the matches it starts from
 // (tide_session_desc.entropy), so no two go the same. 0 if the system gives

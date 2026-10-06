@@ -1,0 +1,6 @@
+// expect: an asset is data, the file it names, and data isn't replaced
+virtual asset string rules = "../e2e/assets/rules.txt";
+
+scene Main
+{
+}

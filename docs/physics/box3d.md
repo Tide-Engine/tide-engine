@@ -42,7 +42,7 @@ A floor, and a wall of twenty crates. Tap to throw a ball at it.
 - A tap is a [command](../game/commands.md), with the ray through the pixel it was on. `ThrowBall` spawns a body at its start, with a `velocity` along it.
 - `Fall` destroys what fell off the floor, and its body goes with it.
 
-[Alley](../guide/alley.md) is a whole game made with the package, for up to eight players in a match: a lane of pins made of three shapes each, balls thrown with spin, gravity that lets go, a bar that sweeps, a sensor that counts, and most of what this page describes.
+[Sumo](../guide/sumo.md) is a whole game made with the package, for up to eight players in a match: balls driven by pushes through two thousand stacked crates, a floor whose tiles turn from static to loose and fall, blasts, sensors that take what falls and hand out pickups, and most of what this page describes.
 
 ## Bodies
 

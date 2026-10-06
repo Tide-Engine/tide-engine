@@ -1,0 +1,6 @@
+// expect: an asset needs its file's path
+asset string rules;
+
+scene Main
+{
+}
