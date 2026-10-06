@@ -320,12 +320,15 @@ enum { RTC_ICE_CHECKING, RTC_ICE_CONNECTED, RTC_ICE_FAILED };
 #define RTC_MAX_PAIRS 32
 #define RTC_MAX_PERMISSIONS 16
 
+// A pair's check: not sent yet, sent, answered from where it went, or given up on
+enum { RTC_PAIR_WAITING, RTC_PAIR_IN_PROGRESS, RTC_PAIR_SUCCEEDED, RTC_PAIR_FAILED };
+
 typedef struct rtc_pair {
     bool relayed; // From our TURN allocation, rather than our socket
     rtc_addr remote;
     uint32_t remote_priority;
     uint64_t priority;
-    uint8_t state; // Waiting, in progress, succeeded or failed
+    uint8_t state; // RTC_PAIR_WAITING and the rest
     uint8_t id[12];
     double sent;
     int tries;
@@ -534,6 +537,7 @@ typedef struct rtc_sctp {
 
     // The channel
     bool channel;      // Open
+    bool connected;    // It opened, at some point: nothing is left to wait for
     bool opening;      // We sent DATA_CHANNEL_OPEN
     uint16_t stream;
     uint16_t ssn;      // Our next stream sequence number, for the ordered open/ack
@@ -544,6 +548,8 @@ void rtc_sctp_start(rtc_sctp *s, bool initiator, uint16_t their_port, rtc_send_f
                     void *user, double now);
 // A packet from DTLS
 void rtc_sctp_receive(rtc_sctp *s, const uint8_t *packet, size_t size, double now);
+// What's due. It fails (RTC_SCTP_FAILED) when the association and the channel
+// on it aren't both up 20 seconds after it started.
 void rtc_sctp_update(rtc_sctp *s, double now);
 // Opens the channel: the side that creates it (the one who joins), with a
 // stream number of the parity its DTLS role gives it.

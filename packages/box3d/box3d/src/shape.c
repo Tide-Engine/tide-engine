@@ -578,6 +578,8 @@ static void b3DestroyShapeInternal( b3World* world, b3Shape* shape, b3Body* body
 			b3Sensor* movedSensor = b3Array_Get( world->sensors, shape->sensorIndex );
 			b3Shape* otherSensorShape = b3Array_Get( world->shapes, movedSensor->shapeId );
 			otherSensorShape->sensorIndex = shape->sensorIndex;
+			// Tide: another sensor's shape, anywhere in the world (see b3SnapTrack)
+			b3SnapTouchShape( world, movedSensor->shapeId );
 		}
 	}
 
@@ -609,6 +611,21 @@ void b3DestroyShape( b3ShapeId shapeId, bool updateBodyMass )
 	bool wakeBodies = true;
 
 	b3Body* body = b3Array_Get( world->bodies, shape->bodyId );
+
+	// Tide: the shape, its neighbors in its body's list, whose links change, and the body, which has the
+	// list's head and its count: the body may be static or asleep (see b3SnapTrack). The contacts that go
+	// with the shape say so themselves. A shape with more in an image than the room every shape takes (a
+	// mesh, a height field, a compound, or a material array of its own) is one nothing follows.
+	b3SnapTouchShape( world, shape->id );
+	b3SnapTouchShape( world, shape->prevShapeId );
+	b3SnapTouchShape( world, shape->nextShapeId );
+	b3SnapTouchBody( world, body->id );
+	if ( shape->materials != NULL ||
+		 ( shape->type != b3_sphereShape && shape->type != b3_capsuleShape && shape->type != b3_hullShape ) )
+	{
+		b3SnapTouchAll( world );
+	}
+
 	b3DestroyShapeInternal( world, shape, body, wakeBodies );
 
 	if ( updateBodyMass == true )
