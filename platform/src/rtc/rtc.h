@@ -537,6 +537,7 @@ typedef struct rtc_sctp {
     bool opening;      // We sent DATA_CHANNEL_OPEN
     uint16_t stream;
     uint16_t ssn;      // Our next stream sequence number, for the ordered open/ack
+    uint32_t messages_in, messages_out; // Its messages so far, each way
 } rtc_sctp;
 
 void rtc_sctp_start(rtc_sctp *s, bool initiator, uint16_t their_port, rtc_send_fn send, rtc_message_fn message,
