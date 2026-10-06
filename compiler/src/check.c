@@ -1134,6 +1134,10 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     case TY_ERROR: return false;
     case TY_BYTE: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
         return true;
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s", set ? "set" : "map",
+                   t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
+        return false;
     default:
         diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
                    type_name(t));
@@ -1143,7 +1147,6 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     }
 }
 
-static bool list_element_ok(type t, loc at, const type *key);
 
 // Map<K, V> or Set<K> for those types: one declaration for each, so two maps
 // from ints to text are the same type. A map's `entry` is the struct a foreach
@@ -1329,71 +1332,30 @@ static void unwrap_error(const expr *e, const type t)
               type_name(error));
 }
 
-// The first list, map or set a struct has in it, in a struct of its own or not:
-// its kind, with the field it's in written to `path`, like "items" or
-// "bag.items". TY_ERROR for a struct with none.
-static type_kind first_held(const type t, char *path, const size_t size)
-{
-    const size_t start = strlen(path);
-    for (int i = 0; i < t.decl->fields.count; i++) {
-        const field *f = &t.decl->fields.items[i];
-        const type_kind kind = f->type.kind;
-        snprintf(path + start, size - start, "%s" STR_FMT, start ? "." : "", STR_ARG(f->name));
-        if (kind == TY_LIST || kind == TY_MAP || kind == TY_SET) return kind;
-        if (kind == TY_STRUCT) {
-            const type_kind inner = first_held(f->type, path, size);
-            if (inner != TY_ERROR) return inner;
-        }
-        path[start] = '\0';
-    }
-    return TY_ERROR;
-}
-
-// A struct with a list, a map or a set in it, as a list's element or a map's
-// value: nothing holds one yet. Says which field is in the way, and what to
-// write instead. `key` is the map's key type, or NULL for a list.
-static void refuse_held(const type t, const loc at, const type *key)
-{
-    char path[256] = "";
-    const type_kind kind = first_held(t, path, sizeof path);
-    const char *one = kind == TY_LIST ? "list" : kind == TY_MAP ? "map" : "set";
-    char entities[160];
-    if (key) snprintf(entities, sizeof entities, "Map<%s, Entity>", type_name(*key));
-    else snprintf(entities, sizeof entities, "List<Entity>");
-    diag_error(at, "a %s can't hold '" STR_FMT "' yet: its '%s' is a %s", key ? "map" : "list", STR_ARG(t.decl->name), path, one);
-    if (kind == TY_LIST) {
-        diag_note("keep all of their '%s' in one list, and in each '" STR_FMT "' where its part starts and how many it "
-                  "has; or keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
-                  path, STR_ARG(t.decl->name), STR_ARG(t.decl->name), entities);
-    } else {
-        diag_note("keep each '" STR_FMT "' in a component, on an entity of its own, and hold the entities: '%s'",
-                  STR_ARG(t.decl->name), entities);
-    }
-}
-
-// What a list can hold, and a map as its values: values, never ECS data,
-// Actions or other lists. `key` is the map's key type, or NULL for a list.
-static bool list_element_ok(const type t, const loc at, const type *key)
+// What a list can hold, and a map as its values (GENERIC_ELEMENT): values,
+// never ECS data or Actions. Lists, maps and sets among them, and structs
+// that hold them: a world keeps an element's own in its heap, as it keeps a
+// field's. Not a grid, which is never copied, but in an asset, which is never
+// written (`asset`). `key` is the map's key type, or NULL for a list.
+static bool element_ok(const type t, const loc at, const type *key, const bool asset)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
+    case TY_LIST: case TY_MAP: case TY_SET:
         return true;
     case TY_STRUCT:
         if (holds_render_resource(t)) {
             diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
             return false;
         }
-        if (!holds_list(t)) return true;
-        refuse_held(t, at, key);
-        return false;
-    case TY_LIST:
-    case TY_MAP:
-    case TY_SET:
-        // The parser refuses these where they're written, with what to write instead
-        diag_error(at, "a %s can't hold %s yet", key ? "map" : "list", t.kind == TY_LIST ? "lists" : t.kind == TY_MAP ? "maps" : "sets");
+        return true;
+    case TY_GRID:
+        if (asset) return true;
+        diag_error(at, "a %s can't hold grids", key ? "map" : "list");
+        diag_note("grids stay where they're made: in components, singletons and scenes");
         return false;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
@@ -1461,9 +1423,13 @@ static bool grid_cell_ok(const type t, const loc at)
     case TY_LIST:
     case TY_MAP:
     case TY_SET:
-    case TY_GRID:
-        diag_error(at, "a grid's cells can't be %s", t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps");
+    case TY_GRID: {
+        const char *one = t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid";
+        diag_error(at, "a grid's cells can't be %ss", one);
+        if (t.kind == TY_GRID) diag_note("grids stay where they're made: in components, singletons and scenes");
+        else diag_note("cells are plain values, side by side in their chunk: keep the %s elsewhere, and a number for it in the cell", one);
         return false;
+    }
     default:
         diag_error(at, "a grid's cells are values, like numbers, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a grid, keep their Entity");
@@ -1486,11 +1452,10 @@ typedef enum type_place {
     PLACE_RETURN,   // What a function or method returns
     PLACE_CONST,    // A constant's
     PLACE_IS,       // What's after `is`
-    ARG_LIST,       // In <>: List<here>
-    ARG_MAP_KEY,    // Map<here, V>
-    ARG_MAP_VALUE,  // Map<K, here>
-    ARG_SET,        // Set<here>
-    ARG_GRID,       // Grid2<here>, Grid3<here>
+    PLACE_ASSET,    // An asset's: a List<T> or Map<string, T> there holds grids too, as nothing writes one
+    ARG_ELEMENT,    // In <>: a list's element, List<here>, or a map's value, Map<K, here>
+    ARG_KEY,        // A map's or set's key: Map<here, V>, Set<here>
+    ARG_CELL,       // A grid's cell: Grid2<here>, Grid3<here>
 } type_place;
 
 static bool routine_place(const type_place place)
@@ -1527,69 +1492,38 @@ static type unknown_type(const checker *c, const type_ref *r, const loc at, cons
 
 static type resolve_type(const checker *c, const type_ref *r, type_place place, loc at);
 
-// A generic type inside another's <>, like List<List<int>>: nothing holds one
-// yet, so it's refused where it's written, with what to write instead. `key`
-// is the key type of the map it's a value of.
-static void refuse_nested(const type_ref *inner, const type_place place, const str key)
+// What's written in a generic type's <>, resolved and checked against what
+// the form takes there (generic_arg, types.h): a list's element or a map's
+// value, a key, or a grid's cell. `key` is the key type where it's a map's
+// value, and `asset` whether the type is an asset's, where a list or a map
+// holds grids (never written, so never copied).
+static type resolve_arg(const checker *c, const type_ref *arg, const generic_form *form, const int i, const loc at, const type *key, const bool asset)
 {
-    const bool grid = str_eq_c(inner->name, "Grid2") || str_eq_c(inner->name, "Grid3");
-    const char *one = grid ? "grid" : str_eq_c(inner->name, "List") ? "list" : str_eq_c(inner->name, "Map") ? "map" : "set";
-    if (place == ARG_MAP_KEY || place == ARG_SET) {
-        diag_error(inner->at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a %s",
-                   place == ARG_SET ? "set" : "map", one);
-    } else if (place == ARG_GRID) {
-        diag_error(inner->at, "a grid's cells can't be %ss", one);
-        if (grid) diag_note("grids stay where they're made: in components, singletons and scenes");
-        else diag_note("cells are plain values, side by side in their chunk: keep the %s elsewhere, and a number for it in the cell", one);
-    } else if (grid) {
-        diag_error(inner->at, "a %s can't hold grids", place == ARG_LIST ? "list" : "map");
-        diag_note("grids stay where they're made: in components, singletons and scenes");
-    } else {
-        // What holds an entity for each instead: List<Entity>, or Map<K, Entity>
-        char entities[160];
-        if (place == ARG_LIST) snprintf(entities, sizeof entities, "List<Entity>");
-        else snprintf(entities, sizeof entities, "Map<" STR_FMT ", Entity>", STR_ARG(key));
-        diag_error(inner->at, "a %s can't hold %ss yet", place == ARG_LIST ? "list" : "map", one);
-        if (place == ARG_LIST && strcmp(one, "list") == 0) {
-            diag_note("keep every element in one list, with a 'List<int>' of where each inner list starts; or keep each "
-                      "inner list in a component, on an entity of its own, and hold the entities: '%s'", entities);
-        } else {
-            diag_note("keep each %s in a component, on an entity of its own, and hold the entities: '%s'", one, entities);
-        }
+    static const type_place places[] = {ARG_ELEMENT, ARG_KEY, ARG_CELL};
+    const generic_arg kind = form->args[i];
+    const type t = resolve_type(c, arg, places[kind], at);
+    switch (kind) {
+    case GENERIC_ELEMENT: return element_ok(t, at, key, asset) ? t : T_ERR;
+    case GENERIC_KEY: return map_key_ok(t, at, strcmp(form->name, "Set") == 0) ? t : T_ERR;
+    default: return grid_cell_ok(t, at) ? t : T_ERR;
     }
-}
-
-// What a generic type takes in <>, resolved: a plain type, as nothing holds
-// one generic type inside another yet (but an asset, which asset_type reads).
-// `key` is the key's text where it's a map's value.
-static type resolve_arg(const checker *c, const type_ref *arg, const type_place place, const loc at, const str key)
-{
-    if (arg->args.count > 0) {
-        refuse_nested(arg, place, key);
-        return T_ERR;
-    }
-    return resolve_type(c, arg, place, at);
 }
 
 // List<T>, Map<K, V>, Set<K>, Grid2<T> or Grid3<T>, from what's written in its <>.
-static type resolve_generic(const checker *c, const type_ref *r, const loc at)
+static type resolve_generic(const checker *c, const type_ref *r, const loc at, const bool asset)
 {
-    const str name = r->name;
-    const str none = {NULL, 0};
-    if (str_eq_c(name, "List")) {
-        const type element = resolve_arg(c, r->args.items[0], ARG_LIST, at, none);
-        return list_element_ok(element, at, NULL) ? list_of(c->prog, element) : T_ERR;
+    const generic_form *form = generic_form_named(r->name);
+    type args[2] = {T_ERR, T_ERR};
+    for (int i = 0; i < form->arity; i++) {
+        args[i] = resolve_arg(c, r->args.items[i], form, i, at, i == 1 ? &args[0] : NULL, asset);
     }
-    if (str_eq_c(name, "Map") || str_eq_c(name, "Set")) {
-        const bool set = str_eq_c(name, "Set");
-        const type key = resolve_arg(c, r->args.items[0], set ? ARG_SET : ARG_MAP_KEY, at, none);
-        const type value = set ? T_ERR : resolve_arg(c, r->args.items[1], ARG_MAP_VALUE, at, r->args.items[0]->text);
-        bool ok = map_key_ok(key, at, set);
-        if (!set && !list_element_ok(value, at, &key)) ok = false;
-        return ok ? map_of(c->prog, key, value, set) : T_ERR;
+    for (int i = 0; i < form->arity; i++) {
+        if (args[i].kind == TY_ERROR) return T_ERR;
     }
-    const type cell = resolve_arg(c, r->args.items[0], ARG_GRID, at, none);
-    return grid_cell_ok(cell, at) ? grid_of(c->prog, cell, name.ptr[4] - '0') : T_ERR;
+    if (str_eq_c(r->name, "List")) return list_of(c->prog, args[0]);
+    if (str_eq_c(r->name, "Set")) return map_of(c->prog, args[0], T_ERR, true);
+    if (str_eq_c(r->name, "Map")) return map_of(c->prog, args[0], args[1], false);
+    return grid_of(c->prog, args[0], r->name.ptr[4] - '0');
 }
 
 // The type `r` names, written at `place`, with errors at `at` (where the
@@ -1603,7 +1537,7 @@ static type resolve_type(const checker *c, const type_ref *r, const type_place p
     type t;
     // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
     if (r->optional) return unknown_type(c, r, at, place);
-    if (r->args.count > 0) return resolve_generic(c, r, at);
+    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) return t;
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
@@ -1657,6 +1591,21 @@ static bool through_element(const expr *e)
             return true;
         }
     }
+    return false;
+}
+
+// A container that's an element of another, changed where it is:
+// `rows[i].Add(x)`, `rows[i][j] = v`, `buckets[key].Add(e)` (which adds the
+// key, as `buckets[key] = ...` does). Generated code finds the element's slot
+// (gen_slot in codegen.c) through any number of indexes, but not through a
+// struct element's field: the struct is a copy, so that's said, and false.
+static bool element_in_place(const expr *receiver)
+{
+    const expr *base = receiver;
+    while (base->kind == E_INDEX && (base->object->type.kind == TY_LIST || base->object->type.kind == TY_MAP)) base = base->object;
+    if (!through_element(base)) return true;
+    diag_error(receiver->at, "a list's element is a copy, so what it holds can't be changed where it is");
+    diag_note("take it out, change it, and put it back: 'var e = items[i]; e.parts.Add(x); items[i] = e;'");
     return false;
 }
 
@@ -6492,7 +6441,7 @@ static type check_map_method(checker *c, expr *e, const type map)
         sb name = {0};
         sb_printf(&name, "%s.%s", set ? "Set" : "Map", methods[m].name);
         changer->name = (str){name.data, (int)name.len};
-        check_writable(c, e->object, changer, NULL);
+        if (element_in_place(e->object)) check_writable(c, e->object, changer, NULL);
     }
     if (methods[m].result == TY_OPTIONAL) { // Get: the value, or nothing
         const type optional = optional_type(c, map_value(map), e->at);
@@ -6609,7 +6558,12 @@ static type check_sort(checker *c, expr *e, const type list)
     }
     decl *changer = NEW(decl);
     changer->name = str_from("List.Sort");
-    check_writable(c, e->object, changer, NULL);
+    if (through_element(e->object)) {
+        diag_error(e->at, "a list that's an element of another is sorted as a copy, taken out and put back");
+        diag_note("'var inner = rows[i]; inner.Sort(a, b) { ... } rows[i] = inner;'");
+    } else {
+        check_writable(c, e->object, changer, NULL);
+    }
     push_scope(c);
     for (int i = 0; i < 2; i++) {
         expr *arg = e->args.items[i];
@@ -6722,7 +6676,7 @@ static type check_list_method(checker *c, expr *e, const type list)
         sb name = {0};
         sb_printf(&name, "List.%s", methods[m].name);
         changer->name = (str){name.data, (int)name.len};
-        check_writable(c, e->object, changer, NULL);
+        if (element_in_place(e->object)) check_writable(c, e->object, changer, NULL);
     }
     if (str_eq_c(e->name, "Resize") && list.decl && builds(c->prog)) list.decl->resized = true; // Generated C has its helper
     return (type){methods[m].result, NULL};
@@ -7996,9 +7950,12 @@ static void check_parallel(checker *c, stmt *s)
     const type position = list ? (type){TY_INT, NULL} : dims == 2 ? (type){TY_INT2, NULL} : (type){TY_INT3, NULL};
     for (int i = 0; i < 3; i++) s->block[i] = 1;
     if (grid.kind == TY_GRID || list) check_writable(c, s->value, NULL, NULL); // It changes the grid or list
-    if (list && holds_text(list_element(grid))) {
-        diag_error(s->value->at, "a parallel loop goes through a list of plain values, and this one's elements hold text");
-        diag_note("steps run on threads, where text can't be made: keep a number for it in the list, or use a 'for' loop");
+    if (list && holds_heap(list_element(grid))) {
+        const bool text = holds_text(list_element(grid));
+        diag_error(s->value->at, "a parallel loop goes through a list of plain values, and this one's elements hold %s",
+                   text ? "text" : "lists");
+        diag_note("steps run on threads, where %s can't be made: keep a number for it in the list, or use a 'for' loop",
+                  text ? "text" : "a list");
     }
     const expr *root = s->value;
     while (root->kind == E_MEMBER) root = root->object;
@@ -8105,6 +8062,7 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
+    if (s->target->kind == E_INDEX && !element_in_place(s->target->object)) return;
     if (s->target->kind != E_INDEX && through_element(s->target)) {
         const expr *at = s->target;
         while (at->kind != E_INDEX) at = at->object;
@@ -9348,25 +9306,16 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         *many = *is_map = true;
         inner = written->args.items[1];
     }
-    type element;
-    if (str_eq_c(inner->text, "string")) {
-        *kind = ASSET_TEXT;
-        element = (type){TY_STRING, NULL};
-    } else if (str_eq_c(inner->text, "List<byte>")) {
-        *kind = ASSET_BYTES;
-        element = list_of(c->prog, (type){TY_BYTE, NULL});
-    } else if (str_eq_c(inner->text, "Grid2<Color>")) {
-        *kind = ASSET_GRID;
-        element = grid_of(c->prog, (type){TY_COLOR, NULL}, 2);
-    } else {
+    if (str_eq_c(inner->text, "string")) *kind = ASSET_TEXT;
+    else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
+    else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
+    else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file) or a Grid2<Color> (a PNG), not '" STR_FMT "'", STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
-    if (*is_map) k->return_type = map_of(c->prog, (type){TY_STRING, NULL}, element, false);
-    else if (*many) k->return_type = list_of(c->prog, element);
-    else k->return_type = element;
-    return true;
+    k->return_type = resolve_type(c, written, PLACE_ASSET, at);
+    return k->return_type.kind != TY_ERROR;
 }
 
 // Checks an asset declaration: its type, its path (a constant text) and the
@@ -9797,14 +9746,6 @@ static void check_fields(checker *c, const decl *d)
                                                                                : "this");
                 diag_note("grids stay where they're made: in components, singletons and scenes");
             }
-        }
-        // A struct declared after this field had no fields yet when the field's type was resolved
-        if (f->type.kind == TY_LIST && holds_list(list_element(f->type))) {
-            refuse_held(list_element(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, NULL);
-        }
-        if (f->type.kind == TY_MAP && holds_list(map_value(f->type))) {
-            const type key = f->type.decl->fields.items[0].type;
-            refuse_held(map_value(f->type), f->type_qual_at.line ? f->type_qual_at : f->at, &key);
         }
         check_reserved(f->name, f->at);
         for (int j = 0; j < i; j++) {

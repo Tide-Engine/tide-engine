@@ -1,0 +1,9 @@
+// expect: a list's element is a copy, so what it holds can't be changed where it is
+// expect: take it out, change it, and put it back
+struct Bag { List<int> parts; }
+component Shelf { List<Bag> bags; }
+scene Main { }
+system Fill(mut Shelf shelf)
+{
+    shelf.bags[0].parts.Add(1);
+}

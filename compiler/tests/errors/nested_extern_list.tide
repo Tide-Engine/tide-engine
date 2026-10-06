@@ -1,0 +1,4 @@
+// expect: C functions can't take lists of lists yet
+// expect: a list goes to C as a pointer to its elements: numbers, vectors, enums, and structs of them
+scene Main { }
+extern void Fill(List<List<int>> rows);
