@@ -319,12 +319,20 @@ view Beacons(Pickup pickup, mut Fx fx)
     Mark(fx, float3(pickup.at.x, 0, pickup.at.y), 2.3 + Math.Sin(fx.beat * 2) * 0.25, Fade(color, 0.85), 0.14, 1);
 }
 
+// What it is shows in its shape: a heavy ball's is a ball, pale and bigger
+// than its ring looks, and a shock's a box on its corner, teal.
 [Stage(Layers.Pieces, 2)]
 view Pickups(Body body, Pickup pickup, Models models, Fx fx)
 {
-    var color = pickup.power == Power.Heavy ? PLAIN : TEAL;
     var bob = Math.Sin(fx.beat * 2 + pickup.at.x) * 0.15;
-    List<Solid> one = [Solid { transform = float4x4.TRS(body.position + float3(0, bob, 0), quaternion.Euler(float3(0.6, fx.beat, 0.4)), float3(0.62)),
-                               tint = color }];
-    Draw3D.Instanced(models.cube, models.cubeFaces, one, Plain);
+    var at = body.position + float3(0, bob, 0);
+    if (pickup.power == Power.Heavy)
+    {
+        List<Solid> ball = [Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.4, fx.beat, 0)), float3(0.52 + Math.Sin(fx.beat * 4) * 0.05)),
+                                    tint = PLAIN }];
+        Draw3D.Instanced(models.ball, models.ballFaces, ball, Plain);
+        return;
+    }
+    List<Solid> spark = [Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.62, fx.beat * 2, 0.79)), float3(0.66)), tint = TEAL }];
+    Draw3D.Instanced(models.cube, models.cubeFaces, spark, Plain);
 }
