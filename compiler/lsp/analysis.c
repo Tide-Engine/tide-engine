@@ -391,55 +391,13 @@ static str namespace_path(const expr *e)
     return (str){text, left.len + 1 + e->member.len};
 }
 
-// A type written by name, maybe qualified: `qual_at` is where it starts, `at`
-// its last part.
-static void type_ref(const loc qual_at, const loc at, const str text, const type t)
+// A type written by name alone, maybe qualified: `qual_at` is where it
+// starts, `at` its last part. For the names the parser keeps as text (an
+// override's, an enum's in an attribute); a type with a tree goes through
+// type_tree.
+static void type_written(const loc qual_at, const loc at, const str text, const type t)
 {
     if (text.len == 0) return;
-    if (text.ptr[text.len - 1] == '?') { // int?: the type it holds
-        const type inner = t.kind == TY_OPTIONAL ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL};
-        type_ref(qual_at, at, (str){text.ptr, text.len - 1}, inner);
-        return;
-    }
-    // Map<K, V>: the generic type, then its key and its value
-    if (str_starts_with_c(text, "Map<") && text.ptr[text.len - 1] == '>' && t.kind == TY_MAP && t.decl) {
-        add_occ((occurrence){.at = qual_at, .len = 3, .kind = OCC_TYPE, .name = (str){text.ptr, 3}, .type = t});
-        const str inner = {text.ptr + 4, text.len - 5};
-        int comma = 0;
-        while (comma < inner.len && inner.ptr[comma] != ',') comma++;
-        const str key = {inner.ptr, comma};
-        str value = {inner.ptr + comma + 1, inner.len - comma - 1};
-        while (value.len > 0 && value.ptr[0] == ' ') {
-            value.ptr++;
-            value.len--;
-        }
-        for (int part = 0; part < 2; part++) {
-            const str name = part ? value : key;
-            if (name.len == 0) continue;
-            const loc name_at = {qual_at.line, qual_at.col + (int)(name.ptr - text.ptr), qual_at.file};
-            const str last = last_part(name);
-            const loc last_at = {qual_at.line, name_at.col + (int)(last.ptr - name.ptr), qual_at.file};
-            type_ref(name_at, last_at, name, t.decl->fields.items[part].type);
-        }
-        return;
-    }
-    // List<T>, Set<K>, Grid2<T> and Grid3<T>: the generic type, then the one it holds
-    const int generic = str_starts_with_c(text, "List<") ? 4
-                      : str_starts_with_c(text, "Set<") ? 3
-                      : str_starts_with_c(text, "Grid2<") || str_starts_with_c(text, "Grid3<") ? 5
-                                                                                               : 0;
-    if (generic && text.ptr[text.len - 1] == '>') {
-        add_occ((occurrence){.at = qual_at, .len = generic, .kind = OCC_TYPE, .name = (str){text.ptr, generic}, .type = t});
-        // The held type, as the formatter writes it: right after the '<'
-        const str inner = {text.ptr + generic + 1, text.len - generic - 2};
-        const loc inner_at = {qual_at.line, qual_at.col + generic + 1, qual_at.file};
-        const type element = (t.kind == TY_LIST || t.kind == TY_SET || t.kind == TY_GRID) && t.decl ? t.decl->fields.items[0].type
-                                                                                             : (type){TY_ERROR, NULL};
-        const str last = last_part(inner);
-        const loc last_at = {qual_at.line, inner_at.col + (int)(last.ptr - inner.ptr), qual_at.file};
-        type_ref(inner_at, last_at, inner, element);
-        return;
-    }
     if (t.kind == TY_WORLD) { // The engine's World, a parameter's type
         add_occ((occurrence){.at = at, .len = text.len, .kind = OCC_TYPE, .name = text, .type = t});
         return;
@@ -459,6 +417,37 @@ static void type_ref(const loc qual_at, const loc at, const str text, const type
         if (!o.decl) return;
     }
     add_occ(o);
+}
+
+// A type as written (type_ref, ast.h): a generic name, each type in its <>
+// and the one a T? holds, each where it's written.
+static void type_tree(const type_ref *r, const type t)
+{
+    if (r->optional) { // int?: the type it holds
+        const type inner = t.kind == TY_OPTIONAL && t.decl ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL};
+        type_ref plain = *r;
+        plain.optional = false;
+        plain.text = (str){r->text.ptr, r->text.len - 1};
+        type_tree(&plain, inner);
+        return;
+    }
+    if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>: the generic type, then what it holds
+        add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
+        const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
+        for (int i = 0; i < r->args.count; i++) {
+            const type part = holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
+            type_tree(r->args.items[i], part);
+        }
+        return;
+    }
+    type_written(r->at, r->name_at, r->name, t);
+}
+
+// A type where the parser kept a tree, or only its text (one the checker made).
+static void type_place(const type_ref *r, const loc qual_at, const loc at, const str text, const type t)
+{
+    if (r) type_tree(r, t);
+    else type_written(qual_at, at, text, t);
 }
 
 // A declaration as the type a name of it is: a component's, an enum's.
@@ -632,7 +621,7 @@ static void walk_expr(const expr *e)
         walk_written = outer;
         return;
     }
-    type_ref(local->type_qual_at.line ? local->type_qual_at : local->type_at, local->type_at, local->type_name, local->type);
+    type_place(local->type_ref, local->type_qual_at.line ? local->type_qual_at : local->type_at, local->type_at, local->type_name, local->type);
     if (local->discard) return;
     add_occ((occurrence){.at = local->name_at, .len = local->name.len, .kind = OCC_LOCAL, .declaration = true, .local = local,
                          .name = local->name, .type = local->type});
@@ -680,11 +669,11 @@ static void walk_value(const expr *e)
             const str type_part = {e->pattern.ptr, e->pattern.len - e->enum_member->name.len - 1};
             const str type_name_ = last_part(type_part);
             const loc type_at = {e->pattern_at.line, e->pattern_at.col - 1 - type_name_.len, e->pattern_at.file};
-            type_ref(e->pattern_qual_at, type_at, type_part, (type){TY_ENUM, e->type_decl});
+            type_written(e->pattern_qual_at, type_at, type_part, (type){TY_ENUM, e->type_decl});
             add_occ((occurrence){.at = e->pattern_at, .len = e->enum_member->name.len, .kind = OCC_ENUM_MEMBER,
                                  .decl = e->type_decl, .name = e->enum_member->name});
         } else {
-            type_ref(e->pattern_qual_at, e->pattern_at, e->pattern, e->binding ? e->binding->type : (type){TY_ERROR, NULL});
+            type_place(e->pattern_ref, e->pattern_qual_at, e->pattern_at, e->pattern, e->binding ? e->binding->type : (type){TY_ERROR, NULL});
         }
         if (e->binding) {
             const stmt *b = e->binding;
@@ -831,7 +820,7 @@ static void walk_value(const expr *e)
                         .call = e->call};
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>
-        if (e->type_arg.len > 0) type_ref(e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
+        if (e->type_arg.len > 0) type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, type_of_decl(e->type_decl));
         if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
@@ -952,7 +941,7 @@ static void walk_stmt(const stmt *s)
         walk_expr(s->value);
         break;
     case S_VAR:
-        type_ref(s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
+        type_place(s->type_ref, s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
         add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
                              .name = s->name, .type = s->type});
         walk_expr(s->value);
@@ -987,7 +976,7 @@ static void walk_stmt(const stmt *s)
         break;
     case S_FOREACH:
     case S_PARALLEL:
-        type_ref(s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
+        type_place(s->type_ref, s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
         add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
                              .name = s->name, .type = s->type});
         walk_expr(s->value);
@@ -1027,7 +1016,7 @@ static void walk_param(const param *p, const decl *d)
                                  .param_of = d, .name = p->type_name});
             return;
         }
-        type_ref(p->type_qual_at, p->type_at, p->type_name, p->type);
+        type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, p->type);
     }
     if (p->name.len > 0) {
         add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
@@ -1047,9 +1036,9 @@ static void walk_routine(const decl *m)
     add_occ((occurrence){.at = m->at, .len = m->is_operator ? 8 : m->name.len, .kind = m->owner ? OCC_METHOD : OCC_FUNCTION,
                          .declaration = true, .decl = m, .name = m->name});
     if (!str_eq_c(m->return_type_name, "void")) {
-        type_ref(m->return_type_qual_at, m->return_type_at, m->return_type_name, m->return_type);
+        type_place(m->return_type_ref, m->return_type_qual_at, m->return_type_at, m->return_type_name, m->return_type);
     }
-    type_ref(m->fails_type_qual_at, m->fails_type_at, m->fails_name, m->fails);
+    type_place(m->fails_ref, m->fails_type_qual_at, m->fails_type_at, m->fails_name, m->fails);
     walk_params(m);
     walk_code = m;
     walk_stmt(m->body);
@@ -1063,7 +1052,7 @@ static void signature_refs(const sig_item *items, const int count)
     for (int i = 0; i < count; i++) {
         const sig_item *item = &items[i];
         if (item->mode == PARAM_QUERY) signature_refs(item->query.items, item->query.count);
-        else if (item->param && !item->param->ownership) type_ref(item->type_qual_at, item->type_at, item->type_name, item->param->type);
+        else if (item->param && !item->param->ownership) type_place(item->type_ref, item->type_qual_at, item->type_at, item->type_name, item->param->type);
     }
 }
 
@@ -1081,7 +1070,7 @@ static void replace_refs(const decl *d)
     const str before = {d->override_name.ptr, d->override_name.len - name.len - 1};
     const int name_token = token_at(d->at);
     if (d->owner && name_token >= 2) { // Combat.Stats.Hurt: the type, maybe with its namespace
-        type_ref(d->override_qual_at, A.files[d->at.file].toks[name_token - 2].at, before, type_of_decl(d->owner));
+        type_written(d->override_qual_at, A.files[d->at.file].toks[name_token - 2].at, before, type_of_decl(d->owner));
     } else if (!d->owner) {
         namespace_parts(d->override_qual_at, before, false);
     }
@@ -1124,7 +1113,7 @@ static void index_program(void)
                     const int member_token = token_at(q->name_at);
                     if (member_token >= 2) {
                         const loc enum_at = A.files[q->at.file].toks[member_token - 2].at;
-                        type_ref(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
+                        type_written(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
                     }
                     add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_ENUM_MEMBER,
                                          .decl = q->decl, .name = name});
@@ -1155,7 +1144,7 @@ static void index_program(void)
         if (d->kind == DECL_CONST || d->kind == DECL_ASSET) {
             add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_CONST, .declaration = true, .decl = d,
                                  .name = d->name, .type = d->return_type});
-            type_ref(d->return_type_qual_at, d->return_type_at, d->return_type_name, d->return_type);
+            type_place(d->return_type_ref, d->return_type_qual_at, d->return_type_at, d->return_type_name, d->return_type);
             walk_expr(d->value);
             continue;
         }
@@ -1175,7 +1164,7 @@ static void index_program(void)
         // checker keeps apart, in its local part
         for (int f = 0; f < d->fields.count + local_field_count(d); f++) {
             const field *fl = field_of(d, f);
-            type_ref(fl->type_qual_at.line ? fl->type_qual_at : fl->type_at, fl->type_at, fl->type_name, fl->type);
+            type_place(fl->type_ref, fl->type_qual_at.line ? fl->type_qual_at : fl->type_at, fl->type_at, fl->type_name, fl->type);
             add_occ((occurrence){.at = fl->at, .len = fl->name.len, .kind = OCC_FIELD, .declaration = true, .field = fl,
                                  .decl = d, .name = fl->name, .type = fl->type});
             walk_expr(fl->default_value);

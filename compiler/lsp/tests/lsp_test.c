@@ -2142,6 +2142,23 @@ TIDE_TEST(lsp_default_value)
     TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
 }
 
+// A type inside another's <> is placed where it's written, from the type's
+// tree: through the '>>' that closes two at once, and however the <> are
+// spaced.
+TIDE_TEST(lsp_nested_types_are_placed_from_the_tree)
+{
+    start();
+    open_document("asset List<Grid2<Color>> frames = \"*.png\";\n"
+                  "asset Map< string , List<byte> > files = \"*.bin\";\n"
+                  "scene Main { }\n");
+    TIDE_CHECK(has(hover_at(0, 17), "A color: r, g, b and a from 0 to 1"));
+    TIDE_CHECK(has(hover_at(0, 12), "Cells at positions")); // Grid2, inside the list's <>
+    TIDE_CHECK(has(hover_at(0, 7), "A list of values"));
+    TIDE_CHECK(has(hover_at(1, 27), "An unsigned 8-bit integer"));
+    TIDE_CHECK(has(hover_at(1, 21), "A list of values"));
+    TIDE_CHECK(has(hover_at(1, 7), "Values by key"));
+}
+
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)
 {
     start();
