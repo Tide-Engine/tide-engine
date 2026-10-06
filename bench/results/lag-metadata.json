@@ -44,5 +44,45 @@
   "unseeded_labels": [
     "catch-up-web-final-unseeded",
     "catch-up-web-before-unseeded"
-  ]
+  ],
+  "integration_validation": {
+    "integrated_revision": "ef03e169cfd35f4ebed23a2cd8eb77a8328989c6",
+    "incoming_dev_revision": "5bc9de616b83185b41527a3303e948b33a67b1b9",
+    "full_debug_tests": 1475,
+    "debug_note": "1473 passed initially; Sumo/Towers pins recomputed for combined physics/netcode and both passed after rebuild",
+    "full_web_debug_tests": 1461,
+    "release_affected_tests": 14,
+    "web_release_affected_tests": 15,
+    "combined_world_pins": {
+      "sumo_640": "ab6f2c13e3765ec0",
+      "sumo_880": "a15c5e6bf2a839d9",
+      "towers_1500": "7bb5741470b80075",
+      "towers_1800": "73da28347c9b7e2a",
+      "sand": "fa2f2bb6b040ab70",
+      "gallery": "45b1d0ae84959084"
+    },
+    "pins_note": "These pins reproduce on native/web debug/release. Pre-integration session-only arrival traces remain above; incoming physics changes also change Sumo/Towers worlds.",
+    "native_smoke": {
+      "seconds": 5,
+      "frames": 693,
+      "raw_frames": "bench/results/lag-frames/2026-10-06-catch-up-integration-smoke-native-0.jsonl.gz",
+      "sha256": "c6bb0636cbcb6979bcbb13b36c454409703a7c621ee6919880ff19b248379f1c",
+      "passed": true,
+      "raw_frames_sha256": "41b1696f428c9dd45316428c9aaac420be66304fc8f519b0f88c62423e647227",
+      "raw_content_sha256": "67c3bd5122d3fc0befb0b902970b57a0d928dd860ed024e28ab7a044307ff2ce"
+    },
+    "web_smoke": {
+      "seconds": 8,
+      "seed": 0,
+      "players": 3,
+      "backend": "hardware WebGPU",
+      "page_sha256": "f33c370944e81ddf2a589939f697084580846b52cff7c37cb62b92468d32b766",
+      "raw_frames": "bench/results/lag-frames/2026-10-06T18-07-52-042Z-catch-up-integration-smoke-web-0.jsonl.gz",
+      "passed": true,
+      "raw_frames_sha256": "f49996056c12c7b70d5b64d013aacb0b93e21e0f780ee97697fc1b2e87cd8e62",
+      "raw_content_sha256": "45497927377b7a1b810d9e3a2ade939342527f8ee2ec65151c7e5a463a18bc71"
+    },
+    "smoke_note": "Bounded functionality checks only; neither smoke completes a full round or updates the full-round performance tables.",
+    "sanitizer_build_fix": "Upstream Build37506147514 failed to force-vectorize wide.c under ASan/UBSan. Guarding only the pragmas reproduces a clean local sanitized object compile while both optimized loops still vectorize."
+  }
 }
