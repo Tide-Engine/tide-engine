@@ -1,4 +1,6 @@
-# Sumo
+# Sumo walkthrough
+
+This walkthrough explains how a Box3D match drives balls with impulses, replaces floor bodies when tiles fall and keeps a large arena deterministic. It also covers [the lobby](#the-lobby), [instanced rendering and shadows](#what-a-machine-shows), and [the cost of simulation and rollback](#what-it-costs).
 
 You are a heavy ball, in a ring in the sky that's stacked with two thousand crates, and so are up to seven others. Plough through what's in your way, ram the others over the edge, and stay on yourself while the floor falls away under everyone. A game made with Tide to push its 3D physics in a match: every crate is in the same place on every machine, whatever their pings, with [Box3D](../physics/box3d.md) under all of it. Play it alone against bots, or with friends in a room.
 

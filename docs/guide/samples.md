@@ -59,4 +59,4 @@ To play together, open a room with the game's **Host** or **Invite** button and 
 </a></li>
 </ul>
 
-Read how [Falling sand](./sand.md), [Duel](./duel.md), [Towers](./towers.md) and [Sumo arena](./sumo.md) are built, or explore the smaller [live examples](./examples.md) alongside their code.
+For the code behind these games, read the [Duel code tour](./duel.md), [Towers walkthrough](./towers.md) and [Sumo walkthrough](./sumo.md), or explore the smaller [live examples](./examples.md) alongside their code.

@@ -32,8 +32,8 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 
 - [Crates, balls and a floor](../physics/box2d.md#a-first-world): Box2D's bodies as components, with crates to kick and balls to drop.
 - [A wall of crates, and balls to throw](../physics/box3d.md#a-first-world): the same with Box3D, through a 3D camera.
-- [Towers](./towers.md): a whole game on Box2D, with a lobby and rooms for four: a race to stack bricks, which lean, slide and come down.
-- [Sumo](./sumo.md): a whole game on Box3D, with a lobby and rooms for eight: heavy balls that ram each other out of a ring stacked with two thousand crates, while its floor falls away.
+- [Towers walkthrough](./towers.md): steering kinematic bricks, landing them as dynamic bodies, and building the input, lobby and views around a Box2D match.
+- [Sumo walkthrough](./sumo.md): driving balls with impulses, replacing floor bodies as tiles fall, and drawing a large Box3D arena with instancing and shadows.
 
 ## What a machine shows
 
@@ -63,4 +63,4 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [The same seed, the same numbers](../language/math.md#seeds): a `Random` and its seed.
 - [A list, changed and sorted](../language/text-and-lists.md#sorting): a list's members, a button each.
 
-[Falling sand](./sand.md), [Duel](./duel.md), [Towers](./towers.md) and [Sumo](./sumo.md) are whole games, to play here too.
+[Samples](./samples.md) collects full games to play. The [Duel code tour](./duel.md), [Towers walkthrough](./towers.md) and [Sumo walkthrough](./sumo.md) explain how three of them are built.

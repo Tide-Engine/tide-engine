@@ -43,7 +43,7 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
 
-[Towers](../guide/towers.md) is a whole game made with the package, for up to four players in a match: bricks of several boxes that are steered as kinematic bodies and land as dynamic ones, a shape moved through the world to find where each lands, plinths that shake and sink, impulses, and most of what this page describes.
+The [Towers walkthrough](../guide/towers.md) shows how the package steers a falling brick as a kinematic body, turns it into a dynamic body when it lands, and casts shapes to find space for movement. It also covers absolute input, the room lobby and the views that present the physics match.
 
 ## Bodies
 
