@@ -2550,6 +2550,10 @@ void b3SnapNoteOp( b3World* world, int op )
 		case b3_recOpBodySetAngularDamping:
 		case b3_recOpBodySetGravityScale:
 		case b3_recOpBodySetBullet:
+		// A body woken or put to sleep, with its island: b3WakeSolverSet and b3TrySleepIsland say what
+		// they write, as they do when the step calls them, and the island that's split first
+		// (b3SplitIsland) is of awake bodies, which are written anyway
+		case b3_recOpBodySetAwake:
 		// A setting of the world's, which every image writes
 		case b3_recOpWorldSetGravity:
 		case b3_recOpWorldSetContactTuning:
