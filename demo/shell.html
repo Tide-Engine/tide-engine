@@ -19,12 +19,26 @@
   // Its output goes into #log, the exit code into <body data-exit>, and a
   // mistake in how it draws (a GL error, or one of WebGPU's) stops it. Served
   // rather than opened from disk (cmake/run_web_served_test.mjs), it also
-  // sends both back to its server, in order.
+  // sends both back to its server, in order. A line that can't be sent
+  // doesn't stop the ones after it or the result: it's the result.
+  // `tideSteps` is how far the page got, which the server asks a page that
+  // gives no result.
   const smoke = new URLSearchParams(location.search).has('smoke');
   const log = document.getElementById('log');
   const served = smoke && location.protocol !== 'file:';
-  let sent = Promise.resolve();
-  const post = (path, body) => { if (served) sent = sent.then(() => fetch(path, { method: 'POST', body })); };
+  window.tideSteps = [];
+  const step = what => tideSteps.push(`${Math.round(performance.now())} ms: ${what}`);
+  step('the page started');
+  for (const name of ['visibilitychange', 'freeze', 'resume'])
+    document.addEventListener(name, () => step(`${name}: the page is ${document.visibilityState}`));
+  let sent = Promise.resolve(), lost = '';
+  const post = (path, body) => {
+    if (served) sent = sent.then(() => fetch(path, { method: 'POST', body })).then(answer => answer.arrayBuffer()).catch(error => {
+      lost = lost || `${path} (${body}): ${error}`;
+      step(`${path} couldn't be sent: ${error}`);
+    });
+  };
+  const result = code => sent.then(() => post('result', lost ? `couldn't send ${lost}` : code));
   function show(text) {
     if (!smoke) return;
     log.textContent += text + '\n';
@@ -36,8 +50,11 @@
     checkGL: smoke,
     print: text => { console.log(text); show(text); },
     printErr: text => { console.error(text); show(text); },
-    onExit: code => { document.body.dataset.exit = code; post('result', String(code)); },
-    onAbort: reason => { show('abort: ' + reason); document.body.dataset.exit = 'abort'; post('result', 'abort'); },
+    onExit: code => { step(`the program exited with ${code}`); document.body.dataset.exit = code; result(String(code)); },
+    onAbort: reason => {
+      step('the program stopped: ' + reason);
+      show('abort: ' + reason); document.body.dataset.exit = 'abort'; result('abort');
+    },
   };
 </script>
 {{{ SCRIPT }}}

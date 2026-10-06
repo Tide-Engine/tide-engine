@@ -43,7 +43,7 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
 
-[Towers](../guide/towers.md) is a whole game made with the package, for up to four players in a match: bricks of several boxes that are steered as kinematic bodies and land as dynamic ones, a shape moved through the world to find where each lands, plinths that shake and sink, impulses, and most of what this page describes.
+The [Towers walkthrough](../guide/towers.md) shows how the package steers a falling brick as a kinematic body, turns it into a dynamic body when it lands, and casts shapes to find space for movement. It also covers absolute input, the room lobby and the views that present the physics match.
 
 ## Bodies
 
@@ -59,6 +59,7 @@ component Body
     float spin;                       // In radians a second
     float2 impulse;                   // A push at the next step, once
     float turn;                       // The same, around
+    bool asleep;                      // At rest, and not stepped until something wakes it
     float gravityScale = 1;           // 0 for a body that floats
     float linearDamping;              // How fast it slows by itself
     float angularDamping;             // And how fast its spin does
@@ -73,13 +74,13 @@ component Body
 - A **dynamic** body is moved by gravity, by what it touches and by what code pushes it with.
 - A **bullet** is checked against the other moving bodies all along its way, so that a small fast body doesn't pass through a thin one between two steps. It costs more, so it's for the few bodies that need it.
 
-After each step, `position`, `angle`, `velocity` and `spin` are where Box2D left the body, with `angle` between -π and π. Code reads them like any component's fields, and [writing them moves the body](#moving-a-body).
+After each step, `position`, `angle`, `velocity` and `spin` are where Box2D left the body, with `angle` between -π and π, and `asleep` says whether it's [at rest](#bodies-at-rest). Code reads them like any component's fields, and [writing them moves the body](#moving-a-body), or puts it to sleep, or wakes it.
 
 [Views](../game/views.md) see a body between its last two ticks, as they see any component. The package says what two of the fields are, for that: `position` is a `[Position]` and `angle` a `[Rotation]` (see [correction smoothing](../game/views.md#provisional-correction-smoothing)). So a view sees a body turn the short way through half a turn, where its angle goes from π to -π, and what it reads there can be a little past π. And when the server corrects where this machine had predicted a body, a view sees it get there over a few frames, where it would jump. Neither changes anything of the match.
 
 `type` can be written at any time: see [Changing what a body is](#changing-what-a-body-is). The fields from `gravityScale` down are read when the body is made, so they're set where the entity is spawned. Changing them later does nothing yet.
 
-The rest of the component is the package's own, and not for a game to write: `id` is Box2D's handle to the body, 0 until its first step, and `stepPosition`, `stepAngle`, `stepVelocity` and `stepSpin` are where the last step left it, which is how the package tells what code wrote since.
+The rest of the component is the package's own, and not for a game to write: `id` is Box2D's handle to the body, 0 until its first step, and `stepPosition`, `stepAngle`, `stepVelocity`, `stepSpin` and `stepAsleep` are how the last step left it, which is how the package tells what code wrote since.
 
 Box2D is tuned for meters, kilograms and seconds, and for moving things between a tenth of a meter and ten meters across. So a crate is 1 wide, not 100: the view's camera makes it as big on screen as the game wants.
 
@@ -228,15 +229,54 @@ event(Thawed) Thaw(mut Body body)
 
 ### Bodies at rest
 
-Box2D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or pushes it. Whatever code writes into a sleeping body wakes it:
+Box2D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or code wakes it. `asleep` says which it is, after each step, and code that writes it puts the body to sleep or wakes it, at the next step:
+
+```csharp
+component Boulder { }
+
+// The boulder hangs over the path, asleep from the tick it's spawned
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { position = float2(4, 9), asleep = true }, Circle { radius = 1 }, Boulder);
+}
+
+// ...until the game's own event says the trap was sprung
+event(Sprung) Drop(mut Body body, with Boulder)
+{
+    body.asleep = false;
+}
+
+// The round is over: everything stops where it is
+system Freeze(mut Body body, Round round)
+{
+    if (round.over && !body.asleep) body.asleep = true;
+}
+```
+
+- **A body that's put to sleep stops where it is**, in the air too: its `velocity` and its `spin` are zero from then on, and none of its speed comes back when it wakes.
+- **It takes what it touches with it.** Box2D sleeps and wakes bodies an *island* at a time: the bodies that touch each other, and the ones those touch, as the last step found them. So the bottom crate of a stack that's put to sleep takes the stack with it, and a crate that's sliding along a plank stops where it is when the plank is put to sleep. A kinematic body is one of them: a lift goes to sleep with what stands on it. A static body isn't: two crates on the same floor are two islands.
+- **What hasn't touched it yet stays awake.** A crate that's still on its way down to a sleeping stack goes on falling, and wakes the stack when it lands.
+- **Waking is the same**: `asleep = false` wakes the body and all of what it fell asleep with.
+- **A static body is never asleep.** Its `asleep` reads false, whatever is written into it, and so does a sleeping body's once it's made `Static`.
+- **It works where bodies don't fall asleep by themselves** ([`sleeping`](#the-world) off): one that code puts to sleep sleeps all the same, until something wakes it.
+
+A sleeping body wakes by itself, with its island, when something awake touches it. And whatever else code writes into it wakes it too:
 
 - A `velocity` or a `spin` that isn't zero, an `impulse` or a `turn`.
 - A `position` or an `angle`: the body is moved and wakes, so a crate at rest that's put in the air falls. What was touching it wakes too: a platform that's moved away, a static one as well, drops what stood on it.
 - A `type`: the body wakes, and what was touching it.
 
-How readily a body falls asleep is its `sleepSpeed`: once it has been slower than that for half a second, with everything it touches, it sleeps. 0.05 meters a second is Box2D's own, and a body that should rest sooner, like the bricks of a tall stack, says more. `Physics.sleeping` turns sleep off for the whole world (see [The world](#the-world)).
+So does a body beside it that's destroyed, and [a new gravity](#the-world). After the step, `asleep` reads false.
 
-A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)).
+How readily a body falls asleep by itself is its `sleepSpeed`: once it has been slower than that for half a second, with everything it touches, it sleeps. 0.05 meters a second is Box2D's own, and a body that should rest sooner, like the bricks of a tall stack, says more. `Physics.sleeping` turns that off for the whole world (see [The world](#the-world)).
+
+**What code puts to sleep in a tick is asleep as that tick's step starts**, whatever else was written that tick, into it or into a body it touches. A push or a speed written with it is lost. A `position` written with it is where it sleeps: a body that's put somewhere else and to sleep at once hangs there. A new gravity in that tick doesn't wake it. What does is another body running into it in that very step.
+
+That's for a body that was awake. Writing `asleep = true` into one that's asleep already writes nothing, so a sleeping body that code moves wakes like any other: `asleep` is false after that tick, and code that wants it asleep where it put it says so then.
+
+A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. A gravity change or automatic sleeping being turned off in its creation tick does not override that sleep. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other. That's fine for a few. For a great many stacked on each other it's better to spawn them awake and put them to sleep a tick later, once they have had a step: they then sleep and wake a stack at a time.
+
+A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)), and a body that's put to sleep costs what one that fell asleep does: nothing.
 
 ## When things happen in a tick
 
@@ -492,7 +532,7 @@ Each is what Box2D comes with, so a game that sets none gets the same world as b
 - **`contactDamping`** is how gently they come back out. Under 1 they spring; the higher, the less a pile that's been squeezed pops.
 - **`contactSpeed`** is the fastest two bodies that are in each other are moved apart: lower, and something that's spawned inside something else eases out of it.
 - **`bounceSpeed`** and **`hitSpeed`** are the speeds two bodies have to meet at for a `bounce` to count and for [`Hit`](#hits) to be sent.
-- **`sleeping`**, off, keeps every body awake. Nothing is ever at rest then, so every tick steps.
+- **`sleeping`**, off, keeps bodies from falling asleep by themselves. Code can still put a body to sleep with `asleep`, and a world with every body asleep waits until something wakes it.
 
 Any match code that takes it `mut` writes them, and the next step uses them:
 
@@ -515,7 +555,7 @@ Removing `Body` from an entity that stays doesn't take its body out of the world
 
 ## Multiplayer
 
-There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package writes Box2D's whole state into the match, as bytes in `Physics`. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
+There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package has Box2D's whole state in the match, as bytes in `Physics`: it writes what changed of them. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
 
 That state is in the match's hash, and it's the same bytes on every machine: the same match gives the same result on desktop and on the web, so their players share one. See [Networking](../multiplayer/networking.md) and [Determinism](../multiplayer/determinism.md).
 
@@ -527,13 +567,15 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
-| The tick | 0.61 | 0.21 | 0.02 |
-| of it, Box2D's step | 0.31 | 0.01 | 0 |
+| The tick | 0.51 | 0.06 | 0.02 |
+| of it, Box2D's step | 0.30 | 0.01 | 0 |
 | Keeping and hashing the world, after it | 0.26 | 0.04 | 0.00 |
 
 - **A world at rest costs next to nothing.** It isn't stepped, and nothing of the match is written. What's left is looking at each body for what code wrote.
 - **The step goes by what's moving.** With one crate pushed among 2,400 it takes a hundredth of a millisecond.
-- **Keeping Box2D's state in the match goes by how big the world is**, while anything moves: it's about a kilobyte a body, 2.5 MB here, written and compared with the last one every tick, which is most of the 0.21 ms with one crate pushed. Only what changed of it is copied and hashed. A player who joins downloads it with the rest of the world.
+- **Keeping Box2D's state in the match goes by what's moving too**, while no more than half of the world is awake. It's about a kilobyte a body, 2.5 MB here, and Box2D says which bodies, shapes and contacts may have changed since the last tick: only those are written, which with one crate pushed takes 0.01 ms of a tick's 0.06.
+- **With more than half of the world awake, all of that state is written** and compared with the last tick's, which goes by how big the world is: 0.06 ms of the 0.51 here, before what changed of it is put into the match. A stack that wakes or falls asleep can have one tick's written whole too.
+- **Only what changed of it is copied and hashed**, either way, and a player who joins downloads it with the rest of the world.
 - **A rollback** makes Box2D's world again from that state, once: about half a millisecond for this world, before the ticks it runs again. So does the first [question](#asking-the-world) a view or a system asks when this machine has no Box2D world at the match's state, which is the tick after a rollback, or a view of a world other than the last one that ticked. In a world of a few hundred bodies that's a few hundredths of a millisecond.
 - **The step runs on the tick's threads** once 2,048 bodies are awake, 4,096 on the web, and gives the same world on any number of them.
 - **On the web** the step takes about 0.46 ms for this world with everything moving. Box2D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.

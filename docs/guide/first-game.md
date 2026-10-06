@@ -208,5 +208,5 @@ Click the game so it has the keyboard, and steer with `WASD`.
 
 - `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../game/schedule.md).
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md). The language itself starts with [the basics](../language/basics.md).
-- [Falling sand](./sand.md) is a bigger game, with a grid, a parallel loop and rooms to play in together.
-- [Duel](./duel.md) is a 2D arena game to play against a practice bot or a friend.
+- Browse the [samples](./samples.md) for complete games to play in your browser.
+- The [Duel code tour](./duel.md) explains how a larger game separates its match rules, local effects and menus.

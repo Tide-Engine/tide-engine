@@ -1,0 +1,1006 @@
+const string SampleTitle = "Asteroids Co-op";
+
+// Asteroids, co-op. Everyone who opens the link flies a ship in the same field
+// of rocks. The crew shares one score and clears waves together, while a saucer
+// hunts them: a ship that took three hits drifts until a friend flies over it,
+// and the game is over when nobody is left flying.
+
+settings
+{
+    title = "Asteroids Co-op";
+    maxPlayers = 8;
+    hostMigration = true;
+}
+
+const float ARENA = 10;          // Half the field's side: it wraps from -10 to 10
+const float TURN = 4.4;          // Radians a second, with the keys
+const float TURN_AIM = 8;        // ...and with the stick
+const float STICK_REST = 10;     // Pixels a drag goes before it steers
+const float STICK_RING = 44;     // ...and before it thrusts
+const float THRUST = 15;
+const float TOP_SPEED = 9;
+const float BULLET_SPEED = 17;
+const float BULLET_LIFE = 0.8;
+const float FIRE_EVERY = 0.2;
+const float SHIP_RADIUS = 0.4;
+const int HULL = 3;
+const int ROCK_CORNERS = 9;
+const float SAUCER_FIRST = 12;   // Seconds of a game before the first saucer
+const float SAUCER_RADIUS = 0.75;
+const float SHOT_SPEED = 7;
+
+const Color SPACE = Color(0.03, 0.035, 0.06);
+const Color ROCK_FILL = Color(0.1, 0.11, 0.15);
+const Color ROCK_EDGE = Color(0.78, 0.8, 0.88);
+const Color QUIET = Color(0.6, 0.64, 0.74);
+const Color AMBER = Color(0.98, 0.75, 0.14);
+const Color ALARM = Color(1, 0.35, 0.35);
+
+enum Phase { Intermission, Playing, Over }
+
+// ---------------------------------------------------------------- the match
+
+component Ship
+{
+    [Position] float2 position;
+    [Rotation] float angle = Math.PI * 0.5;
+    float2 velocity;
+    int tint;            // Which of the crew's colors
+    int hull = HULL;     // Hits it can still take
+    int score;
+    int wave;            // The wave and the game it was last readied for
+    int round;
+    float cooldown;
+    float shield = 3;    // Seconds nothing can hurt it
+    bool thrusting;
+    bool down;           // Out of hull: drifting until a friend comes
+    local float flash;   // This machine's: how long a hit still shows
+}
+
+component Rock
+{
+    [Position] float2 position;
+    float2 velocity;
+    [Rotation] float angle;
+    float spin;
+    int size;            // 2 is big, 1 medium, 0 small
+    int shape;           // What its outline is rolled from
+    bool gone;           // Hit already, this tick
+}
+
+component Bullet
+{
+    float2 position;
+    float2 velocity;
+    float life;
+    Entity shooter;
+    int tint;
+}
+
+// A saucer crosses the field now and then, shooting at whoever is nearest.
+component Saucer
+{
+    [Position] float2 position;
+    float2 velocity;
+    Random random;       // Its own numbers: where it swerves, how well it aims
+    float swerve = 1;    // Seconds to its next change of course
+    float cooldown = 2;
+    bool gone;
+}
+
+component Shot
+{
+    float2 position;
+    float2 velocity;
+    float life = 2.2;
+}
+
+singleton Game
+{
+    Random random;
+    Phase phase;         // Starts between waves, before the first
+    float timer = 1.5;
+    float saucerIn = SAUCER_FIRST;
+    int wave;
+    int round = 1;
+    int score;
+    int best;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> ships;
+    int arrivals;
+}
+
+event Hit { Entity shooter; }                    // To a rock or a saucer
+event Struck { float2 from; }                    // To a ship a saucer's shot reached
+event Scored { int points; float2 at; }          // To the ship that shot it
+event Boom { float2 at; float size; int tint; }  // To the world, for what's shown
+event Hurt { }                                   // To a ship, for what's shown
+event Revived { }                                // The same
+
+// A drag of the mouse or a finger is a stick: a view keeps where it began.
+local singleton Pointer
+{
+    float2 start;    // In the devices' pixels, which count y up
+    float2 pull;
+    bool held;
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float turn;
+    bool thrust;
+    bool fire;
+    bool steer;                              // The stick is pulled: turn to `heading`
+    [Absolute, Clamp(-4, 4)] float heading;  // A direction, so a guess keeps it
+
+    Sample(Devices devices, Pointer pointer, SampleLobby lobby)
+    {
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        if (keys.a.pressed || keys.leftArrow.pressed) turn += 1;
+        if (keys.d.pressed || keys.rightArrow.pressed) turn -= 1;
+        turn -= pad.leftStick.x;
+        thrust = keys.w.pressed || keys.upArrow.pressed || pad.buttonSouth.pressed || pad.rightTrigger > 0.4;
+        fire = keys.space.pressed || pad.buttonWest.pressed || pad.rightShoulder.pressed;
+        if (pointer.held)
+        {
+            // Held, it fires; pulled, it steers; pulled past the ring, it thrusts.
+            var far = Math.Length(pointer.pull);
+            fire = true;
+            if (far > STICK_REST)
+            {
+                steer = true;
+                heading = Math.Atan2(pointer.pull.y, pointer.pull.x);
+            }
+            if (far > STICK_RING) thrust = true;
+        }
+    }
+}
+
+scene Main { }
+
+float Wrap(float value)
+{
+    if (value > ARENA) return value - 2 * ARENA;
+    if (value < -ARENA) return value + 2 * ARENA;
+    return value;
+}
+
+// From `from` to `to`, the short way round the field.
+float2 Between(float2 from, float2 to)
+{
+    return float2(Wrap(to.x - from.x), Wrap(to.y - from.y));
+}
+
+// An angle from -PI to PI.
+float Angle(float turn)
+{
+    return turn - Math.TAU * Math.Floor((turn + Math.PI) / Math.TAU);
+}
+
+float RockRadius(int size)
+{
+    return size == 2 ? 1.7 : size == 1 ? 1.0 : 0.55;
+}
+
+event(PlayerJoined joined) Launch(mut Roster roster, Game game)
+{
+    var seat = roster.arrivals;
+    roster.arrivals += 1;
+    var place = float2(Math.Cos(seat * 2.4), Math.Sin(seat * 2.4)) * 2.2;
+    roster.ships[joined.player] = Spawn(
+        Ship { position = place, tint = seat % 8, wave = game.wave, round = game.round },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.ships[left.player].Destroy();
+    roster.ships.Remove(left.player);
+}
+
+system Fly(Controls input, mut Ship ship, Game game, Time time, with Owner)
+{
+    var dt = time.dt;
+
+    // A new game: everything back as it started.
+    if (ship.round != game.round)
+    {
+        ship.round = game.round;
+        ship.wave = game.wave;
+        ship.score = 0;
+        ship.hull = HULL;
+        ship.down = false;
+        ship.velocity = float2(0);
+        ship.shield = 3;
+    }
+    // A new wave: the fallen are back, and everyone is patched up a little.
+    if (ship.wave != game.wave)
+    {
+        ship.wave = game.wave;
+        ship.hull = ship.down ? HULL : Math.Min(ship.hull + 1, HULL);
+        ship.down = false;
+        ship.shield = Math.Max(ship.shield, 2.5);
+    }
+
+    ship.shield = Math.Max(0, ship.shield - dt);
+    ship.cooldown = Math.Max(0, ship.cooldown - dt);
+
+    mut var thrust = false;
+    mut var fire = false;
+    if (!ship.down)
+    {
+        mut var turn = input.turn * TURN * dt;
+        thrust = input.thrust;
+        fire = input.fire;
+        if (input.steer)
+        {
+            // The way the stick points, the short way round
+            var off = Angle(input.heading - ship.angle);
+            turn = Math.Clamp(off, -TURN_AIM * dt, TURN_AIM * dt);
+        }
+        ship.angle = Angle(ship.angle + turn);
+    }
+    ship.thrusting = thrust;
+
+    var nose = float2(Math.Cos(ship.angle), Math.Sin(ship.angle));
+    if (thrust) ship.velocity += nose * THRUST * dt;
+    ship.velocity = ship.velocity * (1 - (ship.down ? 1.6 : 0.45) * dt);
+    var speed = Math.Length(ship.velocity);
+    if (speed > TOP_SPEED) ship.velocity = ship.velocity * (TOP_SPEED / speed);
+
+    var moved = ship.position + ship.velocity * dt;
+    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap(); // Across the edge at once, not sliding back
+    ship.position = wrapped;
+
+    if (fire && ship.cooldown <= 0)
+    {
+        ship.cooldown = FIRE_EVERY;
+        Spawn(Bullet { position = ship.position + nose * 0.6, velocity = nose * BULLET_SPEED + ship.velocity * 0.4,
+                       life = BULLET_LIFE, shooter = this, tint = ship.tint });
+    }
+}
+
+system Drift(mut Rock rock, Time time)
+{
+    rock.angle = Angle(rock.angle + rock.spin * time.dt);
+    var moved = rock.position + rock.velocity * time.dt;
+    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
+    rock.position = wrapped;
+}
+
+system Shoot(mut Bullet bullet, Time time, query (Rock rock) rocks, query (Saucer saucer) saucers)
+{
+    bullet.life -= time.dt;
+    if (bullet.life <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    var moved = bullet.position + bullet.velocity * time.dt;
+    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
+    bullet.position = wrapped;
+
+    foreach (var entry in rocks)
+    {
+        var reach = RockRadius(entry.rock.size) * 0.92 + 0.1;
+        if (Math.LengthSq(Between(entry.rock.position, bullet.position)) > reach * reach) continue;
+        entry.entity.Send(Hit { shooter = bullet.shooter });
+        this.Destroy();
+        return;
+    }
+    foreach (var foe in saucers)
+    {
+        if (Math.LengthSq(Between(foe.saucer.position, bullet.position)) > SAUCER_RADIUS * SAUCER_RADIUS) continue;
+        foe.entity.Send(Hit { shooter = bullet.shooter });
+        this.Destroy();
+        return;
+    }
+}
+
+system Crash(mut Ship ship, query (Rock rock) rocks)
+{
+    if (ship.down || ship.shield > 0) return;
+    foreach (var entry in rocks)
+    {
+        var reach = RockRadius(entry.rock.size) * 0.9 + SHIP_RADIUS;
+        var away = Between(entry.rock.position, ship.position);
+        if (Math.LengthSq(away) > reach * reach) continue;
+        entry.entity.Send(Hit { });
+        ship.hull -= 1;
+        ship.shield = 1.6;
+        ship.velocity = Math.Normalize(away) * 4.5 + entry.rock.velocity * 0.5;
+        this.Send(Hurt { });
+        if (ship.hull <= 0)
+        {
+            ship.down = true;
+            Send(Boom { at = ship.position, size = 1.6, tint = ship.tint });
+        }
+        return;
+    }
+}
+
+// A ship that's down comes back when a friend who's flying passes over it.
+system Rescue(mut Ship ship, query (Ship friend) friends)
+{
+    if (!ship.down) return;
+    foreach (var entry in friends)
+    {
+        if (entry.friend.down || entry.entity == this) continue;
+        if (Math.LengthSq(Between(entry.friend.position, ship.position)) > 1.4 * 1.4) continue;
+        ship.down = false;
+        ship.hull = 2;
+        ship.shield = 2.5;
+        this.Send(Revived { });
+        return;
+    }
+}
+
+// The saucer swerves as it crosses, and shoots at the nearest ship that's flying.
+system Prowl(mut Saucer saucer, Time time, query (Ship ship) ships)
+{
+    saucer.swerve -= time.dt;
+    if (saucer.swerve <= 0)
+    {
+        saucer.swerve = saucer.random.NextFloat(0.7, 1.8);
+        saucer.velocity.y = saucer.random.NextFloat(-2.4, 2.4);
+    }
+    var moved = saucer.position + saucer.velocity * time.dt;
+    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
+    saucer.position = wrapped;
+
+    saucer.cooldown -= time.dt;
+    if (saucer.cooldown > 0) return;
+    mut var nearest = 1000000.0;
+    mut var aim = float2(0);
+    foreach (var entry in ships)
+    {
+        if (entry.ship.down) continue;
+        var to = Between(saucer.position, entry.ship.position);
+        var far = Math.LengthSq(to);
+        if (far >= nearest) continue;
+        nearest = far;
+        aim = to;
+    }
+    saucer.cooldown = 1.6;
+    if (nearest > 999999) return; // Nobody to shoot at
+    var angle = Math.Atan2(aim.y, aim.x) + saucer.random.NextFloat(-0.22, 0.22);
+    Spawn(Shot { position = saucer.position, velocity = float2(Math.Cos(angle), Math.Sin(angle)) * SHOT_SPEED });
+}
+
+system Sting(mut Shot shot, Time time, query (Ship ship) ships)
+{
+    shot.life -= time.dt;
+    if (shot.life <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    var moved = shot.position + shot.velocity * time.dt;
+    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
+    shot.position = wrapped;
+
+    var reach = SHIP_RADIUS + 0.15;
+    foreach (var entry in ships)
+    {
+        if (entry.ship.down || entry.ship.shield > 0) continue;
+        if (Math.LengthSq(Between(entry.ship.position, shot.position)) > reach * reach) continue;
+        entry.entity.Send(Struck { from = shot.velocity });
+        this.Destroy();
+        return;
+    }
+}
+
+event(Struck struck) TakeShot(mut Ship ship)
+{
+    if (ship.down || ship.shield > 0) return; // Two shots in one tick hurt once
+    ship.hull -= 1;
+    ship.shield = 1.6;
+    ship.velocity += Math.Normalize(struck.from) * 3;
+    this.Send(Hurt { });
+    if (ship.hull <= 0)
+    {
+        ship.down = true;
+        Send(Boom { at = ship.position, size = 1.6, tint = ship.tint });
+    }
+}
+
+// Once a tick: the waves, the saucers, and when the game is over.
+system Direct(mut Game game, Time time, query (with Rock) rocks, query (Ship ship) ships,
+              query (with Saucer) saucers, query (with Shot) shots)
+{
+    mut var left = 0;
+    foreach (var entry in rocks) left += 1;
+    mut var prowlers = 0;
+    foreach (var foe in saucers) prowlers += 1;
+    mut var pilots = 0;
+    mut var flying = 0;
+    foreach (var pilot in ships)
+    {
+        pilots += 1;
+        if (!pilot.ship.down) flying += 1;
+    }
+
+    if (game.phase == Phase.Over)
+    {
+        game.timer -= time.dt;
+        if (game.timer > 0) return;
+        foreach (var old in rocks) old.entity.Destroy();
+        foreach (var old in saucers) old.entity.Destroy();
+        foreach (var old in shots) old.entity.Destroy();
+        game.round += 1;
+        game.wave = 0;
+        game.score = 0;
+        game.phase = Phase.Intermission;
+        game.timer = 1.5;
+        game.saucerIn = SAUCER_FIRST;
+        return;
+    }
+    if (game.phase == Phase.Playing)
+    {
+        if (pilots > 0 && flying == 0)
+        {
+            game.phase = Phase.Over;
+            game.timer = 6;
+            game.best = Math.Max(game.best, game.score);
+            return;
+        }
+        if (left == 0)
+        {
+            game.phase = Phase.Intermission;
+            game.timer = 2.5;
+            return;
+        }
+        // One saucer at a time, sooner in the later waves
+        if (prowlers > 0) return;
+        game.saucerIn -= time.dt;
+        if (game.saucerIn > 0) return;
+        game.saucerIn = Math.Max(7.0, 18 - game.wave * 1.5);
+        var height = game.random.NextFloat(-ARENA, ARENA);
+        Spawn(Saucer { position = float2(ARENA, height), velocity = float2(game.random.NextBool() ? 2.6 : -2.6, 0) });
+        return;
+    }
+
+    game.timer -= time.dt;
+    if (game.timer > 0) return;
+    game.wave += 1;
+    game.phase = Phase.Playing;
+    var count = Math.Min(2 + game.wave + pilots / 2, 11);
+    for (var i = 0; i < count; i++)
+    {
+        // On the field's edge, which is one line: left is right, and top is bottom.
+        var along = game.random.NextFloat(-ARENA, ARENA);
+        var place = game.random.NextBool() ? float2(ARENA, along) : float2(along, ARENA);
+        var way = game.random.NextFloat2Direction();
+        var speed = game.random.NextFloat(1.2, 2.4) + game.wave * 0.12;
+        Spawn(Rock { position = place, velocity = way * speed, angle = game.random.NextFloat(Math.TAU),
+                     spin = game.random.NextFloat(-1.2, 1.2), size = 2, shape = game.random.NextInt() });
+    }
+}
+
+// A rock that's hit breaks in two, down to the small ones.
+event(Hit hit) Shatter(mut Rock rock, mut Game game)
+{
+    if (rock.gone) return; // Two bullets in one tick break it once
+    rock.gone = true;
+    this.Destroy();
+    Send(Boom { at = rock.position, size = RockRadius(rock.size), tint = -1 });
+    if (hit.shooter != default)
+    {
+        var points = rock.size == 2 ? 20 : rock.size == 1 ? 50 : 100;
+        game.score += points;
+        hit.shooter.Send(Scored { points = points, at = rock.position });
+    }
+    if (rock.size == 0) return;
+    for (var i = 0; i < 2; i++)
+    {
+        var way = game.random.NextFloat2Direction();
+        var speed = game.random.NextFloat(1.4, 3.2);
+        Spawn(Rock { position = rock.position + way * 0.4, velocity = rock.velocity * 0.5 + way * speed,
+                     angle = game.random.NextFloat(Math.TAU), spin = game.random.NextFloat(-2, 2),
+                     size = rock.size - 1, shape = game.random.NextInt() });
+    }
+}
+
+// A saucer goes at the first hit, and it's worth a lot.
+event(Hit hit) Zap(mut Saucer saucer, mut Game game)
+{
+    if (saucer.gone) return;
+    saucer.gone = true;
+    this.Destroy();
+    Send(Boom { at = saucer.position, size = 1.8, tint = -3 });
+    if (hit.shooter == default) return;
+    game.score += 300;
+    hit.shooter.Send(Scored { points = 300, at = saucer.position });
+}
+
+event(Scored scored) Credit(mut Ship ship)
+{
+    ship.score += scored.points;
+}
+
+// ------------------------------------------------------- what a machine shows
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.5;
+    int tint;
+}
+
+struct Popup
+{
+    float2 at;
+    int points;
+    int tint;
+    float age;
+}
+
+local singleton Look
+{
+    Random random;
+    List<Spark> sparks;
+    List<Popup> popups;
+    float shake;
+    float time;      // Seconds, wrapped, for what pulses
+    float pixels;    // The pixels in one unit of the field
+}
+
+Color Tint(int index)
+{
+    switch (index)
+    {
+        case 0: return Color(0.98, 0.75, 0.14);
+        case 1: return Color(0.18, 0.83, 0.75);
+        case 2: return Color(0.98, 0.44, 0.52);
+        case 3: return Color(0.4, 0.68, 1);
+        case 4: return Color(0.62, 0.9, 0.3);
+        case 5: return Color(0.74, 0.55, 1);
+        case 6: return Color(1, 0.55, 0.22);
+        case 7: return Color(0.92, 0.92, 0.97);
+    }
+    if (index == -2) return Color(1, 0.6, 0.2); // Exhaust
+    if (index == -3) return ALARM;              // A saucer's
+    return ROCK_EDGE;
+}
+
+Color Faded(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, color.a * alpha);
+}
+
+void Burst(mut Look look, float2 at, float size, int tint, int count)
+{
+    for (var i = 0; i < count; i++)
+    {
+        var way = look.random.NextFloat2Direction();
+        look.sparks.Add(Spark { position = at + way * size * 0.4, velocity = way * look.random.NextFloat(1, 4 + size * 2.5),
+                                life = look.random.NextFloat(0.3, 0.9), tint = tint });
+    }
+}
+
+local event(Boom boom) ShowBoom(mut Look look)
+{
+    Burst(look, boom.at, boom.size, boom.tint, int(8 + boom.size * 12));
+    if (boom.size > 1.5) look.shake = Math.Max(look.shake, 0.2); // A big one is felt
+}
+
+local event(Hurt) ShowHurt(mut Ship ship, Owner owner, Session session, mut Look look)
+{
+    ship.flash = 0.3;
+    Burst(look, ship.position, 0.4, ship.tint, 10);
+    if (owner.player == session.player) look.shake = 0.35;
+}
+
+local event(Revived) ShowRevived(Ship ship, mut Look look)
+{
+    Burst(look, ship.position, 1.2, ship.tint, 26);
+}
+
+local event(Scored scored) ShowScored(Ship ship, mut Look look)
+{
+    look.popups.Add(Popup { at = scored.at, points = scored.points, tint = ship.tint });
+}
+
+// The camera fits the whole field in the window, whatever its shape, and the
+// pointer is read through it.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Backdrop(Devices devices, mut Pointer pointer, mut Look look, SampleLobby lobby)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    look.time += dt;
+    if (look.time > 600) look.time -= 600;
+    look.shake = Math.Max(0, look.shake - dt);
+
+    Draw2D.Clear(SPACE);
+    var size = ARENA * Math.Max(1.0, Screen.height / Screen.width) * 1.02;
+    look.pixels = Screen.height / (2 * size);
+    Draw2D.SetCamera(float2(0), size);
+
+    var drag = devices.pointer;
+    if (lobby.playing && drag.press.down) pointer.start = drag.position;
+    pointer.held = lobby.playing && drag.press.pressed;
+    pointer.pull = pointer.held ? drag.position - pointer.start : float2(0);
+
+    // Nothing of the field draws outside it, so what wraps comes in at the other edge.
+    Draw2D.SetClip(Rect(-ARENA, -ARENA, 2 * ARENA, 2 * ARENA));
+    Draw2D.Clear(Color(0.045, 0.05, 0.085));
+    for (var i = 0; i < 70; i++)
+    {
+        var roll = Math.Hash(i + 11);
+        var at = float2(roll % 2000, (roll / 2000) % 2000) * 0.01 - float2(ARENA);
+        var twinkle = 0.25 + 0.2 * Math.Sin(look.time * (0.6 + (roll % 7) * 0.2) + i);
+        Draw2D.Circle(at, 0.03 + (roll % 3) * 0.015, Color(0.8, 0.85, 1, twinkle));
+    }
+    Draw2D.WireRect(float2(0), float2(2 * ARENA), 0.06, Color(0.16, 0.18, 0.27));
+    var shake = look.shake * look.shake * 2.2;
+    Draw2D.SetCamera(float2(Math.Sin(look.time * 71), Math.Cos(look.time * 53)) * shake, size);
+}
+
+void DrawRock(float2 at, float angle, float radius, int shape)
+{
+    mut List<Vertex> corners = [Vertex { position = at, color = ROCK_FILL }];
+    mut List<int> faces = [];
+    for (var i = 0; i < ROCK_CORNERS; i++)
+    {
+        var turn = angle + i * Math.TAU / ROCK_CORNERS;
+        var reach = radius * (0.74 + (Math.Hash(int2(shape, i)) % 100) * 0.0034);
+        corners.Add(Vertex { position = at + float2(Math.Cos(turn), Math.Sin(turn)) * reach, color = ROCK_FILL });
+        faces.Add(0);
+        faces.Add(i + 1);
+        faces.Add(i == ROCK_CORNERS - 1 ? 1 : i + 2);
+    }
+    Draw2D.Mesh(corners, faces);
+    for (var i = 1; i <= ROCK_CORNERS; i++)
+    {
+        var next = i == ROCK_CORNERS ? 1 : i + 1;
+        Draw2D.Line(corners[i].position, corners[next].position, 0.09, ROCK_EDGE);
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Rocks(Rock rock)
+{
+    var radius = RockRadius(rock.size);
+    for (var x = -1; x <= 1; x++)
+    {
+        for (var y = -1; y <= 1; y++)
+        {
+            // Once more at the other edge, for a rock that's across it
+            var at = rock.position + float2(x, y) * (2 * ARENA);
+            if (Math.Abs(at.x) > ARENA + radius || Math.Abs(at.y) > ARENA + radius) continue;
+            DrawRock(at, rock.angle, radius, rock.shape);
+        }
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Bullets(Bullet bullet)
+{
+    var tail = bullet.position - Math.Normalize(bullet.velocity) * 0.4;
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Line(tail, bullet.position, 0.13, Tint(bullet.tint));
+    }
+    Draw2D.Circle(bullet.position, 0.07, Color.white);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Saucers(Saucer saucer, Look look)
+{
+    for (var x = -1; x <= 1; x++)
+    {
+        for (var y = -1; y <= 1; y++)
+        {
+            var at = saucer.position + float2(x, y) * (2 * ARENA);
+            if (Math.Abs(at.x) > ARENA + 1 || Math.Abs(at.y) > ARENA + 1) continue;
+            Draw2D.Ellipse(at + float2(0, 0.2), float2(0.34, 0.3), Color(0.25, 0.08, 0.1));
+            Draw2D.WireEllipse(at + float2(0, 0.2), float2(0.34, 0.3), 0.08, ALARM);
+            Draw2D.Ellipse(at, float2(SAUCER_RADIUS, 0.26), Color(0.25, 0.08, 0.1));
+            Draw2D.WireEllipse(at, float2(SAUCER_RADIUS, 0.26), 0.08, ALARM);
+            for (var light = -1; light <= 1; light++)
+            {
+                var lit = 0.5 + 0.5 * Math.Sin(look.time * 9 + light * 2.1);
+                Draw2D.Circle(at + float2(light * 0.36, 0), 0.06, Color(1, 0.9, 0.6, 0.3 + 0.7 * lit));
+            }
+        }
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Shots(Shot shot)
+{
+    Draw.Blend(Blend.Add)
+    {
+        Draw2D.Circle(shot.position, 0.2, Faded(ALARM, 0.5));
+    }
+    Draw2D.Circle(shot.position, 0.1, Color(1, 0.85, 0.8));
+}
+
+void DrawShip(float2 at, float angle, Color color, bool thrusting, float flicker)
+{
+    var nose = float2(Math.Cos(angle), Math.Sin(angle));
+    var wing = float2(-nose.y, nose.x);
+    var tip = at + nose * 0.62;
+    var left = at - nose * 0.42 + wing * 0.4;
+    var right = at - nose * 0.42 - wing * 0.4;
+    var notch = at - nose * 0.2;
+    var hull = Color(color.r * 0.25, color.g * 0.25, color.b * 0.25);
+    List<Vertex> corners = [
+        Vertex { position = tip, color = hull },
+        Vertex { position = left, color = hull },
+        Vertex { position = notch, color = hull },
+        Vertex { position = right, color = hull },
+    ];
+    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3]);
+    if (thrusting)
+    {
+        var tail = at - nose * (0.6 + flicker * 0.45);
+        Draw.Blend(Blend.Add)
+        {
+            Draw2D.Line(notch + wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
+            Draw2D.Line(notch - wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
+        }
+    }
+    Draw2D.Line(tip, left, 0.09, color);
+    Draw2D.Line(left, notch, 0.09, color);
+    Draw2D.Line(notch, right, 0.09, color);
+    Draw2D.Line(right, tip, 0.09, color);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
+{
+    ship.flash = Math.Max(0, ship.flash - Frame.dt);
+    var mine = owner.player == session.player;
+    var paint = Tint(ship.tint);
+    var pulse = 0.5 + 0.5 * Math.Sin(look.time * 6);
+    for (var x = -1; x <= 1; x++)
+    {
+        for (var y = -1; y <= 1; y++)
+        {
+            var at = ship.position + float2(x, y) * (2 * ARENA);
+            if (Math.Abs(at.x) > ARENA + 1.2 || Math.Abs(at.y) > ARENA + 1.2) continue;
+            if (ship.down)
+            {
+                // A pod, and a ring that calls for help
+                Draw2D.Circle(at, 0.24, Faded(paint, 0.55));
+                Draw2D.WireCircle(at, 0.5 + pulse * 0.7, 0.07, Faded(ALARM, 1 - pulse * 0.8));
+                continue;
+            }
+            DrawShip(at, ship.angle, ship.flash > 0 ? Color.white : paint, ship.thrusting,
+                     Math.Abs(Math.Sin(look.time * 47)));
+            if (ship.shield > 0)
+                Draw2D.WireCircle(at, 0.85, 0.05, Faded(paint, 0.25 + 0.45 * Math.Abs(Math.Sin(ship.shield * 9))));
+        }
+    }
+
+    if (ship.thrusting && !ship.down && look.sparks.count < 500 && look.random.NextInt(2) == 0)
+    {
+        var nose = float2(Math.Cos(ship.angle), Math.Sin(ship.angle));
+        look.sparks.Add(Spark { position = ship.position - nose * 0.55,
+                                velocity = ship.velocity - nose * 5 + look.random.NextFloat2Direction() * 1.2,
+                                life = 0.3, tint = -2 });
+    }
+
+    // Its label, in pixels, so it reads at any size of window
+    var under = Draw2D.WorldToScreen(ship.position - float2(0, 0.85));
+    Draw2D.Screen()
+    {
+        if (ship.down)
+            Draw2D.Text(mine ? "you: SOS" : "SOS", under, 12, ALARM, Anchor.UpperCenter, Font.Bold);
+        else if (mine)
+            Draw2D.Text("you", under, 11, Faded(Color.white, 0.75), Anchor.UpperCenter);
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Effects(mut Look look)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    Draw.Blend(Blend.Add)
+    {
+        mut var i = 0;
+        while (i < look.sparks.count)
+        {
+            mut var spark = look.sparks[i];
+            spark.age += dt;
+            if (spark.age >= spark.life)
+            {
+                look.sparks.RemoveAt(i);
+                continue;
+            }
+            spark.position += spark.velocity * dt;
+            spark.velocity = spark.velocity * (1 - 1.8 * dt);
+            look.sparks[i] = spark;
+            var left = 1 - spark.age / spark.life;
+            Draw2D.Line(spark.position - spark.velocity * 0.05, spark.position, 0.08, Faded(Tint(spark.tint), left));
+            i++;
+        }
+    }
+
+    mut var p = 0;
+    while (p < look.popups.count)
+    {
+        mut var popup = look.popups[p];
+        popup.age += dt;
+        if (popup.age >= 0.9)
+        {
+            look.popups.RemoveAt(p);
+            continue;
+        }
+        look.popups[p] = popup;
+        var at = Draw2D.WorldToScreen(popup.at + float2(0, 0.5 + popup.age * 1.4));
+        Draw2D.Screen()
+        {
+            Draw2D.Text($"+{popup.points}", at, 14, Faded(Tint(popup.tint), 1 - popup.age / 0.9),
+                        Anchor.MiddleCenter, Font.Bold);
+        }
+        p++;
+    }
+}
+
+// One of the crew on the board: its color, its score and its hull.
+void Chip(float2 at, Color color, int score, int hull, bool down, bool mine)
+{
+    Draw2D.Circle(at + float2(8, 9), 5, down ? Faded(color, 0.4) : color);
+    if (mine) Draw2D.WireCircle(at + float2(8, 9), 8, 1.5, Color.white);
+    Draw2D.Text($"{score}", at + float2(20, 1), 14, down ? QUIET : Color.white);
+    if (down)
+    {
+        Draw2D.Text("SOS", at + float2(20, 16), 10, ALARM, Font.Bold);
+        return;
+    }
+    for (var i = 0; i < HULL; i++)
+    {
+        Draw2D.Rect(at + float2(24 + i * 9, 21), float2(7, 3), i < hull ? color : Color(0.25, 0.27, 0.34));
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) crew)
+{
+    Draw2D.SetClip();
+    Draw2D.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var field = 2 * ARENA * look.pixels;   // The field's side, in pixels
+    var side = (w - field) * 0.5;          // What's left of the window beside it
+    var wide = side >= 170;
+
+    mut var pilots = 0;
+    mut var meDown = false;
+    mut var friendsDown = 0;
+    foreach (var member in crew)
+    {
+        pilots += 1;
+        if (!member.ship.down) continue;
+        if (member.owner.player == session.player)
+        {
+            meDown = true;
+        }
+        else
+        {
+            friendsDown += 1;
+        }
+    }
+
+    var wave = Math.Max(game.wave, 1);
+    var best = Math.Max(game.best, game.score);
+    if (wide)
+    {
+        // Room beside the field: the game on the left, the crew on the right
+        Draw2D.Text("ASTEROIDS", float2(20, 18), 26, Color.white, Font.Bold);
+        Draw2D.Text("co-op", float2(20, 48), 15, QUIET);
+        Draw2D.Text($"WAVE {wave}", float2(20, 92), 16, QUIET);
+        Draw2D.Text($"{game.score}", float2(20, 112), 38, AMBER, Font.Bold);
+        Draw2D.Text($"best {best}", float2(20, 156), 14, QUIET);
+        Draw2D.Text(h < 400 ? "Arrows, space to fire,\nor drag to steer.\nFly over a friend who's\ndown to bring them back."
+                            : "A D or arrows: turn\nW or up: thrust\nSpace: fire\n\nOr drag, with the mouse\nor a finger: it steers and\nfires, and thrusts when\npulled past the ring.\n\nFly over a friend who's\ndown to bring them back.",
+                    float2(20, h - 20), 14, QUIET, Anchor.LowerLeft);
+        Draw2D.Text(pilots <= 1 ? "CREW: just you" : $"CREW: {pilots}", float2(w - side + 20, 72), 15, QUIET);
+        mut var row = 0;
+        foreach (var member in crew)
+        {
+            Chip(float2(w - side + 20, 102 + row * 36), Tint(member.ship.tint), member.ship.score, member.ship.hull,
+                 member.ship.down, member.owner.player == session.player);
+            row += 1;
+        }
+        if (pilots <= 1)
+            Draw2D.Text("Invite friends from\nthe room menu.", float2(w - side + 20, 148), 14, QUIET);
+    }
+    else
+    {
+        // A small or tall window: over the field's edges, or above and below it where there's room
+        var top = Math.Max(52.0, (h - field) * 0.5 - 100);
+        var bottom = Math.Min(h, (h + field) * 0.5 + 62);
+        Draw2D.Text($"WAVE {wave}", float2(10, top + 9), 13, QUIET);
+        Draw2D.Text($"{game.score}", float2(w * 0.5, top + 4), 24, Color.white, Anchor.UpperCenter, Font.Bold);
+        Draw2D.Text($"BEST {best}", float2(w - 10, top + 9), 13, QUIET, Anchor.UpperRight);
+        var chip = Math.Min(92.0, (w - 12) / Math.Min(Math.Max(pilots, 1), 4));
+        mut var seat = 0;
+        foreach (var member in crew)
+        {
+            var line = seat / 4;
+            var inLine = Math.Min(4, pilots - line * 4);
+            var from = (w - inLine * chip) * 0.5 + 6;
+            Chip(float2(from + (seat % 4) * chip, top + 34 + line * 30), Tint(member.ship.tint), member.ship.score,
+                 member.ship.hull, member.ship.down, member.owner.player == session.player);
+            seat += 1;
+        }
+        Draw2D.Text("Arrows or WASD to fly, space to fire\nor drag: steer and fire, pull past the ring to thrust",
+                    float2(w * 0.5, bottom - 22), 12, Faded(QUIET, game.wave > 1 ? 0.6 : 1), Anchor.LowerCenter);
+        Draw2D.Text(pilots <= 1 ? "Host a room from the menu to invite friends" : "Fly over a friend who's down to bring them back",
+                    float2(w * 0.5, bottom - 6), 12, Faded(AMBER, game.wave > 1 ? 0.6 : 0.9), Anchor.LowerCenter);
+    }
+
+    // Banners, above the field's middle, where ships start
+    var big = Math.Clamp(field * 0.11, 22.0, 60.0);
+    var middle = float2(w * 0.5, h * 0.5 - field * 0.2);
+    if (game.phase == Phase.Over)
+    {
+        Draw2D.Rect(middle, float2(field, big * 3.4), Color(0, 0, 0, 0.6));
+        Draw2D.Text("GAME OVER", middle - float2(0, big * 0.8), big, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(pilots > 1 ? $"The crew scored {game.score}" : $"You scored {game.score}", middle + float2(0, big * 0.15),
+                    big * 0.42, AMBER, Anchor.MiddleCenter);
+        Draw2D.Text($"New game in {int(Math.Ceil(game.timer))}", middle + float2(0, big * 0.85), big * 0.36, QUIET,
+                    Anchor.MiddleCenter);
+    }
+    else if (game.phase == Phase.Intermission)
+    {
+        Draw2D.Text($"WAVE {game.wave + 1}", middle - float2(0, big * 0.3), big, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(game.wave == 0 ? "Shoot the rocks. Keep each other flying."
+                                   : pilots > 1 ? "Cleared! Everyone's back in." : "Cleared! Hull patched up.",
+                    middle + float2(0, big * 0.5), big * 0.36, AMBER, Anchor.MiddleCenter);
+    }
+    else if (meDown)
+    {
+        Draw2D.Text("SHIP DOWN", middle - float2(0, big * 0.3), big * 0.8, ALARM, Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("A friend who flies over you brings you back", middle + float2(0, big * 0.4), big * 0.34, Color.white,
+                    Anchor.MiddleCenter);
+    }
+    else if (friendsDown > 0)
+    {
+        Draw2D.Text("A friend is down: fly over them!", float2(w * 0.5, h * 0.5 - field * 0.5 + (wide ? 16 : 96)), 14, ALARM,
+                    Anchor.UpperCenter, Font.Bold);
+    }
+}
+
+// The stick, while a drag lasts: where it began, the ring that thrust starts at, and the pull.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Stick(Pointer pointer)
+{
+    if (!pointer.held) return;
+    Draw2D.SetClip();
+    Draw2D.SetScreen();
+    var far = Math.Length(pointer.pull);
+    var powered = far > STICK_RING;
+    var from = Screen.Flip(pointer.start);
+    var reach = Math.Min(far, STICK_RING + 26.0);
+    var knob = Screen.Flip(pointer.start + Math.Normalize(pointer.pull) * reach);
+    Draw2D.WireCircle(from, STICK_RING, 2, Faded(powered ? AMBER : Color.white, 0.35));
+    if (far > STICK_REST) Draw2D.Line(from, knob, 3, Faded(Color.white, 0.25));
+    Draw2D.Circle(knob, 13, Faded(powered ? AMBER : Color.white, 0.55));
+}
+
+// For someone who just opened the link, while their machine joins.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Joining(Session session)
+{
+    if (session.state == SessionState.Connected) return;
+    Draw2D.SetClip();
+    Draw2D.SetScreen();
+    Draw2D.Text(session.state == SessionState.Connecting ? "Joining the crew..." : "The game is gone.\nReload the page to fly again.",
+                float2(Screen.width, Screen.height) * 0.5, 20, Color.white, Anchor.MiddleCenter);
+}

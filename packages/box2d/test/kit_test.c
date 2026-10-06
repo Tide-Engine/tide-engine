@@ -24,6 +24,7 @@
 
 // bridge.c
 void b2t_forget(void);
+void b2t_check(bool on, bool whenever);
 int32_t b2t_restores(void);
 void b2t_share_from(int32_t bodies);
 int32_t b2t_asking_threads(void);
@@ -34,9 +35,13 @@ static tide_world a;
 static tide_world b;
 static tide_world kept;
 
+// Every image is written as what changed of the last one wherever it can be, and compared with the image
+// written whole (b2t_check), as in the package's other tests: parts, a body's type, what's asked and how the
+// world is tuned are each something an image in parts has to come out right after.
 static void start(tide_world *w, const Case which)
 {
     b2t_forget();
+    b2t_check(true, true);
     tide_world_init(w, DT);
     w->Kit.which = which;
 }
@@ -125,8 +130,8 @@ static bool stays(tide_world *w)
 // The match of parts after its ticks, on every platform and in every
 // configuration: its parts' shapes are in Box2D's image, and whose each is in
 // the match.
-#define PARTS_HASH UINT64_C(0xc24abbd6365d0ee4)
-#define PARTS_IMAGES_HASH UINT64_C(0x2ea63f16bd4bdd10)
+#define PARTS_HASH UINT64_C(0x8df6177caaaf0e2b)
+#define PARTS_IMAGES_HASH UINT64_C(0x834692ff48834364)
 
 enum { PART_TICKS = 420, SNIP = 200, FELL = 260, LOOK = 180 };
 
@@ -420,7 +425,7 @@ static bool same_bytes(const void *x, const void *y, const size_t size, const ch
 
 // The match of questions after its ticks, and every answer the match was
 // given along the way, on every platform and in every configuration.
-#define ASKS_HASH UINT64_C(0xc54efb65d5c1e38e)
+#define ASKS_HASH UINT64_C(0xb3aac02bf5088cb6)
 #define ANSWERS_HASH UINT64_C(0x53abf452b7c6e40b)
 
 enum { ASK_TICKS = 150, FADE = 100 };

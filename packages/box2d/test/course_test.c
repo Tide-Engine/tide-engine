@@ -2,6 +2,10 @@
 // against the step, what a view sees of a body, an impulse given where a body
 // is spawned, bodies at rest that code moves, gravity that changes, and
 // sensors.
+//
+// Every image that's written as what changed of the last one is compared with
+// the image written whole (b2t_check), as in the package's other tests: what
+// a game does here is done to bodies that sleep, too.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,6 +20,8 @@
 // bridge.c
 void b2t_forget(void);
 int32_t b2t_restores(void);
+void b2t_check(bool on, bool whenever);
+void b2t_images(int32_t *whole, int32_t *in_parts);
 
 #define DT (1.0f / 60.0f)
 
@@ -24,6 +30,7 @@ static tide_world a;
 static void start(tide_world *w, const Case which)
 {
     b2t_forget();
+    b2t_check(true, true);
     tide_world_init(w, DT);
     w->Course.which = which;
 }
@@ -284,8 +291,8 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box2D's image.
-#define SENSORS_HASH UINT64_C(0x6cb06673dd86123b)
-#define SENSORS_IMAGES_HASH UINT64_C(0x9b36c4ba3b2af039)
+#define SENSORS_HASH UINT64_C(0x4d1598f04903b33c)
+#define SENSORS_IMAGES_HASH UINT64_C(0xbb270dee420eacc1)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 

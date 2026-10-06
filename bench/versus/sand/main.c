@@ -10,8 +10,8 @@
 extern const versus_way sand_c, sand_c_table;
 
 static versus_flag flags[] = {
-    {"size", "the grid's width and height, in cells", 1024, 128, 0},
-    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
+    {"size", "the grid's width and height, in cells", 1024, 128, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
 
 // With --kept 1, each tick's world is kept first, as a client keeps every tick

@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-06",
+  "source_commit": "5675a66bdf2abf55f4caedd43d79687c164aec86",
+  "binary_sha256": "274df537aa9cffdd948f4e16e300c263745e63324d4612241e07b417bbad9868",
+  "machine": {
+    "os": "Windows",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physical_cores": 12,
+    "logical_cpus": 24
+  },
+  "protocol": {
+    "preset": "release (RelWithDebInfo)",
+    "benchmark": "versus_buckets",
+    "buckets": 4096,
+    "warmup": 40,
+    "ticks": 300,
+    "offered_threads": [
+      1,
+      12
+    ],
+    "repetitions_per_label": 3,
+    "order": "Each round runs arrays-final, then arrays-final-kept; ways and thread counts run sequentially.",
+    "commands": [
+      "build/release/bin/versus_buckets.exe --save arrays-final",
+      "build/release/bin/versus_buckets.exe --kept 1 --save arrays-final-kept"
+    ],
+    "gate": "Local\\TideClaudeContinuationBenchmark",
+    "cpu_percent_before": 0,
+    "cpu_percent_after": 5
+  },
+  "interpretation": {
+    "arrays": "List<Ring>, each with an inline int[32]; head, count and cells are changed directly at the element, without copying a Ring into a local.",
+    "kept": "Every way retains the previous state before a tick and includes it in its final digest; Tide keeps a world snapshot and C copies its arrays.",
+    "noise": "The machine was reasonably idle at the sampled boundaries, and benchmark rounds were serialized. Three repetitions show the remaining noise; twelve-thread C varied more. Timings are medians, not a cross-machine guarantee.",
+    "historical": "The earlier arrays and arrays-in-place records are preserved. arrays-in-place was measured under load and is not the final comparison."
+  },
+  "validation": {
+    "native_full": "1465/1465",
+    "web_full": "1450/1450",
+    "native_overlap": "41/41",
+    "web_overlap": "40/40",
+    "tidels": "156/156",
+    "grammar": "167/167",
+    "docs_build": "passed",
+    "all_saved_runs_ok": true
+  }
+}

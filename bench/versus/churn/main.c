@@ -9,8 +9,8 @@
 extern const versus_way churn_c;
 
 static versus_flag flags[] = {
-    {"rate", "bullets fired a tick, each living 20 to 179 ticks", 2000, 100, 0},
-    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
+    {"rate", "bullets fired a tick, each living 20 to 179 ticks", 2000, 100, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
 
 // With --kept 1, each tick's world is kept first, as a client keeps every tick

@@ -189,6 +189,16 @@ int tide_platform_fps(void);
 // and with WebGL 2 where it doesn't.
 const char *tide_platform_renderer(void);
 
+// Measure the GPU work of tide_platform_draw, including its render targets,
+// while the stats drawer is open. Overlays and the wait for display aren't
+// included. Disabling discards pending samples and releases query resources.
+void tide_platform_gpu_timing(bool enabled);
+
+// A newly completed GPU sample, in milliseconds; -1 while none is ready or
+// the backend has no timer. Never waits for the GPU. Results arrive later
+// than the frame measured, and each is returned once.
+double tide_platform_gpu_ms(void);
+
 // Local files, independent of a window or renderer. The app ID identifies
 // saves across versions. Reinitializing the same ID preserves the provider
 // and pending storage operations, including when the game hot reloads.
