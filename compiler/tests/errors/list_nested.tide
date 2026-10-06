@@ -1,4 +1,0 @@
-// expect: a list can't hold lists yet
-// expect: keep every element in one list, with a 'List<int>' of where each inner list starts; or keep each inner list in a component, on an entity of its own, and hold the entities: 'List<Entity>'
-scene Main { }
-component Grid { List<List<int>> cells; }

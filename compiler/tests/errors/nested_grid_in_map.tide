@@ -1,0 +1,4 @@
+// expect: a map can't hold grids
+// expect: grids stay where they're made: in components, singletons and scenes
+scene Main { }
+singleton Layers { Map<int, Grid2<int>> byDepth; }

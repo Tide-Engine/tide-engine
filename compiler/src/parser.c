@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "types.h"
 
 // Recursive descent. For the compiler, stops at the first syntax error: later
 // errors after a bad parse are usually noise. For editors (`recover`), skips the
@@ -135,34 +136,6 @@ static qname parse_qname(parser *p, const char *what)
 
 // ---------------------------------------------------------------------------
 // Expressions
-
-// The built-in types that take types in <>, and what a syntax error says of
-// each: List<T>, Map<K, V>, Set<K>, Grid2<T> and Grid3<T>. What each accepts
-// there, and where one can be inside another, is the checker's (resolve_type).
-typedef struct generic_form {
-    const char *name;
-    int arity;
-    const char *hints[2]; // What each type in the <> is, for a syntax error
-    const char *comma;    // ...and what's between them
-    const char *close;    // ...and what closes it
-} generic_form;
-
-static const generic_form generic_forms[] = {
-    {"List", 1, {"the list's element type, like 'List<int>'"}, NULL, "'>' after the list's element type"},
-    {"Map", 2, {"the map's key type, like 'Map<int, string>'", "the map's value type, like 'Map<int, string>'"},
-     "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
-    {"Set", 1, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
-    {"Grid2", 1, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
-    {"Grid3", 1, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
-};
-
-static const generic_form *generic_form_named(const str name)
-{
-    for (size_t i = 0; i < sizeof generic_forms / sizeof generic_forms[0]; i++) {
-        if (str_eq_c(name, generic_forms[i].name)) return &generic_forms[i];
-    }
-    return NULL;
-}
 
 // Generic types, which take a type in <>.
 static bool generic_name(const str name)

@@ -27,6 +27,12 @@ char *folder_of_program(void);
 typedef void (*folder_sized_fn)(void *user, const char *path, unsigned long long size);
 void folder_find_files(const char *folder, folder_sized_fn found, void *user);
 
+// Like folder_find_files, but only goes into the subfolders `enter` says to,
+// each given as its path ending in '/': for whoever knows where the files it
+// wants can be, so that nothing else is walked.
+typedef bool (*folder_enter_fn)(void *user, const char *folder);
+void folder_find_files_in(const char *folder, folder_enter_fn enter, folder_sized_fn found, void *user);
+
 // What's in `folder` itself (ending in '/'): each entry's name, and whether
 // it's a folder. Hidden entries (a name starting with '.') are left out.
 typedef void (*folder_entry_fn)(void *user, const char *name, bool is_folder);

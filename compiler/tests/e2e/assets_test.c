@@ -56,7 +56,7 @@ TIDE_TEST(assets_read_as_values_of_their_types)
     TIDE_CHECK(p->hasRunOne && !p->hasRunNine);
     TIDE_CHECK(color_is(p->byName, 50, 0, 0, 255));
     TIDE_CHECK(text_is(&world, p->noteA, "alpha"));
-    TIDE_CHECK(p->noteCount == 2 && p->noteListCount == 2);
+    TIDE_CHECK(p->noteCount == 2 && p->noteListCount == 2); // The list's glob has a '*' for the folder, which is one folder deep
     TIDE_CHECK(text_is(&world, p->noteFirst, "alpha")); // a.txt before b.txt: by their paths' bytes
     TIDE_CHECK(p->pngCount == 5); // bad.png, hero.png, run/0.png, run/1.png, run/2.png
     TIDE_CHECK(p->pngFirstByte == 'o'); // bad.png's second byte

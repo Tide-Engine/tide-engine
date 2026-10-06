@@ -7,6 +7,35 @@
 // Looks up a built-in type by name: bool, int, float, float3, quaternion, ...
 bool builtin_type_named(str name, type *out);
 
+// What a built-in type that takes types accepts for each: the one table the
+// parser (what's in the <>, and what a syntax error says of it) and the
+// checker (what may go there, and where one can be inside another:
+// resolve_generic in check.c) read. List<T>, Map<K, V>, Set<K>, Grid2<T> and
+// Grid3<T> take theirs in <>; `T?` and `fails E` take theirs around them.
+typedef enum generic_arg {
+    GENERIC_ELEMENT, // A list's element or a map's value: any value, containers among them, but a grid (which is never copied)
+    GENERIC_KEY,     // A map's or set's key: a value with a hash and ==, of a fixed size (no containers, no text in structs)
+    GENERIC_CELL,    // A grid's cell: a plain value, side by side with the others in its chunk (no containers, no text)
+    GENERIC_VALUE,   // What a T? holds: any value a function can return
+    GENERIC_ERROR,   // What a function fails with: a value, never a T?
+} generic_arg;
+
+typedef struct generic_form {
+    const char *name;
+    int arity;
+    generic_arg args[2];
+    const char *hints[2]; // What each type in the <> is, for a syntax error
+    const char *comma;    // ...what's between them
+    const char *close;    // ...and what closes it
+} generic_form;
+
+// The form a name takes types in <> with, or NULL: List, Map, Set, Grid2, Grid3.
+const generic_form *generic_form_named(str name);
+
+// The forms around a type: T? and `fails E`.
+extern const generic_form generic_optional;
+extern const generic_form generic_fails;
+
 // Offers every built-in type name to a "did you mean" suggestion.
 void suggest_builtin_types(suggestion *s);
 
