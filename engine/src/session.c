@@ -3340,6 +3340,18 @@ static uint32_t sampled_past(const tide_client *c)
     return c->catching_up && c->heard_tick > c->verified ? c->heard_tick : c->verified;
 }
 
+// Catching up can take several frames, or pause again before it finishes.
+// Keep new samples at the first tick that can still arrive in time now,
+// without changing inputs already sampled or restarting the catch-up.
+static void skip_old_inputs(tide_client *c)
+{
+    int64_t soonest = due_input(c) - (int64_t)c->desc.lead;
+    if (soonest < (int64_t)c->heard_tick) soonest = c->heard_tick;
+    const int64_t most = (int64_t)sampled_past(c) + c->w.prediction - 1;
+    if (soonest > most) soonest = most;
+    skip_inputs(c, (uint32_t)soonest);
+}
+
 // It's behind what the server ran by more than it runs in an update: with a
 // world that just came, as old as it took to come, or after this machine
 // stopped for a while (a breakpoint, a tab that slept), or heard nothing for
@@ -3362,11 +3374,7 @@ static void fall_behind(tide_client *c)
     }
     c->let_go = UINT32_MAX;
     c->catching_up = true;
-    int64_t soonest = due_input(c) - (int64_t)c->desc.lead;
-    if (soonest < (int64_t)c->heard_tick) soonest = c->heard_tick;
-    const int64_t most = (int64_t)sampled_past(c) + c->w.prediction - 1; // As far as it samples (play)
-    if (soonest > most) soonest = most;
-    skip_inputs(c, (uint32_t)soonest);
+    skip_old_inputs(c);
     c->early_watching = false;
     c->early_settling = true;
 }
@@ -3639,6 +3647,7 @@ static void play(tide_client *c)
         && c->heard_tick - c->sampled > c->room.most) {
         fall_behind(c);
     }
+    if (c->catching_up) skip_old_inputs(c);
 
     // Ticks the server confirmed. One that went as predicted is already in its
     // snapshot, which only needs its hash checked. One that didn't runs on the

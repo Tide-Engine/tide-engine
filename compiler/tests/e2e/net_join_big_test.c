@@ -280,6 +280,102 @@ TIDE_TEST(net_join_big_world_is_caught_up_with_as_a_session_updates_it)
     first_moments(true);
 }
 
+typedef struct fresh_inputs {
+    tide_client *client;
+    bool watch;
+    uint32_t sampled;
+    uint32_t stale;
+} fresh_inputs;
+
+// Freshness is judged when an input is sampled: a tick the server has
+// already said it ran cannot receive a newly sampled input in time.
+static void sample_fresh(void *user, const uint32_t tick, void *input)
+{
+    fresh_inputs *f = user;
+    if (f->watch) {
+        f->sampled++;
+        if (tick < tide_client_status_of(f->client).server_tick) f->stale++;
+    }
+    sample(NULL, tick, input);
+}
+
+static void join_fresh(watched *w, fresh_inputs *f, const bool twice)
+{
+    slow_clock = slow_cost = 0;
+    *f = (fresh_inputs){0};
+    *w = (watched){.net = tide_loopback_create(25), .twice = twice};
+    tide_loopback_set_conditions(w->net, (tide_net_conditions){.latency = 0.05});
+    w->server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
+                                     .transports = {tide_loopback_endpoint(w->net, 1)}}, w->now);
+    TIDE_REQUIRE(w->server != NULL);
+    w->client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(w->net, 2),
+                                     .server = tide_loopback_address(1), .sample = sample_fresh, .user = f, .lead = 2}, w->now);
+    TIDE_REQUIRE(w->client != NULL);
+    f->client = w->client;
+    watch(w);
+    while (tide_client_status_of(w->client).state != TIDE_SESSION_CONNECTED) {
+        TIDE_REQUIRE(w->now < 30.0);
+        step(w, true, true);
+    }
+}
+
+// Catching up can take several frames, and a later frame can itself be
+// late. The first catch-up update skipped old inputs, but that floor must
+// follow the clock and the server while catch-up continues. Otherwise the
+// later update samples the ticks this machine just slept through.
+TIDE_TEST(net_join_big_world_keeps_catch_up_inputs_fresh_after_another_pause)
+{
+    for (int twice = 0; twice < 2; twice++) {
+        watched w;
+        fresh_inputs f;
+        join_fresh(&w, &f, twice == 1);
+        const tide_client_status joined = tide_client_status_of(w.client);
+        TIDE_REQUIRE(joined.predicted_tick == joined.verified_tick && joined.server_tick > joined.verified_tick + 8u);
+        // The server runs half a second while the client, still catching
+        // up, waits for its next frame. This is a second pause, not its
+        // original world download or the update that entered catch-up.
+        for (int frame = 0; frame < 30; frame++) step(&w, false, true);
+        f.watch = true;
+        step(&w, true, true);
+        const tide_client_status resumed = tide_client_status_of(w.client);
+        TIDE_CHECK(resumed.predicted_tick == resumed.verified_tick && resumed.server_tick > resumed.verified_tick);
+        TIDE_CHECK(f.sampled > 0 && f.stale == 0);
+        printf("    updated %s a frame, after a pause during catch-up: sampled %u inputs, %u already known to be stale\n",
+               twice ? "twice" : "once", f.sampled, f.stale);
+        const double resumed_at = w.now;
+        while (w.now < resumed_at + 3.0) step(&w, true, true);
+        const tide_client_status s = tide_client_status_of(w.client);
+        TIDE_CHECK(f.stale == 0);
+        TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED && s.resyncs == 0);
+        TIDE_CHECK(s.verified_tick + 10u > tide_server_tick(w.server));
+        leave(&w);
+    }
+}
+
+// An input that was fresh when sampled can still arrive late if the network
+// slows afterwards. Skipping knowingly old ticks must not hide this real
+// lateness from the counter or the clock's early-input feedback.
+TIDE_TEST(net_join_big_world_fresh_inputs_can_still_be_counted_as_late)
+{
+    watched w;
+    fresh_inputs f;
+    join_fresh(&w, &f, true);
+    const double connected = w.now;
+    while (w.now < connected + 4.0) step(&w, true, true);
+    const uint32_t late = tide_client_status_of(w.client).late_ticks;
+    f.watch = true;
+    tide_loopback_set_conditions(w.net, (tide_net_conditions){.latency = 0.25});
+    const double slowed = w.now;
+    while (w.now < slowed + 3.0) step(&w, true, true);
+    const tide_client_status s = tide_client_status_of(w.client);
+    printf("    after the network slowed, sampled %u fresh inputs and counted %u of them as late\n",
+           f.sampled, s.late_ticks - late);
+    TIDE_CHECK(f.sampled > 0 && f.stale == 0);
+    TIDE_CHECK(s.late_ticks > late);
+    TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED && s.resyncs == 0);
+    leave(&w);
+}
+
 // A machine with a clock, on which the game's ticks are dear: 5 ms each, where
 // a frame is 16.7. Catching up takes half a frame's time at the most, once it
 // has run a tick more than came due, so its frames stay about as long as they
@@ -387,4 +483,3 @@ TIDE_TEST(net_join_big_world_sent_again_is_caught_up_with_too)
     TIDE_CHECK(s.verified_tick + 10u > tide_server_tick(w.server));
     leave(&w);
 }
-
