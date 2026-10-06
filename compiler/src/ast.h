@@ -124,6 +124,7 @@ typedef enum type_kind {
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
+    TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
     TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
     TY_COMPONENT,
@@ -166,6 +167,7 @@ typedef struct type_ref {
     loc at;      // Where it starts: its namespace if it's qualified
     loc name_at; // Its last part: the name itself
     VEC(struct type_ref *) args; // What's in its <>, in order; none for a plain name
+    VEC(expr *) sizes;           // T[N][M]: what's in each [] after it, the first the outer; constant expressions
     bool optional;   // `T?`
     loc question_at; // ...the '?'
     str text;        // As written, without spaces but the one after a map's comma
@@ -369,6 +371,7 @@ typedef enum decl_kind {
     DECL_LIST,     // List<T>, one per element type: its one field is the element; in program.lists
     DECL_MAP,      // Map<K, V> or Set<K>, one per key and value type: fields key and (maps) value; in program.maps
     DECL_GRID,     // Grid2<T> or Grid3<T>, one per cell type and dimensions: its one field is the cell; in program.grids
+    DECL_ARRAY,    // T[N], one per element type and length: its one field is the element, array_length N; in program.arrays
     DECL_RESULT,   // T? or `T fails E`, one per combination: field 0 is the value, field 1 the error; in program.results
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
@@ -472,6 +475,7 @@ typedef struct decl {
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
     int dims;  // Grids: 2 or 3
     bool resized;         // Lists: some code calls Resize, so generated C has its helper
+    bool paths;           // Lists and maps: code reaches into an element's fields (`rows[i].x`), so generated C has the helpers that point at one
     bool is_set;          // Maps: a Set<K>, with no values
     struct decl *entry;   // Maps: the struct a foreach over the map gives, `Entry<K, V>`: fields key and value
     struct decl *optional; // Maps: the V? that Get gives, once something calls it
@@ -1120,6 +1124,7 @@ typedef struct program {
     VEC(decl *) lists;   // Every List<T> type the program uses, one per element type
     VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
+    VEC(decl *) arrays;  // Every T[N] type, one per element type and length
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     decl *owner;         // The built-in Owner component.
     decl *devices;       // The built-in Devices record.
