@@ -15,7 +15,6 @@ tide <command> [folder] [options]
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
-| `tide publish [folder]` | Sends this version of the game's source to the service that builds it with [mods](mods.md) (see [publish](#publish)) |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
@@ -295,25 +294,6 @@ tide: play.txt:7: no key is named 'shift': did you mean 'leftShift'?
 Both add the lines of the packages the game's packages need that it doesn't list yet.
 
 `tide run` and `tide build` download the packages from git that aren't on this machine yet. `tide fetch` does only that, each at the commit `tide.packages` pins, and adds the same lines: a build after it needs no network, as on a build server that fetches in one step and compiles in another.
-
-## publish
-
-::: warning
-This is the first part of [mods](mods.md), and it will change. Builds are for the web only, and a game's key comes from us.
-:::
-
-`tide publish` sends a version of the game's source to the service that builds the game with [mods](mods.md):
-
-```
-$ tide publish
-Published duel version 5d0c3f...e9
-```
-
-- **The game's key** is in the environment, as `TIDE_GAME_KEY`. It names the game too.
-- **What's sent** is what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent: they're named by their commit. A package in a folder outside the game's can't be published with it.
-- **A version** is named by what was sent: the same files are the same version, from any machine, whenever they're published.
-
-[Mods](mods.md) has the rest: asking for a build of a version with a set of mods, the link it's played at, and revoking it.
 
 ## upgrade
 
