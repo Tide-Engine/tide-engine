@@ -161,6 +161,10 @@ match has no recording, and a player who joins has only the match's bytes.
   Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
   NaN is ever in a world.
 
+  It took a quarter off a step in a browser. The package's `README.md` has the
+  numbers, and why it's no more: clang had already made SIMD of most of the
+  scalar path by itself.
+
 ### Threads where upstream knows none
 
 - **`timer.c`: a lock that locks, on a platform the file doesn't know.**
@@ -341,8 +345,8 @@ compares the two after every step.
 - The scalar and SSE2 code differ in a zero's sign in two more places
   (`b3AbsW4` of -0, and `b3NegV`), whose results only feed comparisons. A new
   use that keeps one would show in the test. The first is the scalar wide
-  floats', which x64, ARM64 and the web no longer take; the second is a single
-  vector's, which is plain code on ARM64 and on the web.
+  floats', which nothing Tide builds for takes now that the web has its own;
+  the second is a single vector's, which is plain code on ARM64 and on the web.
 - On the web a step still takes longer than a desktop's: WebAssembly's SIMD is
   4 wide where x64 solves 8 contacts at a time with AVX2, and a browser's
   compiler isn't clang.

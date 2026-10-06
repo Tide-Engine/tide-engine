@@ -105,8 +105,9 @@ _Static_assert(sizeof(body) == 88 && sizeof(box) == 32 && sizeof(circle) == 28 &
 // threads too (tide/jobs.h), and what that costs the rest of the tick is only
 // made up for from about here: measured, a tick with 1,800 crates awake was
 // slower shared and one with 2,400 quicker. A page's threads cost more to
-// reach, and its step has no SIMD to share out: there, 2,400 was slower
-// shared and 4,800 quicker.
+// reach: there, 2,400 was slower shared and 4,800 quicker while its step was
+// scalar code, and on WebAssembly's SIMD, which left less of a step to share
+// out, 4,800 is about even and 9,600 quicker.
 #ifdef __wasm__
 #define SHARED_BODIES 4096
 #else
