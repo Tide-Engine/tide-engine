@@ -1,0 +1,9 @@
+// expect: so it can't decode a PNG
+singleton Field { Grid2<Color> cells; List<byte> bytes; }
+scene Main { }
+frag Shade(Vertex vertex, mut Color color, mut Field field)
+{
+    field.cells.Decode(field.bytes)!;
+    color = vertex.color;
+}
+view DrawIt() { Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

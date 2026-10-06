@@ -2221,17 +2221,23 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
 
 // Storage belongs to one machine. Ordinary functions carry the local provider
 // through their callers; async functions also become local tasks.
-static bool check_io_use(checker *c, const loc at, const char *what)
+static bool check_io_use(checker *c, const loc at, const char *what, const bool network)
 {
-    if (gpu_refuses(c, at, "access the filesystem", "read files in local code, and pass what the shader needs in its components")) return false;
+    if (gpu_refuses(c, at, network ? "reach the network" : "access the filesystem",
+                    network ? "fetch in local code, and pass what the shader needs in its components"
+                            : "read files in local code, and pass what the shader needs in its components")) return false;
     decl *code = c->method ? c->method : c->system;
     if (c->in_input || !code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)
         || (code->kind == DECL_SYSTEM && !is_local_code(code))) {
         diag_error(at, "%s can only be used in local code, and in functions it calls", what);
-        diag_note("files belong to this machine; the match runs the same on every machine");
+        if (network) diag_note("the network is this machine's; what it gives reaches the match through a command");
+        else diag_note("files belong to this machine; the match runs the same on every machine");
         return false;
     }
-    if (!code->uses_io) code->io_at = at;
+    if (!code->uses_io) {
+        code->io_at = at;
+        code->io_network = network;
+    }
     code->uses_io = true;
     code->calls_c = true; // Ordered side effects, including reads beside writes
     if (code->is_async && code->kind == DECL_FUNCTION) note_side(code, TASK_LOCAL, at);
@@ -4816,13 +4822,19 @@ static type check_method(checker *c, expr *e)
         const str owner = e->object->name;
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
-        if (io || flush) {
-            if (!check_io_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+        const bool fetch = str_eq_c(owner, "Web");
+        if (io || flush || fetch) {
+            if (!check_io_use(c, e->at, fetch ? "Web.Fetch" : str_to_cstr(owner), fetch)) return T_ERR;
             if (flush && c->awaiting != e) {
                 diag_error(e->at, "Storage.Flush is awaited: 'await Storage.Flush()'");
                 return T_ERR;
             }
-            if (io) {
+            if (fetch && c->awaiting != e) {
+                diag_error(e->at, "Web.Fetch is awaited: 'var bytes = await Web.Fetch(url);'");
+                diag_note("it takes a while, so the task waits for it, and local code reads what came in a frame to come");
+                return T_ERR;
+            }
+            if (io || fetch) {
                 type bytes, paths;
                 resolve_list_type(c, str_from("List<byte>"), e->at, &bytes);
                 resolve_list_type(c, str_from("List<string>"), e->at, &paths);
@@ -4863,10 +4875,15 @@ static type check_method(checker *c, expr *e)
         if (draws && !check_setting(c, e)) return T_ERR;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
-        if (io || flush) {
+        if (io || flush || fetch) {
             e->io_operation = io;
             e->storage_flush = flush;
+            e->web_fetch = fetch;
             c->prog->uses_text = true;
+            if (fetch) {
+                decl *code = c->method ? c->method : c->system;
+                if (code) code->uses_fetch = true; // Its task's frame keeps the ticket
+            }
             if (str_eq_c(e->name, "Exists")) return result;
             if (io) vec_push(c->prog->io_calls, e);
             return result_of(c->prog, result, (type){TY_ENUM, c->prog->io_error}, false);
@@ -5750,7 +5767,7 @@ static type check_member(checker *c, expr *e)
 {
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
-        if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
+        if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths", false)) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
             diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
@@ -6736,8 +6753,48 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     return (type){TY_COLOR, NULL};
 }
 
+// grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
+// as the picture is, and fails with IOError.InvalidData. Pure, so match code
+// decodes too, every machine the same pixels; it changes the grid, so the
+// rules for writing one hold, and the GPU has none of it.
+static type check_grid_decode(checker *c, expr *e, const type grid)
+{
+    if (gpu_refuses(c, e->at, "decode a PNG", "decode it in the view or the match, into a grid the shader samples")) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    type bytes;
+    if (!resolve_list_type(c, str_from("List<byte>"), e->at, &bytes)) return T_ERR;
+    if (e->args.count != 1) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "Decode takes the PNG's bytes, a List<byte>: 'cells.Decode(bytes)'");
+        return T_ERR;
+    }
+    const type given = check_expr_want(c, e->args.items[0], bytes);
+    if (given.kind == TY_ERROR) return T_ERR;
+    if (given.kind != TY_LIST || given.decl != bytes.decl) {
+        diag_error(e->args.items[0]->at, "Decode takes a List<byte>, the PNG's bytes, and this is %s", type_name(given));
+        diag_note("a file's bytes come from File.ReadAllBytes, a command's List<byte> field, or await Web.Fetch");
+        return T_ERR;
+    }
+    if (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR) {
+        diag_error(e->at, "Decode reads a PNG into a Grid2<Color>, and this is a %s", type_name(grid));
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = grid.decl;
+    decl *changer = NEW(decl);
+    changer->name = str_from("Grid.Decode");
+    check_writable(c, e->object, changer, NULL);
+    const type result = result_of(c->prog, T_VOID_, (type){TY_ENUM, c->prog->io_error}, false);
+    c->prog->decodes = true;
+    c->prog->decode_result = result;
+    return result;
+}
+
 static type check_grid_method(checker *c, expr *e, const type grid)
 {
+    if (str_eq_c(e->name, "Decode")) return check_grid_decode(c, e, grid);
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
     if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, grid);
     if (!str_eq_c(e->name, "Clear")) {
@@ -6745,6 +6802,7 @@ static type check_grid_method(checker *c, expr *e, const type grid)
         suggestion sg = suggest_start(e->name);
         suggest_consider_c(&sg, "Sample");
         suggest_consider_c(&sg, "Clear");
+        suggest_consider_c(&sg, "Decode");
         suggest_note(&sg);
         return T_ERR;
     }
@@ -7009,7 +7067,7 @@ static type check_await(checker *c, expr *e)
     }
     if (t.kind == TY_ERROR) return T_ERR;
     if (call->call == CALL_WAIT) return T_VOID_;
-    if (call->storage_flush) return t;
+    if (call->storage_flush || call->web_fetch) return t;
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && call->method->is_async) return t;
     diag_error(e->at, "'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
@@ -7658,7 +7716,7 @@ static bool step_own(const expr *e, const stmt *loop)
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
-    if (e->io_operation || e->storage_flush) return false;
+    if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
@@ -9642,6 +9700,19 @@ static bool holds_list(const type t)
     return false;
 }
 
+// Whether a value of type `t` is or holds a list, map or set, but for
+// List<byte>, a file's bytes, which a command can hold
+static bool holds_list_but_bytes(const type t)
+{
+    if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
+    if (t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
 // Whether a value of type `t` has a grid in it, or is one: a component's or a
 // singleton's, as only those hold grids.
 static bool holds_grid(const type t)
@@ -9670,9 +9741,9 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
-        if (d->is_command && (holds_list(f->type) || f->type.kind == TY_GRID)) {
+        if (d->is_command && (holds_list_but_bytes(f->type) || f->type.kind == TY_GRID)) {
             diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
-            diag_note("send numbers, bools, enums, strings or structs containing those");
+            diag_note("send numbers, bools, enums, strings, a file's bytes as List<byte>, or structs containing those");
         }
         if (holds_render_resource(f->type)) {
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
@@ -12232,7 +12303,7 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
-        || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug");
 }
 
@@ -12913,6 +12984,8 @@ static bool fold_cell(const expr *e, const int dims, int64_t out[3])
 // An ordering attribute can name an enum's member as well as a declaration.
 // The enum name uses the same namespace and using rules as an ordinary type.
 // With `required`, this is Stage's argument, so every other name is an error.
+static bool resolve_enum_member(checker *c, const decl *d, qname *q, bool required, str enum_name, str member_name);
+
 static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool required)
 {
     str enum_name;
@@ -12922,6 +12995,13 @@ static bool resolve_order_member(checker *c, const decl *d, qname *q, const bool
         diag_error(q->name_at, "Stage names an enum member, like [Stage(RenderStages.Objects)]");
         return true;
     }
+    return resolve_enum_member(c, d, q, required, enum_name, member_name);
+}
+
+// The rest of resolve_order_member, which [Channel] shares: the enum, and its member
+static bool resolve_enum_member(checker *c, const decl *d, qname *q, const bool required, const str enum_name,
+                                const str member_name)
+{
     decl *other;
     decl *enumeration = lookup(c->prog, decl_home(d), enum_name, NAME_TYPE, &other);
     if (!enumeration) {
@@ -13007,6 +13087,78 @@ static void order_after(decl *later, decl *earlier)
     vec_push(later->after, earlier);
 }
 
+// [Channel(Channels.Uploads)] puts a command in a channel of the game's: an
+// enum member, as a Stage names one. [Unordered] takes it out of every order.
+static void check_channel_attribute(checker *c, decl *d, attribute *attr)
+{
+    const bool unordered = str_eq_c(attr->name, "Unordered");
+    if (d->kind != DECL_EVENT || !d->is_command) {
+        diag_error(attr->at, "%s orders a command's delivery, and '" STR_FMT "' isn't a command",
+                   unordered ? "Unordered" : "Channel", STR_ARG(d->name));
+        diag_note("it goes before a 'command' declaration: '[%s] command Ping { int at; }'",
+                  unordered ? "Unordered" : "Channel(Channels.Chat)");
+        return;
+    }
+    if (d->channel_at.line) {
+        diag_error(attr->at, "'" STR_FMT "' already has its ordering: one of Channel and Unordered, once", STR_ARG(d->name));
+        return;
+    }
+    d->channel_at = attr->at;
+    if (unordered) {
+        if (attr->values.count > 0 || attr->args.count > 0) {
+            diag_error(attr->at, "Unordered takes nothing: '[Unordered]'");
+            return;
+        }
+        d->unordered = true;
+        return;
+    }
+    if (attr->args.count != 1 || attr->values.count > 0) {
+        diag_error(attr->at, "Channel takes an enum member, the channel's name: [Channel(Channels.Uploads)]");
+        return;
+    }
+    qname *q = &attr->args.items[0];
+    str enum_name;
+    str member_name;
+    if (!split_qualified(q->text, &enum_name, &member_name)) {
+        diag_error(q->name_at, "Channel names an enum member, like [Channel(Channels.Uploads)]");
+        diag_note("declare the channels as an enum of the game's: 'enum Channels { Uploads, Chat }'");
+        return;
+    }
+    resolve_enum_member(c, d, q, true, enum_name, member_name);
+    if (!q->enum_member) return;
+    d->channel_enum = q->decl;
+    d->channel_member = q->enum_member;
+}
+
+// Numbers the channels [Channel] names, from 1: in the order their enums are
+// declared, then their members, so the number is the game's, not the file's
+static void number_channels(program *prog)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *e = prog->decls.items[i];
+        if (e->kind != DECL_ENUM) continue;
+        for (int m = 0; m < e->members.count; m++) {
+            bool named = false;
+            for (int k = 0; k < prog->command_types.count; k++) {
+                decl *d = prog->command_types.items[k];
+                if (d->channel_member != &e->members.items[m]) continue;
+                if (!named) {
+                    named = true;
+                    const command_channel channel = {prog->decls.items[i], &e->members.items[m]};
+                    vec_push(prog->channels, channel);
+                }
+                d->channel = (uint32_t)prog->channels.count;
+            }
+        }
+    }
+    // One of the default channel and TIDE_COMMAND_CHANNELS_MOST - 1 of the game's own (tide/session.h)
+    if (prog->channels.count > 63) {
+        const command_channel *last = &prog->channels.items[63];
+        diag_error(last->member->at, "a game's commands can be in 63 channels of its own at most, and '" STR_FMT "." STR_FMT
+                   "' is the 64th", STR_ARG(last->enumeration->name), STR_ARG(last->member->name));
+    }
+}
+
 // [Before(X)] and [After(X)] order declarations or whole enum phases.
 // Stage assigns one of those phases and an offset within it.
 static void check_attributes(checker *c)
@@ -13041,6 +13193,10 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Channel") || str_eq_c(attr->name, "Unordered")) {
+                check_channel_attribute(c, d, attr);
+                continue;
+            }
             if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
                 if (d->kind != DECL_COMPONENT || d->is_scene) {
                     diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
@@ -13061,11 +13217,13 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Sparse");
+                suggest_consider_c(&s, "Channel");
+                suggest_consider_c(&s, "Unordered");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
-                          "NativeName, which names an extern function's or system's C function, and Sparse, for a component that "
-                          "entities gain and lose");
+                          "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
+                          "entities gain and lose, and Channel and Unordered, which order a command's delivery");
                 continue;
             }
             if (attr->values.count > 0) {
@@ -13506,6 +13664,7 @@ static void mark_io_callers(const checker *c)
             if (!site->to->uses_io || site->from->uses_io) continue;
             site->from->uses_io = true;
             site->from->io_at = site->call->at;
+            site->from->io_network = site->to->io_network;
             site->from->calls_c = true;
             changed = true;
         }
@@ -13518,14 +13677,16 @@ static void check_io_calls(const checker *c)
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         if (!site->to->uses_io) continue;
+        const char *does = site->to->io_network ? "reaches the network" : "accesses the filesystem";
         if (site->parallel || site->comparing) {
-            diag_error(site->call->at, "'" STR_FMT "' accesses the filesystem, so it can't run in %s", STR_ARG(site->to->name),
+            diag_error(site->call->at, "'" STR_FMT "' %s, so it can't run in %s", STR_ARG(site->to->name), does,
                        site->parallel ? "a parallel loop" : "a sort comparison");
             continue;
         }
         if (site->from->kind == DECL_FUNCTION || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
-        diag_error(site->call->at, "'" STR_FMT "' accesses the filesystem, which only local code can use", STR_ARG(site->to->name));
-        diag_note_at(site->to->io_at, "it accesses this machine's files on line %d", site->to->io_at.line);
+        diag_error(site->call->at, "'" STR_FMT "' %s, which only local code can use", STR_ARG(site->to->name), does);
+        diag_note_at(site->to->io_at, "it %s on line %d", site->to->io_network ? "reaches the network" : "accesses this machine's files",
+                     site->to->io_at.line);
     }
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
@@ -14610,6 +14771,7 @@ bool check(program *prog)
     }
 
     check_attributes(&c);
+    number_channels(prog);
     if (diag_error_count() == 0) {
         order_phases(prog->systems.items, prog->systems.count);
         order_phases(prog->views.items, prog->views.count);

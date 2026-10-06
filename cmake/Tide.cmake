@@ -75,6 +75,37 @@ set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
 # go over what CMake says for a C file, which comes before them.
 set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-threadsafe-statics)
 
+# tide_web_page(<target> [SHELL <page.html>] [PACK <game.pack>])
+#
+# Web builds: makes <target>.html next to <target>.wasm, one self-contained
+# page with the program and platform/web/tide.js inside, which opens straight
+# from disk. SHELL is the page around the canvas (default platform/web/shell.html;
+# tests use platform/web/test_shell.html). PACK is the game's pack of assets
+# (tide_add_game), which goes inside the page when there is one. Does nothing
+# in native builds, so it can be called unconditionally. Here, beside
+# tide_add_game, which pages the games it builds with it, so any folder's CMake
+# can page a host of its own.
+set(TIDE_WEB_SHELL "${PROJECT_SOURCE_DIR}/platform/web/shell.html" CACHE INTERNAL "")
+set(TIDE_WEB_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.js" CACHE INTERNAL "")
+function(tide_web_page target)
+    if(NOT TIDE_WEB)
+        return()
+    endif()
+    cmake_parse_arguments(ARG "" "SHELL;PACK" "" ${ARGN})
+    if(ARG_SHELL)
+        get_filename_component(shell "${ARG_SHELL}" ABSOLUTE)
+    else()
+        set(shell "${TIDE_WEB_SHELL}")
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs"
+            "$<TARGET_FILE:${target}>" "${shell}" "${TIDE_WEB_SCRIPT}"
+            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK}
+        COMMENT "Web page for ${target}"
+        VERBATIM)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}")
+endfunction()
+
 function(tide_add_game target)
     cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES" ${ARGN})
     if("SOURCES" IN_LIST ARG_KEYWORDS_MISSING_VALUES)

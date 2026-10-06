@@ -372,6 +372,12 @@ typedef struct enum_member {
     int64_t number;     // Its value, once checked
 } enum_member;
 
+// A channel commands are in: an enum's member, named by [Channel]
+typedef struct command_channel {
+    struct decl *enumeration;
+    const enum_member *member;
+} command_channel;
+
 typedef struct decl {
     decl_kind kind;
     str name;
@@ -517,6 +523,8 @@ typedef struct decl {
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
+    bool io_network;      // ...and what it first reaches is the network (Web.Fetch), for the message
+    bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
@@ -568,6 +576,14 @@ typedef struct decl {
     const enum_member *order_member;
     int order_offset; // Position within the phase, not added to the enum's value
     loc order_at;
+    // A command's ordering: [Channel(Channels.Uploads)], a channel of the
+    // game's, numbered from 1 in program.channels (0 is the default
+    // channel), or [Unordered], no order at all (TIDE_COMMAND_UNORDERED)
+    struct decl *channel_enum;
+    const enum_member *channel_member;
+    uint32_t channel;
+    bool unordered;
+    loc channel_at;
 
     // Systems in the tick, from analyze_parallelism
     VEC(system_wait) waits;       // Earlier systems it must wait for: every one that's its own, and the first few through others
@@ -778,6 +794,7 @@ struct expr {
     bool io_operation;       // File/Directory operation: gets this machine's provider
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
+    bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
     int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
@@ -1025,6 +1042,7 @@ typedef struct program {
     VEC(decl *) handlers; // Every event handler, in the order they run
     VEC(decl *) events;   // Built-in ones first
     VEC(decl *) command_types; // Commands are event-shaped values, with a separate incoming wire API
+    VEC(command_channel) channels; // The channels [Channel] names, in order: channel i + 1
     decl *spawned;        // Built-in events
     decl *destroyed;
     decl *player_joined;
@@ -1048,6 +1066,8 @@ typedef struct program {
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
+    bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
+    type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time

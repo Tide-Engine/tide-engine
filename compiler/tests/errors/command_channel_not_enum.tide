@@ -1,0 +1,5 @@
+// expect: 'Log' is a struct, not an enum
+struct Log { int x; }
+[Channel(Log.x)]
+command Say { string text; }
+scene Main { }

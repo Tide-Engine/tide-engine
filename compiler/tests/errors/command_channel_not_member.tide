@@ -1,0 +1,4 @@
+// expect: Channel names an enum member, like [Channel(Channels.Uploads)]
+[Channel(Chat)]
+command Say { string text; }
+scene Main { }
