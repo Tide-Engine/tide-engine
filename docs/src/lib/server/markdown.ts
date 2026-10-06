@@ -191,12 +191,7 @@ block('tide-example', (tokens, idx) => {
 // the player who joins and the server, whose least the page writes beside it
 // once the game measured one. One with nothing inside shows no source: for a
 // page that has it beside another frame.
-//
-// `tide-game` is a match of a whole game of the repo, which has a page of its
-// own on the site, `/<name>/`, where the docs workflow puts it: its source is
-// a folder, which its page links to rather than shows, and its frames are
-// taller.
-function players(name: string, match: boolean, game = false) {
+function players(name: string, match: boolean) {
     block(name, (tokens, idx) => {
         const token = tokens[idx];
         if (token.nesting !== 1) return tokens[idx - 1].type === `container_${name}_open` ? '</section>\n' : '</div></section>\n';
@@ -204,7 +199,7 @@ function players(name: string, match: boolean, game = false) {
         const parts = /^\S+\s+([a-z][a-z0-9-]*)\s+(?:lag=(\d+)\s+)?(.+)$/.exec(token.info.trim());
         if (!parts || (parts[2] && !match)) throw new Error(`Use ::: ${name} <file-name> ${match ? '[lag=<ms>] ' : ''}<title>`);
         const [, id, lag, title] = parts;
-        const src = game ? `/${id}/` : `/examples/${id}/`;
+        const src = `/examples/${id}/`;
         const ping = Math.min(Number(lag ?? 0), 500);
         const slider = match
             ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output><span class="example-lag-min" hidden></span></label>`
@@ -213,8 +208,8 @@ function players(name: string, match: boolean, game = false) {
         const frames = names
             .map((role, i) => `<div class="example-player"><p class="example-player-name"><strong>Player ${i + 1}</strong>${role ? ` <span>${role}</span>` : ''}</p><div class="example-viewport"></div></div>`)
             .join('');
-        return `<section class="tide-example tide-pair${game ? ' tide-game' : ''}" data-example-src="${src}"${match ? ' data-example-match' : ''} aria-label="${escape(title)}">
-<div class="example-heading"><strong>${escape(title)}</strong><span>${game ? 'Two players, in one match' : 'Live Tide example, two players'}${touchHint}</span></div>
+        return `<section class="tide-example tide-pair" data-example-src="${src}"${match ? ' data-example-match' : ''} aria-label="${escape(title)}">
+<div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example, two players${touchHint}</span></div>
 <div class="example-controls"><button type="button" data-example-run>Run both</button><button type="button" data-example-stop disabled>Stop</button>${slider}<a href="${src}" target="_blank" rel="noreferrer">Open separately</a></div>
 <div class="example-stage"><div class="example-players">${frames}</div>
 <p class="example-status" role="status" hidden></p></div>
@@ -224,7 +219,6 @@ ${bare ? '' : '<div class="example-source">'}\n`;
 }
 players('tide-players', false);
 players('tide-match', true);
-players('tide-game', true, true);
 
 // Tabs over the fences inside, each named by its fence's `[label]`. Radio
 // buttons pick the tab, so they work before the page's script loads.

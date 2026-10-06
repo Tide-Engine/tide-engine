@@ -33,6 +33,8 @@ function showsFocus(frame: HTMLIFrameElement) {
         const inner = frame.contentWindow!;
         inner.addEventListener('focus', () => frame.classList.add('focused'));
         inner.addEventListener('blur', () => frame.classList.remove('focused'));
+        // A game that was in the page as it came, and clicked before this ran, has the focus already
+        if (document.activeElement === frame) frame.classList.add('focused');
     } catch {
         // Not this site's page
     }

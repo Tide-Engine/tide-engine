@@ -26,8 +26,9 @@ const profile = mkdtempSync(join(tmpdir(), 'tide-docs-examples-'));
 // the Markdown: a page is its file's path, and `index.md` its folder's.
 const pages = [];
 const written = new Set();
-// The whole games a page shows as a match of two (`::: tide-game <name>`):
-// each is a page of its own on the site, `/<name>/`, with no source beside it.
+// The whole games that open on a lobby (Siege, Alley), each in a frame of its
+// page: the game's own page on the site, `/<name>/`, as the page's Markdown
+// names it.
 const games = [];
 (function find(folder) {
     for (const entry of readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -36,7 +37,7 @@ const games = [];
             if (!['node_modules', 'build', 'static', 'src', 'tests', 'examples'].includes(entry.name) && !entry.name.startsWith('.')) find(path);
         } else if (entry.name.endsWith('.md')) {
             const page = '/' + relative(docs, path).split(sep).join('/').replace(/\.md$/, '').replace(/(^|\/)index$/, '');
-            for (const found of readFileSync(path, 'utf8').matchAll(/^::: tide-game\s+([a-z][a-z0-9-]*)/gm)) games.push({ page, id: found[1] });
+            for (const found of readFileSync(path, 'utf8').matchAll(/^<iframe class="demo-frame roomy" src="\/([a-z][a-z0-9-]*)\/\?embedded"/gm)) games.push({ page, id: found[1] });
             const ids = Array.from(readFileSync(path, 'utf8').matchAll(/^::: tide-(?:example|players|match)\s+([a-z][a-z0-9-]*)/gm), (found) => found[1]);
             if (!ids.length) continue;
             for (const id of ids) written.add(id);
@@ -397,44 +398,47 @@ try {
         }
         assert.deepEqual([...sourced].sort(), [...new Set(ids)].sort(), `${page} shows the source of every example it runs`);
     }
-    // The whole games: two frames of each in one match, as an example's are,
-    // with a player who plays. A game's page is the docs workflow's to put
-    // there (docs/static/<name>/), and one that's missing fails here.
+    // The whole games that open on a lobby: one frame of each on its page. A
+    // game's page is the docs workflow's to put there (docs/static/<name>/),
+    // and one that's missing fails here. The frame draws, in a match of its
+    // own that's closed, behind its lobby; and the lobby's own button opens a
+    // room, by a real click where its layout puts it (lobby.tide).
     for (const { page, id } of games) {
         if (only && !only.has(id)) continue;
-        await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
-        await until(`location.pathname === '${page}' && document.querySelector('.tide-game')`, `${page} page`);
-        await evaluate(`window.example = document.querySelector('.tide-game[data-example-src="/${id}/"]'); example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
-        await until('example.querySelectorAll("iframe.shown").length === 2', `${id}: both players' frames show`);
-        await until(rendering(2), `${id}: actual rendering`);
-        for (let i = 0; i < 2; i++) {
-            assert.ok((await evaluate(`${frame(i)}.src`)).includes(`/${id}/`), `${id}: the game's own page`);
-            assert.equal(await evaluate(`${frame(i)}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
+        await command('Page.navigate', { url: `${origin}${page}` });
+        await until(`location.pathname === '${page}' && document.querySelector('iframe.demo-frame')`, `${page} page`);
+        const game = 'document.querySelector("iframe.demo-frame")';
+        await evaluate(`${game}.scrollIntoView({block:'center'})`);
+        assert.ok((await evaluate(`${game}.src`)).endsWith(`/${id}/?embedded`), `${id}: the game's own page, in the page's scroll`);
+        await until(`${game}.contentWindow.__draws > 5`, `${id}: actual rendering`);
+        assert.equal(await evaluate(`${game}.contentWindow.crossOriginIsolated`), true, `${id}: shared memory`);
+        assert.equal(await evaluate(`${game}.contentWindow.Tide.room`), '', `${id}: a match of its own, closed, behind its lobby`);
+        const frames = async (count) => {
+            const draws = await evaluate(`${game}.contentWindow.__draws`);
+            await until(`${game}.contentWindow.__draws > ${draws + count * 6}`, `${id}: frames`);
+        };
+        // The title's second button, Host a room
+        const size = await evaluate(`(() => { const r = ${game}.getBoundingClientRect(); return { width: r.width, height: r.height }; })()`);
+        const short = size.height < 470;
+        const [title, tagline, main, row, gap] = short ? [50, 24, 52, 44, 8] : [68, 36, 60, 48, 12];
+        const total = 30 + title + tagline + main + gap + row + gap + row + 30;
+        const top = Math.max(8, (size.height - total) * 0.45);
+        const host = await inside(game, size.width / 2, top + 30 + title + tagline + main + gap + row / 2);
+        // The button sees the pointer on it for a frame before the press, and the press before the release.
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: host.x, y: host.y });
+        for (const type of ['mousePressed', 'mouseReleased']) {
+            await frames(2);
+            await command('Input.dispatchMouseEvent', { type, x: host.x, y: host.y, button: 'left', clickCount: 1 });
         }
-        await until('example.querySelector("[data-example-run]").textContent === "Restart"', `${id}: started`);
-        await paired(id);
-        // Each player points at the middle of their frame and holds the
-        // button for a while, which is how these games are played: the match
-        // goes on through it, on both machines.
-        for (let i = 0; i < 2; i++) {
-            const at = await inside(frame(i), 180, 230);
-            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
-            await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1 });
-            const draws = await evaluate(`${frame(i)}.contentWindow.__draws`);
-            await until(`${frame(i)}.contentWindow.__draws > ${draws + 60}`, `${id}: player ${i + 1} plays`);
-            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 });
-        }
-        const heard = await evaluate(`${frame(0)}.contentWindow.__heard`);
-        await until(`${frame(0)}.contentWindow.__heard > ${heard + 60}`, `${id}: the match goes on`);
-        assert.equal(await evaluate(`${frame(1)}.contentWindow.Tide.room === ${frame(0)}.contentWindow.Tide.room`), true, `${id}: still one room`);
+        await until(`${game}.contentWindow.Tide.room.length === 6`, `${id}: its lobby's button hosts a room`);
+        await until(`${game}.classList.contains('focused')`, `${id}: a click gives it the focus`);
+        await frames(10);
         if (shots) {
             const screenshot = await command('Page.captureScreenshot');
             writeFileSync(join(shots, `${id}.png`), Buffer.from(screenshot.data, 'base64'));
         }
-        await evaluate('example.querySelector("[data-example-stop]").click();');
-        assert.equal(await evaluate('example.querySelectorAll("iframe").length'), 0, `${id}: stop`);
         assert.deepEqual(errors, [], `${id}: no runtime or shader errors`);
-        console.log(`${id}: a match of two, played, passed (${backend})`);
+        console.log(`${id}: its page's frame draws, and its lobby hosts a room (${backend})`);
     }
     const built = readdirSync(join(docs, 'examples')).filter((file) => file.endsWith('.tide')).map((file) => file.slice(0, -5)).sort();
     assert.deepEqual([...visited].sort(), built, 'Every example is on a page, and every page\'s examples exist');

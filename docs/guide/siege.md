@@ -174,7 +174,7 @@ Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws t
 
 ### What it costs
 
-With all four cannons firing there are about a hundred bodies, and a tick takes around 0.04 ms on a desktop, with half as much again to keep and hash its world, and not quite twice that in a browser. A machine that predicts runs a few ticks again each frame at a high ping, which this leaves plenty of room for. Everything a frame draws, effects and all, takes less than a tick does. Box2D's whole state is in the match, about 100 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)).
+With all four cannons firing there are about a hundred bodies, and a tick takes around 0.04 ms on a desktop, with half as much again to keep and hash its world, and not quite twice that in a browser. A machine that predicts runs a few ticks again each frame at a high ping, which this leaves plenty of room for. A frame's views, effects and all, take about 0.02 ms, less than a tick does. Box2D's whole state is in the match, about 100 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)).
 
 ### The match, whole
 
