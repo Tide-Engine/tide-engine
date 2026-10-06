@@ -86,6 +86,22 @@ And one is for threads on the web, where upstream only knows Emscripten:
   a page's own, it goes on with the loop. A world steps the same either way,
   as it does with any number of workers.
 
+And one is for a body that code puts to sleep in a world that was just made
+from an image:
+
+- **`solver_set.c`: `b2TrySleepIsland` only marks a body's move event where
+  the world still has it.** A body that's awake after a step says which of
+  the step's move events was its own (`b2Body.bodyMoveIndex`), which is in the
+  image, and the events aren't: a restore clears them. Upstream looks the
+  event up regardless, to say the body fell asleep, so `b2Body_SetAwake(
+  false )` before a restored world's first step wrote past the events: an
+  assert in a debug build, and otherwise a byte written wherever that was.
+  The package puts bodies to sleep (`Body.asleep`), and a client that runs a
+  tick again does it in a world that was just made. The body says it has no
+  event from there on either way, so its bytes in the next image are the
+  same. `tide_box2d_sleep` makes its world again before every tick of a match
+  that puts bodies to sleep.
+
 ## What the package asks of it
 
 Nothing here is changed for these, but the package rests on them, and a new
@@ -111,6 +127,24 @@ Box2D has to be read for them again:
   A world's gravity is in its image, which is how the package tells a change.
 - **A body made with no shape weighs nothing**, so an impulse does nothing to
   it: the package gives a new body's impulses once its shapes are on it.
+- **Bodies sleep and wake an island at a time** (`b2TrySleepIsland`,
+  `b2WakeSolverSet`): `b2Body_SetAwake( false )` puts to sleep every body of
+  the island the body is in, whatever its speed, and `true` wakes all of the
+  set it fell asleep with. An island is the bodies that touch each other, as
+  the last step found them: every touching contact between two bodies of
+  which neither is static joins their islands (`b2LinkContact`), a kinematic
+  body's too, so a lift is in an island with what stands on it, and a floor
+  that's static ties nothing together. A body that's put to sleep has no
+  speed any more (its `b2BodyState` goes), and Box2D says none of which
+  bodies went with it: the package asks, of each that was awake
+  (`b2t_leave`).
+- **A body that's made asleep** (`b2BodyDef.isAwake`) is alone in a set of its
+  own, and a shape put on it leaves it asleep. Its contacts are made at the
+  next step and aren't looked at until one of their bodies is awake, so
+  bodies made asleep on each other wake one after another, a contact a step.
+- **A speed that isn't zero wakes a body** (`b2Body_SetLinearVelocity`,
+  `b2Body_SetAngularVelocity`), and so does an impulse; the package puts
+  bodies to sleep after everything else a tick wrote, right before the step.
 
 ## Updating it
 
