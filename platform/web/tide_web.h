@@ -161,3 +161,9 @@ TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(int32_t ping_ms, uint32_t ans
 // copy of it.
 TIDE_WEB_IMPORT(resume_size) uint32_t tide_web_resume_size(void);
 TIDE_WEB_IMPORT(resume_copy) void tide_web_resume_copy(void *to);
+
+// The game's pack of assets (tide/pack.h): the page's own (TIDE_PACK, which a
+// page that ships holds), or under tide run the one tide serves (pack-<n>),
+// which the page swaps as tide writes another. 0 bytes for none.
+TIDE_WEB_IMPORT(pack_size) uint32_t tide_web_pack_size(void);
+TIDE_WEB_IMPORT(pack_copy) void tide_web_pack_copy(void *to);

@@ -507,7 +507,7 @@ static void say_missing(const char *written, const char *abs, const char *folder
 
 // Reads `path`'s file as an item of `kind`; false, having said why, when it
 // can't be read as one.
-static bool read_item(asset_item *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at)
+static bool read_item(asset_match *item, const char *key, const char *path, const asset_kind kind, const char *written, const loc at)
 {
     read_file *f = read_at(path);
     if (!f) {
@@ -589,7 +589,7 @@ asset_value *asset_resolve(const char *declaring, const str path, const asset_ki
             diag_note("tidec fetches a URL when the game is built and keeps it in the game's .tide/; once it has, the game builds offline too");
             ok = false;
         } else {
-            v->items = arena_alloc(sizeof(asset_item));
+            v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
             ok = read_item(&v->items[0], written, f->path, kind, written, at);
         }
@@ -616,7 +616,7 @@ asset_value *asset_resolve(const char *declaring, const str path, const asset_ki
                 pairs[2 * i + 1] = w.paths.items[i];
             }
             qsort(pairs, (size_t)w.keys.count, sizeof(char *) * 2u, key_order);
-            v->items = arena_alloc(sizeof(asset_item) * (size_t)w.keys.count);
+            v->items = arena_alloc(sizeof(asset_match) * (size_t)w.keys.count);
             v->count = w.keys.count;
             for (int i = 0; i < w.keys.count && ok; i++) ok = read_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at);
             free(pairs);
@@ -629,7 +629,7 @@ asset_value *asset_resolve(const char *declaring, const str path, const asset_ki
             say_missing(written, abs, folder, game_folder, at);
             ok = false;
         } else {
-            v->items = arena_alloc(sizeof(asset_item));
+            v->items = arena_alloc(sizeof(asset_match));
             v->count = 1;
             ok = read_item(&v->items[0], written, abs, kind, written, at);
         }

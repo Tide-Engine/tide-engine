@@ -212,3 +212,13 @@ void tide_window_typing(const bool typing)
 {
     tide_web_typing(typing);
 }
+
+uint8_t *tide_window_pack(size_t *size)
+{
+    *size = tide_web_pack_size();
+    if (!*size) return NULL;
+    uint8_t *bytes = malloc(*size);
+    if (!bytes) abort();
+    tide_web_pack_copy(bytes);
+    return bytes;
+}

@@ -19,20 +19,20 @@ typedef enum asset_kind {
     ASSET_GRID,  // Grid2<Color>: a PNG, decoded
 } asset_kind;
 
-typedef struct asset_item {
+typedef struct asset_match {
     const char *key;      // The path as written from the declaring file, forward slashes: a map's key. A URL as it is.
     const char *abs;      // Where the bytes were read from
     const uint8_t *data;  // The file's bytes (kept until the process ends)
     size_t size;
     uint8_t hash[32];     // SHA-256 of the bytes
     tide_png_image image; // ASSET_GRID: its pixels
-} asset_item;
+} asset_match;
 
 typedef struct asset_value {
     asset_kind kind;
     bool many;   // A glob: a List<T> or Map<string, T> of its matches
     bool is_map; // ...a Map<string, T>
-    asset_item *items;
+    asset_match *items;
     int count;
 } asset_value;
 

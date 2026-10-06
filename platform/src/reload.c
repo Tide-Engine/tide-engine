@@ -196,10 +196,17 @@ static bool resume(void)
     return true;
 }
 
+// The page fetched another pack from tide (a named file changed): the game loads it.
+__attribute__((export_name("tide_pack_changed"))) void tide_pack_changed(void)
+{
+    tide_run_load_assets();
+}
+
 _Noreturn void tide_host_run_web(const tide_run_desc *desc, const tide_host_game *game)
 {
     tide_run_game = game;
     tide_run_open(desc);
+    tide_run_load_assets();
     if (!resume()) tide_run_begin();
     tide_platform_run(tide_run_frame, NULL);
 }
@@ -295,6 +302,7 @@ static void library_error(char *out, const size_t size)
 static struct {
     const char *dir;
     uint32_t running;  // The build running: game-<running>
+    uint32_t pack;     // The pack loaded: pack-<pack>, 0 for none
     void *library;     // ...and its library
     float since_check; // Seconds since `dir` was last looked at
     float dropped_for; // Seconds since the match ended without this machine leaving it
@@ -303,6 +311,37 @@ static struct {
 static void library_path(const uint32_t build, char *out, const size_t size)
 {
     snprintf(out, size, "%s/game-%u" LIBRARY_SUFFIX, reload.dir, (unsigned)build);
+}
+
+static void pack_path(const uint32_t n, char *out, const size_t size)
+{
+    snprintf(out, size, "%s/pack-%u", reload.dir, (unsigned)n);
+}
+
+// Loads the newest pack tide wrote in the run's folder, if it's newer than
+// the one loaded: tide writes one with each build, and again when a file an
+// asset names changes, so a saved image is in the running game at once.
+static void check_pack(void)
+{
+    char path[4096];
+    uint32_t newest = reload.pack;
+    for (;;) {
+        pack_path(newest + 1u, path, sizeof path);
+        if (!file_exists(path)) break;
+        newest++;
+    }
+    if (newest == reload.pack) return;
+    reload.pack = newest;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    const long length = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *bytes = length > 0 ? malloc((size_t)length) : NULL;
+    const bool ok = bytes && fread(bytes, 1, (size_t)length, f) == (size_t)length;
+    fclose(f);
+    if (ok) tide_run_assets_from(bytes, (size_t)length);
+    else free(bytes);
 }
 
 // Loads a build: its game, or NULL after saying why.
@@ -440,6 +479,8 @@ static void swap(const tide_host_game *next, void *library)
         if (next->correct_views) next->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
     }
     if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
+    // The new build's assets, from the pack the host has
+    if (next->assets && tide_run_pack) next->assets(tide_run_pack, tide_run_pack_size);
     fflush(stdout);
     old->unload();
     library_close(reload.library);
@@ -458,6 +499,7 @@ static void check(void)
         if (!file_exists(path)) break;
         newest++;
     }
+    check_pack(); // Before a new build, which starts with the pack as it is
     if (newest != reload.running) {
         reload.running = newest; // A build that doesn't load isn't tried again
         void *library = NULL;
@@ -512,6 +554,7 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
     if (!game) exit(1);
     tide_run_game = game;
     tide_run_open(desc);
+    check_pack(); // The pack tide wrote with the first build, where the game has assets
     tide_run_begin();
     tide_platform_run(reload_frame, NULL);
 }
