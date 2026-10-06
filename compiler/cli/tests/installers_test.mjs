@@ -20,6 +20,8 @@ const cases = [
     { name: 'GITHUB_TOKEN takes precedence over gh login', githubToken: 'fixture-second', login: 'fixture-login', auth: 'fixture-second' },
     { name: 'gh login supplies authentication', login: 'fixture-login', auth: 'fixture-login' },
     { name: 'token control characters are refused', ghToken: 'fixture\nheader', invalid: true },
+    { name: 'token trailing newline is refused', ghToken: 'fixture\n', invalid: true },
+    { name: 'non-ASCII token is refused', ghToken: 'fixture-é', invalid: true },
     { name: 'asset URL on another host never receives credentials', ghToken: 'fixture-first', auth: 'fixture-first', remoteAssets: true },
     { name: 'checksum failure refuses installation', ghToken: 'fixture-first', auth: 'fixture-first', damaged: true },
     { name: 'old installed updater receives checked local files on its channel', ghToken: 'fixture-first', auth: 'fixture-first', installed: true, nightly: true },
