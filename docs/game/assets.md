@@ -56,9 +56,7 @@ command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
 }
 ```
 
-::: info
-A command carrying a `List<byte>` is agreed but not built yet (see the spec's Commands): until it is, what a match handler decodes is bytes the match already holds.
-:::
+A command's `List<byte>` goes to the server and on to every player, one that doesn't fit a datagram in chunks, so a few megabytes is fine; see [Commands](./commands.md).
 
 Every kind of PNG decodes: gray, color, with a palette, with or without alpha, 1 to 16 bits a sample, interlaced or not. A clear black pixel is a cell that's zero, which takes no memory. A picture past 16384 pixels a side is `InvalidData`. Decoding runs where it's called, on the frame's or the tick's thread: a 4K picture takes a frame, so decode once, when the picture arrives, not every frame.
 

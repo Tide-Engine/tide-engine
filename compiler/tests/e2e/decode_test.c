@@ -1,7 +1,7 @@
 // grid.Decode: the engine's PNG decoder (tide/png.h) against the platform's
-// writer (platform/src/png.c), and a PNG decoded in the match on the loopback
-// network, in a command handler, the same on the server and its client, with
-// the world's hash pinned (the same natively and on the web).
+// writer (platform/src/png.c), and a PNG sent in a command on the loopback
+// network, decoded in its handler, the same on the server and its client,
+// with the world's hash pinned (the same natively and on the web).
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,7 @@
 
 // The pinned world: the same bits on every platform
 #ifndef DECODE_WORLD_HASH
-#define DECODE_WORLD_HASH 0x83b3ea04c8f24bc2ull
+#define DECODE_WORLD_HASH 0xe83b5362d18eac83ull
 #endif
 
 static tide_world world;
@@ -25,7 +25,7 @@ static tide_devices devices;
 
 enum { WIDTH = 12, HEIGHT = 8 };
 
-// The picture decode.tide holds
+// The picture that goes through the match
 static void picture_pixel(const int x, const int y, uint8_t rgb[3])
 {
     rgb[0] = (uint8_t)(x * 20);
@@ -90,6 +90,23 @@ TIDE_TEST(decode_reads_back_what_the_writer_wrote)
     TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not even close", 32, &(tide_png_image){0}));
 }
 
+// Puts `size` bytes where the game's view sends them from, and has it send them
+static void send_bytes(tide_client *client, const uint8_t *bytes, const size_t size)
+{
+    tide_text_use(NULL, &local.heap);
+    tide_list_release(&local.Ui.png, TIDE_IN_LOCAL);
+    for (size_t i = 0; i < size; i++) *(uint8_t *)tide_list_add(&local.Ui.png, 1, TIDE_IN_LOCAL) = bytes[i];
+    local.Ui.send = true;
+    frame();
+    uint32_t packed = 0;
+    const uint8_t *data = tide_local_command(&local, 0, &packed);
+    TIDE_REQUIRE(data && packed > 0);
+    uint32_t channel = 0;
+    TIDE_REQUIRE(tide_game_api.check_command(data, packed, &channel));
+    TIDE_REQUIRE(tide_client_send_command(client, data, packed));
+    tide_local_command_sent(&local, 0);
+}
+
 TIDE_TEST(decode_in_a_command_handler_is_the_same_world_everywhere)
 {
     double now = 0;
@@ -109,18 +126,24 @@ TIDE_TEST(decode_in_a_command_handler_is_the_same_world_everywhere)
     TIDE_REQUIRE(tide_client_status_of(client).state == TIDE_SESSION_CONNECTED);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_client_status_of(client).player, 0, false, false, "");
+    // The picture, through the platform's writer
+    uint8_t rgba[WIDTH * HEIGHT * 4];
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            picture_pixel(x, y, rgba + (y * WIDTH + x) * 4);
+            rgba[(y * WIDTH + x) * 4 + 3] = 255;
+        }
+    }
+    size_t size = 0;
+    uint8_t *png = tide_png_encode(rgba, WIDTH, HEIGHT, &size);
+    TIDE_REQUIRE(png && size > 0);
     // Bytes that aren't a PNG, then the picture, then the picture cut short: the
     // grid ends as the picture, with one decode good and two refused
-    const int order[3] = {1, 0, 2};
-    for (int i = 0; i < 3; i++) {
-        local.Ui.send = order[i];
-        frame();
-        uint8_t bytes[TIDE_COMMAND_BYTES];
-        const uint32_t size = tide_local_command(&local, bytes, TIDE_COMMAND_BYTES);
-        TIDE_REQUIRE(size > 0 && tide_game_api.check_command(bytes, size));
-        TIDE_REQUIRE(tide_client_send_command(client, bytes, size));
-        tide_local_command_sent(&local);
-    }
+    const uint8_t noise[25] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
+    send_bytes(client, noise, sizeof noise);
+    send_bytes(client, png, size);
+    send_bytes(client, png, size * 3 / 4);
+    free(png);
     for (int i = 0; i < 240; i++) {
         now += 1.0 / 60;
         tide_loopback_set_time(net, now);
@@ -134,18 +157,17 @@ TIDE_TEST(decode_in_a_command_handler_is_the_same_world_everywhere)
     TIDE_CHECK(verified->Art.decoded == 1 && verified->Art.bad == 2);
     for (int pass = 0; pass < 2; pass++) {
         const tide_world *w = pass ? verified : authoritative;
-        int32_t size[3];
-        tide_grid_size(w->Art.pixels, size);
-        TIDE_CHECK(size[0] == WIDTH && size[1] == HEIGHT);
+        int32_t grid_size[3];
+        tide_grid_size(w->Art.pixels, grid_size);
+        TIDE_CHECK(grid_size[0] == WIDTH && grid_size[1] == HEIGHT);
         bool same = true;
         for (int y = 0; same && y < HEIGHT; y++) {
             for (int x = 0; same && x < WIDTH; x++) {
                 const tide_color *c = tide_grid_read(&w->heap, w->Art.pixels, x, y, 0, &tide_shape_Grid2_Color);
                 uint8_t rgb[3];
                 picture_pixel(x, y, rgb);
-                const bool zero = !rgb[0] && !rgb[1] && !rgb[2];
-                if (!c) same = zero && false; // Every pixel is opaque: no cell is zero
-                else same = channel_is(c->r, rgb[0]) && channel_is(c->g, rgb[1]) && channel_is(c->b, rgb[2]) && c->a == 1.0f;
+                // Every pixel is opaque, so no cell is zero: each is there
+                same = c && channel_is(c->r, rgb[0]) && channel_is(c->g, rgb[1]) && channel_is(c->b, rgb[2]) && c->a == 1.0f;
             }
         }
         TIDE_CHECK(same);
