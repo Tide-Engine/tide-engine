@@ -2,6 +2,7 @@
 
 #include "versus.h"
 
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -177,12 +178,27 @@ static void write_record(FILE *f, const versus_desc *d, const options *o, const 
     if (utc) strftime(date, sizeof date, "%Y-%m-%dT%H:%M:%SZ", utc);
 #if defined(__wasm__)
     const char *os = "web";
+#elif defined(__ANDROID__)
+    const char *os = "android";
 #elif defined(_WIN32)
     const char *os = "windows";
 #elif defined(__APPLE__)
     const char *os = "macos";
 #else
     const char *os = "linux";
+#endif
+#if defined(__wasm__)
+    const char *arch = "wasm32";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    const char *arch = "arm64";
+#elif defined(__arm__) || defined(_M_ARM)
+    const char *arch = "arm";
+#elif defined(__x86_64__) || defined(_M_X64)
+    const char *arch = "x86_64";
+#elif defined(__i386__) || defined(_M_IX86)
+    const char *arch = "x86";
+#else
+    const char *arch = "unknown";
 #endif
 #if defined(__OPTIMIZE__)
     const bool optimized = true;
@@ -193,8 +209,14 @@ static void write_record(FILE *f, const versus_desc *d, const options *o, const 
     json_text(f, d->name);
     fprintf(f, ",\"label\":");
     json_text(f, label);
-    fprintf(f, ",\"date\":\"%s\",\"os\":\"%s\",\"optimized\":%s", date, os, optimized ? "true" : "false");
-    fprintf(f, ",\"options\":{\"warmup\":%u,\"ticks\":%u", o->warmup, o->ticks);
+    fprintf(f, ",\"date\":\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"optimized\":%s,\"compiler\":", date, os, arch, optimized ? "true" : "false");
+    json_text(f, __clang_version__);
+    const char *machine = getenv("TIDE_BENCH_MACHINE"), *revision = getenv("TIDE_BENCH_REVISION");
+    fprintf(f, ",\"machine\":");
+    json_text(f, machine ? machine : "unknown");
+    fprintf(f, ",\"revision\":");
+    json_text(f, revision ? revision : "unknown");
+    fprintf(f, ",\"options\":{\"warmup\":%u,\"ticks\":%u,\"split\":%s", o->warmup, o->ticks, always_split ? "true" : "false");
     for (uint32_t i = 0; i < d->flag_count; i++) fprintf(f, ",\"%s\":%u", d->flags[i].name, d->flags[i].value);
     fprintf(f, "},\"ok\":%s,\"digest\":\"0x%016llx\",\"runs\":[", ok ? "true" : "false",
             (unsigned long long)t[0][0].digest);
@@ -242,6 +264,18 @@ static void usage(const versus_desc *d)
 }
 
 // The options from the command line, over a full run's or --quick's.
+static bool read_number(const char *text, uint32_t *out)
+{
+    if (*text < '0' || *text > '9') return false;
+    for (const char *c = text; *c; c++) if (*c < '0' || *c > '9') return false;
+    errno = 0;
+    char *end;
+    const unsigned long long number = strtoull(text, &end, 10);
+    if (errno == ERANGE || *end || number > UINT32_MAX) return false;
+    *out = (uint32_t)number;
+    return true;
+}
+
 static bool parse(const versus_desc *d, const int argc, char **argv, options *o, const char **save)
 {
     bool quick = false;
@@ -265,32 +299,31 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
             return false;
         }
         const char *value = argv[++i];
-        char *end = NULL;
-        const unsigned long number = strtoul(value, &end, 10);
-        const bool numeric = end != value && *end == '\0' && number <= UINT32_MAX;
+        uint32_t number = 0;
+        const bool numeric = read_number(value, &number);
         bool known = true;
         if (strcmp(arg, "--save") == 0) {
             *save = value;
         } else if (!numeric) {
             known = false;
         } else if (strcmp(arg, "--ticks") == 0) {
-            o->ticks = (uint32_t)number;
+            o->ticks = number;
         } else if (strcmp(arg, "--warmup") == 0) {
-            o->warmup = (uint32_t)number;
+            o->warmup = number;
         } else if (strcmp(arg, "--threads") == 0) {
-            o->threads = (uint32_t)number;
+            o->threads = number;
             o->one_count = true;
         } else {
             known = false;
             for (uint32_t k = 0; k < d->flag_count; k++) {
                 if (strcmp(arg + 2, d->flags[k].name) == 0) {
-                    d->flags[k].value = (uint32_t)number;
-                    known = true;
+                    known = number <= INT32_MAX && number >= d->flags[k].minimum;
+                    if (known) d->flags[k].value = number;
                 }
             }
         }
         if (!known) {
-            fprintf(stderr, "%s: '%s %s' isn't an option it knows\n", d->name, arg, value);
+            fprintf(stderr, "%s: '%s %s' isn't a valid option and value\n", d->name, arg, value);
             return false;
         }
     }
@@ -298,11 +331,21 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
         fprintf(stderr, "%s: --warmup is at least 1, the tick that sets every way up\n", d->name);
         return false;
     }
+    if (o->ticks < 1u || (size_t)o->ticks > SIZE_MAX / sizeof(double)) {
+        fprintf(stderr, "%s: --ticks needs a positive count that fits in memory\n", d->name);
+        return false;
+    }
     return true;
 }
 
 int versus_main(const versus_desc *d, const int argc, char **argv)
 {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            usage(d);
+            return 0;
+        }
+    }
     options o;
     const char *save = NULL; // The label to save the results under
     if (!parse(d, argc, argv, &o, &save) || d->way_count < 1u || d->way_count > MAX_WAYS) {
