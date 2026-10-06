@@ -17,6 +17,10 @@
 // TIDE_IO_NOT_FOUND), a certificate the system doesn't trust, and anything
 // else that goes wrong.
 
+#ifndef _WIN32
+#define _DEFAULT_SOURCE // nanosleep under strict C
+#endif
+
 #include "fetch.h"
 
 #ifndef __wasm__
