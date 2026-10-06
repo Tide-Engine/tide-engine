@@ -27,8 +27,8 @@ void b3t_forget(void);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its image and the netcode, byte for byte.
 // Once with the lane in the air, and once after a Reset set it up again.
-#define THROWN_HASH UINT64_C(0x5f7a5a39c7044cb4)
-#define MATCH_HASH UINT64_C(0x71c8dc55c8a3746c)
+#define THROWN_HASH UINT64_C(0x768d20e0fb8237a0)
+#define MATCH_HASH UINT64_C(0x9fd0f346722dc9bb)
 
 static tide_world world;
 

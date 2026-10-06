@@ -38,7 +38,7 @@ int32_t b3t_restores(void);
 
 #define DT (1.0f / 60.0f)
 
-enum { TICKS = 760 }; // The script's, and then until everything is asleep
+enum { TICKS = 900 }; // The script's, and then until everything is asleep
 
 static tide_world a;
 static tide_world b;
@@ -86,7 +86,8 @@ TIDE_TEST(box3d_parts_are_the_whole_image)
                usual ? "as a match has them" : "in parts whenever", (int)whole, (int)in_parts, (int)a.Tally.touched, (int)a.Tally.parted,
                (int)a.Box3D_Physics.size);
         // What the script is for happened: bodies came and went, and things touched
-        TIDE_CHECK(a.Box3D_Physics.bodies == 38 && a.Tally.touched > 30 && a.Tally.parted > 5);
+        TIDE_CHECK(a.Box3D_Physics.bodies == 39 && a.Box3D_Physics.shapes == 44 && a.Tally.touched > 30 && a.Tally.parted > 5);
+        TIDE_CHECK(a.Box3D_Physics.parts.live == 0); // Every part that came went again
         TIDE_CHECK(in_parts > (usual ? 300 : 500) && whole > 0);
         // ...and it all came to rest: the last ticks stepped nothing
         TIDE_CHECK(!a.Box3D_Physics.moved && went[TICKS - 1] != 0);
@@ -521,8 +522,12 @@ static void act(lab *l)
         if (at < 1 || !enabled(l, at) || b3Body_GetShapeCount(body) < 2) return;
         b3ShapeId shapes[8];
         const int count = b3Body_GetShapes(body, shapes, 8);
-        b3DestroyShape(shapes[roll(l, (uint32_t)count)], true);
-        did(l, "a shape destroyed", at);
+        // With its body weighed again or not: one that isn't says nothing of the body but what the
+        // shape's going says itself
+        const b3ShapeId gone = shapes[roll(l, (uint32_t)count)];
+        const bool weigh = roll(l, 2) == 0;
+        b3DestroyShape(gone, weigh);
+        did(l, weigh ? "a shape destroyed" : "a shape destroyed, its body not weighed", at);
     } else if (what < 74) {
         if (!enabled(l, at) || b3Body_GetShapeCount(body) < 1) return;
         b3ShapeId shapes[8];
@@ -600,6 +605,24 @@ static void act(lab *l)
         l->restored++;
         l->restored_now = true;
         did(l, "the world rolled back", 0);
+    } else if (what >= 91 && what < 96) {
+        // How a body is to be, which is in the body or in what its set has of it: asleep or static as it may be
+        if (at < 1) return;
+        switch (roll(l, 4)) {
+        case 0: b3Body_SetGravityScale(body, between(l, -0.5f, 1.5f)); break;
+        case 1: b3Body_SetLinearDamping(body, between(l, 0.0f, 1.0f)); break;
+        case 2: b3Body_SetAngularDamping(body, between(l, 0.0f, 1.0f)); break;
+        default: b3Body_SetBullet(body, roll(l, 2) == 0); break;
+        }
+        did(l, "a body's setting set", at);
+    } else if (what >= 96 && what < 99) {
+        // How the world steps: numbers of its own, which every image writes
+        switch (roll(l, 3)) {
+        case 0: b3World_SetContactTuning(l->world, between(l, 10.0f, 30.0f), between(l, 2.0f, 10.0f), between(l, 1.0f, 3.0f)); break;
+        case 1: b3World_SetRestitutionThreshold(l->world, between(l, 0.5f, 2.0f)); break;
+        default: b3World_SetHitEventThreshold(l->world, between(l, 0.5f, 3.0f)); break;
+        }
+        did(l, "the world's setting set", 0);
     } else if (what < 91) {
         // A shape's geometry set: a call Box3D records by hand, or another shape altogether
         if (at < 1 || !enabled(l, at) || l->terrain[at] || b3Body_GetShapeCount(body) < 1) return;
@@ -780,6 +803,12 @@ static void where_one_line_says_so(const bool with_mesh)
     sensing.enableSensorEvents = true;
     const b3Sphere ball = {{0.0f, 1.0f, 0.0f}, 0.5f};
     for (int i = 0; i < 3; i++) b3CreateSphereShape(l.bodies[SHELF + i], &sensing, &ball);
+    // Two more shapes on another shelf, with nothing on them: they go one at a time, while everything
+    // sleeps. A body's shapes are a list from the last one made, so the first to go is the one in the middle
+    const b3ShapeDef plain = b3DefaultShapeDef();
+    const b3ShapeId middle = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
+    const b3ShapeId head = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
+    b3ShapeId lined = {0};
     // A few bodies that never sleep, away from the rest: with them the awake set has room for one more
     // body in the image, where one that wakes in a world all asleep moves a section, and the image is
     // then written whole whatever else is so
@@ -807,6 +836,17 @@ static void where_one_line_says_so(const bool with_mesh)
             b3DestroyBody(l.bodies[SHELF]);
             did(&l, "a sensor's shelf destroyed", 0);
         }
+        // A shape goes from the middle of a body's list, on a body that never moves and isn't weighed again:
+        // the shape, the one before it and the one after it, whose links change, and the body, which counts
+        // them. Then the one that heads the list, which the body names
+        if (l.step == 180) {
+            b3DestroyShape(middle, false);
+            did(&l, "a shape destroyed from the middle of its body's", 0);
+        }
+        if (l.step == 190) {
+            b3DestroyShape(head, false);
+            did(&l, "the shape that heads its body's destroyed", 0);
+        }
         // A shape with a material array of its own, on a shelf that's there
         if (l.step == 270 && !with_mesh) {
             b3ShapeDef def = b3DefaultShapeDef();
@@ -814,14 +854,21 @@ static void where_one_line_says_so(const bool with_mesh)
             two[1].friction = 0.1f;
             def.materials = two;
             def.materialCount = 2;
-            b3CreateSphereShape(l.bodies[SHELF + 4], &def, &ball);
+            lined = b3CreateSphereShape(l.bodies[SHELF + 4], &def, &ball);
             did(&l, "a shape with two materials made", 0);
+        }
+        // ...which goes again: what it has more than other shapes goes from the image with it
+        if (l.step == 285 && !with_mesh) {
+            b3DestroyShape(lined, false);
+            did(&l, "a shape with two materials destroyed", 0);
         }
         b3World_Step(l.world, DT, 4);
         const int parts = l.images_in_parts;
         right = take_image(&l);
         // The steps before each of those had their images in parts: the world was asleep and followed
         if (l.step == 119 || l.step == 249 || l.step == 269) TIDE_CHECK(l.images_in_parts > parts);
+        // ...and so did the steps that took a shape off a body: a shape that goes is followed
+        if (l.step == 180 || l.step == 190) TIDE_CHECK(l.images_in_parts > parts);
     }
     TIDE_REQUIRE(right);
     TIDE_CHECK(b3World_GetAwakeBodyCount(l.world) == RESTLESS);
