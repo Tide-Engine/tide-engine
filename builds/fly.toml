@@ -11,6 +11,11 @@
 # They're apart because Fly gives an app's secrets to every machine in it,
 # and a machine that builds gets none of this app's.
 #
+# On hold since 2026-10-06: the service's machine is stopped, and no request
+# starts it (fly machine update <id> --autostart=false --skip-start), so the
+# address doesn't answer and all that's kept is the volume. Deploying, as
+# below, puts it back as this file says.
+#
 # Deploy from this folder, the builders' image first when tide.version
 # changed (fly.builder.toml says how), then:
 #

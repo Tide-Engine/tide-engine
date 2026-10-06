@@ -5,7 +5,7 @@ A mod is a [package](packages.md) that someone other than a game's developer add
 Every player of a match runs the same build, so a game with mods is built whole, for each set of mods, by a service we run. It builds the game with its mods, signs what it built, and serves it at a link.
 
 ::: warning
-This is the first part of mods, and it will change. Builds are web pages only, a game's key comes from us, and only whoever has that key can ask for a build. What's decided and what's still open is in the [spec](../spec.md#mods).
+Mods are on hold, and the service isn't running: `tide publish` and the addresses on this page don't answer for now. This page is how its first part worked, which may change before it's back: builds are web pages only, a game's key comes from us, and only whoever has that key can ask for a build. What's decided and what's still open is in the [spec](../spec.md#mods).
 :::
 
 ## How it goes
