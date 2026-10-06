@@ -1,6 +1,6 @@
 // Towers: four plinths side by side, and a race to build the tallest tower.
 // Bricks come down one at a time. A player steers and turns the one that's
-// falling, and once it touches anything it's a body like any other: it
+// falling, and where it touches anything it's a body like any other: it
 // leans, slides and falls with whatever it's on. The first tower that stands
 // over the finish line for three seconds takes the round. This file is the
 // match, which every machine runs the same way. What a machine shows of it is
@@ -8,7 +8,8 @@
 // lobby.tide's to say. bots.tide is how a tower nobody steers gets built.
 //
 // Everything that's solid is Box2D's (the box2d package): the game spawns
-// bodies, pushes them and reads where they are.
+// bodies, pushes them, says what kind each is, asks the world what's in a
+// falling brick's way, and reads where they are.
 using Box2D;
 
 settings { title = "Towers"; appId = "dev.tide.towers"; maxPlayers = 4; hostMigration = true; stats = true; }
@@ -31,13 +32,15 @@ const float LOWEST = 12;       // ...and no lower than this
 const float DROP = 9;          // How far over its tower a brick appears
 const float FALL = 3.2;        // A falling brick's speed, in meters a second
 const float FAST = 18;         // ...and while its player asks for more
-const float EASE = 1.2;        // ...and for the last of its way, once it has touched something
-const int EASED = 20;          // Ticks it comes down at that speed
 const int REACH = 8;           // How far from its plinth's middle a brick is steered, in half cells
-const float SLACK = 0.1;       // How much smaller a falling brick's sensor is than the brick: it slides down beside a wall it only just clears
+const float SLACK = 0.1;       // How much smaller a falling brick is taken to be than it is, where its way is asked for: it slides down beside a wall it only just clears
 const float GRIP = 1;          // A brick's friction
 const float STEADY = 2;        // ...and how fast its spin dies by itself
-const float SET_DEPTH = 10;    // A brick this far under its tower's top is set solid
+
+const int SUBSTEPS = 8;        // The smaller steps Box2D solves a tick in: twice what it comes with...
+const float STIFFNESS = 60;    // ...which lets contacts be twice as stiff...
+const float DAMPING = 40;      // ...and they spring back four times as gently: a tower of loose bricks holds, forty meters up
+const float CRASH = 2.5;       // Bodies that meet faster than this say so, for the dust
 
 const int PAUSE = 14;          // Ticks from a brick landing to the next
 const int STUN = 40;           // ...and more for each brick that fell off the tower
@@ -48,7 +51,7 @@ const int GUST = 8;            // Ticks a gust blows
 const float WIND = 1.3;        // What it gives a brick at the top of its tower each tick: an impulse
 const float WIND_DEPTH = 3;    // How far down the tower it's felt
 const int QUAKE = 80;          // Ticks a plinth shakes: four times there and back
-const float SHAKE = 1.2;       // ...and how fast at the most, in meters a second
+const float SHAKE = 0.9;       // ...and how fast at the most, in meters a second
 const float RISE = 2.5;        // How fast a plinth rises under a player who joined late
 const float SINK = 14;         // ...and sinks once the round is over
 
@@ -66,36 +69,36 @@ enum Kind { I, O, T, L, J, S, Z }
 enum Power { None, Gust, Cement, Quake }
 
 // A box of a brick, in cells, around its body's place.
-struct Part
+struct Block
 {
     float2 size;
     float2 offset;
 }
 
-Part First(Kind kind)
+Block First(Kind kind)
 {
     switch (kind)
     {
-        case Kind.I: return Part { size = float2(4, 1) };
-        case Kind.O: return Part { size = float2(2, 2) };
-        case Kind.S: return Part { size = float2(2, 1), offset = float2(-0.5, 0) };
-        case Kind.Z: return Part { size = float2(2, 1), offset = float2(0.5, 0) };
+        case Kind.I: return Block { size = float2(4, 1) };
+        case Kind.O: return Block { size = float2(2, 2) };
+        case Kind.S: return Block { size = float2(2, 1), offset = float2(-0.5, 0) };
+        case Kind.Z: return Block { size = float2(2, 1), offset = float2(0.5, 0) };
     }
-    return Part { size = float2(3, 1) }; // T, L and J: a bar of three
+    return Block { size = float2(3, 1) }; // T, L and J: a bar of three
 }
 
 // The second box, of no size for a brick that's one.
-Part Second(Kind kind)
+Block Second(Kind kind)
 {
     switch (kind)
     {
-        case Kind.T: return Part { size = float2(1, 1), offset = float2(0, 1) };
-        case Kind.L: return Part { size = float2(1, 1), offset = float2(1, 1) };
-        case Kind.J: return Part { size = float2(1, 1), offset = float2(-1, 1) };
-        case Kind.S: return Part { size = float2(2, 1), offset = float2(0.5, 1) };
-        case Kind.Z: return Part { size = float2(2, 1), offset = float2(-0.5, 1) };
+        case Kind.T: return Block { size = float2(1, 1), offset = float2(0, 1) };
+        case Kind.L: return Block { size = float2(1, 1), offset = float2(1, 1) };
+        case Kind.J: return Block { size = float2(1, 1), offset = float2(-1, 1) };
+        case Kind.S: return Block { size = float2(2, 1), offset = float2(0.5, 1) };
+        case Kind.Z: return Block { size = float2(2, 1), offset = float2(-0.5, 1) };
     }
-    return Part { };
+    return Block { };
 }
 
 // The middle of a brick's cell, by its number from 0 to 3, around its body's place.
@@ -217,8 +220,9 @@ component Seat
     int think;         // Ticks until it uses what it earned
 }
 
-// The brick that's falling, which its player steers. It's a kinematic body of
-// sensors: it goes where it's put, stops nothing, and hears what it touches.
+// The brick that's falling, which its player steers. It's a kinematic body
+// with no shapes yet: it goes where it's put and touches nothing, and what's
+// in its way is asked of the world, each tick.
 component Falling
 {
     int seat;
@@ -231,14 +235,6 @@ component Falling
     bool bot;          // Nobody steers it: it follows what bots.tide planned
     int hurry;         // ...and falls fast from this tick of its fall
     int age;
-    float2 free;       // Where it was, and how, before this tick moved it
-    int freeColumn;
-    int freeQuarter;
-    int touching;      // Shapes its sensors are in
-    int eased;         // Ticks left of coming down slowly, since it first touched something...
-    int since;         // ...in this tick
-    float speed;       // ...at this speed
-    bool landed;       // It touched again: it's a brick from the next tick on
     // This machine's own, for the view: where it's drawn across and how
     // turned, on its way to where it is. Nothing of them is in the match.
     local bool drawn;
@@ -249,17 +245,15 @@ component Falling
 // What a body is the shape of: a falling brick's, and a landed one's.
 component Piece { Kind kind; }
 
-// The brick's second box is on its body.
-component Fitted { }
-
-// A brick that landed: a dynamic body, until it's set solid.
+// A brick that landed: the same entity and the same body as when it fell, a
+// dynamic one now, with its boxes on it, until it's set solid.
 component Brick
 {
     int seat;          // Whose it is: who put it there
     int born;          // The tick it landed in
     bool down;         // It fell off its tower
     int rubble;        // Ticks until it's cleared from the ground
-    bool set;          // It's set solid: a kinematic body, which goes where its plinth does
+    bool set;          // It's set solid: its body is a kinematic one, which goes where its plinth does
     // This machine's own, for the view: how lit it is, just landed
     local float lit;
 }
@@ -321,7 +315,7 @@ event Won { }
 
 // What happens in the match, said for whoever shows it: nothing in the match
 // handles these, so they cost it nothing. Each machine's handlers of them are
-// in effects.tide.
+// in effects.tide. Landed is sent to the brick that landed.
 event Landed { float2 at; int seat; float speed; }
 event Lost { float2 at; int seat; }
 event Earned { int seat; Power power; }
@@ -346,8 +340,15 @@ PlayerID Sitter(Towers towers, int seat)
 
 // What stays from round to round: the ground, and the plinths. A plinth is a
 // kinematic body: it goes where its velocity takes it, whatever stands on it.
-event(Spawned) Build(mut Towers towers, with Main)
+// And how the world is tuned, which is the package's Physics to say: stiffer
+// contacts than it comes with, that spring back less, for towers of loose
+// bricks forty meters high.
+event(Spawned) Build(mut Towers towers, mut Physics physics, with Main)
 {
+    physics.substeps = SUBSTEPS;
+    physics.stiffness = STIFFNESS;
+    physics.damping = DAMPING;
+    physics.hitSpeed = CRASH;
     Spawn(Body { type = BodyType.Static, position = float2(0, GROUND - 0.5) }, Box { size = float2(400, 1), friction = GRIP }, Ground);
     for (var seat = 0; seat < SEATS; seat++)
     {
@@ -379,19 +380,59 @@ event(PlayerLeft left) Stand(mut Towers towers)
     towers.seats.Remove(left.player);
 }
 
+// A falling brick's box as the world is asked about it: `slack` smaller, across
+// and up as the world has them, whichever way the brick is turned. A shape
+// that's cast touches what it's flush with, so the box is a little narrower
+// than the brick for its way down, to slide beside a wall the brick only just
+// clears, and a little smaller all round to be moved across or turned.
+Box Slim(Block block, int quarter, float2 slack)
+{
+    var less = quarter % 2 == 0 ? slack : float2(slack.y, slack.x);
+    return Box { size = block.size - less, offset = block.offset };
+}
+
+// How much of a way a falling brick is free to go, from 0 to 1. Each of its
+// boxes is moved along the way (the package's Cast, which changes nothing),
+// and where the first of them touches something is as far as the brick goes.
+// It has no shapes of its own in the world yet, so nothing it meets is itself.
+float Free(Physics physics, Kind kind, float2 from, int quarter, float2 way, float2 slack)
+{
+    mut var free = 1.0;
+    var angle = Angle(quarter);
+    if (Cast(physics, Slim(First(kind), quarter, slack), from, angle, from + way, out var hit)) free = hit.fraction;
+    var second = Second(kind);
+    if (second.size.x > 0 && Cast(physics, Slim(second, quarter, slack), from, angle, from + way, out var other))
+    {
+        free = Math.Min(free, other.fraction);
+    }
+    return free;
+}
+
+// Whether there's room for a falling brick somewhere, turned some way: nothing
+// is in its boxes there (the package's Overlap).
+bool Room(Physics physics, Kind kind, float2 at, int quarter)
+{
+    var angle = Angle(quarter);
+    if (Overlap(physics, Slim(First(kind), quarter, float2(SLACK)), at, angle, out _)) return false;
+    var second = Second(kind);
+    return second.size.x <= 0 || !Overlap(physics, Slim(second, quarter, float2(SLACK)), at, angle, out _);
+}
+
 // A falling brick goes where its player wants it, half a cell at a time, and
-// turns by quarters. `controls` is the input of the player who owns it. This
-// runs before the package's systems, so the step that moves it is this tick's.
+// turns by quarters, wherever it has room to. `controls` is the input of the
+// player who owns it. This runs before the package's systems, so the step that
+// moves it is this tick's, and what it asks of the world is the world as the
+// last tick's step left it.
 //
 // It falls by its body's velocity, and is put across and turned by having its
-// body written. Before any of that, where it is now is kept: nothing was
-// touching it there.
-//
-// Once it has landed it's a brick: a dynamic body where the falling one last
-// was free, and the falling one goes. A body's type is read when it's made,
-// so it's another body.
+// body written. Each tick it asks how far down it's free to go. All the way,
+// and it goes on falling. Less, and it has landed: it's put where it touches,
+// at rest, its body is made a dynamic one, and its boxes are put on it, the
+// first as its own Box and the second, for the bricks that have one, as a Part
+// of it. It's the same entity and the same body from the moment it's dealt
+// to the end of the round.
 [Before(PhysicsStages.Step)]
-system Steer(Controls controls, mut Falling falling, mut Body body, Piece piece, Towers towers, Time time)
+system Steer(Controls controls, mut Falling falling, mut Body body, Piece piece, Towers towers, Physics physics, Time time)
 {
     if (towers.phase != Phase.Play || body.position.y < GROUND - 6)
     {
@@ -399,22 +440,6 @@ system Steer(Controls controls, mut Falling falling, mut Body body, Piece piece,
         this.Destroy();
         return;
     }
-    // It touched something while it came down slowly, or it's still in what
-    // it first touched, a tick after it was put back
-    if (falling.landed || (falling.eased > 0 && falling.touching > 0 && time.tick > falling.since + 1))
-    {
-        var part = First(piece.kind);
-        Spawn(Body { position = falling.free, angle = Angle(falling.freeQuarter), velocity = float2(0, -EASE), angularDamping = STEADY },
-              Box { size = part.size, offset = part.offset, friction = GRIP }, Piece { kind = piece.kind },
-              Brick { seat = falling.seat, born = time.tick });
-        towers.plinths[falling.seat].Send(Placed { });
-        Send(Landed { at = falling.free, seat = falling.seat, speed = falling.speed });
-        this.Destroy();
-        return;
-    }
-    falling.free = body.position;
-    falling.freeColumn = falling.column;
-    falling.freeQuarter = falling.quarter;
     falling.age += 1;
     mut var fast = falling.bot && falling.age > falling.hurry && falling.column == falling.wantColumn;
     if (!falling.bot && controls.serial == falling.serial)
@@ -423,64 +448,38 @@ system Steer(Controls controls, mut Falling falling, mut Body body, Piece piece,
         falling.wantQuarter = controls.quarter;
         fast = controls.drop;
     }
-    if (falling.quarter != falling.wantQuarter)
+    if (falling.quarter != falling.wantQuarter && Room(physics, piece.kind, body.position, falling.wantQuarter))
     {
         falling.quarter = falling.wantQuarter;
         body.angle = Angle(falling.quarter);
     }
     if (falling.column != falling.wantColumn && falling.age % 2 == 0)
     {
-        falling.column += falling.wantColumn > falling.column ? 1 : -1;
-        body.position.x = falling.home + falling.column * 0.5;
+        var step = falling.wantColumn > falling.column ? 1 : -1;
+        if (Free(physics, piece.kind, body.position, falling.quarter, float2(step * 0.5, 0), float2(SLACK)) >= 1)
+        {
+            falling.column += step;
+            body.position.x = falling.home + falling.column * 0.5;
+        }
     }
-    if (falling.eased > 0) falling.eased -= 1;
-    var speed = falling.eased > 0 ? -EASE : fast ? -FAST : -FALL;
-    if (body.velocity.y != speed) body.velocity = float2(0, speed);
-}
-
-// The package sends Touched to a sensor's entity for each shape that comes
-// into it, and Parted for each that leaves. The first thing a falling brick
-// touches stops it short: it's put back where it was a tick before, as it
-// was, and comes down from there slowly, so that it lands softly however
-// fast it fell. What it touches then is where it lands.
-event(Touched) Touch(mut Falling falling, mut Body body, Time time)
-{
-    falling.touching += 1;
-    if (falling.eased > 0)
+    var speed = fast ? FAST : FALL;
+    var fall = speed * time.dt;
+    var free = Free(physics, piece.kind, body.position, falling.quarter, float2(0, -fall), float2(SLACK, 0));
+    if (free >= 1)
     {
-        if (time.tick != falling.since) falling.landed = true;
+        if (body.velocity.y != -speed) body.velocity = float2(0, -speed);
         return;
     }
-    falling.eased = EASED;
-    falling.since = time.tick;
-    falling.speed = -body.velocity.y;
-    falling.column = falling.freeColumn;
-    falling.quarter = falling.freeQuarter;
-    body.position = falling.free;
-    body.angle = Angle(falling.freeQuarter);
-    body.velocity = float2(0, -EASE);
-}
-
-event(Parted) Away(mut Falling falling)
-{
-    falling.touching -= 1;
-}
-
-// The package gives an entity one Box, and five of the seven bricks are two.
-// So the second goes on the body here, with the package's own function, where
-// the package puts on the first: in its stage, once the body is made and
-// before the step. A falling brick's are sensors, a little smaller than the
-// brick.
-[Stage(PhysicsStages.Step, 4)]
-system Fit(Body body, Box box, Piece piece, mut Physics physics, without Fitted)
-{
+    body.position.y -= fall * free;
+    body.velocity = float2(0, 0);
+    body.type = BodyType.Dynamic;
+    var first = First(piece.kind);
     var second = Second(piece.kind);
-    if (second.size.x > 0)
-    {
-        var size = box.sensor ? second.size - float2(SLACK) : second.size;
-        physics.shapes += AttachBox(body.id, Box { size = size, offset = second.offset, friction = box.friction, sensor = box.sensor });
-    }
-    this.Add(Fitted);
+    this.Add(Box { size = first.size, offset = first.offset, friction = GRIP }, Brick { seat = falling.seat, born = time.tick });
+    if (second.size.x > 0) Spawn(Box { size = second.size, offset = second.offset, friction = GRIP }, Part { of = this });
+    this.Remove(Falling, Owner);
+    towers.plinths[falling.seat].Send(Placed { });
+    this.Send(Landed { at = body.position, seat = falling.seat, speed = speed });
 }
 
 // A plinth moves by its velocity: it shakes in a quake, rises under a player
@@ -549,7 +548,7 @@ system Move(mut Seat seat, mut Body body, mut Towers towers, Time time)
 }
 
 // What's done to bricks before the step. One that's set solid goes where its
-// plinth does: it's a kinematic body, so it's given the plinth's velocity. A
+// plinth does: its body is a kinematic one, so it's given the plinth's velocity. A
 // gust pushes the loose ones near the top of the tower it's against, with an
 // impulse each tick it blows: more, the nearer the top. This looks at every
 // brick and writes a few, so it takes Body to read and puts the ones it
@@ -607,14 +606,15 @@ system Measure(mut Seat seat, Body body, Towers towers, query (Body at, Piece pi
 // one, and it lies where it falls a while before it's cleared. An entity
 // that's destroyed takes its body with it.
 //
-// A brick at rest that's deep enough under its tower's top is set solid, as
-// if its mortar had: a tower only ever leans and comes down from its top
-// part. Cement sets all of a tower at once. A brick that's set is a
-// kinematic body in the dynamic one's place, and when the round is over a
-// dynamic one again, from the bottom of its tower up: what comes down then is
-// all of it.
+// Every brick of a tower is loose, from the plinth up, unless its tower's
+// Cement set it solid: that sets every brick that's at rest in the tower, as
+// if its mortar had. A brick that's set has its body made a kinematic one,
+// and when the round is over a dynamic one again, from the bottom of its
+// tower up: what comes down then is all of it. This looks at every brick and
+// changes a few, so it takes Body to read and puts the ones it changed back
+// through the World.
 [After(PhysicsStages.Step)]
-system Tend(Body body, Piece piece, mut Brick brick, Towers towers)
+system Tend(Body body, mut Brick brick, Towers towers, mut World world)
 {
     if (towers.phase == Phase.Clear)
     {
@@ -627,16 +627,15 @@ system Tend(Body body, Piece piece, mut Brick brick, Towers towers)
         if (brick.rubble <= 0 && towers.phase == Phase.Play) this.Destroy();
         return;
     }
-    var part = First(piece.kind);
     var lot = Lot(body.position.x);
     if (brick.set)
     {
         var since = OVER - towers.timer - (lot == towers.winner ? STANDS : 0);
         if (towers.phase != Phase.Over || body.position.y > since * CRUMBLE) return;
-        Spawn(Body { position = body.position, angle = body.angle, angularDamping = STEADY },
-              Box { size = part.size, offset = part.offset, friction = GRIP }, Piece { kind = piece.kind },
-              Brick { seat = brick.seat, born = brick.born });
-        this.Destroy();
+        mut var loose = body;
+        loose.type = BodyType.Dynamic;
+        world.Set<Body>(this, loose);
+        brick.set = false;
         return;
     }
     var aside = Math.Abs(body.position.x - Home(lot)) - PLINTH / 2;
@@ -650,11 +649,11 @@ system Tend(Body body, Piece piece, mut Brick brick, Towers towers)
         return;
     }
     if (towers.phase != Phase.Play || aside > 1 || Math.LengthSq(body.velocity) > 0.04 || Math.Abs(body.spin) > 0.2) return;
-    if (Of(towers.sets, lot) <= 0 && body.position.y > Of(towers.tops, lot) - SET_DEPTH) return;
-    Spawn(Body { type = BodyType.Kinematic, position = body.position, angle = body.angle },
-          Box { size = part.size, offset = part.offset, friction = GRIP }, Piece { kind = piece.kind },
-          Brick { seat = brick.seat, born = brick.born, set = true });
-    this.Destroy();
+    if (Of(towers.sets, lot) <= 0) return;
+    mut var solid = body;
+    solid.type = BodyType.Kinematic;
+    world.Set<Body>(this, solid);
+    brick.set = true;
 }
 
 // A seat is dealt its next brick once the last has landed and its wait is
@@ -684,14 +683,11 @@ system Deal(Controls controls, mut Seat seat, Towers towers, Time time, query (B
     seat.serials += 1;
     seat.busy = true;
     var serial = seat.serials * SEATS + seat.index;
-    var first = First(kind);
     var at = float2(seat.home + Start(kind) * 0.5, Math.Ceil(seat.top) + DROP);
     if (hands)
     {
-        Spawn(Body { type = BodyType.Kinematic, position = at, velocity = float2(0, -FALL) },
-              Box { size = first.size - float2(SLACK), offset = first.offset, sensor = true }, Piece { kind = kind },
-              Falling { seat = seat.index, serial = serial, home = seat.home, column = Start(kind), wantColumn = Start(kind), free = at,
-                        freeColumn = Start(kind) },
+        Spawn(Body { type = BodyType.Kinematic, position = at, velocity = float2(0, -FALL), angularDamping = STEADY }, Piece { kind = kind },
+              Falling { seat = seat.index, serial = serial, home = seat.home, column = Start(kind), wantColumn = Start(kind) },
               Owner { player = player });
         return;
     }
@@ -718,11 +714,9 @@ system Deal(Controls controls, mut Seat seat, Towers towers, Time time, query (B
     // No two towers are built alike: each seat is so careful, and so quick, for a round
     var temper = Math.Hash(int3(time.seed, towers.round, seat.index));
     var plan = Think(kind, heights, askew, temper % 100 * 0.003, seat.dice);
-    Spawn(Body { type = BodyType.Kinematic, position = at, velocity = float2(0, -FALL) },
-          Box { size = first.size - float2(SLACK), offset = first.offset, sensor = true }, Piece { kind = kind },
+    Spawn(Body { type = BodyType.Kinematic, position = at, velocity = float2(0, -FALL), angularDamping = STEADY }, Piece { kind = kind },
           Falling { seat = seat.index, serial = serial, home = seat.home, column = Start(kind), wantColumn = plan.column,
-                    wantQuarter = plan.quarter, bot = true, hurry = 20 + temper / 100 % 30 + seat.dice.NextInt(30), free = at,
-                    freeColumn = Start(kind) });
+                    wantQuarter = plan.quarter, bot = true, hurry = 20 + temper / 100 % 30 + seat.dice.NextInt(30) });
 }
 
 event(Seated) Arrive(mut Seat seat, Towers towers)

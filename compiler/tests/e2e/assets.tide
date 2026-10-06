@@ -13,7 +13,7 @@ asset List<byte> tableAgain = "assets/table.bin";
 asset List<Grid2<Color>> run = "assets/run/*.png";
 asset Map<string, Grid2<Color>> runByName = "assets/run/*.png";
 asset Map<string, string> notes = "assets/notes/*.txt";
-asset List<string> noteList = "assets/notes/*.txt";
+asset List<string> noteList = "assets/*/*.txt"; // A '*' for a folder: the notes, and not rules.txt beside their folder
 asset List<List<byte>> everyPng = "assets/**/*.png";
 
 asset string nested = "assets/notes/a.txt";
