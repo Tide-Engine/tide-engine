@@ -157,6 +157,7 @@ static void deliver(rtc_sctp *s, const uint16_t stream, const uint32_t ppid, con
                     const double now)
 {
     if (ppid == PPID_DCEP && size >= 1) {
+        rtc_debug("sctp: their channel message %u on stream %u", (unsigned)data[0], (unsigned)stream);
         if (data[0] == DCEP_OPEN) {
             // Their channel: ours now, acknowledged on its stream
             s->stream = stream;
@@ -170,7 +171,10 @@ static void deliver(rtc_sctp *s, const uint16_t stream, const uint32_t ppid, con
         return;
     }
     if (!s->channel || stream != s->stream) return;
-    if (ppid == PPID_BINARY || ppid == PPID_STRING) s->message(s->user, data, size);
+    if (ppid == PPID_BINARY || ppid == PPID_STRING) {
+        if (!s->messages_in++) rtc_debug("sctp: their first message (%u bytes)", (unsigned)size);
+        s->message(s->user, data, size);
+    }
 }
 
 // A piece of a message: kept until the pieces from BEGIN to END are all here.
@@ -231,7 +235,13 @@ static void on_data(rtc_sctp *s, const uint8_t flags, const uint8_t *v, const si
     const uint32_t ppid = rtc_get32(v + 8);
     if (!s->unacknowledged) s->first_unacknowledged = now;
     s->unacknowledged++;
-    if (!after(tsn, s->cumulative) || tsn - s->cumulative > RTC_SCTP_WINDOW || has(s, tsn)) return; // Seen, or too far
+    if (!after(tsn, s->cumulative) || tsn - s->cumulative > RTC_SCTP_WINDOW || has(s, tsn)) { // Seen, or too far
+        if (ppid == PPID_DCEP) {
+            rtc_debug("sctp: a channel message of theirs passed by, as %u: we're at %u", (unsigned)tsn,
+                      (unsigned)s->cumulative);
+        }
+        return;
+    }
     mark(s, tsn, true);
     if ((flags & (FLAG_BEGIN | FLAG_END)) == (FLAG_BEGIN | FLAG_END)) {
         deliver(s, stream, ppid, v + 12, size - 12, now);
@@ -469,6 +479,7 @@ static void send_dcep(rtc_sctp *s, const uint8_t *message, const size_t size, co
 void rtc_sctp_send(rtc_sctp *s, const void *data, const size_t size, const double now)
 {
     if (s->state != RTC_SCTP_OPEN || !s->channel || size == 0 || size > 1200) return;
+    if (!s->messages_out++) rtc_debug("sctp: our first message (%u bytes)", (unsigned)size);
     uint8_t v[12 + 1200];
     const uint32_t tsn = s->next_tsn;
     const size_t n = data_value(s, v, 0, PPID_BINARY, data, size);
